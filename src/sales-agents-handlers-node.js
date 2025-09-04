@@ -30,22 +30,76 @@ class OperationLogger {
         this.steps = [];
         this.rawLogs = [];
         this.metadata = {};
+        
+        // Size limits to prevent memory bloat
+        this.MAX_STEPS = 50; // Maximum steps per operation
+        this.MAX_RAW_LOGS = 100; // Maximum raw logs per operation
+        this.MAX_LOG_SIZE = 10000; // Maximum size in characters per log entry
     }
     
     addStep(stepName, status, details = {}) {
         const now = Date.now();
+        
+        // Truncate details if too large
+        const truncatedDetails = this._truncateObject(details);
+        
         this.steps.push({
             step: stepName,
             status,
             duration_ms: now - this.lastStepTime,
             timestamp: new Date(now).toISOString(),
-            details
+            details: truncatedDetails
         });
+        
+        // Rotate steps if we exceed max count
+        if (this.steps.length > this.MAX_STEPS) {
+            this.steps.shift(); // Remove oldest step
+        }
+        
         this.lastStepTime = now;
     }
     
     addRawLog(log) {
-        this.rawLogs.push(log);
+        // Sanitize sensitive data before logging
+        const sanitizedLog = SecurityUtils.sanitizeLogEntry(log);
+        
+        // Truncate log if too large
+        const truncatedLog = this._truncateObject(sanitizedLog);
+        
+        this.rawLogs.push(truncatedLog);
+        
+        // Rotate raw logs if we exceed max count
+        if (this.rawLogs.length > this.MAX_RAW_LOGS) {
+            this.rawLogs.shift(); // Remove oldest log
+        }
+    }
+    
+    /**
+     * Truncate object to prevent memory bloat
+     */
+    _truncateObject(obj) {
+        if (!obj) return obj;
+        
+        try {
+            const jsonStr = JSON.stringify(obj);
+            if (jsonStr.length <= this.MAX_LOG_SIZE) {
+                return obj; // No truncation needed
+            }
+            
+            // Truncate string and add indicator
+            const truncated = jsonStr.substring(0, this.MAX_LOG_SIZE - 50);
+            const truncatedObj = JSON.parse(truncated + '"}');
+            truncatedObj._truncated = `Original size: ${jsonStr.length} chars, truncated to: ${this.MAX_LOG_SIZE} chars`;
+            
+            return truncatedObj;
+        } catch (error) {
+            // If truncation fails, return a safe minimal object
+            return {
+                _error: 'Failed to serialize/truncate log object',
+                _originalType: typeof obj,
+                _size: 'unknown'
+            };
+        }
     }
     
     setMetadata(key, value) {
@@ -72,13 +126,773 @@ class OperationLogger {
     }
 }
 
+/**
+ * Security utilities for token sanitization in logging
+ */
+class SecurityUtils {
+    /**
+     * Sanitize sensitive data from headers for logging
+     */
+    static sanitizeHeaders(headers = {}) {
+        const sanitized = { ...headers };
+        
+        // List of sensitive header keys
+        const sensitiveHeaders = [
+            'authorization',
+            'x-adcp-auth',
+            'x-api-key',
+            'cookie',
+            'set-cookie',
+            'proxy-authorization',
+            'www-authenticate'
+        ];
+        
+        for (const [key, value] of Object.entries(sanitized)) {
+            if (sensitiveHeaders.includes(key.toLowerCase())) {
+                if (typeof value === 'string' && value.length > 0) {
+                    // Show only first 4 and last 4 characters for debugging context
+                    sanitized[key] = value.length > 8 
+                        ? `${value.substring(0, 4)}****${value.substring(value.length - 4)}`
+                        : '****';
+                } else {
+                    sanitized[key] = '****';
+                }
+            }
+        }
+        
+        return sanitized;
+    }
+    
+    /**
+     * Sanitize tokens from request/response body for logging
+     */
+    static sanitizeBody(body) {
+        if (!body) return body;
+        
+        try {
+            if (typeof body === 'string') {
+                // Try to parse as JSON to sanitize tokens
+                let parsed;
+                try {
+                    parsed = JSON.parse(body);
+                } catch {
+                    // Not JSON, sanitize as string
+                    return this.sanitizeStringTokens(body);
+                }
+                
+                return JSON.stringify(this.sanitizeObjectTokens(parsed));
+            } else if (typeof body === 'object') {
+                return this.sanitizeObjectTokens(body);
+            }
+            
+            return body;
+        } catch {
+            return '[SANITIZATION_ERROR]';
+        }
+    }
+    
+    /**
+     * Recursively sanitize tokens from object properties
+     */
+    static sanitizeObjectTokens(obj) {
+        if (!obj || typeof obj !== 'object') return obj;
+        
+        const sensitiveKeys = [
+            'token', 'auth_token', 'access_token', 'refresh_token',
+            'api_key', 'secret', 'password', 'authorization',
+            'x-adcp-auth', 'bearer'
+        ];
+        
+        const sanitized = Array.isArray(obj) ? [] : {};
+        
+        for (const [key, value] of Object.entries(obj)) {
+            const keyLower = key.toLowerCase();
+            
+            if (sensitiveKeys.some(sensitive => keyLower.includes(sensitive))) {
+                // Sanitize sensitive values
+                if (typeof value === 'string' && value.length > 0) {
+                    sanitized[key] = value.length > 8 
+                        ? `${value.substring(0, 4)}****${value.substring(value.length - 4)}`
+                        : '****';
+                } else {
+                    sanitized[key] = '****';
+                }
+            } else if (typeof value === 'object') {
+                // Recursively sanitize nested objects
+                sanitized[key] = this.sanitizeObjectTokens(value);
+            } else {
+                sanitized[key] = value;
+            }
+        }
+        
+        return sanitized;
+    }
+    
+    /**
+     * Sanitize tokens from string content (URLs, raw text)
+     */
+    static sanitizeStringTokens(str) {
+        if (typeof str !== 'string') return str;
+        
+        // Common token patterns in URLs and strings
+        const tokenPatterns = [
+            /([?&](?:token|auth|key|secret)=)[^&\s]+/gi,
+            /Bearer\s+[A-Za-z0-9\-_]+\.[A-Za-z0-9\-_]+\.[A-Za-z0-9\-_]+/gi,
+            /Basic\s+[A-Za-z0-9+/]+=*/gi,
+            /(?:token|key|secret)[:=]\s*["']?[A-Za-z0-9\-_]{16,}["']?/gi
+        ];
+        
+        let sanitized = str;
+        tokenPatterns.forEach(pattern => {
+            sanitized = sanitized.replace(pattern, (match, prefix) => {
+                if (prefix) {
+                    return `${prefix}****`;
+                }
+                return match.substring(0, Math.min(8, match.length)) + '****';
+            });
+        });
+        
+        return sanitized;
+    }
+    
+    /**
+     * Sanitize complete log entry before adding to debug logs
+     */
+    static sanitizeLogEntry(logEntry) {
+        if (!logEntry || typeof logEntry !== 'object') return logEntry;
+        
+        const sanitized = { ...logEntry };
+        
+        // Sanitize headers
+        if (sanitized.headers) {
+            sanitized.headers = this.sanitizeHeaders(sanitized.headers);
+        }
+        
+        // Sanitize request/response bodies
+        if (sanitized.body) {
+            sanitized.body = this.sanitizeBody(sanitized.body);
+        }
+        if (sanitized.response) {
+            sanitized.response = this.sanitizeBody(sanitized.response);
+        }
+        
+        // Sanitize URL
+        if (sanitized.url) {
+            sanitized.url = this.sanitizeStringTokens(sanitized.url);
+        }
+        
+        // Sanitize any other string properties
+        for (const [key, value] of Object.entries(sanitized)) {
+            if (typeof value === 'string' && key !== 'body' && key !== 'response') {
+                sanitized[key] = this.sanitizeStringTokens(value);
+            }
+        }
+        
+        return sanitized;
+    }
+    
+    /**
+     * Validate authentication token format and basic security properties
+     */
+    static validateAuthToken(token) {
+        if (!token || typeof token !== 'string') {
+            return { valid: false, reason: 'Token must be a non-empty string' };
+        }
+        
+        // Trim whitespace
+        token = token.trim();
+        
+        if (token.length === 0) {
+            return { valid: false, reason: 'Token cannot be empty or whitespace only' };
+        }
+        
+        // Check minimum length for security
+        if (token.length < 16) {
+            return { valid: false, reason: 'Token too short (minimum 16 characters)' };
+        }
+        
+        // Check for common insecure patterns
+        const insecurePatterns = [
+            /^(test|demo|example|sample|default|admin|password|secret)$/i,
+            /^(123|abc|aaa|xxx)+$/i,
+            /^\d{1,10}$/,  // Just numbers
+            /^[a]{16,}$/i, // All A's
+            /^.{1,3}$/     // Too short
+        ];
+        
+        for (const pattern of insecurePatterns) {
+            if (pattern.test(token)) {
+                return { valid: false, reason: 'Token appears to be a placeholder or test value' };
+            }
+        }
+        
+        // Check for environment variable patterns that weren't resolved
+        if (token.includes('${') || token.includes('$')) {
+            return { valid: false, reason: 'Token appears to contain unresolved environment variables' };
+        }
+        
+        return { valid: true, token: token };
+    }
+    
+    /**
+     * Standardized error handling for agent protocols
+     */
+    static createStandardError(type, error, context = {}) {
+        const baseError = {
+            timestamp: new Date().toISOString(),
+            success: false,
+            protocol: context.protocol || 'unknown',
+            agent_name: context.agentName || context.agent_name || 'unknown',
+            agent_id: context.agentId || context.agent_id || context.id || 'unknown'
+        };
+        
+        // Standard error types with consistent messaging
+        switch (type) {
+            case 'network':
+                return {
+                    ...baseError,
+                    error_type: 'network_error',
+                    error: `Network request failed: ${error.message}`,
+                    message: error.message,
+                    recommendation: "Check agent connectivity and network configuration",
+                    retry_possible: true,
+                    ...context.additionalData
+                };
+                
+            case 'authentication':
+                return {
+                    ...baseError,
+                    error_type: 'authentication_error',
+                    error: `Authentication failed: ${error.message}`,
+                    message: error.message,
+                    recommendation: "Verify authentication token and permissions",
+                    retry_possible: false,
+                    ...context.additionalData
+                };
+                
+            case 'protocol':
+                return {
+                    ...baseError,
+                    error_type: 'protocol_error',
+                    error: `Protocol error: ${error.message}`,
+                    message: error.message,
+                    recommendation: "Check protocol implementation and message format",
+                    retry_possible: false,
+                    ...context.additionalData
+                };
+                
+            case 'timeout':
+                return {
+                    ...baseError,
+                    error_type: 'timeout_error',
+                    error: `Request timed out: ${error.message}`,
+                    message: error.message,
+                    recommendation: "Try again or increase timeout value",
+                    retry_possible: true,
+                    ...context.additionalData
+                };
+                
+            case 'validation':
+                return {
+                    ...baseError,
+                    error_type: 'validation_error',
+                    error: `Input validation failed: ${error.message}`,
+                    message: error.message,
+                    recommendation: "Check request format and required parameters",
+                    retry_possible: false,
+                    ...context.additionalData
+                };
+                
+            case 'rate_limit':
+                return {
+                    ...baseError,
+                    error_type: 'rate_limit_error',
+                    error: `Rate limit exceeded: ${error.message}`,
+                    message: error.message,
+                    recommendation: "Wait before retrying or reduce request frequency",
+                    retry_possible: true,
+                    retry_after: context.retryAfter || 60,
+                    ...context.additionalData
+                };
+                
+            case 'server':
+                return {
+                    ...baseError,
+                    error_type: 'server_error',
+                    error: `Server error: ${error.message}`,
+                    message: error.message,
+                    recommendation: "Check agent server status and configuration",
+                    retry_possible: true,
+                    ...context.additionalData
+                };
+                
+            default:
+                return {
+                    ...baseError,
+                    error_type: 'general_error',
+                    error: error.message || 'Unknown error occurred',
+                    message: error.message || 'Unknown error occurred',
+                    recommendation: "Check logs for more details",
+                    retry_possible: true,
+                    ...context.additionalData
+                };
+        }
+    }
+    
+    /**
+     * Classify error type based on error characteristics
+     */
+    static classifyError(error, response = null) {
+        if (!error) return 'general';
+        
+        const message = error.message?.toLowerCase() || '';
+        const status = response?.status || error.status || 0;
+        
+        // Network-related errors
+        if (message.includes('network') || message.includes('connection') || 
+            message.includes('fetch') || message.includes('econnrefused') ||
+            message.includes('enotfound') || message.includes('timeout')) {
+            return status >= 500 ? 'server' : 'network';
+        }
+        
+        // Authentication errors
+        if (status === 401 || status === 403 || 
+            message.includes('unauthorized') || message.includes('auth') ||
+            message.includes('token') || message.includes('permission')) {
+            return 'authentication';
+        }
+        
+        // Protocol errors
+        if (message.includes('protocol') || message.includes('json-rpc') ||
+            message.includes('invalid format') || message.includes('parse')) {
+            return 'protocol';
+        }
+        
+        // Validation errors
+        if (status === 400 || message.includes('validation') || 
+            message.includes('invalid') || message.includes('required')) {
+            return 'validation';
+        }
+        
+        // Rate limiting
+        if (status === 429 || message.includes('rate limit') || 
+            message.includes('too many requests')) {
+            return 'rate_limit';
+        }
+        
+        // Timeout errors
+        if (message.includes('timeout') || message.includes('timed out')) {
+            return 'timeout';
+        }
+        
+        // Server errors
+        if (status >= 500) {
+            return 'server';
+        }
+        
+        return 'general';
+    }
+    
+    /**
+     * Manage debug log arrays with size limits and rotation
+     */
+    static manageDebugLogs(debugLogsArray, newEntry, maxSize = 100, maxEntrySize = 5000) {
+        if (!Array.isArray(debugLogsArray)) {
+            console.warn('manageDebugLogs called with non-array, creating new array');
+            debugLogsArray = [];
+        }
+        
+        // Truncate the new entry if it's too large
+        let processedEntry = newEntry;
+        if (newEntry && typeof newEntry === 'object') {
+            try {
+                const jsonStr = JSON.stringify(newEntry);
+                if (jsonStr.length > maxEntrySize) {
+                    const truncated = jsonStr.substring(0, maxEntrySize - 100);
+                    processedEntry = JSON.parse(truncated + '"}');
+                    processedEntry._truncated = `Original: ${jsonStr.length} chars, truncated to: ${maxEntrySize} chars`;
+                }
+            } catch (error) {
+                processedEntry = {
+                    _error: 'Failed to process log entry',
+                    _originalType: typeof newEntry,
+                    _timestamp: new Date().toISOString()
+                };
+            }
+        }
+        
+        // Add the entry
+        debugLogsArray.push(processedEntry);
+        
+        // Rotate if too many entries
+        while (debugLogsArray.length > maxSize) {
+            debugLogsArray.shift(); // Remove oldest entry
+        }
+        
+        return debugLogsArray;
+    }
+    
+    /**
+     * Get memory usage statistics for debug logs
+     */
+    static getDebugLogStats(debugLogsArray) {
+        if (!Array.isArray(debugLogsArray)) return { error: 'Not an array' };
+        
+        try {
+            const jsonStr = JSON.stringify(debugLogsArray);
+            const sizeInBytes = new TextEncoder().encode(jsonStr).length;
+            const sizeInKB = Math.round(sizeInBytes / 1024 * 100) / 100;
+            
+            return {
+                entryCount: debugLogsArray.length,
+                sizeInBytes,
+                sizeInKB,
+                averageEntrySize: Math.round(sizeInBytes / (debugLogsArray.length || 1)),
+                truncatedEntries: debugLogsArray.filter(entry => 
+                    entry && typeof entry === 'object' && entry._truncated
+                ).length
+            };
+        } catch (error) {
+            return {
+                error: 'Failed to calculate stats',
+                entryCount: debugLogsArray.length,
+                errorMessage: error.message
+            };
+        }
+    }
+}
+
+/**
+ * Client lifecycle management and resource cleanup utilities
+ */
+class ClientManager {
+    constructor() {
+        this.clients = new Map(); // clientKey -> client metadata
+        this.MAX_CLIENTS_PER_AGENT = 3;
+        this.CLIENT_IDLE_TIMEOUT = 300000; // 5 minutes
+        this.CLIENT_MAX_AGE = 1800000; // 30 minutes
+        
+        // Start cleanup timer
+        this.cleanupTimer = setInterval(() => {
+            this.cleanupIdleClients();
+        }, 60000); // Check every minute
+    }
+    
+    /**
+     * Generate unique key for client caching
+     */
+    getClientKey(agent, protocol) {
+        return `${protocol}:${agent.agent_uri}:${agent.agent_name || 'unnamed'}`;
+    }
+    
+    /**
+     * Get cached client if available and still valid
+     */
+    getCachedClient(agent, protocol) {
+        const key = this.getClientKey(agent, protocol);
+        const clientMeta = this.clients.get(key);
+        
+        if (!clientMeta) return null;
+        
+        const now = Date.now();
+        
+        // Check if client is too old
+        if (now - clientMeta.created > this.CLIENT_MAX_AGE) {
+            this.disposeClient(key);
+            return null;
+        }
+        
+        // Update last used time
+        clientMeta.lastUsed = now;
+        return clientMeta.client;
+    }
+    
+    /**
+     * Store client in cache with metadata
+     */
+    cacheClient(agent, protocol, client) {
+        const key = this.getClientKey(agent, protocol);
+        const now = Date.now();
+        
+        // Clean up any existing client for this key
+        this.disposeClient(key);
+        
+        // Check if we have too many clients for this agent already
+        const agentClients = Array.from(this.clients.keys()).filter(k => 
+            k.startsWith(`${protocol}:${agent.agent_uri}:`)
+        );
+        
+        if (agentClients.length >= this.MAX_CLIENTS_PER_AGENT) {
+            // Remove the oldest client for this agent
+            const oldestKey = agentClients
+                .map(k => ({ key: k, meta: this.clients.get(k) }))
+                .sort((a, b) => a.meta.lastUsed - b.meta.lastUsed)[0].key;
+            
+            this.disposeClient(oldestKey);
+        }
+        
+        this.clients.set(key, {
+            client,
+            created: now,
+            lastUsed: now,
+            protocol,
+            agentUri: agent.agent_uri,
+            agentName: agent.agent_name || 'unnamed'
+        });
+    }
+    
+    /**
+     * Dispose of a specific client and clean up resources
+     */
+    disposeClient(clientKey) {
+        const clientMeta = this.clients.get(clientKey);
+        if (!clientMeta) return;
+        
+        try {
+            // Attempt to close/cleanup the client if it has cleanup methods
+            if (clientMeta.client && typeof clientMeta.client.close === 'function') {
+                clientMeta.client.close();
+            }
+            if (clientMeta.client && typeof clientMeta.client.disconnect === 'function') {
+                clientMeta.client.disconnect();
+            }
+            if (clientMeta.client && typeof clientMeta.client.destroy === 'function') {
+                clientMeta.client.destroy();
+            }
+        } catch (error) {
+            console.warn(`Error disposing client ${clientKey}:`, error.message);
+        }
+        
+        this.clients.delete(clientKey);
+    }
+    
+    /**
+     * Clean up idle clients that haven't been used recently
+     */
+    cleanupIdleClients() {
+        const now = Date.now();
+        const keysToRemove = [];
+        
+        for (const [key, clientMeta] of this.clients) {
+            const idleTime = now - clientMeta.lastUsed;
+            const age = now - clientMeta.created;
+            
+            if (idleTime > this.CLIENT_IDLE_TIMEOUT || age > this.CLIENT_MAX_AGE) {
+                keysToRemove.push(key);
+            }
+        }
+        
+        keysToRemove.forEach(key => {
+            this.disposeClient(key);
+        });
+        
+        if (keysToRemove.length > 0) {
+            console.log(`Cleaned up ${keysToRemove.length} idle/expired clients`);
+        }
+    }
+    
+    /**
+     * Get client statistics for monitoring
+     */
+    getStats() {
+        const now = Date.now();
+        const stats = {
+            totalClients: this.clients.size,
+            clientsByProtocol: {},
+            clientsByAge: { fresh: 0, old: 0, expired: 0 },
+            clientsByIdle: { active: 0, idle: 0, stale: 0 }
+        };
+        
+        for (const [key, clientMeta] of this.clients) {
+            // By protocol
+            stats.clientsByProtocol[clientMeta.protocol] = 
+                (stats.clientsByProtocol[clientMeta.protocol] || 0) + 1;
+            
+            // By age
+            const age = now - clientMeta.created;
+            if (age < 300000) stats.clientsByAge.fresh++;
+            else if (age < this.CLIENT_MAX_AGE) stats.clientsByAge.old++;
+            else stats.clientsByAge.expired++;
+            
+            // By idle time
+            const idleTime = now - clientMeta.lastUsed;
+            if (idleTime < 60000) stats.clientsByIdle.active++;
+            else if (idleTime < this.CLIENT_IDLE_TIMEOUT) stats.clientsByIdle.idle++;
+            else stats.clientsByIdle.stale++;
+        }
+        
+        return stats;
+    }
+    
+    /**
+     * Dispose of all clients and stop cleanup timer
+     */
+    shutdown() {
+        if (this.cleanupTimer) {
+            clearInterval(this.cleanupTimer);
+            this.cleanupTimer = null;
+        }
+        
+        const keys = Array.from(this.clients.keys());
+        keys.forEach(key => this.disposeClient(key));
+        
+        console.log(`ClientManager shutdown: disposed of ${keys.length} clients`);
+    }
+}
+
 class SalesAgentsHandlers {
     constructor(env) {
         this.env = env;
-        this.mcpClients = new Map();
-        this.a2aClients = new Map();
+        this.clientManager = new ClientManager();
         this.MAX_CONCURRENT_REQUESTS = 5;
         this.REQUEST_TIMEOUT = 30000;
+        
+        // Concurrent request limiting
+        this.concurrentRequests = 0;
+        this.requestQueue = [];
+        this.requestStats = {
+            total: 0,
+            completed: 0,
+            failed: 0,
+            queued: 0,
+            rejected: 0
+        };
+        
+        // Handle graceful shutdown
+        this.setupShutdownHandlers();
+    }
+    
+    /**
+     * Setup graceful shutdown handlers for proper resource cleanup
+     */
+    setupShutdownHandlers() {
+        const cleanup = () => {
+            console.log('Shutting down SalesAgentsHandlers...');
+            if (this.clientManager) {
+                this.clientManager.shutdown();
+            }
+        };
+        
+        // Handle various shutdown signals
+        process.on('SIGTERM', cleanup);
+        process.on('SIGINT', cleanup);
+        process.on('beforeExit', cleanup);
+        
+        // Handle uncaught exceptions to ensure cleanup
+        process.on('uncaughtException', (error) => {
+            console.error('Uncaught exception:', error);
+            cleanup();
+            process.exit(1);
+        });
+        
+        process.on('unhandledRejection', (reason, promise) => {
+            console.error('Unhandled rejection at:', promise, 'reason:', reason);
+            cleanup();
+            process.exit(1);
+        });
+    }
+    
+    /**
+     * Acquire a concurrent request slot
+     */
+    async acquireRequestSlot() {
+        return new Promise((resolve, reject) => {
+            this.requestStats.total++;
+            
+            if (this.concurrentRequests < this.MAX_CONCURRENT_REQUESTS) {
+                // Slot available immediately
+                this.concurrentRequests++;
+                resolve();
+            } else {
+                // Queue the request
+                this.requestStats.queued++;
+                const queueEntry = {
+                    resolve,
+                    reject,
+                    timestamp: Date.now(),
+                    timeout: setTimeout(() => {
+                        // Request timed out in queue
+                        this.removeFromQueue(queueEntry);
+                        this.requestStats.queued--;
+                        this.requestStats.rejected++;
+                        reject(new Error('Request timed out in queue'));
+                    }, this.REQUEST_TIMEOUT)
+                };
+                
+                this.requestQueue.push(queueEntry);
+                
+                // Limit queue size to prevent memory issues
+                const maxQueueSize = this.MAX_CONCURRENT_REQUESTS * 10; // 10x the concurrent limit
+                if (this.requestQueue.length > maxQueueSize) {
+                    // Remove oldest queued request
+                    const oldest = this.requestQueue.shift();
+                    clearTimeout(oldest.timeout);
+                    this.requestStats.queued--;
+                    this.requestStats.rejected++;
+                    oldest.reject(new Error('Request queue full, oldest request dropped'));
+                }
+            }
+        });
+    }
+    
+    /**
+     * Release a concurrent request slot
+     */
+    releaseRequestSlot() {
+        this.concurrentRequests = Math.max(0, this.concurrentRequests - 1);
+        
+        // Process next item in queue if available
+        if (this.requestQueue.length > 0 && this.concurrentRequests < this.MAX_CONCURRENT_REQUESTS) {
+            const nextRequest = this.requestQueue.shift();
+            clearTimeout(nextRequest.timeout);
+            this.concurrentRequests++;
+            this.requestStats.queued--;
+            nextRequest.resolve();
+        }
+    }
+    
+    /**
+     * Remove a specific entry from the queue
+     */
+    removeFromQueue(targetEntry) {
+        const index = this.requestQueue.indexOf(targetEntry);
+        if (index !== -1) {
+            this.requestQueue.splice(index, 1);
+            clearTimeout(targetEntry.timeout);
+        }
+    }
+    
+    /**
+     * Execute a function with concurrent request limiting
+     */
+    async withConcurrencyLimit(asyncFunction) {
+        await this.acquireRequestSlot();
+        
+        try {
+            const result = await asyncFunction();
+            this.requestStats.completed++;
+            return result;
+        } catch (error) {
+            this.requestStats.failed++;
+            throw error;
+        } finally {
+            this.releaseRequestSlot();
+        }
+    }
+    
+    /**
+     * Get concurrent request statistics
+     */
+    getConcurrencyStats() {
+        return {
+            currentConcurrent: this.concurrentRequests,
+            maxConcurrent: this.MAX_CONCURRENT_REQUESTS,
+            queueLength: this.requestQueue.length,
+            queueOldestWaitTime: this.requestQueue.length > 0 
+                ? Date.now() - this.requestQueue[0].timestamp 
+                : 0,
+            stats: { ...this.requestStats }
+        };
     }
 
     /**
@@ -93,19 +907,41 @@ class SalesAgentsHandlers {
                 throw new Error('Only HTTP/HTTPS protocols allowed');
             }
             
-            // Block private IP ranges and localhost in production
-            if (process.env.NODE_ENV === 'production') {
-                const hostname = parsedUrl.hostname.toLowerCase();
-                if (['localhost', '127.0.0.1', '0.0.0.0', '::1'].includes(hostname) ||
-                    hostname.startsWith('192.168.') ||
-                    hostname.startsWith('10.') ||
-                    hostname.match(/^172\.(1[6-9]|2[0-9]|3[01])\./)) {
-                    throw new Error('Private network access not allowed in production');
+            // Block private IP ranges and localhost (security: always enforce, regardless of environment)
+            const hostname = parsedUrl.hostname.toLowerCase();
+            
+            // Check for development allowlist first
+            const devAllowedHosts = (process.env.ADCP_DEV_ALLOWED_HOSTS || '').split(',').map(h => h.trim().toLowerCase());
+            const isDevAllowed = process.env.NODE_ENV !== 'production' && devAllowedHosts.includes(hostname);
+            
+            if (!isDevAllowed) {
+                // Block localhost variants
+                if (['localhost', '127.0.0.1', '0.0.0.0', '::1', '[::]'].includes(hostname)) {
+                    throw new Error('Localhost access not allowed for security reasons');
+                }
+                
+                // Block private IPv4 ranges (RFC 1918)
+                if (hostname.match(/^192\.168\.\d+\.\d+$/) ||
+                    hostname.match(/^10\.\d+\.\d+\.\d+$/) ||
+                    hostname.match(/^172\.(1[6-9]|2[0-9]|3[01])\.\d+\.\d+$/)) {
+                    throw new Error('Private IP range access not allowed for security reasons');
+                }
+                
+                // Block link-local addresses
+                if (hostname.match(/^169\.254\.\d+\.\d+$/) ||
+                    hostname.match(/^fe80::/i)) {
+                    throw new Error('Link-local address access not allowed for security reasons');
+                }
+                
+                // Block IPv6 localhost and private ranges
+                if (hostname.match(/^::1$/) ||
+                    hostname.match(/^fc00::/i) ||
+                    hostname.match(/^fd00::/i)) {
+                    throw new Error('Private IPv6 address access not allowed for security reasons');
                 }
             }
             
-            // Block metadata endpoints
-            const hostname = parsedUrl.hostname.toLowerCase();
+            // Block metadata endpoints (use already declared hostname variable)
             if (hostname === '169.254.169.254' || hostname === 'metadata.google.internal') {
                 throw new Error('Metadata endpoint access not allowed');
             }
@@ -180,12 +1016,26 @@ class SalesAgentsHandlers {
         // Validate URL before creating client
         this.validateAgentUrl(url);
         
-        // Always create a fresh client for MCP to avoid session issues
+        // Try to get cached client first, but only for agents that don't require fresh sessions
+        let cachedClient = null;
+        if (!agent.requiresFreshSession) {
+            cachedClient = this.clientManager.getCachedClient(agent, 'mcp');
+            if (cachedClient) {
+                return cachedClient;
+            }
+        }
+        
         // Get auth token if required
         let authToken = null;
         if (agent.requiresAuth !== false && agent.auth_token_env) {
-            // Use the auth_token_env value directly as the token
-            authToken = agent.auth_token_env;
+            // Validate the auth token before using it
+            const tokenValidation = SecurityUtils.validateAuthToken(agent.auth_token_env);
+            if (tokenValidation.valid) {
+                authToken = tokenValidation.token;
+            } else {
+                console.warn(`Invalid MCP auth token for agent ${agent.agent_name}: ${tokenValidation.reason}`);
+                // Continue without token - let the agent handle authentication failure
+            }
         }
 
         // Store MCP session state and ensure debugLogs is captured
@@ -212,13 +1062,21 @@ class SalesAgentsHandlers {
                 headers['Content-Type'] = 'application/json';
             }
             
-            // Always add MCP auth headers for MCP protocol agents
-            // Many MCP agents require x-adcp-auth header even for public endpoints
-            if (!headers['x-adcp-auth']) {
-                headers['x-adcp-auth'] = authToken || 'public-access';
-            }
-            if (authToken && !headers['Authorization']) {
-                headers['Authorization'] = `Bearer ${authToken}`;
+            // Only add MCP auth headers when agent explicitly requires authentication
+            // This prevents leaking authentication attempts to public endpoints
+            if (agent.requiresAuth !== false && authToken) {
+                if (!headers['x-adcp-auth']) {
+                    headers['x-adcp-auth'] = authToken;
+                }
+                if (!headers['Authorization']) {
+                    headers['Authorization'] = `Bearer ${authToken}`;
+                }
+            } else if (agent.requiresAuth !== false && !authToken) {
+                // Agent requires auth but no token provided - this will likely fail
+                // but we should let the agent respond with proper error
+                if (!headers['x-adcp-auth']) {
+                    headers['x-adcp-auth'] = 'unauthenticated';
+                }
             }
 
             // Add MCP session headers if we have them
@@ -257,7 +1115,7 @@ class SalesAgentsHandlers {
                 request_start: requestStart
             };
             if (logs && Array.isArray(logs)) {
-                logs.push(debugEntry);
+                SecurityUtils.manageDebugLogs(logs, SecurityUtils.sanitizeLogEntry(debugEntry));
             }
             
             // Also log to OperationLogger if provided
@@ -287,7 +1145,7 @@ class SalesAgentsHandlers {
                     duration_ms: Date.now() - requestStart
                 };
                 if (logs && Array.isArray(logs)) {
-                    logs.push(errorEntry);
+                    SecurityUtils.manageDebugLogs(logs, SecurityUtils.sanitizeLogEntry(errorEntry));
                 }
                 
                 // Also log to OperationLogger if provided
@@ -386,7 +1244,7 @@ class SalesAgentsHandlers {
                 success: response.ok && !mcpError
             };
             if (logs && Array.isArray(logs)) {
-                logs.push(responseEntry);
+                SecurityUtils.manageDebugLogs(logs, SecurityUtils.sanitizeLogEntry(responseEntry));
             }
             
             // Also log to OperationLogger if provided
@@ -610,6 +1468,12 @@ class SalesAgentsHandlers {
         };
         
         console.log(`HTTP-based MCP client created successfully`);
+        
+        // Cache the client if it doesn't require fresh sessions
+        if (!agent.requiresFreshSession) {
+            this.clientManager.cacheClient(agent, 'mcp', mockMcpClient);
+        }
+        
         return mockMcpClient;
     }
 
@@ -619,11 +1483,23 @@ class SalesAgentsHandlers {
     async getA2AClient(agent, debugLogs = []) {
         const url = agent.agent_uri;
         
+        // Try to get cached client first
+        const cachedClient = this.clientManager.getCachedClient(agent, 'a2a');
+        if (cachedClient) {
+            return cachedClient;
+        }
+        
         // Get auth token if required
         let authToken = null;
         if (agent.requiresAuth !== false && agent.auth_token_env) {
-            // Use the auth_token_env value directly as the token
-            authToken = agent.auth_token_env;
+            // Validate the auth token before using it
+            const tokenValidation = SecurityUtils.validateAuthToken(agent.auth_token_env);
+            if (tokenValidation.valid) {
+                authToken = tokenValidation.token;
+            } else {
+                console.warn(`Invalid A2A auth token for agent ${agent.agent_name}: ${tokenValidation.reason}`);
+                // Continue without token - let the agent handle authentication failure
+            }
         }
         
         // Capture debugLogs in closure scope
@@ -653,7 +1529,7 @@ class SalesAgentsHandlers {
                 adcp_version: 'PR#48' // Indicate ADCP spec compliance
             };
             if (logs && Array.isArray(logs)) {
-                logs.push(debugEntry);
+                SecurityUtils.manageDebugLogs(logs, SecurityUtils.sanitizeLogEntry(debugEntry));
             }
             
             const response = await fetch(url, {
@@ -687,7 +1563,7 @@ class SalesAgentsHandlers {
                 body: responseText
             };
             if (logs && Array.isArray(logs)) {
-                logs.push(responseEntry);
+                SecurityUtils.manageDebugLogs(logs, SecurityUtils.sanitizeLogEntry(responseEntry));
             }
             
             return response;
@@ -740,6 +1616,9 @@ class SalesAgentsHandlers {
                 return { result: jsonRpcResponse.result };
             }
         };
+        
+        // Cache the client for reuse
+        this.clientManager.cacheClient(agent, 'a2a', mockClient);
         
         return mockClient;
     }
@@ -800,8 +1679,10 @@ class SalesAgentsHandlers {
      * Query A2A protocol agent for inventory with structured brief
      */
     async queryA2AAgent(agent, brandStory, userProvidedOffering = null, toolName = 'get_products') {
-        // Validate URL before making requests
-        this.validateAgentUrl(agent.agent_uri);
+        // Apply concurrent request limiting
+        return await this.withConcurrencyLimit(async () => {
+            // Validate URL before making requests
+            this.validateAgentUrl(agent.agent_uri);
         
         // Array to collect debug logs
         const debugLogs = [];
@@ -967,13 +1848,16 @@ Please process this ${toolName} request according to AdCP specifications.`;
                 debugLogs
             };
         }
+        }); // End of concurrency limiter
     }
 
     /**
      * Query MCP protocol agent for inventory using proper tool discovery
      */
     async queryMCPAgent(agent, brandStory, userProvidedOffering = null, toolName = 'get_products') {
-        // Create operation logger to track the entire MCP operation
+        // Apply concurrent request limiting
+        return await this.withConcurrencyLimit(async () => {
+            // Create operation logger to track the entire MCP operation
         const operationLogger = new OperationLogger(
             `mcp_${toolName}`,
             'MCP',
@@ -1189,6 +2073,7 @@ Please process this ${toolName} request according to AdCP specifications.`;
                 debugLogs: [operationLog] // Return the grouped operation log
             };
         }
+        }); // End of concurrency limiter
     }
 
     /**
@@ -1244,8 +2129,14 @@ Please process this ${toolName} request according to AdCP specifications.`;
                 // Check A2A agent card
                 const authHeaders = {};
                 if (agent.requiresAuth !== false && agent.auth_token_env) {
-                    const authToken = agent.auth_token_env;
-                    authHeaders['Authorization'] = `Bearer ${authToken}`;
+                    // Validate the auth token before using it
+                    const tokenValidation = SecurityUtils.validateAuthToken(agent.auth_token_env);
+                    if (tokenValidation.valid) {
+                        authHeaders['Authorization'] = `Bearer ${tokenValidation.token}`;
+                    } else {
+                        console.warn(`Invalid auth token for tool discovery on agent ${agent.agent_name}: ${tokenValidation.reason}`);
+                        // Continue without token - let the agent handle authentication failure
+                    }
                 }
 
                 const response = await fetch(agent.agent_uri, {
