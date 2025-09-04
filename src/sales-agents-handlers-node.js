@@ -157,14 +157,13 @@ class SalesAgentsHandlers {
                 headers['Content-Type'] = 'application/json';
             }
             
-            if (authToken) {
-                // Add auth headers without overwriting existing ones
-                if (!headers['Authorization']) {
-                    headers['Authorization'] = `Bearer ${authToken}`;
-                }
-                if (!headers['x-adcp-auth']) {
-                    headers['x-adcp-auth'] = authToken;
-                }
+            // Always add MCP auth headers for MCP protocol agents
+            // Many MCP agents require x-adcp-auth header even for public endpoints
+            if (!headers['x-adcp-auth']) {
+                headers['x-adcp-auth'] = authToken || 'public-access';
+            }
+            if (authToken && !headers['Authorization']) {
+                headers['Authorization'] = `Bearer ${authToken}`;
             }
 
             // Add MCP session headers if we have them
@@ -314,7 +313,7 @@ class SalesAgentsHandlers {
                 status: response.status,
                 statusText: response.statusText,
                 headers: responseHeaders,
-                body: responseText,
+                body: parsedResponse ? JSON.stringify(parsedResponse, null, 2) : responseText,
                 parsed_response: parsedResponse,
                 session_id: mcpSessionId || null,
                 duration_ms: requestEnd - requestStart,
@@ -692,28 +691,19 @@ class SalesAgentsHandlers {
     }
 
     /**
-     * Create A2A message following ADCP PR #48 specification
-     * Supports both natural language and explicit skill invocation methods
+     * Create A2A message following current ADCP specification
+     * Uses only text parts as skill parts are not supported by current agents
      */
-    createA2AMessage(messageId, requestText, toolName, brandStory, userProvidedOffering, useExplicitSkill = true) {
+    createA2AMessage(messageId, requestText, toolName, brandStory, userProvidedOffering) {
+        // Create comprehensive text request that includes all necessary information
+        const fullRequestText = `${requestText}\n\nTOOL REQUEST: ${toolName}\nBRIEF: ${brandStory}${userProvidedOffering ? `\nPROMOTED OFFERING: ${userProvidedOffering}` : ''}`;
+        
         const baseParts = [
             {
                 kind: 'text',
-                text: requestText
+                text: fullRequestText
             }
         ];
-
-        if (useExplicitSkill) {
-            // Explicit skill invocation with structured parameters
-            baseParts.push({
-                kind: 'skill',
-                skill: toolName,
-                parameters: {
-                    brief: brandStory,
-                    promoted_offering: userProvidedOffering || null
-                }
-            });
-        }
 
         return {
             message: {
@@ -791,16 +781,16 @@ Please process this ${toolName} request according to AdCP specifications.`;
             // Try explicit skill invocation first
             let response = await client.sendMessage(inventoryRequest);
             
-            // If explicit skill invocation fails, try natural language approach
-            if (response.error && response.error.message && response.error.message.includes('skill')) {
-                console.log('Explicit skill invocation failed, trying natural language approach');
+            // If payload validation fails, try with simplified text approach
+            if (response.error && (response.error.code === -32600 || (response.error.message && response.error.message.includes('validation')))) {
+                console.log('A2A request failed with validation error, trying simplified approach...');
+                const simplifiedText = `Please help with ${toolName} for: ${brandStory}`;
                 const fallbackRequest = this.createA2AMessage(
                     messageId + '_fallback', 
-                    requestText, 
+                    simplifiedText, 
                     toolName, 
                     brandStory, 
-                    userProvidedOffering, 
-                    false // Use natural language only
+                    userProvidedOffering
                 );
                 
                 response = await client.sendMessage(fallbackRequest);
@@ -979,7 +969,7 @@ Please process this ${toolName} request according to AdCP specifications.`;
                 toolArguments = {
                     req: {
                         brief: brandStory,
-                        promoted_offering: userProvidedOffering || '',
+                        promoted_offering: userProvidedOffering || 'Testing product for advertising campaign discovery',
                         strategy_id: null
                     }
                 };
@@ -987,7 +977,7 @@ Please process this ${toolName} request according to AdCP specifications.`;
                 toolArguments = {
                     req: {
                         brief: brandStory,
-                        promoted_offering: userProvidedOffering || '',
+                        promoted_offering: userProvidedOffering || 'Testing product for advertising campaign discovery',
                         packages: [],
                         budget: {},
                         start_time: new Date().toISOString(),
@@ -998,7 +988,7 @@ Please process this ${toolName} request according to AdCP specifications.`;
                 toolArguments = {
                     req: {
                         brief: brandStory,
-                        promoted_offering: userProvidedOffering || ''
+                        promoted_offering: userProvidedOffering || 'Testing product for advertising campaign discovery'
                     }
                 };
             }
@@ -1023,8 +1013,72 @@ Please process this ${toolName} request according to AdCP specifications.`;
                 }
             });
 
+            // Parse MCP response to extract products and format consistently
+            let extractedData = [];
+            let files = [];
+            let additionalData = {};
+            let responseMessage = "MCP agent response received";
+
+            if (response.content && Array.isArray(response.content)) {
+                // Parse content array for text responses containing JSON
+                response.content.forEach(contentItem => {
+                    if (contentItem.type === 'text' && contentItem.text) {
+                        try {
+                            // Try to parse the text as JSON (common pattern for MCP agents)
+                            const parsedText = JSON.parse(contentItem.text);
+                            if (parsedText.products && Array.isArray(parsedText.products)) {
+                                extractedData = extractedData.concat(parsedText.products);
+                            }
+                            if (parsedText.message) {
+                                responseMessage = parsedText.message;
+                            }
+                        } catch (e) {
+                            // Not JSON, treat as plain text response
+                            if (!additionalData.text_responses) {
+                                additionalData.text_responses = [];
+                            }
+                            additionalData.text_responses.push(contentItem.text);
+                        }
+                    }
+                });
+            }
+            
+            // Also check for structuredContent (some agents provide this) - but avoid duplicates
+            if (extractedData.length === 0 && response.structuredContent && response.structuredContent.products) {
+                if (Array.isArray(response.structuredContent.products)) {
+                    extractedData = extractedData.concat(response.structuredContent.products);
+                }
+                if (response.structuredContent.message) {
+                    responseMessage = response.structuredContent.message;
+                }
+            }
+            
+            // Check for error state
+            if (response.isError === true) {
+                return {
+                    response: {
+                        error: true,
+                        message: responseMessage || "MCP agent returned an error",
+                        agent_name: agent.name,
+                        raw_response: response
+                    },
+                    debugLogs
+                };
+            }
+
             return { 
-                response: response, 
+                response: {
+                    task_created: true,
+                    task_id: `mcp_${Date.now()}`,
+                    task_status: "completed",
+                    products: extractedData,
+                    total_products_found: extractedData.length,
+                    files: files,
+                    total_files: files.length,
+                    additional_data: additionalData,
+                    message: `${responseMessage}. Found ${extractedData.length} products${files.length > 0 ? ` and ${files.length} files` : ''}.`,
+                    raw_mcp_response: response
+                }, 
                 debugLogs
             };
             
