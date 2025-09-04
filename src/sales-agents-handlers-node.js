@@ -17,6 +17,61 @@ try {
     A2AClient = null;
 }
 
+/**
+ * Tracks multi-step protocol operations as a single logical unit
+ */
+class OperationLogger {
+    constructor(operationName, protocol, agentName) {
+        this.operationName = operationName;
+        this.protocol = protocol;
+        this.agentName = agentName;
+        this.startTime = Date.now();
+        this.lastStepTime = this.startTime;
+        this.steps = [];
+        this.rawLogs = [];
+        this.metadata = {};
+    }
+    
+    addStep(stepName, status, details = {}) {
+        const now = Date.now();
+        this.steps.push({
+            step: stepName,
+            status,
+            duration_ms: now - this.lastStepTime,
+            timestamp: new Date(now).toISOString(),
+            details
+        });
+        this.lastStepTime = now;
+    }
+    
+    addRawLog(log) {
+        this.rawLogs.push(log);
+    }
+    
+    setMetadata(key, value) {
+        this.metadata[key] = value;
+    }
+    
+    complete(success, summary, result = {}) {
+        const totalDuration = Date.now() - this.startTime;
+        return {
+            type: 'operation',
+            operation: this.operationName,
+            protocol: this.protocol,
+            agent_name: this.agentName,
+            timestamp: new Date(this.startTime).toISOString(),
+            duration_ms: totalDuration,
+            status: success ? 'success' : 'failed',
+            summary,
+            steps: this.steps,
+            metadata: this.metadata,
+            result,
+            rawLogs: this.rawLogs, // Available for detailed debugging
+            step_count: this.steps.length
+        };
+    }
+}
+
 class SalesAgentsHandlers {
     constructor(env) {
         this.env = env;
@@ -119,7 +174,7 @@ class SalesAgentsHandlers {
     /**
      * Get or create MCP client for an agent
      */
-    async getMCPClient(agent, debugLogs = []) {
+    async getMCPClient(agent, debugLogs = [], operationLogger = null) {
         const url = agent.agent_uri;
         
         // Validate URL before creating client
@@ -205,6 +260,11 @@ class SalesAgentsHandlers {
                 logs.push(debugEntry);
             }
             
+            // Also log to OperationLogger if provided
+            if (operationLogger) {
+                operationLogger.addRawLog(debugEntry);
+            }
+            
             let response;
             let requestError = null;
             
@@ -228,6 +288,12 @@ class SalesAgentsHandlers {
                 };
                 if (logs && Array.isArray(logs)) {
                     logs.push(errorEntry);
+                }
+                
+                // Also log to OperationLogger if provided
+                if (operationLogger) {
+                    operationLogger.addRawLog(errorEntry);
+                    operationLogger.addStep(mcpMethod, 'error', { error: error.message });
                 }
                 throw error;
             }
@@ -321,6 +387,17 @@ class SalesAgentsHandlers {
             };
             if (logs && Array.isArray(logs)) {
                 logs.push(responseEntry);
+            }
+            
+            // Also log to OperationLogger if provided
+            if (operationLogger) {
+                operationLogger.addRawLog(responseEntry);
+                operationLogger.addStep(mcpMethod, response.status, { 
+                    response_type: mcpResponseType,
+                    session_id: mcpSessionId,
+                    has_error: !!mcpError,
+                    duration_ms: requestEnd - requestStart
+                });
             }
             
             return response;
@@ -896,36 +973,32 @@ Please process this ${toolName} request according to AdCP specifications.`;
      * Query MCP protocol agent for inventory using proper tool discovery
      */
     async queryMCPAgent(agent, brandStory, userProvidedOffering = null, toolName = 'get_products') {
-        // Array to collect debug logs
+        // Create operation logger to track the entire MCP operation
+        const operationLogger = new OperationLogger(
+            `mcp_${toolName}`,
+            'MCP',
+            agent.name
+        );
+        
+        // Legacy debug logs array for compatibility
         const debugLogs = [];
         
-        const client = await this.getMCPClient(agent, debugLogs);
+        const client = await this.getMCPClient(agent, debugLogs, operationLogger);
+        
+        operationLogger.setMetadata('agent_uri', agent.agent_uri);
+        operationLogger.setMetadata('tool_name', toolName);
+        operationLogger.setMetadata('requires_auth', agent.requiresAuth !== false);
         
         try {
             // Initialize the MCP session first
             const initResult = await client.initialize();
-            
-            // Log successful initialization
-            debugLogs.push({
-                timestamp: new Date().toISOString(),
-                type: 'info',
-                protocol: 'MCP',
-                message: 'MCP session initialized successfully',
-                init_result: initResult
-            });
+            operationLogger.setMetadata('protocol_version', initResult?.protocolVersion);
+            operationLogger.setMetadata('server_info', initResult?.serverInfo);
             
             // First discover available tools
             const toolsResponse = await client.listTools();
             const tools = toolsResponse.tools;
-            
-            // Log tools discovery
-            debugLogs.push({
-                timestamp: new Date().toISOString(),
-                type: 'info',
-                protocol: 'MCP',
-                message: `Discovered ${tools.length} tools`,
-                tools: tools.map(t => ({ name: t.name, description: t.description }))
-            });
+            operationLogger.setMetadata('available_tools', tools.map(t => ({ name: t.name, description: t.description })));
             
             // Look for the specified tool
             let targetTool = tools.find(t => t.name === toolName);
@@ -1000,18 +1073,7 @@ Please process this ${toolName} request according to AdCP specifications.`;
             
             const response = await client.callTool(toolCall);
             
-            // Log successful tool call
-            debugLogs.push({
-                timestamp: new Date().toISOString(),
-                type: 'info',
-                protocol: 'MCP',
-                message: `Successfully called tool: ${targetTool.name}`,
-                tool_call: toolCall,
-                response_summary: {
-                    has_data: !!response,
-                    response_type: typeof response
-                }
-            });
+            // Tool call completed - metadata tracked by operationLogger automatically
 
             // Parse MCP response to extract products and format consistently
             let extractedData = [];
@@ -1055,16 +1117,39 @@ Please process this ${toolName} request according to AdCP specifications.`;
             
             // Check for error state
             if (response.isError === true) {
+                const errorMessage = responseMessage || "MCP agent returned an error";
+                const operationLog = operationLogger.complete(false, errorMessage, {
+                    error: true,
+                    message: errorMessage,
+                    agent_name: agent.name
+                });
+                
                 return {
                     response: {
                         error: true,
-                        message: responseMessage || "MCP agent returned an error",
+                        message: errorMessage,
                         agent_name: agent.name,
                         raw_response: response
                     },
-                    debugLogs
+                    debugLogs: [operationLog] // Return the grouped operation log
                 };
             }
+
+            const successMessage = `${responseMessage} - Found ${extractedData.length} products${files.length > 0 ? ` and ${files.length} files` : ''}`;
+            operationLogger.setMetadata('products_found', extractedData.length);
+            operationLogger.setMetadata('files_found', files.length);
+            
+            const operationLog = operationLogger.complete(true, successMessage, {
+                task_created: true,
+                task_id: `mcp_${Date.now()}`,
+                task_status: "completed",
+                products: extractedData,
+                total_products_found: extractedData.length,
+                files: files,
+                total_files: files.length,
+                additional_data: additionalData,
+                message: `${responseMessage}. Found ${extractedData.length} products${files.length > 0 ? ` and ${files.length} files` : ''}.`
+            });
 
             return { 
                 response: {
@@ -1079,21 +1164,19 @@ Please process this ${toolName} request according to AdCP specifications.`;
                     message: `${responseMessage}. Found ${extractedData.length} products${files.length > 0 ? ` and ${files.length} files` : ''}.`,
                     raw_mcp_response: response
                 }, 
-                debugLogs
+                debugLogs: [operationLog] // Return the grouped operation log
             };
             
         } catch (error) {
             console.error(`MCP agent error for ${agent.name}:`, error);
             
-            // Log the error for debugging
-            debugLogs.push({
-                timestamp: new Date().toISOString(),
-                type: 'error',
-                protocol: 'MCP',
-                message: `MCP agent error: ${error.message}`,
-                error: error.message,
+            const errorMessage = `MCP agent error: ${error.message}`;
+            const operationLog = operationLogger.complete(false, errorMessage, {
+                error: true,
+                message: error.message,
+                agent_name: agent.name,
                 error_stack: error.stack,
-                agent_name: agent.name
+                recommendation: "Check that the MCP agent is properly configured and implements the expected tools"
             });
             
             return {
@@ -1103,7 +1186,7 @@ Please process this ${toolName} request according to AdCP specifications.`;
                     agent_name: agent.name,
                     recommendation: "Check that the MCP agent is properly configured and implements the expected tools"
                 },
-                debugLogs
+                debugLogs: [operationLog] // Return the grouped operation log
             };
         }
     }

@@ -187,6 +187,18 @@
             border-left-color: #f44336;
         }
         
+        .debug-entry.operation {
+            border-left-color: #9C27B0;
+        }
+        
+        .debug-entry.operation.success {
+            border-left-color: #4CAF50;
+        }
+        
+        .debug-entry.operation.failed {
+            border-left-color: #f44336;
+        }
+        
         .debug-entry-header {
             font-weight: bold;
             margin-bottom: 8px;
@@ -264,6 +276,158 @@
         .debug-stat-label {
             font-size: 10px;
             opacity: 0.8;
+        }
+
+        /* Operation-specific debug styles */
+        .operation-title {
+            font-weight: bold;
+            color: #9C27B0;
+        }
+        
+        .operation-summary {
+            margin-bottom: 10px;
+        }
+        
+        .operation-status {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 5px;
+        }
+        
+        .operation-status .status-badge {
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 10px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+        
+        .operation-status .status-badge.success {
+            background: #4CAF50;
+            color: white;
+        }
+        
+        .operation-status .status-badge.failed {
+            background: #f44336;
+            color: white;
+        }
+        
+        .operation-agent {
+            font-weight: 600;
+            color: #4CAF50;
+        }
+        
+        .operation-duration {
+            font-family: monospace;
+            background: #333;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 10px;
+        }
+        
+        .operation-description {
+            font-size: 11px;
+            opacity: 0.9;
+            font-style: italic;
+        }
+        
+        .operation-details {
+            margin-top: 10px;
+            border: 1px solid #333;
+            border-radius: 4px;
+        }
+        
+        .operation-details summary {
+            background: #2a2a2a;
+            padding: 8px 12px;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 11px;
+            color: #4CAF50;
+        }
+        
+        .operation-details summary:hover {
+            background: #333;
+        }
+        
+        .steps-container {
+            padding: 10px;
+            background: #1a1a1a;
+        }
+        
+        .step-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 4px 0;
+            font-size: 11px;
+            border-bottom: 1px solid #333;
+        }
+        
+        .step-item:last-child {
+            border-bottom: none;
+        }
+        
+        .step-item.success .step-status {
+            color: #4CAF50;
+        }
+        
+        .step-item.error .step-status {
+            color: #f44336;
+        }
+        
+        .step-number {
+            background: #666;
+            color: white;
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 9px;
+            font-weight: 600;
+            flex-shrink: 0;
+        }
+        
+        .step-name {
+            flex: 1;
+            font-weight: 500;
+        }
+        
+        .step-status {
+            font-family: monospace;
+            font-weight: 600;
+        }
+        
+        .step-duration {
+            font-family: monospace;
+            opacity: 0.7;
+            font-size: 10px;
+        }
+        
+        .metadata-container {
+            margin-top: 10px;
+            padding-top: 10px;
+            border-top: 1px solid #333;
+        }
+        
+        .metadata-container strong {
+            color: #4CAF50;
+            font-size: 11px;
+        }
+        
+        .debug-logs-container {
+            font-family: 'Monaco', 'Courier New', monospace;
+            font-size: 12px;
+        }
+        
+        .no-logs {
+            color: #666;
+            font-style: italic;
+            text-align: center;
+            padding: 20px;
         }
 
         /* Main content styles */
@@ -1197,7 +1361,9 @@
                             <div class="json-viewer">${JSON.stringify(result.data || result.error, null, 2)}</div>
                         </div>
                         <div id="result-tab-${index}-debug" class="result-tab-content">
-                            <div class="json-viewer">${JSON.stringify(result.debug_logs || [], null, 2)}</div>
+                            <div class="debug-logs-container">
+                                ${formatDebugLogs(result.debug_logs || [])}
+                            </div>
                         </div>
                         <div id="result-tab-${index}-validation" class="result-tab-content">
                             <div class="json-viewer">${JSON.stringify(result.validation || 'No validation data', null, 2)}</div>
@@ -1312,18 +1478,59 @@
             const debugLog = document.getElementById('debugLog');
             
             const entryDiv = document.createElement('div');
-            entryDiv.className = `debug-entry ${entry.type}`;
             
-            entryDiv.innerHTML = `
-                <div class="debug-entry-header">
-                    <span>${entry.type.toUpperCase()}</span>
-                    <span class="debug-timestamp">${entry.timestamp}</span>
-                </div>
-                <div class="debug-entry-content">
-                    <strong>${entry.method || entry.status || 'N/A'}</strong> ${entry.url || ''}
-                    ${entry.body ? '<div class="debug-json">' + JSON.stringify(JSON.parse(entry.body), null, 2) + '</div>' : ''}
-                </div>
-            `;
+            // Handle new hierarchical operation logs
+            if (entry.type === 'operation') {
+                entryDiv.className = `debug-entry operation ${entry.status}`;
+                entryDiv.innerHTML = `
+                    <div class="debug-entry-header">
+                        <span class="operation-title">
+                            🔄 ${entry.operation.replace('_', ' ').toUpperCase()} (${entry.protocol})
+                        </span>
+                        <span class="debug-timestamp">${entry.timestamp}</span>
+                    </div>
+                    <div class="debug-entry-content">
+                        <div class="operation-summary">
+                            <div class="operation-status ${entry.status}">
+                                <span class="status-badge ${entry.status}">${entry.status.toUpperCase()}</span>
+                                <span class="operation-agent">${entry.agent_name}</span>
+                                <span class="operation-duration">${entry.duration_ms}ms</span>
+                            </div>
+                            <div class="operation-description">${entry.summary}</div>
+                        </div>
+                        <details class="operation-details">
+                            <summary>View ${entry.step_count} protocol steps</summary>
+                            <div class="steps-container">
+                                ${entry.steps.map((step, i) => `
+                                    <div class="step-item ${step.status >= 400 ? 'error' : 'success'}">
+                                        <span class="step-number">${i + 1}</span>
+                                        <span class="step-name">${step.step}</span>
+                                        <span class="step-status">[${step.status}]</span>
+                                        <span class="step-duration">${step.duration_ms}ms</span>
+                                    </div>
+                                `).join('')}
+                            </div>
+                            <div class="metadata-container">
+                                <strong>Metadata:</strong>
+                                <div class="debug-json">${JSON.stringify(entry.metadata, null, 2)}</div>
+                            </div>
+                        </details>
+                    </div>
+                `;
+            } else {
+                // Handle legacy log format
+                entryDiv.className = `debug-entry ${entry.type}`;
+                entryDiv.innerHTML = `
+                    <div class="debug-entry-header">
+                        <span>${entry.type.toUpperCase()}</span>
+                        <span class="debug-timestamp">${entry.timestamp}</span>
+                    </div>
+                    <div class="debug-entry-content">
+                        <strong>${entry.method || entry.status || 'N/A'}</strong> ${entry.url || ''}
+                        ${entry.body ? '<div class="debug-json">' + JSON.stringify(JSON.parse(entry.body), null, 2) + '</div>' : ''}
+                    </div>
+                `;
+            }
             
             debugLog.appendChild(entryDiv);
             debugLog.scrollTop = debugLog.scrollHeight;
@@ -1364,6 +1571,69 @@
             container.insertBefore(successDiv, container.firstChild);
             
             setTimeout(() => successDiv.remove(), 3000);
+        }
+
+        // Format debug logs for display in results
+        function formatDebugLogs(logs) {
+            if (!logs || logs.length === 0) {
+                return '<div class="no-logs">No debug logs available</div>';
+            }
+            
+            return logs.map(entry => {
+                if (entry.type === 'operation') {
+                    return `
+                        <div class="debug-entry operation ${entry.status}">
+                            <div class="debug-entry-header">
+                                <span class="operation-title">
+                                    🔄 ${entry.operation.replace('_', ' ').toUpperCase()} (${entry.protocol})
+                                </span>
+                                <span class="debug-timestamp">${entry.timestamp}</span>
+                            </div>
+                            <div class="debug-entry-content">
+                                <div class="operation-summary">
+                                    <div class="operation-status ${entry.status}">
+                                        <span class="status-badge ${entry.status}">${entry.status.toUpperCase()}</span>
+                                        <span class="operation-agent">${entry.agent_name}</span>
+                                        <span class="operation-duration">${entry.duration_ms}ms</span>
+                                    </div>
+                                    <div class="operation-description">${entry.summary}</div>
+                                </div>
+                                <details class="operation-details">
+                                    <summary>View ${entry.step_count} protocol steps</summary>
+                                    <div class="steps-container">
+                                        ${entry.steps.map((step, i) => `
+                                            <div class="step-item ${step.status >= 400 ? 'error' : 'success'}">
+                                                <span class="step-number">${i + 1}</span>
+                                                <span class="step-name">${step.step}</span>
+                                                <span class="step-status">[${step.status}]</span>
+                                                <span class="step-duration">${step.duration_ms}ms</span>
+                                            </div>
+                                        `).join('')}
+                                    </div>
+                                    <div class="metadata-container">
+                                        <strong>Metadata:</strong>
+                                        <div class="debug-json">${JSON.stringify(entry.metadata, null, 2)}</div>
+                                    </div>
+                                </details>
+                            </div>
+                        </div>
+                    `;
+                } else {
+                    // Handle legacy log format
+                    return `
+                        <div class="debug-entry ${entry.type}">
+                            <div class="debug-entry-header">
+                                <span>${entry.type.toUpperCase()}</span>
+                                <span class="debug-timestamp">${entry.timestamp}</span>
+                            </div>
+                            <div class="debug-entry-content">
+                                <strong>${entry.method || entry.status || 'N/A'}</strong> ${entry.url || ''}
+                                ${entry.body ? '<div class="debug-json">' + JSON.stringify(JSON.parse(entry.body), null, 2) + '</div>' : ''}
+                            </div>
+                        </div>
+                    `;
+                }
+            }).join('');
         }
     </script>
 </body>

@@ -446,6 +446,116 @@
             border-top: 1px solid #444;
         }
         
+        /* Operation-specific styles */
+        .debug-pair.operation {
+            border-left-color: #9C27B0;
+        }
+        
+        .debug-pair-meta {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            font-size: 11px;
+        }
+        
+        .debug-pair-agent {
+            color: #4CAF50;
+            font-weight: 600;
+        }
+        
+        .debug-pair-duration {
+            color: #FF9800;
+            font-family: monospace;
+            background: #444;
+            padding: 2px 6px;
+            border-radius: 3px;
+        }
+        
+        .operation-summary {
+            font-size: 12px;
+            line-height: 1.5;
+        }
+        
+        .operation-steps {
+            margin: 10px 0;
+            border: 1px solid #444;
+            border-radius: 4px;
+            background: #1a1a1a;
+        }
+        
+        .operation-step {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 6px 12px;
+            border-bottom: 1px solid #333;
+            font-size: 11px;
+        }
+        
+        .operation-step:last-child {
+            border-bottom: none;
+        }
+        
+        .operation-step.success .step-status {
+            color: #4CAF50;
+        }
+        
+        .operation-step.error .step-status {
+            color: #f44336;
+        }
+        
+        .step-number {
+            background: #666;
+            color: white;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 10px;
+            font-weight: 600;
+            flex-shrink: 0;
+        }
+        
+        .step-name {
+            flex: 1;
+            font-weight: 500;
+        }
+        
+        .step-status {
+            font-family: monospace;
+            font-weight: 600;
+        }
+        
+        .step-duration {
+            font-family: monospace;
+            opacity: 0.7;
+            font-size: 10px;
+        }
+        
+        .operation-metadata {
+            margin-top: 10px;
+            padding-top: 10px;
+            border-top: 1px solid #444;
+        }
+        
+        .operation-metadata strong {
+            color: #4CAF50;
+            font-size: 11px;
+        }
+        
+        .json-data {
+            background: #000;
+            border: 1px solid #333;
+            border-radius: 3px;
+            padding: 8px;
+            margin-top: 5px;
+            font-size: 10px;
+            line-height: 1.3;
+            overflow-x: auto;
+        }
+        
         .debug-section {
             margin-bottom: 20px;
         }
@@ -3331,12 +3441,119 @@
                 }
             }
             
-            // Group logs into request-response pairs
-            const pairs = groupLogsIntoPairs(logs);
+            // Handle both hierarchical operation logs and legacy request-response pairs
+            logs.forEach((log, logIndex) => {
+                if (log.type === 'operation') {
+                    // Handle new hierarchical operation logs
+                    displayOperationLog(log, agent, logIndex);
+                } else {
+                    // Handle legacy logs - group into request-response pairs
+                    const legacyLogs = logs.filter(l => l.type !== 'operation');
+                    if (legacyLogs.length > 0 && logIndex === 0) {
+                        // Only process legacy logs once
+                        const pairs = groupLogsIntoPairs(legacyLogs);
+                        displayLegacyPairs(pairs, agent);
+                    }
+                }
+            });
             
+            // Auto-scroll to bottom
+            const content = document.getElementById('debug-content');
+            content.scrollTop = content.scrollHeight;
+        }
+        
+        function displayOperationLog(operationLog, agent, operationIndex) {
+            try {
+                const callId = `operation-${Date.now()}-${operationIndex}`;
+                const operationName = operationLog.operation.replace(/_/g, ' ').toUpperCase();
+                
+                let statusClass = operationLog.status === 'success' ? 'success' : 'error';
+                let statusIcon = operationLog.status === 'success' ? '✅' : '❌';
+                let isError = operationLog.status !== 'success';
+                
+                // Create collapsible operation container
+                const operationEntry = document.createElement('div');
+                operationEntry.className = `debug-pair operation ${isError ? 'error' : ''}`;
+                
+                const timestamp = new Date(operationLog.timestamp).toLocaleTimeString();
+                
+                // Create steps HTML
+                const stepsHTML = operationLog.steps.map((step, i) => {
+                    const stepStatus = step.status >= 400 ? 'error' : 'success';
+                    const stepIcon = step.status >= 400 ? '❌' : '✅';
+                    return `
+                        <div class="operation-step ${stepStatus}">
+                            <span class="step-number">${i + 1}</span>
+                            <span class="step-name">${step.step}</span>
+                            <span class="step-status">[${step.status}]</span>
+                            <span class="step-duration">${step.duration_ms}ms</span>
+                        </div>
+                    `;
+                }).join('');
+                
+                const metadataHTML = operationLog.metadata ? 
+                    `<div class="operation-metadata">
+                        <strong>Metadata:</strong>
+                        <pre class="json-data">${JSON.stringify(operationLog.metadata, null, 2)}</pre>
+                    </div>` : '';
+                
+                const fullHTML = `
+                    <div class="debug-pair-header" onclick="toggleDebugPair('${callId}')">
+                        <div class="debug-pair-title">
+                            🔄 Operation: ${operationName} (${operationLog.protocol})
+                            <span class="debug-status ${statusClass}">[${operationLog.status.toUpperCase()}]</span>
+                        </div>
+                        <div class="debug-pair-meta">
+                            <span class="debug-pair-agent">${operationLog.agent_name}</span>
+                            <span class="debug-pair-duration">${operationLog.duration_ms}ms</span>
+                            <span class="debug-pair-time">${timestamp}</span>
+                        </div>
+                        <div class="debug-pair-toggle">${isError ? '▲' : '▼'}</div>
+                    </div>
+                    <div id="${callId}" class="debug-pair-content" style="display: ${isError ? 'block' : 'none'};">
+                        <div class="operation-summary">
+                            <p><strong>Summary:</strong> ${operationLog.summary}</p>
+                            <p><strong>Protocol Steps (${operationLog.step_count}):</strong></p>
+                            <div class="operation-steps">
+                                ${stepsHTML}
+                            </div>
+                            ${metadataHTML}
+                        </div>
+                    </div>
+                `;
+                
+                operationEntry.innerHTML = fullHTML;
+                
+                // Store entry
+                debugEntries.push({
+                    type: isError ? 'error' : 'operation',
+                    element: operationEntry,
+                    timestamp: Date.now(),
+                    isError: isError
+                });
+                
+                // Add to current view if matching filter
+                const shouldShow = currentDebugTab === 'all' ||
+                    (currentDebugTab === 'requests') ||
+                    (currentDebugTab === 'responses') ||
+                    (currentDebugTab === 'errors' && isError);
+                    
+                if (shouldShow) {
+                    const debugContent = document.getElementById('debug-content');
+                    if (debugContent) {
+                        debugContent.appendChild(operationEntry);
+                    } else {
+                        console.log(`❌ displayOperationLog: Could not find debug-content element`);
+                    }
+                }
+            } catch (error) {
+                console.error('Error displaying operation log:', error);
+            }
+        }
+        
+        function displayLegacyPairs(pairs, agent) {
             pairs.forEach((pair, pairIndex) => {
                 try {
-                    
                     const callId = `call-${Date.now()}-${pairIndex}`;
                     const methodName = extractMethodName(pair.request);
                     
@@ -3376,7 +3593,6 @@
                         isError = true;
                     }
                     
-                    
                     // Create collapsible pair container
                     const pairEntry = document.createElement('div');
                     pairEntry.className = `debug-pair ${isError ? 'error' : ''}`;
@@ -3414,22 +3630,18 @@
                         (currentDebugTab === 'responses' && pair.response) ||
                         (currentDebugTab === 'errors' && isError);
                         
-                    
                     if (shouldShow) {
                         const debugContent = document.getElementById('debug-content');
                         if (debugContent) {
                             debugContent.appendChild(pairEntry);
                         } else {
-                            console.log(`❌ displayDebugLogs: Could not find debug-content element`);
+                            console.log(`❌ displayLegacyPairs: Could not find debug-content element`);
                         }
                     }
                 } catch (error) {
+                    console.error('Error displaying legacy pair:', error);
                 }
             });
-            
-            // Auto-scroll to bottom
-            const content = document.getElementById('debug-content');
-            content.scrollTop = content.scrollHeight;
         }
         
         // Helper function to safely escape HTML to prevent XSS
