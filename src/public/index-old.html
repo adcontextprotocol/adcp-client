@@ -1,0 +1,644 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AdCP Testing Framework</title>
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f8f9fa;
+            color: #333;
+            line-height: 1.6;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #1a4d3a 0%, #2d5a46 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+        
+        .header h1 {
+            margin: 0 0 10px 0;
+            font-size: 2.5em;
+            font-weight: 300;
+        }
+        
+        .header p {
+            margin: 0;
+            opacity: 0.9;
+            font-size: 1.1em;
+        }
+        
+        .main-content {
+            padding: 40px;
+        }
+        
+        .form-section {
+            margin-bottom: 40px;
+        }
+        
+        .form-section h2 {
+            color: #1a4d3a;
+            margin-bottom: 20px;
+            font-size: 1.4em;
+        }
+        
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #555;
+        }
+        
+        .form-group input,
+        .form-group textarea,
+        .form-group select {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 6px;
+            font-size: 14px;
+            transition: border-color 0.3s;
+        }
+        
+        .form-group input:focus,
+        .form-group textarea:focus,
+        .form-group select:focus {
+            outline: none;
+            border-color: #1a4d3a;
+        }
+        
+        .form-group textarea {
+            min-height: 120px;
+            resize: vertical;
+        }
+        
+        .agents-section {
+            background: #f8f9fa;
+            border-radius: 6px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        
+        .agent-list {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 15px;
+            margin-top: 15px;
+        }
+        
+        .agent-item {
+            background: white;
+            border: 2px solid #e0e0e0;
+            border-radius: 6px;
+            padding: 15px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        
+        .agent-item:hover {
+            border-color: #1a4d3a;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        }
+        
+        .agent-item.selected {
+            border-color: #1a4d3a;
+            background: #f0f8f4;
+        }
+        
+        .agent-name {
+            font-weight: 600;
+            color: #1a4d3a;
+            margin-bottom: 5px;
+        }
+        
+        .agent-protocol {
+            font-size: 12px;
+            background: #e9ecef;
+            color: #6c757d;
+            padding: 2px 8px;
+            border-radius: 12px;
+            display: inline-block;
+        }
+        
+        .agent-url {
+            font-size: 12px;
+            color: #666;
+            margin-top: 5px;
+            word-break: break-all;
+        }
+        
+        .test-button {
+            background: linear-gradient(135deg, #1a4d3a 0%, #2d5a46 100%);
+            color: white;
+            border: none;
+            padding: 15px 30px;
+            font-size: 16px;
+            font-weight: 600;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.3s;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        .test-button:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+        }
+        
+        .test-button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        
+        .results-section {
+            margin-top: 40px;
+            padding-top: 40px;
+            border-top: 2px solid #e0e0e0;
+        }
+        
+        .results-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+        
+        .results-summary {
+            background: #f8f9fa;
+            border-radius: 6px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        
+        .summary-stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 15px;
+        }
+        
+        .stat-item {
+            text-align: center;
+        }
+        
+        .stat-value {
+            font-size: 2em;
+            font-weight: bold;
+            color: #1a4d3a;
+        }
+        
+        .stat-label {
+            color: #666;
+            font-size: 0.9em;
+        }
+        
+        .result-item {
+            border: 2px solid #e0e0e0;
+            border-radius: 6px;
+            margin-bottom: 15px;
+            overflow: hidden;
+        }
+        
+        .result-header {
+            padding: 15px 20px;
+            background: #f8f9fa;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            cursor: pointer;
+        }
+        
+        .result-header.success {
+            border-left: 4px solid #28a745;
+        }
+        
+        .result-header.error {
+            border-left: 4px solid #dc3545;
+        }
+        
+        .result-name {
+            font-weight: 600;
+        }
+        
+        .result-status {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .status-badge {
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        
+        .status-badge.success {
+            background: #d4edda;
+            color: #155724;
+        }
+        
+        .status-badge.error {
+            background: #f8d7da;
+            color: #721c24;
+        }
+        
+        .result-time {
+            font-size: 12px;
+            color: #666;
+        }
+        
+        .result-content {
+            padding: 20px;
+            display: none;
+            background: white;
+        }
+        
+        .result-content.expanded {
+            display: block;
+        }
+        
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+        }
+        
+        .spinner {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #1a4d3a;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .error-message {
+            background: #f8d7da;
+            color: #721c24;
+            padding: 15px;
+            border-radius: 6px;
+            margin: 10px 0;
+        }
+        
+        .response-data {
+            background: #f8f9fa;
+            border-radius: 4px;
+            padding: 15px;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            overflow-x: auto;
+            white-space: pre-wrap;
+        }
+        
+        @media (max-width: 768px) {
+            body {
+                padding: 10px;
+            }
+            
+            .header h1 {
+                font-size: 2em;
+            }
+            
+            .main-content {
+                padding: 20px;
+            }
+            
+            .agent-list {
+                grid-template-columns: 1fr;
+            }
+            
+            .summary-stats {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>AdCP Testing Framework</h1>
+            <p>Test MCP and A2A protocol sales agents for AdCP compliance</p>
+        </div>
+        
+        <div class="main-content">
+            <div class="form-section">
+                <h2>Test Configuration</h2>
+                
+                <div class="form-group">
+                    <label for="brief">Brand Story / Brief *</label>
+                    <textarea id="brief" 
+                              placeholder="Enter a detailed description of the brand, campaign objectives, target audience, and any specific requirements..." 
+                              required></textarea>
+                </div>
+                
+                <div class="form-group">
+                    <label for="promoted-offering">Advertiser/Offering Description (Optional)</label>
+                    <textarea id="promoted-offering" 
+                              placeholder="Specific details about what is being promoted (product, service, campaign)..."></textarea>
+                </div>
+                
+                <div class="form-group">
+                    <label for="tool-name">Tool Name</label>
+                    <select id="tool-name">
+                        <option value="get_products">get_products</option>
+                        <option value="list_creative_formats">list_creative_formats</option>
+                        <option value="create_media_buy">create_media_buy</option>
+                        <option value="get_media_buy_delivery">get_media_buy_delivery</option>
+                    </select>
+                </div>
+            </div>
+            
+            <div class="form-section">
+                <h2>Available Sales Agents</h2>
+                <div class="agents-section">
+                    <div class="loading" id="agents-loading">
+                        <div class="spinner"></div>
+                        Loading available agents...
+                    </div>
+                    <div class="agent-list" id="agent-list"></div>
+                </div>
+            </div>
+            
+            <div class="form-section" style="text-align: center;">
+                <button class="test-button" id="test-button" disabled>
+                    Test Selected Agents
+                </button>
+            </div>
+            
+            <div class="results-section" id="results-section" style="display: none;">
+                <div class="results-header">
+                    <h2>Test Results</h2>
+                    <button id="export-results" class="test-button" style="padding: 8px 16px; font-size: 14px;">
+                        Export JSON
+                    </button>
+                </div>
+                
+                <div class="results-summary" id="results-summary"></div>
+                <div class="results-list" id="results-list"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Application state
+        let availableAgents = [];
+        let selectedAgents = [];
+        let currentResults = null;
+
+        // Initialize the application
+        document.addEventListener('DOMContentLoaded', function() {
+            loadAgents();
+            setupEventListeners();
+        });
+
+        // Load available agents from the API
+        async function loadAgents() {
+            try {
+                const response = await fetch('/api/agents');
+                const result = await response.json();
+                
+                if (result.success) {
+                    availableAgents = result.data.agents;
+                    renderAgents();
+                } else {
+                    showError('Failed to load agents: ' + result.error);
+                }
+            } catch (error) {
+                showError('Failed to load agents: ' + error.message);
+            } finally {
+                document.getElementById('agents-loading').style.display = 'none';
+            }
+        }
+
+        // Render the list of available agents
+        function renderAgents() {
+            const agentList = document.getElementById('agent-list');
+            
+            if (availableAgents.length === 0) {
+                agentList.innerHTML = '<p>No agents configured. Please check your SALES_AGENTS_CONFIG environment variable.</p>';
+                return;
+            }
+            
+            agentList.innerHTML = availableAgents.map(agent => `
+                <div class="agent-item" data-agent-id="${agent.id}">
+                    <div class="agent-name">${agent.name}</div>
+                    <div class="agent-protocol">${agent.protocol.toUpperCase()}</div>
+                    <div class="agent-url">${agent.agent_uri}</div>
+                </div>
+            `).join('');
+            
+            // Add click handlers for agent selection
+            document.querySelectorAll('.agent-item').forEach(item => {
+                item.addEventListener('click', function() {
+                    const agentId = this.dataset.agentId;
+                    toggleAgentSelection(agentId);
+                });
+            });
+        }
+
+        // Toggle agent selection
+        function toggleAgentSelection(agentId) {
+            const agentElement = document.querySelector(`[data-agent-id="${agentId}"]`);
+            
+            if (selectedAgents.includes(agentId)) {
+                selectedAgents = selectedAgents.filter(id => id !== agentId);
+                agentElement.classList.remove('selected');
+            } else {
+                selectedAgents.push(agentId);
+                agentElement.classList.add('selected');
+            }
+            
+            updateTestButton();
+        }
+
+        // Update test button state
+        function updateTestButton() {
+            const testButton = document.getElementById('test-button');
+            const brief = document.getElementById('brief').value.trim();
+            
+            if (selectedAgents.length > 0 && brief) {
+                testButton.disabled = false;
+                testButton.textContent = `Test ${selectedAgents.length} Agent${selectedAgents.length > 1 ? 's' : ''}`;
+            } else {
+                testButton.disabled = true;
+                testButton.textContent = 'Test Selected Agents';
+            }
+        }
+
+        // Setup event listeners
+        function setupEventListeners() {
+            document.getElementById('brief').addEventListener('input', updateTestButton);
+            document.getElementById('test-button').addEventListener('click', runTests);
+            document.getElementById('export-results').addEventListener('click', exportResults);
+        }
+
+        // Run tests on selected agents
+        async function runTests() {
+            const testButton = document.getElementById('test-button');
+            const resultsSection = document.getElementById('results-section');
+            
+            // Disable button and show loading
+            testButton.disabled = true;
+            testButton.innerHTML = '<div class="spinner" style="width: 20px; height: 20px; margin: 0 auto;"></div>';
+            
+            // Prepare test data
+            const testData = {
+                agents: selectedAgents.map(id => availableAgents.find(a => a.id === id)),
+                brief: document.getElementById('brief').value.trim(),
+                promoted_offering: document.getElementById('promoted-offering').value.trim() || undefined,
+                tool_name: document.getElementById('tool-name').value
+            };
+            
+            try {
+                const response = await fetch('/api/test', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(testData)
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    currentResults = result.data;
+                    renderResults(result.data);
+                    resultsSection.style.display = 'block';
+                    resultsSection.scrollIntoView({ behavior: 'smooth' });
+                } else {
+                    showError('Test failed: ' + result.error);
+                }
+            } catch (error) {
+                showError('Test failed: ' + error.message);
+            } finally {
+                // Reset button
+                testButton.disabled = false;
+                testButton.textContent = `Test ${selectedAgents.length} Agent${selectedAgents.length > 1 ? 's' : ''}`;
+            }
+        }
+
+        // Render test results
+        function renderResults(data) {
+            renderResultsSummary(data.summary);
+            renderResultsList(data.results);
+        }
+
+        // Render results summary
+        function renderResultsSummary(summary) {
+            document.getElementById('results-summary').innerHTML = `
+                <h3>Test Summary</h3>
+                <div class="summary-stats">
+                    <div class="stat-item">
+                        <div class="stat-value">${summary.total_agents}</div>
+                        <div class="stat-label">Total Agents</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value" style="color: #28a745;">${summary.successful}</div>
+                        <div class="stat-label">Successful</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value" style="color: #dc3545;">${summary.failed}</div>
+                        <div class="stat-label">Failed</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value">${summary.average_response_time_ms}ms</div>
+                        <div class="stat-label">Avg Response Time</div>
+                    </div>
+                </div>
+            `;
+        }
+
+        // Render results list
+        function renderResultsList(results) {
+            const resultsList = document.getElementById('results-list');
+            
+            resultsList.innerHTML = results.map((result, index) => `
+                <div class="result-item">
+                    <div class="result-header ${result.success ? 'success' : 'error'}" onclick="toggleResultContent(${index})">
+                        <div class="result-name">${result.agent_name}</div>
+                        <div class="result-status">
+                            <span class="status-badge ${result.success ? 'success' : 'error'}">
+                                ${result.success ? 'SUCCESS' : 'ERROR'}
+                            </span>
+                            <span class="result-time">${result.response_time_ms}ms</span>
+                        </div>
+                    </div>
+                    <div class="result-content" id="result-content-${index}">
+                        ${result.success 
+                            ? `<h4>Response Data:</h4><div class="response-data">${JSON.stringify(result.data, null, 2)}</div>`
+                            : `<div class="error-message"><strong>Error:</strong> ${result.error}</div>`
+                        }
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        // Toggle result content visibility
+        function toggleResultContent(index) {
+            const content = document.getElementById(`result-content-${index}`);
+            content.classList.toggle('expanded');
+        }
+
+        // Export results as JSON
+        function exportResults() {
+            if (!currentResults) return;
+            
+            const dataStr = JSON.stringify(currentResults, null, 2);
+            const dataBlob = new Blob([dataStr], { type: 'application/json' });
+            const url = URL.createObjectURL(dataBlob);
+            
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = `adcp-test-results-${new Date().toISOString().slice(0, 19)}.json`;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            URL.revokeObjectURL(url);
+        }
+
+        // Show error message
+        function showError(message) {
+            const errorDiv = document.createElement('div');
+            errorDiv.className = 'error-message';
+            errorDiv.textContent = message;
+            
+            const firstSection = document.querySelector('.form-section');
+            firstSection.insertBefore(errorDiv, firstSection.firstChild);
+            
+            // Remove error after 5 seconds
+            setTimeout(() => {
+                errorDiv.remove();
+            }, 5000);
+        }
+    </script>
+</body>
+</html>
