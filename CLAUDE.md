@@ -54,7 +54,7 @@ The production `SALES_AGENTS_CONFIG` should contain:
   "agents": [
     {
       "id": "principal_3bd0d4a8_a2a",
-      "name": "Scope3 Storylab test advertiser",
+      "name": "AdCP Test Agent",
       "agent_uri": "https://adcp-sales-agent.fly.dev",
       "protocol": "a2a",
       "auth_token_env": "L4UCklW_V_40eTdWuQYF6HD5GWeKkgV8U6xxK-jwNO8",
@@ -62,7 +62,7 @@ The production `SALES_AGENTS_CONFIG` should contain:
     },
     {
       "id": "principal_3bd0d4a8_mcp", 
-      "name": "Scope3 Storylab test advertiser",
+      "name": "AdCP Test Agent",
       "agent_uri": "https://adcp-sales-agent.fly.dev/mcp/",
       "protocol": "mcp",
       "auth_token_env": "L4UCklW_V_40eTdWuQYF6HD5GWeKkgV8U6xxK-jwNO8",
@@ -79,7 +79,7 @@ When you need to change agents, auth tokens, or URIs:
 
 ```bash
 # Single line format for terminal
-fly secrets set SALES_AGENTS_CONFIG='{"agents":[{"id":"principal_3bd0d4a8_a2a","name":"Scope3 Storylab test advertiser","agent_uri":"https://adcp-sales-agent.fly.dev","protocol":"a2a","auth_token_env":"L4UCklW_V_40eTdWuQYF6HD5GWeKkgV8U6xxK-jwNO8","requiresAuth":true},{"id":"principal_3bd0d4a8_mcp","name":"Scope3 Storylab test advertiser","agent_uri":"https://adcp-sales-agent.fly.dev/mcp/","protocol":"mcp","auth_token_env":"L4UCklW_V_40eTdWuQYF6HD5GWeKkgV8U6xxK-jwNO8","requiresAuth":true}]}'
+fly secrets set SALES_AGENTS_CONFIG='{"agents":[{"id":"principal_3bd0d4a8_a2a","name":"AdCP Test Agent","agent_uri":"https://adcp-sales-agent.fly.dev","protocol":"a2a","auth_token_env":"L4UCklW_V_40eTdWuQYF6HD5GWeKkgV8U6xxK-jwNO8","requiresAuth":true},{"id":"principal_3bd0d4a8_mcp","name":"AdCP Test Agent","agent_uri":"https://adcp-sales-agent.fly.dev/mcp/","protocol":"mcp","auth_token_env":"L4UCklW_V_40eTdWuQYF6HD5GWeKkgV8U6xxK-jwNO8","requiresAuth":true}]}'
 ```
 
 #### Toggle Real vs Demo Agents
@@ -113,8 +113,8 @@ fly logs -n | grep "Configured agents"
 Should show:
 ```
 📡 Configured agents: 2
-  - Scope3 Storylab test advertiser (A2A) at https://adcp-sales-agent.fly.dev  
-  - Scope3 Storylab test advertiser (MCP) at https://adcp-sales-agent.fly.dev/mcp/
+  - AdCP Test Agent (A2A) at https://adcp-sales-agent.fly.dev  
+  - AdCP Test Agent (MCP) at https://adcp-sales-agent.fly.dev/mcp/
 🔧 Real agents mode: ENABLED
 ```
 
