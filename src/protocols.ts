@@ -1,11 +1,23 @@
 // Official protocol clients
 // Note: MCP client is commented out for now since we're focusing on A2A
 // import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-// Import A2A client - need to check correct path based on package structure
-// import { A2AClient } from '@a2a-js/sdk';
 
-// For now, let's simulate A2A responses until we can resolve the import
-const A2AClient: any = null;
+// Import A2A client
+let A2AClient: any = null;
+try {
+  // Try to import the A2A client from the client module
+  const clientModule = require('@a2a-js/sdk/client');
+  A2AClient = clientModule.A2AClient;
+  if (A2AClient) {
+    console.log('✅ A2A SDK client imported successfully');
+  } else {
+    throw new Error('A2AClient not found in client module');
+  }
+} catch (error) {
+  console.warn('⚠️ A2A SDK import failed:', error instanceof Error ? error.message : String(error));
+  console.log('📄 Falling back to HTTP-based A2A implementation');
+  A2AClient = null;
+}
 import { AgentConfig, TestResult, CreativeFormat } from './types/adcp';
 
 // Production mode detection

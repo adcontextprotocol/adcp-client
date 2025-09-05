@@ -5,15 +5,20 @@
 
 // Use native fetch (available in Node.js 18+)
 
-// Mock A2A client for now since the SDK has import issues
-// We'll use your working HTTP fallback approach
+// Import A2A client with proper error handling
 let A2AClient = null;
 try {
-    // SDK imports commented out due to ES module compatibility issues
-    // We'll use the HTTP fallback approach which works reliably
-    A2AClient = null;
+    // Try to import the A2A client from the client module
+    const clientModule = require('@a2a-js/sdk/client');
+    A2AClient = clientModule.A2AClient;
+    if (A2AClient) {
+        console.log('✅ A2A SDK client imported successfully in handlers');
+    } else {
+        throw new Error('A2AClient not found in client module');
+    }
 } catch (error) {
-    console.log('A2A SDK not available, using HTTP fallback');
+    console.warn('⚠️ A2A SDK import failed in handlers:', error.message);
+    console.log('📄 Using HTTP fallback approach for A2A protocol');
     A2AClient = null;
 }
 
