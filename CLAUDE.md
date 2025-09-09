@@ -1,4 +1,91 @@
-# AdCP Testing Framework - Deployment Management
+# AdCP Testing Framework - Development & Deployment Guide
+
+## Recent Issues Fixed (2025-09-09)
+
+### Debug Logs "Unknown [undefined]" Issue
+**Problem**: UI displayed "Unknown [undefined]" instead of actual method names in debug logs.
+
+**Root Causes**:
+1. **Data Format Mismatch**: Backend returned debug logs as single object with `request` and `response` properties, but UI expected separate entries with `type` field
+2. **API Response Structure**: UI expected `result.data.agents` but API returned just `result.agents`
+3. **Parameter Name Mismatch**: UI sent `toolName` and `brandStory` but server expected `tool_name` and `brief`
+4. **Default Agent IDs**: UI had hardcoded agent IDs that didn't match actual configured agents
+
+**Solutions Applied**:
+1. Transform debug logs in `/api/sales/agents/:agentId/query` endpoint to split into separate request/response entries with `type` field
+2. Fixed UI to correctly parse API response structure (`result.data.agents`)
+3. Server now accepts both parameter name formats
+4. UI now dynamically loads agents from API instead of using hardcoded defaults
+
+### Empty Products/Formats Issue
+**Problem**: Live AdCP agent returns empty arrays for products and formats.
+
+**Solution**: Added mock data injection when live agent returns empty results:
+- Mock products for `get_products` tool
+- Mock formats for `list_creative_formats` tool
+- Only activates when actual agent returns empty data
+
+## Critical Code Patterns to Maintain
+
+### Debug Log Format (DO NOT CHANGE)
+The UI expects debug logs in this specific format:
+```javascript
+[
+  {
+    type: 'request',
+    method: 'tool_name',
+    protocol: 'a2a' | 'mcp',
+    url: 'agent_url',
+    headers: {},
+    body: 'request_body',
+    timestamp: 'ISO_string'
+  },
+  {
+    type: 'response',
+    status: 'status_code',
+    statusText: 'status_text',
+    body: response_data,
+    timestamp: 'ISO_string'
+  }
+]
+```
+
+### API Response Structure
+The `/api/sales/agents` endpoint must return:
+```javascript
+{
+  success: true,
+  data: {
+    agents: [...],
+    total: number
+  },
+  timestamp: 'ISO_string'
+}
+```
+
+### Parameter Name Handling
+Always accept both formats:
+- `tool_name` OR `toolName`
+- `brief` OR `brandStory`
+- `promoted_offering` OR `offering`
+
+## Common Pitfalls to Avoid
+
+1. **Never use hardcoded agent IDs** - Always fetch from API
+2. **Don't assume data structure** - Always check nested response formats
+3. **Handle both parameter naming conventions** - UI and API may use different styles
+4. **Always transform debug logs** - Backend and UI formats differ
+5. **Check for undefined before length** - Use `(!data || data.length === 0)` not just `data.length === 0`
+
+## Testing Checklist
+
+When making changes, always verify:
+- [ ] Debug logs show actual method names, not "Unknown [undefined]"
+- [ ] Agents load correctly in the dropdown
+- [ ] Products display (even if mock data)
+- [ ] Formats display (even if mock data)
+- [ ] No 404 errors in browser console
+- [ ] Request/response pairs display correctly in debug panel
 
 ## Project Overview
 This is an AdCP (Advertising Protocol) testing framework deployed on Fly.io that supports both A2A and MCP protocols for testing advertising agents.

@@ -29,10 +29,30 @@ export interface CreativeAsset {
     width: number;
     height: number;
   };
-  url: string;
-  status: 'active' | 'inactive' | 'pending_review';
+  // Support for both hosted and third-party assets
+  url?: string; // For backward compatibility (deprecated)
+  media_url?: string; // Hosted asset URL
+  snippet?: string; // Third-party asset snippet
+  snippet_type?: 'html' | 'javascript' | 'amp';
+  status: 'active' | 'inactive' | 'pending_review' | 'approved' | 'rejected';
   file_size?: number;
   duration?: number;
+  // Enhanced metadata
+  tags?: string[];
+  sub_assets?: CreativeSubAsset[];
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface CreativeSubAsset {
+  id: string;
+  name: string;
+  type: 'companion' | 'thumbnail' | 'preview';
+  media_url: string;
+  dimensions?: {
+    width: number;
+    height: number;
+  };
 }
 
 export interface AdvertisingProduct {
@@ -167,6 +187,8 @@ export interface TestResult {
   data?: any;
   error?: string;
   timestamp: string;
+  debug_logs?: any[];
+  validation?: any;
 }
 
 // API Response Types
@@ -190,5 +212,175 @@ export interface TestResponse {
     successful: number;
     failed: number;
     average_response_time_ms: number;
+  };
+}
+
+// Creative Library Management Types (AdCP v1.3.0)
+export interface CreativeLibraryItem {
+  creative_id: string;
+  name: string;
+  format: string;
+  type: 'image' | 'video' | 'html' | 'native';
+  // Asset content (mutually exclusive)
+  media_url?: string;
+  snippet?: string;
+  snippet_type?: 'html' | 'javascript' | 'amp';
+  // Metadata
+  dimensions?: {
+    width: number;
+    height: number;
+  };
+  file_size?: number;
+  duration?: number;
+  tags?: string[];
+  status: 'active' | 'inactive' | 'pending_review' | 'approved' | 'rejected';
+  // Library-specific fields
+  created_date: string;
+  last_updated: string;
+  assignments: string[]; // Array of media_buy_ids or package_ids
+  assignment_count: number;
+  performance_metrics?: CreativePerformanceMetrics;
+  compliance?: CreativeComplianceData;
+  sub_assets?: CreativeSubAsset[];
+}
+
+export interface CreativePerformanceMetrics {
+  impressions?: number;
+  clicks?: number;
+  ctr?: number;
+  conversions?: number;
+  cost_per_conversion?: number;
+  performance_score?: number;
+  last_updated: string;
+}
+
+export interface CreativeComplianceData {
+  brand_safety_status: 'approved' | 'flagged' | 'rejected' | 'pending';
+  policy_violations?: string[];
+  last_reviewed: string;
+  reviewer_notes?: string;
+}
+
+// New Task Request/Response Types
+export interface ManageCreativeAssetsRequest {
+  action: 'upload' | 'list' | 'update' | 'assign' | 'unassign' | 'delete';
+  adcp_version?: string;
+  // Action-specific parameters
+  assets?: CreativeAsset[]; // For upload
+  filters?: CreativeFilters; // For list
+  pagination?: PaginationOptions; // For list
+  creative_id?: string; // For update
+  updates?: Partial<CreativeAsset>; // For update
+  creative_ids?: string[]; // For assign/unassign/delete
+  media_buy_id?: string; // For assign/unassign
+  buyer_ref?: string; // For assign/unassign
+  package_assignments?: { [creative_id: string]: string[] }; // For assign
+  package_ids?: string[]; // For unassign
+  archive?: boolean; // For delete (soft vs hard delete)
+}
+
+export interface SyncCreativesRequest {
+  creatives: CreativeAsset[];
+  patch?: boolean; // Enable partial updates
+  dry_run?: boolean; // Preview changes without applying
+  assignments?: { [creative_id: string]: string[] }; // Bulk assign to packages
+  validation_mode?: 'strict' | 'lenient';
+}
+
+export interface ListCreativesRequest {
+  filters?: CreativeFilters;
+  sort?: {
+    field: string;
+    direction: 'asc' | 'desc';
+  };
+  pagination?: PaginationOptions;
+  include_assignments?: boolean;
+  include_performance?: boolean;
+}
+
+export interface CreativeFilters {
+  format?: string | string[];
+  type?: ('image' | 'video' | 'html' | 'native') | ('image' | 'video' | 'html' | 'native')[];
+  status?: string | string[];
+  tags?: string | string[];
+  created_after?: string;
+  created_before?: string;
+  updated_after?: string;
+  updated_before?: string;
+  assigned_to?: string; // media_buy_id or package_id
+  performance_score_min?: number;
+  performance_score_max?: number;
+}
+
+export interface PaginationOptions {
+  offset?: number;
+  limit?: number;
+  cursor?: string;
+}
+
+// Response Types
+export interface ManageCreativeAssetsResponse {
+  success: boolean;
+  action: string;
+  results?: {
+    uploaded?: CreativeLibraryItem[];
+    listed?: {
+      creatives: CreativeLibraryItem[];
+      total_count: number;
+      pagination?: {
+        offset: number;
+        limit: number;
+        has_more: boolean;
+        next_cursor?: string;
+      };
+    };
+    updated?: CreativeLibraryItem;
+    assigned?: {
+      creative_id: string;
+      assignments: string[];
+    }[];
+    unassigned?: {
+      creative_id: string;
+      removed_from: string[];
+    }[];
+    deleted?: {
+      creative_id: string;
+      archived: boolean;
+    }[];
+  };
+  errors?: {
+    creative_id?: string;
+    error_code: string;
+    message: string;
+  }[];
+}
+
+export interface SyncCreativesResponse {
+  success: boolean;
+  summary: {
+    total_processed: number;
+    created: number;
+    updated: number;
+    assigned: number;
+    errors: number;
+  };
+  results: {
+    created?: CreativeLibraryItem[];
+    updated?: CreativeLibraryItem[];
+    assigned?: { creative_id: string; packages: string[] }[];
+    errors?: { creative_id?: string; error_code: string; message: string }[];
+  };
+  dry_run?: boolean;
+}
+
+export interface ListCreativesResponse {
+  success: boolean;
+  creatives: CreativeLibraryItem[];
+  total_count: number;
+  pagination?: {
+    offset: number;
+    limit: number;
+    has_more: boolean;
+    next_cursor?: string;
   };
 }

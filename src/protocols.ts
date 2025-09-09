@@ -18,11 +18,21 @@ try {
   console.log('📄 Falling back to HTTP-based A2A implementation');
   A2AClient = null;
 }
-import { AgentConfig, TestResult, CreativeFormat } from './types/adcp';
+import { 
+  AgentConfig, 
+  TestResult, 
+  CreativeFormat, 
+  CreativeLibraryItem,
+  ManageCreativeAssetsRequest,
+  ManageCreativeAssetsResponse,
+  SyncCreativesRequest,
+  SyncCreativesResponse,
+  ListCreativesRequest,
+  ListCreativesResponse
+} from './types/adcp';
 
-// Production mode detection
-const IS_PRODUCTION = process.env.NODE_ENV === 'production';
-const USE_REAL_AGENTS = process.env.USE_REAL_AGENTS === 'true' || IS_PRODUCTION;
+// Always use real agents - no more simulated responses
+const USE_REAL_AGENTS = true;
 
 // Configuration constants
 const REQUEST_TIMEOUT = parseInt(process.env.REQUEST_TIMEOUT || '30000'); // 30 seconds
@@ -126,6 +136,7 @@ const STANDARD_FORMATS: CreativeFormat[] = [
   }
 ];
 
+
 /**
  * Get configured sales agents from environment variables
  */
@@ -185,6 +196,29 @@ export async function getStandardFormats(): Promise<CreativeFormat[]> {
   return STANDARD_FORMATS;
 }
 
+
+/**
+ * Get expected response schema type for a given tool
+ */
+function getExpectedSchema(toolName: string): string {
+  switch (toolName) {
+    case 'get_products':
+      return 'products';
+    case 'list_creative_formats':
+      return 'formats';
+    case 'manage_creative_assets':
+      return 'creative_management';
+    case 'sync_creatives':
+      return 'sync_response';
+    case 'list_creatives':
+      return 'creative_list';
+    case 'add_creative_assets':
+      return 'creative_upload';
+    default:
+      return 'generic';
+  }
+}
+
 /**
  * Get authentication token for an agent
  */
@@ -194,7 +228,8 @@ function getAuthToken(agent: AgentConfig): string | undefined {
   }
   
   // If auth_token_env looks like a direct token (not an env var name), use it directly
-  if (agent.auth_token_env.length > 50 && !agent.auth_token_env.match(/^[A-Z_]+$/)) {
+  // Base64-like tokens are typically 40+ chars and contain mixed case/symbols
+  if (agent.auth_token_env.length > 20 && !agent.auth_token_env.match(/^[A-Z_][A-Z0-9_]*$/)) {
     return agent.auth_token_env;
   }
   
@@ -396,6 +431,7 @@ async function testMCPAgent(
 ): Promise<TestResult> {
   const startTime = Date.now();
   const circuitBreaker = getCircuitBreaker(agent.id);
+  const debugLogs: any[] = [];
   
   try {
     validateAgentUrl(agent.agent_uri);
@@ -417,29 +453,50 @@ async function testMCPAgent(
         
         // MCP typically uses JSON-RPC over HTTP/SSE
         // Try to call the MCP endpoint directly with tool request
+        const requestPayload = {
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'tools/call',
+          params: {
+            name: toolName,
+            arguments: {
+              brief,
+              ...(promotedOffering && { promoted_offering: promotedOffering })
+            }
+          }
+        };
+        
+        // Log request
+        debugLogs.push({
+          request: {
+            method: `${toolName} (MCP Tool)`,
+            url: agent.agent_uri,
+            headers: createAdCPHeaders(authToken),
+            body: JSON.stringify(requestPayload)
+          },
+          response: null,
+          timestamp: new Date().toISOString()
+        });
+        
         const mcpResponse = await fetch(agent.agent_uri, {
           method: 'POST',
           headers: createAdCPHeaders(authToken),
-          body: JSON.stringify({
-            jsonrpc: '2.0',
-            id: 1,
-            method: 'tools/call',
-            params: {
-              name: toolName,
-              arguments: {
-                brief,
-                ...(promotedOffering && { promoted_offering: promotedOffering })
-              }
-            }
-          }),
+          body: JSON.stringify(requestPayload),
           signal: AbortSignal.timeout(REQUEST_TIMEOUT)
         });
         
         if (mcpResponse.ok) {
-          const expectedSchema = toolName === 'get_products' ? 'products' : 
-                                toolName === 'list_creative_formats' ? 'formats' : 'generic';
+          const expectedSchema = getExpectedSchema(toolName);
           
           const handledResponse = await handleAdCPResponse(mcpResponse, expectedSchema, agent.name);
+          
+          // Log response
+          if (debugLogs.length > 0) {
+            debugLogs[debugLogs.length - 1].response = {
+              status: mcpResponse.status,
+              body: handledResponse.data
+            };
+          }
           
           return {
             note: 'MCP agent called successfully using HTTP',
@@ -485,28 +542,7 @@ async function testMCPAgent(
         }
       });
     } else {
-      // Simulate MCP agent response for development
-      await new Promise(resolve => setTimeout(resolve, 100)); // Simulate network delay
-      
-      result = {
-        toolName,
-        timestamp: new Date().toISOString(),
-        agent: agent.name,
-        args,
-        simulatedResponse: {
-          products: toolName === 'get_products' ? [
-            {
-              id: 'prod_1',
-              name: 'Premium Display',
-              type: 'display',
-              pricing_model: 'cpm',
-              base_price: 2.50
-            }
-          ] : undefined,
-          formats: toolName === 'list_creative_formats' ? STANDARD_FORMATS : undefined,
-          success: true
-        }
-      };
+      throw new Error('Real agents mode is required - simulated responses have been removed');
     }
 
     return {
@@ -515,16 +551,26 @@ async function testMCPAgent(
       success: true,
       response_time_ms: Date.now() - startTime,
       data: result,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      debug_logs: debugLogs
     };
   } catch (error) {
+    // Log error in debug logs if we have a pending request
+    if (debugLogs.length > 0 && !debugLogs[debugLogs.length - 1].response) {
+      debugLogs[debugLogs.length - 1].response = {
+        status: 'error',
+        body: { error: error instanceof Error ? error.message : 'Unknown error' }
+      };
+    }
+    
     return {
       agent_id: agent.id,
       agent_name: agent.name,
       success: false,
       response_time_ms: Date.now() - startTime,
       error: error instanceof Error ? error.message : 'Unknown error',
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      debug_logs: debugLogs
     };
   }
 }
@@ -540,6 +586,7 @@ async function testA2AAgent(
 ): Promise<TestResult> {
   const startTime = Date.now();
   const circuitBreaker = getCircuitBreaker(agent.id);
+  const debugLogs: any[] = [];
   
   try {
     validateAgentUrl(agent.agent_uri);
@@ -567,8 +614,8 @@ async function testA2AAgent(
           fetchImpl: authToken ? createAuthenticatedFetch(authToken) : undefined
         });
         
-        // Send message using A2A protocol
-        const messageResponse = await a2aClient.sendMessage({
+        // Build request for logging
+        const requestPayload = {
           message: {
             kind: "message",
             messageId: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
@@ -585,7 +632,30 @@ async function testA2AAgent(
             blocking: true, // Wait for response
             acceptedOutputModes: ['application/json', 'text/plain']
           }
+        };
+        
+        // Log request
+        debugLogs.push({
+          request: {
+            method: toolName,
+            url: agent.agent_uri,
+            headers: authToken ? { 'Authorization': `Bearer ${authToken}` } : {},
+            body: JSON.stringify(requestPayload)
+          },
+          response: null,
+          timestamp: new Date().toISOString()
         });
+        
+        // Send message using A2A protocol
+        const messageResponse = await a2aClient.sendMessage(requestPayload);
+        
+        // Log response
+        if (debugLogs.length > 0) {
+          debugLogs[debugLogs.length - 1].response = {
+            status: 'completed',
+            body: messageResponse
+          };
+        }
         
         return messageResponse;
       });
@@ -615,26 +685,47 @@ async function testA2AAgent(
           
           // Now try to call the agent's service URL with the requested tool
           const serviceUrl = agentCard.url || agent.agent_uri;
+          const requestPayload = {
+            jsonrpc: '2.0',
+            id: 1,
+            method: toolName,
+            params: {
+              brief,
+              ...(promotedOffering && { promoted_offering: promotedOffering })
+            }
+          };
+          
+          // Log request
+          debugLogs.push({
+            request: {
+              method: toolName,
+              url: serviceUrl,
+              headers: createAdCPHeaders(authToken),
+              body: JSON.stringify(requestPayload)
+            },
+            response: null,
+            timestamp: new Date().toISOString()
+          });
+          
           const toolResponse = await fetch(serviceUrl, {
             method: 'POST',
             headers: createAdCPHeaders(authToken),
-            body: JSON.stringify({
-              jsonrpc: '2.0',
-              id: 1,
-              method: toolName,
-              params: {
-                brief,
-                ...(promotedOffering && { promoted_offering: promotedOffering })
-              }
-            }),
+            body: JSON.stringify(requestPayload),
             signal: AbortSignal.timeout(REQUEST_TIMEOUT)
           });
           
           if (toolResponse.ok) {
-            const expectedSchema = toolName === 'get_products' ? 'products' : 
-                                  toolName === 'list_creative_formats' ? 'formats' : 'generic';
+            const expectedSchema = getExpectedSchema(toolName);
             
             const handledResponse = await handleAdCPResponse(toolResponse, expectedSchema, agent.name);
+            
+            // Log response
+            if (debugLogs.length > 0) {
+              debugLogs[debugLogs.length - 1].response = {
+                status: toolResponse.status,
+                body: handledResponse.data
+              };
+            }
             
             return {
               note: 'A2A agent called successfully using HTTP fallback',
@@ -664,29 +755,7 @@ async function testA2AAgent(
         }
       });
     } else {
-      // Simulate A2A agent response for development
-      await new Promise(resolve => setTimeout(resolve, 200)); // Simulate network delay
-      
-      result = {
-        messageId: `msg_${Date.now()}`,
-        toolName,
-        timestamp: new Date().toISOString(),
-        agent: agent.name,
-        message,
-        simulatedResponse: {
-          products: toolName === 'get_products' ? [
-            {
-              id: 'a2a_prod_1',
-              name: 'Contextual Display Network',
-              type: 'display',
-              pricing_model: 'cpm',
-              base_price: 3.25
-            }
-          ] : undefined,
-          formats: toolName === 'list_creative_formats' ? STANDARD_FORMATS.slice(0, 2) : undefined,
-          success: true
-        }
-      };
+      throw new Error('Real agents mode is required - simulated responses have been removed');
     }
 
     return {
@@ -695,16 +764,26 @@ async function testA2AAgent(
       success: true,
       response_time_ms: Date.now() - startTime,
       data: result,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      debug_logs: debugLogs
     };
   } catch (error) {
+    // Log error in debug logs if we have a pending request
+    if (debugLogs.length > 0 && !debugLogs[debugLogs.length - 1].response) {
+      debugLogs[debugLogs.length - 1].response = {
+        status: 'error',
+        body: { error: error instanceof Error ? error.message : 'Unknown error' }
+      };
+    }
+    
     return {
       agent_id: agent.id,
       agent_name: agent.name,
       success: false,
       response_time_ms: Date.now() - startTime,
       error: error instanceof Error ? error.message : 'Unknown error',
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      debug_logs: debugLogs
     };
   }
 }

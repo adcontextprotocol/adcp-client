@@ -1850,6 +1850,177 @@
             </div>
         </div>
 
+        <!-- Creative Management Section -->
+        <div class="section">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                <h3>🎬 Creative Management</h3>
+                <div style="display: flex; gap: 10px;">
+                    <button class="btn" onclick="showCreateModal()">➕ Create New</button>
+                    <button class="btn" onclick="showUpdateModal()">✏️ Update Existing</button>
+                    <button class="btn" onclick="listCreatives()">📋 List All</button>
+                </div>
+            </div>
+            
+            <div id="creative-management-content" style="min-height: 100px; padding: 15px; background: #f9f9f9; border-radius: 8px;">
+                <p style="color: #666; text-align: center;">Select an action above to manage creatives</p>
+            </div>
+        </div>
+
+        <!-- Creative Create Modal -->
+        <div id="creative-create-modal" class="modal" style="display: none;">
+            <div class="modal-content" style="max-width: 800px;">
+                <span class="close" onclick="closeCreateModal()">&times;</span>
+                <h3>➕ Create New Creative Assets</h3>
+                
+                <div class="param-group">
+                    <label>Creation Mode:</label>
+                    <select id="create-mode" onchange="updateCreateUI()">
+                        <option value="single">Single Creative</option>
+                        <option value="batch">Batch Create</option>
+                    </select>
+                </div>
+                
+                <div id="single-create" class="upload-section">
+                    <div class="param-group">
+                        <label>Creative Name:</label>
+                        <input type="text" id="creative-name" placeholder="My Creative">
+                    </div>
+                    
+                    <div class="param-group">
+                        <label>Creative Type:</label>
+                        <select id="creative-type">
+                            <option value="image">Image</option>
+                            <option value="video">Video</option>
+                            <option value="html">HTML5</option>
+                            <option value="native">Native</option>
+                        </select>
+                    </div>
+                    
+                    <div class="param-group">
+                        <label>Media URL:</label>
+                        <input type="text" id="creative-url" placeholder="https://example.com/creative.jpg">
+                    </div>
+                    
+                    <div class="param-group">
+                        <label>Dimensions (Width x Height):</label>
+                        <div style="display: flex; gap: 10px;">
+                            <input type="number" id="creative-width" placeholder="300" style="width: 100px;">
+                            <span>x</span>
+                            <input type="number" id="creative-height" placeholder="250" style="width: 100px;">
+                        </div>
+                    </div>
+                    
+                    <div class="param-group">
+                        <label>Tags (comma-separated):</label>
+                        <input type="text" id="creative-tags" placeholder="campaign1, product-launch, Q4">
+                    </div>
+                </div>
+                
+                <div id="batch-create" class="upload-section" style="display: none;">
+                    <div class="param-group">
+                        <label>Creative Assets JSON:</label>
+                        <textarea id="batch-creatives-json" rows="10" style="width: 100%; font-family: monospace;" placeholder='[
+  {
+    "name": "Banner 1",
+    "type": "image",
+    "media_url": "https://example.com/banner1.jpg",
+    "format": "300x250",
+    "dimensions": {"width": 300, "height": 250},
+    "tags": ["campaign1", "display"]
+  },
+  {
+    "name": "Video Ad",
+    "type": "video",
+    "media_url": "https://example.com/video.mp4",
+    "format": "video",
+    "duration": 30,
+    "tags": ["campaign1", "video"]
+  }
+]'></textarea>
+                    </div>
+                </div>
+                
+                <div class="param-group">
+                    <label>
+                        <input type="checkbox" id="assign-to-media-buy" onchange="toggleMediaBuyInput()">
+                        Assign to Media Buy
+                    </label>
+                    <input type="text" id="target-media-buy-id" placeholder="Media Buy ID" style="margin-left: 20px; display: none;">
+                </div>
+                
+                <div style="margin-top: 20px; display: flex; gap: 10px; justify-content: flex-end;">
+                    <button class="btn btn-secondary" onclick="closeCreateModal()">Cancel</button>
+                    <button class="btn" onclick="executeCreativeCreate()">Create</button>
+                </div>
+            </div>
+        </div>
+
+        
+        <!-- Creative Update Modal -->
+        <div id="creative-update-modal" class="modal" style="display: none;">
+            <div class="modal-content" style="max-width: 800px;">
+                <span class="close" onclick="closeUpdateModal()">&times;</span>
+                <h3>✏️ Update Existing Creative Assets</h3>
+                
+                <div class="param-group">
+                    <label>Update Mode:</label>
+                    <select id="update-mode" onchange="updateUpdateUI()">
+                        <option value="single">Single Creative</option>
+                        <option value="batch">Batch Update</option>
+                    </select>
+                </div>
+                
+                <div id="single-update" class="upload-section">
+                    <div class="param-group">
+                        <label>Creative ID:</label>
+                        <input type="text" id="update-creative-id" placeholder="creative_123456" required>
+                    </div>
+                    
+                    <div class="param-group">
+                        <label>New Name (optional):</label>
+                        <input type="text" id="update-creative-name" placeholder="Updated Creative Name">
+                    </div>
+                    
+                    <div class="param-group">
+                        <label>Status:</label>
+                        <select id="update-creative-status">
+                            <option value="active">Active</option>
+                            <option value="paused">Paused</option>
+                            <option value="archived">Archived</option>
+                        </select>
+                    </div>
+                    
+                    <div class="param-group">
+                        <label>Update Tags (comma-separated, optional):</label>
+                        <input type="text" id="update-creative-tags" placeholder="updated-campaign, Q1-2025">
+                    </div>
+                </div>
+                
+                <div id="batch-update" class="upload-section" style="display: none;">
+                    <div class="param-group">
+                        <label>Creative Updates JSON:</label>
+                        <textarea id="batch-updates-json" rows="10" style="width: 100%; font-family: monospace;" placeholder='[
+  {
+    "id": "creative_123456",
+    "name": "Updated Banner",
+    "status": "active",
+    "tags": ["updated", "Q1-2025"]
+  },
+  {
+    "id": "creative_789012",
+    "status": "paused"
+  }
+]'></textarea>
+                    </div>
+                </div>
+                
+                <div style="margin-top: 20px; display: flex; gap: 10px; justify-content: flex-end;">
+                    <button class="btn btn-secondary" onclick="closeUpdateModal()">Cancel</button>
+                    <button class="btn" onclick="executeCreativeUpdate()">Update</button>
+                </div>
+            </div>
+        </div>
+        
         <!-- Debug Panels -->
         <div id="debug-panels"></div>
     </div>
@@ -1919,8 +2090,8 @@
                 const response = await fetch('/api/sales/agents');
                 const result = await response.json();
                 
-                if (result.success && result.agents) {
-                    agents = result.agents;
+                if (result.success && result.data && result.data.agents) {
+                    agents = result.data.agents;
                     logEvent('success', `Loaded ${agents.length} agents`);
                     // Update the agent selector dropdown
                     updateAgentSelector();
@@ -1994,10 +2165,25 @@
                 required: ['products'],
                 description: 'Create a media buy from selected packages'
             },
+            manage_creative_assets: {
+                params: ['action', 'assets', 'filters', 'creative_ids', 'media_buy_id', 'updates'],
+                required: ['action'],
+                description: 'Centralized creative asset management (upload, list, update, assign, unassign, delete)'
+            },
+            sync_creatives: {
+                params: ['creatives', 'patch', 'dry_run', 'assignments', 'validation_mode'],
+                required: ['creatives'],
+                description: 'Synchronize creative assets with the creative library'
+            },
+            list_creatives: {
+                params: ['filters', 'sort', 'pagination', 'include_assignments', 'include_performance'],
+                required: [],
+                description: 'Query and search the creative library with advanced filtering'
+            },
             add_creative_assets: {
                 params: ['media_buy_id', 'assets', 'assignment_rules'],
                 required: ['media_buy_id', 'assets'],
-                description: 'Upload and assign creative assets'
+                description: '[DEPRECATED] Upload and assign creative assets - use manage_creative_assets instead'
             },
             get_media_buy_delivery: {
                 params: ['media_buy_id', 'metrics', 'date_range'],
@@ -3500,17 +3686,21 @@
                 
                 logEvent('info', `Generated ${assets.length} creative assets`);
                 
-                // Call ADCP add_creative_assets with proper parameters
-                const result = await callADCPTool(selectedAgent, 'add_creative_assets', {
-                    media_buy_id: mediaBuyId,
+                // Call ADCP manage_creative_assets with upload action
+                const result = await callADCPTool(selectedAgent, 'manage_creative_assets', {
+                    action: 'upload',
                     assets: assets,
+                    media_buy_id: mediaBuyId,
                     buyer_ref: `creative_upload_${Date.now()}`
                 });
                 
                 logEvent('success', `Successfully uploaded ${assets.length} creative assets to ${mediaBuyId}`);
                 
                 // Display results if available
-                if (result.asset_statuses) {
+                if (result.results?.uploaded) {
+                    displayAssetUploadResults(result.results.uploaded);
+                } else if (result.asset_statuses) {
+                    // Fallback for legacy response format
                     displayAssetUploadResults(result.asset_statuses);
                 }
                 
@@ -3733,10 +3923,8 @@
         function displayDebugLogs(logs, agent) {
             
             if (!logs || !Array.isArray(logs)) {
-                console.log('❌ displayDebugLogs: logs invalid or not array');
                 return;
             }
-            
             
             // Clear the initial "waiting" message when we get first logs
             if (debugEntries.length === 0 && logs.length > 0) {
@@ -4448,9 +4636,16 @@
         }
         
         function extractMethodName(request) {
-            if (!request) return 'Unknown';
+            if (!request) {
+                return 'Unknown';
+            }
             
-            // Try to extract method from JSON-RPC body first
+            // Direct method field (for our debug logs structure)
+            if (request.method) {
+                return request.method;
+            }
+            
+            // Try to extract method from JSON-RPC body
             if (request.body) {
                 try {
                     const body = typeof request.body === 'string' ? JSON.parse(request.body) : request.body;
@@ -4460,6 +4655,11 @@
                             return `${body.params.name} (MCP Tool)`;
                         }
                         return body.method;
+                    }
+                    // Check if body has tool field (for A2A requests)
+                    if (body.tool) {
+                        console.log('extractMethodName: found tool in body:', body.tool);
+                        return body.tool;
                     }
                 } catch (e) {
                     // Not JSON-RPC, continue
@@ -4473,11 +4673,12 @@
                     const pathParts = url.pathname.split('/').filter(Boolean);
                     return pathParts[pathParts.length - 1] || 'HTTP Request';
                 } catch (e) {
-                    return request.method || 'HTTP Request';
+                    // URL parsing failed, continue
                 }
             }
             
-            return request.method || 'Unknown';
+            console.log('extractMethodName: no method found, request:', request);
+            return 'Unknown';
         }
         
         function createRequestResponseHTML(request, response) {
@@ -5623,7 +5824,11 @@ ${JSON.stringify(result, null, 2)}
                     'targeting': 'get_products.result.targeting_suggestions',
                     'budget': 'get_products.result.recommended_budget'
                 },
-                // create_media_buy output -> add_creative_assets input
+                // create_media_buy output -> manage_creative_assets input
+                'manage_creative_assets': {
+                    'media_buy_id': 'create_media_buy.result.media_buy_id'
+                },
+                // create_media_buy output -> add_creative_assets input (deprecated)
                 'add_creative_assets': {
                     'media_buy_id': 'create_media_buy.result.media_buy_id'
                 },
@@ -6032,47 +6237,314 @@ ${JSON.stringify(result, null, 2)}
         
 
         // ============================================================================
+        // Creative Management Functions
+        // ============================================================================
+        
+        function showCreateModal() {
+            document.getElementById('creative-create-modal').style.display = 'block';
+        }
+        
+        function closeCreateModal() {
+            document.getElementById('creative-create-modal').style.display = 'none';
+        }
+        
+        function showUpdateModal() {
+            document.getElementById('creative-update-modal').style.display = 'block';
+        }
+        
+        function closeUpdateModal() {
+            document.getElementById('creative-update-modal').style.display = 'none';
+        }
+        
+        function updateCreateUI() {
+            const mode = document.getElementById('create-mode').value;
+            document.getElementById('single-create').style.display = mode === 'single' ? 'block' : 'none';
+            document.getElementById('batch-create').style.display = mode === 'batch' ? 'block' : 'none';
+        }
+        
+        function updateUpdateUI() {
+            const mode = document.getElementById('update-mode').value;
+            document.getElementById('single-update').style.display = mode === 'single' ? 'block' : 'none';
+            document.getElementById('batch-update').style.display = mode === 'batch' ? 'block' : 'none';
+        }
+        
+        function toggleMediaBuyInput() {
+            const checkbox = document.getElementById('assign-to-media-buy');
+            const input = document.getElementById('target-media-buy-id');
+            input.style.display = checkbox.checked ? 'inline-block' : 'none';
+            if (!checkbox.checked) {
+                input.value = '';
+            }
+        }
+        
+        async function executeCreativeCreate() {
+            const selectedAgent = agents.find(a => a.id === document.getElementById('agent-selector').value);
+            if (!selectedAgent) {
+                alert('Please select an agent first');
+                return;
+            }
+            
+            const mode = document.getElementById('create-mode').value;
+            let assets = [];
+            
+            if (mode === 'single') {
+                // Build single creative asset
+                const width = parseInt(document.getElementById('creative-width').value) || 300;
+                const height = parseInt(document.getElementById('creative-height').value) || 250;
+                const tags = document.getElementById('creative-tags').value
+                    .split(',')
+                    .map(t => t.trim())
+                    .filter(t => t);
+                
+                assets.push({
+                    name: document.getElementById('creative-name').value || 'Untitled Creative',
+                    type: document.getElementById('creative-type').value,
+                    media_url: document.getElementById('creative-url').value || 'https://example.com/creative.jpg',
+                    format: `${width}x${height}`,
+                    dimensions: { width, height },
+                    tags: tags.length > 0 ? tags : ['test'],
+                    status: 'active'
+                });
+            } else {
+                // Parse batch JSON
+                try {
+                    assets = JSON.parse(document.getElementById('batch-creatives-json').value);
+                } catch (e) {
+                    alert('Invalid JSON for batch upload: ' + e.message);
+                    return;
+                }
+            }
+            
+            const assignToMediaBuy = document.getElementById('assign-to-media-buy').checked;
+            const mediaBuyId = assignToMediaBuy ? document.getElementById('target-media-buy-id').value : null;
+            
+            const params = {
+                action: 'create',
+                assets: assets
+            };
+            
+            if (mediaBuyId) {
+                params.media_buy_id = mediaBuyId;
+            }
+            
+            logEvent('info', `➕ Creating ${assets.length} creative(s)...`);
+            
+            try {
+                const result = await callADCPTool(selectedAgent, 'manage_creative_assets', params);
+                
+                if (result && result.success) {
+                    logEvent('success', `✅ Successfully created ${assets.length} creative(s)`);
+                    displayCreativeResults(result.data || result);
+                    closeCreateModal();
+                } else {
+                    logEvent('error', `Failed to create creatives: ${result.error || 'Unknown error'}`);
+                }
+            } catch (error) {
+                logEvent('error', `Error creating creatives: ${error.message}`);
+            }
+        }
+        
+        async function listCreatives() {
+            const selectedAgent = agents.find(a => a.id === document.getElementById('agent-selector').value);
+            if (!selectedAgent) {
+                alert('Please select an agent first');
+                return;
+            }
+            
+            logEvent('info', '📋 Listing creatives...');
+            
+            try {
+                const result = await callADCPTool(selectedAgent, 'list_creatives', {
+                    include_assignments: true,
+                    include_performance: true
+                });
+                
+                if (result) {
+                    const creatives = result.creatives || result.data?.creatives || [];
+                    logEvent('success', `✅ Found ${creatives.length} creative(s)`);
+                    displayCreativeResults(result);
+                } else {
+                    logEvent('error', 'Failed to list creatives');
+                }
+            } catch (error) {
+                logEvent('error', `Error listing creatives: ${error.message}`);
+            }
+        }
+        
+        async function executeCreativeUpdate() {
+            const selectedAgent = agents.find(a => a.id === document.getElementById('agent-selector').value);
+            if (!selectedAgent) {
+                alert('Please select an agent first');
+                return;
+            }
+            
+            // Get creatives to update from the modal
+            const mode = document.getElementById('update-mode')?.value || 'single';
+            let updates = [];
+            
+            if (mode === 'single') {
+                const creativeId = document.getElementById('update-creative-id')?.value;
+                if (!creativeId) {
+                    alert('Please enter a Creative ID to update');
+                    return;
+                }
+                updates.push({
+                    id: creativeId,
+                    name: document.getElementById('update-creative-name')?.value,
+                    status: document.getElementById('update-creative-status')?.value || 'active',
+                    tags: document.getElementById('update-creative-tags')?.value?.split(',').map(t => t.trim()).filter(t => t) || []
+                });
+            } else {
+                try {
+                    updates = JSON.parse(document.getElementById('batch-updates-json')?.value || '[]');
+                } catch (e) {
+                    alert('Invalid JSON format for batch updates');
+                    return;
+                }
+            }
+            
+            logEvent('info', `✏️ Updating ${updates.length} creative(s)...`);
+            
+            try {
+                const result = await callADCPTool(selectedAgent, 'sync_creatives', {
+                    creatives: updates,
+                    dry_run: false,
+                    validation_mode: 'strict'
+                });
+                
+                if (result) {
+                    logEvent('success', `✅ Updated ${updates.length} creative(s)`);
+                    displayCreativeResults(result);
+                    closeUpdateModal();
+                } else {
+                    logEvent('error', 'Failed to update creatives');
+                }
+            } catch (error) {
+                logEvent('error', `Error updating creatives: ${error.message}`);
+            }
+        }
+        
+        function displayCreativeResults(result) {
+            const contentDiv = document.getElementById('creative-management-content');
+            
+            // Extract creatives from various possible response structures
+            const creatives = result.creatives || 
+                             result.data?.creatives || 
+                             result.uploaded_creatives ||
+                             result.synced_creatives ||
+                             [];
+            
+            if (creatives.length === 0) {
+                contentDiv.innerHTML = `
+                    <div style="padding: 20px; text-align: center;">
+                        <p style="color: #666;">No creatives found</p>
+                    </div>
+                `;
+                return;
+            }
+            
+            let html = `
+                <div style="max-height: 400px; overflow-y: auto;">
+                    <table style="width: 100%; border-collapse: collapse;">
+                        <thead>
+                            <tr style="border-bottom: 2px solid #ddd;">
+                                <th style="padding: 10px; text-align: left;">ID</th>
+                                <th style="padding: 10px; text-align: left;">Name</th>
+                                <th style="padding: 10px; text-align: left;">Type</th>
+                                <th style="padding: 10px; text-align: left;">Format</th>
+                                <th style="padding: 10px; text-align: left;">Status</th>
+                                <th style="padding: 10px; text-align: left;">Tags</th>
+                                <th style="padding: 10px; text-align: left;">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+            `;
+            
+            creatives.forEach(creative => {
+                const tags = (creative.tags || []).join(', ');
+                const status = creative.status || 'unknown';
+                const statusColor = status === 'active' ? 'green' : 
+                                   status === 'paused' ? 'orange' : 
+                                   status === 'archived' ? 'gray' : 'black';
+                
+                html += `
+                    <tr style="border-bottom: 1px solid #eee;">
+                        <td style="padding: 10px; font-family: monospace; font-size: 12px;">
+                            ${creative.id || creative.creative_id || 'N/A'}
+                        </td>
+                        <td style="padding: 10px;">${creative.name || 'Unnamed'}</td>
+                        <td style="padding: 10px;">${creative.type || 'unknown'}</td>
+                        <td style="padding: 10px;">${creative.format || 'N/A'}</td>
+                        <td style="padding: 10px;">
+                            <span style="color: ${statusColor}; font-weight: bold;">
+                                ${status}
+                            </span>
+                        </td>
+                        <td style="padding: 10px; font-size: 12px;">${tags || 'None'}</td>
+                        <td style="padding: 10px;">
+                            <button class="btn btn-small" onclick="assignCreativeToMediaBuy('${creative.id || creative.creative_id}')">
+                                Assign
+                            </button>
+                        </td>
+                    </tr>
+                `;
+            });
+            
+            html += `
+                        </tbody>
+                    </table>
+                </div>
+            `;
+            
+            contentDiv.innerHTML = html;
+        }
+        
+        function assignCreativeToMediaBuy(creativeId) {
+            const mediaBuyId = prompt('Enter Media Buy ID to assign this creative to:');
+            if (!mediaBuyId) return;
+            
+            const selectedAgent = agents.find(a => a.id === document.getElementById('agent-selector').value);
+            if (!selectedAgent) {
+                alert('Please select an agent first');
+                return;
+            }
+            
+            logEvent('info', `🔗 Assigning creative ${creativeId} to media buy ${mediaBuyId}...`);
+            
+            callADCPTool(selectedAgent, 'manage_creative_assets', {
+                action: 'assign',
+                creative_ids: [creativeId],
+                media_buy_id: mediaBuyId
+            }).then(result => {
+                if (result && result.success) {
+                    logEvent('success', `✅ Creative assigned successfully`);
+                } else {
+                    logEvent('error', `Failed to assign creative: ${result?.error || 'Unknown error'}`);
+                }
+            }).catch(error => {
+                logEvent('error', `Error assigning creative: ${error.message}`);
+            });
+        }
+        
+        // Show/hide media buy ID field based on checkbox
+        document.addEventListener('DOMContentLoaded', function() {
+            const assignCheckbox = document.getElementById('assign-to-media-buy');
+            const mediaBuyInput = document.getElementById('target-media-buy-id');
+            
+            if (assignCheckbox && mediaBuyInput) {
+                assignCheckbox.addEventListener('change', function() {
+                    mediaBuyInput.style.display = this.checked ? 'inline-block' : 'none';
+                });
+            }
+        });
+        
+        // ============================================================================
         // Initialization
         // ============================================================================
         
         document.addEventListener('DOMContentLoaded', async function() {
-            // Add default agents using ADCP_TEST_SERVER (both MCP and A2A)
-            const defaultAgents = [
-                {
-                    id: 'default-adcp-test-mcp',
-                    name: 'AdCP Test Server (MCP)',
-                    server_url: 'ADCP_TEST_SERVER', // Will be resolved by backend
-                    protocol: 'mcp',
-                    protocols: ['MCP'],
-                    type: 'Custom Agent',
-                    description: 'Default test agent using MCP protocol',
-                    tools: []
-                },
-                {
-                    id: 'default-adcp-test-a2a',
-                    name: 'AdCP Test Server (A2A)',
-                    server_url: 'ADCP_TEST_SERVER', // Will be resolved by backend
-                    protocol: 'a2a',
-                    protocols: ['A2A'],
-                    type: 'Custom Agent',
-                    description: 'Default test agent using A2A protocol',
-                    tools: []
-                }
-            ];
-            
-            // Add default agents if not already present
-            let addedCount = 0;
-            defaultAgents.forEach(defaultAgent => {
-                if (!agents.find(a => a.id === defaultAgent.id)) {
-                    agents.push(defaultAgent);
-                    addedCount++;
-                }
-            });
-            
-            if (addedCount > 0) {
-                updateAgentSelector();
-                logEvent('info', `Added ${addedCount} default AdCP test agent(s)`);
-            }
+            // Agents are loaded dynamically from API - no hardcoded defaults
+            // This prevents issues with mismatched agent IDs
             
             // Load custom agents from localStorage
             loadCustomAgentsFromStorage();
