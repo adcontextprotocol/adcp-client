@@ -1,5 +1,28 @@
 # AdCP Testing Framework - Development & Deployment Guide
 
+## 🚨 CRITICAL REQUIREMENTS - MUST FOLLOW 🚨
+
+### 1. ALWAYS USE OFFICIAL PROTOCOL CLIENTS
+- **A2A Protocol**: ALWAYS use the official `@a2a-js/sdk` client
+- **MCP Protocol**: ALWAYS use the official `@modelcontextprotocol/sdk` client  
+- **NEVER** implement custom HTTP fallbacks or protocol implementations
+- **NEVER** parse SSE responses manually
+- **NEVER** make direct fetch() calls to agent endpoints
+- If an official client fails to import, FIX THE IMPORT - don't create workarounds
+
+### 2. NEVER USE MOCK DATA
+- **NEVER** inject mock products, formats, or any other fake data
+- **NEVER** provide fallback data when agents return empty responses
+- **ALWAYS** return exactly what the agents provide
+- If an agent returns empty arrays or errors, show that to the user
+- Real data only - no exceptions
+
+### 3. ERROR HANDLING
+- Show real errors from agents
+- Don't mask failures with fake success responses
+- Properly detect and report JSON-RPC errors
+- If a protocol client throws an error, let it bubble up
+
 ## Recent Issues Fixed (2025-09-09)
 
 ### Debug Logs "Unknown [undefined]" Issue
@@ -20,10 +43,7 @@
 ### Empty Products/Formats Issue
 **Problem**: Live AdCP agent returns empty arrays for products and formats.
 
-**Solution**: Added mock data injection when live agent returns empty results:
-- Mock products for `get_products` tool
-- Mock formats for `list_creative_formats` tool
-- Only activates when actual agent returns empty data
+**Solution**: Return exactly what the agent provides - empty arrays are valid responses. NO MOCK DATA.
 
 ## Critical Code Patterns to Maintain
 
