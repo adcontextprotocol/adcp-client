@@ -556,6 +556,15 @@ async function testMCPAgent(
             timestamp: new Date().toISOString()
           };
         } else {
+          // Log failed response before trying initialize
+          if (debugLogs.length > 0) {
+            debugLogs[debugLogs.length - 1].response = {
+              status: mcpResponse.status,
+              statusText: mcpResponse.statusText,
+              body: { error: `MCP tool call failed: ${mcpResponse.status} ${mcpResponse.statusText}` }
+            };
+          }
+          
           // If direct tool call fails, try to get server info first
           const infoResponse = await fetch(agent.agent_uri, {
             method: 'POST',
