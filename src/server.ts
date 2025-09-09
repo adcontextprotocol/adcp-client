@@ -305,8 +305,40 @@ function extractResponseData(result: any): any {
     };
   }
   
+  // 6. Check for MCP toolResponse structure
+  if (result?.toolResponse) {
+    // MCP responses may have the data directly in toolResponse
+    if (result.toolResponse?.products || result.toolResponse?.formats) {
+      return {
+        ...result.toolResponse,
+        message: result.toolResponse.message || 'MCP response processed'
+      };
+    }
+    // Or nested under toolResponse.result
+    if (result.toolResponse?.result) {
+      return {
+        ...result.toolResponse.result,
+        products: result.toolResponse.result.products || [],
+        formats: result.toolResponse.result.formats || [],
+        message: result.toolResponse.result.message || 'MCP response processed'
+      };
+    }
+    // Or the toolResponse itself might be the data
+    return result.toolResponse;
+  }
+  
+  // 7. Check for note/error structure (MCP error response)
+  if (result?.note || result?.error) {
+    return {
+      products: [],
+      formats: [],
+      message: result.note || result.error || 'MCP response received',
+      error: result.error
+    };
+  }
+  
   // Return the original result if we can't extract anything
-  return result;
+  return result || {};
 }
 
 app.post('/api/sales/agents/:agentId/query', async (request, reply) => {
@@ -332,7 +364,7 @@ app.post('/api/sales/agents/:agentId/query', async (request, reply) => {
     const results = await testAgents([agent], body.brief || body.brandStory || body.message || 'Test query', body.promoted_offering || body.offering, body.tool_name || body.toolName);
     
     // Extract the data from the nested response structure
-    const extractedData = extractResponseData(results[0].data);
+    const extractedData = extractResponseData(results[0].data) || {};
     
     // If no products returned, add mock data for testing
     const toolName = body.tool_name || body.toolName || 'get_products';
