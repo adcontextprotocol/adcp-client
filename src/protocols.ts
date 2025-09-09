@@ -402,6 +402,17 @@ async function handleAdCPResponse(
     };
   }
   
+  // Check for JSON-RPC error response
+  if (responseData?.error || (responseData?.jsonrpc && responseData?.id !== undefined && !responseData?.result)) {
+    const errorObj = responseData.error;
+    return {
+      success: false,
+      error: `Agent returned JSON-RPC error: ${errorObj?.message || JSON.stringify(errorObj)}`,
+      warnings,
+      data: responseData // Include raw data for debugging
+    };
+  }
+  
   // Validate response schema
   const validation = validateAdCPResponse(responseData, expectedSchema);
   if (!validation.valid) {
@@ -733,7 +744,23 @@ async function testA2AAgent(
         // Send message using A2A protocol
         const messageResponse = await a2aClient.sendMessage(requestPayload);
         
-        // Log response
+        // Check for JSON-RPC error in response
+        if (messageResponse?.error || messageResponse?.result?.error) {
+          const errorObj = messageResponse.error || messageResponse.result?.error;
+          const errorMessage = errorObj.message || JSON.stringify(errorObj);
+          
+          // Log error response
+          if (debugLogs.length > 0) {
+            debugLogs[debugLogs.length - 1].response = {
+              status: 'error',
+              body: messageResponse
+            };
+          }
+          
+          throw new Error(`A2A agent returned error: ${errorMessage}`);
+        }
+        
+        // Log successful response
         if (debugLogs.length > 0) {
           debugLogs[debugLogs.length - 1].response = {
             status: 'completed',
