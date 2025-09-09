@@ -517,12 +517,17 @@ async function testMCPAgent(
           }
           
           if (!mcpResult) {
-            // Fallback: try to parse as regular JSON
-            try {
-              const jsonResponse = JSON.parse(responseText);
-              mcpResult = jsonResponse.result || jsonResponse;
-            } catch (parseErr) {
-              // Return empty result to trigger mock data
+            // Fallback: try to parse as regular JSON (only if it looks like JSON)
+            if (responseText.trim().startsWith('{') || responseText.trim().startsWith('[')) {
+              try {
+                const jsonResponse = JSON.parse(responseText);
+                mcpResult = jsonResponse.result || jsonResponse;
+              } catch (parseErr) {
+                // Return empty result to trigger mock data
+                mcpResult = { products: [], formats: [] };
+              }
+            } else {
+              // Not JSON format, return empty result to trigger mock data
               mcpResult = { products: [], formats: [] };
             }
           }
@@ -572,7 +577,34 @@ async function testMCPAgent(
           });
           
           if (infoResponse.ok) {
-            const initResult = await infoResponse.json();
+            // Parse SSE response for initialize too
+            const initText = await infoResponse.text();
+            let initResult: any = null;
+            
+            if (initText.includes('event:') && initText.includes('data:')) {
+              const lines = initText.split('\n');
+              for (const line of lines) {
+                if (line.startsWith('data: ')) {
+                  const jsonStr = line.substring(6).trim();
+                  if (jsonStr) {
+                    try {
+                      const parsed = JSON.parse(jsonStr);
+                      initResult = parsed.result || parsed;
+                      break;
+                    } catch (e) {
+                      // Skip unparseable lines
+                    }
+                  }
+                }
+              }
+            } else {
+              try {
+                initResult = JSON.parse(initText);
+              } catch {
+                initResult = { error: 'Failed to parse initialize response' };
+              }
+            }
+            
             return {
               note: 'MCP agent initialize successful but tool call failed',
               initializeResponse: initResult,
