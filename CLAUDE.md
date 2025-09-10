@@ -186,7 +186,7 @@ The production `SALES_AGENTS_CONFIG` should contain:
       "name": "AdCP Test Agent",
       "agent_uri": "https://adcp-sales-agent.fly.dev",
       "protocol": "a2a",
-      "auth_token_env": "L4UCklW_V_40eTdWuQYF6HD5GWeKkgV8U6xxK-jwNO8",
+      "auth_token_env": "<AUTH_TOKEN>",
       "requiresAuth": true
     },
     {
@@ -194,7 +194,7 @@ The production `SALES_AGENTS_CONFIG` should contain:
       "name": "AdCP Test Agent",
       "agent_uri": "https://adcp-sales-agent.fly.dev/mcp/",
       "protocol": "mcp",
-      "auth_token_env": "L4UCklW_V_40eTdWuQYF6HD5GWeKkgV8U6xxK-jwNO8",
+      "auth_token_env": "<AUTH_TOKEN>",
       "requiresAuth": true
     }
   ]
@@ -207,8 +207,8 @@ The production `SALES_AGENTS_CONFIG` should contain:
 When you need to change agents, auth tokens, or URIs:
 
 ```bash
-# Single line format for terminal
-fly secrets set SALES_AGENTS_CONFIG='{"agents":[{"id":"principal_3bd0d4a8_a2a","name":"AdCP Test Agent","agent_uri":"https://adcp-sales-agent.fly.dev","protocol":"a2a","auth_token_env":"L4UCklW_V_40eTdWuQYF6HD5GWeKkgV8U6xxK-jwNO8","requiresAuth":true},{"id":"principal_3bd0d4a8_mcp","name":"AdCP Test Agent","agent_uri":"https://adcp-sales-agent.fly.dev/mcp/","protocol":"mcp","auth_token_env":"L4UCklW_V_40eTdWuQYF6HD5GWeKkgV8U6xxK-jwNO8","requiresAuth":true}]}'
+# Single line format for terminal (replace <AUTH_TOKEN> with actual token)
+fly secrets set SALES_AGENTS_CONFIG='{"agents":[{"id":"principal_3bd0d4a8_a2a","name":"AdCP Test Agent","agent_uri":"https://adcp-sales-agent.fly.dev","protocol":"a2a","auth_token_env":"<AUTH_TOKEN>","requiresAuth":true},{"id":"principal_3bd0d4a8_mcp","name":"AdCP Test Agent","agent_uri":"https://adcp-sales-agent.fly.dev/mcp/","protocol":"mcp","auth_token_env":"<AUTH_TOKEN>","requiresAuth":true}]}'
 ```
 
 #### Toggle Real vs Demo Agents
