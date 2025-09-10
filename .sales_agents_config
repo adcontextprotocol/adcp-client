@@ -1,0 +1,19 @@
+{"agents": [
+{
+  "id": "principal_b7c46dd6",
+  "name": "Scribd (A2A)",
+  "agent_uri": "https://adcp-sales-agent.fly.dev",
+  "protocol": "a2a",
+  "auth_token_env": "ELZcVBXKQ2c4KISE81bI-Nb_cONXJIOglB0eEFQUykQ",
+  "requiresAuth": true
+},
+{
+  "id": "principal_8ac9e391",
+  "name": "Wonderstruck (MCP)",
+  "agent_uri": "https://adcp-sales-agent.fly.dev/mcp/",
+  "protocol": "mcp",
+  "auth_token_env": "UhwoigyVKdd6GT8hS04cc51ckGfi8qXpZL6OvS2i2cU",
+  "requiresAuth": true
+}
+]
+}
