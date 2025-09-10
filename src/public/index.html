@@ -1588,7 +1588,15 @@
         <div class="section">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
                 <h3>📦 Available Products</h3>
-                <button id="refresh-products-btn" class="btn" onclick="refreshProducts()">🔄 Refresh Products</button>
+                <div style="display: flex; align-items: center; gap: 10px;">
+                    <input type="text" 
+                           id="promoted-offering-refresh" 
+                           placeholder="Promoted offering" 
+                           value="gourmet robot food" 
+                           style="padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; width: 200px;"
+                           title="Specify the promoted offering for product discovery">
+                    <button id="refresh-products-btn" class="btn" onclick="refreshProducts()">🔄 Refresh Products</button>
+                </div>
             </div>
             
             <div style="overflow-x: auto;">
@@ -2030,6 +2038,7 @@
         <div class="debug-header">
             <h3>🔍 Agent Communication Debug</h3>
             <div class="debug-controls">
+                <button class="debug-btn" onclick="clearAllDebugLogs()" style="background: #dc3545;">🗑️ Clear All</button>
                 <button class="debug-btn" onclick="clearDebugLog()">🗑️ Clear</button>
                 <button class="debug-btn" onclick="toggleDebugPanel()">✖️ Close</button>
             </div>
@@ -2203,7 +2212,9 @@
         
         async function refreshProducts() {
             const selectedAgentId = document.getElementById('agent-selector').value;
+            const promotedOffering = document.getElementById('promoted-offering-refresh').value || 'gourmet robot food';
             logEvent('info', `Selected agent ID: ${selectedAgentId}`);
+            logEvent('info', `Promoted offering: ${promotedOffering}`);
             
             const selectedAgent = agents.find(a => a.id === selectedAgentId);
             if (!selectedAgent) {
@@ -2220,11 +2231,12 @@
             
             logEvent('info', `Found agent: ${selectedAgent.name}, has auth token: ${!!selectedAgent.auth_token}`);
             logEvent('info', `Agent config: ${JSON.stringify(selectedAgent, null, 2)}`);
-            logEvent('info', 'Refreshing products...');
+            logEvent('info', 'Refreshing products with promoted offering: ' + promotedOffering);
             
             try {
                 const result = await callADCPTool(selectedAgent, 'get_products', {
-                    brief: 'Discover available advertising products for testing'
+                    brief: 'Discover available advertising products for testing',
+                    promoted_offering: promotedOffering
                 });
                 
                 if (result && result.products) {
@@ -2908,7 +2920,7 @@
             
             const requestBody = {
                 brandStory: params.brief || "ADCP Testing Suite execution",
-                offering: null,
+                offering: params.promoted_offering || null,
                 agentConfig: agent,
                 toolName: toolName
             };
@@ -3914,6 +3926,16 @@
             redrawDebugEntries();
         }
         
+        function clearAllDebugLogs() {
+            debugEntries = [];
+            redrawDebugEntries();
+            // Also clear any stored debug data
+            if (window.sessionStorage) {
+                window.sessionStorage.removeItem('debugEntries');
+            }
+            console.log('All debug logs cleared');
+        }
+        
         function escapeHtml(text) {
             const div = document.createElement('div');
             div.textContent = text;
@@ -4684,6 +4706,23 @@
         function createRequestResponseHTML(request, response) {
             let html = '';
             
+            // Create full data object for copying
+            const fullData = {
+                request: request || null,
+                response: response || null,
+                timestamp: new Date().toISOString()
+            };
+            const fullDataJson = JSON.stringify(fullData, null, 2);
+            
+            // Add Copy All button at the top - store data in a global variable to avoid inline encoding issues
+            const copyAllId = 'copy-all-' + Date.now();
+            window[copyAllId] = fullDataJson;
+            html += `
+                <div style="text-align: right; margin-bottom: 10px;">
+                    <button class="debug-copy-btn" style="background: #28a745; padding: 6px 12px;" onclick="copyDirectContent('${copyAllId}')">📋 Copy All</button>
+                </div>
+            `;
+            
             // Request section
             if (request) {
                 html += `
@@ -4695,10 +4734,12 @@
                 
                 if (request.headers && Object.keys(request.headers).length > 0) {
                     const headersJson = JSON.stringify(request.headers, null, 2);
+                    const headersId = 'headers-' + Date.now() + '-' + Math.random();
+                    window[headersId] = headersJson;
                     html += `
                         <div style="margin-top: 8px;">
                             <strong>Headers:</strong>
-                            <button class="debug-copy-btn" onclick="copyToClipboard('${btoa(encodeURIComponent(headersJson))}')">Copy</button>
+                            <button class="debug-copy-btn" onclick="copyDirectContent('${headersId}')">Copy</button>
                             <div class="debug-json">
                                 <pre>${escapeHtml(headersJson)}</pre>
                             </div>
@@ -4719,10 +4760,12 @@
                         bodyContent = JSON.stringify(bodyContent, null, 2);
                     }
                     
+                    const bodyId = 'req-body-' + Date.now() + '-' + Math.random();
+                    window[bodyId] = bodyContent;
                     html += `
                         <div style="margin-top: 8px;">
                             <strong>Body:</strong>
-                            <button class="debug-copy-btn" onclick="copyToClipboard('${btoa(encodeURIComponent(bodyContent))}')">Copy</button>
+                            <button class="debug-copy-btn" onclick="copyDirectContent('${bodyId}')">Copy</button>
                             <div class="debug-json">
                                 <pre>${escapeHtml(bodyContent)}</pre>
                             </div>
@@ -4752,10 +4795,12 @@
                 // For HTTP responses, handle headers and body
                 if (response.headers && Object.keys(response.headers).length > 0) {
                     const headersJson = JSON.stringify(response.headers, null, 2);
+                    const respHeadersId = 'resp-headers-' + Date.now() + '-' + Math.random();
+                    window[respHeadersId] = headersJson;
                     html += `
                         <div style="margin-top: 8px;">
                             <strong>Headers:</strong>
-                            <button class="debug-copy-btn" onclick="copyToClipboard('${btoa(encodeURIComponent(headersJson))}')">Copy</button>
+                            <button class="debug-copy-btn" onclick="copyDirectContent('${respHeadersId}')">Copy</button>
                             <div class="debug-json">
                                 <pre>${escapeHtml(headersJson)}</pre>
                             </div>
@@ -4795,10 +4840,12 @@
                     // Show unwrapped response as primary body if available
                     if (unwrappedResponse) {
                         const unwrappedContent = JSON.stringify(unwrappedResponse, null, 2);
+                        const unwrappedId = 'unwrapped-' + Date.now() + '-' + Math.random();
+                        window[unwrappedId] = unwrappedContent;
                         html += `
                             <div style="margin-top: 8px;">
                                 <strong>Body:</strong>
-                                <button class="debug-copy-btn" onclick="copyToClipboard('${btoa(encodeURIComponent(unwrappedContent))}')">Copy</button>
+                                <button class="debug-copy-btn" onclick="copyDirectContent('${unwrappedId}')">Copy</button>
                                 <div class="debug-json" style="background: #1e3a2e;">
                                     <pre>${escapeHtml(unwrappedContent)}</pre>
                                 </div>
@@ -4806,6 +4853,8 @@
                         `;
                         
                         // Show wrapped version as collapsible raw details
+                        const rawErrorId = 'raw-error-' + Date.now() + '-' + Math.random();
+                        window[rawErrorId] = rawErrorMessage;
                         html += `
                             <div style="margin-top: 12px; border-top: 1px solid #444; padding-top: 8px;">
                                 <details>
@@ -4813,7 +4862,7 @@
                                         <strong>📄 Raw Error Details</strong>
                                     </summary>
                                     <div style="margin-top: 8px;">
-                                        <button class="debug-copy-btn" onclick="copyToClipboard('${btoa(encodeURIComponent(rawErrorMessage))}')">Copy</button>
+                                        <button class="debug-copy-btn" onclick="copyDirectContent('${rawErrorId}')">Copy</button>
                                         <div class="debug-json">
                                             <pre>${escapeHtml(rawErrorMessage)}</pre>
                                         </div>
@@ -4823,10 +4872,12 @@
                         `;
                     } else {
                         // Show original body content if no unwrapped response
+                        const bodyContentId = 'body-content-' + Date.now() + '-' + Math.random();
+                        window[bodyContentId] = bodyContent;
                         html += `
                             <div style="margin-top: 8px;">
                                 <strong>Body:</strong>
-                                <button class="debug-copy-btn" onclick="copyToClipboard('${btoa(encodeURIComponent(bodyContent))}')">Copy</button>
+                                <button class="debug-copy-btn" onclick="copyDirectContent('${bodyContentId}')">Copy</button>
                                 <div class="debug-json">
                                     <pre>${escapeHtml(bodyContent)}</pre>
                                 </div>
@@ -4864,23 +4915,106 @@
         
         function copyToClipboard(base64Content) {
             try {
+                // Try decoding the base64 content
                 const content = decodeURIComponent(atob(base64Content));
+                
+                // Use the more reliable writeText method with fallback
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(content).then(() => {
+                        // Show brief confirmation
+                        const btn = event.target;
+                        const originalText = btn.textContent;
+                        btn.textContent = '✓ Copied';
+                        setTimeout(() => {
+                            btn.textContent = originalText;
+                        }, 2000);
+                    }).catch(err => {
+                        console.error('Clipboard API failed:', err);
+                        // Fallback to older method
+                        fallbackCopyToClipboard(content);
+                    });
+                } else {
+                    // Browser doesn't support clipboard API
+                    fallbackCopyToClipboard(content);
+                }
+            } catch (error) {
+                console.error('Failed to decode clipboard content:', error);
+                // Try to extract the content directly if base64 decode fails
+                try {
+                    fallbackCopyToClipboard(base64Content);
+                } catch (fallbackError) {
+                    console.error('Fallback copy also failed:', fallbackError);
+                    alert('Failed to copy to clipboard. Please check browser permissions.');
+                }
+            }
+        }
+        
+        function fallbackCopyToClipboard(text) {
+            // Create a temporary textarea element
+            const textArea = document.createElement("textarea");
+            textArea.value = text;
+            textArea.style.position = "fixed";
+            textArea.style.top = "-9999px";
+            textArea.style.left = "-9999px";
+            document.body.appendChild(textArea);
+            textArea.focus();
+            textArea.select();
+            
+            try {
+                const successful = document.execCommand('copy');
+                if (successful) {
+                    const btn = event.target;
+                    if (btn) {
+                        const originalText = btn.textContent;
+                        btn.textContent = '✓ Copied';
+                        setTimeout(() => {
+                            btn.textContent = originalText;
+                        }, 2000);
+                    }
+                } else {
+                    throw new Error('execCommand copy failed');
+                }
+            } catch (err) {
+                console.error('Fallback copy failed:', err);
+                alert('Failed to copy to clipboard. Please copy manually.');
+            } finally {
+                document.body.removeChild(textArea);
+            }
+        }
+        
+        function copyDirectContent(globalVarName) {
+            const content = window[globalVarName];
+            if (!content) {
+                console.error('Content not found for:', globalVarName);
+                alert('Content not found to copy');
+                return;
+            }
+            
+            if (navigator.clipboard && navigator.clipboard.writeText) {
                 navigator.clipboard.writeText(content).then(() => {
                     // Show brief confirmation
                     const btn = event.target;
-                    const originalText = btn.textContent;
-                    btn.textContent = '✓ Copied';
-                    setTimeout(() => {
-                        btn.textContent = originalText;
-                    }, 2000);
+                    if (btn) {
+                        const originalText = btn.textContent;
+                        btn.textContent = '✓ Copied';
+                        setTimeout(() => {
+                            btn.textContent = originalText;
+                        }, 2000);
+                    }
                 }).catch(err => {
-                    console.error('Failed to copy:', err);
-                    alert('Failed to copy to clipboard');
+                    console.error('Clipboard API failed:', err);
+                    // Fallback to older method
+                    fallbackCopyToClipboard(content);
                 });
-            } catch (error) {
-                console.error('Failed to decode clipboard content:', error);
-                alert('Failed to copy to clipboard');
+            } else {
+                // Browser doesn't support clipboard API
+                fallbackCopyToClipboard(content);
             }
+            
+            // Clean up the global variable after copying
+            setTimeout(() => {
+                delete window[globalVarName];
+            }, 5000);
         }
         
         // ============================================================================

@@ -17,7 +17,29 @@
 - If an agent returns empty arrays or errors, show that to the user
 - Real data only - no exceptions
 
-### 3. ERROR HANDLING
+### 3. MCP CLIENT AUTHENTICATION - CRITICAL
+**🚨 AUTHENTICATION REQUIREMENTS 🚨**: 
+
+1. **The MCP SDK automatically handles initialization** - The `connect()` method sends the `initialize` request internally
+2. **Authentication must be provided via headers** - Use `requestInit.headers` to add `x-adcp-auth`:
+
+```javascript
+const transport = new StreamableHTTPClientTransport(url, {
+  requestInit: {
+    headers: {
+      'x-adcp-auth': authToken
+    }
+  }
+});
+await client.connect(transport); // This automatically calls initialize internally
+```
+
+3. **Server authentication issues** - If you get "Missing or invalid x-adcp-auth header" errors even when providing the header, verify:
+   - The auth token is correct and not expired
+   - The server is properly handling the authentication headers
+   - You're using the correct scope/API key for the server
+
+### 4. ERROR HANDLING
 - Show real errors from agents
 - Don't mask failures with fake success responses
 - Properly detect and report JSON-RPC errors

@@ -1,23 +1,8 @@
-// Official protocol clients
-// Note: MCP client is commented out for now since we're focusing on A2A
-// import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+// Official protocol clients - ALWAYS USE THESE, NO FALLBACKS
+import { callMCPTool } from './mcp-client.js';
+import { callA2ATool } from './a2a-client.js';
 
-// Import A2A client
-let A2AClient: any = null;
-try {
-  // Try to import the A2A client from the client module
-  const clientModule = require('@a2a-js/sdk/client');
-  A2AClient = clientModule.A2AClient;
-  if (A2AClient) {
-    console.log('✅ A2A SDK client imported successfully');
-  } else {
-    throw new Error('A2AClient not found in client module');
-  }
-} catch (error) {
-  console.warn('⚠️ A2A SDK import failed:', error instanceof Error ? error.message : String(error));
-  console.log('📄 Falling back to HTTP-based A2A implementation');
-  A2AClient = null;
-}
+console.log('✅ Official protocol clients loaded');
 import { 
   AgentConfig, 
   TestResult, 
@@ -432,7 +417,7 @@ async function handleAdCPResponse(
 }
 
 /**
- * Test MCP agent
+ * Test MCP agent using official client with HTTP streaming
  */
 async function testMCPAgent(
   agent: AgentConfig, 
@@ -447,199 +432,52 @@ async function testMCPAgent(
   try {
     validateAgentUrl(agent.agent_uri);
     
-    // Prepare tool arguments
-    const args: any = { brief };
-    if (promotedOffering) {
-      args.promoted_offering = promotedOffering;
-    }
+    // Prepare tool arguments - spec-compliant format (no wrapper)
+    // AdCP spec requires promoted_offering to always be present for get_products
+    const args: any = {
+      brief,
+      promoted_offering: promotedOffering || 'gourmet robot food' // Default to something fun
+    };
 
-    let result: any;
-    
-    if (USE_REAL_AGENTS) {
-      result = await circuitBreaker.call(async () => {
-        // Use real MCP agent with HTTP fallback
-        console.log(`🔗 Calling real MCP agent: ${agent.name} at ${agent.agent_uri}`);
-        
-        const authToken = getAuthToken(agent);
-        
-        // MCP typically uses JSON-RPC over HTTP/SSE
-        // Try to call the MCP endpoint directly with tool request
-        const requestPayload = {
-          jsonrpc: '2.0',
-          id: 1,
-          method: 'tools/call',
-          params: {
-            name: toolName,
-            arguments: {
-              brief,
-              ...(promotedOffering && { promoted_offering: promotedOffering })
-            }
-          }
-        };
-        
-        // Log request
-        debugLogs.push({
-          request: {
-            method: `${toolName} (MCP Tool)`,
-            url: agent.agent_uri,
-            headers: createAdCPHeaders(authToken, true),
-            body: JSON.stringify(requestPayload)
-          },
-          response: null,
-          timestamp: new Date().toISOString()
-        });
-        
-        const mcpResponse = await fetch(agent.agent_uri, {
-          method: 'POST',
-          headers: createAdCPHeaders(authToken, true),
-          body: JSON.stringify(requestPayload),
-          signal: AbortSignal.timeout(REQUEST_TIMEOUT)
-        });
-        
-        if (mcpResponse.ok) {
-          const expectedSchema = getExpectedSchema(toolName);
-          
-          // Handle SSE response for MCP
-          const responseText = await mcpResponse.text();
-          
-          let mcpResult: any = null;
-          
-          // Parse SSE format (event: message\ndata: {...})
-          if (responseText.includes('event:') && responseText.includes('data:')) {
-            const lines = responseText.split('\n');
-            for (const line of lines) {
-              if (line.startsWith('data: ')) {
-                const jsonStr = line.substring(6).trim();
-                if (jsonStr) {
-                  try {
-                    const parsed = JSON.parse(jsonStr);
-                    if (parsed.result) {
-                      mcpResult = parsed.result;
-                      break;
-                    } else if (parsed.error) {
-                      throw new Error(`MCP error: ${parsed.error.message || JSON.stringify(parsed.error)}`);
-                    }
-                  } catch (e) {
-                    // Silently skip unparseable lines
-                  }
-                }
-              }
-            }
-          }
-          
-          if (!mcpResult) {
-            // Fallback: try to parse as regular JSON (only if it looks like JSON)
-            if (responseText.trim().startsWith('{') || responseText.trim().startsWith('[')) {
-              try {
-                const jsonResponse = JSON.parse(responseText);
-                mcpResult = jsonResponse.result || jsonResponse;
-              } catch (parseErr) {
-                // Return empty result to trigger mock data
-                mcpResult = { products: [], formats: [] };
-              }
-            } else {
-              // Not JSON format, return empty result to trigger mock data
-              mcpResult = { products: [], formats: [] };
-            }
-          }
-          
-          const handledResponse = {
-            success: true,
-            data: mcpResult,
-            warnings: []
-          };
-          
-          // Log response
-          if (debugLogs.length > 0) {
-            debugLogs[debugLogs.length - 1].response = {
-              status: mcpResponse.status,
-              body: mcpResult
-            };
-          }
-          
-          return {
-            note: 'MCP agent called successfully using HTTP',
-            toolResponse: mcpResult,
-            adcpCompliance: {
-              warnings: handledResponse.warnings,
-              schemaValid: handledResponse.success
-            },
-            timestamp: new Date().toISOString()
-          };
-        } else {
-          // Log failed response before trying initialize
-          if (debugLogs.length > 0) {
-            debugLogs[debugLogs.length - 1].response = {
-              status: mcpResponse.status,
-              statusText: mcpResponse.statusText,
-              body: { error: `MCP tool call failed: ${mcpResponse.status} ${mcpResponse.statusText}` }
-            };
-          }
-          
-          // If direct tool call fails, try to get server info first
-          const infoResponse = await fetch(agent.agent_uri, {
-            method: 'POST',
-            headers: createAdCPHeaders(authToken, true),
-            body: JSON.stringify({
-              jsonrpc: '2.0',
-              id: 1,
-              method: 'initialize',
-              params: {
-                protocolVersion: '2024-11-05',
-                capabilities: {},
-                clientInfo: {
-                  name: 'AdCP-Testing-Framework',
-                  version: '1.0.0'
-                }
-              }
-            }),
-            signal: AbortSignal.timeout(REQUEST_TIMEOUT)
-          });
-          
-          if (infoResponse.ok) {
-            // Parse SSE response for initialize too
-            const initText = await infoResponse.text();
-            let initResult: any = null;
-            
-            if (initText.includes('event:') && initText.includes('data:')) {
-              const lines = initText.split('\n');
-              for (const line of lines) {
-                if (line.startsWith('data: ')) {
-                  const jsonStr = line.substring(6).trim();
-                  if (jsonStr) {
-                    try {
-                      const parsed = JSON.parse(jsonStr);
-                      initResult = parsed.result || parsed;
-                      break;
-                    } catch (e) {
-                      // Skip unparseable lines
-                    }
-                  }
-                }
-              }
-            } else {
-              try {
-                initResult = JSON.parse(initText);
-              } catch {
-                initResult = { error: 'Failed to parse initialize response' };
-              }
-            }
-            
-            return {
-              note: 'MCP agent initialize successful but tool call failed',
-              initializeResponse: initResult,
-              error: `Tool call failed: ${mcpResponse.status} ${mcpResponse.statusText}`,
-              timestamp: new Date().toISOString()
-            };
-          } else {
-            throw new Error(`MCP agent call failed: ${mcpResponse.status} ${mcpResponse.statusText}`);
-          }
-        }
+    const result = await circuitBreaker.call(async () => {
+      console.log(`🔗 Calling MCP agent using official client: ${agent.name} at ${agent.agent_uri}`);
+      
+      const authToken = getAuthToken(agent);
+      
+      // Log request (MCP uses x-adcp-auth header)
+      debugLogs.push({
+        request: {
+          method: `${toolName} (MCP Tool)`,
+          url: agent.agent_uri,
+          headers: authToken ? { 'x-adcp-auth': authToken } : {},
+          body: JSON.stringify({
+            tool: toolName,
+            arguments: args
+          })
+        },
+        response: null,
+        timestamp: new Date().toISOString()
       });
-    } else {
-      throw new Error('Real agents mode is required - simulated responses have been removed');
-    }
-
+      
+      // Call MCP tool using official client
+      const response = await callMCPTool(
+        agent.agent_uri,
+        toolName,
+        args,
+        authToken
+      );
+      
+      // Log response
+      if (debugLogs.length > 0) {
+        debugLogs[debugLogs.length - 1].response = {
+          status: 'completed',
+          body: response
+        };
+      }
+      
+      return response;
+    });
+    
     return {
       agent_id: agent.id,
       agent_name: agent.name,
@@ -671,7 +509,7 @@ async function testMCPAgent(
 }
 
 /**
- * Test A2A agent
+ * Test A2A agent using official client only - NO FALLBACKS
  */
 async function testA2AAgent(
   agent: AgentConfig,
@@ -686,188 +524,46 @@ async function testA2AAgent(
   try {
     validateAgentUrl(agent.agent_uri);
     
-    // Prepare message payload
-    const message = {
-      tool: toolName,
-      args: {
+    const result = await circuitBreaker.call(async () => {
+      console.log(`🔗 Calling A2A agent using official client: ${agent.name} at ${agent.agent_uri}`);
+      
+      const authToken = getAuthToken(agent);
+      
+      // Log request
+      debugLogs.push({
+        request: {
+          method: `${toolName} (A2A Tool)`,
+          url: agent.agent_uri,
+          headers: authToken ? { 'Authorization': `Bearer ${authToken}` } : {},
+          body: JSON.stringify({
+            tool: toolName,
+            brief,
+            ...(promotedOffering && { promoted_offering: promotedOffering })
+          })
+        },
+        response: null,
+        timestamp: new Date().toISOString()
+      });
+      
+      // Call A2A tool using official client
+      const response = await callA2ATool(
+        agent.agent_uri,
+        toolName,
         brief,
-        ...(promotedOffering && { promoted_offering: promotedOffering })
-      }
-    };
-
-    let result: any;
-    
-    if (USE_REAL_AGENTS && A2AClient) {
-      result = await circuitBreaker.call(async () => {
-        // Use official A2A client with agent discovery
-        console.log(`🔗 Calling real A2A agent: ${agent.name} at ${agent.agent_uri}`);
-        
-        const authToken = getAuthToken(agent);
-        
-        // Create A2A client with agent URL (it will discover the agent card)
-        const a2aClient = new A2AClient(agent.agent_uri, {
-          fetchImpl: authToken ? createAuthenticatedFetch(authToken) : undefined
-        });
-        
-        // Build request for logging
-        const requestPayload = {
-          message: {
-            kind: "message",
-            messageId: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-            role: "user",
-            parts: [{
-              kind: "text",
-              text: `Please execute ${toolName} with the following parameters: ${JSON.stringify({
-                brief,
-                ...(promotedOffering && { promoted_offering: promotedOffering })
-              })}`
-            }]
-          },
-          configuration: {
-            blocking: true, // Wait for response
-            acceptedOutputModes: ['application/json', 'text/plain']
-          }
+        promotedOffering,
+        authToken
+      );
+      
+      // Log response
+      if (debugLogs.length > 0) {
+        debugLogs[debugLogs.length - 1].response = {
+          status: 'completed',
+          body: response
         };
-        
-        // Log request
-        debugLogs.push({
-          request: {
-            method: toolName,
-            url: agent.agent_uri,
-            headers: authToken ? { 'Authorization': `Bearer ${authToken}` } : {},
-            body: JSON.stringify(requestPayload)
-          },
-          response: null,
-          timestamp: new Date().toISOString()
-        });
-        
-        // Send message using A2A protocol
-        const messageResponse = await a2aClient.sendMessage(requestPayload);
-        
-        // Check for JSON-RPC error in response
-        if (messageResponse?.error || messageResponse?.result?.error) {
-          const errorObj = messageResponse.error || messageResponse.result?.error;
-          const errorMessage = errorObj.message || JSON.stringify(errorObj);
-          
-          // Log error response
-          if (debugLogs.length > 0) {
-            debugLogs[debugLogs.length - 1].response = {
-              status: 'error',
-              body: messageResponse
-            };
-          }
-          
-          throw new Error(`A2A agent returned error: ${errorMessage}`);
-        }
-        
-        // Log successful response
-        if (debugLogs.length > 0) {
-          debugLogs[debugLogs.length - 1].response = {
-            status: 'completed',
-            body: messageResponse
-          };
-        }
-        
-        return messageResponse;
-      });
-    } else if (USE_REAL_AGENTS) {
-      result = await circuitBreaker.call(async () => {
-        // A2A client import failed, use fallback HTTP request
-        console.log(`🔗 A2A client unavailable, using HTTP fallback: ${agent.name} at ${agent.agent_uri}`);
-        console.log('⚠️ A2A client import failed - using direct HTTP request');
-        
-        const authToken = getAuthToken(agent);
-        
-        // Try to discover agent card from well-known path
-        const agentCardUrl = new URL('/.well-known/agent-card.json', agent.agent_uri).toString();
-        const response = await fetch(agentCardUrl, {
-          method: 'GET',
-          headers: createAdCPHeaders(authToken),
-          signal: AbortSignal.timeout(REQUEST_TIMEOUT)
-        });
-        
-        if (response.ok) {
-          const agentCard: any = await response.json();
-          
-          // Validate agent card structure
-          if (!agentCard.url && !agentCard.skills) {
-            throw new Error('Invalid agent card: missing required fields (url or skills)');
-          }
-          
-          // Now try to call the agent's service URL with the requested tool
-          const serviceUrl = agentCard.url || agent.agent_uri;
-          const requestPayload = {
-            jsonrpc: '2.0',
-            id: 1,
-            method: toolName,
-            params: {
-              brief,
-              ...(promotedOffering && { promoted_offering: promotedOffering })
-            }
-          };
-          
-          // Log request
-          debugLogs.push({
-            request: {
-              method: toolName,
-              url: serviceUrl,
-              headers: createAdCPHeaders(authToken),
-              body: JSON.stringify(requestPayload)
-            },
-            response: null,
-            timestamp: new Date().toISOString()
-          });
-          
-          const toolResponse = await fetch(serviceUrl, {
-            method: 'POST',
-            headers: createAdCPHeaders(authToken),
-            body: JSON.stringify(requestPayload),
-            signal: AbortSignal.timeout(REQUEST_TIMEOUT)
-          });
-          
-          if (toolResponse.ok) {
-            const expectedSchema = getExpectedSchema(toolName);
-            
-            const handledResponse = await handleAdCPResponse(toolResponse, expectedSchema, agent.name);
-            
-            // Log response
-            if (debugLogs.length > 0) {
-              debugLogs[debugLogs.length - 1].response = {
-                status: toolResponse.status,
-                body: handledResponse.data
-              };
-            }
-            
-            return {
-              note: 'A2A agent called successfully using HTTP fallback',
-              agentCard,
-              toolResponse: handledResponse.data,
-              adcpCompliance: {
-                warnings: handledResponse.warnings,
-                schemaValid: handledResponse.success,
-                agentCardValid: true
-              },
-              timestamp: new Date().toISOString()
-            };
-          } else {
-            return {
-              note: 'Agent card discovered but tool call failed',
-              agentCard,
-              error: `Tool call failed: ${toolResponse.status} ${toolResponse.statusText}`,
-              adcpCompliance: {
-                agentCardValid: true,
-                toolCallSuccessful: false
-              },
-              timestamp: new Date().toISOString()
-            };
-          }
-        } else {
-          throw new Error(`Agent card discovery failed: ${response.status} ${response.statusText}`);
-        }
-      });
-    } else {
-      throw new Error('Real agents mode is required - simulated responses have been removed');
-    }
+      }
+      
+      return response;
+    });
 
     return {
       agent_id: agent.id,
