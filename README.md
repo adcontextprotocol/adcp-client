@@ -108,6 +108,18 @@ The server runs on port 8080 in production, 3000 in development.
 
 ## Configuration
 
+### Development vs Production
+
+**Development (Local):**
+- Create a `.env` file from `.env.example`
+- Set `SALES_AGENTS_CONFIG` in the `.env` file
+- Leave `SALES_AGENTS_CONFIG` commented out to run with no agents (recommended for development)
+- Uncomment `SALES_AGENTS_CONFIG` only when testing with real agents
+
+**Production (Fly.io, Vercel, etc.):**
+- Set `SALES_AGENTS_CONFIG` as an environment variable or secret in your platform
+- The system automatically loads agents from the environment variable
+
 ### Agent Configuration Formats
 
 Agents are configured via the `SALES_AGENTS_CONFIG` environment variable. Here are examples for different scenarios:
