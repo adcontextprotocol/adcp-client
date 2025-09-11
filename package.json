@@ -12,7 +12,8 @@
     "start-legacy": "node server.js",
     "test-mcp-server": "node test-mcp-server.js",
     "generate-types": "tsx scripts/generate-types.ts",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node --test test/*.test.js",
+    "test:server-config": "node --test test/server-config.test.js"
   },
   "keywords": [
     "adcp",

@@ -45,9 +45,44 @@ await client.connect(transport); // This automatically calls initialize internal
 - Properly detect and report JSON-RPC errors
 - If a protocol client throws an error, let it bubble up
 
-## Recent Issues Fixed (2025-09-09)
+### 5. FLY.IO DEPLOYMENT REQUIREMENTS - CRITICAL 🚨
+**🚨 HOST/PORT CONFIGURATION REQUIREMENTS 🚨**:
 
-### Debug Logs "Unknown [undefined]" Issue
+1. **Server MUST listen on 0.0.0.0:8080 in production** - Fly.io requires this for external access
+2. **Environment-specific host binding**:
+   ```javascript
+   const host = process.env.HOST || (process.env.NODE_ENV === 'production' ? '0.0.0.0' : '127.0.0.1');
+   const port = parseInt(process.env.PORT || '8080');
+   ```
+3. **Common deployment failure**: Server listening on `127.0.0.1` will cause "instance refused connection" errors
+4. **Verification**: Check logs for `Server listening at http://0.0.0.0:8080` (not `127.0.0.1`)
+
+**Files to check when deploying**:
+- `src/server.ts` - Fastify server host/port configuration
+- `server.js` - Express server host/port configuration (if used)
+- `fly.toml` - Should have `internal_port = 8080`
+
+## Recent Issues Fixed
+
+### Server Host/Port Configuration Issue (2025-09-11)
+**Problem**: Fly.io deployment failing with "instance refused connection" errors.
+
+**Root Cause**: TypeScript server (`src/server.ts`) was configured to listen on `127.0.0.1:3000` by default instead of `0.0.0.0:8080` required by Fly.io.
+
+**Solution**: Updated server configuration to use environment-specific host binding:
+```javascript
+// Before (BROKEN in production)
+const port = parseInt(process.env.PORT || '3000');
+const host = process.env.HOST || '127.0.0.1';
+
+// After (WORKS in production) 
+const port = parseInt(process.env.PORT || '8080');
+const host = process.env.HOST || (process.env.NODE_ENV === 'production' ? '0.0.0.0' : '127.0.0.1');
+```
+
+**Prevention**: Always verify server logs show `http://0.0.0.0:8080` in production, not `http://127.0.0.1`.
+
+### Debug Logs "Unknown [undefined]" Issue (2025-09-09)
 **Problem**: UI displayed "Unknown [undefined]" instead of actual method names in debug logs.
 
 **Root Causes**:
@@ -121,6 +156,7 @@ Always accept both formats:
 
 ## Testing Checklist
 
+### Pre-Deployment Testing
 When making changes, always verify:
 - [ ] Debug logs show actual method names, not "Unknown [undefined]"
 - [ ] Agents load correctly in the dropdown
@@ -128,6 +164,27 @@ When making changes, always verify:
 - [ ] Formats display (even if mock data)
 - [ ] No 404 errors in browser console
 - [ ] Request/response pairs display correctly in debug panel
+- [ ] **Server configuration**: Verify host/port settings for production deployment
+
+### Deployment Testing (Fly.io)
+Before and after deploying:
+- [ ] **Pre-deploy**: Run `npm test` to ensure server configuration is correct
+- [ ] **Pre-deploy**: Run `npm run build` locally to catch TypeScript errors
+- [ ] **Pre-deploy**: Verify `src/server.ts` has correct host/port configuration
+- [ ] **Post-deploy**: Check `fly logs -n | grep "Server listening"` shows `http://0.0.0.0:8080`
+- [ ] **Post-deploy**: Test `curl -I https://adcp-testing.fly.dev` returns 200 OK
+- [ ] **Post-deploy**: Verify `fly status` shows machine in "started" state with healthy checks
+
+### Automated Tests
+The project includes unit tests to prevent regression of critical deployment configurations:
+
+- **Server Configuration Tests** (`test/server-config.test.js`):
+  - Validates host binding logic for production vs development
+  - Ensures correct port defaults for Fly.io compatibility
+  - Tests environment variable override behavior
+  - Run with: `npm run test:server-config`
+
+**Important**: Always run `npm test` before deploying to catch configuration issues early.
 
 ## Project Overview
 This is an AdCP (Advertising Protocol) testing framework deployed on Fly.io that supports both A2A and MCP protocols for testing advertising agents.
@@ -249,19 +306,27 @@ Should show:
 
 #### Common Issues
 
-1. **Secret update timeout**: If `fly secrets set` times out, check if it completed:
+1. **"Instance refused connection" / Deployment fails**: 
+   - **Cause**: Server listening on `127.0.0.1` instead of `0.0.0.0`
+   - **Fix**: Update server configuration to use environment-specific host binding
+   - **Verify**: Check logs for `Server listening at http://0.0.0.0:8080`
+   ```bash
+   fly logs -n | grep "Server listening"  # Should show 0.0.0.0:8080, not 127.0.0.1
+   ```
+
+2. **Secret update timeout**: If `fly secrets set` times out, check if it completed:
    ```bash
    fly secrets list  # check if digest changed
    fly logs -n       # check if app restarted with new config
    ```
 
-2. **Agent not responding**: Check agent health:
+3. **Agent not responding**: Check agent health:
    ```bash
    curl -I https://adcp-sales-agent.fly.dev
    curl -I https://adcp-sales-agent.fly.dev/mcp/
    ```
 
-3. **Authentication issues**: Verify auth token in agent config and ensure `requiresAuth: true`
+4. **Authentication issues**: Verify auth token in agent config and ensure `requiresAuth: true`
 
 ### File Structure
 - `fly.toml` - Fly.io configuration
@@ -283,6 +348,6 @@ Should show:
 
 ---
 
-*Last updated: 2025-09-04*
+*Last updated: 2025-09-11 (Added Fly.io deployment requirements and unit tests)*
 *Project: AdCP Testing Framework*
 *Environment: Fly.io Production*
