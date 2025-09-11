@@ -489,8 +489,8 @@ app.setErrorHandler((error, request, reply) => {
 // Start server
 const start = async () => {
   try {
-    const port = parseInt(process.env.PORT || '3000');
-    const host = process.env.HOST || '127.0.0.1';
+    const port = parseInt(process.env.PORT || '8080');
+    const host = process.env.HOST || (process.env.NODE_ENV === 'production' ? '0.0.0.0' : '127.0.0.1');
     
     await app.listen({ 
       port, 
