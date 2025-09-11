@@ -123,34 +123,28 @@ const STANDARD_FORMATS: CreativeFormat[] = [
 
 
 /**
- * Get configured sales agents from environment variables
+ * Get configured sales agents from environment variables (.env file only)
  */
 export function getConfiguredAgents(): AgentConfig[] {
   const configStr = process.env.SALES_AGENTS_CONFIG;
   
   if (!configStr) {
-    // Return default test agents if no config is provided
-    return [
-      {
-        id: 'demo-mcp',
-        name: 'Demo MCP Agent',
-        agent_uri: 'http://localhost:3001/mcp',
-        protocol: 'mcp',
-        requiresAuth: false
-      },
-      {
-        id: 'demo-a2a',
-        name: 'Demo A2A Agent', 
-        agent_uri: 'http://localhost:3002/a2a',
-        protocol: 'a2a',
-        requiresAuth: false
-      }
-    ];
+    // No agents configured - return empty array
+    // This prevents demo agents from loading when no real configuration exists
+    console.log('⚠️  No SALES_AGENTS_CONFIG found - no agents will be loaded');
+    console.log('💡 To enable agents, set SALES_AGENTS_CONFIG in your .env file');
+    return [];
   }
 
   try {
     const config = JSON.parse(configStr);
     if (config.agents && Array.isArray(config.agents)) {
+      console.log(`📡 Configured agents: ${config.agents.length}`);
+      config.agents.forEach((agent: any) => {
+        console.log(`  - ${agent.name} (${agent.protocol.toUpperCase()}) at ${agent.agent_uri}`);
+      });
+      console.log('🔧 Real agents mode: ENABLED');
+      
       return config.agents.map((agent: any) => ({
         id: String(agent.id),
         name: String(agent.name || agent.id),
