@@ -1,0 +1,1099 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AdAgents.json Manager - AdCP Testing Framework</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <style>
+        /* CSS Custom Properties for Theming */
+        :root {
+            /* Primary gradients */
+            --primary-gradient: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            --success-gradient: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+            --warning-gradient: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            --danger-gradient: linear-gradient(135deg, #fc466b 0%, #3f5efb 100%);
+            
+            /* Glass morphism effects */
+            --glass-bg: rgba(255, 255, 255, 0.1);
+            --glass-border: rgba(255, 255, 255, 0.2);
+            --glass-shadow: 0 8px 32px rgba(31, 38, 135, 0.37);
+            
+            /* Semantic colors */
+            --surface-primary: rgba(255, 255, 255, 0.95);
+            --surface-secondary: rgba(248, 250, 252, 0.8);
+            --text-primary: #1a202c;
+            --text-secondary: #4a5568;
+            --text-muted: #718096;
+            
+            /* Interactive colors */
+            --accent-blue: #4299e1;
+            --accent-purple: #9f7aea;
+            --accent-green: #48bb78;
+            --accent-orange: #ed8936;
+            
+            /* Animation timing */
+            --timing-fast: 0.2s;
+            --timing-normal: 0.4s;
+            --timing-slow: 0.6s;
+            --easing: cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        /* Modern Typography System */
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+            line-height: 1.6;
+            color: var(--text-primary);
+            font-weight: 400;
+            margin: 0;
+            padding: 0;
+            min-height: 100vh;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            position: relative;
+        }
+
+        /* Background Elements */
+        body::before {
+            content: '';
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: radial-gradient(circle at 20% 50%, rgba(120, 119, 198, 0.3) 0%, transparent 50%),
+                        radial-gradient(circle at 80% 20%, rgba(255, 119, 198, 0.3) 0%, transparent 50%),
+                        radial-gradient(circle at 40% 80%, rgba(120, 119, 198, 0.2) 0%, transparent 50%);
+            pointer-events: none;
+            z-index: 1;
+        }
+
+        /* Top Navigation */
+        .top-nav {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            box-shadow: 0 2px 20px rgba(0, 0, 0, 0.1);
+            position: sticky;
+            top: 0;
+            z-index: 1000;
+        }
+
+        .nav-container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            height: 60px;
+        }
+
+        .nav-brand h2 {
+            color: white;
+            margin: 0;
+            font-size: 18px;
+            font-weight: 600;
+        }
+
+        .nav-links {
+            display: flex;
+            gap: 30px;
+        }
+
+        .nav-link {
+            color: rgba(255, 255, 255, 0.8);
+            text-decoration: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            transition: all 0.3s ease;
+            font-weight: 500;
+            font-size: 14px;
+        }
+
+        .nav-link:hover {
+            color: white;
+            background: rgba(255, 255, 255, 0.1);
+            transform: translateY(-1px);
+        }
+
+        .nav-link.active {
+            color: white;
+            background: rgba(255, 255, 255, 0.2);
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        }
+
+        /* Main Content */
+        .main-content {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 40px 20px;
+            position: relative;
+            z-index: 2;
+        }
+
+        /* Page Header */
+        .page-header {
+            text-align: center;
+            margin-bottom: 50px;
+        }
+
+        .page-header h1 {
+            color: white;
+            font-size: 2.5rem;
+            font-weight: 700;
+            margin: 0 0 15px 0;
+            text-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+
+        .page-header p {
+            color: rgba(255, 255, 255, 0.9);
+            font-size: 1.1rem;
+            margin: 0;
+            max-width: 600px;
+            margin: 0 auto;
+        }
+
+        /* Glass-morphic Card Design */
+        .section {
+            background: var(--surface-primary);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 16px;
+            padding: 32px;
+            margin-bottom: 32px;
+            box-shadow: 
+                0 8px 32px rgba(0, 0, 0, 0.08),
+                0 1px 3px rgba(0, 0, 0, 0.12);
+            transition: all var(--timing-normal) var(--easing);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .section::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: var(--primary-gradient);
+            border-radius: 16px 16px 0 0;
+        }
+
+        .section h3 {
+            color: var(--text-primary);
+            margin: 0 0 20px 0;
+            font-size: 1.5rem;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .section h4 {
+            color: var(--text-secondary);
+            margin: 0 0 15px 0;
+            font-size: 1.2rem;
+            font-weight: 600;
+        }
+
+        /* Modern Button System */
+        .btn {
+            background: var(--primary-gradient);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-weight: 600;
+            font-size: 14px;
+            cursor: pointer;
+            transition: all var(--timing-fast) var(--easing);
+            text-decoration: none;
+            display: inline-block;
+            text-align: center;
+            box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 16px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn:active {
+            transform: translateY(0);
+        }
+
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .btn-secondary {
+            background: #6c757d;
+            box-shadow: 0 2px 8px rgba(108, 117, 125, 0.3);
+        }
+
+        .btn-secondary:hover {
+            box-shadow: 0 4px 16px rgba(108, 117, 125, 0.4);
+        }
+
+        /* Form Elements */
+        input[type="text"], input[type="url"], textarea {
+            width: 100%;
+            padding: 12px 16px;
+            border: 2px solid #e2e8f0;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: all var(--timing-fast) var(--easing);
+            font-family: inherit;
+            box-sizing: border-box;
+        }
+
+        input[type="text"]:focus, input[type="url"]:focus, textarea:focus {
+            outline: none;
+            border-color: var(--accent-blue);
+            box-shadow: 0 0 0 3px rgba(66, 153, 225, 0.1);
+        }
+
+        textarea {
+            resize: vertical;
+            min-height: 120px;
+            font-family: 'Monaco', 'Courier New', monospace;
+        }
+
+        /* Agent Entry Styling */
+        .agent-entry {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 12px;
+            padding: 16px;
+            border: 2px solid #e2e8f0;
+            border-radius: 12px;
+            background: #f8fafc;
+            transition: all var(--timing-fast) var(--easing);
+        }
+
+        .agent-entry:hover {
+            border-color: var(--accent-blue);
+            background: #f1f5f9;
+        }
+
+        .agent-entry input {
+            margin: 0;
+        }
+
+        .agent-entry .btn {
+            padding: 8px 12px;
+            margin: 0;
+            align-self: flex-start;
+        }
+
+        /* Results Display */
+        .validation-result {
+            margin-top: 20px;
+            padding: 20px;
+            border-radius: 12px;
+            border: 1px solid #e2e8f0;
+        }
+
+        .result-success {
+            background: #f0fdf4;
+            border-color: #bbf7d0;
+            color: #166534;
+        }
+
+        .result-warning {
+            background: #fffbeb;
+            border-color: #fcd34d;
+            color: #92400e;
+        }
+
+        .result-error {
+            background: #fef2f2;
+            border-color: #fca5a5;
+            color: #dc2626;
+        }
+
+        /* JSON Output */
+        .json-output-container {
+            position: relative;
+            margin-top: 20px;
+        }
+
+        .json-output {
+            width: 100%;
+            height: 300px;
+            font-family: 'Monaco', 'Courier New', monospace;
+            font-size: 13px;
+            padding: 16px;
+            border: 2px solid #e2e8f0;
+            border-radius: 12px;
+            background: #f8fafc;
+            resize: vertical;
+            box-sizing: border-box;
+        }
+
+        .copy-btn {
+            position: absolute;
+            top: 12px;
+            right: 12px;
+            padding: 6px 12px;
+            font-size: 12px;
+        }
+
+        /* Responsive Design */
+        @media (max-width: 768px) {
+            .main-content {
+                padding: 20px 10px;
+            }
+
+            .page-header h1 {
+                font-size: 2rem;
+            }
+
+            .section {
+                padding: 20px;
+            }
+
+            .agent-entry {
+                flex-direction: column;
+                gap: 8px;
+            }
+
+            .nav-container {
+                padding: 0 15px;
+            }
+
+            .nav-links {
+                gap: 15px;
+            }
+
+            .nav-link {
+                padding: 6px 12px;
+                font-size: 13px;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .page-header h1 {
+                font-size: 1.8rem;
+            }
+
+            .section {
+                padding: 16px;
+                margin-bottom: 20px;
+            }
+
+            .btn {
+                padding: 10px 16px;
+                font-size: 13px;
+            }
+        }
+
+        /* Loading States */
+        .loading {
+            opacity: 0.6;
+            pointer-events: none;
+        }
+
+        /* Utility Classes */
+        .text-center { text-align: center; }
+        .mb-1 { margin-bottom: 8px; }
+        .mb-2 { margin-bottom: 16px; }
+        .mb-3 { margin-bottom: 24px; }
+        .flex { display: flex; }
+        .gap-2 { gap: 8px; }
+        .gap-3 { gap: 12px; }
+    </style>
+</head>
+<body>
+    <!-- Top Navigation -->
+    <nav class="top-nav">
+        <div class="nav-container">
+            <div class="nav-brand">
+                <h2>AdCP Testing Framework</h2>
+            </div>
+            <div class="nav-links">
+                <a href="/" class="nav-link">🧪 Agent Testing</a>
+                <a href="/adagents.html" class="nav-link active">🔗 AdAgents Manager</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="main-content">
+        <!-- Page Header -->
+        <div class="page-header">
+            <h1>🔗 AdAgents.json Manager</h1>
+            <p>Validate, create, and manage adagents.json files for the Ad Context Protocol. Ensure your domain properly declares authorized sales agents according to the AdCP specification.</p>
+        </div>
+
+        <!-- Domain Validation Section -->
+        <div class="section">
+            <h3>🔍 Domain Validation</h3>
+            <p style="color: #666; margin-bottom: 20px;">Check if a domain has a properly formatted adagents.json file and validate agent cards. Enter any domain to validate compliance with the AdCP specification.</p>
+            
+            <div style="display: flex; gap: 12px; margin-bottom: 20px;">
+                <input type="text" id="domain-input" placeholder="example.com" style="flex: 1;">
+                <button class="btn" onclick="validateDomain()" id="validate-btn">🔍 Validate Domain</button>
+            </div>
+            
+            <div id="validation-results" style="display: none;">
+                <!-- Validation results will be populated here -->
+            </div>
+        </div>
+
+        <!-- AdAgents.json Creator Section -->
+        <div class="section">
+            <h3 id="creator-section-title">📝 Create AdAgents.json</h3>
+            <p id="creator-section-description" style="color: #666; margin-bottom: 20px;">Create a properly formatted adagents.json file for your domain. Add authorized sales agents and generate a compliant file ready for deployment.</p>
+            
+            <!-- Domain Input Step -->
+            <div id="creator-domain-step">
+                <h4>Step 1: Enter Your Domain</h4>
+                <p style="color: #666; margin-bottom: 16px;">First, enter your domain name to get personalized deployment instructions.</p>
+                <div style="display: flex; gap: 12px; margin-bottom: 20px;">
+                    <input type="text" id="creator-domain-input" placeholder="example.com" style="flex: 1;">
+                    <button class="btn" onclick="startCreating()" id="start-creating-btn">▶️ Start Creating</button>
+                </div>
+            </div>
+            
+            <!-- Agent Creation Form (hidden initially) -->
+            <div id="creator-form" style="display: none;">
+                <!-- Personalized Deployment Instructions -->
+                <div id="personalized-instructions" style="background: #e8f4fd; border: 1px solid #bee5eb; border-radius: 8px; padding: 16px; margin-bottom: 20px;">
+                    <h4 style="margin: 0 0 12px 0; color: #0c5460;">📍 File Placement Instructions for <span id="user-domain-display"></span></h4>
+                    <p style="margin: 0 0 8px 0; color: #0c5460;">After generating your adagents.json file, upload it to your domain's <code>/.well-known/</code> directory.</p>
+                    <p style="margin: 0; color: #0c5460;">
+                        <strong>Your file must be accessible at:</strong><br>
+                        <code id="user-file-path" style="background: white; padding: 4px 8px; border-radius: 4px; color: #0c5460; font-weight: bold;"></code>
+                    </p>
+                </div>
+                
+                <h4 id="step-2-title">Step 2: Add Authorized Agents</h4>
+                <div id="agents-list" style="margin-bottom: 20px;">
+                    <div class="agent-entry">
+                        <input type="url" placeholder="https://agent.example.com" style="flex: 2;" class="agent-url">
+                        <input type="text" placeholder="Authorized for all products and services" style="flex: 3;" class="agent-auth">
+                        <button class="btn" onclick="removeAgentEntry(this)" style="background: #dc3545;">✖️</button>
+                    </div>
+                </div>
+                
+                <div style="display: flex; gap: 12px; margin-bottom: 20px; flex-wrap: wrap;">
+                    <button class="btn" onclick="addAgentEntry()">➕ Add Agent</button>
+                    <button class="btn" onclick="loadExampleAgents()">📄 Load Example</button>
+                    <button class="btn" onclick="generateAdAgentsJson()" id="generate-btn">🚀 Generate JSON</button>
+                    <button class="btn btn-secondary" onclick="validateAgentCards()" id="validate-cards-btn" style="display: none;">🔍 Validate Cards</button>
+                </div>
+                
+                <div id="generated-json" style="display: none;">
+                    <h4>Generated adagents.json for <span id="generated-domain-display"></span></h4>
+                    <div class="json-output-container">
+                        <textarea id="json-output" class="json-output" readonly></textarea>
+                        <button class="btn copy-btn" onclick="copyToClipboard('json-output')">📋 Copy</button>
+                    </div>
+                    <div style="margin-top: 16px; display: flex; gap: 12px;">
+                        <button class="btn" onclick="downloadAdAgentsJson()">💾 Download File</button>
+                        <button class="btn btn-secondary" onclick="clearGenerated()">🗑️ Clear</button>
+                    </div>
+                    <div id="personalized-reminder" style="margin-top: 12px; padding: 12px; background: #fff3cd; border: 1px solid #ffeaa7; border-radius: 6px;">
+                        <p style="margin: 0; font-size: 14px; color: #856404;">
+                            <strong>📍 Next Step:</strong> Upload this file to <code id="reminder-file-path"></code> to make it discoverable by the AdCP protocol.
+                        </p>
+                    </div>
+                </div>
+                
+                <div style="margin-top: 20px; display: flex; gap: 12px;">
+                    <button class="btn btn-secondary" onclick="resetCreator()">⬅️ Back to Domain Entry</button>
+                </div>
+            </div>
+            
+            <div id="agent-cards-results" style="display: none; margin-top: 20px;">
+                <!-- Agent card validation results will be shown here -->
+            </div>
+        </div>
+
+        <!-- Documentation Section -->
+        <div class="section">
+            <h3>📚 AdCP Specification</h3>
+            <p style="color: #666; margin-bottom: 16px;">The adagents.json file must be hosted at <code>/.well-known/adagents.json</code> and follow the AdCP specification:</p>
+            
+            <div style="background: #f8fafc; padding: 20px; border-radius: 8px; border: 1px solid #e2e8f0;">
+                <h4>Required Structure:</h4>
+                <pre style="background: #1a202c; color: #f7fafc; padding: 16px; border-radius: 8px; overflow-x: auto; font-size: 13px;">{
+  "$schema": "https://adcontextprotocol.org/schemas/v1/adagents.json",
+  "authorized_agents": [
+    {
+      "url": "https://agent.example.com",
+      "authorized_for": "Description of authorization scope"
+    }
+  ],
+  "last_updated": "2025-01-10T12:00:00Z"
+}</pre>
+                
+                <div style="margin-top: 16px;">
+                    <h4>Key Requirements:</h4>
+                    <ul style="margin: 8px 0; padding-left: 20px;">
+                        <li><strong>HTTPS Required:</strong> All agent URLs must use HTTPS</li>
+                        <li><strong>Authorization Scope:</strong> 1-500 characters describing what each agent is authorized to do</li>
+                        <li><strong>Domain Matching:</strong> Agents validate authorization based on publisher domain</li>
+                        <li><strong>Agent Cards:</strong> Each agent should provide a valid agent card at their endpoint</li>
+                    </ul>
+                </div>
+                
+                <div style="margin-top: 16px;">
+                    <p style="color: #666; font-size: 14px; margin: 0;">
+                        <strong>Note:</strong> This tool validates against the AdCP adagents.json specification. 
+                        The structure and requirements shown above reflect the current protocol standards.
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ============================================================================
+        // AdAgents.json Management Functions
+        // ============================================================================
+
+        async function validateDomain() {
+            const domain = document.getElementById('domain-input').value.trim();
+            const validateBtn = document.getElementById('validate-btn');
+            const resultsDiv = document.getElementById('validation-results');
+
+            if (!domain) {
+                alert('Please enter a domain name');
+                return;
+            }
+
+            validateBtn.disabled = true;
+            validateBtn.textContent = '🔄 Validating...';
+            resultsDiv.style.display = 'none';
+
+            try {
+                console.log(`Validating adagents.json for domain: ${domain}`);
+                
+                const response = await fetch('/api/adagents/validate', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ domain })
+                });
+
+                const result = await response.json();
+                
+                if (result.success) {
+                    displayValidationResults(result.data);
+                    console.log(`Domain validation completed for ${domain}`);
+                } else {
+                    throw new Error(result.error || 'Validation failed');
+                }
+
+            } catch (error) {
+                console.error(`Domain validation failed: ${error.message}`);
+                resultsDiv.innerHTML = `
+                    <div class="validation-result result-error">
+                        <strong>❌ Validation Error</strong><br>
+                        ${error.message}
+                    </div>
+                `;
+                resultsDiv.style.display = 'block';
+            } finally {
+                validateBtn.disabled = false;
+                validateBtn.textContent = '🔍 Validate Domain';
+            }
+        }
+
+        function displayValidationResults(data) {
+            const resultsDiv = document.getElementById('validation-results');
+            const { domain, found, validation, agent_cards } = data;
+
+            let html = `<h4>Validation Results for ${domain}</h4>`;
+
+            // Overall status
+            if (found && validation.valid) {
+                html += `
+                    <div class="validation-result result-success">
+                        <strong>✅ Valid AdAgents.json Found</strong><br>
+                        Found at: <code>${validation.url}</code>
+                    </div>
+                `;
+            } else if (found && !validation.valid) {
+                html += `
+                    <div class="validation-result result-warning">
+                        <strong>⚠️ AdAgents.json Found but Invalid</strong><br>
+                        Found at: <code>${validation.url}</code>
+                    </div>
+                `;
+            } else {
+                html += `
+                    <div class="validation-result result-error">
+                        <strong>❌ No AdAgents.json Found</strong><br>
+                        Expected at: <code>https://${domain}/.well-known/adagents.json</code>
+                    </div>
+                `;
+            }
+
+            // Validation errors and warnings
+            if (validation.errors.length > 0 || validation.warnings.length > 0) {
+                html += '<div style="margin-top: 20px;">';
+                
+                if (validation.errors.length > 0) {
+                    html += '<h5>❌ Errors:</h5><ul style="margin-bottom: 10px;">';
+                    validation.errors.forEach(error => {
+                        html += `<li style="color: #dc2626;"><strong>${error.field}:</strong> ${error.message}</li>`;
+                    });
+                    html += '</ul>';
+                }
+
+                if (validation.warnings.length > 0) {
+                    html += '<h5>⚠️ Warnings:</h5><ul>';
+                    validation.warnings.forEach(warning => {
+                        html += `<li style="color: #92400e;"><strong>${warning.field}:</strong> ${warning.message}`;
+                        if (warning.suggestion) {
+                            html += `<br><em>Suggestion: ${warning.suggestion}</em>`;
+                        }
+                        html += '</li>';
+                    });
+                    html += '</ul>';
+                }
+                html += '</div>';
+            }
+
+            // Agent cards validation
+            if (agent_cards && agent_cards.length > 0) {
+                html += '<h5>🔍 Agent Card Validation:</h5>';
+                html += '<div style="background: #f8fafc; padding: 16px; border-radius: 8px; border: 1px solid #e2e8f0;">';
+                
+                agent_cards.forEach(card => {
+                    const status = card.valid ? '✅' : '❌';
+                    const statusColor = card.valid ? '#166534' : '#dc2626';
+                    
+                    // Extract agent name from card data if available
+                    let agentName = '';
+                    if (card.valid && card.card_data && card.card_data.name) {
+                        agentName = ` - ${card.card_data.name}`;
+                    }
+                    
+                    // Show which endpoint was used for successful validations
+                    let endpointInfo = '';
+                    if (card.valid && card.card_endpoint) {
+                        const endpointPath = card.card_endpoint.replace(card.agent_url, '');
+                        if (endpointPath === '/.well-known/agent-card.json') {
+                            endpointInfo = ' <span style="color: #059669; font-size: 11px;">[A2A]</span>';
+                        } else if (endpointPath === '') {
+                            endpointInfo = ' <span style="color: #7c3aed; font-size: 11px;">[Root]</span>';
+                        } else {
+                            endpointInfo = ` <span style="color: #7c3aed; font-size: 11px;">[${endpointPath}]</span>`;
+                        }
+                    }
+                    
+                    html += `
+                        <div style="margin-bottom: 10px; padding: 12px; border-left: 4px solid ${statusColor}; background: white; border-radius: 4px;">
+                            <strong>${status} ${card.agent_url}${agentName}</strong>${endpointInfo}
+                            ${card.response_time_ms ? `<span style="color: #666; font-size: 12px;"> (${card.response_time_ms}ms)</span>` : ''}
+                            ${card.status_code ? `<br><em>HTTP ${card.status_code}</em>` : ''}
+                            ${card.errors.length > 0 ? `<br><span style="color: #dc2626;">Errors: ${card.errors.join(', ')}</span>` : ''}
+                        </div>
+                    `;
+                });
+                html += '</div>';
+            }
+
+            // Raw data
+            if (validation.raw_data) {
+                html += `
+                    <details style="margin-top: 20px;">
+                        <summary style="cursor: pointer; font-weight: bold; color: var(--text-secondary);">📄 Raw AdAgents.json Data</summary>
+                        <pre style="background: #1a202c; color: #f7fafc; padding: 16px; border-radius: 8px; margin-top: 12px; font-size: 12px; overflow-x: auto;">${JSON.stringify(validation.raw_data, null, 2)}</pre>
+                    </details>
+                `;
+            }
+
+            resultsDiv.innerHTML = html;
+            resultsDiv.style.display = 'block';
+        }
+
+        function addAgentEntry() {
+            const agentsList = document.getElementById('agents-list');
+            const newEntry = document.createElement('div');
+            newEntry.className = 'agent-entry';
+            
+            newEntry.innerHTML = `
+                <input type="url" placeholder="https://agent.example.com" style="flex: 2;" class="agent-url">
+                <input type="text" placeholder="Authorized for all products and services" style="flex: 3;" class="agent-auth">
+                <button class="btn" onclick="removeAgentEntry(this)" style="background: #dc3545;">✖️</button>
+            `;
+            
+            agentsList.appendChild(newEntry);
+        }
+
+        function removeAgentEntry(button) {
+            const agentsList = document.getElementById('agents-list');
+            if (agentsList.children.length > 1) {
+                button.parentElement.remove();
+            } else {
+                alert('At least one agent is required');
+            }
+        }
+
+        function loadExampleAgents() {
+            // Clear existing entries
+            const agentsList = document.getElementById('agents-list');
+            agentsList.innerHTML = '';
+            
+            // Add example entries
+            const examples = [
+                { url: 'https://test-agent.adcontextprotocol.org', auth: 'Authorized for all display and video advertising products' },
+                { url: 'https://agent2.example.com', auth: 'Authorized for premium inventory and high-value campaigns only' }
+            ];
+            
+            examples.forEach(example => {
+                const newEntry = document.createElement('div');
+                newEntry.className = 'agent-entry';
+                
+                newEntry.innerHTML = `
+                    <input type="url" placeholder="https://agent.example.com" style="flex: 2;" class="agent-url" value="${example.url}">
+                    <input type="text" placeholder="Authorized for all products and services" style="flex: 3;" class="agent-auth" value="${example.auth}">
+                    <button class="btn" onclick="removeAgentEntry(this)" style="background: #dc3545;">✖️</button>
+                `;
+                
+                agentsList.appendChild(newEntry);
+            });
+            
+            console.log('Loaded example adagents configuration');
+        }
+
+        async function generateAdAgentsJson() {
+            const agentEntries = document.querySelectorAll('.agent-entry');
+            const authorizedAgents = [];
+
+            for (const entry of agentEntries) {
+                const url = entry.querySelector('.agent-url').value.trim();
+                const authorizedFor = entry.querySelector('.agent-auth').value.trim();
+
+                if (!url || !authorizedFor) {
+                    alert('Please fill in all agent URL and authorization fields');
+                    return;
+                }
+
+                authorizedAgents.push({ url, authorized_for: authorizedFor });
+            }
+
+            const generateBtn = document.getElementById('generate-btn');
+            generateBtn.disabled = true;
+            generateBtn.textContent = '🔄 Generating...';
+
+            try {
+                console.log(`Generating adagents.json with ${authorizedAgents.length} agents`);
+
+                const response = await fetch('/api/adagents/create', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        authorized_agents: authorizedAgents,
+                        include_schema: true,
+                        include_timestamp: true
+                    })
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    document.getElementById('json-output').value = result.data.adagents_json;
+                    document.getElementById('generated-json').style.display = 'block';
+                    document.getElementById('validate-cards-btn').style.display = 'inline-block';
+                    
+                    console.log('AdAgents.json generated successfully');
+                    
+                    // Show validation results if any issues
+                    if (result.data.validation.warnings.length > 0) {
+                        alert(`Generated successfully with ${result.data.validation.warnings.length} warnings. Check console for details.`);
+                        console.warn('Validation warnings:', result.data.validation.warnings);
+                    }
+                } else {
+                    throw new Error(result.error || 'Generation failed');
+                }
+
+            } catch (error) {
+                console.error(`AdAgents.json generation failed: ${error.message}`);
+                alert(`Generation failed: ${error.message}`);
+            } finally {
+                generateBtn.disabled = false;
+                generateBtn.textContent = '🚀 Generate JSON';
+            }
+        }
+
+        async function validateAgentCards() {
+            const agentUrls = Array.from(document.querySelectorAll('.agent-url')).map(input => input.value.trim()).filter(url => url);
+            
+            if (agentUrls.length === 0) {
+                alert('No agent URLs to validate');
+                return;
+            }
+
+            const validateBtn = document.getElementById('validate-cards-btn');
+            validateBtn.disabled = true;
+            validateBtn.textContent = '🔄 Validating...';
+
+            try {
+                console.log(`Validating ${agentUrls.length} agent cards`);
+
+                const response = await fetch('/api/adagents/validate-cards', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ agent_urls: agentUrls })
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    displayAgentCardsResults(result.data.agent_cards);
+                    console.log('Agent cards validation completed');
+                } else {
+                    throw new Error(result.error || 'Validation failed');
+                }
+
+            } catch (error) {
+                console.error(`Agent cards validation failed: ${error.message}`);
+                alert(`Validation failed: ${error.message}`);
+            } finally {
+                validateBtn.disabled = false;
+                validateBtn.textContent = '🔍 Validate Cards';
+            }
+        }
+
+        function displayAgentCardsResults(agentCards) {
+            const resultsDiv = document.getElementById('agent-cards-results');
+            
+            let html = '<h4>Agent Cards Validation Results</h4>';
+            html += '<div style="background: #f8fafc; padding: 16px; border-radius: 8px; border: 1px solid #e2e8f0;">';
+            
+            agentCards.forEach(card => {
+                const status = card.valid ? '✅' : '❌';
+                const statusColor = card.valid ? '#166534' : '#dc2626';
+                
+                html += `
+                    <div style="margin-bottom: 10px; padding: 12px; border-left: 4px solid ${statusColor}; background: white; border-radius: 4px;">
+                        <strong>${status} ${card.agent_url}</strong>
+                        ${card.response_time_ms ? `<span style="color: #666; font-size: 12px;"> (${card.response_time_ms}ms)</span>` : ''}
+                        ${card.status_code ? `<br><em>HTTP ${card.status_code}</em>` : ''}
+                        ${card.errors.length > 0 ? `<br><span style="color: #dc2626;">Issues: ${card.errors.join(', ')}</span>` : ''}
+                        ${card.valid && card.card_data ? `<br><span style="color: #166534;">✅ Agent card found and valid</span>` : ''}
+                    </div>
+                `;
+            });
+            
+            html += '</div>';
+            resultsDiv.innerHTML = html;
+            resultsDiv.style.display = 'block';
+        }
+
+        function copyToClipboard(textareaId) {
+            const textarea = document.getElementById(textareaId);
+            textarea.select();
+            textarea.setSelectionRange(0, 99999); // For mobile devices
+            
+            try {
+                document.execCommand('copy');
+                // Provide visual feedback
+                const button = event.target;
+                const originalText = button.textContent;
+                button.textContent = '✅ Copied!';
+                setTimeout(() => {
+                    button.textContent = originalText;
+                }, 2000);
+                
+                console.log('AdAgents.json copied to clipboard');
+            } catch (err) {
+                console.error('Failed to copy to clipboard:', err);
+                alert('Failed to copy to clipboard');
+            }
+        }
+
+        function downloadAdAgentsJson() {
+            const jsonContent = document.getElementById('json-output').value;
+            
+            if (!jsonContent) {
+                alert('No JSON content to download');
+                return;
+            }
+
+            const blob = new Blob([jsonContent], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'adagents.json';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            
+            console.log('AdAgents.json file downloaded');
+        }
+
+        function clearGenerated() {
+            document.getElementById('generated-json').style.display = 'none';
+            document.getElementById('validate-cards-btn').style.display = 'none';
+            document.getElementById('agent-cards-results').style.display = 'none';
+            document.getElementById('json-output').value = '';
+        }
+
+        async function startCreating() {
+            const domain = document.getElementById('creator-domain-input').value.trim();
+            const startBtn = document.getElementById('start-creating-btn');
+            
+            if (!domain) {
+                alert('Please enter a domain name');
+                return;
+            }
+
+            // Normalize domain (remove protocol, www, trailing slash)
+            const normalizedDomain = domain.replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/$/, '');
+            
+            startBtn.disabled = true;
+            startBtn.textContent = '🔄 Checking domain...';
+            
+            try {
+                // First validate domain to see if adagents.json exists
+                console.log(`Checking existing adagents.json for domain: ${normalizedDomain}`);
+                
+                const response = await fetch('/api/adagents/validate', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ domain: normalizedDomain })
+                });
+
+                const result = await response.json();
+                let isUpdate = false;
+                let existingAgents = [];
+                
+                if (result.success && result.data.found && result.data.validation.valid) {
+                    // Valid adagents.json exists - this is an update
+                    isUpdate = true;
+                    if (result.data.validation.raw_data && result.data.validation.raw_data.authorized_agents) {
+                        existingAgents = result.data.validation.raw_data.authorized_agents;
+                    }
+                    console.log(`Found existing valid adagents.json with ${existingAgents.length} agents`);
+                } else {
+                    console.log(`No valid adagents.json found - will create new file`);
+                }
+
+                // Update UI based on create vs update mode
+                updateUIForCreateOrUpdate(normalizedDomain, isUpdate, existingAgents);
+                
+                // Hide domain step, show creation form
+                document.getElementById('creator-domain-step').style.display = 'none';
+                document.getElementById('creator-form').style.display = 'block';
+                
+                startBtn.disabled = false;
+                startBtn.textContent = '▶️ Start Creating';
+                
+            } catch (error) {
+                console.error(`Error checking domain: ${error.message}`);
+                // On error, default to create mode
+                updateUIForCreateOrUpdate(normalizedDomain, false, []);
+                
+                // Hide domain step, show creation form
+                document.getElementById('creator-domain-step').style.display = 'none';
+                document.getElementById('creator-form').style.display = 'block';
+                
+                startBtn.disabled = false;
+                startBtn.textContent = '▶️ Start Creating';
+            }
+        }
+
+        function updateUIForCreateOrUpdate(normalizedDomain, isUpdate, existingAgents) {
+            // Update section title and description
+            const sectionTitle = document.getElementById('creator-section-title');
+            const sectionDescription = document.getElementById('creator-section-description');
+            
+            if (isUpdate) {
+                sectionTitle.innerHTML = '📝 Update AdAgents.json';
+                sectionDescription.textContent = 'Update the existing adagents.json file for your domain. Modify authorized sales agents and generate an updated compliant file ready for deployment.';
+            } else {
+                sectionTitle.innerHTML = '📝 Create AdAgents.json';
+                sectionDescription.textContent = 'Create a properly formatted adagents.json file for your domain. Add authorized sales agents and generate a compliant file ready for deployment.';
+            }
+            
+            // Update personalized instructions
+            document.getElementById('user-domain-display').textContent = normalizedDomain;
+            document.getElementById('user-file-path').textContent = `https://${normalizedDomain}/.well-known/adagents.json`;
+            document.getElementById('generated-domain-display').textContent = normalizedDomain;
+            document.getElementById('reminder-file-path').textContent = `https://${normalizedDomain}/.well-known/adagents.json`;
+            
+            // Pre-populate agents if updating
+            if (isUpdate && existingAgents.length > 0) {
+                const agentsList = document.getElementById('agents-list');
+                agentsList.innerHTML = '';
+                
+                existingAgents.forEach(agent => {
+                    const newEntry = document.createElement('div');
+                    newEntry.className = 'agent-entry';
+                    
+                    newEntry.innerHTML = `
+                        <input type="url" placeholder="https://agent.example.com" style="flex: 2;" class="agent-url" value="${agent.url}">
+                        <input type="text" placeholder="Authorized for all products and services" style="flex: 3;" class="agent-auth" value="${agent.authorized_for}">
+                        <button class="btn" onclick="removeAgentEntry(this)" style="background: #dc3545;">✖️</button>
+                    `;
+                    
+                    agentsList.appendChild(newEntry);
+                });
+                
+                console.log(`Pre-populated ${existingAgents.length} existing agents for update`);
+            }
+            
+            // Update personalized instructions based on create/update mode
+            const instructionsHeading = document.querySelector('#personalized-instructions h4');
+            const step2Title = document.getElementById('step-2-title');
+            if (isUpdate) {
+                instructionsHeading.innerHTML = `📍 File Update Instructions for <span id="user-domain-display">${normalizedDomain}</span>`;
+                step2Title.textContent = 'Step 2: Update Authorized Agents';
+            } else {
+                instructionsHeading.innerHTML = `📍 File Placement Instructions for <span id="user-domain-display">${normalizedDomain}</span>`;
+                step2Title.textContent = 'Step 2: Add Authorized Agents';
+            }
+        }
+
+        function resetCreator() {
+            // Clear form data
+            document.getElementById('creator-domain-input').value = '';
+            document.getElementById('json-output').value = '';
+            
+            // Reset agent entries to single default entry
+            const agentsList = document.getElementById('agents-list');
+            agentsList.innerHTML = `
+                <div class="agent-entry">
+                    <input type="url" placeholder="https://agent.example.com" style="flex: 2;" class="agent-url">
+                    <input type="text" placeholder="Authorized for all products and services" style="flex: 3;" class="agent-auth">
+                    <button class="btn" onclick="removeAgentEntry(this)" style="background: #dc3545;">✖️</button>
+                </div>
+            `;
+            
+            // Hide all sections except domain step
+            document.getElementById('creator-form').style.display = 'none';
+            document.getElementById('generated-json').style.display = 'none';
+            document.getElementById('validate-cards-btn').style.display = 'none';
+            document.getElementById('agent-cards-results').style.display = 'none';
+            document.getElementById('creator-domain-step').style.display = 'block';
+            
+            console.log('Reset adagents.json creator to domain entry step');
+        }
+
+        // Initialize with one example agent entry
+        document.addEventListener('DOMContentLoaded', function() {
+            console.log('AdAgents.json Manager initialized');
+        });
+    </script>
+</body>
+</html>

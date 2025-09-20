@@ -132,7 +132,66 @@
         }
         
         .main-content.debug-open {
-            margin-right: 520px;
+            /* No margin adjustment needed - debug panel is now at bottom */
+        }
+
+        /* Top Navigation */
+        .top-nav {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            box-shadow: 0 2px 20px rgba(0, 0, 0, 0.1);
+            position: sticky;
+            top: 0;
+            z-index: 1000;
+        }
+
+        .nav-container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            height: 60px;
+        }
+
+        .nav-brand h2 {
+            color: white;
+            margin: 0;
+            font-size: 18px;
+            font-weight: 600;
+        }
+
+        .nav-links {
+            display: flex;
+            gap: 30px;
+        }
+
+        .nav-link {
+            color: rgba(255, 255, 255, 0.8);
+            text-decoration: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            transition: all 0.3s ease;
+            font-weight: 500;
+            font-size: 14px;
+        }
+
+        .nav-link:hover {
+            color: white;
+            background: rgba(255, 255, 255, 0.1);
+            transform: translateY(-1px);
+        }
+
+        .nav-link.active {
+            color: white;
+            background: rgba(255, 255, 255, 0.2);
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        }
+
+        /* Adjust main content to account for navigation */
+        .main-content {
+            margin-top: 0;
         }
 
         /* Glass-morphic Card Design */
@@ -169,20 +228,21 @@
                 0 4px 12px rgba(0, 0, 0, 0.08);
         }
         
-        /* Glassmorphic Debug Panel */
+        /* Glassmorphic Debug Panel - Bottom Positioned */
         .debug-panel {
             position: fixed;
-            right: -500px;
-            top: 80px; /* Start below header */
-            width: 500px;
-            height: calc(100vh - 80px); /* Subtract header height */
+            bottom: -400px;
+            left: 0;
+            right: 0;
+            width: 100%;
+            height: 400px;
             background: rgba(26, 26, 26, 0.95);
             backdrop-filter: blur(20px);
             border: 1px solid rgba(255, 255, 255, 0.1);
             box-shadow: 
-                -8px 0 32px rgba(0, 0, 0, 0.3),
-                inset 1px 0 1px rgba(255, 255, 255, 0.1);
-            transition: right var(--timing-normal) var(--easing);
+                0 -8px 32px rgba(0, 0, 0, 0.3),
+                inset 0 1px 1px rgba(255, 255, 255, 0.1);
+            transition: bottom var(--timing-normal) var(--easing);
             display: flex;
             flex-direction: column;
             z-index: 1000;
@@ -190,7 +250,7 @@
         }
         
         .debug-panel.open {
-            right: 0;
+            bottom: 0;
         }
         
         .debug-header {
@@ -474,11 +534,17 @@
             border-radius: 25px;
             cursor: pointer;
             box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-            z-index: 999;
+            z-index: 1001;
             font-weight: bold;
             display: flex;
             align-items: center;
             gap: 8px;
+            transition: all 0.3s ease;
+        }
+        
+        /* Move toggle button up when debug panel is open */
+        .toggle-debug-btn.panel-open {
+            bottom: 420px; /* 400px panel height + 20px margin */
         }
         
         .toggle-debug-btn:hover {
@@ -1420,12 +1486,16 @@
             }
 
             .main-content.debug-open {
-                margin-right: 10px;
+                /* No margin adjustment needed - debug panel is now at bottom */
             }
 
             .debug-panel {
-                width: 100%;
-                right: -100%;
+                height: 300px; /* Smaller height on mobile */
+                bottom: -300px;
+            }
+            
+            .toggle-debug-btn.panel-open {
+                bottom: 320px; /* 300px panel height + 20px margin on mobile */
             }
             
             /* Stack tables vertically on mobile */
@@ -1509,6 +1579,19 @@
             Ad Context Protocol
         </div>
     </div>
+
+    <!-- Top Navigation -->
+    <nav class="top-nav">
+        <div class="nav-container">
+            <div class="nav-brand">
+                <h2>AdCP Testing Framework</h2>
+            </div>
+            <div class="nav-links">
+                <a href="/" class="nav-link active">🧪 Agent Testing</a>
+                <a href="/adagents.html" class="nav-link">🔗 AdAgents Manager</a>
+            </div>
+        </div>
+    </nav>
 
     <div class="main-content debug-open" id="main-content">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px;">
@@ -4229,15 +4312,18 @@
             const mainContent = document.getElementById('main-content');
             const btnText = document.getElementById('debug-btn-text');
             const btnIcon = document.getElementById('debug-btn-icon');
+            const toggleBtn = document.querySelector('.toggle-debug-btn');
             
             if (debugPanelOpen) {
                 panel.classList.add('open');
                 mainContent.classList.add('debug-open');
+                toggleBtn.classList.add('panel-open');
                 btnText.textContent = 'Hide Debug';
                 btnIcon.textContent = '✖️';
             } else {
                 panel.classList.remove('open');
                 mainContent.classList.remove('debug-open');
+                toggleBtn.classList.remove('panel-open');
                 btnText.textContent = 'Show Debug';
                 btnIcon.textContent = '🔍';
             }
@@ -7051,6 +7137,12 @@ ${JSON.stringify(result, null, 2)}
         document.addEventListener('DOMContentLoaded', async function() {
             // Agents are loaded dynamically from API - no hardcoded defaults
             // This prevents issues with mismatched agent IDs
+            
+            // Initialize debug panel button position since it starts open
+            const toggleBtn = document.querySelector('.toggle-debug-btn');
+            if (debugPanelOpen && toggleBtn) {
+                toggleBtn.classList.add('panel-open');
+            }
             
             // Load custom agents from localStorage
             loadCustomAgentsFromStorage();
