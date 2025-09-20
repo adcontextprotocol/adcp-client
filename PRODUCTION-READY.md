@@ -3,8 +3,8 @@
 ## ✅ What's Configured for Production
 
 ### **Real Agent Integration**
-- **Test A2A Agent**: `https://adcp-sales-agent.fly.dev`
-- **Test MCP Agent**: `https://adcp-sales-agent.fly.dev/mcp`
+- **Test A2A Agent**: `https://test-agent.adcontextprotocol.org`
+- **Test MCP Agent**: `https://test-agent.adcontextprotocol.org/mcp`
 - **Protocol Support**: Both A2A and MCP protocols with real HTTP requests
 
 ### **Deployment Configuration**
@@ -30,14 +30,14 @@ fly secrets set 'SALES_AGENTS_CONFIG={
     {
       "id": "test_agent_a2a",
       "name": "Test A2A Agent",
-      "agent_uri": "https://adcp-sales-agent.fly.dev",
+      "agent_uri": "https://test-agent.adcontextprotocol.org",
       "protocol": "a2a",
       "requiresAuth": false
     },
     {
       "id": "test_agent_mcp",
       "name": "Test MCP Agent",
-      "agent_uri": "https://adcp-sales-agent.fly.dev/mcp",
+      "agent_uri": "https://test-agent.adcontextprotocol.org/mcp",
       "protocol": "mcp",
       "requiresAuth": false
     }
@@ -56,14 +56,14 @@ fly certs add testing.adcontextprotocol.org
 ### A2A Agent
 - **ID**: `test_agent_a2a`
 - **Name**: `Test A2A Agent`
-- **Endpoint**: `https://adcp-sales-agent.fly.dev`
+- **Endpoint**: `https://test-agent.adcontextprotocol.org`
 - **Protocol**: `a2a`
 - **Auth**: No authentication required for testing
 
 ### MCP Agent
 - **ID**: `test_agent_mcp` 
 - **Name**: `Test MCP Agent`
-- **Endpoint**: `https://adcp-sales-agent.fly.dev/mcp`
+- **Endpoint**: `https://test-agent.adcontextprotocol.org/mcp`
 - **Protocol**: `mcp`
 - **Auth**: No authentication required for testing
 
@@ -85,7 +85,7 @@ curl -X POST https://testing.adcontextprotocol.org/api/test \
       {
         "id": "test_agent_a2a",
         "name": "Test A2A Agent",
-        "agent_uri": "https://adcp-sales-agent.fly.dev",
+        "agent_uri": "https://test-agent.adcontextprotocol.org",
         "protocol": "a2a",
         "requiresAuth": false
       }
