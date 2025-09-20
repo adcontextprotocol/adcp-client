@@ -360,15 +360,17 @@ app.post('/api/sales/agents/:agentId/query', async (request, reply) => {
       };
     }
 
-    // Use the existing testAgents function
-    const results = await testAgents([agent], body.brief || body.brandStory || body.message || 'Test query', body.promoted_offering || body.offering, body.tool_name || body.toolName);
+    // Use the existing testAgents function with tool-specific parameters
+    const toolName = body.tool_name || body.toolName || 'get_products';
+    const brief = body.brief || body.brandStory || body.message || 'Test query';
+    const promotedOffering = body.promoted_offering || body.offering;
+    
+    // Pass tool-specific params if provided
+    const toolParams = body.params || {};
+    const results = await testAgents([agent], brief, promotedOffering, toolName, toolParams);
     
     // Extract the data from the nested response structure
     const extractedData = extractResponseData(results[0].data) || {};
-    
-    // No mock data - return actual agent responses
-    const toolName = body.tool_name || body.toolName || 'get_products';
-    
     
     
     // Transform debug logs to the format the UI expects
@@ -377,7 +379,7 @@ app.post('/api/sales/agents/:agentId/query', async (request, reply) => {
     if (results[0].debug_logs && results[0].debug_logs.length > 0) {
       // Transform our backend format (single object with request/response) to UI format (separate entries)
       results[0].debug_logs.forEach(log => {
-        if (log.request) {
+        if (log.request && log.request.method && log.request.method !== 'undefined') {
           debugLogs.push({
             type: 'request',
             method: log.request.method,

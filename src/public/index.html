@@ -2366,10 +2366,7 @@
                 throw new Error('Agent not found');
             }
             
-            const result = await callADCPTool(selectedAgent, 'list_creative_formats', {
-                include_source: true,
-                force_refresh: true
-            });
+            const result = await callADCPTool(selectedAgent, 'list_creative_formats', {});
             
             if (result && result.formats) {
                 creativeFormats = result.formats;
@@ -2675,9 +2672,7 @@
             try {
                 // Fetch both agent formats and standard formats in parallel
                 const [agentResult, standardFormats] = await Promise.allSettled([
-                    callADCPTool(selectedAgent, 'list_creative_formats', {
-                        standard_only: false  // Get all formats, not just IAB standard
-                    }),
+                    callADCPTool(selectedAgent, 'list_creative_formats', {}),
                     fetchStandardFormats()
                 ]);
                 
@@ -3267,16 +3262,28 @@
             
             const headers = {
                 'Content-Type': 'application/json',
-                'Content-Type': 'application/json',
                 ...testingHeaders
             };
             
+            // Only send brief/offering for tools that need them
             const requestBody = {
-                brandStory: params.brief || "ADCP Testing Suite execution",
-                offering: params.promoted_offering || null,
                 agentConfig: agent,
                 toolName: toolName
             };
+            
+            // Add brief and offering only for tools that use them
+            if (toolName === 'get_products') {
+                requestBody.brandStory = params.brief || "ADCP Testing Suite execution";
+                requestBody.offering = params.promoted_offering || null;
+            } else if (toolName !== 'list_creative_formats' && toolName !== 'manage_creative_assets' && toolName !== 'list_creatives') {
+                // For other tools that might need brief, include it but not offering
+                requestBody.brandStory = params.brief || "ADCP Testing Suite execution";
+            }
+            
+            // Always include the tool-specific params
+            if (params && Object.keys(params).length > 0) {
+                requestBody.params = params;
+            }
             
             // Log the outgoing request to backend API
             logEvent('info', `🔄 Backend API Request: POST /api/sales/agents/${agent.id}/query`);
@@ -6773,52 +6780,58 @@ ${JSON.stringify(result, null, 2)}
                 return;
             }
             
-            const mode = document.getElementById('create-mode').value;
-            let assets = [];
-            
-            if (mode === 'single') {
-                // Build single creative asset
-                const width = parseInt(document.getElementById('creative-width').value) || 300;
-                const height = parseInt(document.getElementById('creative-height').value) || 250;
-                const tags = document.getElementById('creative-tags').value
-                    .split(',')
-                    .map(t => t.trim())
-                    .filter(t => t);
-                
-                assets.push({
-                    name: document.getElementById('creative-name').value || 'Untitled Creative',
-                    type: document.getElementById('creative-type').value,
-                    media_url: document.getElementById('creative-url').value || 'https://example.com/creative.jpg',
-                    format: `${width}x${height}`,
-                    dimensions: { width, height },
-                    tags: tags.length > 0 ? tags : ['test'],
-                    status: 'active'
-                });
-            } else {
-                // Parse batch JSON
-                try {
-                    assets = JSON.parse(document.getElementById('batch-creatives-json').value);
-                } catch (e) {
-                    alert('Invalid JSON for batch upload: ' + e.message);
-                    return;
-                }
-            }
-            
-            const assignToMediaBuy = document.getElementById('assign-to-media-buy').checked;
-            const mediaBuyId = assignToMediaBuy ? document.getElementById('target-media-buy-id').value : null;
-            
-            const params = {
-                action: 'create',
-                assets: assets
-            };
-            
-            if (mediaBuyId) {
-                params.media_buy_id = mediaBuyId;
-            }
-            
-            logEvent('info', `➕ Creating ${assets.length} creative(s)...`);
+            // Get the create button and add loading state
+            const createButton = event.target;
+            const originalText = createButton.textContent;
+            createButton.disabled = true;
+            createButton.textContent = 'Creating...';
             
             try {
+                const mode = document.getElementById('create-mode').value;
+                let assets = [];
+                
+                if (mode === 'single') {
+                    // Build single creative asset
+                    const width = parseInt(document.getElementById('creative-width').value) || 300;
+                    const height = parseInt(document.getElementById('creative-height').value) || 250;
+                    const tags = document.getElementById('creative-tags').value
+                        .split(',')
+                        .map(t => t.trim())
+                        .filter(t => t);
+                    
+                    assets.push({
+                        name: document.getElementById('creative-name').value || 'Untitled Creative',
+                        type: document.getElementById('creative-type').value,
+                        media_url: document.getElementById('creative-url').value || 'https://example.com/creative.jpg',
+                        format: `${width}x${height}`,
+                        dimensions: { width, height },
+                        tags: tags.length > 0 ? tags : ['test'],
+                        status: 'active'
+                    });
+                } else {
+                    // Parse batch JSON
+                    try {
+                        assets = JSON.parse(document.getElementById('batch-creatives-json').value);
+                    } catch (e) {
+                        alert('Invalid JSON for batch upload: ' + e.message);
+                        return;
+                    }
+                }
+                
+                const assignToMediaBuy = document.getElementById('assign-to-media-buy').checked;
+                const mediaBuyId = assignToMediaBuy ? document.getElementById('target-media-buy-id').value : null;
+                
+                const params = {
+                    action: 'create',
+                    assets: assets
+                };
+                
+                if (mediaBuyId) {
+                    params.media_buy_id = mediaBuyId;
+                }
+                
+                logEvent('info', `➕ Creating ${assets.length} creative(s)...`);
+                
                 const result = await callADCPTool(selectedAgent, 'manage_creative_assets', params);
                 
                 if (result && result.success) {
@@ -6830,6 +6843,10 @@ ${JSON.stringify(result, null, 2)}
                 }
             } catch (error) {
                 logEvent('error', `Error creating creatives: ${error.message}`);
+            } finally {
+                // Always restore button state
+                createButton.disabled = false;
+                createButton.textContent = originalText;
             }
         }
         

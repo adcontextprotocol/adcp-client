@@ -417,7 +417,8 @@ async function testMCPAgent(
   agent: AgentConfig, 
   brief: string, 
   promotedOffering?: string,
-  toolName: string = 'get_products'
+  toolName: string = 'get_products',
+  toolParams?: Record<string, any>
 ): Promise<TestResult> {
   const startTime = Date.now();
   const circuitBreaker = getCircuitBreaker(agent.id);
@@ -429,7 +430,10 @@ async function testMCPAgent(
     // Prepare tool arguments based on tool type - spec-compliant format (no wrapper)
     let args: any = {};
     
-    if (toolName === 'get_products') {
+    // If tool-specific params are provided, use them directly
+    if (toolParams && Object.keys(toolParams).length > 0) {
+      args = toolParams;
+    } else if (toolName === 'get_products') {
       // AdCP spec requires promoted_offering to always be present for get_products
       args = {
         brief,
@@ -441,6 +445,9 @@ async function testMCPAgent(
       args = {};
     } else if (toolName === 'list_creatives') {
       // list_creatives typically doesn't need brief/promoted_offering
+      args = {};
+    } else if (toolName === 'manage_creative_assets') {
+      // manage_creative_assets gets its params from the frontend (action, assets, etc.)
       args = {};
     } else {
       // For other tools, include brief but not promoted_offering unless needed
@@ -553,7 +560,8 @@ async function testA2AAgent(
   agent: AgentConfig,
   brief: string,
   promotedOffering?: string,
-  toolName: string = 'get_products'
+  toolName: string = 'get_products',
+  toolParams?: Record<string, any>
 ): Promise<TestResult> {
   const startTime = Date.now();
   const circuitBreaker = getCircuitBreaker(agent.id);
@@ -570,7 +578,10 @@ async function testA2AAgent(
       // Prepare tool-specific arguments for A2A as well
       let toolArgs: any = { tool: toolName };
       
-      if (toolName === 'get_products') {
+      // If tool-specific params are provided, merge them in
+      if (toolParams && Object.keys(toolParams).length > 0) {
+        toolArgs = { ...toolArgs, ...toolParams };
+      } else if (toolName === 'get_products') {
         toolArgs.brief = brief;
         if (promotedOffering) {
           toolArgs.promoted_offering = promotedOffering;
@@ -579,6 +590,8 @@ async function testA2AAgent(
         // list_creative_formats doesn't need brief or promoted_offering
       } else if (toolName === 'list_creatives') {
         // list_creatives typically doesn't need these parameters
+      } else if (toolName === 'manage_creative_assets') {
+        // manage_creative_assets gets its params from frontend, no brief needed
       } else {
         // For other tools, include brief but be careful with promoted_offering
         toolArgs.brief = brief;
@@ -603,7 +616,7 @@ async function testA2AAgent(
       if (toolName === 'get_products') {
         a2aBrief = brief;
         a2aPromotedOffering = promotedOffering;
-      } else if (toolName === 'list_creative_formats' || toolName === 'list_creatives') {
+      } else if (toolName === 'list_creative_formats' || toolName === 'list_creatives' || toolName === 'manage_creative_assets') {
         // These tools don't need brief or promoted_offering parameters
         a2aBrief = undefined;
         a2aPromotedOffering = undefined;
@@ -670,7 +683,8 @@ export async function testSingleAgent(
   agentId: string,
   brief: string,
   promotedOffering?: string,
-  toolName?: string
+  toolName?: string,
+  toolParams?: Record<string, any>
 ): Promise<TestResult> {
   const agents = getConfiguredAgents();
   const agent = agents.find(a => a.id === agentId);
@@ -687,9 +701,9 @@ export async function testSingleAgent(
   }
 
   if (agent.protocol === 'mcp') {
-    return testMCPAgent(agent, brief, promotedOffering, toolName);
+    return testMCPAgent(agent, brief, promotedOffering, toolName, toolParams);
   } else if (agent.protocol === 'a2a') {
-    return testA2AAgent(agent, brief, promotedOffering, toolName);
+    return testA2AAgent(agent, brief, promotedOffering, toolName, toolParams);
   } else {
     return {
       agent_id: agentId,
@@ -709,7 +723,8 @@ export async function testAgents(
   agentConfigs: AgentConfig[],
   brief: string,
   promotedOffering?: string,
-  toolName?: string
+  toolName?: string,
+  toolParams?: Record<string, any>
 ): Promise<TestResult[]> {
   const results: TestResult[] = [];
   
@@ -719,9 +734,9 @@ export async function testAgents(
     
     const batchPromises = batch.map(agent => {
       if (agent.protocol === 'mcp') {
-        return testMCPAgent(agent, brief, promotedOffering, toolName);
+        return testMCPAgent(agent, brief, promotedOffering, toolName, toolParams);
       } else if (agent.protocol === 'a2a') {
-        return testA2AAgent(agent, brief, promotedOffering, toolName);
+        return testA2AAgent(agent, brief, promotedOffering, toolName, toolParams);
       } else {
         return Promise.resolve({
           agent_id: agent.id,
