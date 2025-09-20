@@ -241,7 +241,7 @@ The production `SALES_AGENTS_CONFIG` should contain:
     {
       "id": "principal_3bd0d4a8_a2a",
       "name": "AdCP Test Agent",
-      "agent_uri": "https://adcp-sales-agent.fly.dev",
+      "agent_uri": "https://test-agent.adcontextprotocol.org",
       "protocol": "a2a",
       "auth_token_env": "<AUTH_TOKEN>",
       "requiresAuth": true
@@ -249,7 +249,7 @@ The production `SALES_AGENTS_CONFIG` should contain:
     {
       "id": "principal_3bd0d4a8_mcp", 
       "name": "AdCP Test Agent",
-      "agent_uri": "https://adcp-sales-agent.fly.dev/mcp/",
+      "agent_uri": "https://test-agent.adcontextprotocol.org/mcp/",
       "protocol": "mcp",
       "auth_token_env": "<AUTH_TOKEN>",
       "requiresAuth": true
@@ -265,7 +265,7 @@ When you need to change agents, auth tokens, or URIs:
 
 ```bash
 # Single line format for terminal (replace <AUTH_TOKEN> with actual token)
-fly secrets set SALES_AGENTS_CONFIG='{"agents":[{"id":"principal_3bd0d4a8_a2a","name":"AdCP Test Agent","agent_uri":"https://adcp-sales-agent.fly.dev","protocol":"a2a","auth_token_env":"<AUTH_TOKEN>","requiresAuth":true},{"id":"principal_3bd0d4a8_mcp","name":"AdCP Test Agent","agent_uri":"https://adcp-sales-agent.fly.dev/mcp/","protocol":"mcp","auth_token_env":"<AUTH_TOKEN>","requiresAuth":true}]}'
+fly secrets set SALES_AGENTS_CONFIG='{"agents":[{"id":"principal_3bd0d4a8_a2a","name":"AdCP Test Agent","agent_uri":"https://test-agent.adcontextprotocol.org","protocol":"a2a","auth_token_env":"<AUTH_TOKEN>","requiresAuth":true},{"id":"principal_3bd0d4a8_mcp","name":"AdCP Test Agent","agent_uri":"https://test-agent.adcontextprotocol.org/mcp/","protocol":"mcp","auth_token_env":"<AUTH_TOKEN>","requiresAuth":true}]}'
 ```
 
 #### Toggle Real vs Demo Agents
@@ -299,8 +299,8 @@ fly logs -n | grep "Configured agents"
 Should show:
 ```
 📡 Configured agents: 2
-  - AdCP Test Agent (A2A) at https://adcp-sales-agent.fly.dev  
-  - AdCP Test Agent (MCP) at https://adcp-sales-agent.fly.dev/mcp/
+  - AdCP Test Agent (A2A) at https://test-agent.adcontextprotocol.org  
+  - AdCP Test Agent (MCP) at https://test-agent.adcontextprotocol.org/mcp/
 🔧 Real agents mode: ENABLED
 ```
 
@@ -322,8 +322,8 @@ Should show:
 
 3. **Agent not responding**: Check agent health:
    ```bash
-   curl -I https://adcp-sales-agent.fly.dev
-   curl -I https://adcp-sales-agent.fly.dev/mcp/
+   curl -I https://test-agent.adcontextprotocol.org
+   curl -I https://test-agent.adcontextprotocol.org/mcp/
    ```
 
 4. **Authentication issues**: Verify auth token in agent config and ensure `requiresAuth: true`

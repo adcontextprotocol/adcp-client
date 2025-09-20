@@ -37,11 +37,14 @@ export async function callA2ATool(
       messageId: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
       role: "user",
       parts: [{
-        kind: "text",
-        text: `Please execute ${toolName} with the following parameters: ${JSON.stringify({
-          brief,
-          ...(promotedOffering && { promoted_offering: promotedOffering })
-        })}`
+        kind: "data",
+        data: {
+          skill: toolName,
+          parameters: {
+            brief,
+            ...(promotedOffering && { promoted_offering: promotedOffering })
+          }
+        }
       }]
     },
     configuration: {
