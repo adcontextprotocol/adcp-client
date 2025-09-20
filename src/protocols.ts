@@ -417,7 +417,8 @@ async function testMCPAgent(
   agent: AgentConfig, 
   brief: string, 
   promotedOffering?: string,
-  toolName: string = 'get_products'
+  toolName: string = 'get_products',
+  toolParams?: Record<string, any>
 ): Promise<TestResult> {
   const startTime = Date.now();
   const circuitBreaker = getCircuitBreaker(agent.id);
@@ -426,12 +427,32 @@ async function testMCPAgent(
   try {
     validateAgentUrl(agent.agent_uri);
     
-    // Prepare tool arguments - spec-compliant format (no wrapper)
-    // AdCP spec requires promoted_offering to always be present for get_products
-    const args: any = {
-      brief,
-      promoted_offering: promotedOffering || 'gourmet robot food' // Default to something fun
-    };
+    // Prepare tool arguments based on tool type - spec-compliant format (no wrapper)
+    let args: any = {};
+    
+    // If tool-specific params are provided, use them directly
+    if (toolParams && Object.keys(toolParams).length > 0) {
+      args = toolParams;
+    } else if (toolName === 'get_products') {
+      // AdCP spec requires promoted_offering to always be present for get_products
+      args = {
+        brief,
+        promoted_offering: promotedOffering || 'gourmet robot food'
+      };
+    } else if (toolName === 'list_creative_formats') {
+      // list_creative_formats accepts optional: type, category, format_ids
+      // Don't send brief or promoted_offering - they're not valid parameters
+      args = {};
+    } else if (toolName === 'list_creatives') {
+      // list_creatives typically doesn't need brief/promoted_offering
+      args = {};
+    } else if (toolName === 'manage_creative_assets') {
+      // manage_creative_assets gets its params from the frontend (action, assets, etc.)
+      args = {};
+    } else {
+      // For other tools, include brief but not promoted_offering unless needed
+      args = { brief };
+    }
 
     const result = await circuitBreaker.call(async () => {
       console.log(`🔗 Calling MCP agent using official client: ${agent.name} at ${agent.agent_uri}`);
@@ -453,17 +474,19 @@ async function testMCPAgent(
         timestamp: new Date().toISOString()
       });
       
-      // Call MCP tool using official client
+      // Call MCP tool using official client and pass debugLogs
       const response = await callMCPTool(
         agent.agent_uri,
         toolName,
         args,
-        authToken
+        authToken,
+        debugLogs
       );
       
-      // Log response
-      if (debugLogs.length > 0) {
-        debugLogs[debugLogs.length - 1].response = {
+      // Find and update the request entry (not necessarily the last one due to MCP client adding its own entries)
+      const requestEntry = debugLogs.find(log => log.request && !log.response);
+      if (requestEntry) {
+        requestEntry.response = {
           status: 'completed',
           body: response
         };
@@ -472,12 +495,40 @@ async function testMCPAgent(
       return response;
     });
     
+    // Extract data from MCP response structure
+    let extractedData = result;
+    if (result && result.content && Array.isArray(result.content)) {
+      // Try to extract from structuredContent first
+      if (result.structuredContent) {
+        const structured = result.structuredContent;
+        if (structured.products || structured.formats || structured.creatives) {
+          extractedData = {
+            products: structured.products,
+            formats: structured.formats, 
+            creatives: structured.creatives,
+            message: structured.message,
+            errors: structured.errors
+          };
+        }
+      } else if (result.content[0] && result.content[0].text) {
+        // Fallback: try to parse JSON from content text
+        try {
+          const parsedContent = JSON.parse(result.content[0].text);
+          if (parsedContent.products || parsedContent.formats || parsedContent.creatives) {
+            extractedData = parsedContent;
+          }
+        } catch (parseError) {
+          console.log('Could not parse MCP content text as JSON:', parseError);
+        }
+      }
+    }
+    
     return {
       agent_id: agent.id,
       agent_name: agent.name,
       success: true,
       response_time_ms: Date.now() - startTime,
-      data: result,
+      data: extractedData,
       timestamp: new Date().toISOString(),
       debug_logs: debugLogs
     };
@@ -509,7 +560,8 @@ async function testA2AAgent(
   agent: AgentConfig,
   brief: string,
   promotedOffering?: string,
-  toolName: string = 'get_products'
+  toolName: string = 'get_products',
+  toolParams?: Record<string, any>
 ): Promise<TestResult> {
   const startTime = Date.now();
   const circuitBreaker = getCircuitBreaker(agent.id);
@@ -523,34 +575,69 @@ async function testA2AAgent(
       
       const authToken = getAuthToken(agent);
       
+      // Prepare tool-specific arguments for A2A as well
+      let toolArgs: any = { tool: toolName };
+      
+      // If tool-specific params are provided, merge them in
+      if (toolParams && Object.keys(toolParams).length > 0) {
+        toolArgs = { ...toolArgs, ...toolParams };
+      } else if (toolName === 'get_products') {
+        toolArgs.brief = brief;
+        if (promotedOffering) {
+          toolArgs.promoted_offering = promotedOffering;
+        }
+      } else if (toolName === 'list_creative_formats') {
+        // list_creative_formats doesn't need brief or promoted_offering
+      } else if (toolName === 'list_creatives') {
+        // list_creatives typically doesn't need these parameters
+      } else if (toolName === 'manage_creative_assets') {
+        // manage_creative_assets gets its params from frontend, no brief needed
+      } else {
+        // For other tools, include brief but be careful with promoted_offering
+        toolArgs.brief = brief;
+      }
+      
       // Log request
       debugLogs.push({
         request: {
           method: `${toolName} (A2A Tool)`,
           url: agent.agent_uri,
           headers: authToken ? { 'Authorization': `Bearer ${authToken}` } : {},
-          body: JSON.stringify({
-            tool: toolName,
-            brief,
-            ...(promotedOffering && { promoted_offering: promotedOffering })
-          })
+          body: JSON.stringify(toolArgs)
         },
         response: null,
         timestamp: new Date().toISOString()
       });
       
-      // Call A2A tool using official client
+      // Call A2A tool using official client with tool-specific parameters
+      let a2aBrief: string | undefined = undefined;
+      let a2aPromotedOffering: string | undefined = undefined;
+      
+      if (toolName === 'get_products') {
+        a2aBrief = brief;
+        a2aPromotedOffering = promotedOffering;
+      } else if (toolName === 'list_creative_formats' || toolName === 'list_creatives' || toolName === 'manage_creative_assets') {
+        // These tools don't need brief or promoted_offering parameters
+        a2aBrief = undefined;
+        a2aPromotedOffering = undefined;
+      } else {
+        // For other tools, include brief but not promoted_offering
+        a2aBrief = brief;
+        a2aPromotedOffering = undefined;
+      }
+      
       const response = await callA2ATool(
         agent.agent_uri,
         toolName,
-        brief,
-        promotedOffering,
+        a2aBrief || '',  // A2A client expects string, not undefined
+        a2aPromotedOffering,
         authToken
       );
       
-      // Log response
-      if (debugLogs.length > 0) {
-        debugLogs[debugLogs.length - 1].response = {
+      // Find and update the request entry
+      const requestEntry = debugLogs.find(log => log.request && !log.response);
+      if (requestEntry) {
+        requestEntry.response = {
           status: 'completed',
           body: response
         };
@@ -596,7 +683,8 @@ export async function testSingleAgent(
   agentId: string,
   brief: string,
   promotedOffering?: string,
-  toolName?: string
+  toolName?: string,
+  toolParams?: Record<string, any>
 ): Promise<TestResult> {
   const agents = getConfiguredAgents();
   const agent = agents.find(a => a.id === agentId);
@@ -613,9 +701,9 @@ export async function testSingleAgent(
   }
 
   if (agent.protocol === 'mcp') {
-    return testMCPAgent(agent, brief, promotedOffering, toolName);
+    return testMCPAgent(agent, brief, promotedOffering, toolName, toolParams);
   } else if (agent.protocol === 'a2a') {
-    return testA2AAgent(agent, brief, promotedOffering, toolName);
+    return testA2AAgent(agent, brief, promotedOffering, toolName, toolParams);
   } else {
     return {
       agent_id: agentId,
@@ -635,7 +723,8 @@ export async function testAgents(
   agentConfigs: AgentConfig[],
   brief: string,
   promotedOffering?: string,
-  toolName?: string
+  toolName?: string,
+  toolParams?: Record<string, any>
 ): Promise<TestResult[]> {
   const results: TestResult[] = [];
   
@@ -645,9 +734,9 @@ export async function testAgents(
     
     const batchPromises = batch.map(agent => {
       if (agent.protocol === 'mcp') {
-        return testMCPAgent(agent, brief, promotedOffering, toolName);
+        return testMCPAgent(agent, brief, promotedOffering, toolName, toolParams);
       } else if (agent.protocol === 'a2a') {
-        return testA2AAgent(agent, brief, promotedOffering, toolName);
+        return testA2AAgent(agent, brief, promotedOffering, toolName, toolParams);
       } else {
         return Promise.resolve({
           agent_id: agent.id,

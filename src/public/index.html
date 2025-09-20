@@ -1519,9 +1519,10 @@
             <div style="display: flex; align-items: center; gap: 15px;">
                 <div style="display: flex; align-items: center; gap: 10px;">
                     <label>Agent:</label>
-                    <select id="agent-selector" style="min-width: 200px;">
+                    <select id="agent-selector" style="min-width: 200px;" onchange="onAgentSelected()">
                         <option value="">Select an agent...</option>
                     </select>
+                    <button id="refresh-agent-btn" class="btn btn-small" onclick="refreshAgentData()" disabled>🔄 Load Agent Data</button>
                     <button class="btn btn-secondary btn-small" onclick="toggleAddAgent()" id="add-toggle-btn">➕ Add Agent</button>
                     <button class="btn btn-small" onclick="viewAllAgents()" style="background-color: #28a745; color: white; margin-left: 5px;">📋 View All</button>
                 </div>
@@ -1587,7 +1588,7 @@
         <!-- Products Section -->
         <div class="section">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
-                <h3>📦 Available Products</h3>
+                <h3>📦 Available Products <span style="color: #666; font-size: 14px; font-weight: normal;">- Auto-loaded with agent data</span></h3>
                 <div style="display: flex; align-items: center; gap: 10px;">
                     <input type="text" 
                            id="promoted-offering-refresh" 
@@ -1595,7 +1596,6 @@
                            value="gourmet robot food" 
                            style="padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; width: 200px;"
                            title="Specify the promoted offering for product discovery">
-                    <button id="refresh-products-btn" class="btn" onclick="refreshProducts()">🔄 Refresh Products</button>
                 </div>
             </div>
             
@@ -1608,10 +1608,10 @@
                             </th>
                             <th style="padding: 12px; text-align: left; border: 1px solid #dee2e6;">Product ID</th>
                             <th style="padding: 12px; text-align: left; border: 1px solid #dee2e6;">Name</th>
-                            <th style="padding: 12px; text-align: left; border: 1px solid #dee2e6;">Type</th>
+                            <th style="padding: 12px; text-align: left; border: 1px solid #dee2e6;">Delivery Type</th>
                             <th style="padding: 12px; text-align: left; border: 1px solid #dee2e6;">CPM</th>
-                            <th style="padding: 12px; text-align: left; border: 1px solid #dee2e6;">Available</th>
-                            <th style="padding: 12px; text-align: left; border: 1px solid #dee2e6;">Target</th>
+                            <th style="padding: 12px; text-align: left; border: 1px solid #dee2e6;">Min Spend</th>
+                            <th style="padding: 12px; text-align: left; border: 1px solid #dee2e6;">Formats</th>
                             <th style="padding: 12px; text-align: left; border: 1px solid #dee2e6; width: 80px;">AdCP</th>
                         </tr>
                     </thead>
@@ -1634,7 +1634,7 @@
         <div class="section">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
                 <h3>🎨 Creative Formats</h3>
-                <button id="refresh-creative-formats-btn" class="btn" onclick="refreshCreativeFormats()">🔄 Refresh Creative Formats</button>
+                <span style="color: #666; font-size: 14px;">Auto-loaded with agent data</span>
             </div>
             
             <div style="overflow-x: auto;">
@@ -2207,7 +2207,258 @@
         };
 
         // ============================================================================
-        // Products Table Management
+        // Agent Data Management
+        // ============================================================================
+        
+        async function onAgentSelected() {
+            const selectedAgentId = document.getElementById('agent-selector').value;
+            const refreshBtn = document.getElementById('refresh-agent-btn');
+            
+            if (!selectedAgentId) {
+                // Clear all data when no agent selected
+                products = [];
+                creativeFormats = [];
+                mediaByUs = [];
+                updateProductsTable();
+                updateCreativeFormatsTable();
+                updateMediaBuysTable();
+                refreshBtn.disabled = true;
+                refreshBtn.innerHTML = '🔄 Load Agent Data';
+                logEvent('info', 'Agent cleared - data reset');
+                return;
+            }
+            
+            // Enable the load button but don't auto-load
+            refreshBtn.disabled = false;
+            refreshBtn.innerHTML = '🔄 Load Agent Data';
+            logEvent('info', `Agent selected: ${selectedAgentId}. Click "Load Agent Data" to fetch inventory.`);
+        }
+        
+        async function refreshAgentData() {
+            const selectedAgentId = document.getElementById('agent-selector').value;
+            if (!selectedAgentId) {
+                logEvent('warning', 'No agent selected');
+                return;
+            }
+            
+            const refreshBtn = document.getElementById('refresh-agent-btn');
+            const originalText = refreshBtn.innerHTML;
+            refreshBtn.innerHTML = '⏳ Loading...';
+            refreshBtn.disabled = true;
+            
+            logEvent('info', 'Loading agent data (progressive loading)...');
+            
+            // Track completion status
+            const loadStatus = {
+                products: false,
+                formats: false,
+                creatives: false
+            };
+            
+            // Update button text with progress
+            const updateProgress = () => {
+                const completed = Object.values(loadStatus).filter(Boolean).length;
+                const total = Object.keys(loadStatus).length;
+                refreshBtn.innerHTML = `⏳ Loading... (${completed}/${total})`;
+            };
+            
+            // Progressive loading with error isolation
+            const loadTasks = [
+                {
+                    name: 'products',
+                    task: async () => {
+                        try {
+                            await loadProducts();
+                            loadStatus.products = true;
+                            logEvent('success', '✅ Products loaded');
+                        } catch (error) {
+                            logEvent('error', `❌ Products failed: ${error.message}`);
+                        }
+                        updateProgress();
+                    }
+                },
+                {
+                    name: 'formats',
+                    task: async () => {
+                        try {
+                            await loadCreativeFormats();
+                            loadStatus.formats = true;
+                            logEvent('success', '✅ Creative formats loaded');
+                        } catch (error) {
+                            logEvent('error', `❌ Creative formats failed: ${error.message}`);
+                        }
+                        updateProgress();
+                    }
+                },
+                {
+                    name: 'creatives',
+                    task: async () => {
+                        try {
+                            await loadCreatives();
+                            loadStatus.creatives = true;
+                            logEvent('success', '✅ Creatives loaded');
+                        } catch (error) {
+                            logEvent('error', `❌ Creatives failed: ${error.message}`);
+                        }
+                        updateProgress();
+                    }
+                }
+            ];
+            
+            // Start all tasks in parallel with error isolation
+            await Promise.allSettled(loadTasks.map(task => task.task()));
+            
+            // Final status
+            const completedCount = Object.values(loadStatus).filter(Boolean).length;
+            const totalCount = Object.keys(loadStatus).length;
+            
+            if (completedCount === totalCount) {
+                logEvent('success', `🎉 All agent data loaded successfully (${completedCount}/${totalCount})`);
+            } else if (completedCount > 0) {
+                logEvent('warning', `⚠️ Partial success: ${completedCount}/${totalCount} sections loaded`);
+            } else {
+                logEvent('error', '❌ All data loading failed');
+            }
+            
+            // Reset button
+            refreshBtn.innerHTML = originalText;
+            refreshBtn.disabled = false;
+        }
+        
+        async function loadProducts() {
+            const selectedAgentId = document.getElementById('agent-selector').value;
+            const promotedOffering = document.getElementById('promoted-offering-refresh').value || 'gourmet robot food';
+            
+            // Show loading state
+            setProductsLoadingState(true);
+            
+            const selectedAgent = agents.find(a => a.id === selectedAgentId);
+            if (!selectedAgent) {
+                setProductsLoadingState(false, 'error');
+                throw new Error('Agent not found');
+            }
+            
+            const result = await callADCPTool(selectedAgent, 'get_products', {
+                brief: 'Discover available advertising products for testing',
+                promoted_offering: promotedOffering
+            });
+            
+            if (result && result.products) {
+                products = result.products;
+                updateProductsTable();
+                setProductsLoadingState(false, 'success');
+                logEvent('success', `Loaded ${products.length} products`);
+            } else {
+                setProductsLoadingState(false, 'warning');
+                logEvent('warning', 'No products returned from agent');
+            }
+        }
+        
+        async function loadCreativeFormats() {
+            const selectedAgentId = document.getElementById('agent-selector').value;
+            
+            // Show loading state
+            setFormatsLoadingState(true);
+            
+            const selectedAgent = agents.find(a => a.id === selectedAgentId);
+            if (!selectedAgent) {
+                setFormatsLoadingState(false, 'error');
+                throw new Error('Agent not found');
+            }
+            
+            const result = await callADCPTool(selectedAgent, 'list_creative_formats', {});
+            
+            if (result && result.formats) {
+                creativeFormats = result.formats;
+                updateCreativeFormatsTable();
+                setFormatsLoadingState(false, 'success');
+                logEvent('success', `Loaded ${creativeFormats.length} creative formats`);
+            } else {
+                setFormatsLoadingState(false, 'warning');
+                logEvent('warning', 'No creative formats returned from agent');
+            }
+        }
+        
+        async function loadCreatives() {
+            const selectedAgentId = document.getElementById('agent-selector').value;
+            
+            // Show loading state (if there's a creatives section)
+            setCreativesLoadingState(true);
+            
+            const selectedAgent = agents.find(a => a.id === selectedAgentId);
+            if (!selectedAgent) {
+                setCreativesLoadingState(false, 'error');
+                throw new Error('Agent not found');
+            }
+            
+            const result = await callADCPTool(selectedAgent, 'list_creatives', {
+                // Add any default parameters if needed
+            });
+            
+            if (result && result.creatives) {
+                // Update creatives table if it exists
+                setCreativesLoadingState(false, 'success');
+                logEvent('success', `Loaded ${result.creatives.length} creatives`);
+                
+                // Find and update creatives table if it exists
+                const creativesTable = document.getElementById('creatives-list');
+                if (creativesTable) {
+                    updateCreativesDisplay(result.creatives);
+                }
+            } else {
+                setCreativesLoadingState(false, 'warning');
+                logEvent('warning', 'No creatives returned from agent');
+            }
+        }
+
+        // Helper functions for section loading states
+        function setProductsLoadingState(loading, status = null) {
+            const header = document.querySelector('#products-section h3, .section h3');
+            if (!header || !header.textContent.includes('Products')) return;
+            
+            if (loading) {
+                header.innerHTML = '📦 Available Products <span style="color: #007bff;">⏳ Loading...</span>';
+            } else {
+                const statusIcon = {
+                    'success': '<span style="color: #28a745;">✅</span>',
+                    'warning': '<span style="color: #ffc107;">⚠️</span>',
+                    'error': '<span style="color: #dc3545;">❌</span>'
+                }[status] || '';
+                header.innerHTML = `📦 Available Products ${statusIcon} <span style="color: #666; font-size: 14px; font-weight: normal;">- Auto-loaded with agent data</span>`;
+            }
+        }
+        
+        function setFormatsLoadingState(loading, status = null) {
+            const header = document.querySelector('h3').parentNode.querySelector('h3');
+            const formatsHeader = Array.from(document.querySelectorAll('h3')).find(h => h.textContent.includes('Creative Formats'));
+            if (!formatsHeader) return;
+            
+            if (loading) {
+                formatsHeader.innerHTML = '🎨 Creative Formats <span style="color: #007bff;">⏳ Loading...</span>';
+            } else {
+                const statusIcon = {
+                    'success': '<span style="color: #28a745;">✅</span>',
+                    'warning': '<span style="color: #ffc107;">⚠️</span>',
+                    'error': '<span style="color: #dc3545;">❌</span>'
+                }[status] || '';
+                formatsHeader.innerHTML = `🎨 Creative Formats ${statusIcon}`;
+                // Re-add the auto-loaded text
+                formatsHeader.parentNode.querySelector('span').textContent = 'Auto-loaded with agent data';
+            }
+        }
+        
+        function setCreativesLoadingState(loading, status = null) {
+            // This is optional since creatives might not have a visible section
+            // Just log for now
+            if (loading) {
+                console.log('⏳ Loading creatives...');
+            } else {
+                console.log(`${status === 'success' ? '✅' : status === 'error' ? '❌' : '⚠️'} Creatives load ${status}`);
+            }
+        }
+
+        // ============================================================================
+        // Products Table Management  
         // ============================================================================
         
         async function refreshProducts() {
@@ -2273,19 +2524,42 @@
             tbody.innerHTML = products.map(product => `
                 <tr>
                     <td style="padding: 12px; border: 1px solid #dee2e6;">
-                        <input type="checkbox" onchange="toggleProductSelection('${product.id}')" ${selectedProducts.has(product.id) ? 'checked' : ''}>
+                        <input type="checkbox" onchange="toggleProductSelection('${product.product_id}')" ${selectedProducts.has(product.product_id) ? 'checked' : ''}>
                     </td>
-                    <td style="padding: 12px; border: 1px solid #dee2e6;">${product.id || 'N/A'}</td>
+                    <td style="padding: 12px; border: 1px solid #dee2e6;">${product.product_id || 'N/A'}</td>
                     <td style="padding: 12px; border: 1px solid #dee2e6;">${product.name || 'Unnamed Product'}</td>
-                    <td style="padding: 12px; border: 1px solid #dee2e6;">${product.type || 'N/A'}</td>
-                    <td style="padding: 12px; border: 1px solid #dee2e6;">$${product.cpm || '0'}</td>
-                    <td style="padding: 12px; border: 1px solid #dee2e6;">${product.available || 'N/A'}</td>
-                    <td style="padding: 12px; border: 1px solid #dee2e6;">${product.targeting || 'All'}</td>
+                    <td style="padding: 12px; border: 1px solid #dee2e6;">${product.delivery_type || 'N/A'}</td>
+                    <td style="padding: 12px; border: 1px solid #dee2e6;">${formatCPM(product.cpm)}</td>
+                    <td style="padding: 12px; border: 1px solid #dee2e6;">${formatMinSpend(product.min_spend)}</td>
+                    <td style="padding: 12px; border: 1px solid #dee2e6;">${formatFormats(product)}</td>
                     <td style="padding: 12px; border: 1px solid #dee2e6; text-align: center;">${getValidationStatusIcon(product)}</td>
                 </tr>
             `).join('');
             
             updateCreateBuyButton();
+        }
+        
+        function formatCPM(cpm) {
+            if (cpm === null || cpm === undefined) {
+                return '<span style="color: #888;">Contact for pricing</span>';
+            }
+            return `$${cpm}`;
+        }
+        
+        function formatMinSpend(minSpend) {
+            if (minSpend === null || minSpend === undefined) {
+                return '<span style="color: #888;">N/A</span>';
+            }
+            return `$${minSpend}`;
+        }
+        
+        function formatFormats(product) {
+            // Check both AdCP spec field (format_ids) and common agent field (formats)
+            const formats = product.format_ids || product.formats;
+            if (!formats || !Array.isArray(formats)) {
+                return '<span style="color: #888;">N/A</span>';
+            }
+            return formats.slice(0, 2).join(', ') + (formats.length > 2 ? `... (+${formats.length - 2})` : '');
         }
         
         function getValidationStatusIcon(product) {
@@ -2300,15 +2574,41 @@
                 }
             }
             
-            // Fallback: basic field validation
-            const hasRequiredFields = product.product_id && product.name && product.description && 
-                                    product.formats && product.delivery_type !== undefined && 
-                                    product.is_fixed_price !== undefined;
-                                    
-            if (hasRequiredFields) {
-                return '<span title="Basic fields present">✓</span>';
+            // AdCP spec compliance check
+            const adcpViolations = [];
+            
+            // Required fields per AdCP spec
+            if (!product.product_id) adcpViolations.push('Missing product_id');
+            if (!product.name) adcpViolations.push('Missing name');
+            if (!product.description) adcpViolations.push('Missing description');
+            if (product.delivery_type === undefined) adcpViolations.push('Missing delivery_type');
+            if (product.is_fixed_price === undefined) adcpViolations.push('Missing is_fixed_price');
+            
+            // Format fields - spec requires format_ids, but many agents return formats
+            const hasFormats = product.format_ids || product.formats;
+            if (!hasFormats || !Array.isArray(hasFormats)) {
+                adcpViolations.push('Missing format_ids/formats');
+            }
+            
+            // Type checking for numeric fields (should be number or null, not string)
+            if (product.cpm !== null && typeof product.cpm !== 'number') {
+                adcpViolations.push('cpm should be number or null');
+            }
+            if (product.min_spend !== null && typeof product.min_spend !== 'number') {
+                adcpViolations.push('min_spend should be number or null');
+            }
+            
+            // Field naming violations
+            if (product.formats && !product.format_ids) {
+                adcpViolations.push('Uses formats instead of format_ids');
+            }
+            
+            if (adcpViolations.length === 0) {
+                return '<span title="AdCP Spec Compliant">✅</span>';
+            } else if (adcpViolations.length <= 2) {
+                return `<span title="Minor AdCP violations: ${adcpViolations.join(', ')}" style="color: orange;">⚠️</span>`;
             } else {
-                return '<span title="Missing required fields">⚠️</span>';
+                return `<span title="Major AdCP violations: ${adcpViolations.join(', ')}" style="color: red;">❌</span>`;
             }
         }
         
@@ -2316,7 +2616,7 @@
             const selectAll = document.getElementById('select-all-products').checked;
             
             if (selectAll) {
-                products.forEach(p => selectedProducts.add(p.id));
+                products.forEach(p => selectedProducts.add(p.product_id));
             } else {
                 selectedProducts.clear();
             }
@@ -2372,9 +2672,7 @@
             try {
                 // Fetch both agent formats and standard formats in parallel
                 const [agentResult, standardFormats] = await Promise.allSettled([
-                    callADCPTool(selectedAgent, 'list_creative_formats', {
-                        standard_only: false  // Get all formats, not just IAB standard
-                    }),
+                    callADCPTool(selectedAgent, 'list_creative_formats', {}),
                     fetchStandardFormats()
                 ]);
                 
@@ -2491,7 +2789,7 @@
                     <td style="padding: 12px; border: 1px solid #dee2e6;">${format.iab_specification || 'N/A'}</td>
                     <td style="padding: 12px; border: 1px solid #dee2e6;">${formatAssetsRequired(format.assets_required)}</td>
                     <td style="padding: 12px; border: 1px solid #dee2e6;">${format.requirements || 'Standard'}</td>
-                    <td style="padding: 12px; border: 1px solid #dee2e6; text-align: center;">${getValidationStatusIcon(format)}</td>
+                    <td style="padding: 12px; border: 1px solid #dee2e6; text-align: center;">${getFormatValidationStatusIcon(format)}</td>
                     <td style="padding: 12px; border: 1px solid #dee2e6; text-align: center;">
                         ${formatSourceDisplay(format.source)}
                     </td>
@@ -2526,6 +2824,56 @@
                     return '<span style="color: #007bff; font-weight: bold;">📚 Standard</span>';
                 default:
                     return `<span style="color: #6c757d;">${source}</span>`;
+            }
+        }
+        
+        function getFormatValidationStatusIcon(format) {
+            // Check if format has validation information from backend
+            if (format.validation !== undefined) {
+                if (format.validation === true) {
+                    return '<span title="AdCP Spec Compliant">✅</span>';
+                } else if (format.validation === false) {
+                    return '<span title="AdCP Spec Violations">❌</span>';
+                } else {
+                    return '<span title="Validation Error">⚠️</span>';
+                }
+            }
+            
+            // AdCP spec compliance check for creative formats
+            const adcpViolations = [];
+            
+            // Required fields per AdCP spec
+            if (!format.format_id) adcpViolations.push('Missing format_id');
+            if (!format.name) adcpViolations.push('Missing name');
+            if (!format.type) adcpViolations.push('Missing type');
+            if (format.is_standard === undefined) adcpViolations.push('Missing is_standard');
+            if (!format.category) adcpViolations.push('Missing category');
+            if (format.accepts_3p_tags === undefined) adcpViolations.push('Missing accepts_3p_tags');
+            
+            // Check for required arrays
+            if (!format.assets_required || !Array.isArray(format.assets_required)) {
+                adcpViolations.push('Missing or invalid assets_required array');
+            }
+            
+            // Type validation
+            if (format.is_standard !== undefined && typeof format.is_standard !== 'boolean') {
+                adcpViolations.push('is_standard should be boolean');
+            }
+            if (format.accepts_3p_tags !== undefined && typeof format.accepts_3p_tags !== 'boolean') {
+                adcpViolations.push('accepts_3p_tags should be boolean');
+            }
+            
+            // Category validation
+            if (format.category && !['standard', 'custom'].includes(format.category)) {
+                adcpViolations.push('category should be "standard" or "custom"');
+            }
+            
+            if (adcpViolations.length === 0) {
+                return '<span title="AdCP Spec Compliant">✅</span>';
+            } else if (adcpViolations.length <= 2) {
+                return `<span title="Minor AdCP violations: ${adcpViolations.join(', ')}" style="color: orange;">⚠️</span>`;
+            } else {
+                return `<span title="Major AdCP violations: ${adcpViolations.join(', ')}" style="color: red;">❌</span>`;
             }
         }
 
@@ -2914,16 +3262,28 @@
             
             const headers = {
                 'Content-Type': 'application/json',
-                'Content-Type': 'application/json',
                 ...testingHeaders
             };
             
+            // Only send brief/offering for tools that need them
             const requestBody = {
-                brandStory: params.brief || "ADCP Testing Suite execution",
-                offering: params.promoted_offering || null,
                 agentConfig: agent,
                 toolName: toolName
             };
+            
+            // Add brief and offering only for tools that use them
+            if (toolName === 'get_products') {
+                requestBody.brandStory = params.brief || "ADCP Testing Suite execution";
+                requestBody.offering = params.promoted_offering || null;
+            } else if (toolName !== 'list_creative_formats' && toolName !== 'manage_creative_assets' && toolName !== 'list_creatives') {
+                // For other tools that might need brief, include it but not offering
+                requestBody.brandStory = params.brief || "ADCP Testing Suite execution";
+            }
+            
+            // Always include the tool-specific params
+            if (params && Object.keys(params).length > 0) {
+                requestBody.params = params;
+            }
             
             // Log the outgoing request to backend API
             logEvent('info', `🔄 Backend API Request: POST /api/sales/agents/${agent.id}/query`);
@@ -3052,8 +3412,8 @@
             // Populate selected products summary
             const summary = document.getElementById('selected-products-summary');
             const selectedProductsList = Array.from(selectedProducts).map(productId => {
-                const product = products.find(p => p.id === productId);
-                return product ? `• ${product.name || 'Unnamed Product'} (${product.id}) - $${product.cpm || '0'} CPM` : `• ${productId}`;
+                const product = products.find(p => p.product_id === productId);
+                return product ? `• ${product.name || 'Unnamed Product'} (${product.product_id}) - $${product.cpm || '0'} CPM` : `• ${productId}`;
             }).join('<br>');
             
             summary.innerHTML = selectedProductsList;
@@ -3236,8 +3596,8 @@
             
             // Build selected products array
             const selectedProductsData = Array.from(selectedProducts).map(productId => {
-                const product = products.find(p => p.id === productId);
-                return product || { id: productId };
+                const product = products.find(p => p.product_id === productId);
+                return product || { product_id: productId };
             });
             
             try {
@@ -3276,7 +3636,7 @@
                 
                 // Build packages array from selected products
                 const packages = selectedProductsData.map(product => ({
-                    product_id: product.id,
+                    product_id: product.product_id,
                     targeting_overlay: Object.keys(targetingOverlay).length > 0 ? targetingOverlay : undefined
                 }));
                 
@@ -5148,8 +5508,8 @@
             clearAgentForm();
             toggleAddAgent();
             
-            // Select the newly added agent
-            document.getElementById('agent-selector').value = agent.id;
+            // Don't auto-select agent - user should explicitly choose
+            // document.getElementById('agent-selector').value = agent.id;
             logEvent('success', `Agent added: ${agent.name}`);
         }
         
@@ -6105,8 +6465,8 @@ ${JSON.stringify(result, null, 2)}
             clearAgentForm();
             toggleAddAgent();
             
-            // Select the newly added agent
-            document.getElementById('agent-selector').value = agent.id;
+            // Don't auto-select agent - user should explicitly choose
+            // document.getElementById('agent-selector').value = agent.id;
             logEvent('success', `Agent added: ${agent.name}`);
         }
         
@@ -6270,6 +6630,8 @@ ${JSON.stringify(result, null, 2)}
             if (agents.length > 0) {
                 selector.value = agents[0].id;
                 logEvent('info', `Auto-selected agent: ${agents[0].name}`);
+                // Trigger onAgentSelected to enable the Load Agent Data button
+                onAgentSelected();
             }
         }
 
@@ -6418,52 +6780,58 @@ ${JSON.stringify(result, null, 2)}
                 return;
             }
             
-            const mode = document.getElementById('create-mode').value;
-            let assets = [];
-            
-            if (mode === 'single') {
-                // Build single creative asset
-                const width = parseInt(document.getElementById('creative-width').value) || 300;
-                const height = parseInt(document.getElementById('creative-height').value) || 250;
-                const tags = document.getElementById('creative-tags').value
-                    .split(',')
-                    .map(t => t.trim())
-                    .filter(t => t);
-                
-                assets.push({
-                    name: document.getElementById('creative-name').value || 'Untitled Creative',
-                    type: document.getElementById('creative-type').value,
-                    media_url: document.getElementById('creative-url').value || 'https://example.com/creative.jpg',
-                    format: `${width}x${height}`,
-                    dimensions: { width, height },
-                    tags: tags.length > 0 ? tags : ['test'],
-                    status: 'active'
-                });
-            } else {
-                // Parse batch JSON
-                try {
-                    assets = JSON.parse(document.getElementById('batch-creatives-json').value);
-                } catch (e) {
-                    alert('Invalid JSON for batch upload: ' + e.message);
-                    return;
-                }
-            }
-            
-            const assignToMediaBuy = document.getElementById('assign-to-media-buy').checked;
-            const mediaBuyId = assignToMediaBuy ? document.getElementById('target-media-buy-id').value : null;
-            
-            const params = {
-                action: 'create',
-                assets: assets
-            };
-            
-            if (mediaBuyId) {
-                params.media_buy_id = mediaBuyId;
-            }
-            
-            logEvent('info', `➕ Creating ${assets.length} creative(s)...`);
+            // Get the create button and add loading state
+            const createButton = event.target;
+            const originalText = createButton.textContent;
+            createButton.disabled = true;
+            createButton.textContent = 'Creating...';
             
             try {
+                const mode = document.getElementById('create-mode').value;
+                let assets = [];
+                
+                if (mode === 'single') {
+                    // Build single creative asset
+                    const width = parseInt(document.getElementById('creative-width').value) || 300;
+                    const height = parseInt(document.getElementById('creative-height').value) || 250;
+                    const tags = document.getElementById('creative-tags').value
+                        .split(',')
+                        .map(t => t.trim())
+                        .filter(t => t);
+                    
+                    assets.push({
+                        name: document.getElementById('creative-name').value || 'Untitled Creative',
+                        type: document.getElementById('creative-type').value,
+                        media_url: document.getElementById('creative-url').value || 'https://example.com/creative.jpg',
+                        format: `${width}x${height}`,
+                        dimensions: { width, height },
+                        tags: tags.length > 0 ? tags : ['test'],
+                        status: 'active'
+                    });
+                } else {
+                    // Parse batch JSON
+                    try {
+                        assets = JSON.parse(document.getElementById('batch-creatives-json').value);
+                    } catch (e) {
+                        alert('Invalid JSON for batch upload: ' + e.message);
+                        return;
+                    }
+                }
+                
+                const assignToMediaBuy = document.getElementById('assign-to-media-buy').checked;
+                const mediaBuyId = assignToMediaBuy ? document.getElementById('target-media-buy-id').value : null;
+                
+                const params = {
+                    action: 'create',
+                    assets: assets
+                };
+                
+                if (mediaBuyId) {
+                    params.media_buy_id = mediaBuyId;
+                }
+                
+                logEvent('info', `➕ Creating ${assets.length} creative(s)...`);
+                
                 const result = await callADCPTool(selectedAgent, 'manage_creative_assets', params);
                 
                 if (result && result.success) {
@@ -6475,6 +6843,10 @@ ${JSON.stringify(result, null, 2)}
                 }
             } catch (error) {
                 logEvent('error', `Error creating creatives: ${error.message}`);
+            } finally {
+                // Always restore button state
+                createButton.disabled = false;
+                createButton.textContent = originalText;
             }
         }
         
