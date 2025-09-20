@@ -453,12 +453,13 @@ async function testMCPAgent(
         timestamp: new Date().toISOString()
       });
       
-      // Call MCP tool using official client
+      // Call MCP tool using official client and pass debugLogs
       const response = await callMCPTool(
         agent.agent_uri,
         toolName,
         args,
-        authToken
+        authToken,
+        debugLogs
       );
       
       // Log response

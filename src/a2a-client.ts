@@ -25,8 +25,13 @@ export async function callA2ATool(
       });
     } : undefined;
   
-  // Create A2A client with agent URL
-  const a2aClient = new A2AClient(agentUrl, {
+  // Create A2A client using the recommended fromCardUrl method
+  // Ensure the URL points to the agent card endpoint
+  const cardUrl = agentUrl.endsWith('/.well-known/agent-card.json') 
+    ? agentUrl 
+    : agentUrl.replace(/\/$/, '') + '/.well-known/agent-card.json';
+    
+  const a2aClient = await A2AClient.fromCardUrl(cardUrl, {
     fetchImpl
   });
   

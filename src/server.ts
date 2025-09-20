@@ -507,17 +507,36 @@ const start = async () => {
 };
 
 // Handle graceful shutdown
-process.on('SIGTERM', async () => {
-  app.log.info('Received SIGTERM, shutting down gracefully...');
-  await app.close();
-  process.exit(0);
-});
+let shutdownInProgress = false;
 
-process.on('SIGINT', async () => {
-  app.log.info('Received SIGINT, shutting down gracefully...');
-  await app.close();
-  process.exit(0);
-});
+async function gracefulShutdown(signal: string) {
+  if (shutdownInProgress) {
+    app.log.warn(`Received ${signal} but shutdown already in progress, forcing exit...`);
+    process.exit(1);
+  }
+  
+  shutdownInProgress = true;
+  app.log.info(`Received ${signal}, shutting down gracefully...`);
+  
+  try {
+    // Set a timeout for forceful shutdown
+    const forceShutdownTimer = setTimeout(() => {
+      app.log.error('Graceful shutdown timed out, forcing exit...');
+      process.exit(1);
+    }, 10000); // 10 second timeout
+    
+    await app.close();
+    clearTimeout(forceShutdownTimer);
+    app.log.info('Server closed successfully');
+    process.exit(0);
+  } catch (error) {
+    app.log.error(`Error during graceful shutdown: ${error}`);
+    process.exit(1);
+  }
+}
+
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
 if (require.main === module) {
   start();

@@ -7,7 +7,8 @@ export async function callMCPTool(
   agentUrl: string,
   toolName: string,
   args: any,
-  authToken?: string
+  authToken?: string,
+  debugLogs: any[] = []
 ): Promise<any> {
   let mcpClient: MCPClient | undefined = undefined;
   const baseUrl = new URL(agentUrl);
@@ -19,11 +20,23 @@ export async function callMCPTool(
       'x-adcp-auth': authToken,
       'Accept': 'application/json, text/event-stream' // Required by MCP server
     };
-    console.log('Auth token provided:', authToken.substring(0, 10) + '...');
+    
+    // Add to debug logs
+    debugLogs.push({
+      type: 'info',
+      message: `MCP: Auth token provided (${authToken.substring(0, 10)}...)`,
+      timestamp: new Date().toISOString()
+    });
   }
   
   try {
     // First, try to connect using StreamableHTTPClientTransport
+    debugLogs.push({
+      type: 'info',
+      message: `MCP: Attempting StreamableHTTP connection to ${baseUrl}`,
+      timestamp: new Date().toISOString()
+    });
+    
     mcpClient = new MCPClient({
       name: 'AdCP-Testing-Framework',
       version: '1.0.0'
@@ -34,10 +47,28 @@ export async function callMCPTool(
       requestInit
     });
     await mcpClient.connect(transport);
-    console.log('Connected to MCP using StreamableHTTP transport');
+    
+    debugLogs.push({
+      type: 'success',
+      message: 'MCP: Connected using StreamableHTTP transport',
+      timestamp: new Date().toISOString()
+    });
   } catch (error) {
+    // Capture the connection error
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    debugLogs.push({
+      type: 'error',
+      message: `MCP: StreamableHTTP connection failed: ${errorMessage}`,
+      timestamp: new Date().toISOString(),
+      error: error
+    });
+    
     // If StreamableHTTP fails, fall back to SSE transport
-    console.log('StreamableHTTP connection failed, falling back to SSE transport:', error);
+    debugLogs.push({
+      type: 'info',
+      message: 'MCP: Falling back to SSE transport',
+      timestamp: new Date().toISOString()
+    });
     
     mcpClient = new MCPClient({
       name: 'AdCP-Testing-Framework',
@@ -51,23 +82,62 @@ export async function callMCPTool(
     
     const sseTransport = new SSEClientTransport(baseUrl);
     await mcpClient.connect(sseTransport);
-    console.log('Connected to MCP using SSE transport');
+    
+    debugLogs.push({
+      type: 'success',
+      message: 'MCP: Connected using SSE transport',
+      timestamp: new Date().toISOString()
+    });
   }
   
   try {
     // Call the tool using official MCP client
-    console.log(`Calling tool: ${toolName} with args:`, JSON.stringify(args));
+    debugLogs.push({
+      type: 'info',
+      message: `MCP: Calling tool ${toolName} with args: ${JSON.stringify(args)}`,
+      timestamp: new Date().toISOString()
+    });
+    
     const response = await mcpClient.callTool({
       name: toolName,
       arguments: args
     });
-    console.log('Tool response received:', response?.isError ? 'error' : 'success');
+    
+    debugLogs.push({
+      type: response?.isError ? 'error' : 'success',
+      message: `MCP: Tool response received (${response?.isError ? 'error' : 'success'})`,
+      timestamp: new Date().toISOString(),
+      response: response
+    });
     
     return response;
+  } catch (error) {
+    // Capture tool call errors (including timeouts)
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    debugLogs.push({
+      type: 'error',
+      message: `MCP: Tool call failed: ${errorMessage}`,
+      timestamp: new Date().toISOString(),
+      error: error
+    });
+    throw error; // Re-throw to maintain error handling
   } finally {
     // Always close the client properly
     if (mcpClient) {
-      await mcpClient.close();
+      try {
+        await mcpClient.close();
+        debugLogs.push({
+          type: 'info',
+          message: 'MCP: Client connection closed',
+          timestamp: new Date().toISOString()
+        });
+      } catch (closeError) {
+        debugLogs.push({
+          type: 'warning',
+          message: `MCP: Error closing client: ${closeError}`,
+          timestamp: new Date().toISOString()
+        });
+      }
     }
   }
 }
