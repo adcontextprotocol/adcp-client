@@ -4,7 +4,8 @@ import fastifyStatic from '@fastify/static';
 import fastifyCors from '@fastify/cors';
 import path from 'path';
 import { testAgents, getAgentList, testSingleAgent, getStandardFormats } from './protocols';
-import { TestRequest, ApiResponse, TestResponse, AgentListResponse } from './types/adcp';
+import { TestRequest, ApiResponse, TestResponse, AgentListResponse, ValidateAdAgentsRequest, ValidateAdAgentsResponse, CreateAdAgentsRequest, CreateAdAgentsResponse } from './types/adcp';
+import { AdAgentsManager } from './adagents-manager';
 
 // __dirname is available in CommonJS mode
 
@@ -486,6 +487,170 @@ app.setErrorHandler((error, request, reply) => {
     error: 'Internal server error',
     timestamp: new Date().toISOString()
   });
+});
+
+// AdAgents.json Management Endpoints
+const adagentsManager = new AdAgentsManager();
+
+// Validate domain's adagents.json
+app.post<{
+  Body: ValidateAdAgentsRequest;
+  Reply: ApiResponse<ValidateAdAgentsResponse>;
+}>('/api/adagents/validate', async (request, reply) => {
+  try {
+    const { domain } = request.body;
+    
+    if (!domain || domain.trim().length === 0) {
+      reply.code(400);
+      return {
+        success: false,
+        error: 'Domain is required',
+        timestamp: new Date().toISOString()
+      };
+    }
+
+    app.log.info(`Validating adagents.json for domain: ${domain}`);
+    
+    // Validate the domain's adagents.json
+    const validation = await adagentsManager.validateDomain(domain);
+    
+    let agentCards = undefined;
+    
+    // If adagents.json is found and has agents, validate their cards
+    if (validation.valid && validation.raw_data?.authorized_agents?.length > 0) {
+      app.log.info(`Validating ${validation.raw_data.authorized_agents.length} agent cards`);
+      agentCards = await adagentsManager.validateAgentCards(validation.raw_data.authorized_agents);
+    }
+
+    return {
+      success: true,
+      data: {
+        domain: validation.domain,
+        found: validation.status_code === 200,
+        validation,
+        agent_cards: agentCards
+      },
+      timestamp: new Date().toISOString()
+    };
+
+  } catch (error) {
+    app.log.error('Failed to validate domain: ' + (error instanceof Error ? error.message : String(error)));
+    reply.code(500);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error',
+      timestamp: new Date().toISOString()
+    };
+  }
+});
+
+// Create adagents.json file
+app.post<{
+  Body: CreateAdAgentsRequest;
+  Reply: ApiResponse<CreateAdAgentsResponse>;
+}>('/api/adagents/create', async (request, reply) => {
+  try {
+    const { authorized_agents, include_schema = true, include_timestamp = true } = request.body;
+    
+    if (!authorized_agents || !Array.isArray(authorized_agents)) {
+      reply.code(400);
+      return {
+        success: false,
+        error: 'authorized_agents array is required',
+        timestamp: new Date().toISOString()
+      };
+    }
+
+    if (authorized_agents.length === 0) {
+      reply.code(400);
+      return {
+        success: false,
+        error: 'At least one authorized agent is required',
+        timestamp: new Date().toISOString()
+      };
+    }
+
+    app.log.info(`Creating adagents.json with ${authorized_agents.length} agents`);
+    
+    // Validate the proposed structure
+    const validation = adagentsManager.validateProposed(authorized_agents);
+    
+    if (!validation.valid) {
+      reply.code(400);
+      return {
+        success: false,
+        error: `Validation failed: ${validation.errors.map(e => e.message).join(', ')}`,
+        timestamp: new Date().toISOString()
+      };
+    }
+
+    // Create the adagents.json content
+    const adagentsJson = adagentsManager.createAdAgentsJson(
+      authorized_agents, 
+      include_schema, 
+      include_timestamp
+    );
+
+    return {
+      success: true,
+      data: {
+        success: true,
+        adagents_json: adagentsJson,
+        validation
+      },
+      timestamp: new Date().toISOString()
+    };
+
+  } catch (error) {
+    app.log.error('Failed to create adagents.json: ' + (error instanceof Error ? error.message : String(error)));
+    reply.code(500);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error',
+      timestamp: new Date().toISOString()
+    };
+  }
+});
+
+// Validate agent cards only (utility endpoint)
+app.post<{
+  Body: { agent_urls: string[] };
+  Reply: ApiResponse<{ agent_cards: any[] }>;
+}>('/api/adagents/validate-cards', async (request, reply) => {
+  try {
+    const { agent_urls } = request.body;
+    
+    if (!agent_urls || !Array.isArray(agent_urls) || agent_urls.length === 0) {
+      reply.code(400);
+      return {
+        success: false,
+        error: 'agent_urls array with at least one URL is required',
+        timestamp: new Date().toISOString()
+      };
+    }
+
+    app.log.info(`Validating ${agent_urls.length} agent cards`);
+    
+    const agents = agent_urls.map(url => ({ url, authorized_for: 'validation' }));
+    const agentCards = await adagentsManager.validateAgentCards(agents);
+
+    return {
+      success: true,
+      data: {
+        agent_cards: agentCards
+      },
+      timestamp: new Date().toISOString()
+    };
+
+  } catch (error) {
+    app.log.error('Failed to validate agent cards: ' + (error instanceof Error ? error.message : String(error)));
+    reply.code(500);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error',
+      timestamp: new Date().toISOString()
+    };
+  }
 });
 
 // Start server
