@@ -426,12 +426,26 @@ async function testMCPAgent(
   try {
     validateAgentUrl(agent.agent_uri);
     
-    // Prepare tool arguments - spec-compliant format (no wrapper)
-    // AdCP spec requires promoted_offering to always be present for get_products
-    const args: any = {
-      brief,
-      promoted_offering: promotedOffering || 'gourmet robot food' // Default to something fun
-    };
+    // Prepare tool arguments based on tool type - spec-compliant format (no wrapper)
+    let args: any = {};
+    
+    if (toolName === 'get_products') {
+      // AdCP spec requires promoted_offering to always be present for get_products
+      args = {
+        brief,
+        promoted_offering: promotedOffering || 'gourmet robot food'
+      };
+    } else if (toolName === 'list_creative_formats') {
+      // list_creative_formats accepts optional: type, category, format_ids
+      // Don't send brief or promoted_offering - they're not valid parameters
+      args = {};
+    } else if (toolName === 'list_creatives') {
+      // list_creatives typically doesn't need brief/promoted_offering
+      args = {};
+    } else {
+      // For other tools, include brief but not promoted_offering unless needed
+      args = { brief };
+    }
 
     const result = await circuitBreaker.call(async () => {
       console.log(`🔗 Calling MCP agent using official client: ${agent.name} at ${agent.agent_uri}`);
@@ -553,28 +567,57 @@ async function testA2AAgent(
       
       const authToken = getAuthToken(agent);
       
+      // Prepare tool-specific arguments for A2A as well
+      let toolArgs: any = { tool: toolName };
+      
+      if (toolName === 'get_products') {
+        toolArgs.brief = brief;
+        if (promotedOffering) {
+          toolArgs.promoted_offering = promotedOffering;
+        }
+      } else if (toolName === 'list_creative_formats') {
+        // list_creative_formats doesn't need brief or promoted_offering
+      } else if (toolName === 'list_creatives') {
+        // list_creatives typically doesn't need these parameters
+      } else {
+        // For other tools, include brief but be careful with promoted_offering
+        toolArgs.brief = brief;
+      }
+      
       // Log request
       debugLogs.push({
         request: {
           method: `${toolName} (A2A Tool)`,
           url: agent.agent_uri,
           headers: authToken ? { 'Authorization': `Bearer ${authToken}` } : {},
-          body: JSON.stringify({
-            tool: toolName,
-            brief,
-            ...(promotedOffering && { promoted_offering: promotedOffering })
-          })
+          body: JSON.stringify(toolArgs)
         },
         response: null,
         timestamp: new Date().toISOString()
       });
       
-      // Call A2A tool using official client
+      // Call A2A tool using official client with tool-specific parameters
+      let a2aBrief: string | undefined = undefined;
+      let a2aPromotedOffering: string | undefined = undefined;
+      
+      if (toolName === 'get_products') {
+        a2aBrief = brief;
+        a2aPromotedOffering = promotedOffering;
+      } else if (toolName === 'list_creative_formats' || toolName === 'list_creatives') {
+        // These tools don't need brief or promoted_offering parameters
+        a2aBrief = undefined;
+        a2aPromotedOffering = undefined;
+      } else {
+        // For other tools, include brief but not promoted_offering
+        a2aBrief = brief;
+        a2aPromotedOffering = undefined;
+      }
+      
       const response = await callA2ATool(
         agent.agent_uri,
         toolName,
-        brief,
-        promotedOffering,
+        a2aBrief || '',  // A2A client expects string, not undefined
+        a2aPromotedOffering,
         authToken
       );
       
