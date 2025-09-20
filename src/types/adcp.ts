@@ -384,3 +384,72 @@ export interface ListCreativesResponse {
     next_cursor?: string;
   };
 }
+
+// AdAgents.json Types - Based on AdCP reference specification
+export interface AdAgentsJson {
+  $schema?: string;
+  authorized_agents: AuthorizedAgent[];
+  last_updated?: string;
+}
+
+export interface AuthorizedAgent {
+  url: string;
+  authorized_for: string;
+}
+
+// Validation Types
+export interface AdAgentsValidationResult {
+  valid: boolean;
+  errors: ValidationError[];
+  warnings: ValidationWarning[];
+  domain: string;
+  url: string;
+  status_code?: number;
+  raw_data?: any;
+}
+
+export interface ValidationError {
+  field: string;
+  message: string;
+  severity: 'error' | 'warning';
+}
+
+export interface ValidationWarning {
+  field: string;
+  message: string;
+  suggestion?: string;
+}
+
+export interface AgentCardValidationResult {
+  agent_url: string;
+  valid: boolean;
+  status_code?: number;
+  card_data?: any;
+  card_endpoint?: string;
+  errors: string[];
+  response_time_ms?: number;
+}
+
+// API Request/Response Types for AdAgents Management
+export interface ValidateAdAgentsRequest {
+  domain: string;
+}
+
+export interface ValidateAdAgentsResponse {
+  domain: string;
+  found: boolean;
+  validation: AdAgentsValidationResult;
+  agent_cards?: AgentCardValidationResult[];
+}
+
+export interface CreateAdAgentsRequest {
+  authorized_agents: AuthorizedAgent[];
+  include_schema?: boolean;
+  include_timestamp?: boolean;
+}
+
+export interface CreateAdAgentsResponse {
+  success: boolean;
+  adagents_json: string;
+  validation: AdAgentsValidationResult;
+}
