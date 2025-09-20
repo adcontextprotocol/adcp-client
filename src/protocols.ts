@@ -462,9 +462,10 @@ async function testMCPAgent(
         debugLogs
       );
       
-      // Log response
-      if (debugLogs.length > 0) {
-        debugLogs[debugLogs.length - 1].response = {
+      // Find and update the request entry (not necessarily the last one due to MCP client adding its own entries)
+      const requestEntry = debugLogs.find(log => log.request && !log.response);
+      if (requestEntry) {
+        requestEntry.response = {
           status: 'completed',
           body: response
         };
@@ -549,9 +550,10 @@ async function testA2AAgent(
         authToken
       );
       
-      // Log response
-      if (debugLogs.length > 0) {
-        debugLogs[debugLogs.length - 1].response = {
+      // Find and update the request entry
+      const requestEntry = debugLogs.find(log => log.request && !log.response);
+      if (requestEntry) {
+        requestEntry.response = {
           status: 'completed',
           body: response
         };
