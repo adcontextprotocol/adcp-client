@@ -474,12 +474,40 @@ async function testMCPAgent(
       return response;
     });
     
+    // Extract data from MCP response structure
+    let extractedData = result;
+    if (result && result.content && Array.isArray(result.content)) {
+      // Try to extract from structuredContent first
+      if (result.structuredContent) {
+        const structured = result.structuredContent;
+        if (structured.products || structured.formats || structured.creatives) {
+          extractedData = {
+            products: structured.products,
+            formats: structured.formats, 
+            creatives: structured.creatives,
+            message: structured.message,
+            errors: structured.errors
+          };
+        }
+      } else if (result.content[0] && result.content[0].text) {
+        // Fallback: try to parse JSON from content text
+        try {
+          const parsedContent = JSON.parse(result.content[0].text);
+          if (parsedContent.products || parsedContent.formats || parsedContent.creatives) {
+            extractedData = parsedContent;
+          }
+        } catch (parseError) {
+          console.log('Could not parse MCP content text as JSON:', parseError);
+        }
+      }
+    }
+    
     return {
       agent_id: agent.id,
       agent_name: agent.name,
       success: true,
       response_time_ms: Date.now() - startTime,
-      data: result,
+      data: extractedData,
       timestamp: new Date().toISOString(),
       debug_logs: debugLogs
     };
