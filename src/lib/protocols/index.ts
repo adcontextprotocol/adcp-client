@@ -34,15 +34,10 @@ export class ProtocolClient {
         debugLogs
       );
     } else if (agent.protocol === 'a2a') {
-      // Extract brief and promoted_offering for A2A (legacy interface)
-      const brief = args.brief || '';
-      const promotedOffering = args.promoted_offering;
-      
       return callA2ATool(
         agent.agent_uri,
         toolName,
-        brief,
-        promotedOffering,
+        args,
         authToken
       );
     } else {
@@ -60,6 +55,6 @@ export const createMCPClient = (agentUrl: string, authToken?: string) => ({
 });
 
 export const createA2AClient = (agentUrl: string, authToken?: string) => ({
-  callTool: (toolName: string, brief: string, promotedOffering?: string) =>
-    callA2ATool(agentUrl, toolName, brief, promotedOffering, authToken)
+  callTool: (toolName: string, parameters: Record<string, any>) =>
+    callA2ATool(agentUrl, toolName, parameters, authToken)
 });

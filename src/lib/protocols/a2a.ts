@@ -9,8 +9,7 @@ if (!A2AClient) {
 export async function callA2ATool(
   agentUrl: string,
   toolName: string,
-  brief: string,
-  promotedOffering?: string,
+  parameters: Record<string, any>,
   authToken?: string
 ): Promise<any> {
   // Create authenticated fetch if needed
@@ -44,10 +43,7 @@ export async function callA2ATool(
         kind: "data",  // A2A spec uses "kind", not "type"
         data: {
           skill: toolName,
-          parameters: {
-            brief,
-            ...(promotedOffering && { promoted_offering: promotedOffering })
-          }
+          parameters
         }
       }]
     }
