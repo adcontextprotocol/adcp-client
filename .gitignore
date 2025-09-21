@@ -116,3 +116,15 @@ fly.toml.bak
 # Test artifacts
 test-results/
 playwright-report/
+
+# Security - Never commit auth tokens, API keys, or secrets
+**/debug-*.js
+**/test-*.js
+**/*token*.txt
+**/*secret*.txt
+**/*key*.txt
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
