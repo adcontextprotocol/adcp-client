@@ -1661,7 +1661,7 @@ class SalesAgentsHandlers {
         
         const baseParts = [
             {
-                kind: 'text',
+                type: 'text',
                 text: fullRequestText
             }
         ];
@@ -1670,8 +1670,7 @@ class SalesAgentsHandlers {
             message: {
                 messageId: messageId,
                 role: 'user',
-                parts: baseParts,
-                kind: 'message'
+                parts: baseParts
             },
             configuration: {
                 blocking: true,

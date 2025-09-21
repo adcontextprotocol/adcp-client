@@ -35,14 +35,13 @@ export async function callA2ATool(
     fetchImpl
   });
   
-  // Build request payload
+  // Build request payload following AdCP A2A spec
   const requestPayload = {
     message: {
-      kind: "message",
       messageId: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-      role: "user",
+      role: "user", 
       parts: [{
-        kind: "data",
+        type: "data",  // AdCP spec uses "type", not "kind"
         data: {
           skill: toolName,
           parameters: {
@@ -51,10 +50,6 @@ export async function callA2ATool(
           }
         }
       }]
-    },
-    configuration: {
-      blocking: true, // Wait for response
-      acceptedOutputModes: ['application/json', 'text/plain']
     }
   };
   
