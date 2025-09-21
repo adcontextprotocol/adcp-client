@@ -489,7 +489,7 @@ function extractResponseData(result: any): any {
       // Extract text content as informational message for user
       let textMessage = `Found ${result.structuredContent.formats?.length || result.structuredContent.products?.length || 0} items from agent`;
       if (result.content && Array.isArray(result.content)) {
-        const textContent = result.content.find(item => item.type === 'text');
+        const textContent = result.content.find((item: any) => item.type === 'text');
         if (textContent?.text) {
           // Use text as message only if it's not a JSON dump
           try {
@@ -603,7 +603,7 @@ app.post('/api/sales/agents/:agentId/query', async (request, reply) => {
     let agentTextResponse = null;
     const originalData = results[0].data;
     if (originalData?.content && Array.isArray(originalData.content)) {
-      const textContent = originalData.content.find(item => item.type === 'text');
+      const textContent = originalData.content.find((item: any) => item.type === 'text');
       if (textContent?.text) {
         // Only include if it's not a JSON data dump
         try {
