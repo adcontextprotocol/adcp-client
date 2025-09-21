@@ -1661,7 +1661,7 @@ class SalesAgentsHandlers {
         
         const baseParts = [
             {
-                type: 'text',
+                kind: 'text',
                 text: fullRequestText
             }
         ];

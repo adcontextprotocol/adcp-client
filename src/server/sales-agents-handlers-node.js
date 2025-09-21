@@ -1661,7 +1661,7 @@ class SalesAgentsHandlers {
         
         const baseParts = [
             {
-                type: 'text',
+                kind: 'text',
                 text: fullRequestText
             }
         ];
@@ -1775,8 +1775,8 @@ Please process this ${toolName} request according to AdCP specifications.`;
                     result.artifacts.forEach((artifact) => {
                         if (artifact.parts && Array.isArray(artifact.parts)) {
                             artifact.parts.forEach((part) => {
-                                // Handle different part types according to ADCP spec
-                                switch (part.type) {
+                                // Handle different part kinds according to A2A spec
+                                switch (part.kind) {
                                     case 'data':
                                         if (part.data && part.data.products && Array.isArray(part.data.products)) {
                                             extractedData = extractedData.concat(part.data.products);

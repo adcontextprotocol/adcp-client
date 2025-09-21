@@ -41,7 +41,7 @@ export async function callA2ATool(
       messageId: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
       role: "user", 
       parts: [{
-        type: "data",  // AdCP spec uses "type", not "kind"
+        kind: "data",  // A2A spec uses "kind", not "type"
         data: {
           skill: toolName,
           parameters: {
