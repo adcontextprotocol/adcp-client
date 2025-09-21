@@ -3,6 +3,7 @@ import Fastify, { FastifyInstance } from 'fastify';
 import fastifyStatic from '@fastify/static';
 import fastifyCors from '@fastify/cors';
 import path from 'path';
+import fs from 'fs';
 import { AdCPClient, ConfigurationManager, getStandardFormats } from '../lib';
 import type { TestRequest, ApiResponse, TestResponse, AgentListResponse, ValidateAdAgentsRequest, ValidateAdAgentsResponse, CreateAdAgentsRequest, CreateAdAgentsResponse, AgentConfig, TestResult } from '../lib/types';
 import { AdAgentsManager } from './adagents-manager';
@@ -86,43 +87,115 @@ async function callToolOnAgent(agentId: string, toolName: string, args: any): Pr
   return adaptResponseToLegacyFormat(fluentResponse);
 }
 
+// Debug logging function
+function debugLog(message: string, data?: any) {
+  const timestamp = new Date().toISOString();
+  const logEntry = `${timestamp} [DEBUG] ${message}${data ? ' ' + JSON.stringify(data, null, 2) : ''}\n`;
+  console.log(`[DEBUG] ${message}`, data || '');
+  try {
+    fs.appendFileSync('debug.log', logEntry);
+  } catch (e) {
+    console.log('Failed to write to debug.log:', e);
+  }
+}
+
+// Helper function to add timeout to any promise
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number = 30000): Promise<T> {
+  debugLog(`Setting up timeout for ${timeoutMs}ms`);
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) => 
+      setTimeout(() => {
+        debugLog(`Timeout triggered after ${timeoutMs}ms`);
+        reject(new Error(`Operation timed out after ${timeoutMs}ms`));
+      }, timeoutMs)
+    )
+  ]);
+}
+
 async function callToolOnAgents(agentIds: string[], toolName: string, args: any): Promise<TestResult[]> {
+  debugLog(`callToolOnAgents called with:`, {
+    toolName,
+    agentIds,
+    args
+  });
+  
   const agents = adcpClient.agents(agentIds);
+  debugLog(`Retrieved agents object:`, {
+    agentCount: agentIds.length,
+    availableAgents: adcpClient.getAgents().map(a => ({ id: a.id, name: a.name, protocol: a.protocol, uri: a.agent_uri }))
+  });
   
   let fluentResponses;
-  switch (toolName) {
-    case 'get_products':
-      fluentResponses = await agents.getProducts({
-        ...(args.brief && { brief: args.brief }),
-        promoted_offering: args.promoted_offering || 'Test offering for AdCP testing'
-      });
-      break;
+  debugLog(`About to call ${toolName} tool with timeout`);
+  
+  const startTime = Date.now();
+  try {
+    switch (toolName) {
+      case 'get_products':
+        const productParams = {
+          ...(args.brief && { brief: args.brief }),
+          promoted_offering: args.promoted_offering || 'Test offering for AdCP testing'
+        };
+        debugLog(`Calling get_products with params:`, productParams);
+        fluentResponses = await withTimeout(agents.getProducts(productParams), 30000);
+        break;
     case 'list_creative_formats':
-      fluentResponses = await agents.listCreativeFormats({
+      fluentResponses = await withTimeout(agents.listCreativeFormats({
         ...(args.type && { type: args.type }),
         ...(args.category && { category: args.category }),
         ...(args.format_ids && { format_ids: args.format_ids })
-      });
+      }), 30000);
       break;
     case 'sync_creatives':
-      fluentResponses = await agents.syncCreatives({
+      fluentResponses = await withTimeout(agents.syncCreatives({
         creatives: args.creatives,
         patch: args.patch,
         dry_run: args.dry_run
-      });
+      }), 30000);
       break;
     case 'list_creatives':
-      fluentResponses = await agents.listCreatives({
+      fluentResponses = await withTimeout(agents.listCreatives({
         filters: args.filters,
         sort: args.sort,
         pagination: args.pagination
-      });
+      }), 30000);
+      break;
+    case 'get_media_buy_delivery':
+      fluentResponses = await withTimeout(agents.getMediaBuyDelivery({
+        ...(args.media_buy_ids && { media_buy_ids: args.media_buy_ids }),
+        ...(args.buyer_reference_ids && { buyer_reference_ids: args.buyer_reference_ids }),
+        ...(args.start_date && { start_date: args.start_date }),
+        ...(args.end_date && { end_date: args.end_date }),
+        ...(args.granularity && { granularity: args.granularity }),
+        ...(args.metrics && { metrics: args.metrics })
+      }), 30000);
       break;
     default:
       throw new Error(`Unknown tool: ${toolName}`);
   }
   
-  return fluentResponses.map(adaptResponseToLegacyFormat);
+    const endTime = Date.now();
+    debugLog(`${toolName} call completed in ${endTime - startTime}ms`);
+    debugLog(`Response summary:`, {
+      responseCount: fluentResponses?.length || 0,
+      responses: fluentResponses?.map((r: any, i: number) => ({
+        agent: i,
+        success: r?.success,
+        hasData: !!r?.data,
+        error: r?.error
+      })) || []
+    });
+    
+    return fluentResponses.map(adaptResponseToLegacyFormat);
+  } catch (error) {
+    const endTime = Date.now();
+    debugLog(`${toolName} call failed after ${endTime - startTime}ms:`, {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined
+    });
+    throw error;
+  }
 }
 
 // Register plugins
@@ -410,7 +483,36 @@ function extractResponseData(result: any): any {
     return result.toolResponse;
   }
   
-  // 7. Check for note/error structure (MCP error response)
+  // 7. Check for MCP structuredContent (only source for data)
+  if (result?.structuredContent) {
+    if (result.structuredContent.products || result.structuredContent.formats) {
+      // Extract text content as informational message for user
+      let textMessage = `Found ${result.structuredContent.formats?.length || result.structuredContent.products?.length || 0} items from agent`;
+      if (result.content && Array.isArray(result.content)) {
+        const textContent = result.content.find((item: any) => item.type === 'text');
+        if (textContent?.text) {
+          // Use text as message only if it's not a JSON dump
+          try {
+            JSON.parse(textContent.text);
+            // It's JSON, keep the count message
+          } catch (e) {
+            // Not JSON, use as user message
+            textMessage = textContent.text.length > 200 ? 
+              textContent.text.substring(0, 200) + '...' : 
+              textContent.text;
+          }
+        }
+      }
+      
+      return {
+        products: result.structuredContent.products || [],
+        formats: result.structuredContent.formats || [],
+        message: textMessage
+      };
+    }
+  }
+  
+  // 9. Check for note/error structure (MCP error response)
   if (result?.note || result?.error) {
     return {
       products: [],
@@ -444,7 +546,11 @@ app.post('/api/sales/agents/:agentId/query', async (request, reply) => {
     }
 
     // Use the existing testAgents function with tool-specific parameters
-    app.log.info(`Query endpoint received body:`, body);
+    debugLog(`Query endpoint received request for agent ${agentId}:`, {
+      toolName: body.tool,
+      body,
+      agent: { id: agent.id, name: agent.name, protocol: agent.protocol, uri: agent.agent_uri }
+    });
     
     const toolName = body.tool;
     if (!toolName) {
@@ -453,7 +559,6 @@ app.post('/api/sales/agents/:agentId/query', async (request, reply) => {
         error: 'Missing required parameter: tool'
       });
     }
-    app.log.info(`Tool name: ${toolName}`);
     
     const brief = body.brief || body.brandStory || body.message || 'Test query';
     const promotedOffering = body.promoted_offering || body.offering;
@@ -465,6 +570,13 @@ app.post('/api/sales/agents/:agentId/query', async (request, reply) => {
       ...(promotedOffering && { promoted_offering: promotedOffering }),
       ...toolParams
     };
+    
+    debugLog(`About to call callToolOnAgents with:`, {
+      agentId: agent.id,
+      toolName,
+      args
+    });
+    
     const results = await callToolOnAgents([agent.id], toolName, args);
     
     // Extract the data from the nested response structure
@@ -487,6 +599,23 @@ app.post('/api/sales/agents/:agentId/query', async (request, reply) => {
     }
     // If no debug logs exist, that's fine - we don't create fake ones
     
+    // Extract text content from MCP response for potential UI display
+    let agentTextResponse = null;
+    const originalData = results[0].data;
+    if (originalData?.content && Array.isArray(originalData.content)) {
+      const textContent = originalData.content.find((item: any) => item.type === 'text');
+      if (textContent?.text) {
+        // Only include if it's not a JSON data dump
+        try {
+          JSON.parse(textContent.text);
+          // It's JSON, don't include as text response
+        } catch (e) {
+          // Not JSON, safe to include as agent message
+          agentTextResponse = textContent.text;
+        }
+      }
+    }
+
     // Format the response to match what the UI expects
     const response = {
       success: true,
@@ -501,6 +630,8 @@ app.post('/api/sales/agents/:agentId/query', async (request, reply) => {
       // Also include at the top level for simpler access
       products: extractedData.products || [],
       formats: extractedData.formats || [],
+      // Include agent text response if available (for potential info bubble)
+      ...(agentTextResponse && { agent_message: agentTextResponse }),
       // Include debug info - always have something to show
       debug_logs: debugLogs,
       validation: results[0].validation,
@@ -519,10 +650,8 @@ app.post('/api/sales/agents/:agentId/query', async (request, reply) => {
   }
 });
 
-// Serve the main UI at root
-app.get('/', async (request, reply) => {
-  return reply.sendFile('index.html');
-});
+// Static files are served by fastifyStatic plugin above
+// No need for explicit route - plugin handles serving index.html at root
 
 
 // Add some fallback routes for missing endpoints that might be expected
