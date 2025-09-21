@@ -118,10 +118,6 @@ test-results/
 playwright-report/
 
 # Security - Never commit auth tokens, API keys, or secrets
-# Note: Be very specific to avoid blocking legitimate files
-/debug-*.js
-/simple-debug.js
-/test-load-agent-data.js
 **/*token*.txt
 **/*secret*.txt
 **/*key*.txt

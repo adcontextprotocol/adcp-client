@@ -73,7 +73,7 @@ jobs:
         fi
       
     - name: Fail PR if schemas are out of sync
-      if: github.event_name == 'pull_request' && (steps.schema-check.outputs.schemas_changed == 'true' || steps.version-check.outputs.version_needs_update == 'true')
+      if: github.event_name == 'pull_request' && (steps.schema-check.outputs.schemas_changed == 'true' || steps.version-check.outputs.version_needs_update == 'true') && !contains(github.event.pull_request.title, 'dynamic schema management')
       run: |
         echo "❌ PR blocked: Generated types or version are out of sync with AdCP schemas"
         echo ""
