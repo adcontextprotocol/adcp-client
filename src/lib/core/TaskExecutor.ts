@@ -14,7 +14,7 @@ import type {
   TaskStatus
 } from './ConversationTypes';
 import { normalizeHandlerResponse, isDeferResponse, isAbortResponse } from '../handlers/types';
-
+import { ProtocolResponseParser, ResponseStatus } from './ProtocolResponseParser';
 /**
  * Custom errors for task execution
  */
@@ -43,6 +43,8 @@ export class DeferredTaskError extends Error {
  * Core task execution engine that handles the conversation loop with agents
  */
 export class TaskExecutor {
+  private responseParser: ProtocolResponseParser;
+
   private activeTasks = new Map<string, TaskState>();
   private conversationStorage?: Map<string, Message[]>;
   
@@ -53,6 +55,7 @@ export class TaskExecutor {
       enableConversationStorage?: boolean;
     } = {}
   ) {
+    this.responseParser = new ProtocolResponseParser();
     if (config.enableConversationStorage) {
       this.conversationStorage = new Map();
     }
@@ -181,8 +184,8 @@ export class TaskExecutor {
         });
 
         // Check if agent is requesting input
-        if (this.isInputRequest(agentResponse)) {
-          const inputRequest = this.parseInputRequest(agentResponse);
+        if (this.responseParser.isInputRequest(agentResponse, taskState.agent.protocol, taskState.agent.id)) {
+          const inputRequest = this.responseParser.parseInputRequest(agentResponse, taskState.agent.protocol);
           taskState.status = 'needs_input';
           taskState.pendingInput = inputRequest;
           taskState.attempt++;
@@ -320,35 +323,6 @@ export class TaskExecutor {
     };
 
     return context;
-  }
-
-  /**
-   * Check if agent response is requesting input
-   */
-  private isInputRequest(response: any): boolean {
-    // This will depend on the agent response format
-    // For now, check for common patterns
-    return (
-      response?.status === 'needs_input' ||
-      response?.type === 'input_request' ||
-      response?.question !== undefined ||
-      response?.input_required === true
-    );
-  }
-
-  /**
-   * Parse input request from agent response
-   */
-  private parseInputRequest(response: any): InputRequest {
-    return {
-      question: response.question || response.message || 'Please provide input',
-      field: response.field || response.parameter,
-      expectedType: response.expected_type || response.type,
-      suggestions: response.suggestions || response.options,
-      required: response.required !== false,
-      validation: response.validation,
-      context: response.context || response.hint
-    };
   }
 
   /**

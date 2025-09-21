@@ -9,7 +9,8 @@ export { AgentClient } from './core/AgentClient';
 export { ADCPMultiAgentClient, AgentCollection as NewAgentCollection, createADCPMultiAgentClient } from './core/ADCPMultiAgentClient';
 export { ConfigurationManager } from './core/ConfigurationManager';
 export { TaskExecutor } from './core/TaskExecutor';
-
+export { ProtocolResponseParser, ResponseStatus, responseParser } from './core/ProtocolResponseParser';
+export type { ProtocolParserConfig, AgentParserConfig } from './core/ProtocolResponseParser';
 // ====== CONVERSATION TYPES ======
 export type {
   Message,

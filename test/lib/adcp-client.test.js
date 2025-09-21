@@ -176,7 +176,7 @@ describe('AdCPClient', () => {
       assert.throws(() => {
         client.allAgents();
       }, {
-        message: 'No agents configured. Use addAgent() to add agents first.'
+        message: 'No agents configured. Add agents to the client first.'
       });
     });
   });
@@ -259,10 +259,11 @@ describe('ConfigurationManager', () => {
       
       process.env.SALES_AGENTS_CONFIG = 'invalid json {';
       
-      const agents = ConfigurationManager.loadAgentsFromEnv();
-      
-      assert.ok(Array.isArray(agents));
-      assert.strictEqual(agents.length, 0);
+      assert.throws(() => {
+        ConfigurationManager.loadAgentsFromEnv();
+      }, {
+        name: 'ConfigurationError'
+      });
       
       // Restore original env var
       if (originalConfig) {

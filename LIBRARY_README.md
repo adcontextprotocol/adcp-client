@@ -1,6 +1,6 @@
 # ADCP TypeScript Client Library v2.0
 
-A comprehensive, conversation-aware TypeScript client library for the **Ad Context Protocol (ADCP)**.
+A comprehensive, conversation-aware TypeScript client library for the **Ad Context Protocol (ADCP)** with robust protocol detection and standardized status field support.
 
 ## 🤔 What is ADCP?
 
