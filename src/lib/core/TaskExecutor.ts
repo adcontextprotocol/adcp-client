@@ -14,7 +14,7 @@ import type {
   TaskStatus
 } from './ConversationTypes';
 import { normalizeHandlerResponse, isDeferResponse, isAbortResponse } from '../handlers/types';
-import { ProtocolResponseParser, ResponseStatus } from './ProtocolResponseParser';
+import { ProtocolResponseParser, ADCP_STATUS } from './ProtocolResponseParser';
 /**
  * Custom errors for task execution
  */
@@ -184,8 +184,8 @@ export class TaskExecutor {
         });
 
         // Check if agent is requesting input
-        if (this.responseParser.isInputRequest(agentResponse, taskState.agent.protocol, taskState.agent.id)) {
-          const inputRequest = this.responseParser.parseInputRequest(agentResponse, taskState.agent.protocol);
+        if (this.responseParser.isInputRequest(agentResponse)) {
+          const inputRequest = this.responseParser.parseInputRequest(agentResponse);
           taskState.status = 'needs_input';
           taskState.pendingInput = inputRequest;
           taskState.attempt++;
