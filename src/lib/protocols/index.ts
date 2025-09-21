@@ -37,8 +37,9 @@ export class ProtocolClient {
       return callA2ATool(
         agent.agent_uri,
         toolName,
-        args,
-        authToken
+        args, // This maps to 'parameters' in callA2ATool
+        authToken,
+        debugLogs
       );
     } else {
       throw new Error(`Unsupported protocol: ${agent.protocol}`);
@@ -55,6 +56,6 @@ export const createMCPClient = (agentUrl: string, authToken?: string) => ({
 });
 
 export const createA2AClient = (agentUrl: string, authToken?: string) => ({
-  callTool: (toolName: string, parameters: Record<string, any>) =>
-    callA2ATool(agentUrl, toolName, parameters, authToken)
+  callTool: (toolName: string, parameters: Record<string, any>, debugLogs?: any[]) =>
+    callA2ATool(agentUrl, toolName, parameters, authToken, debugLogs)
 });

@@ -127,15 +127,16 @@ async function callToolOnAgents(agentIds: string[], toolName: string, args: any)
 
 // Register plugins
 app.register(fastifyCors, {
-  origin: process.env.NODE_ENV === 'development' ? true : ['https://testing.adcontextprotocol.org'],
+  origin: process.env.NODE_ENV === 'development' ? true : ['https://testing.adcontextprotocol.org', 'https://adcp-testing.fly.dev'],
   methods: ['GET', 'POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: false
 });
 
 // Configure static file serving - different paths for dev vs production
 const publicPath = process.env.NODE_ENV === 'development' 
   ? path.join(__dirname, '../../src/public')  // from src/server/ to src/public/ 
-  : path.join(__dirname, 'public'); // dist/public for production
+  : path.join(__dirname, '../public'); // dist/public for production (go up from dist/server to dist/public)
 
 console.log(`📁 Static files path: ${publicPath}`);
 
@@ -300,25 +301,6 @@ app.post<{
   }
 });
 
-// Get standard creative formats
-app.get('/api/formats/standard', async (request, reply) => {
-  try {
-    const formats = adcpClient.getStandardFormats();
-    return {
-      success: true,
-      data: formats,
-      timestamp: new Date().toISOString()
-    };
-  } catch (error) {
-    app.log.error('Failed to get standard formats: ' + (error instanceof Error ? error.message : String(error)));
-    reply.code(500);
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : 'Unknown error',
-      timestamp: new Date().toISOString()
-    };
-  }
-});
 
 // Additional endpoints for main page (index.html)
 app.get('/api/sales/agents', async (request, reply) => {
@@ -344,25 +326,6 @@ app.get('/api/sales/agents', async (request, reply) => {
   }
 });
 
-app.get('/api/sales/formats/standard', async (request, reply) => {
-  // Same as /api/formats/standard but with different path for main page
-  try {
-    const formats = adcpClient.getStandardFormats();
-    return {
-      success: true,
-      data: formats,
-      timestamp: new Date().toISOString()
-    };
-  } catch (error) {
-    app.log.error('Failed to get sales formats: ' + (error instanceof Error ? error.message : String(error)));
-    reply.code(500);
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : 'Unknown error',
-      timestamp: new Date().toISOString()
-    };
-  }
-});
 
 // Helper function to extract data from nested A2A/MCP responses
 function extractResponseData(result: any): any {
@@ -507,60 +470,22 @@ app.post('/api/sales/agents/:agentId/query', async (request, reply) => {
     // Extract the data from the nested response structure
     const extractedData = extractResponseData(results[0].data) || {};
     
+    // Debug: Log the results structure
+    app.log.info('Results structure: ' + JSON.stringify({
+      success: results[0].success,
+      error: results[0].error,
+      debug_logs_length: results[0].debug_logs ? results[0].debug_logs.length : 'undefined',
+      debug_logs_sample: results[0].debug_logs ? results[0].debug_logs.slice(0, 2) : 'undefined'
+    }));
     
-    // Transform debug logs to the format the UI expects
+    // Pass through authentic debug logs only - NO SYNTHETIC FALLBACKS
     let debugLogs: any[] = [];
     
     if (results[0].debug_logs && results[0].debug_logs.length > 0) {
-      // Transform our backend format (single object with request/response) to UI format (separate entries)
-      results[0].debug_logs.forEach((log: any) => {
-        if (log.request && log.request.method && log.request.method !== 'undefined') {
-          debugLogs.push({
-            type: 'request',
-            method: log.request.method,
-            protocol: agent.protocol,
-            url: log.request.url,
-            headers: log.request.headers,
-            body: log.request.body,
-            timestamp: log.timestamp || new Date().toISOString()
-          });
-        }
-        if (log.response) {
-          debugLogs.push({
-            type: 'response',
-            status: log.response.status,
-            statusText: log.response.status === 'completed' ? 'OK' : log.response.status,
-            body: log.response.body,
-            timestamp: log.timestamp || new Date().toISOString()
-          });
-        }
-      });
-    } else {
-      // Fallback: create synthetic debug logs if none exist
-      debugLogs = [
-        {
-          type: 'request',
-          method: toolName,
-          protocol: agent.protocol,
-          url: agent.agent_uri,
-          body: {
-            tool: toolName,
-            args: {
-              brief: body.brief || body.message || 'Test query',
-              ...(body.promoted_offering && { promoted_offering: body.promoted_offering })
-            }
-          },
-          timestamp: new Date().toISOString()
-        },
-        {
-          type: 'response',
-          status: results[0].success ? 200 : 500,
-          statusText: results[0].success ? 'OK' : 'Error',
-          body: extractedData,
-          timestamp: new Date().toISOString()
-        }
-      ];
+      // Pass through the authentic debug logs directly
+      debugLogs = results[0].debug_logs;
     }
+    // If no debug logs exist, that's fine - we don't create fake ones
     
     // Format the response to match what the UI expects
     const response = {
@@ -607,8 +532,8 @@ app.get('/agents', async (request, reply) => {
 });
 
 app.get('/standard', async (request, reply) => {
-  // Redirect to proper API endpoint
-  reply.redirect('/api/formats/standard');
+  // Formats are now retrieved from agents, not a separate endpoint
+  reply.redirect('/');
 });
 
 // Removed unused /query endpoint that was causing 404 errors
@@ -786,6 +711,7 @@ app.post<{
     };
   }
 });
+
 
 // Start server
 const start = async () => {

@@ -34,7 +34,7 @@
     "generate-types": "tsx scripts/generate-types.ts",
     "sync-version": "tsx scripts/sync-version.ts",
     "validate-schemas": "tsx scripts/validate-schemas.ts",
-    "prebuild": "npm run sync-schemas && npm run generate-types",
+    "prebuild": "(npm run sync-schemas || echo 'Schema sync failed, continuing...') && npm run generate-types",
     "lint": "echo 'Linting not yet configured'",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist/",

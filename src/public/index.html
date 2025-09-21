@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Ad Context Protocol Testing Framework</title>
+    <title>Ad Context Protocol Testing Framework v2.1</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
@@ -1571,6 +1571,138 @@
                 scroll-behavior: auto !important;
             }
         }
+        /* Authentic Debug Log Styles */
+        .debug-log-entry {
+            margin: 8px 0;
+            padding: 8px 12px;
+            border-radius: 4px;
+            border-left: 3px solid;
+        }
+        
+        .debug-log-entry.info {
+            background: rgba(59, 130, 246, 0.1);
+            border-left-color: #3b82f6;
+        }
+        
+        .debug-log-entry.success {
+            background: rgba(34, 197, 94, 0.1);
+            border-left-color: #22c55e;
+        }
+        
+        .debug-log-entry.error {
+            background: rgba(239, 68, 68, 0.1);
+            border-left-color: #ef4444;
+        }
+        
+        .debug-log-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 4px;
+        }
+        
+        .debug-log-type {
+            font-size: 11px;
+            font-weight: 600;
+            padding: 2px 6px;
+            border-radius: 2px;
+            background: rgba(0, 0, 0, 0.1);
+            color: var(--text-primary);
+        }
+        
+        .debug-log-time {
+            font-size: 11px;
+            color: var(--text-muted);
+        }
+        
+        .debug-log-message {
+            font-size: 13px;
+            color: var(--text-primary);
+            margin-bottom: 4px;
+        }
+        
+        .debug-log-data {
+            background: rgba(0, 0, 0, 0.05);
+            border: 1px solid rgba(0, 0, 0, 0.1);
+            border-radius: 4px;
+            padding: 8px;
+            font-size: 11px;
+            color: var(--text-secondary);
+            margin: 0;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        
+        /* Debug Call Card Styles */
+        .debug-call-card {
+            margin: 12px 0;
+            border-radius: 8px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(10px);
+        }
+        
+        .debug-call-card.success {
+            border-left: 4px solid #22c55e;
+            background: rgba(34, 197, 94, 0.1);
+        }
+        
+        .debug-call-card.error {
+            border-left: 4px solid #ef4444;
+            background: rgba(239, 68, 68, 0.1);
+        }
+        
+        .debug-call-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 16px;
+            cursor: pointer;
+            user-select: none;
+        }
+        
+        .debug-call-header:hover {
+            background: rgba(255, 255, 255, 0.1);
+        }
+        
+        .debug-call-title {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .debug-call-icon {
+            font-size: 14px;
+        }
+        
+        .debug-call-method {
+            font-weight: 600;
+            color: var(--text-primary);
+            font-size: 14px;
+        }
+        
+        .debug-call-status {
+            font-size: 12px;
+            font-weight: 500;
+            opacity: 0.8;
+            color: var(--text-secondary);
+        }
+        
+        .debug-call-timestamp {
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+        
+        .debug-call-toggle {
+            font-size: 12px;
+            color: var(--text-muted);
+            transition: transform 0.2s ease;
+        }
+        
+        .debug-call-details {
+            padding: 0 16px 16px 16px;
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+        }
     </style>
 </head>
 <body>
@@ -2179,7 +2311,8 @@
         async function loadAgentsData() {
             try {
                 logEvent('info', 'Loading agents from API...');
-                const response = await fetch('/api/sales/agents');
+                // Add cache-busting parameter to force fresh fetch
+                const response = await fetch('/api/sales/agents?t=' + Date.now());
                 const result = await response.json();
                 
                 if (result.success && result.data && result.data.agents) {
@@ -2192,7 +2325,12 @@
                 }
             } catch (error) {
                 console.error('Error loading agents:', error);
-                logEvent('error', `Failed to load agents: ${error.message}`);
+                console.error('Error details:', {
+                    name: error.name,
+                    message: error.message,
+                    stack: error.stack
+                });
+                logEvent('error', `Failed to load agents: ${error.name}: ${error.message}`);
             }
         }
 
@@ -2202,7 +2340,6 @@
                 logEvent('info', 'AdCP Testing Framework initialized (public mode)');
                 // Load initial data
                 await loadAgentsData();
-                await fetchStandardFormats();
             } catch (error) {
                 console.error('App initialization error:', error);
                 logEvent('error', `App initialization failed: ${error.message}`);
@@ -2756,72 +2893,44 @@
             logEvent('info', 'Refreshing creative formats from agent and standard repository...');
             
             try {
-                // Fetch both agent formats and standard formats in parallel
-                const [agentResult, standardFormats] = await Promise.allSettled([
-                    callADCPTool(selectedAgent, 'list_creative_formats', {}),
-                    fetchStandardFormats()
-                ]);
+                // Fetch formats from the selected agent
+                const agentResult = await callADCPTool(selectedAgent, 'list_creative_formats', {});
                 
                 let agentFormats = [];
-                let standardFormatsArray = [];
                 
-                // Handle agent result
-                if (agentResult.status === 'fulfilled') {
-                    const result = agentResult.value;
-                    // Handle ADCP response structure - formats can be in payload, formats, or sources
-                    if (result && result.payload && Array.isArray(result.payload)) {
+                // Handle agent result - all formats come from the agent
+                if (agentResult && agentResult.success) {
+                    const result = agentResult;
+                    // Handle ADCP response structure - formats can be in payload, formats, or data
+                    if (result.payload && Array.isArray(result.payload)) {
                         agentFormats = result.payload;
-                        logEvent('success', `Found ${agentFormats.length} formats from agent (enhanced response)`);
-                        
-                        // Check if response was already enhanced with standard formats
-                        if (result.sources && result.sources.standard > 0) {
-                            logEvent('info', `Agent response already includes ${result.sources.standard} standard formats`);
-                            creativeFormats = agentFormats; // Already merged by backend
-                            updateCreativeFormatsTable();
-                            return;
-                        }
-                    } else if (result && result.formats && Array.isArray(result.formats)) {
+                        logEvent('success', `Found ${agentFormats.length} formats from agent`);
+                    } else if (result.formats && Array.isArray(result.formats)) {
                         agentFormats = result.formats;
-                        logEvent('success', `Found ${agentFormats.length} formats from agent (legacy format)`);
-                    } else if (result && Array.isArray(result)) {
+                        logEvent('success', `Found ${agentFormats.length} formats from agent`);
+                    } else if (result.data && result.data.formats && Array.isArray(result.data.formats)) {
+                        agentFormats = result.data.formats;
+                        logEvent('success', `Found ${agentFormats.length} formats from agent`);
+                    } else if (Array.isArray(result)) {
                         agentFormats = result;
-                        logEvent('success', `Found ${agentFormats.length} formats from agent (direct array)`);
+                        logEvent('success', `Found ${agentFormats.length} formats from agent`);
                     } else {
-                        logEvent('warning', 'Agent returned unexpected format structure');
+                        logEvent('warning', 'Agent returned no formats or unrecognized format structure');
+                        logEvent('debug', `Agent response: ${JSON.stringify(result, null, 2)}`);
+                        agentFormats = [];
                     }
                 } else {
-                    logEvent('error', `Failed to fetch agent formats: ${agentResult.reason}`);
+                    logEvent('error', `Failed to fetch formats from agent: ${agentResult?.error || 'Unknown error'}`);
+                    agentFormats = [];
                 }
                 
-                // Handle standard formats result
-                if (standardFormats.status === 'fulfilled') {
-                    standardFormatsArray = standardFormats.value;
-                    logEvent('success', `Fetched ${standardFormatsArray.length} standard formats from ADCP repository`);
-                } else {
-                    logEvent('warning', `Failed to fetch standard formats: ${standardFormats.reason}`);
-                }
+                // Use agent formats directly - no need for separate "standard" formats
+                creativeFormats = agentFormats.map(format => ({
+                    ...format,
+                    source: 'agent'
+                }));
                 
-                // Merge formats, prioritizing agent formats over standard ones with same format_id
-                const formatMap = new Map();
-                
-                // Add standard formats first
-                standardFormatsArray.forEach(format => {
-                    format.source = format.source || 'standard';
-                    formatMap.set(format.format_id, format);
-                });
-                
-                // Add/override with agent formats
-                agentFormats.forEach(format => {
-                    format.source = format.source || 'agent';
-                    formatMap.set(format.format_id, format);
-                });
-                
-                creativeFormats = Array.from(formatMap.values());
-                const agentCount = agentFormats.length;
-                const standardCount = standardFormatsArray.length;
-                const totalCount = creativeFormats.length;
-                
-                logEvent('success', `Loaded ${totalCount} total formats (${agentCount} from agent, ${standardCount} standard, merged to ${totalCount} unique)`);
+                logEvent('success', `Loaded ${creativeFormats.length} creative formats from agent`);
                 updateCreativeFormatsTable();
             } catch (error) {
                 logEvent('error', `Failed to refresh creative formats: ${error.message}`);
@@ -2833,22 +2942,6 @@
             }
         }
         
-        // Fetch standard formats from the API endpoint
-        async function fetchStandardFormats() {
-            try {
-                const response = await fetch('/api/sales/formats/standard');
-                if (response.ok) {
-                    const data = await response.json();
-                    return data.formats || [];
-                } else {
-                    console.warn('Failed to fetch standard formats:', response.status, response.statusText);
-                    return [];
-                }
-            } catch (error) {
-                console.warn('Error fetching standard formats:', error.message);
-                return [];
-            }
-        }
         
         function updateCreativeFormatsTable() {
             const tbody = document.getElementById('creative-formats-tbody');
@@ -4388,7 +4481,6 @@
         }
         
         function displayDebugLogs(logs, agent) {
-            
             if (!logs || !Array.isArray(logs)) {
                 return;
             }
@@ -4401,21 +4493,32 @@
                 }
             }
             
-            // Handle both hierarchical operation logs and legacy request-response pairs
-            logs.forEach((log, logIndex) => {
-                if (log.type === 'operation') {
-                    // Handle new hierarchical operation logs
-                    displayOperationLog(log, agent, logIndex);
-                } else {
-                    // Handle legacy logs - group into request-response pairs
-                    const legacyLogs = logs.filter(l => l.type !== 'operation');
-                    if (legacyLogs.length > 0 && logIndex === 0) {
-                        // Only process legacy logs once
-                        const pairs = groupLogsIntoPairs(legacyLogs);
-                        displayLegacyPairs(pairs, agent);
-                    }
-                }
+            // Separate operation logs from other logs
+            const operationLogs = logs.filter(l => l.type === 'operation');
+            const nonOperationLogs = logs.filter(l => l.type !== 'operation');
+            
+            
+            // Handle hierarchical operation logs
+            operationLogs.forEach((log, logIndex) => {
+                displayOperationLog(log, agent, logIndex);
             });
+            
+            // Handle non-operation logs (authentic or legacy)
+            if (nonOperationLogs.length > 0) {
+                const hasAuthenticLogs = nonOperationLogs.some(l => 
+                    l.type === 'info' || l.type === 'success' || l.type === 'error'
+                );
+                
+                if (hasAuthenticLogs) {
+                    // Use new authentic log display
+                    displayAuthenticLogs(nonOperationLogs, agent);
+                } else {
+                    // Use legacy display for old synthetic logs
+                    const pairs = groupLogsIntoPairs(nonOperationLogs);
+                    displayLegacyPairs(pairs, agent);
+                }
+            } else {
+            }
             
             // Auto-scroll to bottom
             const content = document.getElementById('debug-content');
@@ -4511,11 +4614,108 @@
             }
         }
         
+        function formatTime(timestamp) {
+            return new Date(timestamp).toLocaleTimeString();
+        }
+        
+        function toggleCallDetails(callId) {
+            const detailsElement = document.getElementById(callId);
+            const toggleElement = detailsElement.previousElementSibling.querySelector('.debug-call-toggle');
+            
+            if (detailsElement.style.display === 'none') {
+                detailsElement.style.display = 'block';
+                toggleElement.textContent = '▲';
+            } else {
+                detailsElement.style.display = 'none';
+                toggleElement.textContent = '▼';
+            }
+        }
+        
+        function displayAuthenticLogs(logs, agent) {
+            // Group logs by their protocol flow (look for sequences starting with tool calls)
+            let callGroups = [];
+            let currentGroup = [];
+            
+            logs.forEach(log => {
+                // Start a new group when we see a tool call
+                if (log.message && (log.message.includes('Calling tool') || log.message.includes('Calling skill'))) {
+                    if (currentGroup.length > 0) {
+                        callGroups.push(currentGroup);
+                    }
+                    currentGroup = [log];
+                } else {
+                    currentGroup.push(log);
+                }
+            });
+            
+            // Add the last group
+            if (currentGroup.length > 0) {
+                callGroups.push(currentGroup);
+            }
+            
+            // Display each group as a call
+            callGroups.forEach((group, groupIndex) => {
+                const callId = `call-${Date.now()}-${groupIndex}`;
+                const firstLog = group[0];
+                const methodName = extractMethodFromLog(firstLog);
+                
+                // Determine overall status from the group
+                let statusClass = 'pending';
+                let isError = false;
+                let status = 'In Progress';
+                
+                // Find the final status from the logs
+                const errorLog = group.find(log => log.type === 'error');
+                const successLog = group.find(log => log.type === 'success');
+                
+                if (errorLog) {
+                    statusClass = 'error';
+                    isError = true;
+                    status = 'Error';
+                } else if (successLog) {
+                    statusClass = 'success';
+                    status = 'Success';
+                }
+                
+                const callCard = document.createElement('div');
+                callCard.className = `debug-call-card ${statusClass}`;
+                
+                callCard.innerHTML = `
+                    <div class="debug-call-header" onclick="toggleCallDetails('${callId}')">
+                        <div class="debug-call-title">
+                            <span class="debug-call-icon">📞</span>
+                            <span class="debug-call-method">Call ${groupIndex + 1}: ${methodName}</span>
+                            <span class="debug-call-status">[${status}]</span>
+                        </div>
+                        <div class="debug-call-timestamp">${formatTime(firstLog.timestamp)}</div>
+                        <div class="debug-call-toggle">▼</div>
+                    </div>
+                    <div id="${callId}" class="debug-call-details" style="display: none;">
+                        ${group.map(log => `
+                            <div class="debug-log-entry ${log.type}">
+                                <div class="debug-log-header">
+                                    <span class="debug-log-type">${log.type.toUpperCase()}</span>
+                                    <span class="debug-log-time">${formatTime(log.timestamp)}</span>
+                                </div>
+                                <div class="debug-log-message">${log.message || 'No message'}</div>
+                                ${log.response ? `<pre class="debug-log-data">${JSON.stringify(log.response, null, 2)}</pre>` : ''}
+                            </div>
+                        `).join('')}
+                    </div>
+                `;
+                
+                const debugContent = document.getElementById('debug-content');
+                if (debugContent) {
+                    debugContent.appendChild(callCard);
+                }
+            });
+        }
+
         function displayLegacyPairs(pairs, agent) {
             pairs.forEach((pair, pairIndex) => {
                 try {
                     const callId = `call-${Date.now()}-${pairIndex}`;
-                    const methodName = extractMethodName(pair.request);
+                    const methodName = pair.request ? extractMethodName(pair.request) : extractMethodFromLog(pair.response);
                     
                     // Filter out low-level protocol calls - only show business logic
                     const lowLevelCalls = ['agent-card.json', 'tools/list', 'resources/list', 'prompts/list'];
@@ -5102,17 +5302,41 @@
             return pairs;
         }
         
-        function extractMethodName(request) {
-            console.log('🔧 extractMethodName called with:', request);
+        function extractMethodFromLog(log) {
+            if (!log || !log.message) {
+                return 'System Log';
+            }
             
+            // Extract method name from messages like "MCP: Calling tool get_products with args: ..."
+            // or "A2A: Calling skill get_products with parameters: ..."
+            const mcpMatch = log.message.match(/MCP: Calling tool (\w+)/);
+            if (mcpMatch) {
+                return mcpMatch[1];
+            }
+            
+            const a2aMatch = log.message.match(/A2A: Calling skill (\w+)/);
+            if (a2aMatch) {
+                return a2aMatch[1];
+            }
+            
+            // For response messages, try to infer from protocol type
+            if (log.message.includes('MCP:')) {
+                return 'MCP Response';
+            }
+            if (log.message.includes('A2A:')) {
+                return 'A2A Response';
+            }
+            
+            return 'System Log';
+        }
+
+        function extractMethodName(request) {
             if (!request) {
-                console.log('❌ extractMethodName: no request provided');
                 return 'Unknown';
             }
             
             // Direct method field (for our debug logs structure)
             if (request.method) {
-                console.log('✅ extractMethodName: found direct method:', request.method);
                 return request.method;
             }
             
@@ -5120,10 +5344,8 @@
             if (request.body) {
                 try {
                     const body = typeof request.body === 'string' ? JSON.parse(request.body) : request.body;
-                    console.log('🔧 extractMethodName: parsed body:', body);
                     
                     if (body.method) {
-                        console.log('✅ extractMethodName: found body.method:', body.method);
                         // For MCP tool calls, show tool name instead of generic "tools/call"
                         if (body.method === 'tools/call' && body.params && body.params.name) {
                             return `${body.params.name} (MCP Tool)`;
@@ -5132,16 +5354,11 @@
                     }
                     // Check if body has tool field (for A2A requests)
                     if (body.tool) {
-                        console.log('✅ extractMethodName: found body.tool:', body.tool);
                         return body.tool;
                     }
-                    
-                    console.log('⚠️ extractMethodName: no method or tool found in body');
                 } catch (e) {
-                    console.log('❌ extractMethodName: failed to parse body:', e.message);
+                    // Silently handle parse errors
                 }
-            } else {
-                console.log('⚠️ extractMethodName: no body in request');
             }
             
             // Fall back to URL path
@@ -5155,7 +5372,6 @@
                 }
             }
             
-            console.log('extractMethodName: no method found, request:', request);
             return 'Unknown';
         }
         

@@ -10,7 +10,8 @@ export async function callA2ATool(
   agentUrl: string,
   toolName: string,
   parameters: Record<string, any>,
-  authToken?: string
+  authToken?: string,
+  debugLogs: any[] = []
 ): Promise<any> {
   // Create authenticated fetch if needed
   const fetchImpl = authToken ? 
@@ -49,8 +50,26 @@ export async function callA2ATool(
     }
   };
   
+  // Add debug log for A2A call
+  const payloadSize = JSON.stringify(requestPayload).length;
+  debugLogs.push({
+    type: 'info',
+    message: `A2A: Calling skill ${toolName} with parameters: ${JSON.stringify(parameters)}. Payload size: ${payloadSize} bytes`,
+    timestamp: new Date().toISOString(),
+    payloadSize,
+    actualPayload: requestPayload
+  });
+  
   // Send message using A2A protocol
   const messageResponse = await a2aClient.sendMessage(requestPayload);
+  
+  // Add debug log for A2A response
+  debugLogs.push({
+    type: messageResponse?.error ? 'error' : 'success',
+    message: `A2A: Response received (${messageResponse?.error ? 'error' : 'success'})`,
+    timestamp: new Date().toISOString(),
+    response: messageResponse
+  });
   
   // Check for JSON-RPC error in response
   if (messageResponse?.error || messageResponse?.result?.error) {
