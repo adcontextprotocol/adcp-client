@@ -4557,7 +4557,7 @@
                 const metadataHTML = operationLog.metadata ? 
                     `<div class="operation-metadata">
                         <strong>Metadata:</strong>
-                        <pre class="json-data">${JSON.stringify(operationLog.metadata, null, 2)}</pre>
+                        <pre class="json-data">${escapeHtml(safeStringify(operationLog.metadata))}</pre>
                     </div>` : '';
                 
                 const fullHTML = `
@@ -4615,19 +4615,58 @@
         }
         
         function formatTime(timestamp) {
-            return new Date(timestamp).toLocaleTimeString();
+            try {
+                if (!timestamp) {
+                    return '[No timestamp]';
+                }
+                const date = new Date(timestamp);
+                if (isNaN(date.getTime())) {
+                    return '[Invalid timestamp]';
+                }
+                return date.toLocaleTimeString();
+            } catch (error) {
+                console.warn('Error formatting timestamp:', timestamp, error);
+                return '[Format error]';
+            }
+        }
+        
+        function safeStringify(obj) {
+            try {
+                return JSON.stringify(obj, null, 2);
+            } catch (error) {
+                return `[Error serializing object: ${error.message}]`;
+            }
         }
         
         function toggleCallDetails(callId) {
-            const detailsElement = document.getElementById(callId);
-            const toggleElement = detailsElement.previousElementSibling.querySelector('.debug-call-toggle');
-            
-            if (detailsElement.style.display === 'none') {
-                detailsElement.style.display = 'block';
-                toggleElement.textContent = '▲';
-            } else {
-                detailsElement.style.display = 'none';
-                toggleElement.textContent = '▼';
+            try {
+                const detailsElement = document.getElementById(callId);
+                if (!detailsElement) {
+                    console.warn(`Debug details element not found: ${callId}`);
+                    return;
+                }
+                
+                const headerElement = detailsElement.previousElementSibling;
+                if (!headerElement) {
+                    console.warn(`Header element not found for: ${callId}`);
+                    return;
+                }
+                
+                const toggleElement = headerElement.querySelector('.debug-call-toggle');
+                if (!toggleElement) {
+                    console.warn(`Toggle element not found for: ${callId}`);
+                    return;
+                }
+                
+                if (detailsElement.style.display === 'none') {
+                    detailsElement.style.display = 'block';
+                    toggleElement.textContent = '▲';
+                } else {
+                    detailsElement.style.display = 'none';
+                    toggleElement.textContent = '▼';
+                }
+            } catch (error) {
+                console.error(`Error toggling call details for ${callId}:`, error);
             }
         }
         
@@ -4684,8 +4723,8 @@
                     <div class="debug-call-header" onclick="toggleCallDetails('${callId}')">
                         <div class="debug-call-title">
                             <span class="debug-call-icon">📞</span>
-                            <span class="debug-call-method">Call ${groupIndex + 1}: ${methodName}</span>
-                            <span class="debug-call-status">[${status}]</span>
+                            <span class="debug-call-method">Call ${groupIndex + 1}: ${escapeHtml(methodName)}</span>
+                            <span class="debug-call-status">[${escapeHtml(status)}]</span>
                         </div>
                         <div class="debug-call-timestamp">${formatTime(firstLog.timestamp)}</div>
                         <div class="debug-call-toggle">▼</div>
@@ -4694,11 +4733,11 @@
                         ${group.map(log => `
                             <div class="debug-log-entry ${log.type}">
                                 <div class="debug-log-header">
-                                    <span class="debug-log-type">${log.type.toUpperCase()}</span>
+                                    <span class="debug-log-type">${escapeHtml(log.type.toUpperCase())}</span>
                                     <span class="debug-log-time">${formatTime(log.timestamp)}</span>
                                 </div>
-                                <div class="debug-log-message">${log.message || 'No message'}</div>
-                                ${log.response ? `<pre class="debug-log-data">${JSON.stringify(log.response, null, 2)}</pre>` : ''}
+                                <div class="debug-log-message">${escapeHtml(log.message || 'No message')}</div>
+                                ${log.response ? `<pre class="debug-log-data">${escapeHtml(safeStringify(log.response))}</pre>` : ''}
                             </div>
                         `).join('')}
                     </div>
