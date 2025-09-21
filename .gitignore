@@ -9,6 +9,9 @@ dist/
 build/
 *.tsbuildinfo
 
+# Schema cache
+schemas/cache/
+
 # Environment variables
 .env
 .env.local
@@ -113,3 +116,13 @@ fly.toml.bak
 # Test artifacts
 test-results/
 playwright-report/
+
+# Security - Never commit auth tokens, API keys, or secrets
+**/*token*.txt
+**/*secret*.txt
+**/*key*.txt
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx

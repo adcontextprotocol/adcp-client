@@ -1,0 +1,140 @@
+# Source files (only ship compiled dist/)
+src/
+tsconfig*.json
+*.ts
+
+# Development files
+.env*
+.env.example
+*.log
+.DS_Store
+Thumbs.db
+
+# Build artifacts not needed in package
+node_modules/
+coverage/
+.nyc_output/
+test-results/
+
+# Development tools
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# CI/CD files
+.github/
+.gitlab-ci.yml
+.travis.yml
+.circleci/
+
+# Docker files
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# Testing files
+test/
+tests/
+**/*.test.js
+**/*.test.ts
+**/*.spec.js
+**/*.spec.ts
+
+# Documentation that's not needed in package
+docs/
+*.draft.md
+DEPLOYMENT.md
+MCP_TESTING.md
+PRODUCTION-READY.md
+CLAUDE.md
+
+# Scripts and tooling
+scripts/
+tools/
+.husky/
+
+# Package manager files
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Linting and formatting
+.eslintrc*
+.prettierrc*
+.editorconfig
+
+# Git files
+.git/
+.gitignore
+.gitattributes
+
+# OS files
+.DS_Store
+Thumbs.db
+*.tmp
+*.temp
+
+# Runtime files
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage and profiling
+coverage/
+.nyc_output/
+*.lcov
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Optional npm cache directory
+.npm
+
+# Optional eslint cache
+.eslintcache
+
+# Microbundle cache
+.rpt2_cache/
+.rts2_cache_cjs/
+.rts2_cache_es/
+.rts2_cache_umd/
+
+# Optional REPL history
+.node_repl_history
+
+# Output of 'npm pack'
+*.tgz
+
+# Yarn Integrity file
+.yarn-integrity
+
+# dotenv environment variables file
+.env
+.env.test
+.env.production
+
+# Stores VSCode versions used for testing VSCode extensions
+.vscode-test
+
+# Temporary folders
+tmp/
+temp/
+
+# Examples and demos (include only what's referenced in README)
+examples/
+demos/
+
+# Conductor-specific files
+conductor.json
+.conductor/
+
+# Legacy server file
+server.js
+
+# Fly.io deployment files
+fly.toml

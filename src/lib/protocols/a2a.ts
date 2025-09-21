@@ -9,9 +9,9 @@ if (!A2AClient) {
 export async function callA2ATool(
   agentUrl: string,
   toolName: string,
-  brief: string,
-  promotedOffering?: string,
-  authToken?: string
+  parameters: Record<string, any>,
+  authToken?: string,
+  debugLogs: any[] = []
 ): Promise<any> {
   // Create authenticated fetch if needed
   const fetchImpl = authToken ? 
@@ -35,31 +35,41 @@ export async function callA2ATool(
     fetchImpl
   });
   
-  // Build request payload
+  // Build request payload following AdCP A2A spec
   const requestPayload = {
     message: {
-      kind: "message",
       messageId: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-      role: "user",
+      role: "user", 
       parts: [{
-        kind: "data",
+        kind: "data",  // A2A spec uses "kind", not "type"
         data: {
           skill: toolName,
-          parameters: {
-            brief,
-            ...(promotedOffering && { promoted_offering: promotedOffering })
-          }
+          parameters
         }
       }]
-    },
-    configuration: {
-      blocking: true, // Wait for response
-      acceptedOutputModes: ['application/json', 'text/plain']
     }
   };
   
+  // Add debug log for A2A call
+  const payloadSize = JSON.stringify(requestPayload).length;
+  debugLogs.push({
+    type: 'info',
+    message: `A2A: Calling skill ${toolName} with parameters: ${JSON.stringify(parameters)}. Payload size: ${payloadSize} bytes`,
+    timestamp: new Date().toISOString(),
+    payloadSize,
+    actualPayload: requestPayload
+  });
+  
   // Send message using A2A protocol
   const messageResponse = await a2aClient.sendMessage(requestPayload);
+  
+  // Add debug log for A2A response
+  debugLogs.push({
+    type: messageResponse?.error ? 'error' : 'success',
+    message: `A2A: Response received (${messageResponse?.error ? 'error' : 'success'})`,
+    timestamp: new Date().toISOString(),
+    response: messageResponse
+  });
   
   // Check for JSON-RPC error in response
   if (messageResponse?.error || messageResponse?.result?.error) {

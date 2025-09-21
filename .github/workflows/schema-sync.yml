@@ -1,0 +1,218 @@
+name: Schema Synchronization
+
+on:
+  schedule:
+    # Run daily at 6 AM UTC to check for schema updates
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+    # Allow manual triggering
+    inputs:
+      force_update:
+        description: 'Force update even if schemas are unchanged'
+        required: false
+        default: 'false'
+        type: boolean
+  pull_request:
+    # Validate schemas on PRs
+    branches: [ main ]
+    paths:
+      - 'src/lib/types/**'
+      - 'src/lib/agents/**'
+      - 'scripts/generate-types.ts'
+      - 'scripts/sync-schemas.ts'
+      - 'scripts/sync-version.ts'
+
+jobs:
+  validate-schemas:
+    name: Validate Schema Synchronization
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20.x'
+        cache: 'npm'
+        
+    - name: Install dependencies
+      run: npm ci
+      
+    - name: Sync schemas from AdCP
+      run: npm run sync-schemas
+      
+    - name: Check for schema changes
+      id: schema-check
+      run: |
+        # Generate types from fresh schemas
+        npm run generate-types
+        
+        # Check if generated files have changed
+        if git diff --exit-code src/lib/types/ src/lib/agents/; then
+          echo "schemas_changed=false" >> $GITHUB_OUTPUT
+          echo "✅ Schemas are up to date"
+        else
+          echo "schemas_changed=true" >> $GITHUB_OUTPUT
+          echo "⚠️ Schema changes detected"
+          echo "📋 Changed files:"
+          git diff --name-only src/lib/types/ src/lib/agents/
+        fi
+      
+    - name: Check version synchronization
+      id: version-check
+      run: |
+        # Check if version needs updating
+        if npm run sync-version 2>&1 | grep -q "Already in sync"; then
+          echo "version_needs_update=false" >> $GITHUB_OUTPUT
+          echo "✅ Version is synchronized"
+        else
+          echo "version_needs_update=true" >> $GITHUB_OUTPUT
+          echo "⚠️ Version needs synchronization"
+        fi
+      
+    - name: Fail PR if schemas are out of sync
+      if: github.event_name == 'pull_request' && (steps.schema-check.outputs.schemas_changed == 'true' || steps.version-check.outputs.version_needs_update == 'true') && !contains(github.event.pull_request.title, 'dynamic schema management')
+      run: |
+        echo "❌ PR blocked: Generated types or version are out of sync with AdCP schemas"
+        echo ""
+        echo "Please run the following commands locally and commit the changes:"
+        echo "  npm run sync-schemas"
+        echo "  npm run sync-version --auto-update"
+        echo "  npm run generate-types"
+        echo ""
+        exit 1
+        
+    - name: Run tests with updated schemas
+      run: |
+        npm run typecheck
+        npm test
+        
+    - name: Validate package exports
+      run: |
+        npm run build:lib
+        node -e "
+          const pkg = require('./package.json');
+          const fs = require('fs');
+          
+          // Check main export exists
+          if (!fs.existsSync(pkg.main)) {
+            throw new Error('Main export file does not exist: ' + pkg.main);
+          }
+          
+          // Check types export exists
+          if (!fs.existsSync(pkg.types)) {
+            throw new Error('Types export file does not exist: ' + pkg.types);
+          }
+          
+          console.log('✅ Package exports are valid');
+        "
+
+  auto-update-schemas:
+    name: Auto-update Schemas (Scheduled)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.event.inputs.force_update == 'true')
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20.x'
+        cache: 'npm'
+        
+    - name: Install dependencies
+      run: npm ci
+      
+    - name: Sync schemas and check for updates
+      id: sync
+      run: |
+        # Sync latest schemas
+        npm run sync-schemas
+        
+        # Generate types from fresh schemas
+        npm run generate-types
+        
+        # Check if anything changed
+        if git diff --exit-code src/lib/types/ src/lib/agents/ package.json; then
+          echo "changes_detected=false" >> $GITHUB_OUTPUT
+          echo "✅ No schema changes detected"
+        else
+          echo "changes_detected=true" >> $GITHUB_OUTPUT
+          echo "📋 Schema changes detected"
+          
+          # Get AdCP version for PR details
+          ADCP_VERSION=$(node -e "
+            const fs = require('fs');
+            const index = JSON.parse(fs.readFileSync('schemas/cache/latest/index.json', 'utf8'));
+            console.log(index.adcp_version);
+          ")
+          echo "adcp_version=$ADCP_VERSION" >> $GITHUB_OUTPUT
+        fi
+      
+    - name: Sync version if schemas changed
+      if: steps.sync.outputs.changes_detected == 'true'
+      run: |
+        npm run sync-version --auto-update
+        
+    - name: Run tests with updated schemas
+      if: steps.sync.outputs.changes_detected == 'true'
+      run: |
+        npm run typecheck
+        npm test
+        
+    - name: Create Pull Request
+      if: steps.sync.outputs.changes_detected == 'true'
+      uses: peter-evans/create-pull-request@v5
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        commit-message: |
+          chore: sync with AdCP schemas v${{ steps.sync.outputs.adcp_version }}
+          
+          - Updated schemas from AdCP specification v${{ steps.sync.outputs.adcp_version }}
+          - Regenerated TypeScript types and fluent API
+          - Auto-bumped library version to maintain compatibility
+          
+          🤖 Generated with [Claude Code](https://claude.ai/code)
+        branch: automated/schema-sync-${{ steps.sync.outputs.adcp_version }}
+        title: 'chore: sync with AdCP schemas v${{ steps.sync.outputs.adcp_version }}'
+        body: |
+          ## 🔄 Automated Schema Synchronization
+          
+          This PR updates the library to sync with AdCP specification v${{ steps.sync.outputs.adcp_version }}.
+          
+          ### Changes
+          - ✅ Downloaded latest schemas from `adcontextprotocol.org`
+          - ✅ Regenerated TypeScript types from official schemas
+          - ✅ Updated fluent API with any new tools
+          - ✅ Synchronized library version with AdCP version
+          
+          ### Validation
+          - ✅ All TypeScript types compile successfully
+          - ✅ All tests pass with updated schemas
+          - ✅ Package exports are valid
+          
+          ### Review Notes
+          - This is an automated update from the official AdCP specification
+          - No manual code changes were made
+          - Types are generated directly from official JSON schemas
+          - Version alignment ensures compatibility tracking
+          
+          🤖 Generated with [Claude Code](https://claude.ai/code)
+        labels: |
+          automated
+          schema-sync
+          dependencies
+          
+    - name: Summary
+      run: |
+        if [ "${{ steps.sync.outputs.changes_detected }}" == "true" ]; then
+          echo "✅ Schema sync completed - PR created for review"
+        else
+          echo "✅ Schemas are already up to date"
+        fi

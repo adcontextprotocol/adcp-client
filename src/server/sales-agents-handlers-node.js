@@ -1775,7 +1775,7 @@ Please process this ${toolName} request according to AdCP specifications.`;
                     result.artifacts.forEach((artifact) => {
                         if (artifact.parts && Array.isArray(artifact.parts)) {
                             artifact.parts.forEach((part) => {
-                                // Handle different part kinds according to ADCP spec
+                                // Handle different part kinds according to A2A spec
                                 switch (part.kind) {
                                     case 'data':
                                         if (part.data && part.data.products && Array.isArray(part.data.products)) {
