@@ -2,6 +2,7 @@
 import { Client as MCPClient } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
+import { createMCPAuthHeaders } from '../auth';
 
 export async function callMCPTool(
   agentUrl: string,
@@ -16,10 +17,7 @@ export async function callMCPTool(
   // Prepare auth headers for StreamableHTTP transport
   const requestInit: RequestInit = {};
   if (authToken) {
-    requestInit.headers = {
-      'x-adcp-auth': authToken,
-      'Accept': 'application/json, text/event-stream' // Required by MCP server
-    };
+    requestInit.headers = createMCPAuthHeaders(authToken);
     
     // Add to debug logs
     debugLogs.push({

@@ -3,8 +3,8 @@ import Fastify, { FastifyInstance } from 'fastify';
 import fastifyStatic from '@fastify/static';
 import fastifyCors from '@fastify/cors';
 import path from 'path';
-import { testAgents, getAgentList, testSingleAgent, getStandardFormats } from './protocols';
-import { TestRequest, ApiResponse, TestResponse, AgentListResponse, ValidateAdAgentsRequest, ValidateAdAgentsResponse, CreateAdAgentsRequest, CreateAdAgentsResponse } from './types/adcp';
+import { AdCPClient, ConfigurationManager, getStandardFormats } from '../lib';
+import type { TestRequest, ApiResponse, TestResponse, AgentListResponse, ValidateAdAgentsRequest, ValidateAdAgentsResponse, CreateAdAgentsRequest, CreateAdAgentsResponse, AgentConfig, TestResult } from '../lib/types';
 import { AdAgentsManager } from './adagents-manager';
 
 // __dirname is available in CommonJS mode
@@ -18,6 +18,113 @@ const app: FastifyInstance = Fastify({
   }
 });
 
+// Initialize AdCP client with configured agents
+const configuredAgents = ConfigurationManager.loadAgentsFromEnv();
+const adcpClient = new AdCPClient(configuredAgents);
+
+// Helper function to call tools dynamically using the new fluent API
+// Convert new fluent API response to legacy format for server compatibility
+function adaptResponseToLegacyFormat(fluentResponse: any): TestResult {
+  return {
+    agent_id: fluentResponse.agent.id,
+    agent_name: fluentResponse.agent.name,
+    success: fluentResponse.success,
+    response_time_ms: fluentResponse.responseTimeMs,
+    data: fluentResponse.success ? fluentResponse.data : undefined,
+    error: fluentResponse.success ? undefined : fluentResponse.error,
+    timestamp: fluentResponse.timestamp,
+    debug_logs: fluentResponse.debugLogs
+  };
+}
+
+async function callToolOnAgent(agentId: string, toolName: string, args: any): Promise<TestResult> {
+  const agent = adcpClient.agent(agentId);
+  
+  let fluentResponse;
+  switch (toolName) {
+    case 'get_products':
+      fluentResponse = await agent.getProducts({
+        brief: args.brief,
+        promoted_offering: args.promoted_offering
+      });
+      break;
+    case 'list_creative_formats':
+      fluentResponse = await agent.listCreativeFormats({
+        type: args.type,
+        category: args.category,
+        format_ids: args.format_ids
+      });
+      break;
+    case 'create_media_buy':
+      fluentResponse = await agent.createMediaBuy({
+        buyer_ref: args.buyer_ref || 'test-buyer-ref',
+        packages: args.packages || [],
+        promoted_offering: args.promoted_offering || 'Test offering',
+        start_time: args.start_time || new Date().toISOString(),
+        end_time: args.end_time || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+        budget: args.budget || { total: 1000, currency: 'USD' }
+      });
+      break;
+    case 'sync_creatives':
+      fluentResponse = await agent.syncCreatives({
+        creatives: args.creatives,
+        patch: args.patch,
+        dry_run: args.dry_run
+      });
+      break;
+    case 'list_creatives':
+      fluentResponse = await agent.listCreatives({
+        filters: args.filters,
+        sort: args.sort,
+        pagination: args.pagination
+      });
+      break;
+    default:
+      throw new Error(`Unknown tool: ${toolName}`);
+  }
+  
+  return adaptResponseToLegacyFormat(fluentResponse);
+}
+
+async function callToolOnAgents(agentIds: string[], toolName: string, args: any): Promise<TestResult[]> {
+  const agents = adcpClient.agents(agentIds);
+  
+  let fluentResponses;
+  switch (toolName) {
+    case 'get_products':
+      fluentResponses = await agents.getProducts({
+        ...(args.brief && { brief: args.brief }),
+        promoted_offering: args.promoted_offering || 'Test offering for AdCP testing'
+      });
+      break;
+    case 'list_creative_formats':
+      fluentResponses = await agents.listCreativeFormats({
+        ...(args.type && { type: args.type }),
+        ...(args.category && { category: args.category }),
+        ...(args.format_ids && { format_ids: args.format_ids })
+      });
+      break;
+    case 'sync_creatives':
+      fluentResponses = await agents.syncCreatives({
+        creatives: args.creatives,
+        patch: args.patch,
+        dry_run: args.dry_run
+      });
+      break;
+    case 'list_creatives':
+      fluentResponses = await agents.listCreatives({
+        filters: args.filters,
+        sort: args.sort,
+        pagination: args.pagination
+      });
+      break;
+    default:
+      throw new Error(`Unknown tool: ${toolName}`);
+  }
+  
+  return fluentResponses.map(adaptResponseToLegacyFormat);
+}
+
 // Register plugins
 app.register(fastifyCors, {
   origin: process.env.NODE_ENV === 'development' ? true : ['https://testing.adcontextprotocol.org'],
@@ -27,8 +134,10 @@ app.register(fastifyCors, {
 
 // Configure static file serving - different paths for dev vs production
 const publicPath = process.env.NODE_ENV === 'development' 
-  ? path.join(__dirname, 'public')  // src/public for dev
+  ? path.join(__dirname, '../../src/public')  // from src/server/ to src/public/ 
   : path.join(__dirname, 'public'); // dist/public for production
+
+console.log(`📁 Static files path: ${publicPath}`);
 
 app.register(fastifyStatic, {
   root: publicPath,
@@ -50,7 +159,7 @@ app.get('/health', async () => {
 // Get list of available agents
 app.get<{ Reply: ApiResponse<AgentListResponse> }>('/api/agents', async (request, reply) => {
   try {
-    const agents = await getAgentList();
+    const agents = adcpClient.getAgents();
     return {
       success: true,
       data: {
@@ -76,7 +185,7 @@ app.post<{
   Reply: ApiResponse<TestResponse>;
 }>('/api/test', async (request, reply) => {
   try {
-    const { agents, brief, promoted_offering, tool_name } = request.body;
+    const { agents, brief, promoted_offering, tool_name } = request.body as TestRequest;
     
     if (!agents || agents.length === 0) {
       reply.code(400);
@@ -99,7 +208,13 @@ app.post<{
     app.log.info(`Testing ${agents.length} agents with brief: "${brief.substring(0, 100)}..."`);
     
     const startTime = Date.now();
-    const results = await testAgents(agents, brief, promoted_offering, tool_name);
+    const agentIds = agents.map((a: AgentConfig) => a.id);
+    const args = {
+      brief,
+      ...(promoted_offering && { promoted_offering }),
+      ...(tool_name && { tool_name })
+    };
+    const results = await callToolOnAgents(agentIds, tool_name || 'get_products', args);
     const totalTime = Date.now() - startTime;
 
     const successful = results.filter(r => r.success).length;
@@ -154,7 +269,11 @@ app.post<{
 
     app.log.info(`Testing single agent ${agentId} with brief: "${brief.substring(0, 100)}..."`);
     
-    const result = await testSingleAgent(agentId, brief, promoted_offering, tool_name);
+    const args = {
+      brief,
+      ...(promoted_offering && { promoted_offering })
+    };
+    const result = await callToolOnAgent(agentId, tool_name || 'get_products', args);
 
     return {
       success: true,
@@ -184,7 +303,7 @@ app.post<{
 // Get standard creative formats
 app.get('/api/formats/standard', async (request, reply) => {
   try {
-    const formats = await getStandardFormats();
+    const formats = adcpClient.getStandardFormats();
     return {
       success: true,
       data: formats,
@@ -205,7 +324,7 @@ app.get('/api/formats/standard', async (request, reply) => {
 app.get('/api/sales/agents', async (request, reply) => {
   // Same as /api/agents but with different path for main page
   try {
-    const agents = await getAgentList();
+    const agents = adcpClient.getAgents();
     return {
       success: true,
       data: {
@@ -228,7 +347,7 @@ app.get('/api/sales/agents', async (request, reply) => {
 app.get('/api/sales/formats/standard', async (request, reply) => {
   // Same as /api/formats/standard but with different path for main page
   try {
-    const formats = await getStandardFormats();
+    const formats = adcpClient.getStandardFormats();
     return {
       success: true,
       data: formats,
@@ -349,7 +468,7 @@ app.post('/api/sales/agents/:agentId/query', async (request, reply) => {
     const body = request.body as any;
     
     // Convert single agent query to the standard test format
-    const agents = await getAgentList();
+    const agents = adcpClient.getAgents();
     const agent = agents.find(a => a.id === agentId);
     
     if (!agent) {
@@ -362,13 +481,28 @@ app.post('/api/sales/agents/:agentId/query', async (request, reply) => {
     }
 
     // Use the existing testAgents function with tool-specific parameters
-    const toolName = body.tool_name || body.toolName || 'get_products';
+    app.log.info(`Query endpoint received body:`, body);
+    
+    const toolName = body.tool;
+    if (!toolName) {
+      return reply.status(400).send({
+        success: false,
+        error: 'Missing required parameter: tool'
+      });
+    }
+    app.log.info(`Tool name: ${toolName}`);
+    
     const brief = body.brief || body.brandStory || body.message || 'Test query';
     const promotedOffering = body.promoted_offering || body.offering;
     
     // Pass tool-specific params if provided
     const toolParams = body.params || {};
-    const results = await testAgents([agent], brief, promotedOffering, toolName, toolParams);
+    const args = {
+      brief,
+      ...(promotedOffering && { promoted_offering: promotedOffering }),
+      ...toolParams
+    };
+    const results = await callToolOnAgents([agent.id], toolName, args);
     
     // Extract the data from the nested response structure
     const extractedData = extractResponseData(results[0].data) || {};
@@ -379,7 +513,7 @@ app.post('/api/sales/agents/:agentId/query', async (request, reply) => {
     
     if (results[0].debug_logs && results[0].debug_logs.length > 0) {
       // Transform our backend format (single object with request/response) to UI format (separate entries)
-      results[0].debug_logs.forEach(log => {
+      results[0].debug_logs.forEach((log: any) => {
         if (log.request && log.request.method && log.request.method !== 'undefined') {
           debugLogs.push({
             type: 'request',
@@ -406,11 +540,11 @@ app.post('/api/sales/agents/:agentId/query', async (request, reply) => {
       debugLogs = [
         {
           type: 'request',
-          method: body.tool_name || 'get_products',
+          method: toolName,
           protocol: agent.protocol,
           url: agent.agent_uri,
           body: {
-            tool: body.tool_name || 'get_products',
+            tool: toolName,
             args: {
               brief: body.brief || body.message || 'Test query',
               ...(body.promoted_offering && { promoted_offering: body.promoted_offering })
@@ -498,7 +632,7 @@ app.post<{
   Reply: ApiResponse<ValidateAdAgentsResponse>;
 }>('/api/adagents/validate', async (request, reply) => {
   try {
-    const { domain } = request.body;
+    const { domain } = request.body as ValidateAdAgentsRequest;
     
     if (!domain || domain.trim().length === 0) {
       reply.code(400);
@@ -550,7 +684,7 @@ app.post<{
   Reply: ApiResponse<CreateAdAgentsResponse>;
 }>('/api/adagents/create', async (request, reply) => {
   try {
-    const { authorized_agents, include_schema = true, include_timestamp = true } = request.body;
+    const { authorized_agents, include_schema = true, include_timestamp = true } = request.body as CreateAdAgentsRequest;
     
     if (!authorized_agents || !Array.isArray(authorized_agents)) {
       reply.code(400);
@@ -579,7 +713,7 @@ app.post<{
       reply.code(400);
       return {
         success: false,
-        error: `Validation failed: ${validation.errors.map(e => e.message).join(', ')}`,
+        error: `Validation failed: ${validation.errors.map((e: any) => e.message).join(', ')}`,
         timestamp: new Date().toISOString()
       };
     }

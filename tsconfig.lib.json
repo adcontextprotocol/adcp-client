@@ -1,0 +1,13 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "outDir": "./dist/lib",
+    "rootDir": "./src/lib",
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "composite": true
+  },
+  "include": ["src/lib/**/*"],
+  "exclude": ["node_modules", "dist", "**/*.test.ts", "src/server/**/*"]
+}

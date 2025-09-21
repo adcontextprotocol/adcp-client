@@ -1,50 +1,96 @@
 {
-  "name": "adcp-testing-framework",
-  "version": "1.0.0",
-  "description": "AdCP Testing Framework for MCP and A2A protocols",
-  "main": "dist/server.js",
+  "name": "@adcp/client",
+  "version": "2.0.0",
+  "description": "AdCP client library with protocol support for MCP and A2A, includes testing framework",
+  "main": "dist/lib/index.js",
+  "types": "dist/lib/index.d.ts",
   "type": "commonjs",
+  "exports": {
+    ".": {
+      "import": "./dist/lib/index.js",
+      "require": "./dist/lib/index.js",
+      "types": "./dist/lib/index.d.ts"
+    },
+    "./types": {
+      "types": "./dist/lib/types/index.d.ts"
+    }
+  },
+  "files": [
+    "dist/lib/**/*",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
-    "dev": "tsx src/server.ts",
-    "dev-legacy": "node server.js",
-    "build": "tsc && cp -r src/public dist/",
-    "start": "node dist/server.js",
-    "start-legacy": "node server.js",
-    "test-mcp-server": "node test-mcp-server.js",
-    "generate-types": "tsx scripts/generate-types.ts",
+    "dev": "tsx src/server/server.ts",
+    "build": "npm run build:lib && tsc && cp -r src/public dist/",
+    "build:lib": "tsc --project tsconfig.lib.json",
+    "start": "node dist/server/server.js",
     "test": "node --test test/*.test.js",
-    "test:server-config": "node --test test/server-config.test.js"
+    "test:lib": "node --test test/lib/*.test.js",
+    "test:e2e": "node test/e2e/adcp-e2e.test.js",
+    "test:load-agent-data": "node test-load-agent-data.js",
+    "test:server-config": "node --test test/server-config.test.js",
+    "sync-schemas": "tsx scripts/sync-schemas.ts",
+    "generate-types": "tsx scripts/generate-types.ts",
+    "sync-version": "tsx scripts/sync-version.ts",
+    "validate-schemas": "tsx scripts/validate-schemas.ts",
+    "prebuild": "npm run sync-schemas && npm run generate-types",
+    "lint": "echo 'Linting not yet configured'",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist/",
+    "prepublishOnly": "npm run clean && npm run build:lib && npm run test:lib"
   },
   "keywords": [
     "adcp",
     "mcp",
     "a2a",
-    "testing",
-    "protocol"
+    "protocol",
+    "client",
+    "library",
+    "advertising",
+    "testing"
   ],
-  "author": "",
+  "author": {
+    "name": "AdCP Community",
+    "email": "maintainers@adcontextprotocol.org",
+    "url": "https://adcontextprotocol.org"
+  },
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/adcontextprotocol/adcp-client.git"
+  },
+  "homepage": "https://github.com/adcontextprotocol/adcp-client#readme",
+  "bugs": {
+    "url": "https://github.com/adcontextprotocol/adcp-client/issues",
+    "email": "bugs@adcontextprotocol.org"
+  },
   "dependencies": {
+    "dotenv": "^17.2.2"
+  },
+  "peerDependencies": {
+    "@a2a-js/sdk": "^0.3.4",
+    "@modelcontextprotocol/sdk": "^1.17.5"
+  },
+  "devDependencies": {
     "@a2a-js/sdk": "^0.3.4",
     "@fastify/cors": "^9.0.1",
     "@fastify/static": "^7.0.0",
     "@modelcontextprotocol/sdk": "^1.17.5",
+    "@types/node": "^20.19.13",
     "axios": "^1.11.0",
     "cors": "^2.8.5",
-    "dotenv": "^17.2.2",
     "express": "^5.1.0",
     "fastify": "^4.24.3",
-    "node-fetch": "^3.3.2",
-    "zod": "^3.22.4"
-  },
-  "devDependencies": {
-    "@types/node": "^20.19.13",
     "json-schema-to-typescript": "^13.1.0",
+    "node-fetch": "^3.3.2",
     "pino-pretty": "^13.1.1",
     "tsx": "^4.6.0",
-    "typescript": "^5.3.0"
+    "typescript": "^5.3.0",
+    "zod": "^3.22.4"
   },
   "engines": {
     "node": ">=18.0.0"
-  }
+  },
+  "adcp_version": "1.5.0"
 }

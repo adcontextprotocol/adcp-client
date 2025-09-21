@@ -1593,7 +1593,7 @@
         </div>
     </nav>
 
-    <div class="main-content debug-open" id="main-content">
+    <div class="main-content" id="main-content">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px;">
             <div>
                 <h1>Ad Context Protocol Testing Framework</h1>
@@ -2117,7 +2117,7 @@
     </div>
     
     <!-- Debug Panel -->
-    <div id="debug-panel" class="debug-panel open">
+    <div id="debug-panel" class="debug-panel">
         <div class="debug-header">
             <h3>🔍 Agent Communication Debug</h3>
             <div class="debug-controls">
@@ -2140,8 +2140,8 @@
     
     <!-- Toggle Debug Button -->
     <button class="toggle-debug-btn" onclick="toggleDebugPanel()">
-        <span id="debug-btn-icon">✖️</span>
-        <span id="debug-btn-text">Hide Debug</span>
+        <span id="debug-btn-icon">🔍</span>
+        <span id="debug-btn-text">Show Debug</span>
     </button>
 
     <script src="/shared-nav.js"></script>
@@ -2421,6 +2421,7 @@
                 throw new Error('Agent not found');
             }
             
+            logEvent('info', `🔧 DEBUG: loadProducts calling callADCPTool with 'get_products'`);
             const result = await callADCPTool(selectedAgent, 'get_products', {
                 brief: 'Discover available advertising products for testing',
                 promoted_offering: promotedOffering
@@ -2449,6 +2450,7 @@
                 throw new Error('Agent not found');
             }
             
+            logEvent('info', `🔧 DEBUG: loadCreativeFormats calling callADCPTool with 'list_creative_formats'`);
             const result = await callADCPTool(selectedAgent, 'list_creative_formats', {});
             
             if (result && result.formats) {
@@ -2474,6 +2476,7 @@
                 throw new Error('Agent not found');
             }
             
+            logEvent('info', `🔧 DEBUG: loadCreatives calling callADCPTool with 'list_creatives'`);
             const result = await callADCPTool(selectedAgent, 'list_creatives', {
                 // Add any default parameters if needed
             });
@@ -3330,29 +3333,25 @@
         // ============================================================================
         
         async function callADCPTool(agent, toolName, params) {
-            logEvent('info', `Calling ADCP tool ${toolName} with agent: ${agent.name} (ID: ${agent.id})`);
+            logEvent('info', `🔧 DEBUG: callADCPTool called with toolName='${toolName}', agent=${agent.name} (ID: ${agent.id})`);
             return await callADCPToolBackend(agent, toolName, params);
         }
         
         async function callADCPToolBackend(agent, toolName, params) {
+            logEvent('info', `🔧 DEBUG: callADCPToolBackend called with toolName='${toolName}'`);
             const testingHeaders = collectTestingHeaders();
-            
-            const request = {
-                tool: toolName,
-                params: params,
-                brief: params.brief || "ADCP Testing Suite execution"
-            };
             
             const headers = {
                 'Content-Type': 'application/json',
                 ...testingHeaders
             };
             
-            // Only send brief/offering for tools that need them
+            // Create request body with tool parameter
             const requestBody = {
                 agentConfig: agent,
-                toolName: toolName
+                tool: toolName
             };
+            logEvent('info', `🔧 DEBUG: requestBody.tool='${requestBody.tool}'`);
             
             // Add brief and offering only for tools that use them
             if (toolName === 'get_products') {
@@ -4302,7 +4301,7 @@
         // Enhanced Debug Panel Functions
         // ============================================================================
         
-        let debugPanelOpen = true; // Start with panel open by default
+        let debugPanelOpen = false; // Start with panel hidden by default
         let currentDebugTab = 'all';
         let debugEntries = [];
         
@@ -5104,12 +5103,16 @@
         }
         
         function extractMethodName(request) {
+            console.log('🔧 extractMethodName called with:', request);
+            
             if (!request) {
+                console.log('❌ extractMethodName: no request provided');
                 return 'Unknown';
             }
             
             // Direct method field (for our debug logs structure)
             if (request.method) {
+                console.log('✅ extractMethodName: found direct method:', request.method);
                 return request.method;
             }
             
@@ -5117,7 +5120,10 @@
             if (request.body) {
                 try {
                     const body = typeof request.body === 'string' ? JSON.parse(request.body) : request.body;
+                    console.log('🔧 extractMethodName: parsed body:', body);
+                    
                     if (body.method) {
+                        console.log('✅ extractMethodName: found body.method:', body.method);
                         // For MCP tool calls, show tool name instead of generic "tools/call"
                         if (body.method === 'tools/call' && body.params && body.params.name) {
                             return `${body.params.name} (MCP Tool)`;
@@ -5126,12 +5132,16 @@
                     }
                     // Check if body has tool field (for A2A requests)
                     if (body.tool) {
-                        console.log('extractMethodName: found tool in body:', body.tool);
+                        console.log('✅ extractMethodName: found body.tool:', body.tool);
                         return body.tool;
                     }
+                    
+                    console.log('⚠️ extractMethodName: no method or tool found in body');
                 } catch (e) {
-                    // Not JSON-RPC, continue
+                    console.log('❌ extractMethodName: failed to parse body:', e.message);
                 }
+            } else {
+                console.log('⚠️ extractMethodName: no body in request');
             }
             
             // Fall back to URL path
