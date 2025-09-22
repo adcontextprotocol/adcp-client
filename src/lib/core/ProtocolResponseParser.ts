@@ -6,18 +6,23 @@
 import type { InputRequest } from './ConversationTypes';
 
 /**
- * ADCP standardized status values as per spec PR #77
+ * ADCP standardized status values as per spec PR #78
+ * Clear semantics for async task management:
+ * - submitted: Long-running tasks (hours to days) - webhook required
+ * - working: Processing tasks (<120 seconds) - keep connection open
+ * - input-required: Tasks needing user interaction via handler
+ * - completed: Successful task completion
  */
 export const ADCP_STATUS = {
-  SUBMITTED: 'submitted',
-  WORKING: 'working', 
-  INPUT_REQUIRED: 'input-required',
-  COMPLETED: 'completed',
-  FAILED: 'failed',
-  CANCELED: 'canceled',
-  REJECTED: 'rejected',
-  AUTH_REQUIRED: 'auth-required',
-  UNKNOWN: 'unknown'
+  SUBMITTED: 'submitted',      // Long-running (hours/days) - webhook required
+  WORKING: 'working',          // Processing (<120s) - keep connection open  
+  INPUT_REQUIRED: 'input-required',  // Needs user input via handler
+  COMPLETED: 'completed',      // Task completed successfully
+  FAILED: 'failed',           // Task failed
+  CANCELED: 'canceled',       // Task was canceled
+  REJECTED: 'rejected',       // Task was rejected
+  AUTH_REQUIRED: 'auth-required',  // Authentication required
+  UNKNOWN: 'unknown'          // Unknown status
 } as const;
 
 export type ADCPStatus = typeof ADCP_STATUS[keyof typeof ADCP_STATUS];

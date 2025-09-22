@@ -454,7 +454,7 @@ export class ADCPMultiAgentClient {
 
     return new ADCPMultiAgentClient([agent], {
       debug,
-      defaultTimeout: timeout
+      workingTimeout: timeout
     });
   }
 

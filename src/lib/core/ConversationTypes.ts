@@ -104,7 +104,7 @@ export interface ConversationContext {
 /**
  * Status of a task execution
  */
-export type TaskStatus = 'pending' | 'running' | 'needs_input' | 'completed' | 'failed' | 'deferred' | 'aborted';
+export type TaskStatus = 'pending' | 'running' | 'needs_input' | 'completed' | 'failed' | 'deferred' | 'aborted' | 'submitted';
 
 /**
  * Options for task execution
@@ -155,15 +155,69 @@ export interface TaskState {
 }
 
 /**
+ * Task tracking information from tasks/get endpoint (PR #78)
+ */
+export interface TaskInfo {
+  /** Task ID */
+  taskId: string;
+  /** Current status */
+  status: string;
+  /** Task type/name */
+  taskType: string;
+  /** Creation timestamp */
+  createdAt: number;
+  /** Last update timestamp */
+  updatedAt: number;
+  /** Task result (if completed) */
+  result?: any;
+  /** Error message (if failed) */
+  error?: string;
+  /** Webhook URL (if applicable) */
+  webhookUrl?: string;
+}
+
+/**
+ * Continuation for deferred client tasks (client needs time)
+ */
+export interface DeferredContinuation<T> {
+  /** Token for resuming the task */
+  token: string;
+  /** Question that triggered the deferral */
+  question?: string;
+  /** Resume the task with user input */
+  resume: (input: any) => Promise<TaskResult<T>>;
+}
+
+/**
+ * Continuation for submitted server tasks (server needs time)
+ */
+export interface SubmittedContinuation<T> {
+  /** Task ID for tracking */
+  taskId: string;
+  /** Webhook URL where server will notify completion */
+  webhookUrl?: string;
+  /** Get current task status */
+  track: () => Promise<TaskInfo>;
+  /** Wait for completion with polling */
+  waitForCompletion: (pollInterval?: number) => Promise<TaskResult<T>>;
+}
+
+/**
  * Result of a task execution
  */
 export interface TaskResult<T = any> {
-  /** Whether the task succeeded */
+  /** Whether the task completed successfully */
   success: boolean;
+  /** Task execution status */
+  status: 'completed' | 'deferred' | 'submitted';
   /** Task result data (if successful) */
   data?: T;
   /** Error message (if failed) */
   error?: string;
+  /** Deferred continuation (client needs time for input) */
+  deferred?: DeferredContinuation<T>;
+  /** Submitted continuation (server needs time for processing) */
+  submitted?: SubmittedContinuation<T>;
   /** Task execution metadata */
   metadata: {
     taskId: string;
@@ -196,8 +250,8 @@ export interface ConversationConfig {
   maxHistorySize?: number;
   /** Whether to persist conversations */
   persistConversations?: boolean;
-  /** Default timeout for tasks */
-  defaultTimeout?: number;
+  /** Timeout for 'working' status (max 120s per PR #78) */
+  workingTimeout?: number;
   /** Default max clarifications */
   defaultMaxClarifications?: number;
 }

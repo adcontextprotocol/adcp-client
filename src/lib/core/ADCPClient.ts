@@ -68,7 +68,7 @@ export class ADCPClient {
     private config: ADCPClientConfig = {}
   ) {
     this.executor = new TaskExecutor({
-      defaultTimeout: config.defaultTimeout || 30000,
+      workingTimeout: config.workingTimeout || 120000, // Max 120s for working status
       defaultMaxClarifications: config.defaultMaxClarifications || 3,
       enableConversationStorage: config.persistConversations !== false
     });
@@ -474,7 +474,7 @@ export class ADCPClient {
    */
   getActiveTasks() {
     return this.executor.getActiveTasks().filter(
-      task => task.agent.id === this.agent.id
+      (task: any) => task.agent.id === this.agent.id
     );
   }
 }

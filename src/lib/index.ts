@@ -59,6 +59,7 @@ export {
   isErrorOfType,
   extractErrorInfo
 } from './errors';
+export { InputRequiredError } from './core/TaskExecutor';
 
 // ====== CORE TYPES ======
 export * from './types';
