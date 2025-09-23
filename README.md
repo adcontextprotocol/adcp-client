@@ -16,24 +16,53 @@ npm install @adcp/client
 ## Quick Start
 
 ```typescript
-import { ADCPClient } from '@adcp/client';
+import { ADCPMultiAgentClient } from '@adcp/client';
 
-// Simple setup with direct URL
-const client = ADCPClient.simple('https://agent.example.com/mcp/', {
-  authToken: 'your-auth-token'
-});
+// Multi-agent setup with type safety
+const client = new ADCPMultiAgentClient([{
+  id: 'premium-agent',
+  name: 'Premium Ad Agent', 
+  agent_uri: 'https://agent.example.com/mcp/',
+  protocol: 'mcp',
+  auth_token: 'your-auth-token'
+}]);
 
-// Execute a task
-const result = await client.executeTask('get_products', {
+const agent = client.agent('premium-agent');
+
+// ✅ TYPE-SAFE: Full IntelliSense and compile-time checking
+const result = await agent.getProducts({
   brief: 'Looking for premium coffee advertising',
   promoted_offering: 'Artisan coffee blends'
 });
+// result is TaskResult<GetProductsResponse> with known properties
 
 if (result.success) {
-  console.log('Products:', result.data.products);
+  console.log('Products:', result.data.products); // Fully typed!
 } else {
   console.error('Error:', result.error);
 }
+```
+
+## 🛡️ Type Safety
+
+Get **full TypeScript support** with compile-time checking and IntelliSense:
+
+```typescript
+const agent = client.agent('agent-id');
+
+// ✅ TYPE-SAFE METHODS: Full IntelliSense, compile-time checking
+await agent.getProducts(params);           // TaskResult<GetProductsResponse>
+await agent.createMediaBuy(params);       // TaskResult<CreateMediaBuyResponse>
+await agent.listCreativeFormats(params);  // TaskResult<ListCreativeFormatsResponse>
+
+// ✅ GENERIC METHOD: Flexible for dynamic use cases  
+await agent.executeTask('get_products', params); // TaskResult<any>
+
+// ✅ BOTH support async patterns & input handlers!
+const withHandler = await agent.getProducts(
+  { brief: "Premium inventory" },
+  async (inputRequest) => ({ approve: true })
+);
 ```
 
 ## Key Features
