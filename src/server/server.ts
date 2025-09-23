@@ -107,7 +107,7 @@ async function executeTaskOnAgent(
     
     return adaptTaskResultToLegacyFormat(result as TaskResult<any>, agentId);
   } catch (error) {
-    app.log.error('Error executing task:', error);
+    app.log.error({ error }, 'Error executing task');
     
     // Handle InputRequiredError specifically
     if (error instanceof InputRequiredError) {
@@ -566,7 +566,7 @@ app.post<{
     });
 
   } catch (error) {
-    app.log.error('Execute task error:', error);
+    app.log.error({ error }, 'Execute task error');
     return reply.code(500).send({
       success: false,
       error: error instanceof Error ? error.message : 'Unknown error'
@@ -609,7 +609,7 @@ app.get('/api/tasks/:taskId', async (request, reply) => {
     });
 
   } catch (error) {
-    app.log.error('Get task status error:', error);
+    app.log.error({ error }, 'Get task status error');
     return reply.code(500).send({
       success: false,
       error: error instanceof Error ? error.message : 'Unknown error'
@@ -646,7 +646,7 @@ app.post('/api/tasks/:taskId/continue', async (request, reply) => {
     return result; // executeTaskOnAgent already returns the adapted format
 
   } catch (error) {
-    app.log.error('Continue task error:', error);
+    app.log.error({ error }, 'Continue task error');
     return reply.code(500).send({
       success: false,
       error: error instanceof Error ? error.message : 'Unknown error'
@@ -671,7 +671,7 @@ app.get('/api/agents/:agentId/conversation', async (request, reply) => {
     });
 
   } catch (error) {
-    app.log.error('Get conversation error:', error);
+    app.log.error({ error }, 'Get conversation error');
     return reply.code(500).send({
       success: false,
       error: error instanceof Error ? error.message : 'Unknown error'
@@ -698,7 +698,7 @@ app.get('/api/tasks', async (request, reply) => {
     });
 
   } catch (error) {
-    app.log.error('List tasks error:', error);
+    app.log.error({ error }, 'List tasks error');
     return reply.code(500).send({
       success: false,
       error: error instanceof Error ? error.message : 'Unknown error'
