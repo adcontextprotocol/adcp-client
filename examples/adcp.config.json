@@ -1,0 +1,33 @@
+{
+  "agents": [
+    {
+      "id": "premium-network",
+      "name": "Premium Ad Network",
+      "agent_uri": "https://premium-ads.example.com/mcp/",
+      "protocol": "mcp",
+      "requiresAuth": true,
+      "auth_token_env": "PREMIUM_AGENT_TOKEN"
+    },
+    {
+      "id": "budget-network", 
+      "name": "Budget Ad Network",
+      "agent_uri": "https://budget-ads.example.com/a2a/",
+      "protocol": "a2a",
+      "requiresAuth": false
+    },
+    {
+      "id": "social-network",
+      "name": "Social Media Ad Network",
+      "agent_uri": "https://social-ads.example.com/mcp/",
+      "protocol": "mcp",
+      "requiresAuth": true,
+      "auth_token_env": "SOCIAL_AGENT_TOKEN"
+    }
+  ],
+  "defaults": {
+    "protocol": "mcp",
+    "timeout": 30000,
+    "maxClarifications": 3,
+    "debug": false
+  }
+}

@@ -1,6 +1,6 @@
 {
   "name": "@adcp/client",
-  "version": "2.0.0",
+  "version": "0.2.2",
   "description": "AdCP client library with protocol support for MCP and A2A, includes testing framework",
   "main": "dist/lib/index.js",
   "types": "dist/lib/index.d.ts",
@@ -34,11 +34,22 @@
     "generate-types": "tsx scripts/generate-types.ts",
     "sync-version": "tsx scripts/sync-version.ts",
     "validate-schemas": "tsx scripts/validate-schemas.ts",
-    "prebuild": "(npm run sync-schemas || echo 'Schema sync failed, continuing...') && npm run generate-types",
     "lint": "echo 'Linting not yet configured'",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist/",
-    "prepublishOnly": "npm run clean && npm run build:lib && npm run test:lib"
+    "prepublishOnly": "npm run clean && (npm run sync-schemas || echo 'Schema sync failed, continuing...') && npm run generate-types && npm run build:lib && node --test test/lib/adcp-client.test.js test/lib/validation.test.js",
+    "docs": "typedoc",
+    "docs:watch": "typedoc --watch",
+    "docs:serve": "cd docs && make serve",
+    "docs:serve-simple": "echo '📚 Docs available at: file://'$(pwd)'/docs/index.html' && echo '🐳 For live preview: npm run docs:serve (Docker)' && echo '📦 Alternative: npx http-server docs -p 4000'",
+    "docs:build": "npm run docs && cd docs && make build",
+    "docs:install": "cd docs && make install",
+    "ci:validate": "node scripts/ci-validate.js",
+    "ci:quick": "npm run typecheck && npm run build:lib && npm test",
+    "ci:schema-check": "npm run sync-schemas && npm run generate-types && git diff --exit-code src/lib/types/ src/lib/agents/",
+    "ci:pre-push": "npm run ci:schema-check && npm run ci:quick",
+    "hooks:install": "node scripts/install-hooks.js",
+    "hooks:uninstall": "rm -f .git/hooks/pre-push"
   },
   "keywords": [
     "adcp",
@@ -83,14 +94,20 @@
     "express": "^5.1.0",
     "fastify": "^4.24.3",
     "json-schema-to-typescript": "^13.1.0",
+    "markdown-it": "^14.1.0",
     "node-fetch": "^3.3.2",
     "pino-pretty": "^13.1.1",
     "tsx": "^4.6.0",
+    "typedoc": "^0.28.13",
+    "typedoc-plugin-markdown": "^4.9.0",
     "typescript": "^5.3.0",
     "zod": "^3.22.4"
   },
   "engines": {
     "node": ">=18.0.0"
   },
-  "adcp_version": "1.5.0"
+  "overrides": {
+    "@types/glob": "^8.1.0"
+  },
+  "adcp_version": "1.6.0"
 }

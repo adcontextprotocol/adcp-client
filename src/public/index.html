@@ -2415,8 +2415,8 @@
                 description: '[DEPRECATED] Upload and assign creative assets - use manage_creative_assets instead'
             },
             get_media_buy_delivery: {
-                params: ['media_buy_id', 'metrics', 'date_range'],
-                required: ['media_buy_id'],
+                params: ['media_buy_ids', 'buyer_refs', 'status_filter', 'start_date', 'end_date'],
+                required: [], // Per AdCP v1.6.0 spec - all parameters are optional
                 description: 'Retrieve performance metrics and monitor delivery'
             },
             update_media_buy: {
@@ -3073,7 +3073,10 @@
                 // Note: In a real implementation, there would be a get_media_buys tool
                 // For now, we'll simulate with get_media_buy_delivery for existing ones
                 const result = await callADCPTool(selectedAgent, 'get_media_buy_delivery', {
-                    media_buy_id: 'all' // Hypothetical parameter to get all
+                    // Use proper AdCP v1.6.0 spec parameters
+                    status_filter: 'all', // Get all statuses per official spec
+                    start_date: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0], // Last 30 days
+                    end_date: new Date().toISOString().split('T')[0] // Today
                 });
                 
                 if (result && result.media_buys) {

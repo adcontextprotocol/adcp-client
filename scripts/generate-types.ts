@@ -4,6 +4,31 @@ import { writeFileSync, mkdirSync, readFileSync, existsSync } from 'fs';
 import { compile } from 'json-schema-to-typescript';
 import path from 'path';
 
+// Write file only if content differs (excluding timestamp)
+function writeFileIfChanged(filePath: string, newContent: string): boolean {
+  // Extract content without timestamp for comparison
+  const contentWithoutTimestamp = (content: string) => {
+    return content.replace(/\/\/ Generated at: .*?\n/, '// Generated at: [TIMESTAMP]\n');
+  };
+
+  let hasChanged = true;
+  if (existsSync(filePath)) {
+    const existingContent = readFileSync(filePath, 'utf8');
+    const existingWithoutTimestamp = contentWithoutTimestamp(existingContent);
+    const newWithoutTimestamp = contentWithoutTimestamp(newContent);
+    
+    if (existingWithoutTimestamp === newWithoutTimestamp) {
+      hasChanged = false;
+    }
+  }
+
+  if (hasChanged) {
+    writeFileSync(filePath, newContent);
+  }
+  
+  return hasChanged;
+}
+
 // Schema cache configuration
 const SCHEMA_CACHE_DIR = path.join(__dirname, '../schemas/cache');
 const LATEST_CACHE_DIR = path.join(SCHEMA_CACHE_DIR, 'latest');
@@ -589,15 +614,27 @@ async function generateTypes() {
   // Generate Agent classes
   const agentClasses = generateAgentClasses(tools);
 
-  // Write files
+  // Write files only if content changed
   const coreTypesPath = path.join(libOutputDir, 'core.generated.ts');
-  writeFileSync(coreTypesPath, coreTypes);
+  const coreChanged = writeFileIfChanged(coreTypesPath, coreTypes);
   
   const toolTypesPath = path.join(libOutputDir, 'tools.generated.ts');
-  writeFileSync(toolTypesPath, toolTypes);
+  const toolsChanged = writeFileIfChanged(toolTypesPath, toolTypes);
 
   const agentClassesPath = path.join(agentsOutputDir, 'index.generated.ts');
-  writeFileSync(agentClassesPath, agentClasses);
+  const agentsChanged = writeFileIfChanged(agentClassesPath, agentClasses);
+  
+  const changedFiles = [
+    coreChanged && 'core types',
+    toolsChanged && 'tool types', 
+    agentsChanged && 'agent classes'
+  ].filter(Boolean);
+  
+  if (changedFiles.length > 0) {
+    console.log(`✅ Updated ${changedFiles.join(', ')}`);
+  } else {
+    console.log(`✅ All generated files are up to date`);
+  }
   
   console.log(`✅ Generated files:`);
   console.log(`   📄 Core types: ${coreTypesPath}`);

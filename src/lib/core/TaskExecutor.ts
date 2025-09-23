@@ -1,0 +1,625 @@
+// Core task execution engine for ADCP conversation flow
+// Implements PR #78 async patterns: working/submitted/input-required/completed
+
+import { randomUUID } from 'crypto';
+import type { AgentConfig } from '../types';
+import { ProtocolClient } from '../protocols';
+import type { Storage } from '../storage/interfaces';
+import type {
+  Message,
+  InputRequest,
+  InputHandler,
+  ConversationContext,
+  TaskOptions,
+  TaskResult,
+  TaskState,
+  TaskStatus,
+  TaskInfo,
+  DeferredContinuation,
+  SubmittedContinuation
+} from './ConversationTypes';
+import { normalizeHandlerResponse, isDeferResponse, isAbortResponse } from '../handlers/types';
+import { ProtocolResponseParser, ADCP_STATUS, type ADCPStatus } from './ProtocolResponseParser';
+/**
+ * Custom errors for task execution
+ */
+export class TaskTimeoutError extends Error {
+  constructor(taskId: string, timeout: number) {
+    super(`Task ${taskId} timed out after ${timeout}ms`);
+    this.name = 'TaskTimeoutError';
+  }
+}
+
+export class MaxClarificationError extends Error {
+  constructor(taskId: string, maxAttempts: number) {
+    super(`Task ${taskId} exceeded maximum clarification attempts: ${maxAttempts}`);
+    this.name = 'MaxClarificationError';
+  }
+}
+
+export class DeferredTaskError extends Error {
+  constructor(public token: string) {
+    super(`Task deferred with token: ${token}`);
+    this.name = 'DeferredTaskError';
+  }
+}
+
+export class InputRequiredError extends Error {
+  constructor(question: string) {
+    super(`Server requires input but no handler provided. Question: ${question}`);
+    this.name = 'InputRequiredError';
+  }
+}
+
+/**
+ * Webhook manager for submitted tasks
+ */
+interface WebhookManager {
+  generateUrl(taskId: string): string;
+  registerWebhook(agent: AgentConfig, taskId: string, webhookUrl: string): Promise<void>;
+  processWebhook(token: string, body: any): Promise<void>;
+}
+
+/**
+ * Deferred task storage for client deferrals
+ */
+interface DeferredTaskState {
+  taskId: string;
+  contextId: string;
+  agent: AgentConfig;
+  taskName: string;
+  params: any;
+  messages: Message[];
+  createdAt: number;
+}
+
+/**
+ * Core task execution engine that handles the conversation loop with agents
+ */
+export class TaskExecutor {
+  private responseParser: ProtocolResponseParser;
+  private activeTasks = new Map<string, TaskState>();
+  private conversationStorage?: Map<string, Message[]>;
+  
+  constructor(
+    private config: {
+      /** Default timeout for 'working' status (max 120s per PR #78) */
+      workingTimeout?: number;
+      /** Default max clarification attempts */
+      defaultMaxClarifications?: number;
+      /** Enable conversation storage */
+      enableConversationStorage?: boolean;
+      /** Webhook manager for submitted tasks */
+      webhookManager?: WebhookManager;
+      /** Storage for deferred task state */
+      deferredStorage?: Storage<DeferredTaskState>;
+    } = {}
+  ) {
+    this.responseParser = new ProtocolResponseParser();
+    if (config.enableConversationStorage) {
+      this.conversationStorage = new Map();
+    }
+  }
+
+  /**
+   * Execute a task with an agent using PR #78 async patterns
+   * Handles: working (keep SSE open), submitted (webhook), input-required (handler), completed
+   */
+  async executeTask<T = any>(
+    agent: AgentConfig,
+    taskName: string,
+    params: any,
+    inputHandler?: InputHandler,
+    options: TaskOptions = {}
+  ): Promise<TaskResult<T>> {
+    const taskId = options.contextId || randomUUID();
+    const startTime = Date.now();
+    const workingTimeout = this.config.workingTimeout || 120000; // 120s max per PR #78
+    
+    // Create initial message
+    const initialMessage: Message = {
+      id: randomUUID(),
+      role: 'user',
+      content: { tool: taskName, params },
+      timestamp: new Date().toISOString(),
+      metadata: { toolName: taskName, type: 'request' }
+    };
+
+    // Start streaming connection
+    const debugLogs: any[] = [];
+    
+    try {
+      // Send initial request and get streaming response
+      const response = await ProtocolClient.callTool(agent, taskName, params, debugLogs);
+      
+      // Add initial response message
+      const responseMessage: Message = {
+        id: randomUUID(),
+        role: 'agent', 
+        content: response,
+        timestamp: new Date().toISOString(),
+        metadata: { toolName: taskName, type: 'response' }
+      };
+
+      const messages = [initialMessage, responseMessage];
+      
+      // Handle response based on status
+      return await this.handleAsyncResponse<T>(
+        agent,
+        taskId,
+        taskName,
+        params,
+        response,
+        messages,
+        inputHandler,
+        options,
+        debugLogs,
+        startTime
+      );
+      
+    } catch (error) {
+      return this.createErrorResult<T>(taskId, agent, error, debugLogs, startTime);
+    }
+  }
+
+  /**
+   * Handle agent response based on ADCP status (PR #78)
+   */
+  private async handleAsyncResponse<T>(
+    agent: AgentConfig,
+    taskId: string,
+    taskName: string,
+    params: any,
+    response: any,
+    messages: Message[],
+    inputHandler?: InputHandler,
+    options: TaskOptions = {},
+    debugLogs: any[] = [],
+    startTime: number = Date.now()
+  ): Promise<TaskResult<T>> {
+    
+    const status = this.responseParser.getStatus(response) as ADCPStatus;
+    
+    switch (status) {
+      case ADCP_STATUS.COMPLETED:
+        // Task completed immediately
+        return {
+          success: true,
+          status: 'completed',
+          data: response.result || response.data || response,
+          metadata: {
+            taskId,
+            taskName,
+            agent: { id: agent.id, name: agent.name, protocol: agent.protocol },
+            responseTimeMs: Date.now() - startTime,
+            timestamp: new Date().toISOString(),
+            clarificationRounds: 0,
+            status: 'completed'
+          },
+          conversation: messages
+        };
+
+      case ADCP_STATUS.WORKING:
+        // Server is processing - keep connection open for up to 120s
+        return this.waitForWorkingCompletion<T>(
+          agent, taskId, taskName, params, response, messages, 
+          inputHandler, options, debugLogs, startTime
+        );
+
+      case ADCP_STATUS.SUBMITTED:
+        // Long-running task - set up webhook
+        return this.setupSubmittedTask<T>(
+          agent, taskId, taskName, response, messages, 
+          options, debugLogs, startTime
+        );
+
+      case ADCP_STATUS.INPUT_REQUIRED:
+        // Server needs input - handler is mandatory
+        return this.handleInputRequired<T>(
+          agent, taskId, taskName, params, response, messages,
+          inputHandler, options, debugLogs, startTime
+        );
+
+      case ADCP_STATUS.FAILED:
+      case ADCP_STATUS.REJECTED:
+      case ADCP_STATUS.CANCELED:
+        throw new Error(`Task ${status}: ${response.error || response.message || 'Unknown error'}`);
+
+      default:
+        // Unknown status - treat as completed if we have data
+        if (response.result || response.data) {
+          return {
+            success: true,
+            status: 'completed',
+            data: response.result || response.data || response,
+            metadata: {
+              taskId,
+              taskName,
+              agent: { id: agent.id, name: agent.name, protocol: agent.protocol },
+              responseTimeMs: Date.now() - startTime,
+              timestamp: new Date().toISOString(),
+              clarificationRounds: 0,
+              status: 'completed'
+            },
+            conversation: messages
+          };
+        } else {
+          throw new Error(`Unknown status: ${status || 'undefined'}`);
+        }
+    }
+  }
+
+  /**
+   * Wait for 'working' status completion (max 120s per PR #78)
+   */
+  private async waitForWorkingCompletion<T>(
+    agent: AgentConfig,
+    taskId: string,
+    taskName: string,
+    params: any,
+    initialResponse: any,
+    messages: Message[],
+    inputHandler?: InputHandler,
+    options: TaskOptions = {},
+    debugLogs: any[] = [],
+    startTime: number = Date.now()
+  ): Promise<TaskResult<T>> {
+    // TODO: Implement SSE/streaming connection waiting
+    // For now, simulate by polling tasks/get endpoint
+    const workingTimeout = this.config.workingTimeout || 120000;
+    const pollInterval = 2000; // Poll every 2 seconds
+    const deadline = Date.now() + workingTimeout;
+    
+    while (Date.now() < deadline) {
+      await this.sleep(pollInterval);
+      
+      try {
+        const taskInfo = await this.getTaskStatus(agent, taskId);
+        
+        if (taskInfo.status === ADCP_STATUS.COMPLETED) {
+          return {
+            success: true,
+            status: 'completed',
+            data: taskInfo.result,
+            metadata: {
+              taskId,
+              taskName,
+              agent: { id: agent.id, name: agent.name, protocol: agent.protocol },
+              responseTimeMs: Date.now() - startTime,
+              timestamp: new Date().toISOString(),
+              clarificationRounds: 0,
+              status: 'completed'
+            },
+            conversation: messages
+          };
+        }
+        
+        if (taskInfo.status === ADCP_STATUS.INPUT_REQUIRED) {
+          // Transition to input handling
+          return this.handleInputRequired<T>(
+            agent, taskId, taskName, params, taskInfo, messages,
+            inputHandler, options, debugLogs, startTime
+          );
+        }
+        
+        if (taskInfo.status === ADCP_STATUS.FAILED) {
+          throw new Error(`Task failed: ${taskInfo.error}`);
+        }
+        
+        // Still working, continue polling
+        
+      } catch (error) {
+        // Network error during polling - continue trying
+        console.warn(`Polling error for task ${taskId}:`, error);
+      }
+    }
+    
+    throw new TaskTimeoutError(taskId, workingTimeout);
+  }
+
+  /**
+   * Set up submitted task with webhook
+   */
+  private async setupSubmittedTask<T>(
+    agent: AgentConfig,
+    taskId: string,
+    taskName: string,
+    response: any,
+    messages: Message[],
+    options: TaskOptions = {},
+    debugLogs: any[] = [],
+    startTime: number = Date.now()
+  ): Promise<TaskResult<T>> {
+    
+    let webhookUrl = response.webhookUrl;
+    
+    // If no webhook URL provided by server, generate one
+    if (!webhookUrl && this.config.webhookManager) {
+      webhookUrl = this.config.webhookManager.generateUrl(taskId);
+      await this.config.webhookManager.registerWebhook(agent, taskId, webhookUrl);
+    }
+    
+    const submitted: SubmittedContinuation<T> = {
+      taskId,
+      webhookUrl,
+      track: () => this.getTaskStatus(agent, taskId),
+      waitForCompletion: (pollInterval = 60000) => this.pollTaskCompletion<T>(agent, taskId, pollInterval)
+    };
+    
+    return {
+      success: false,
+      status: 'submitted',
+      submitted,
+      metadata: {
+        taskId,
+        taskName,
+        agent: { id: agent.id, name: agent.name, protocol: agent.protocol },
+        responseTimeMs: Date.now() - startTime,
+        timestamp: new Date().toISOString(),
+        clarificationRounds: 0,
+        status: 'submitted'
+      },
+      conversation: messages
+    };
+  }
+
+  /**
+   * Handle input-required status (handler mandatory)
+   */
+  private async handleInputRequired<T>(
+    agent: AgentConfig,
+    taskId: string,
+    taskName: string,
+    params: any,
+    response: any,
+    messages: Message[],
+    inputHandler?: InputHandler,
+    options: TaskOptions = {},
+    debugLogs: any[] = [],
+    startTime: number = Date.now()
+  ): Promise<TaskResult<T>> {
+    
+    const inputRequest = this.responseParser.parseInputRequest(response);
+    
+    // Handler is mandatory for input-required
+    if (!inputHandler) {
+      throw new InputRequiredError(inputRequest.question);
+    }
+    
+    // Build context for handler
+    const context: ConversationContext = {
+      messages,
+      inputRequest,
+      taskId,
+      agent: { id: agent.id, name: agent.name, protocol: agent.protocol },
+      attempt: 1,
+      maxAttempts: options.maxClarifications || 3,
+      deferToHuman: async () => ({ defer: true, token: randomUUID() }),
+      abort: (reason) => { throw new Error(reason || 'Task aborted'); },
+      getSummary: () => messages.map(m => `${m.role}: ${JSON.stringify(m.content)}`).join('\n'),
+      wasFieldDiscussed: (field) => messages.some(m => 
+        m.content && typeof m.content === 'object' && m.content[field] !== undefined
+      ),
+      getPreviousResponse: (field) => {
+        const msg = messages.find(m => 
+          m.role === 'user' && m.content && typeof m.content === 'object' && m.content[field] !== undefined
+        );
+        return msg?.content[field];
+      }
+    };
+    
+    // Call handler
+    const handlerResponse = await inputHandler(context);
+    
+    // Check if handler wants to defer
+    if (isDeferResponse(handlerResponse)) {
+      const token = handlerResponse.token;
+      
+      // Save deferred state for later resumption
+      if (this.config.deferredStorage) {
+        await this.config.deferredStorage.set(token, {
+          taskId,
+          contextId: response.contextId || taskId,
+          agent,
+          taskName,
+          params,
+          messages,
+          createdAt: Date.now()
+        });
+      }
+      
+      const deferred: DeferredContinuation<T> = {
+        token,
+        question: inputRequest.question,
+        resume: (input) => this.resumeDeferredTask<T>(token, input)
+      };
+      
+      return {
+        success: false,
+        status: 'deferred',
+        deferred,
+        metadata: {
+          taskId,
+          taskName,
+          agent: { id: agent.id, name: agent.name, protocol: agent.protocol },
+          responseTimeMs: Date.now() - startTime,
+          timestamp: new Date().toISOString(),
+          clarificationRounds: 1,
+          status: 'deferred'
+        },
+        conversation: messages
+      };
+    }
+    
+    // Handler provided input - continue with the task
+    return this.continueTaskWithInput<T>(
+      agent, taskId, taskName, params, response.contextId, handlerResponse,
+      messages, options, debugLogs, startTime
+    );
+  }
+
+  /**
+   * Task tracking methods (PR #78)
+   */
+  async listTasks(agent: AgentConfig): Promise<TaskInfo[]> {
+    try {
+      const response = await ProtocolClient.callTool(agent, 'tasks/list', {});
+      return response.tasks || [];
+    } catch (error) {
+      console.warn('Failed to list tasks:', error);
+      return [];
+    }
+  }
+
+  async getTaskStatus(agent: AgentConfig, taskId: string): Promise<TaskInfo> {
+    const response = await ProtocolClient.callTool(agent, 'tasks/get', { taskId });
+    return response.task || response;
+  }
+
+  async pollTaskCompletion<T>(
+    agent: AgentConfig,
+    taskId: string, 
+    pollInterval = 60000
+  ): Promise<TaskResult<T>> {
+    while (true) {
+      const status = await this.getTaskStatus(agent, taskId);
+      
+      if (status.status === ADCP_STATUS.COMPLETED) {
+        return {
+          success: true,
+          status: 'completed',
+          data: status.result,
+          metadata: {
+            taskId,
+            taskName: status.taskType,
+            agent: { id: agent.id, name: agent.name, protocol: agent.protocol },
+            responseTimeMs: Date.now() - status.createdAt,
+            timestamp: new Date().toISOString(),
+            clarificationRounds: 0,
+            status: 'completed'
+          }
+        };
+      }
+      
+      if (status.status === ADCP_STATUS.FAILED || status.status === ADCP_STATUS.CANCELED) {
+        throw new Error(`Task ${status.status}: ${status.error}`);
+      }
+      
+      await this.sleep(pollInterval);
+    }
+  }
+
+  /**
+   * Resume a deferred task (client deferral)
+   */
+  async resumeDeferredTask<T>(token: string, input: any): Promise<TaskResult<T>> {
+    if (!this.config.deferredStorage) {
+      throw new Error('Deferred storage not configured');
+    }
+    
+    const state = await this.config.deferredStorage.get(token);
+    if (!state) {
+      throw new Error(`Deferred task not found: ${token}`);
+    }
+    
+    // Continue task with the provided input
+    return this.continueTaskWithInput<T>(
+      state.agent, state.taskId, state.taskName, state.params,
+      state.contextId, input, state.messages
+    );
+  }
+
+  /**
+   * Continue a task after receiving input
+   */
+  private async continueTaskWithInput<T>(
+    agent: AgentConfig,
+    taskId: string,
+    taskName: string,
+    params: any,
+    contextId: string,
+    input: any,
+    messages: Message[],
+    options: TaskOptions = {},
+    debugLogs: any[] = [],
+    startTime: number = Date.now()
+  ): Promise<TaskResult<T>> {
+    
+    // Add user input message
+    const inputMessage: Message = {
+      id: randomUUID(),
+      role: 'user',
+      content: input,
+      timestamp: new Date().toISOString(),
+      metadata: { type: 'input_response' }
+    };
+    messages.push(inputMessage);
+    
+    // Continue the task with input
+    const response = await ProtocolClient.callTool(agent, 'continue_task', {
+      contextId,
+      input
+    }, debugLogs);
+    
+    // Add response message
+    const responseMessage: Message = {
+      id: randomUUID(),
+      role: 'agent',
+      content: response,
+      timestamp: new Date().toISOString(),
+      metadata: { type: 'continued_response' }
+    };
+    messages.push(responseMessage);
+    
+    // Handle the continued response
+    return this.handleAsyncResponse<T>(
+      agent, taskId, taskName, params, response, messages,
+      undefined, options, debugLogs, startTime
+    );
+  }
+
+  /**
+   * Utility methods
+   */
+  private sleep(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  private createErrorResult<T>(
+    taskId: string,
+    agent: AgentConfig,
+    error: any,
+    debugLogs: any[] = [],
+    startTime: number = Date.now()
+  ): TaskResult<T> {
+    return {
+      success: false,
+      status: 'completed', // TaskResult status
+      error: error.message || String(error),
+      metadata: {
+        taskId,
+        taskName: 'unknown',
+        agent: { id: agent.id, name: agent.name, protocol: agent.protocol },
+        responseTimeMs: Date.now() - startTime,
+        timestamp: new Date().toISOString(),
+        clarificationRounds: 0,
+        status: 'failed' // metadata status
+      }
+    };
+  }
+
+  /**
+   * Legacy methods for backward compatibility
+   */
+  getConversationHistory(taskId: string): Message[] | undefined {
+    return this.conversationStorage?.get(taskId);
+  }
+
+  clearConversationHistory(taskId: string): void {
+    this.conversationStorage?.delete(taskId);
+  }
+
+  getActiveTasks(): TaskState[] {
+    return Array.from(this.activeTasks.values());
+  }
+}

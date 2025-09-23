@@ -50,6 +50,19 @@ export interface GetProductsRequest {
 
 // get_products response
 /**
+ * Current task state
+ */
+export type TaskStatus =
+  | 'submitted'
+  | 'working'
+  | 'input-required'
+  | 'completed'
+  | 'canceled'
+  | 'failed'
+  | 'rejected'
+  | 'auth-required'
+  | 'unknown';
+/**
  * Represents available advertising inventory
  */
 export type Product = Product1 & Product2;
@@ -95,6 +108,7 @@ export interface GetProductsResponse {
    * AdCP schema version used for this response
    */
   adcp_version: string;
+  status?: TaskStatus;
   /**
    * Array of matching products
    */
@@ -304,7 +318,7 @@ export interface ListCreativeFormatsRequest {
 
 // list_creative_formats response
 /**
- * Creative asset for upload to library - supports both hosted assets and third-party snippets
+ * Current task state
  */
 export type CreativeAsset = CreativeAsset1 & CreativeAsset2;
 /**
@@ -338,6 +352,7 @@ export interface ListCreativeFormatsResponse {
    * AdCP schema version used for this response
    */
   adcp_version: string;
+  status?: TaskStatus;
   /**
    * Array of available creative formats
    */
@@ -530,13 +545,14 @@ export interface Budget {
 
 // create_media_buy response
 /**
- * Response payload for create_media_buy task
+ * Current task state - typically 'completed' for successful creation or 'input-required' if approval needed
  */
 export interface CreateMediaBuyResponse {
   /**
    * AdCP schema version used for this response
    */
   adcp_version: string;
+  status?: TaskStatus;
   /**
    * Publisher's unique identifier for the created media buy
    */
@@ -1747,7 +1763,7 @@ export interface ActivateSignalRequest {
 
 // activate_signal response
 /**
- * Response payload for activate_signal task
+ * Current activation state: 'submitted' (pending), 'working' (processing), 'completed' (deployed), 'failed', 'input-required' (needs auth), etc.
  */
 export interface ActivateSignalResponse {
   /**
@@ -1758,10 +1774,7 @@ export interface ActivateSignalResponse {
    * Unique identifier for tracking the activation
    */
   task_id: string;
-  /**
-   * Current status
-   */
-  status: 'pending' | 'processing' | 'deployed' | 'failed';
+  status: TaskStatus;
   /**
    * The platform-specific ID to use once activated
    */
