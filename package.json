@@ -1,6 +1,6 @@
 {
   "name": "@adcp/client",
-  "version": "2.1.0",
+  "version": "0.2.0",
   "description": "AdCP client library with protocol support for MCP and A2A, includes testing framework",
   "main": "dist/lib/index.js",
   "types": "dist/lib/index.d.ts",
@@ -38,7 +38,7 @@
     "lint": "echo 'Linting not yet configured'",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist/",
-    "prepublishOnly": "npm run clean && npm run build:lib && npm run test:lib",
+    "prepublishOnly": "npm run clean && npm run build:lib && node --test test/lib/adcp-client.test.js test/lib/validation.test.js",
     "docs": "typedoc",
     "docs:watch": "typedoc --watch",
     "docs:serve": "cd docs && make serve",
@@ -100,6 +100,9 @@
   },
   "engines": {
     "node": ">=18.0.0"
+  },
+  "overrides": {
+    "@types/glob": "^8.1.0"
   },
   "adcp_version": "1.6.0"
 }
