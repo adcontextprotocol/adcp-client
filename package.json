@@ -38,7 +38,10 @@
     "lint": "echo 'Linting not yet configured'",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist/",
-    "prepublishOnly": "npm run clean && npm run build:lib && npm run test:lib"
+    "prepublishOnly": "npm run clean && npm run build:lib && npm run test:lib",
+    "docs": "typedoc",
+    "docs:watch": "typedoc --watch",
+    "docs:serve": "npx http-server docs -p 3001"
   },
   "keywords": [
     "adcp",
@@ -86,6 +89,8 @@
     "node-fetch": "^3.3.2",
     "pino-pretty": "^13.1.1",
     "tsx": "^4.6.0",
+    "typedoc": "^0.28.13",
+    "typedoc-plugin-markdown": "^4.9.0",
     "typescript": "^5.3.0",
     "zod": "^3.22.4"
   },
