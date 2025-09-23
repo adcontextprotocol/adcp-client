@@ -6,7 +6,7 @@
 
 # Class: InputRequiredError
 
-Defined in: [src/lib/core/TaskExecutor.ts:47](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/TaskExecutor.ts#L47)
+Defined in: [src/lib/core/TaskExecutor.ts:47](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/core/TaskExecutor.ts#L47)
 
 ## Extends
 
@@ -18,7 +18,7 @@ Defined in: [src/lib/core/TaskExecutor.ts:47](https://github.com/adcontextprotoc
 
 > **new InputRequiredError**(`question`): `InputRequiredError`
 
-Defined in: [src/lib/core/TaskExecutor.ts:48](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/TaskExecutor.ts#L48)
+Defined in: [src/lib/core/TaskExecutor.ts:48](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/core/TaskExecutor.ts#L48)
 
 #### Parameters
 

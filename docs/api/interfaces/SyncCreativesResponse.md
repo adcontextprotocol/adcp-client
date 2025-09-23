@@ -6,7 +6,7 @@
 
 # Interface: SyncCreativesResponse
 
-Defined in: [src/lib/types/tools.generated.ts:644](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/tools.generated.ts#L644)
+Defined in: [src/lib/types/tools.generated.ts:644](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L644)
 
 Response from creative sync operation with detailed results and bulk operation summary
 
@@ -16,7 +16,7 @@ Response from creative sync operation with detailed results and bulk operation s
 
 > **adcp\_version**: `string`
 
-Defined in: [src/lib/types/tools.generated.ts:648](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/tools.generated.ts#L648)
+Defined in: [src/lib/types/tools.generated.ts:648](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L648)
 
 AdCP schema version used for this response
 
@@ -26,7 +26,7 @@ AdCP schema version used for this response
 
 > **message**: `string`
 
-Defined in: [src/lib/types/tools.generated.ts:652](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/tools.generated.ts#L652)
+Defined in: [src/lib/types/tools.generated.ts:652](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L652)
 
 Human-readable result message summarizing the sync operation
 
@@ -36,7 +36,7 @@ Human-readable result message summarizing the sync operation
 
 > `optional` **context\_id**: `string`
 
-Defined in: [src/lib/types/tools.generated.ts:656](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/tools.generated.ts#L656)
+Defined in: [src/lib/types/tools.generated.ts:656](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L656)
 
 Context ID for tracking async operations
 
@@ -46,7 +46,7 @@ Context ID for tracking async operations
 
 > `optional` **dry\_run**: `boolean`
 
-Defined in: [src/lib/types/tools.generated.ts:660](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/tools.generated.ts#L660)
+Defined in: [src/lib/types/tools.generated.ts:660](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L660)
 
 Whether this was a dry run (no actual changes made)
 
@@ -56,7 +56,7 @@ Whether this was a dry run (no actual changes made)
 
 > **summary**: `object`
 
-Defined in: [src/lib/types/tools.generated.ts:664](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/tools.generated.ts#L664)
+Defined in: [src/lib/types/tools.generated.ts:664](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L664)
 
 High-level summary of sync operation results
 
@@ -102,7 +102,7 @@ Number of creatives deleted/archived (when delete_missing=true)
 
 > **results**: `object`[]
 
-Defined in: [src/lib/types/tools.generated.ts:693](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/tools.generated.ts#L693)
+Defined in: [src/lib/types/tools.generated.ts:693](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L693)
 
 Detailed results for each creative processed
 
@@ -164,7 +164,7 @@ Recommended creative adaptations for better performance
 
 > `optional` **assignments\_summary**: `object`
 
-Defined in: [src/lib/types/tools.generated.ts:752](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/tools.generated.ts#L752)
+Defined in: [src/lib/types/tools.generated.ts:752](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L752)
 
 Summary of assignment operations (when assignments were included in request)
 
@@ -198,7 +198,7 @@ Number of assignment operations that failed
 
 > `optional` **assignment\_results**: `object`[]
 
-Defined in: [src/lib/types/tools.generated.ts:773](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/tools.generated.ts#L773)
+Defined in: [src/lib/types/tools.generated.ts:773](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L773)
 
 Detailed assignment results (when assignments were included in request)
 

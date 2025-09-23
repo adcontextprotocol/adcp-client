@@ -6,7 +6,7 @@
 
 # Interface: AgentCardValidationResult
 
-Defined in: [src/lib/types/adcp.ts:423](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/adcp.ts#L423)
+Defined in: [src/lib/types/adcp.ts:423](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L423)
 
 ## Properties
 
@@ -14,7 +14,7 @@ Defined in: [src/lib/types/adcp.ts:423](https://github.com/adcontextprotocol/adc
 
 > **agent\_url**: `string`
 
-Defined in: [src/lib/types/adcp.ts:424](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/adcp.ts#L424)
+Defined in: [src/lib/types/adcp.ts:424](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L424)
 
 ***
 
@@ -22,7 +22,7 @@ Defined in: [src/lib/types/adcp.ts:424](https://github.com/adcontextprotocol/adc
 
 > **valid**: `boolean`
 
-Defined in: [src/lib/types/adcp.ts:425](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/adcp.ts#L425)
+Defined in: [src/lib/types/adcp.ts:425](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L425)
 
 ***
 
@@ -30,7 +30,7 @@ Defined in: [src/lib/types/adcp.ts:425](https://github.com/adcontextprotocol/adc
 
 > `optional` **status\_code**: `number`
 
-Defined in: [src/lib/types/adcp.ts:426](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/adcp.ts#L426)
+Defined in: [src/lib/types/adcp.ts:426](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L426)
 
 ***
 
@@ -38,7 +38,7 @@ Defined in: [src/lib/types/adcp.ts:426](https://github.com/adcontextprotocol/adc
 
 > `optional` **card\_data**: `any`
 
-Defined in: [src/lib/types/adcp.ts:427](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/adcp.ts#L427)
+Defined in: [src/lib/types/adcp.ts:427](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L427)
 
 ***
 
@@ -46,7 +46,7 @@ Defined in: [src/lib/types/adcp.ts:427](https://github.com/adcontextprotocol/adc
 
 > `optional` **card\_endpoint**: `string`
 
-Defined in: [src/lib/types/adcp.ts:428](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/adcp.ts#L428)
+Defined in: [src/lib/types/adcp.ts:428](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L428)
 
 ***
 
@@ -54,7 +54,7 @@ Defined in: [src/lib/types/adcp.ts:428](https://github.com/adcontextprotocol/adc
 
 > **errors**: `string`[]
 
-Defined in: [src/lib/types/adcp.ts:429](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/adcp.ts#L429)
+Defined in: [src/lib/types/adcp.ts:429](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L429)
 
 ***
 
@@ -62,4 +62,4 @@ Defined in: [src/lib/types/adcp.ts:429](https://github.com/adcontextprotocol/adc
 
 > `optional` **response\_time\_ms**: `number`
 
-Defined in: [src/lib/types/adcp.ts:430](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/adcp.ts#L430)
+Defined in: [src/lib/types/adcp.ts:430](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L430)

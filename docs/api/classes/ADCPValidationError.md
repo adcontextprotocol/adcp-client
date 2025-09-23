@@ -6,7 +6,7 @@
 
 # Class: ADCPValidationError
 
-Defined in: [src/lib/errors/index.ts:118](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/errors/index.ts#L118)
+Defined in: [src/lib/errors/index.ts:118](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/errors/index.ts#L118)
 
 Error thrown when validation fails
 
@@ -20,7 +20,7 @@ Error thrown when validation fails
 
 > **new ADCPValidationError**(`field`, `value`, `constraint`): `ValidationError`
 
-Defined in: [src/lib/errors/index.ts:121](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/errors/index.ts#L121)
+Defined in: [src/lib/errors/index.ts:121](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/errors/index.ts#L121)
 
 #### Parameters
 
@@ -50,7 +50,7 @@ Defined in: [src/lib/errors/index.ts:121](https://github.com/adcontextprotocol/a
 
 > `optional` **details**: `any`
 
-Defined in: [src/lib/errors/index.ts:9](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/errors/index.ts#L9)
+Defined in: [src/lib/errors/index.ts:9](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/errors/index.ts#L9)
 
 #### Inherited from
 
@@ -62,7 +62,7 @@ Defined in: [src/lib/errors/index.ts:9](https://github.com/adcontextprotocol/adc
 
 > `readonly` **code**: `"VALIDATION_ERROR"` = `'VALIDATION_ERROR'`
 
-Defined in: [src/lib/errors/index.ts:119](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/errors/index.ts#L119)
+Defined in: [src/lib/errors/index.ts:119](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/errors/index.ts#L119)
 
 #### Overrides
 
@@ -74,7 +74,7 @@ Defined in: [src/lib/errors/index.ts:119](https://github.com/adcontextprotocol/a
 
 > `readonly` **field**: `string`
 
-Defined in: [src/lib/errors/index.ts:122](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/errors/index.ts#L122)
+Defined in: [src/lib/errors/index.ts:122](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/errors/index.ts#L122)
 
 ***
 
@@ -82,7 +82,7 @@ Defined in: [src/lib/errors/index.ts:122](https://github.com/adcontextprotocol/a
 
 > `readonly` **value**: `any`
 
-Defined in: [src/lib/errors/index.ts:123](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/errors/index.ts#L123)
+Defined in: [src/lib/errors/index.ts:123](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/errors/index.ts#L123)
 
 ***
 
@@ -90,7 +90,7 @@ Defined in: [src/lib/errors/index.ts:123](https://github.com/adcontextprotocol/a
 
 > `readonly` **constraint**: `string`
 
-Defined in: [src/lib/errors/index.ts:124](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/errors/index.ts#L124)
+Defined in: [src/lib/errors/index.ts:124](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/errors/index.ts#L124)
 
 ***
 

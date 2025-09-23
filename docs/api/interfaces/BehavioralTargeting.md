@@ -6,7 +6,7 @@
 
 # Interface: BehavioralTargeting
 
-Defined in: [src/lib/types/adcp.ts:125](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/adcp.ts#L125)
+Defined in: [src/lib/types/adcp.ts:125](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L125)
 
 ## Properties
 
@@ -14,7 +14,7 @@ Defined in: [src/lib/types/adcp.ts:125](https://github.com/adcontextprotocol/adc
 
 > `optional` **interests**: `string`[]
 
-Defined in: [src/lib/types/adcp.ts:126](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/adcp.ts#L126)
+Defined in: [src/lib/types/adcp.ts:126](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L126)
 
 ***
 
@@ -22,7 +22,7 @@ Defined in: [src/lib/types/adcp.ts:126](https://github.com/adcontextprotocol/adc
 
 > `optional` **purchase\_intent**: `string`[]
 
-Defined in: [src/lib/types/adcp.ts:127](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/adcp.ts#L127)
+Defined in: [src/lib/types/adcp.ts:127](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L127)
 
 ***
 
@@ -30,4 +30,4 @@ Defined in: [src/lib/types/adcp.ts:127](https://github.com/adcontextprotocol/adc
 
 > `optional` **life\_events**: `string`[]
 
-Defined in: [src/lib/types/adcp.ts:128](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/adcp.ts#L128)
+Defined in: [src/lib/types/adcp.ts:128](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L128)

@@ -6,7 +6,7 @@
 
 # Interface: GetMediaBuyDeliveryResponse
 
-Defined in: [src/lib/types/tools.generated.ts:1296](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/tools.generated.ts#L1296)
+Defined in: [src/lib/types/tools.generated.ts:1296](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L1296)
 
 Response payload for get_media_buy_delivery task
 
@@ -16,7 +16,7 @@ Response payload for get_media_buy_delivery task
 
 > **adcp\_version**: `string`
 
-Defined in: [src/lib/types/tools.generated.ts:1300](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/tools.generated.ts#L1300)
+Defined in: [src/lib/types/tools.generated.ts:1300](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L1300)
 
 AdCP schema version used for this response
 
@@ -26,7 +26,7 @@ AdCP schema version used for this response
 
 > **reporting\_period**: `object`
 
-Defined in: [src/lib/types/tools.generated.ts:1304](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/tools.generated.ts#L1304)
+Defined in: [src/lib/types/tools.generated.ts:1304](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L1304)
 
 Date range for the report
 
@@ -48,7 +48,7 @@ ISO 8601 end timestamp
 
 > **currency**: `string`
 
-Defined in: [src/lib/types/tools.generated.ts:1317](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/tools.generated.ts#L1317)
+Defined in: [src/lib/types/tools.generated.ts:1317](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L1317)
 
 ISO 4217 currency code
 
@@ -58,7 +58,7 @@ ISO 4217 currency code
 
 > **aggregated\_totals**: `object`
 
-Defined in: [src/lib/types/tools.generated.ts:1321](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/tools.generated.ts#L1321)
+Defined in: [src/lib/types/tools.generated.ts:1321](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L1321)
 
 Combined metrics across all returned media buys
 
@@ -98,7 +98,7 @@ Number of media buys included in the response
 
 > **deliveries**: `object`[]
 
-Defined in: [src/lib/types/tools.generated.ts:1346](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/tools.generated.ts#L1346)
+Defined in: [src/lib/types/tools.generated.ts:1346](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L1346)
 
 Array of delivery data for each media buy
 
@@ -180,6 +180,6 @@ Day-by-day delivery
 
 > `optional` **errors**: `Error`[]
 
-Defined in: [src/lib/types/tools.generated.ts:1442](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/tools.generated.ts#L1442)
+Defined in: [src/lib/types/tools.generated.ts:1442](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L1442)
 
 Task-specific errors and warnings (e.g., missing delivery data, reporting platform issues)

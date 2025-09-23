@@ -6,7 +6,7 @@
 
 # Class: MissingInputHandlerError
 
-Defined in: [src/lib/errors/index.ts:134](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/errors/index.ts#L134)
+Defined in: [src/lib/errors/index.ts:134](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/errors/index.ts#L134)
 
 Error thrown when input handler is missing but required
 
@@ -20,7 +20,7 @@ Error thrown when input handler is missing but required
 
 > **new MissingInputHandlerError**(`taskId`, `question`): `MissingInputHandlerError`
 
-Defined in: [src/lib/errors/index.ts:137](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/errors/index.ts#L137)
+Defined in: [src/lib/errors/index.ts:137](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/errors/index.ts#L137)
 
 #### Parameters
 
@@ -46,7 +46,7 @@ Defined in: [src/lib/errors/index.ts:137](https://github.com/adcontextprotocol/a
 
 > `optional` **details**: `any`
 
-Defined in: [src/lib/errors/index.ts:9](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/errors/index.ts#L9)
+Defined in: [src/lib/errors/index.ts:9](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/errors/index.ts#L9)
 
 #### Inherited from
 
@@ -58,7 +58,7 @@ Defined in: [src/lib/errors/index.ts:9](https://github.com/adcontextprotocol/adc
 
 > `readonly` **code**: `"MISSING_INPUT_HANDLER"` = `'MISSING_INPUT_HANDLER'`
 
-Defined in: [src/lib/errors/index.ts:135](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/errors/index.ts#L135)
+Defined in: [src/lib/errors/index.ts:135](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/errors/index.ts#L135)
 
 #### Overrides
 
@@ -70,7 +70,7 @@ Defined in: [src/lib/errors/index.ts:135](https://github.com/adcontextprotocol/a
 
 > `readonly` **taskId**: `string`
 
-Defined in: [src/lib/errors/index.ts:138](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/errors/index.ts#L138)
+Defined in: [src/lib/errors/index.ts:138](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/errors/index.ts#L138)
 
 ***
 
@@ -78,7 +78,7 @@ Defined in: [src/lib/errors/index.ts:138](https://github.com/adcontextprotocol/a
 
 > `readonly` **question**: `string`
 
-Defined in: [src/lib/errors/index.ts:139](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/errors/index.ts#L139)
+Defined in: [src/lib/errors/index.ts:139](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/errors/index.ts#L139)
 
 ***
 

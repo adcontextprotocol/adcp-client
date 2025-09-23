@@ -6,7 +6,7 @@
 
 # Interface: DeviceTargeting
 
-Defined in: [src/lib/types/adcp.ts:138](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/adcp.ts#L138)
+Defined in: [src/lib/types/adcp.ts:138](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L138)
 
 ## Properties
 
@@ -14,7 +14,7 @@ Defined in: [src/lib/types/adcp.ts:138](https://github.com/adcontextprotocol/adc
 
 > `optional` **device\_types**: (`"connected_tv"` \| `"mobile"` \| `"tablet"` \| `"desktop"`)[]
 
-Defined in: [src/lib/types/adcp.ts:139](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/adcp.ts#L139)
+Defined in: [src/lib/types/adcp.ts:139](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L139)
 
 ***
 
@@ -22,7 +22,7 @@ Defined in: [src/lib/types/adcp.ts:139](https://github.com/adcontextprotocol/adc
 
 > `optional` **operating\_systems**: `string`[]
 
-Defined in: [src/lib/types/adcp.ts:140](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/adcp.ts#L140)
+Defined in: [src/lib/types/adcp.ts:140](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L140)
 
 ***
 
@@ -30,4 +30,4 @@ Defined in: [src/lib/types/adcp.ts:140](https://github.com/adcontextprotocol/adc
 
 > `optional` **browsers**: `string`[]
 
-Defined in: [src/lib/types/adcp.ts:141](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/adcp.ts#L141)
+Defined in: [src/lib/types/adcp.ts:141](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L141)

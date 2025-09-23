@@ -6,7 +6,7 @@
 
 # Interface: DayParting
 
-Defined in: [src/lib/types/adcp.ts:156](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/adcp.ts#L156)
+Defined in: [src/lib/types/adcp.ts:156](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L156)
 
 ## Properties
 
@@ -14,7 +14,7 @@ Defined in: [src/lib/types/adcp.ts:156](https://github.com/adcontextprotocol/adc
 
 > **days\_of\_week**: (`"monday"` \| `"tuesday"` \| `"wednesday"` \| `"thursday"` \| `"friday"` \| `"saturday"` \| `"sunday"`)[]
 
-Defined in: [src/lib/types/adcp.ts:157](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/adcp.ts#L157)
+Defined in: [src/lib/types/adcp.ts:157](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L157)
 
 ***
 
@@ -22,7 +22,7 @@ Defined in: [src/lib/types/adcp.ts:157](https://github.com/adcontextprotocol/adc
 
 > **hours**: `object`
 
-Defined in: [src/lib/types/adcp.ts:158](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/adcp.ts#L158)
+Defined in: [src/lib/types/adcp.ts:158](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L158)
 
 #### start
 

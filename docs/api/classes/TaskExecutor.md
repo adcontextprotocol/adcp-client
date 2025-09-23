@@ -6,7 +6,7 @@
 
 # Class: TaskExecutor
 
-Defined in: [src/lib/core/TaskExecutor.ts:79](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/TaskExecutor.ts#L79)
+Defined in: [src/lib/core/TaskExecutor.ts:79](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/core/TaskExecutor.ts#L79)
 
 Core task execution engine that handles the conversation loop with agents
 
@@ -16,7 +16,7 @@ Core task execution engine that handles the conversation loop with agents
 
 > **new TaskExecutor**(`config`): `TaskExecutor`
 
-Defined in: [src/lib/core/TaskExecutor.ts:84](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/TaskExecutor.ts#L84)
+Defined in: [src/lib/core/TaskExecutor.ts:84](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/core/TaskExecutor.ts#L84)
 
 #### Parameters
 
@@ -62,7 +62,7 @@ Storage for deferred task state
 
 > **executeTask**\<`T`\>(`agent`, `taskName`, `params`, `inputHandler?`, `options?`): `Promise`\<[`TaskResult`](../interfaces/TaskResult.md)\<`T`\>\>
 
-Defined in: [src/lib/core/TaskExecutor.ts:108](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/TaskExecutor.ts#L108)
+Defined in: [src/lib/core/TaskExecutor.ts:108](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/core/TaskExecutor.ts#L108)
 
 Execute a task with an agent using PR #78 async patterns
 Handles: working (keep SSE open), submitted (webhook), input-required (handler), completed
@@ -105,7 +105,7 @@ Handles: working (keep SSE open), submitted (webhook), input-required (handler),
 
 > **listTasks**(`agent`): `Promise`\<`TaskInfo`[]\>
 
-Defined in: [src/lib/core/TaskExecutor.ts:464](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/TaskExecutor.ts#L464)
+Defined in: [src/lib/core/TaskExecutor.ts:464](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/core/TaskExecutor.ts#L464)
 
 Task tracking methods (PR #78)
 
@@ -125,7 +125,7 @@ Task tracking methods (PR #78)
 
 > **getTaskStatus**(`agent`, `taskId`): `Promise`\<`TaskInfo`\>
 
-Defined in: [src/lib/core/TaskExecutor.ts:474](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/TaskExecutor.ts#L474)
+Defined in: [src/lib/core/TaskExecutor.ts:474](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/core/TaskExecutor.ts#L474)
 
 #### Parameters
 
@@ -147,7 +147,7 @@ Defined in: [src/lib/core/TaskExecutor.ts:474](https://github.com/adcontextproto
 
 > **pollTaskCompletion**\<`T`\>(`agent`, `taskId`, `pollInterval`): `Promise`\<[`TaskResult`](../interfaces/TaskResult.md)\<`T`\>\>
 
-Defined in: [src/lib/core/TaskExecutor.ts:479](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/TaskExecutor.ts#L479)
+Defined in: [src/lib/core/TaskExecutor.ts:479](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/core/TaskExecutor.ts#L479)
 
 #### Type Parameters
 
@@ -179,7 +179,7 @@ Defined in: [src/lib/core/TaskExecutor.ts:479](https://github.com/adcontextproto
 
 > **resumeDeferredTask**\<`T`\>(`token`, `input`): `Promise`\<[`TaskResult`](../interfaces/TaskResult.md)\<`T`\>\>
 
-Defined in: [src/lib/core/TaskExecutor.ts:515](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/TaskExecutor.ts#L515)
+Defined in: [src/lib/core/TaskExecutor.ts:515](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/core/TaskExecutor.ts#L515)
 
 Resume a deferred task (client deferral)
 
@@ -209,7 +209,7 @@ Resume a deferred task (client deferral)
 
 > **getConversationHistory**(`taskId`): `undefined` \| [`Message`](../interfaces/Message.md)[]
 
-Defined in: [src/lib/core/TaskExecutor.ts:614](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/TaskExecutor.ts#L614)
+Defined in: [src/lib/core/TaskExecutor.ts:614](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/core/TaskExecutor.ts#L614)
 
 Legacy methods for backward compatibility
 
@@ -229,7 +229,7 @@ Legacy methods for backward compatibility
 
 > **clearConversationHistory**(`taskId`): `void`
 
-Defined in: [src/lib/core/TaskExecutor.ts:618](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/TaskExecutor.ts#L618)
+Defined in: [src/lib/core/TaskExecutor.ts:618](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/core/TaskExecutor.ts#L618)
 
 #### Parameters
 
@@ -247,7 +247,7 @@ Defined in: [src/lib/core/TaskExecutor.ts:618](https://github.com/adcontextproto
 
 > **getActiveTasks**(): [`TaskState`](../interfaces/TaskState.md)[]
 
-Defined in: [src/lib/core/TaskExecutor.ts:622](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/TaskExecutor.ts#L622)
+Defined in: [src/lib/core/TaskExecutor.ts:622](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/core/TaskExecutor.ts#L622)
 
 #### Returns
 

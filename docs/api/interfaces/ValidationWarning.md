@@ -6,7 +6,7 @@
 
 # Interface: ValidationWarning
 
-Defined in: [src/lib/types/adcp.ts:417](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/adcp.ts#L417)
+Defined in: [src/lib/types/adcp.ts:417](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L417)
 
 ## Properties
 
@@ -14,7 +14,7 @@ Defined in: [src/lib/types/adcp.ts:417](https://github.com/adcontextprotocol/adc
 
 > **field**: `string`
 
-Defined in: [src/lib/types/adcp.ts:418](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/adcp.ts#L418)
+Defined in: [src/lib/types/adcp.ts:418](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L418)
 
 ***
 
@@ -22,7 +22,7 @@ Defined in: [src/lib/types/adcp.ts:418](https://github.com/adcontextprotocol/adc
 
 > **message**: `string`
 
-Defined in: [src/lib/types/adcp.ts:419](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/adcp.ts#L419)
+Defined in: [src/lib/types/adcp.ts:419](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L419)
 
 ***
 
@@ -30,4 +30,4 @@ Defined in: [src/lib/types/adcp.ts:419](https://github.com/adcontextprotocol/adc
 
 > `optional` **suggestion**: `string`
 
-Defined in: [src/lib/types/adcp.ts:420](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/adcp.ts#L420)
+Defined in: [src/lib/types/adcp.ts:420](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L420)

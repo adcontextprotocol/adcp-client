@@ -6,7 +6,7 @@
 
 # Interface: GetProductsRequest
 
-Defined in: [src/lib/types/tools.generated.ts:13](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/tools.generated.ts#L13)
+Defined in: [src/lib/types/tools.generated.ts:13](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L13)
 
 Request parameters for discovering available advertising products
 
@@ -16,7 +16,7 @@ Request parameters for discovering available advertising products
 
 > `optional` **adcp\_version**: `string`
 
-Defined in: [src/lib/types/tools.generated.ts:17](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/tools.generated.ts#L17)
+Defined in: [src/lib/types/tools.generated.ts:17](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L17)
 
 AdCP schema version for this request
 
@@ -26,7 +26,7 @@ AdCP schema version for this request
 
 > `optional` **brief**: `string`
 
-Defined in: [src/lib/types/tools.generated.ts:21](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/tools.generated.ts#L21)
+Defined in: [src/lib/types/tools.generated.ts:21](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L21)
 
 Natural language description of campaign requirements
 
@@ -36,7 +36,7 @@ Natural language description of campaign requirements
 
 > **promoted\_offering**: `string`
 
-Defined in: [src/lib/types/tools.generated.ts:25](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/tools.generated.ts#L25)
+Defined in: [src/lib/types/tools.generated.ts:25](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L25)
 
 Description of advertiser and what is being promoted
 
@@ -46,7 +46,7 @@ Description of advertiser and what is being promoted
 
 > `optional` **filters**: `object`
 
-Defined in: [src/lib/types/tools.generated.ts:29](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/tools.generated.ts#L29)
+Defined in: [src/lib/types/tools.generated.ts:29](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L29)
 
 Structured filters for product discovery
 

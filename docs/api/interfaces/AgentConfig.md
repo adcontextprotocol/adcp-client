@@ -6,7 +6,7 @@
 
 # Interface: AgentConfig
 
-Defined in: [src/lib/types/adcp.ts:165](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/adcp.ts#L165)
+Defined in: [src/lib/types/adcp.ts:165](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L165)
 
 ## Properties
 
@@ -14,7 +14,7 @@ Defined in: [src/lib/types/adcp.ts:165](https://github.com/adcontextprotocol/adc
 
 > **id**: `string`
 
-Defined in: [src/lib/types/adcp.ts:166](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/adcp.ts#L166)
+Defined in: [src/lib/types/adcp.ts:166](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L166)
 
 ***
 
@@ -22,7 +22,7 @@ Defined in: [src/lib/types/adcp.ts:166](https://github.com/adcontextprotocol/adc
 
 > **name**: `string`
 
-Defined in: [src/lib/types/adcp.ts:167](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/adcp.ts#L167)
+Defined in: [src/lib/types/adcp.ts:167](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L167)
 
 ***
 
@@ -30,7 +30,7 @@ Defined in: [src/lib/types/adcp.ts:167](https://github.com/adcontextprotocol/adc
 
 > **agent\_uri**: `string`
 
-Defined in: [src/lib/types/adcp.ts:168](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/adcp.ts#L168)
+Defined in: [src/lib/types/adcp.ts:168](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L168)
 
 ***
 
@@ -38,7 +38,7 @@ Defined in: [src/lib/types/adcp.ts:168](https://github.com/adcontextprotocol/adc
 
 > **protocol**: `"mcp"` \| `"a2a"`
 
-Defined in: [src/lib/types/adcp.ts:169](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/adcp.ts#L169)
+Defined in: [src/lib/types/adcp.ts:169](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L169)
 
 ***
 
@@ -46,7 +46,7 @@ Defined in: [src/lib/types/adcp.ts:169](https://github.com/adcontextprotocol/adc
 
 > `optional` **auth\_token\_env**: `string`
 
-Defined in: [src/lib/types/adcp.ts:170](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/adcp.ts#L170)
+Defined in: [src/lib/types/adcp.ts:170](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L170)
 
 ***
 
@@ -54,4 +54,4 @@ Defined in: [src/lib/types/adcp.ts:170](https://github.com/adcontextprotocol/adc
 
 > `optional` **requiresAuth**: `boolean`
 
-Defined in: [src/lib/types/adcp.ts:171](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/adcp.ts#L171)
+Defined in: [src/lib/types/adcp.ts:171](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L171)

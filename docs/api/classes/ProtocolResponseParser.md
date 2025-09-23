@@ -6,7 +6,7 @@
 
 # Class: ProtocolResponseParser
 
-Defined in: [src/lib/core/ProtocolResponseParser.ts:33](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/ProtocolResponseParser.ts#L33)
+Defined in: [src/lib/core/ProtocolResponseParser.ts:33](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/core/ProtocolResponseParser.ts#L33)
 
 Simple parser that follows ADCP spec exactly
 
@@ -26,7 +26,7 @@ Simple parser that follows ADCP spec exactly
 
 > **isInputRequest**(`response`): `boolean`
 
-Defined in: [src/lib/core/ProtocolResponseParser.ts:37](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/ProtocolResponseParser.ts#L37)
+Defined in: [src/lib/core/ProtocolResponseParser.ts:37](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/core/ProtocolResponseParser.ts#L37)
 
 Check if response indicates input is needed per ADCP spec
 
@@ -46,7 +46,7 @@ Check if response indicates input is needed per ADCP spec
 
 > **parseInputRequest**(`response`): [`InputRequest`](../interfaces/InputRequest.md)
 
-Defined in: [src/lib/core/ProtocolResponseParser.ts:55](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/ProtocolResponseParser.ts#L55)
+Defined in: [src/lib/core/ProtocolResponseParser.ts:55](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/core/ProtocolResponseParser.ts#L55)
 
 Parse input request from response
 
@@ -66,7 +66,7 @@ Parse input request from response
 
 > **getStatus**(`response`): `null` \| [`ADCPStatus`](../type-aliases/ADCPStatus.md)
 
-Defined in: [src/lib/core/ProtocolResponseParser.ts:74](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/ProtocolResponseParser.ts#L74)
+Defined in: [src/lib/core/ProtocolResponseParser.ts:74](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/core/ProtocolResponseParser.ts#L74)
 
 Get ADCP status from response
 

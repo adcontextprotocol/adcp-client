@@ -6,7 +6,7 @@
 
 # Interface: ContextualTargeting
 
-Defined in: [src/lib/types/adcp.ts:131](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/adcp.ts#L131)
+Defined in: [src/lib/types/adcp.ts:131](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L131)
 
 ## Properties
 
@@ -14,7 +14,7 @@ Defined in: [src/lib/types/adcp.ts:131](https://github.com/adcontextprotocol/adc
 
 > `optional` **keywords**: `string`[]
 
-Defined in: [src/lib/types/adcp.ts:132](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/adcp.ts#L132)
+Defined in: [src/lib/types/adcp.ts:132](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L132)
 
 ***
 
@@ -22,7 +22,7 @@ Defined in: [src/lib/types/adcp.ts:132](https://github.com/adcontextprotocol/adc
 
 > `optional` **topics**: `string`[]
 
-Defined in: [src/lib/types/adcp.ts:133](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/adcp.ts#L133)
+Defined in: [src/lib/types/adcp.ts:133](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L133)
 
 ***
 
@@ -30,7 +30,7 @@ Defined in: [src/lib/types/adcp.ts:133](https://github.com/adcontextprotocol/adc
 
 > `optional` **content\_categories**: `string`[]
 
-Defined in: [src/lib/types/adcp.ts:134](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/adcp.ts#L134)
+Defined in: [src/lib/types/adcp.ts:134](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L134)
 
 ***
 
@@ -38,4 +38,4 @@ Defined in: [src/lib/types/adcp.ts:134](https://github.com/adcontextprotocol/adc
 
 > `optional` **website\_categories**: `string`[]
 
-Defined in: [src/lib/types/adcp.ts:135](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/adcp.ts#L135)
+Defined in: [src/lib/types/adcp.ts:135](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L135)

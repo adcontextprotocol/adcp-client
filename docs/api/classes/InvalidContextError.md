@@ -6,7 +6,7 @@
 
 # Class: InvalidContextError
 
-Defined in: [src/lib/errors/index.ts:148](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/errors/index.ts#L148)
+Defined in: [src/lib/errors/index.ts:148](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/errors/index.ts#L148)
 
 Error thrown when conversation context is invalid
 
@@ -20,7 +20,7 @@ Error thrown when conversation context is invalid
 
 > **new InvalidContextError**(`contextId`, `reason`): `InvalidContextError`
 
-Defined in: [src/lib/errors/index.ts:151](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/errors/index.ts#L151)
+Defined in: [src/lib/errors/index.ts:151](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/errors/index.ts#L151)
 
 #### Parameters
 
@@ -46,7 +46,7 @@ Defined in: [src/lib/errors/index.ts:151](https://github.com/adcontextprotocol/a
 
 > `optional` **details**: `any`
 
-Defined in: [src/lib/errors/index.ts:9](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/errors/index.ts#L9)
+Defined in: [src/lib/errors/index.ts:9](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/errors/index.ts#L9)
 
 #### Inherited from
 
@@ -58,7 +58,7 @@ Defined in: [src/lib/errors/index.ts:9](https://github.com/adcontextprotocol/adc
 
 > `readonly` **code**: `"INVALID_CONTEXT"` = `'INVALID_CONTEXT'`
 
-Defined in: [src/lib/errors/index.ts:149](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/errors/index.ts#L149)
+Defined in: [src/lib/errors/index.ts:149](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/errors/index.ts#L149)
 
 #### Overrides
 
@@ -70,7 +70,7 @@ Defined in: [src/lib/errors/index.ts:149](https://github.com/adcontextprotocol/a
 
 > `readonly` **contextId**: `string`
 
-Defined in: [src/lib/errors/index.ts:152](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/errors/index.ts#L152)
+Defined in: [src/lib/errors/index.ts:152](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/errors/index.ts#L152)
 
 ***
 

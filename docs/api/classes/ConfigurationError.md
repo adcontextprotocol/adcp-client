@@ -6,7 +6,7 @@
 
 # Class: ConfigurationError
 
-Defined in: [src/lib/errors/index.ts:162](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/errors/index.ts#L162)
+Defined in: [src/lib/errors/index.ts:162](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/errors/index.ts#L162)
 
 Error thrown when configuration is invalid
 
@@ -20,7 +20,7 @@ Error thrown when configuration is invalid
 
 > **new ConfigurationError**(`message`, `configField?`): `ConfigurationError`
 
-Defined in: [src/lib/errors/index.ts:165](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/errors/index.ts#L165)
+Defined in: [src/lib/errors/index.ts:165](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/errors/index.ts#L165)
 
 #### Parameters
 
@@ -46,7 +46,7 @@ Defined in: [src/lib/errors/index.ts:165](https://github.com/adcontextprotocol/a
 
 > `optional` **details**: `any`
 
-Defined in: [src/lib/errors/index.ts:9](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/errors/index.ts#L9)
+Defined in: [src/lib/errors/index.ts:9](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/errors/index.ts#L9)
 
 #### Inherited from
 
@@ -58,7 +58,7 @@ Defined in: [src/lib/errors/index.ts:9](https://github.com/adcontextprotocol/adc
 
 > `readonly` **code**: `"CONFIGURATION_ERROR"` = `'CONFIGURATION_ERROR'`
 
-Defined in: [src/lib/errors/index.ts:163](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/errors/index.ts#L163)
+Defined in: [src/lib/errors/index.ts:163](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/errors/index.ts#L163)
 
 #### Overrides
 
@@ -70,7 +70,7 @@ Defined in: [src/lib/errors/index.ts:163](https://github.com/adcontextprotocol/a
 
 > `readonly` `optional` **configField**: `string`
 
-Defined in: [src/lib/errors/index.ts:165](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/errors/index.ts#L165)
+Defined in: [src/lib/errors/index.ts:165](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/errors/index.ts#L165)
 
 ***
 

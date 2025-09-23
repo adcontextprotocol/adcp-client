@@ -6,7 +6,7 @@
 
 # Interface: GetSignalsResponse
 
-Defined in: [src/lib/types/tools.generated.ts:1655](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/tools.generated.ts#L1655)
+Defined in: [src/lib/types/tools.generated.ts:1655](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L1655)
 
 Response payload for get_signals task
 
@@ -16,7 +16,7 @@ Response payload for get_signals task
 
 > **adcp\_version**: `string`
 
-Defined in: [src/lib/types/tools.generated.ts:1659](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/tools.generated.ts#L1659)
+Defined in: [src/lib/types/tools.generated.ts:1659](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L1659)
 
 AdCP schema version used for this response
 
@@ -26,7 +26,7 @@ AdCP schema version used for this response
 
 > **signals**: `object`[]
 
-Defined in: [src/lib/types/tools.generated.ts:1663](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/tools.generated.ts#L1663)
+Defined in: [src/lib/types/tools.generated.ts:1663](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L1663)
 
 Array of matching signals
 
@@ -96,6 +96,6 @@ Currency code
 
 > `optional` **errors**: `Error`[]
 
-Defined in: [src/lib/types/tools.generated.ts:1734](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/tools.generated.ts#L1734)
+Defined in: [src/lib/types/tools.generated.ts:1734](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L1734)
 
 Task-specific errors and warnings (e.g., signal discovery or pricing issues)

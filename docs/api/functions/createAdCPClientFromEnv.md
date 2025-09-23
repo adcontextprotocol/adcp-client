@@ -8,7 +8,7 @@
 
 > **createAdCPClientFromEnv**(): [`ADCPMultiAgentClient`](../classes/ADCPMultiAgentClient.md)
 
-Defined in: [src/lib/index.ts:145](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/index.ts#L145)
+Defined in: [src/lib/index.ts:145](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/index.ts#L145)
 
 Load agents from environment and create multi-agent client
 

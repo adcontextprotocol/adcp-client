@@ -6,7 +6,7 @@
 
 # Class: AgentClient
 
-Defined in: [src/lib/core/AgentClient.ts:42](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/AgentClient.ts#L42)
+Defined in: [src/lib/core/AgentClient.ts:42](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/core/AgentClient.ts#L42)
 
 Per-agent client that maintains conversation context across calls
 
@@ -19,7 +19,7 @@ making it easy to have multi-turn conversations and maintain state.
 
 > **new AgentClient**(`agent`, `config`): `AgentClient`
 
-Defined in: [src/lib/core/AgentClient.ts:46](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/AgentClient.ts#L46)
+Defined in: [src/lib/core/AgentClient.ts:46](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/core/AgentClient.ts#L46)
 
 #### Parameters
 
@@ -41,7 +41,7 @@ Defined in: [src/lib/core/AgentClient.ts:46](https://github.com/adcontextprotoco
 
 > **getProducts**(`params`, `inputHandler?`, `options?`): `Promise`\<[`TaskResult`](../interfaces/TaskResult.md)\<[`GetProductsResponse`](../interfaces/GetProductsResponse.md)\>\>
 
-Defined in: [src/lib/core/AgentClient.ts:58](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/AgentClient.ts#L58)
+Defined in: [src/lib/core/AgentClient.ts:58](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/core/AgentClient.ts#L58)
 
 Discover available advertising products
 
@@ -69,7 +69,7 @@ Discover available advertising products
 
 > **listCreativeFormats**(`params`, `inputHandler?`, `options?`): `Promise`\<[`TaskResult`](../interfaces/TaskResult.md)\<[`ListCreativeFormatsResponse`](../interfaces/ListCreativeFormatsResponse.md)\>\>
 
-Defined in: [src/lib/core/AgentClient.ts:79](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/AgentClient.ts#L79)
+Defined in: [src/lib/core/AgentClient.ts:79](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/core/AgentClient.ts#L79)
 
 List available creative formats
 
@@ -97,7 +97,7 @@ List available creative formats
 
 > **createMediaBuy**(`params`, `inputHandler?`, `options?`): `Promise`\<[`TaskResult`](../interfaces/TaskResult.md)\<[`CreateMediaBuyResponse`](../interfaces/CreateMediaBuyResponse.md)\>\>
 
-Defined in: [src/lib/core/AgentClient.ts:100](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/AgentClient.ts#L100)
+Defined in: [src/lib/core/AgentClient.ts:100](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/core/AgentClient.ts#L100)
 
 Create a new media buy
 
@@ -125,7 +125,7 @@ Create a new media buy
 
 > **updateMediaBuy**(`params`, `inputHandler?`, `options?`): `Promise`\<[`TaskResult`](../interfaces/TaskResult.md)\<[`UpdateMediaBuyResponse`](../interfaces/UpdateMediaBuyResponse.md)\>\>
 
-Defined in: [src/lib/core/AgentClient.ts:121](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/AgentClient.ts#L121)
+Defined in: [src/lib/core/AgentClient.ts:121](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/core/AgentClient.ts#L121)
 
 Update an existing media buy
 
@@ -153,7 +153,7 @@ Update an existing media buy
 
 > **syncCreatives**(`params`, `inputHandler?`, `options?`): `Promise`\<[`TaskResult`](../interfaces/TaskResult.md)\<[`SyncCreativesResponse`](../interfaces/SyncCreativesResponse.md)\>\>
 
-Defined in: [src/lib/core/AgentClient.ts:142](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/AgentClient.ts#L142)
+Defined in: [src/lib/core/AgentClient.ts:142](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/core/AgentClient.ts#L142)
 
 Sync creative assets
 
@@ -181,7 +181,7 @@ Sync creative assets
 
 > **listCreatives**(`params`, `inputHandler?`, `options?`): `Promise`\<[`TaskResult`](../interfaces/TaskResult.md)\<[`ListCreativesResponse`](../interfaces/ListCreativesResponse.md)\>\>
 
-Defined in: [src/lib/core/AgentClient.ts:163](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/AgentClient.ts#L163)
+Defined in: [src/lib/core/AgentClient.ts:163](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/core/AgentClient.ts#L163)
 
 List creative assets
 
@@ -209,7 +209,7 @@ List creative assets
 
 > **getMediaBuyDelivery**(`params`, `inputHandler?`, `options?`): `Promise`\<[`TaskResult`](../interfaces/TaskResult.md)\<[`GetMediaBuyDeliveryResponse`](../interfaces/GetMediaBuyDeliveryResponse.md)\>\>
 
-Defined in: [src/lib/core/AgentClient.ts:184](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/AgentClient.ts#L184)
+Defined in: [src/lib/core/AgentClient.ts:184](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/core/AgentClient.ts#L184)
 
 Get media buy delivery information
 
@@ -237,7 +237,7 @@ Get media buy delivery information
 
 > **listAuthorizedProperties**(`params`, `inputHandler?`, `options?`): `Promise`\<[`TaskResult`](../interfaces/TaskResult.md)\<[`ListAuthorizedPropertiesResponse`](../interfaces/ListAuthorizedPropertiesResponse.md)\>\>
 
-Defined in: [src/lib/core/AgentClient.ts:205](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/AgentClient.ts#L205)
+Defined in: [src/lib/core/AgentClient.ts:205](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/core/AgentClient.ts#L205)
 
 List authorized properties
 
@@ -265,7 +265,7 @@ List authorized properties
 
 > **providePerformanceFeedback**(`params`, `inputHandler?`, `options?`): `Promise`\<[`TaskResult`](../interfaces/TaskResult.md)\<[`ProvidePerformanceFeedbackResponse`](../interfaces/ProvidePerformanceFeedbackResponse.md)\>\>
 
-Defined in: [src/lib/core/AgentClient.ts:226](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/AgentClient.ts#L226)
+Defined in: [src/lib/core/AgentClient.ts:226](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/core/AgentClient.ts#L226)
 
 Provide performance feedback
 
@@ -293,7 +293,7 @@ Provide performance feedback
 
 > **getSignals**(`params`, `inputHandler?`, `options?`): `Promise`\<[`TaskResult`](../interfaces/TaskResult.md)\<[`GetSignalsResponse`](../interfaces/GetSignalsResponse.md)\>\>
 
-Defined in: [src/lib/core/AgentClient.ts:249](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/AgentClient.ts#L249)
+Defined in: [src/lib/core/AgentClient.ts:249](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/core/AgentClient.ts#L249)
 
 Get audience signals
 
@@ -321,7 +321,7 @@ Get audience signals
 
 > **activateSignal**(`params`, `inputHandler?`, `options?`): `Promise`\<[`TaskResult`](../interfaces/TaskResult.md)\<[`ActivateSignalResponse`](../interfaces/ActivateSignalResponse.md)\>\>
 
-Defined in: [src/lib/core/AgentClient.ts:270](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/AgentClient.ts#L270)
+Defined in: [src/lib/core/AgentClient.ts:270](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/core/AgentClient.ts#L270)
 
 Activate audience signals
 
@@ -349,7 +349,7 @@ Activate audience signals
 
 > **continueConversation**\<`T`\>(`message`, `inputHandler?`, `options?`): `Promise`\<[`TaskResult`](../interfaces/TaskResult.md)\<`T`\>\>
 
-Defined in: [src/lib/core/AgentClient.ts:307](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/AgentClient.ts#L307)
+Defined in: [src/lib/core/AgentClient.ts:307](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/core/AgentClient.ts#L307)
 
 Continue the conversation with a natural language message
 
@@ -399,7 +399,7 @@ const refined = await agent.continueConversation(
 
 > **getHistory**(): `undefined` \| [`Message`](../interfaces/Message.md)[]
 
-Defined in: [src/lib/core/AgentClient.ts:332](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/AgentClient.ts#L332)
+Defined in: [src/lib/core/AgentClient.ts:332](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/core/AgentClient.ts#L332)
 
 Get the full conversation history
 
@@ -413,7 +413,7 @@ Get the full conversation history
 
 > **clearContext**(): `void`
 
-Defined in: [src/lib/core/AgentClient.ts:342](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/AgentClient.ts#L342)
+Defined in: [src/lib/core/AgentClient.ts:342](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/core/AgentClient.ts#L342)
 
 Clear the conversation context (start fresh)
 
@@ -427,7 +427,7 @@ Clear the conversation context (start fresh)
 
 > **getContextId**(): `undefined` \| `string`
 
-Defined in: [src/lib/core/AgentClient.ts:352](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/AgentClient.ts#L352)
+Defined in: [src/lib/core/AgentClient.ts:352](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/core/AgentClient.ts#L352)
 
 Get the current conversation context ID
 
@@ -441,7 +441,7 @@ Get the current conversation context ID
 
 > **setContextId**(`contextId`): `void`
 
-Defined in: [src/lib/core/AgentClient.ts:359](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/AgentClient.ts#L359)
+Defined in: [src/lib/core/AgentClient.ts:359](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/core/AgentClient.ts#L359)
 
 Set a specific conversation context ID
 
@@ -461,7 +461,7 @@ Set a specific conversation context ID
 
 > **getAgent**(): [`AgentConfig`](../interfaces/AgentConfig.md)
 
-Defined in: [src/lib/core/AgentClient.ts:368](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/AgentClient.ts#L368)
+Defined in: [src/lib/core/AgentClient.ts:368](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/core/AgentClient.ts#L368)
 
 Get the agent configuration
 
@@ -475,7 +475,7 @@ Get the agent configuration
 
 > **getAgentId**(): `string`
 
-Defined in: [src/lib/core/AgentClient.ts:375](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/AgentClient.ts#L375)
+Defined in: [src/lib/core/AgentClient.ts:375](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/core/AgentClient.ts#L375)
 
 Get the agent ID
 
@@ -489,7 +489,7 @@ Get the agent ID
 
 > **getAgentName**(): `string`
 
-Defined in: [src/lib/core/AgentClient.ts:382](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/AgentClient.ts#L382)
+Defined in: [src/lib/core/AgentClient.ts:382](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/core/AgentClient.ts#L382)
 
 Get the agent name
 
@@ -503,7 +503,7 @@ Get the agent name
 
 > **getProtocol**(): `"mcp"` \| `"a2a"`
 
-Defined in: [src/lib/core/AgentClient.ts:389](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/AgentClient.ts#L389)
+Defined in: [src/lib/core/AgentClient.ts:389](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/core/AgentClient.ts#L389)
 
 Get the agent protocol
 
@@ -517,7 +517,7 @@ Get the agent protocol
 
 > **hasActiveConversation**(): `boolean`
 
-Defined in: [src/lib/core/AgentClient.ts:396](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/AgentClient.ts#L396)
+Defined in: [src/lib/core/AgentClient.ts:396](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/core/AgentClient.ts#L396)
 
 Check if there's an active conversation
 
@@ -531,7 +531,7 @@ Check if there's an active conversation
 
 > **getActiveTasks**(): [`TaskState`](../interfaces/TaskState.md)[]
 
-Defined in: [src/lib/core/AgentClient.ts:403](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/AgentClient.ts#L403)
+Defined in: [src/lib/core/AgentClient.ts:403](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/core/AgentClient.ts#L403)
 
 Get active tasks for this agent
 
@@ -545,7 +545,7 @@ Get active tasks for this agent
 
 > **executeTask**\<`T`\>(`taskName`, `params`, `inputHandler?`, `options?`): `Promise`\<[`TaskResult`](../interfaces/TaskResult.md)\<`T`\>\>
 
-Defined in: [src/lib/core/AgentClient.ts:412](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/AgentClient.ts#L412)
+Defined in: [src/lib/core/AgentClient.ts:412](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/core/AgentClient.ts#L412)
 
 Execute any task by name, maintaining conversation context
 

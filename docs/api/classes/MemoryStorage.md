@@ -6,7 +6,7 @@
 
 # Class: MemoryStorage\<T\>
 
-Defined in: [src/lib/storage/MemoryStorage.ts:32](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/storage/MemoryStorage.ts#L32)
+Defined in: [src/lib/storage/MemoryStorage.ts:32](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/storage/MemoryStorage.ts#L32)
 
 In-memory storage implementation with TTL support
 
@@ -43,7 +43,7 @@ const value = await storage.get('key');
 
 > **new MemoryStorage**\<`T`\>(`options`): `MemoryStorage`\<`T`\>
 
-Defined in: [src/lib/storage/MemoryStorage.ts:37](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/storage/MemoryStorage.ts#L37)
+Defined in: [src/lib/storage/MemoryStorage.ts:37](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/storage/MemoryStorage.ts#L37)
 
 #### Parameters
 
@@ -77,7 +77,7 @@ Whether to enable automatic cleanup, default true
 
 > **get**(`key`): `Promise`\<`undefined` \| `T`\>
 
-Defined in: [src/lib/storage/MemoryStorage.ts:59](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/storage/MemoryStorage.ts#L59)
+Defined in: [src/lib/storage/MemoryStorage.ts:59](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/storage/MemoryStorage.ts#L59)
 
 Get a value by key
 
@@ -105,7 +105,7 @@ Value or undefined if not found
 
 > **set**(`key`, `value`, `ttl?`): `Promise`\<`void`\>
 
-Defined in: [src/lib/storage/MemoryStorage.ts:75](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/storage/MemoryStorage.ts#L75)
+Defined in: [src/lib/storage/MemoryStorage.ts:75](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/storage/MemoryStorage.ts#L75)
 
 Set a value with optional TTL
 
@@ -143,7 +143,7 @@ Time to live in seconds (optional)
 
 > **delete**(`key`): `Promise`\<`void`\>
 
-Defined in: [src/lib/storage/MemoryStorage.ts:92](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/storage/MemoryStorage.ts#L92)
+Defined in: [src/lib/storage/MemoryStorage.ts:92](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/storage/MemoryStorage.ts#L92)
 
 Delete a value by key
 
@@ -169,7 +169,7 @@ Storage key
 
 > **has**(`key`): `Promise`\<`boolean`\>
 
-Defined in: [src/lib/storage/MemoryStorage.ts:96](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/storage/MemoryStorage.ts#L96)
+Defined in: [src/lib/storage/MemoryStorage.ts:96](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/storage/MemoryStorage.ts#L96)
 
 Check if a key exists
 
@@ -195,7 +195,7 @@ Storage key
 
 > **clear**(): `Promise`\<`void`\>
 
-Defined in: [src/lib/storage/MemoryStorage.ts:101](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/storage/MemoryStorage.ts#L101)
+Defined in: [src/lib/storage/MemoryStorage.ts:101](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/storage/MemoryStorage.ts#L101)
 
 Clear all stored values (optional)
 
@@ -213,7 +213,7 @@ Clear all stored values (optional)
 
 > **keys**(): `Promise`\<`string`[]\>
 
-Defined in: [src/lib/storage/MemoryStorage.ts:105](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/storage/MemoryStorage.ts#L105)
+Defined in: [src/lib/storage/MemoryStorage.ts:105](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/storage/MemoryStorage.ts#L105)
 
 Get all keys (optional, for debugging)
 
@@ -231,7 +231,7 @@ Get all keys (optional, for debugging)
 
 > **size**(): `Promise`\<`number`\>
 
-Defined in: [src/lib/storage/MemoryStorage.ts:119](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/storage/MemoryStorage.ts#L119)
+Defined in: [src/lib/storage/MemoryStorage.ts:119](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/storage/MemoryStorage.ts#L119)
 
 Get storage size/count (optional, for monitoring)
 
@@ -249,7 +249,7 @@ Get storage size/count (optional, for monitoring)
 
 > **mget**(`keys`): `Promise`\<(`undefined` \| `T`)[]\>
 
-Defined in: [src/lib/storage/MemoryStorage.ts:127](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/storage/MemoryStorage.ts#L127)
+Defined in: [src/lib/storage/MemoryStorage.ts:127](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/storage/MemoryStorage.ts#L127)
 
 Get multiple values at once
 
@@ -273,7 +273,7 @@ Get multiple values at once
 
 > **mset**(`entries`): `Promise`\<`void`\>
 
-Defined in: [src/lib/storage/MemoryStorage.ts:132](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/storage/MemoryStorage.ts#L132)
+Defined in: [src/lib/storage/MemoryStorage.ts:132](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/storage/MemoryStorage.ts#L132)
 
 Set multiple values at once
 
@@ -297,7 +297,7 @@ Set multiple values at once
 
 > **mdel**(`keys`): `Promise`\<`number`\>
 
-Defined in: [src/lib/storage/MemoryStorage.ts:137](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/storage/MemoryStorage.ts#L137)
+Defined in: [src/lib/storage/MemoryStorage.ts:137](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/storage/MemoryStorage.ts#L137)
 
 Delete multiple keys at once
 
@@ -321,7 +321,7 @@ Delete multiple keys at once
 
 > **scan**(`pattern`): `Promise`\<`string`[]\>
 
-Defined in: [src/lib/storage/MemoryStorage.ts:150](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/storage/MemoryStorage.ts#L150)
+Defined in: [src/lib/storage/MemoryStorage.ts:150](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/storage/MemoryStorage.ts#L150)
 
 Get keys matching a pattern
 
@@ -345,7 +345,7 @@ Get keys matching a pattern
 
 > **deletePattern**(`pattern`): `Promise`\<`number`\>
 
-Defined in: [src/lib/storage/MemoryStorage.ts:156](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/storage/MemoryStorage.ts#L156)
+Defined in: [src/lib/storage/MemoryStorage.ts:156](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/storage/MemoryStorage.ts#L156)
 
 Delete keys matching a pattern
 
@@ -369,7 +369,7 @@ Delete keys matching a pattern
 
 > **cleanupExpired**(): `number`
 
-Defined in: [src/lib/storage/MemoryStorage.ts:166](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/storage/MemoryStorage.ts#L166)
+Defined in: [src/lib/storage/MemoryStorage.ts:166](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/storage/MemoryStorage.ts#L166)
 
 Manually trigger cleanup of expired items
 
@@ -383,7 +383,7 @@ Manually trigger cleanup of expired items
 
 > **getStats**(): `object`
 
-Defined in: [src/lib/storage/MemoryStorage.ts:184](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/storage/MemoryStorage.ts#L184)
+Defined in: [src/lib/storage/MemoryStorage.ts:184](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/storage/MemoryStorage.ts#L184)
 
 Get storage statistics
 
@@ -421,7 +421,7 @@ Get storage statistics
 
 > **destroy**(): `void`
 
-Defined in: [src/lib/storage/MemoryStorage.ts:255](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/storage/MemoryStorage.ts#L255)
+Defined in: [src/lib/storage/MemoryStorage.ts:255](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/storage/MemoryStorage.ts#L255)
 
 Destroy the storage and cleanup resources
 

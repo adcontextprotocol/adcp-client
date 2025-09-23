@@ -6,7 +6,7 @@
 
 # Interface: AgentListResponse
 
-Defined in: [src/lib/types/adcp.ts:202](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/adcp.ts#L202)
+Defined in: [src/lib/types/adcp.ts:202](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L202)
 
 ## Properties
 
@@ -14,7 +14,7 @@ Defined in: [src/lib/types/adcp.ts:202](https://github.com/adcontextprotocol/adc
 
 > **agents**: [`AgentConfig`](AgentConfig.md)[]
 
-Defined in: [src/lib/types/adcp.ts:203](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/adcp.ts#L203)
+Defined in: [src/lib/types/adcp.ts:203](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L203)
 
 ***
 
@@ -22,4 +22,4 @@ Defined in: [src/lib/types/adcp.ts:203](https://github.com/adcontextprotocol/adc
 
 > **total**: `number`
 
-Defined in: [src/lib/types/adcp.ts:204](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/adcp.ts#L204)
+Defined in: [src/lib/types/adcp.ts:204](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L204)

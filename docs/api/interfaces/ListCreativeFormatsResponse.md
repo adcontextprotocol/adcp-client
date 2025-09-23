@@ -6,7 +6,7 @@
 
 # Interface: ListCreativeFormatsResponse
 
-Defined in: [src/lib/types/tools.generated.ts:350](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/tools.generated.ts#L350)
+Defined in: [src/lib/types/tools.generated.ts:350](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L350)
 
 Response payload for list_creative_formats task
 
@@ -16,7 +16,7 @@ Response payload for list_creative_formats task
 
 > **adcp\_version**: `string`
 
-Defined in: [src/lib/types/tools.generated.ts:354](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/tools.generated.ts#L354)
+Defined in: [src/lib/types/tools.generated.ts:354](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L354)
 
 AdCP schema version used for this response
 
@@ -26,7 +26,7 @@ AdCP schema version used for this response
 
 > `optional` **status**: `TaskStatus`
 
-Defined in: [src/lib/types/tools.generated.ts:355](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/tools.generated.ts#L355)
+Defined in: [src/lib/types/tools.generated.ts:355](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L355)
 
 ***
 
@@ -34,7 +34,7 @@ Defined in: [src/lib/types/tools.generated.ts:355](https://github.com/adcontextp
 
 > **formats**: `Format`[]
 
-Defined in: [src/lib/types/tools.generated.ts:359](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/tools.generated.ts#L359)
+Defined in: [src/lib/types/tools.generated.ts:359](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L359)
 
 Array of available creative formats
 
@@ -44,6 +44,6 @@ Array of available creative formats
 
 > `optional` **errors**: `Error`[]
 
-Defined in: [src/lib/types/tools.generated.ts:363](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/tools.generated.ts#L363)
+Defined in: [src/lib/types/tools.generated.ts:363](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L363)
 
 Task-specific errors and warnings (e.g., format availability issues)
