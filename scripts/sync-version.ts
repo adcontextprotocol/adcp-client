@@ -3,6 +3,30 @@
 import { readFileSync, writeFileSync, existsSync } from 'fs';
 import path from 'path';
 
+// Write file only if content differs (excluding generated timestamp)
+function writeFileIfChanged(filePath: string, newContent: string): boolean {
+  const contentWithoutTimestamp = (content: string) => {
+    return content.replace(/generatedAt: '.*?'/, "generatedAt: '[TIMESTAMP]'");
+  };
+
+  let hasChanged = true;
+  if (existsSync(filePath)) {
+    const existingContent = readFileSync(filePath, 'utf8');
+    const existingWithoutTimestamp = contentWithoutTimestamp(existingContent);
+    const newWithoutTimestamp = contentWithoutTimestamp(newContent);
+    
+    if (existingWithoutTimestamp === newWithoutTimestamp) {
+      hasChanged = false;
+    }
+  }
+
+  if (hasChanged) {
+    writeFileSync(filePath, newContent);
+  }
+  
+  return hasChanged;
+}
+
 // Get cached AdCP version
 function getCachedAdCPVersion(): string {
   try {
@@ -69,8 +93,12 @@ export function isCompatibleWith(adcpVersion: string): boolean {
 }
 `;
 
-  writeFileSync(versionFilePath, versionContent);
-  console.log(`✅ Generated version file: ${versionFilePath}`);
+  const versionChanged = writeFileIfChanged(versionFilePath, versionContent);
+  if (versionChanged) {
+    console.log(`✅ Updated version file: ${versionFilePath}`);
+  } else {
+    console.log(`✅ Version file is up to date: ${versionFilePath}`);
+  }
 }
 
 // Update package.json with AdCP version
