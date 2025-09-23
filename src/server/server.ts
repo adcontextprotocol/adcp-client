@@ -480,11 +480,12 @@ app.post('/api/sales/agents/:agentId/query', async (request, reply) => {
     }
 
     // Use the existing testAgents function with tool-specific parameters
-    debugLog(`Query endpoint received request for agent ${agentId}:`, {
+    app.log.info({
+      agentId,
       toolName: body.tool,
       body,
       agent: { id: agent.id, name: agent.name, protocol: agent.protocol, uri: agent.agent_uri }
-    });
+    }, `Query endpoint received request for agent ${agentId}`);
     
     const toolName = body.tool;
     if (!toolName) {
