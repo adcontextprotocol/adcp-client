@@ -417,7 +417,36 @@ function extractResponseData(result: any): any {
     return result.toolResponse;
   }
   
-  // 7. Check for note/error structure (MCP error response)
+  // 7. Check for MCP structuredContent (only source for data)
+  if (result?.structuredContent) {
+    if (result.structuredContent.products || result.structuredContent.formats) {
+      // Extract text content as informational message for user
+      let textMessage = `Found ${result.structuredContent.formats?.length || result.structuredContent.products?.length || 0} items from agent`;
+      if (result.content && Array.isArray(result.content)) {
+        const textContent = result.content.find((item: any) => item.type === 'text');
+        if (textContent?.text) {
+          // Use text as message only if it's not a JSON dump
+          try {
+            JSON.parse(textContent.text);
+            // It's JSON, keep the count message
+          } catch (e) {
+            // Not JSON, use as user message
+            textMessage = textContent.text.length > 200 ? 
+              textContent.text.substring(0, 200) + '...' : 
+              textContent.text;
+          }
+        }
+      }
+      
+      return {
+        products: result.structuredContent.products || [],
+        formats: result.structuredContent.formats || [],
+        message: textMessage
+      };
+    }
+  }
+  
+  // 9. Check for note/error structure (MCP error response)
   if (result?.note || result?.error) {
     const response = {
       products: [],
@@ -451,7 +480,11 @@ app.post('/api/sales/agents/:agentId/query', async (request, reply) => {
     }
 
     // Use the existing testAgents function with tool-specific parameters
-    app.log.info(`Query endpoint received body:`, body);
+    debugLog(`Query endpoint received request for agent ${agentId}:`, {
+      toolName: body.tool,
+      body,
+      agent: { id: agent.id, name: agent.name, protocol: agent.protocol, uri: agent.agent_uri }
+    });
     
     const toolName = body.tool;
     if (!toolName) {
@@ -460,7 +493,6 @@ app.post('/api/sales/agents/:agentId/query', async (request, reply) => {
         error: 'Missing required parameter: tool'
       });
     }
-    app.log.info(`Tool name: ${toolName}`);
     
     const brief = body.brief || body.brandStory || body.message || 'Test query';
     const promotedOffering = body.promoted_offering || body.offering;
