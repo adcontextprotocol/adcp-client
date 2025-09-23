@@ -5,7 +5,7 @@
 // New conversation-aware clients with input handler pattern
 export { ADCPClient, createADCPClient } from './core/ADCPClient';
 export type { ADCPClientConfig } from './core/ADCPClient';
-export { AgentClient } from './core/AgentClient';
+export { AgentClient, type TaskResponseTypeMap, type AdcpTaskName } from './core/AgentClient';
 export { ADCPMultiAgentClient, AgentCollection as NewAgentCollection, createADCPMultiAgentClient } from './core/ADCPMultiAgentClient';
 export { ConfigurationManager } from './core/ConfigurationManager';
 export { TaskExecutor } from './core/TaskExecutor';

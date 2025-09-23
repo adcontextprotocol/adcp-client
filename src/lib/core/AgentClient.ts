@@ -34,6 +34,29 @@ import type {
 } from '../types/tools.generated';
 
 /**
+ * Type mapping for task names to their response types
+ * Enables type-safe generic executeTask() calls
+ */
+export type TaskResponseTypeMap = {
+  get_products: GetProductsResponse;
+  list_creative_formats: ListCreativeFormatsResponse;
+  create_media_buy: CreateMediaBuyResponse;
+  update_media_buy: UpdateMediaBuyResponse;
+  sync_creatives: SyncCreativesResponse;
+  list_creatives: ListCreativesResponse;
+  get_media_buy_delivery: GetMediaBuyDeliveryResponse;
+  list_authorized_properties: ListAuthorizedPropertiesResponse;
+  provide_performance_feedback: ProvidePerformanceFeedbackResponse;
+  get_signals: GetSignalsResponse;
+  activate_signal: ActivateSignalResponse;
+};
+
+/**
+ * Valid ADCP task names
+ */
+export type AdcpTaskName = keyof TaskResponseTypeMap;
+
+/**
  * Per-agent client that maintains conversation context across calls
  * 
  * This wrapper provides a persistent conversation context for a single agent,
@@ -407,8 +430,35 @@ export class AgentClient {
   // ====== GENERIC TASK EXECUTION ======
 
   /**
-   * Execute any task by name, maintaining conversation context
+   * Execute any ADCP task by name with full type safety
+   * 
+   * @example
+   * ```typescript
+   * // ✅ TYPE-SAFE: Automatic response type inference
+   * const result = await agent.executeTask('get_products', params);
+   * // result is TaskResult<GetProductsResponse> - no casting needed!
+   * 
+   * // ✅ CUSTOM TYPES: For non-standard tasks
+   * const customResult = await agent.executeTask<MyCustomResponse>('custom_task', params);
+   * ```
    */
+  async executeTask<K extends AdcpTaskName>(
+    taskName: K,
+    params: any,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<TaskResponseTypeMap[K]>>;
+  
+  /**
+   * Execute any task by name with custom response type
+   */
+  async executeTask<T = any>(
+    taskName: string,
+    params: any,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<T>>;
+  
   async executeTask<T = any>(
     taskName: string,
     params: any,

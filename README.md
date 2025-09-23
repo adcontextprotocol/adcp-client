@@ -43,6 +43,42 @@ if (result.success) {
 }
 ```
 
+## 🔧 Easy Configuration
+
+### Environment-based Setup (Recommended)
+Set your agent configuration once and auto-discover everywhere:
+
+```bash
+# .env file
+ADCP_AGENTS='[{"id":"agent1","name":"My Agent","agent_uri":"https://agent.example.com","protocol":"mcp","auth_token":"token123"}]'
+```
+
+```typescript
+// Auto-discover agents from environment
+const client = ADCPMultiAgentClient.fromEnv();
+console.log(`Found ${client.agentCount} agents`); // Auto-discovered!
+
+// Or manually configure
+const client = new ADCPMultiAgentClient([
+  { id: 'agent1', agent_uri: 'https://...', protocol: 'mcp' }
+]);
+```
+
+### Multiple Agents Made Simple
+```typescript
+const client = new ADCPMultiAgentClient([
+  { id: 'premium', agent_uri: 'https://premium.example.com', protocol: 'mcp' },
+  { id: 'budget', agent_uri: 'https://budget.example.com', protocol: 'a2a' }
+]);
+
+// Work with specific agents
+const premium = client.agent('premium');
+const budget = client.agent('budget');
+
+// Or run across all agents in parallel
+const allResults = await client.getProducts(params); // TaskResult<GetProductsResponse>[]
+```
+
 ## 🛡️ Type Safety
 
 Get **full TypeScript support** with compile-time checking and IntelliSense:
@@ -55,8 +91,12 @@ await agent.getProducts(params);           // TaskResult<GetProductsResponse>
 await agent.createMediaBuy(params);       // TaskResult<CreateMediaBuyResponse>
 await agent.listCreativeFormats(params);  // TaskResult<ListCreativeFormatsResponse>
 
-// ✅ GENERIC METHOD: Flexible for dynamic use cases  
-await agent.executeTask('get_products', params); // TaskResult<any>
+// ✅ GENERIC METHOD WITH AUTO TYPE INFERENCE: No casting needed!
+const result = await agent.executeTask('get_products', params);
+// result is TaskResult<GetProductsResponse> - TypeScript knows the return type!
+
+// ✅ CUSTOM TYPES: For non-standard tasks
+const customResult = await agent.executeTask<MyCustomResponse>('custom_task', params);
 
 // ✅ BOTH support async patterns & input handlers!
 const withHandler = await agent.getProducts(
