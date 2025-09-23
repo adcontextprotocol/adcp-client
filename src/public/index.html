@@ -3073,7 +3073,8 @@
                 // Note: In a real implementation, there would be a get_media_buys tool
                 // For now, we'll simulate with get_media_buy_delivery for existing ones
                 const result = await callADCPTool(selectedAgent, 'get_media_buy_delivery', {
-                    media_buy_id: 'all' // Hypothetical parameter to get all
+                    media_buy_id: 'all', // Hypothetical parameter to get all
+                    today: new Date().toISOString().split('T')[0] // YYYY-MM-DD format
                 });
                 
                 if (result && result.media_buys) {
