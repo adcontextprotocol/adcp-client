@@ -6,7 +6,7 @@
 
 # Interface: ApiResponse\<T\>
 
-Defined in: [src/lib/types/adcp.ts:195](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/types/adcp.ts#L195)
+Defined in: [src/lib/types/adcp.ts:195](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/adcp.ts#L195)
 
 ## Type Parameters
 
@@ -20,7 +20,7 @@ Defined in: [src/lib/types/adcp.ts:195](https://github.com/adcontextprotocol/adc
 
 > **success**: `boolean`
 
-Defined in: [src/lib/types/adcp.ts:196](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/types/adcp.ts#L196)
+Defined in: [src/lib/types/adcp.ts:196](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/adcp.ts#L196)
 
 ***
 
@@ -28,7 +28,7 @@ Defined in: [src/lib/types/adcp.ts:196](https://github.com/adcontextprotocol/adc
 
 > `optional` **data**: `T`
 
-Defined in: [src/lib/types/adcp.ts:197](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/types/adcp.ts#L197)
+Defined in: [src/lib/types/adcp.ts:197](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/adcp.ts#L197)
 
 ***
 
@@ -36,7 +36,7 @@ Defined in: [src/lib/types/adcp.ts:197](https://github.com/adcontextprotocol/adc
 
 > `optional` **error**: `string`
 
-Defined in: [src/lib/types/adcp.ts:198](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/types/adcp.ts#L198)
+Defined in: [src/lib/types/adcp.ts:198](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/adcp.ts#L198)
 
 ***
 
@@ -44,4 +44,4 @@ Defined in: [src/lib/types/adcp.ts:198](https://github.com/adcontextprotocol/adc
 
 > **timestamp**: `string`
 
-Defined in: [src/lib/types/adcp.ts:199](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/types/adcp.ts#L199)
+Defined in: [src/lib/types/adcp.ts:199](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/adcp.ts#L199)

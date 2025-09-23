@@ -6,7 +6,7 @@
 
 # Interface: ListAuthorizedPropertiesRequest
 
-Defined in: [src/lib/types/tools.generated.ts:1452](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/types/tools.generated.ts#L1452)
+Defined in: [src/lib/types/tools.generated.ts:1452](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/tools.generated.ts#L1452)
 
 Request parameters for discovering all properties this agent is authorized to represent
 
@@ -16,7 +16,7 @@ Request parameters for discovering all properties this agent is authorized to re
 
 > `optional` **adcp\_version**: `string`
 
-Defined in: [src/lib/types/tools.generated.ts:1456](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/types/tools.generated.ts#L1456)
+Defined in: [src/lib/types/tools.generated.ts:1456](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/tools.generated.ts#L1456)
 
 AdCP schema version for this request
 
@@ -26,6 +26,6 @@ AdCP schema version for this request
 
 > `optional` **tags**: `string`[]
 
-Defined in: [src/lib/types/tools.generated.ts:1460](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/types/tools.generated.ts#L1460)
+Defined in: [src/lib/types/tools.generated.ts:1460](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/tools.generated.ts#L1460)
 
 Filter properties by specific tags (optional)

@@ -6,7 +6,7 @@
 
 # Class: DeferredTaskError
 
-Defined in: [src/lib/errors/index.ts:47](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/errors/index.ts#L47)
+Defined in: [src/lib/errors/index.ts:47](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/errors/index.ts#L47)
 
 Error thrown when a task is deferred to human
 Contains the token needed to resume the task
@@ -21,7 +21,7 @@ Contains the token needed to resume the task
 
 > **new DeferredTaskError**(`token`): `DeferredTaskError`
 
-Defined in: [src/lib/errors/index.ts:50](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/errors/index.ts#L50)
+Defined in: [src/lib/errors/index.ts:50](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/errors/index.ts#L50)
 
 #### Parameters
 
@@ -43,7 +43,7 @@ Defined in: [src/lib/errors/index.ts:50](https://github.com/adcontextprotocol/ad
 
 > `optional` **details**: `any`
 
-Defined in: [src/lib/errors/index.ts:9](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/errors/index.ts#L9)
+Defined in: [src/lib/errors/index.ts:9](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/errors/index.ts#L9)
 
 #### Inherited from
 
@@ -55,7 +55,7 @@ Defined in: [src/lib/errors/index.ts:9](https://github.com/adcontextprotocol/adc
 
 > `readonly` **code**: `"TASK_DEFERRED"` = `'TASK_DEFERRED'`
 
-Defined in: [src/lib/errors/index.ts:48](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/errors/index.ts#L48)
+Defined in: [src/lib/errors/index.ts:48](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/errors/index.ts#L48)
 
 #### Overrides
 
@@ -67,7 +67,7 @@ Defined in: [src/lib/errors/index.ts:48](https://github.com/adcontextprotocol/ad
 
 > `readonly` **token**: `string`
 
-Defined in: [src/lib/errors/index.ts:50](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/errors/index.ts#L50)
+Defined in: [src/lib/errors/index.ts:50](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/errors/index.ts#L50)
 
 ***
 

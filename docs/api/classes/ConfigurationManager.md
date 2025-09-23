@@ -6,7 +6,7 @@
 
 # Class: ConfigurationManager
 
-Defined in: [src/lib/core/ConfigurationManager.ts:34](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/core/ConfigurationManager.ts#L34)
+Defined in: [src/lib/core/ConfigurationManager.ts:34](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/ConfigurationManager.ts#L34)
 
 Enhanced configuration manager with multiple loading strategies
 
@@ -26,7 +26,7 @@ Enhanced configuration manager with multiple loading strategies
 
 > `static` **loadAgents**(): [`AgentConfig`](../interfaces/AgentConfig.md)[]
 
-Defined in: [src/lib/core/ConfigurationManager.ts:55](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/core/ConfigurationManager.ts#L55)
+Defined in: [src/lib/core/ConfigurationManager.ts:55](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/ConfigurationManager.ts#L55)
 
 Load agent configurations using auto-discovery
 Tries multiple sources in order:
@@ -44,7 +44,7 @@ Tries multiple sources in order:
 
 > `static` **loadAgentsFromEnv**(): [`AgentConfig`](../interfaces/AgentConfig.md)[]
 
-Defined in: [src/lib/core/ConfigurationManager.ts:82](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/core/ConfigurationManager.ts#L82)
+Defined in: [src/lib/core/ConfigurationManager.ts:82](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/ConfigurationManager.ts#L82)
 
 Load agents from environment variables
 
@@ -58,7 +58,7 @@ Load agents from environment variables
 
 > `static` **loadAgentsFromConfig**(`configPath?`): [`AgentConfig`](../interfaces/AgentConfig.md)[]
 
-Defined in: [src/lib/core/ConfigurationManager.ts:112](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/core/ConfigurationManager.ts#L112)
+Defined in: [src/lib/core/ConfigurationManager.ts:112](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/ConfigurationManager.ts#L112)
 
 Load agents from config file
 
@@ -78,7 +78,7 @@ Load agents from config file
 
 > `static` **validateAgentConfig**(`agent`): `void`
 
-Defined in: [src/lib/core/ConfigurationManager.ts:180](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/core/ConfigurationManager.ts#L180)
+Defined in: [src/lib/core/ConfigurationManager.ts:180](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/ConfigurationManager.ts#L180)
 
 Validate agent configuration
 
@@ -98,7 +98,7 @@ Validate agent configuration
 
 > `static` **validateAgentsConfig**(`agents`): `void`
 
-Defined in: [src/lib/core/ConfigurationManager.ts:213](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/core/ConfigurationManager.ts#L213)
+Defined in: [src/lib/core/ConfigurationManager.ts:213](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/ConfigurationManager.ts#L213)
 
 Validate multiple agent configurations
 
@@ -118,7 +118,7 @@ Validate multiple agent configurations
 
 > `static` **createSampleConfig**(): `ADCPConfig`
 
-Defined in: [src/lib/core/ConfigurationManager.ts:239](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/core/ConfigurationManager.ts#L239)
+Defined in: [src/lib/core/ConfigurationManager.ts:239](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/ConfigurationManager.ts#L239)
 
 Create a sample configuration file
 
@@ -132,7 +132,7 @@ Create a sample configuration file
 
 > `static` **getConfigPaths**(): `string`[]
 
-Defined in: [src/lib/core/ConfigurationManager.ts:270](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/core/ConfigurationManager.ts#L270)
+Defined in: [src/lib/core/ConfigurationManager.ts:270](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/ConfigurationManager.ts#L270)
 
 Get configuration file paths that would be checked
 
@@ -146,7 +146,7 @@ Get configuration file paths that would be checked
 
 > `static` **getEnvVars**(): `string`[]
 
-Defined in: [src/lib/core/ConfigurationManager.ts:277](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/core/ConfigurationManager.ts#L277)
+Defined in: [src/lib/core/ConfigurationManager.ts:277](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/ConfigurationManager.ts#L277)
 
 Get environment variables that would be checked
 
@@ -160,7 +160,7 @@ Get environment variables that would be checked
 
 > `static` **getConfigurationHelp**(): `string`
 
-Defined in: [src/lib/core/ConfigurationManager.ts:284](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/core/ConfigurationManager.ts#L284)
+Defined in: [src/lib/core/ConfigurationManager.ts:284](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/ConfigurationManager.ts#L284)
 
 Generate configuration help text
 

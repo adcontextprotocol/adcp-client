@@ -6,7 +6,7 @@
 
 # Class: ADCPMultiAgentClient
 
-Defined in: [src/lib/core/ADCPMultiAgentClient.ts:294](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/core/ADCPMultiAgentClient.ts#L294)
+Defined in: [src/lib/core/ADCPMultiAgentClient.ts:294](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/ADCPMultiAgentClient.ts#L294)
 
 Main multi-agent ADCP client providing simple, intuitive API
 
@@ -40,7 +40,7 @@ const allResults = await client.allAgents().getProducts(params, handler);
 
 > **new ADCPMultiAgentClient**(`agentConfigs`, `config`): `ADCPMultiAgentClient`
 
-Defined in: [src/lib/core/ADCPMultiAgentClient.ts:297](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/core/ADCPMultiAgentClient.ts#L297)
+Defined in: [src/lib/core/ADCPMultiAgentClient.ts:297](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/ADCPMultiAgentClient.ts#L297)
 
 #### Parameters
 
@@ -64,7 +64,7 @@ Defined in: [src/lib/core/ADCPMultiAgentClient.ts:297](https://github.com/adcont
 
 > **get** **agentCount**(): `number`
 
-Defined in: [src/lib/core/ADCPMultiAgentClient.ts:598](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/core/ADCPMultiAgentClient.ts#L598)
+Defined in: [src/lib/core/ADCPMultiAgentClient.ts:598](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/ADCPMultiAgentClient.ts#L598)
 
 Get count of configured agents
 
@@ -78,7 +78,7 @@ Get count of configured agents
 
 > `static` **fromConfig**(`config?`): `ADCPMultiAgentClient`
 
-Defined in: [src/lib/core/ADCPMultiAgentClient.ts:330](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/core/ADCPMultiAgentClient.ts#L330)
+Defined in: [src/lib/core/ADCPMultiAgentClient.ts:330](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/ADCPMultiAgentClient.ts#L330)
 
 Create client by auto-discovering agent configuration
 
@@ -119,7 +119,7 @@ const client = ADCPMultiAgentClient.fromConfig({
 
 > `static` **fromEnv**(`config?`): `ADCPMultiAgentClient`
 
-Defined in: [src/lib/core/ADCPMultiAgentClient.ts:356](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/core/ADCPMultiAgentClient.ts#L356)
+Defined in: [src/lib/core/ADCPMultiAgentClient.ts:356](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/ADCPMultiAgentClient.ts#L356)
 
 Create client from environment variables only
 
@@ -150,7 +150,7 @@ const client = ADCPMultiAgentClient.fromEnv();
 
 > `static` **fromFile**(`configPath?`, `config?`): `ADCPMultiAgentClient`
 
-Defined in: [src/lib/core/ADCPMultiAgentClient.ts:387](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/core/ADCPMultiAgentClient.ts#L387)
+Defined in: [src/lib/core/ADCPMultiAgentClient.ts:387](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/ADCPMultiAgentClient.ts#L387)
 
 Create client from a specific config file
 
@@ -190,7 +190,7 @@ const client = ADCPMultiAgentClient.fromFile();
 
 > `static` **simple**(`agentUrl`, `options`): `ADCPMultiAgentClient`
 
-Defined in: [src/lib/core/ADCPMultiAgentClient.ts:422](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/core/ADCPMultiAgentClient.ts#L422)
+Defined in: [src/lib/core/ADCPMultiAgentClient.ts:422](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/ADCPMultiAgentClient.ts#L422)
 
 Create a simple client with minimal configuration
 
@@ -261,7 +261,7 @@ const client = ADCPMultiAgentClient.simple('https://my-agent.example.com', {
 
 > **agent**(`agentId`): [`AgentClient`](AgentClient.md)
 
-Defined in: [src/lib/core/ADCPMultiAgentClient.ts:477](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/core/ADCPMultiAgentClient.ts#L477)
+Defined in: [src/lib/core/ADCPMultiAgentClient.ts:477](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/ADCPMultiAgentClient.ts#L477)
 
 Get a single agent for operations
 
@@ -297,7 +297,7 @@ const refined = await agent.continueConversation('Focus on premium brands');
 
 > **agents**(`agentIds`): [`NewAgentCollection`](NewAgentCollection.md)
 
-Defined in: [src/lib/core/ADCPMultiAgentClient.ts:507](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/core/ADCPMultiAgentClient.ts#L507)
+Defined in: [src/lib/core/ADCPMultiAgentClient.ts:507](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/ADCPMultiAgentClient.ts#L507)
 
 Get multiple specific agents for parallel operations
 
@@ -339,7 +339,7 @@ results.forEach(result => {
 
 > **allAgents**(): [`NewAgentCollection`](NewAgentCollection.md)
 
-Defined in: [src/lib/core/ADCPMultiAgentClient.ts:539](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/core/ADCPMultiAgentClient.ts#L539)
+Defined in: [src/lib/core/ADCPMultiAgentClient.ts:539](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/ADCPMultiAgentClient.ts#L539)
 
 Get all configured agents for broadcast operations
 
@@ -369,7 +369,7 @@ const bestResult = successful.sort((a, b) =>
 
 > **addAgent**(`agentConfig`): `void`
 
-Defined in: [src/lib/core/ADCPMultiAgentClient.ts:556](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/core/ADCPMultiAgentClient.ts#L556)
+Defined in: [src/lib/core/ADCPMultiAgentClient.ts:556](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/ADCPMultiAgentClient.ts#L556)
 
 Add an agent to the client
 
@@ -395,7 +395,7 @@ Error if agent ID already exists
 
 > **removeAgent**(`agentId`): `boolean`
 
-Defined in: [src/lib/core/ADCPMultiAgentClient.ts:570](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/core/ADCPMultiAgentClient.ts#L570)
+Defined in: [src/lib/core/ADCPMultiAgentClient.ts:570](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/ADCPMultiAgentClient.ts#L570)
 
 Remove an agent from the client
 
@@ -419,7 +419,7 @@ True if agent was removed, false if not found
 
 > **hasAgent**(`agentId`): `boolean`
 
-Defined in: [src/lib/core/ADCPMultiAgentClient.ts:577](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/core/ADCPMultiAgentClient.ts#L577)
+Defined in: [src/lib/core/ADCPMultiAgentClient.ts:577](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/ADCPMultiAgentClient.ts#L577)
 
 Check if an agent exists
 
@@ -439,7 +439,7 @@ Check if an agent exists
 
 > **getAgentIds**(): `string`[]
 
-Defined in: [src/lib/core/ADCPMultiAgentClient.ts:584](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/core/ADCPMultiAgentClient.ts#L584)
+Defined in: [src/lib/core/ADCPMultiAgentClient.ts:584](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/ADCPMultiAgentClient.ts#L584)
 
 Get all configured agent IDs
 
@@ -453,7 +453,7 @@ Get all configured agent IDs
 
 > **getAgentConfigs**(): [`AgentConfig`](../interfaces/AgentConfig.md)[]
 
-Defined in: [src/lib/core/ADCPMultiAgentClient.ts:591](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/core/ADCPMultiAgentClient.ts#L591)
+Defined in: [src/lib/core/ADCPMultiAgentClient.ts:591](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/ADCPMultiAgentClient.ts#L591)
 
 Get all agent configurations
 
@@ -467,7 +467,7 @@ Get all agent configurations
 
 > **getAgentsByProtocol**(`protocol`): [`NewAgentCollection`](NewAgentCollection.md)
 
-Defined in: [src/lib/core/ADCPMultiAgentClient.ts:607](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/core/ADCPMultiAgentClient.ts#L607)
+Defined in: [src/lib/core/ADCPMultiAgentClient.ts:607](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/ADCPMultiAgentClient.ts#L607)
 
 Filter agents by protocol
 
@@ -487,7 +487,7 @@ Filter agents by protocol
 
 > **findAgentsForTask**(`taskName`): [`NewAgentCollection`](NewAgentCollection.md)
 
-Defined in: [src/lib/core/ADCPMultiAgentClient.ts:619](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/core/ADCPMultiAgentClient.ts#L619)
+Defined in: [src/lib/core/ADCPMultiAgentClient.ts:619](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/ADCPMultiAgentClient.ts#L619)
 
 Find agents that support a specific task
 This is a placeholder - in a full implementation, you'd query agent capabilities
@@ -508,7 +508,7 @@ This is a placeholder - in a full implementation, you'd query agent capabilities
 
 > **getAllActiveTasks**(): [`TaskState`](../interfaces/TaskState.md)[]
 
-Defined in: [src/lib/core/ADCPMultiAgentClient.ts:627](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/core/ADCPMultiAgentClient.ts#L627)
+Defined in: [src/lib/core/ADCPMultiAgentClient.ts:627](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/ADCPMultiAgentClient.ts#L627)
 
 Get all active tasks across all agents
 

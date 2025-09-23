@@ -6,7 +6,7 @@
 
 # Interface: ListCreativesRequest
 
-Defined in: [src/lib/types/tools.generated.ts:811](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/types/tools.generated.ts#L811)
+Defined in: [src/lib/types/tools.generated.ts:811](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/tools.generated.ts#L811)
 
 Filter by third-party snippet type
 
@@ -16,7 +16,7 @@ Filter by third-party snippet type
 
 > `optional` **adcp\_version**: `string`
 
-Defined in: [src/lib/types/tools.generated.ts:815](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/types/tools.generated.ts#L815)
+Defined in: [src/lib/types/tools.generated.ts:815](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/tools.generated.ts#L815)
 
 AdCP schema version for this request
 
@@ -26,7 +26,7 @@ AdCP schema version for this request
 
 > `optional` **filters**: `object`
 
-Defined in: [src/lib/types/tools.generated.ts:819](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/types/tools.generated.ts#L819)
+Defined in: [src/lib/types/tools.generated.ts:819](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/tools.generated.ts#L819)
 
 Filter criteria for querying creatives
 
@@ -138,7 +138,7 @@ Filter creatives that have performance data when true
 
 > `optional` **sort**: `object`
 
-Defined in: [src/lib/types/tools.generated.ts:888](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/types/tools.generated.ts#L888)
+Defined in: [src/lib/types/tools.generated.ts:888](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/tools.generated.ts#L888)
 
 Sorting parameters
 
@@ -160,7 +160,7 @@ Sort direction
 
 > `optional` **pagination**: `object`
 
-Defined in: [src/lib/types/tools.generated.ts:901](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/types/tools.generated.ts#L901)
+Defined in: [src/lib/types/tools.generated.ts:901](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/tools.generated.ts#L901)
 
 Pagination parameters
 
@@ -182,7 +182,7 @@ Number of creatives to skip
 
 > `optional` **include\_assignments**: `boolean`
 
-Defined in: [src/lib/types/tools.generated.ts:914](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/types/tools.generated.ts#L914)
+Defined in: [src/lib/types/tools.generated.ts:914](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/tools.generated.ts#L914)
 
 Include package assignment information in response
 
@@ -192,7 +192,7 @@ Include package assignment information in response
 
 > `optional` **include\_performance**: `boolean`
 
-Defined in: [src/lib/types/tools.generated.ts:918](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/types/tools.generated.ts#L918)
+Defined in: [src/lib/types/tools.generated.ts:918](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/tools.generated.ts#L918)
 
 Include aggregated performance metrics in response
 
@@ -202,7 +202,7 @@ Include aggregated performance metrics in response
 
 > `optional` **include\_sub\_assets**: `boolean`
 
-Defined in: [src/lib/types/tools.generated.ts:922](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/types/tools.generated.ts#L922)
+Defined in: [src/lib/types/tools.generated.ts:922](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/tools.generated.ts#L922)
 
 Include sub-assets (for carousel/native formats) in response
 
@@ -212,6 +212,6 @@ Include sub-assets (for carousel/native formats) in response
 
 > `optional` **fields**: (`"created_date"` \| `"updated_date"` \| `"name"` \| `"status"` \| `"creative_id"` \| `"format"` \| `"tags"` \| `"assignments"` \| `"performance"` \| `"sub_assets"`)[]
 
-Defined in: [src/lib/types/tools.generated.ts:926](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/types/tools.generated.ts#L926)
+Defined in: [src/lib/types/tools.generated.ts:926](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/tools.generated.ts#L926)
 
 Specific fields to include in response (omit for all fields)

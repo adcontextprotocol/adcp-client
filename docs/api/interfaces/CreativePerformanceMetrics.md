@@ -6,7 +6,7 @@
 
 # Interface: CreativePerformanceMetrics
 
-Defined in: [src/lib/types/adcp.ts:247](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/types/adcp.ts#L247)
+Defined in: [src/lib/types/adcp.ts:247](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/adcp.ts#L247)
 
 ## Properties
 
@@ -14,7 +14,7 @@ Defined in: [src/lib/types/adcp.ts:247](https://github.com/adcontextprotocol/adc
 
 > `optional` **impressions**: `number`
 
-Defined in: [src/lib/types/adcp.ts:248](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/types/adcp.ts#L248)
+Defined in: [src/lib/types/adcp.ts:248](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/adcp.ts#L248)
 
 ***
 
@@ -22,7 +22,7 @@ Defined in: [src/lib/types/adcp.ts:248](https://github.com/adcontextprotocol/adc
 
 > `optional` **clicks**: `number`
 
-Defined in: [src/lib/types/adcp.ts:249](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/types/adcp.ts#L249)
+Defined in: [src/lib/types/adcp.ts:249](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/adcp.ts#L249)
 
 ***
 
@@ -30,7 +30,7 @@ Defined in: [src/lib/types/adcp.ts:249](https://github.com/adcontextprotocol/adc
 
 > `optional` **ctr**: `number`
 
-Defined in: [src/lib/types/adcp.ts:250](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/types/adcp.ts#L250)
+Defined in: [src/lib/types/adcp.ts:250](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/adcp.ts#L250)
 
 ***
 
@@ -38,7 +38,7 @@ Defined in: [src/lib/types/adcp.ts:250](https://github.com/adcontextprotocol/adc
 
 > `optional` **conversions**: `number`
 
-Defined in: [src/lib/types/adcp.ts:251](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/types/adcp.ts#L251)
+Defined in: [src/lib/types/adcp.ts:251](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/adcp.ts#L251)
 
 ***
 
@@ -46,7 +46,7 @@ Defined in: [src/lib/types/adcp.ts:251](https://github.com/adcontextprotocol/adc
 
 > `optional` **cost\_per\_conversion**: `number`
 
-Defined in: [src/lib/types/adcp.ts:252](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/types/adcp.ts#L252)
+Defined in: [src/lib/types/adcp.ts:252](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/adcp.ts#L252)
 
 ***
 
@@ -54,7 +54,7 @@ Defined in: [src/lib/types/adcp.ts:252](https://github.com/adcontextprotocol/adc
 
 > `optional` **performance\_score**: `number`
 
-Defined in: [src/lib/types/adcp.ts:253](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/types/adcp.ts#L253)
+Defined in: [src/lib/types/adcp.ts:253](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/adcp.ts#L253)
 
 ***
 
@@ -62,4 +62,4 @@ Defined in: [src/lib/types/adcp.ts:253](https://github.com/adcontextprotocol/adc
 
 > **last\_updated**: `string`
 
-Defined in: [src/lib/types/adcp.ts:254](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/types/adcp.ts#L254)
+Defined in: [src/lib/types/adcp.ts:254](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/adcp.ts#L254)

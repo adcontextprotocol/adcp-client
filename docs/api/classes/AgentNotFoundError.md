@@ -6,7 +6,7 @@
 
 # Class: AgentNotFoundError
 
-Defined in: [src/lib/errors/index.ts:72](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/errors/index.ts#L72)
+Defined in: [src/lib/errors/index.ts:72](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/errors/index.ts#L72)
 
 Error thrown when an agent is not found
 
@@ -20,7 +20,7 @@ Error thrown when an agent is not found
 
 > **new AgentNotFoundError**(`agentId`, `availableAgents`): `AgentNotFoundError`
 
-Defined in: [src/lib/errors/index.ts:75](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/errors/index.ts#L75)
+Defined in: [src/lib/errors/index.ts:75](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/errors/index.ts#L75)
 
 #### Parameters
 
@@ -46,7 +46,7 @@ Defined in: [src/lib/errors/index.ts:75](https://github.com/adcontextprotocol/ad
 
 > `optional` **details**: `any`
 
-Defined in: [src/lib/errors/index.ts:9](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/errors/index.ts#L9)
+Defined in: [src/lib/errors/index.ts:9](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/errors/index.ts#L9)
 
 #### Inherited from
 
@@ -58,7 +58,7 @@ Defined in: [src/lib/errors/index.ts:9](https://github.com/adcontextprotocol/adc
 
 > `readonly` **code**: `"AGENT_NOT_FOUND"` = `'AGENT_NOT_FOUND'`
 
-Defined in: [src/lib/errors/index.ts:73](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/errors/index.ts#L73)
+Defined in: [src/lib/errors/index.ts:73](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/errors/index.ts#L73)
 
 #### Overrides
 
@@ -70,7 +70,7 @@ Defined in: [src/lib/errors/index.ts:73](https://github.com/adcontextprotocol/ad
 
 > `readonly` **agentId**: `string`
 
-Defined in: [src/lib/errors/index.ts:76](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/errors/index.ts#L76)
+Defined in: [src/lib/errors/index.ts:76](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/errors/index.ts#L76)
 
 ***
 
@@ -78,7 +78,7 @@ Defined in: [src/lib/errors/index.ts:76](https://github.com/adcontextprotocol/ad
 
 > `readonly` **availableAgents**: `string`[]
 
-Defined in: [src/lib/errors/index.ts:77](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/errors/index.ts#L77)
+Defined in: [src/lib/errors/index.ts:77](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/errors/index.ts#L77)
 
 ***
 

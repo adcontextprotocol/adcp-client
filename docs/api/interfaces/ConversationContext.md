@@ -6,7 +6,7 @@
 
 # Interface: ConversationContext
 
-Defined in: [src/lib/core/ConversationTypes.ts:70](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/core/ConversationTypes.ts#L70)
+Defined in: [src/lib/core/ConversationTypes.ts:70](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/ConversationTypes.ts#L70)
 
 Complete conversation context provided to input handlers
 
@@ -16,7 +16,7 @@ Complete conversation context provided to input handlers
 
 > **messages**: [`Message`](Message.md)[]
 
-Defined in: [src/lib/core/ConversationTypes.ts:72](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/core/ConversationTypes.ts#L72)
+Defined in: [src/lib/core/ConversationTypes.ts:72](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/ConversationTypes.ts#L72)
 
 Full conversation history for this task
 
@@ -26,7 +26,7 @@ Full conversation history for this task
 
 > **inputRequest**: [`InputRequest`](InputRequest.md)
 
-Defined in: [src/lib/core/ConversationTypes.ts:74](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/core/ConversationTypes.ts#L74)
+Defined in: [src/lib/core/ConversationTypes.ts:74](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/ConversationTypes.ts#L74)
 
 Current input request from the agent
 
@@ -36,7 +36,7 @@ Current input request from the agent
 
 > **taskId**: `string`
 
-Defined in: [src/lib/core/ConversationTypes.ts:76](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/core/ConversationTypes.ts#L76)
+Defined in: [src/lib/core/ConversationTypes.ts:76](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/ConversationTypes.ts#L76)
 
 Unique task identifier
 
@@ -46,7 +46,7 @@ Unique task identifier
 
 > **agent**: `object`
 
-Defined in: [src/lib/core/ConversationTypes.ts:78](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/core/ConversationTypes.ts#L78)
+Defined in: [src/lib/core/ConversationTypes.ts:78](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/ConversationTypes.ts#L78)
 
 Agent configuration
 
@@ -68,7 +68,7 @@ Agent configuration
 
 > **attempt**: `number`
 
-Defined in: [src/lib/core/ConversationTypes.ts:84](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/core/ConversationTypes.ts#L84)
+Defined in: [src/lib/core/ConversationTypes.ts:84](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/ConversationTypes.ts#L84)
 
 Current clarification attempt number (1-based)
 
@@ -78,7 +78,7 @@ Current clarification attempt number (1-based)
 
 > **maxAttempts**: `number`
 
-Defined in: [src/lib/core/ConversationTypes.ts:86](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/core/ConversationTypes.ts#L86)
+Defined in: [src/lib/core/ConversationTypes.ts:86](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/ConversationTypes.ts#L86)
 
 Maximum allowed clarification attempts
 
@@ -88,7 +88,7 @@ Maximum allowed clarification attempts
 
 > **deferToHuman**(): `Promise`\<\{ `defer`: `true`; `token`: `string`; \}\>
 
-Defined in: [src/lib/core/ConversationTypes.ts:89](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/core/ConversationTypes.ts#L89)
+Defined in: [src/lib/core/ConversationTypes.ts:89](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/ConversationTypes.ts#L89)
 
 Helper method to defer task to human
 
@@ -102,7 +102,7 @@ Helper method to defer task to human
 
 > **abort**(`reason?`): `never`
 
-Defined in: [src/lib/core/ConversationTypes.ts:92](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/core/ConversationTypes.ts#L92)
+Defined in: [src/lib/core/ConversationTypes.ts:92](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/ConversationTypes.ts#L92)
 
 Helper method to abort the task
 
@@ -122,7 +122,7 @@ Helper method to abort the task
 
 > **getSummary**(): `string`
 
-Defined in: [src/lib/core/ConversationTypes.ts:95](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/core/ConversationTypes.ts#L95)
+Defined in: [src/lib/core/ConversationTypes.ts:95](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/ConversationTypes.ts#L95)
 
 Get conversation summary for context
 
@@ -136,7 +136,7 @@ Get conversation summary for context
 
 > **wasFieldDiscussed**(`field`): `boolean`
 
-Defined in: [src/lib/core/ConversationTypes.ts:98](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/core/ConversationTypes.ts#L98)
+Defined in: [src/lib/core/ConversationTypes.ts:98](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/ConversationTypes.ts#L98)
 
 Check if a field was previously discussed
 
@@ -156,7 +156,7 @@ Check if a field was previously discussed
 
 > **getPreviousResponse**(`field`): `any`
 
-Defined in: [src/lib/core/ConversationTypes.ts:101](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/core/ConversationTypes.ts#L101)
+Defined in: [src/lib/core/ConversationTypes.ts:101](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/ConversationTypes.ts#L101)
 
 Get previous response for a field
 

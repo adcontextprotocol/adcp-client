@@ -6,7 +6,7 @@
 
 # Class: CircuitBreaker
 
-Defined in: [src/lib/utils/index.ts:47](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/utils/index.ts#L47)
+Defined in: [src/lib/utils/index.ts:47](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/utils/index.ts#L47)
 
 Circuit Breaker for handling agent failures
 
@@ -16,7 +16,7 @@ Circuit Breaker for handling agent failures
 
 > **new CircuitBreaker**(`agentId`): `CircuitBreaker`
 
-Defined in: [src/lib/utils/index.ts:54](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/utils/index.ts#L54)
+Defined in: [src/lib/utils/index.ts:54](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/utils/index.ts#L54)
 
 #### Parameters
 
@@ -34,7 +34,7 @@ Defined in: [src/lib/utils/index.ts:54](https://github.com/adcontextprotocol/adc
 
 > **call**\<`T`\>(`fn`): `Promise`\<`T`\>
 
-Defined in: [src/lib/utils/index.ts:56](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/utils/index.ts#L56)
+Defined in: [src/lib/utils/index.ts:56](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/utils/index.ts#L56)
 
 #### Type Parameters
 

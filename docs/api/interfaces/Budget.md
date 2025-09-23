@@ -6,7 +6,7 @@
 
 # Interface: Budget
 
-Defined in: [src/lib/types/adcp.ts:17](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/types/adcp.ts#L17)
+Defined in: [src/lib/types/adcp.ts:17](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/adcp.ts#L17)
 
 ## Properties
 
@@ -14,7 +14,7 @@ Defined in: [src/lib/types/adcp.ts:17](https://github.com/adcontextprotocol/adcp
 
 > **total\_budget**: `number`
 
-Defined in: [src/lib/types/adcp.ts:18](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/types/adcp.ts#L18)
+Defined in: [src/lib/types/adcp.ts:18](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/adcp.ts#L18)
 
 ***
 
@@ -22,7 +22,7 @@ Defined in: [src/lib/types/adcp.ts:18](https://github.com/adcontextprotocol/adcp
 
 > `optional` **daily\_budget**: `number`
 
-Defined in: [src/lib/types/adcp.ts:19](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/types/adcp.ts#L19)
+Defined in: [src/lib/types/adcp.ts:19](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/adcp.ts#L19)
 
 ***
 
@@ -30,4 +30,4 @@ Defined in: [src/lib/types/adcp.ts:19](https://github.com/adcontextprotocol/adcp
 
 > **currency**: `string`
 
-Defined in: [src/lib/types/adcp.ts:20](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/types/adcp.ts#L20)
+Defined in: [src/lib/types/adcp.ts:20](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/adcp.ts#L20)

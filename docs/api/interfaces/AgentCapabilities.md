@@ -6,7 +6,7 @@
 
 # Interface: AgentCapabilities
 
-Defined in: [src/lib/storage/interfaces.ts:57](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/storage/interfaces.ts#L57)
+Defined in: [src/lib/storage/interfaces.ts:57](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/storage/interfaces.ts#L57)
 
 Agent capabilities for caching
 
@@ -16,7 +16,7 @@ Agent capabilities for caching
 
 > **agentId**: `string`
 
-Defined in: [src/lib/storage/interfaces.ts:59](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/storage/interfaces.ts#L59)
+Defined in: [src/lib/storage/interfaces.ts:59](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/storage/interfaces.ts#L59)
 
 Agent ID
 
@@ -26,7 +26,7 @@ Agent ID
 
 > **supportedTasks**: `string`[]
 
-Defined in: [src/lib/storage/interfaces.ts:61](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/storage/interfaces.ts#L61)
+Defined in: [src/lib/storage/interfaces.ts:61](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/storage/interfaces.ts#L61)
 
 Supported task names
 
@@ -36,7 +36,7 @@ Supported task names
 
 > `optional` **taskSchemas**: `Record`\<`string`, `any`\>
 
-Defined in: [src/lib/storage/interfaces.ts:63](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/storage/interfaces.ts#L63)
+Defined in: [src/lib/storage/interfaces.ts:63](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/storage/interfaces.ts#L63)
 
 Task schemas/definitions
 
@@ -46,7 +46,7 @@ Task schemas/definitions
 
 > `optional` **metadata**: `object`
 
-Defined in: [src/lib/storage/interfaces.ts:65](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/storage/interfaces.ts#L65)
+Defined in: [src/lib/storage/interfaces.ts:65](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/storage/interfaces.ts#L65)
 
 Agent metadata
 
@@ -72,7 +72,7 @@ Agent metadata
 
 > **cachedAt**: `string`
 
-Defined in: [src/lib/storage/interfaces.ts:72](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/storage/interfaces.ts#L72)
+Defined in: [src/lib/storage/interfaces.ts:72](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/storage/interfaces.ts#L72)
 
 When capabilities were cached
 
@@ -82,6 +82,6 @@ When capabilities were cached
 
 > `optional` **expiresAt**: `string`
 
-Defined in: [src/lib/storage/interfaces.ts:74](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/storage/interfaces.ts#L74)
+Defined in: [src/lib/storage/interfaces.ts:74](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/storage/interfaces.ts#L74)
 
 Cache expiration time

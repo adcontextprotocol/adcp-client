@@ -6,7 +6,7 @@
 
 # Interface: GetProductsResponse
 
-Defined in: [src/lib/types/tools.generated.ts:106](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/types/tools.generated.ts#L106)
+Defined in: [src/lib/types/tools.generated.ts:106](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/tools.generated.ts#L106)
 
 Response payload for get_products task
 
@@ -16,7 +16,7 @@ Response payload for get_products task
 
 > **adcp\_version**: `string`
 
-Defined in: [src/lib/types/tools.generated.ts:110](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/types/tools.generated.ts#L110)
+Defined in: [src/lib/types/tools.generated.ts:110](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/tools.generated.ts#L110)
 
 AdCP schema version used for this response
 
@@ -26,7 +26,7 @@ AdCP schema version used for this response
 
 > `optional` **status**: `TaskStatus`
 
-Defined in: [src/lib/types/tools.generated.ts:111](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/types/tools.generated.ts#L111)
+Defined in: [src/lib/types/tools.generated.ts:111](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/tools.generated.ts#L111)
 
 ***
 
@@ -34,7 +34,7 @@ Defined in: [src/lib/types/tools.generated.ts:111](https://github.com/adcontextp
 
 > **products**: `Product`[]
 
-Defined in: [src/lib/types/tools.generated.ts:115](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/types/tools.generated.ts#L115)
+Defined in: [src/lib/types/tools.generated.ts:115](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/tools.generated.ts#L115)
 
 Array of matching products
 
@@ -44,6 +44,6 @@ Array of matching products
 
 > `optional` **errors**: `Error`[]
 
-Defined in: [src/lib/types/tools.generated.ts:119](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/types/tools.generated.ts#L119)
+Defined in: [src/lib/types/tools.generated.ts:119](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/tools.generated.ts#L119)
 
 Task-specific errors and warnings (e.g., product filtering issues)

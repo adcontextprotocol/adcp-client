@@ -6,7 +6,7 @@
 
 # Interface: ListCreativesResponse
 
-Defined in: [src/lib/types/tools.generated.ts:945](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/types/tools.generated.ts#L945)
+Defined in: [src/lib/types/tools.generated.ts:945](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/tools.generated.ts#L945)
 
 Current approval status of the creative
 
@@ -16,7 +16,7 @@ Current approval status of the creative
 
 > **adcp\_version**: `string`
 
-Defined in: [src/lib/types/tools.generated.ts:949](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/types/tools.generated.ts#L949)
+Defined in: [src/lib/types/tools.generated.ts:949](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/tools.generated.ts#L949)
 
 AdCP schema version used for this response
 
@@ -26,7 +26,7 @@ AdCP schema version used for this response
 
 > **message**: `string`
 
-Defined in: [src/lib/types/tools.generated.ts:953](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/types/tools.generated.ts#L953)
+Defined in: [src/lib/types/tools.generated.ts:953](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/tools.generated.ts#L953)
 
 Human-readable result message
 
@@ -36,7 +36,7 @@ Human-readable result message
 
 > `optional` **context\_id**: `string`
 
-Defined in: [src/lib/types/tools.generated.ts:957](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/types/tools.generated.ts#L957)
+Defined in: [src/lib/types/tools.generated.ts:957](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/tools.generated.ts#L957)
 
 Context ID for tracking related operations
 
@@ -46,7 +46,7 @@ Context ID for tracking related operations
 
 > **query\_summary**: `object`
 
-Defined in: [src/lib/types/tools.generated.ts:961](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/types/tools.generated.ts#L961)
+Defined in: [src/lib/types/tools.generated.ts:961](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/tools.generated.ts#L961)
 
 Summary of the query that was executed
 
@@ -92,7 +92,7 @@ Sort order that was applied
 
 > **pagination**: `object`
 
-Defined in: [src/lib/types/tools.generated.ts:986](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/types/tools.generated.ts#L986)
+Defined in: [src/lib/types/tools.generated.ts:986](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/tools.generated.ts#L986)
 
 Pagination information for navigating results
 
@@ -132,7 +132,7 @@ Current page number (1-based)
 
 > **creatives**: `object`[]
 
-Defined in: [src/lib/types/tools.generated.ts:1011](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/types/tools.generated.ts#L1011)
+Defined in: [src/lib/types/tools.generated.ts:1011](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/tools.generated.ts#L1011)
 
 Array of creative assets matching the query
 
@@ -288,7 +288,7 @@ Sub-assets for multi-asset formats (included when include_sub_assets=true)
 
 > `optional` **format\_summary**: `object`
 
-Defined in: [src/lib/types/tools.generated.ts:1129](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/types/tools.generated.ts#L1129)
+Defined in: [src/lib/types/tools.generated.ts:1129](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/tools.generated.ts#L1129)
 
 Breakdown of creatives by format type
 
@@ -307,7 +307,7 @@ via the `patternProperty` "^[a-zA-Z0-9_-]+$".
 
 > `optional` **status\_summary**: `object`
 
-Defined in: [src/lib/types/tools.generated.ts:1141](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/types/tools.generated.ts#L1141)
+Defined in: [src/lib/types/tools.generated.ts:1141](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/tools.generated.ts#L1141)
 
 Breakdown of creatives by status
 

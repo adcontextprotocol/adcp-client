@@ -8,7 +8,7 @@
 
 > **StorageMiddleware**\<`T`\> = (`storage`) => [`Storage`](../interfaces/Storage.md)\<`T`\>
 
-Defined in: [src/lib/storage/interfaces.ts:179](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/storage/interfaces.ts#L179)
+Defined in: [src/lib/storage/interfaces.ts:179](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/storage/interfaces.ts#L179)
 
 Utility type for storage middleware/decorators
 

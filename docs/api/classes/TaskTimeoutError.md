@@ -6,7 +6,7 @@
 
 # Class: TaskTimeoutError
 
-Defined in: [src/lib/errors/index.ts:18](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/errors/index.ts#L18)
+Defined in: [src/lib/errors/index.ts:18](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/errors/index.ts#L18)
 
 Error thrown when a task times out
 
@@ -20,7 +20,7 @@ Error thrown when a task times out
 
 > **new TaskTimeoutError**(`taskId`, `timeout`): `TaskTimeoutError`
 
-Defined in: [src/lib/errors/index.ts:21](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/errors/index.ts#L21)
+Defined in: [src/lib/errors/index.ts:21](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/errors/index.ts#L21)
 
 #### Parameters
 
@@ -46,7 +46,7 @@ Defined in: [src/lib/errors/index.ts:21](https://github.com/adcontextprotocol/ad
 
 > `optional` **details**: `any`
 
-Defined in: [src/lib/errors/index.ts:9](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/errors/index.ts#L9)
+Defined in: [src/lib/errors/index.ts:9](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/errors/index.ts#L9)
 
 #### Inherited from
 
@@ -58,7 +58,7 @@ Defined in: [src/lib/errors/index.ts:9](https://github.com/adcontextprotocol/adc
 
 > `readonly` **code**: `"TASK_TIMEOUT"` = `'TASK_TIMEOUT'`
 
-Defined in: [src/lib/errors/index.ts:19](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/errors/index.ts#L19)
+Defined in: [src/lib/errors/index.ts:19](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/errors/index.ts#L19)
 
 #### Overrides
 
@@ -70,7 +70,7 @@ Defined in: [src/lib/errors/index.ts:19](https://github.com/adcontextprotocol/ad
 
 > `readonly` **taskId**: `string`
 
-Defined in: [src/lib/errors/index.ts:22](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/errors/index.ts#L22)
+Defined in: [src/lib/errors/index.ts:22](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/errors/index.ts#L22)
 
 ***
 
@@ -78,7 +78,7 @@ Defined in: [src/lib/errors/index.ts:22](https://github.com/adcontextprotocol/ad
 
 > `readonly` **timeout**: `number`
 
-Defined in: [src/lib/errors/index.ts:23](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/errors/index.ts#L23)
+Defined in: [src/lib/errors/index.ts:23](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/errors/index.ts#L23)
 
 ***
 

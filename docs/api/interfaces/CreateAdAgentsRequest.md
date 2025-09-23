@@ -6,7 +6,7 @@
 
 # Interface: CreateAdAgentsRequest
 
-Defined in: [src/lib/types/adcp.ts:445](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/types/adcp.ts#L445)
+Defined in: [src/lib/types/adcp.ts:445](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/adcp.ts#L445)
 
 ## Properties
 
@@ -14,7 +14,7 @@ Defined in: [src/lib/types/adcp.ts:445](https://github.com/adcontextprotocol/adc
 
 > **authorized\_agents**: [`AuthorizedAgent`](AuthorizedAgent.md)[]
 
-Defined in: [src/lib/types/adcp.ts:446](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/types/adcp.ts#L446)
+Defined in: [src/lib/types/adcp.ts:446](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/adcp.ts#L446)
 
 ***
 
@@ -22,7 +22,7 @@ Defined in: [src/lib/types/adcp.ts:446](https://github.com/adcontextprotocol/adc
 
 > `optional` **include\_schema**: `boolean`
 
-Defined in: [src/lib/types/adcp.ts:447](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/types/adcp.ts#L447)
+Defined in: [src/lib/types/adcp.ts:447](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/adcp.ts#L447)
 
 ***
 
@@ -30,4 +30,4 @@ Defined in: [src/lib/types/adcp.ts:447](https://github.com/adcontextprotocol/adc
 
 > `optional` **include\_timestamp**: `boolean`
 
-Defined in: [src/lib/types/adcp.ts:448](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/types/adcp.ts#L448)
+Defined in: [src/lib/types/adcp.ts:448](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/adcp.ts#L448)

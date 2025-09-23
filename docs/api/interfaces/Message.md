@@ -6,7 +6,7 @@
 
 # Interface: Message
 
-Defined in: [src/lib/core/ConversationTypes.ts:7](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/core/ConversationTypes.ts#L7)
+Defined in: [src/lib/core/ConversationTypes.ts:7](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/ConversationTypes.ts#L7)
 
 Represents a single message in a conversation with an agent
 
@@ -16,7 +16,7 @@ Represents a single message in a conversation with an agent
 
 > **id**: `string`
 
-Defined in: [src/lib/core/ConversationTypes.ts:9](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/core/ConversationTypes.ts#L9)
+Defined in: [src/lib/core/ConversationTypes.ts:9](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/ConversationTypes.ts#L9)
 
 Unique identifier for this message
 
@@ -26,7 +26,7 @@ Unique identifier for this message
 
 > **role**: `"user"` \| `"agent"` \| `"system"`
 
-Defined in: [src/lib/core/ConversationTypes.ts:11](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/core/ConversationTypes.ts#L11)
+Defined in: [src/lib/core/ConversationTypes.ts:11](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/ConversationTypes.ts#L11)
 
 Role of the message sender
 
@@ -36,7 +36,7 @@ Role of the message sender
 
 > **content**: `any`
 
-Defined in: [src/lib/core/ConversationTypes.ts:13](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/core/ConversationTypes.ts#L13)
+Defined in: [src/lib/core/ConversationTypes.ts:13](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/ConversationTypes.ts#L13)
 
 Message content - can be structured or text
 
@@ -46,7 +46,7 @@ Message content - can be structured or text
 
 > **timestamp**: `string`
 
-Defined in: [src/lib/core/ConversationTypes.ts:15](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/core/ConversationTypes.ts#L15)
+Defined in: [src/lib/core/ConversationTypes.ts:15](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/ConversationTypes.ts#L15)
 
 Timestamp when message was created
 
@@ -56,7 +56,7 @@ Timestamp when message was created
 
 > `optional` **metadata**: `object`
 
-Defined in: [src/lib/core/ConversationTypes.ts:17](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/core/ConversationTypes.ts#L17)
+Defined in: [src/lib/core/ConversationTypes.ts:17](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/ConversationTypes.ts#L17)
 
 Optional metadata about the message
 

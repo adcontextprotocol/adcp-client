@@ -6,7 +6,7 @@
 
 # Interface: StorageFactory
 
-Defined in: [src/lib/storage/interfaces.ts:169](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/storage/interfaces.ts#L169)
+Defined in: [src/lib/storage/interfaces.ts:169](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/storage/interfaces.ts#L169)
 
 Storage factory interface for creating storage instances
 
@@ -16,7 +16,7 @@ Storage factory interface for creating storage instances
 
 > **createStorage**\<`T`\>(`type`, `options?`): [`Storage`](Storage.md)\<`T`\>
 
-Defined in: [src/lib/storage/interfaces.ts:173](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/storage/interfaces.ts#L173)
+Defined in: [src/lib/storage/interfaces.ts:173](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/storage/interfaces.ts#L173)
 
 Create a storage instance for a specific data type
 

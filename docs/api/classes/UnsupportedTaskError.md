@@ -6,7 +6,7 @@
 
 # Class: UnsupportedTaskError
 
-Defined in: [src/lib/errors/index.ts:86](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/errors/index.ts#L86)
+Defined in: [src/lib/errors/index.ts:86](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/errors/index.ts#L86)
 
 Error thrown when an agent doesn't support a task
 
@@ -20,7 +20,7 @@ Error thrown when an agent doesn't support a task
 
 > **new UnsupportedTaskError**(`agentId`, `taskName`, `supportedTasks?`): `UnsupportedTaskError`
 
-Defined in: [src/lib/errors/index.ts:89](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/errors/index.ts#L89)
+Defined in: [src/lib/errors/index.ts:89](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/errors/index.ts#L89)
 
 #### Parameters
 
@@ -50,7 +50,7 @@ Defined in: [src/lib/errors/index.ts:89](https://github.com/adcontextprotocol/ad
 
 > `optional` **details**: `any`
 
-Defined in: [src/lib/errors/index.ts:9](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/errors/index.ts#L9)
+Defined in: [src/lib/errors/index.ts:9](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/errors/index.ts#L9)
 
 #### Inherited from
 
@@ -62,7 +62,7 @@ Defined in: [src/lib/errors/index.ts:9](https://github.com/adcontextprotocol/adc
 
 > `readonly` **code**: `"UNSUPPORTED_TASK"` = `'UNSUPPORTED_TASK'`
 
-Defined in: [src/lib/errors/index.ts:87](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/errors/index.ts#L87)
+Defined in: [src/lib/errors/index.ts:87](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/errors/index.ts#L87)
 
 #### Overrides
 
@@ -74,7 +74,7 @@ Defined in: [src/lib/errors/index.ts:87](https://github.com/adcontextprotocol/ad
 
 > `readonly` **agentId**: `string`
 
-Defined in: [src/lib/errors/index.ts:90](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/errors/index.ts#L90)
+Defined in: [src/lib/errors/index.ts:90](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/errors/index.ts#L90)
 
 ***
 
@@ -82,7 +82,7 @@ Defined in: [src/lib/errors/index.ts:90](https://github.com/adcontextprotocol/ad
 
 > `readonly` **taskName**: `string`
 
-Defined in: [src/lib/errors/index.ts:91](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/errors/index.ts#L91)
+Defined in: [src/lib/errors/index.ts:91](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/errors/index.ts#L91)
 
 ***
 
@@ -90,7 +90,7 @@ Defined in: [src/lib/errors/index.ts:91](https://github.com/adcontextprotocol/ad
 
 > `readonly` `optional` **supportedTasks**: `string`[]
 
-Defined in: [src/lib/errors/index.ts:92](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/errors/index.ts#L92)
+Defined in: [src/lib/errors/index.ts:92](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/errors/index.ts#L92)
 
 ***
 

@@ -6,7 +6,7 @@
 
 # Interface: DeliverySchedule
 
-Defined in: [src/lib/types/adcp.ts:149](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/types/adcp.ts#L149)
+Defined in: [src/lib/types/adcp.ts:149](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/adcp.ts#L149)
 
 ## Properties
 
@@ -14,7 +14,7 @@ Defined in: [src/lib/types/adcp.ts:149](https://github.com/adcontextprotocol/adc
 
 > **start\_date**: `string`
 
-Defined in: [src/lib/types/adcp.ts:150](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/types/adcp.ts#L150)
+Defined in: [src/lib/types/adcp.ts:150](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/adcp.ts#L150)
 
 ***
 
@@ -22,7 +22,7 @@ Defined in: [src/lib/types/adcp.ts:150](https://github.com/adcontextprotocol/adc
 
 > `optional` **end\_date**: `string`
 
-Defined in: [src/lib/types/adcp.ts:151](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/types/adcp.ts#L151)
+Defined in: [src/lib/types/adcp.ts:151](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/adcp.ts#L151)
 
 ***
 
@@ -30,7 +30,7 @@ Defined in: [src/lib/types/adcp.ts:151](https://github.com/adcontextprotocol/adc
 
 > **time\_zone**: `string`
 
-Defined in: [src/lib/types/adcp.ts:152](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/types/adcp.ts#L152)
+Defined in: [src/lib/types/adcp.ts:152](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/adcp.ts#L152)
 
 ***
 
@@ -38,4 +38,4 @@ Defined in: [src/lib/types/adcp.ts:152](https://github.com/adcontextprotocol/adc
 
 > `optional` **day\_parting**: [`DayParting`](DayParting.md)[]
 
-Defined in: [src/lib/types/adcp.ts:153](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/types/adcp.ts#L153)
+Defined in: [src/lib/types/adcp.ts:153](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/adcp.ts#L153)

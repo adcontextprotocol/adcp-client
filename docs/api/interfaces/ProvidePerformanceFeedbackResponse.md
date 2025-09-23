@@ -6,7 +6,7 @@
 
 # Interface: ProvidePerformanceFeedbackResponse
 
-Defined in: [src/lib/types/tools.generated.ts:1562](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/types/tools.generated.ts#L1562)
+Defined in: [src/lib/types/tools.generated.ts:1562](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/tools.generated.ts#L1562)
 
 Response payload for provide_performance_feedback task
 
@@ -16,7 +16,7 @@ Response payload for provide_performance_feedback task
 
 > **adcp\_version**: `string`
 
-Defined in: [src/lib/types/tools.generated.ts:1566](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/types/tools.generated.ts#L1566)
+Defined in: [src/lib/types/tools.generated.ts:1566](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/tools.generated.ts#L1566)
 
 AdCP schema version used for this response
 
@@ -26,7 +26,7 @@ AdCP schema version used for this response
 
 > **success**: `boolean`
 
-Defined in: [src/lib/types/tools.generated.ts:1570](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/types/tools.generated.ts#L1570)
+Defined in: [src/lib/types/tools.generated.ts:1570](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/tools.generated.ts#L1570)
 
 Whether the performance feedback was successfully received
 
@@ -36,7 +36,7 @@ Whether the performance feedback was successfully received
 
 > `optional` **message**: `string`
 
-Defined in: [src/lib/types/tools.generated.ts:1574](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/types/tools.generated.ts#L1574)
+Defined in: [src/lib/types/tools.generated.ts:1574](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/tools.generated.ts#L1574)
 
 Optional human-readable message about the feedback processing
 
@@ -46,6 +46,6 @@ Optional human-readable message about the feedback processing
 
 > `optional` **errors**: `Error`[]
 
-Defined in: [src/lib/types/tools.generated.ts:1578](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/types/tools.generated.ts#L1578)
+Defined in: [src/lib/types/tools.generated.ts:1578](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/tools.generated.ts#L1578)
 
 Task-specific errors and warnings (e.g., invalid measurement period, missing campaign data)

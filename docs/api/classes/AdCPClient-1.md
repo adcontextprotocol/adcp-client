@@ -6,7 +6,7 @@
 
 # ~~Class: AdCPClient~~
 
-Defined in: [src/lib/index.ts:109](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/index.ts#L109)
+Defined in: [src/lib/index.ts:109](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/index.ts#L109)
 
 Legacy AdCPClient for backward compatibility - now redirects to ADCPMultiAgentClient
 
@@ -20,7 +20,7 @@ Use ADCPMultiAgentClient instead for new code
 
 > **new AdCPClient**(`agents?`): `AdCPClient`
 
-Defined in: [src/lib/index.ts:112](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/index.ts#L112)
+Defined in: [src/lib/index.ts:112](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/index.ts#L112)
 
 #### Parameters
 
@@ -40,7 +40,7 @@ Defined in: [src/lib/index.ts:112](https://github.com/adcontextprotocol/adcp-cli
 
 > **get** **agentCount**(): `number`
 
-Defined in: [src/lib/index.ts:121](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/index.ts#L121)
+Defined in: [src/lib/index.ts:121](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/index.ts#L121)
 
 ##### Returns
 
@@ -54,7 +54,7 @@ Defined in: [src/lib/index.ts:121](https://github.com/adcontextprotocol/adcp-cli
 
 > **get** **agentIds**(): `string`[]
 
-Defined in: [src/lib/index.ts:122](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/index.ts#L122)
+Defined in: [src/lib/index.ts:122](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/index.ts#L122)
 
 ##### Returns
 
@@ -66,7 +66,7 @@ Defined in: [src/lib/index.ts:122](https://github.com/adcontextprotocol/adcp-cli
 
 > **agent**(`id`): [`AgentClient`](AgentClient.md)
 
-Defined in: [src/lib/index.ts:116](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/index.ts#L116)
+Defined in: [src/lib/index.ts:116](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/index.ts#L116)
 
 #### Parameters
 
@@ -84,7 +84,7 @@ Defined in: [src/lib/index.ts:116](https://github.com/adcontextprotocol/adcp-cli
 
 > **agents**(`ids`): [`NewAgentCollection`](NewAgentCollection.md)
 
-Defined in: [src/lib/index.ts:117](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/index.ts#L117)
+Defined in: [src/lib/index.ts:117](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/index.ts#L117)
 
 #### Parameters
 
@@ -102,7 +102,7 @@ Defined in: [src/lib/index.ts:117](https://github.com/adcontextprotocol/adcp-cli
 
 > **allAgents**(): [`NewAgentCollection`](NewAgentCollection.md)
 
-Defined in: [src/lib/index.ts:118](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/index.ts#L118)
+Defined in: [src/lib/index.ts:118](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/index.ts#L118)
 
 #### Returns
 
@@ -114,7 +114,7 @@ Defined in: [src/lib/index.ts:118](https://github.com/adcontextprotocol/adcp-cli
 
 > **addAgent**(`agent`): `void`
 
-Defined in: [src/lib/index.ts:119](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/index.ts#L119)
+Defined in: [src/lib/index.ts:119](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/index.ts#L119)
 
 #### Parameters
 
@@ -132,7 +132,7 @@ Defined in: [src/lib/index.ts:119](https://github.com/adcontextprotocol/adcp-cli
 
 > **getAgents**(): [`AgentConfig`](../interfaces/AgentConfig.md)[]
 
-Defined in: [src/lib/index.ts:120](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/index.ts#L120)
+Defined in: [src/lib/index.ts:120](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/index.ts#L120)
 
 #### Returns
 
@@ -144,7 +144,7 @@ Defined in: [src/lib/index.ts:120](https://github.com/adcontextprotocol/adcp-cli
 
 > **getStandardFormats**(): `any`
 
-Defined in: [src/lib/index.ts:124](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/index.ts#L124)
+Defined in: [src/lib/index.ts:124](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/index.ts#L124)
 
 #### Returns
 

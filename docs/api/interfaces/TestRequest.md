@@ -6,7 +6,7 @@
 
 # Interface: TestRequest
 
-Defined in: [src/lib/types/adcp.ts:175](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/types/adcp.ts#L175)
+Defined in: [src/lib/types/adcp.ts:175](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/adcp.ts#L175)
 
 ## Properties
 
@@ -14,7 +14,7 @@ Defined in: [src/lib/types/adcp.ts:175](https://github.com/adcontextprotocol/adc
 
 > **agents**: [`AgentConfig`](AgentConfig.md)[]
 
-Defined in: [src/lib/types/adcp.ts:176](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/types/adcp.ts#L176)
+Defined in: [src/lib/types/adcp.ts:176](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/adcp.ts#L176)
 
 ***
 
@@ -22,7 +22,7 @@ Defined in: [src/lib/types/adcp.ts:176](https://github.com/adcontextprotocol/adc
 
 > **brief**: `string`
 
-Defined in: [src/lib/types/adcp.ts:177](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/types/adcp.ts#L177)
+Defined in: [src/lib/types/adcp.ts:177](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/adcp.ts#L177)
 
 ***
 
@@ -30,7 +30,7 @@ Defined in: [src/lib/types/adcp.ts:177](https://github.com/adcontextprotocol/adc
 
 > `optional` **promoted\_offering**: `string`
 
-Defined in: [src/lib/types/adcp.ts:178](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/types/adcp.ts#L178)
+Defined in: [src/lib/types/adcp.ts:178](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/adcp.ts#L178)
 
 ***
 
@@ -38,4 +38,4 @@ Defined in: [src/lib/types/adcp.ts:178](https://github.com/adcontextprotocol/adc
 
 > `optional` **tool\_name**: `string`
 
-Defined in: [src/lib/types/adcp.ts:179](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/types/adcp.ts#L179)
+Defined in: [src/lib/types/adcp.ts:179](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/adcp.ts#L179)

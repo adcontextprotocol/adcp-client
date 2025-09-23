@@ -1,29 +1,48 @@
 # GitHub Pages Configuration
 title: ADCP Client Documentation
 description: Official documentation for the @adcp/client TypeScript/JavaScript library
+url: https://adcontextprotocol.github.io
+baseurl: /adcp-client
+
+# Theme (GitHub Pages supported)
 theme: jekyll-theme-cayman
 
-# Navigation
-nav:
-  - title: Home
-    url: /
-  - title: Getting Started
-    url: /getting-started
-  - title: API Reference
-    url: /api/
-  - title: Guides
-    url: /guides/ASYNC-DOCUMENTATION-INDEX
-  - title: GitHub
-    url: https://github.com/your-org/adcp-client
+# Repository info
+repository: adcontextprotocol/adcp-client
 
-# Plugins
+# GitHub Pages settings
+github:
+  repository_url: https://github.com/adcontextprotocol/adcp-client
+  issues_url: https://github.com/adcontextprotocol/adcp-client/issues
+
+# Plugins (only GitHub Pages supported ones)
 plugins:
-  - jekyll-seo-tag
+  - jekyll-feed
   - jekyll-sitemap
+  - jekyll-seo-tag
+  - jekyll-github-metadata
 
-# Exclude files
+# Markdown processor (GitHub Pages default)
+markdown: kramdown
+kramdown:
+  input: GFM
+  syntax_highlighter: rouge
+
+# Highlighter (GitHub Pages default)
+highlighter: rouge
+
+# Exclude files from processing
 exclude:
-  - node_modules
+  - node_modules/
+  - vendor/
+  - Gemfile
+  - Gemfile.lock
   - package.json
   - package-lock.json
   - tsconfig.json
+  - typedoc.json
+  - scripts/
+  - src/
+  - test/
+  - dist/
+  - examples/

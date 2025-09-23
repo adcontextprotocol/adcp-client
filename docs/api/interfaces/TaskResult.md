@@ -6,7 +6,7 @@
 
 # Interface: TaskResult\<T\>
 
-Defined in: [src/lib/core/ConversationTypes.ts:208](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/core/ConversationTypes.ts#L208)
+Defined in: [src/lib/core/ConversationTypes.ts:208](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/ConversationTypes.ts#L208)
 
 Result of a task execution
 
@@ -22,7 +22,7 @@ Result of a task execution
 
 > **success**: `boolean`
 
-Defined in: [src/lib/core/ConversationTypes.ts:210](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/core/ConversationTypes.ts#L210)
+Defined in: [src/lib/core/ConversationTypes.ts:210](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/ConversationTypes.ts#L210)
 
 Whether the task completed successfully
 
@@ -32,7 +32,7 @@ Whether the task completed successfully
 
 > **status**: `"completed"` \| `"submitted"` \| `"deferred"`
 
-Defined in: [src/lib/core/ConversationTypes.ts:212](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/core/ConversationTypes.ts#L212)
+Defined in: [src/lib/core/ConversationTypes.ts:212](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/ConversationTypes.ts#L212)
 
 Task execution status
 
@@ -42,7 +42,7 @@ Task execution status
 
 > `optional` **data**: `T`
 
-Defined in: [src/lib/core/ConversationTypes.ts:214](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/core/ConversationTypes.ts#L214)
+Defined in: [src/lib/core/ConversationTypes.ts:214](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/ConversationTypes.ts#L214)
 
 Task result data (if successful)
 
@@ -52,7 +52,7 @@ Task result data (if successful)
 
 > `optional` **error**: `string`
 
-Defined in: [src/lib/core/ConversationTypes.ts:216](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/core/ConversationTypes.ts#L216)
+Defined in: [src/lib/core/ConversationTypes.ts:216](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/ConversationTypes.ts#L216)
 
 Error message (if failed)
 
@@ -62,7 +62,7 @@ Error message (if failed)
 
 > `optional` **deferred**: `DeferredContinuation`\<`T`\>
 
-Defined in: [src/lib/core/ConversationTypes.ts:218](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/core/ConversationTypes.ts#L218)
+Defined in: [src/lib/core/ConversationTypes.ts:218](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/ConversationTypes.ts#L218)
 
 Deferred continuation (client needs time for input)
 
@@ -72,7 +72,7 @@ Deferred continuation (client needs time for input)
 
 > `optional` **submitted**: `SubmittedContinuation`\<`T`\>
 
-Defined in: [src/lib/core/ConversationTypes.ts:220](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/core/ConversationTypes.ts#L220)
+Defined in: [src/lib/core/ConversationTypes.ts:220](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/ConversationTypes.ts#L220)
 
 Submitted continuation (server needs time for processing)
 
@@ -82,7 +82,7 @@ Submitted continuation (server needs time for processing)
 
 > **metadata**: `object`
 
-Defined in: [src/lib/core/ConversationTypes.ts:222](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/core/ConversationTypes.ts#L222)
+Defined in: [src/lib/core/ConversationTypes.ts:222](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/ConversationTypes.ts#L222)
 
 Task execution metadata
 
@@ -140,7 +140,7 @@ Final status
 
 > `optional` **conversation**: [`Message`](Message.md)[]
 
-Defined in: [src/lib/core/ConversationTypes.ts:240](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/core/ConversationTypes.ts#L240)
+Defined in: [src/lib/core/ConversationTypes.ts:240](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/ConversationTypes.ts#L240)
 
 Full conversation history
 
@@ -150,6 +150,6 @@ Full conversation history
 
 > `optional` **debugLogs**: `any`[]
 
-Defined in: [src/lib/core/ConversationTypes.ts:242](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/core/ConversationTypes.ts#L242)
+Defined in: [src/lib/core/ConversationTypes.ts:242](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/core/ConversationTypes.ts#L242)
 
 Debug logs (if debug enabled)

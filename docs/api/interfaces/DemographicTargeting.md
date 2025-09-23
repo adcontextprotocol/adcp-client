@@ -6,7 +6,7 @@
 
 # Interface: DemographicTargeting
 
-Defined in: [src/lib/types/adcp.ts:112](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/types/adcp.ts#L112)
+Defined in: [src/lib/types/adcp.ts:112](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/adcp.ts#L112)
 
 ## Properties
 
@@ -14,7 +14,7 @@ Defined in: [src/lib/types/adcp.ts:112](https://github.com/adcontextprotocol/adc
 
 > `optional` **age\_ranges**: `object`[]
 
-Defined in: [src/lib/types/adcp.ts:113](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/types/adcp.ts#L113)
+Defined in: [src/lib/types/adcp.ts:113](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/adcp.ts#L113)
 
 #### min
 
@@ -30,7 +30,7 @@ Defined in: [src/lib/types/adcp.ts:113](https://github.com/adcontextprotocol/adc
 
 > `optional` **genders**: (`"male"` \| `"female"` \| `"other"`)[]
 
-Defined in: [src/lib/types/adcp.ts:117](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/types/adcp.ts#L117)
+Defined in: [src/lib/types/adcp.ts:117](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/adcp.ts#L117)
 
 ***
 
@@ -38,7 +38,7 @@ Defined in: [src/lib/types/adcp.ts:117](https://github.com/adcontextprotocol/adc
 
 > `optional` **income\_ranges**: `object`[]
 
-Defined in: [src/lib/types/adcp.ts:118](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/types/adcp.ts#L118)
+Defined in: [src/lib/types/adcp.ts:118](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/adcp.ts#L118)
 
 #### min
 

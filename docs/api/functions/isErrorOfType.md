@@ -8,7 +8,7 @@
 
 > **isErrorOfType**\<`T`\>(`error`, `ErrorClass`): `error is T`
 
-Defined in: [src/lib/errors/index.ts:181](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/errors/index.ts#L181)
+Defined in: [src/lib/errors/index.ts:181](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/errors/index.ts#L181)
 
 Type guard to check if an error is a specific ADCP error type
 

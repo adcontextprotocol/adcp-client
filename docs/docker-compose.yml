@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+  jekyll:
+    image: jekyll/jekyll:latest
+    container_name: adcp-docs
+    environment:
+      - JEKYLL_ENV=development
+    volumes:
+      - .:/srv/jekyll
+    ports:
+      - "4000:4000"
+    command: jekyll serve --host 0.0.0.0 --livereload --incremental --verbose

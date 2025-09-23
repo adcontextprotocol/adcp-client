@@ -6,7 +6,7 @@
 
 # Abstract Class: ADCPError
 
-Defined in: [src/lib/errors/index.ts:6](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/errors/index.ts#L6)
+Defined in: [src/lib/errors/index.ts:6](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/errors/index.ts#L6)
 
 Base class for all ADCP client errors
 
@@ -34,7 +34,7 @@ Base class for all ADCP client errors
 
 > **new ADCPError**(`message`, `details?`): `ADCPError`
 
-Defined in: [src/lib/errors/index.ts:9](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/errors/index.ts#L9)
+Defined in: [src/lib/errors/index.ts:9](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/errors/index.ts#L9)
 
 #### Parameters
 
@@ -60,7 +60,7 @@ Defined in: [src/lib/errors/index.ts:9](https://github.com/adcontextprotocol/adc
 
 > `abstract` `readonly` **code**: `string`
 
-Defined in: [src/lib/errors/index.ts:7](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/errors/index.ts#L7)
+Defined in: [src/lib/errors/index.ts:7](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/errors/index.ts#L7)
 
 ***
 
@@ -68,7 +68,7 @@ Defined in: [src/lib/errors/index.ts:7](https://github.com/adcontextprotocol/adc
 
 > `optional` **details**: `any`
 
-Defined in: [src/lib/errors/index.ts:9](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/errors/index.ts#L9)
+Defined in: [src/lib/errors/index.ts:9](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/errors/index.ts#L9)
 
 ***
 

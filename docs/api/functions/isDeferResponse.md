@@ -8,7 +8,7 @@
 
 > **isDeferResponse**(`response`): `response is { defer: true; token: string }`
 
-Defined in: [src/lib/handlers/types.ts:261](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/handlers/types.ts#L261)
+Defined in: [src/lib/handlers/types.ts:261](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/handlers/types.ts#L261)
 
 Type guard to check if a response is a defer response
 

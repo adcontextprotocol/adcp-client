@@ -6,7 +6,7 @@
 
 # Interface: ManageCreativeAssetsResponse
 
-Defined in: [src/lib/types/adcp.ts:322](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/types/adcp.ts#L322)
+Defined in: [src/lib/types/adcp.ts:322](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/adcp.ts#L322)
 
 ## Properties
 
@@ -14,7 +14,7 @@ Defined in: [src/lib/types/adcp.ts:322](https://github.com/adcontextprotocol/adc
 
 > **success**: `boolean`
 
-Defined in: [src/lib/types/adcp.ts:323](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/types/adcp.ts#L323)
+Defined in: [src/lib/types/adcp.ts:323](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/adcp.ts#L323)
 
 ***
 
@@ -22,7 +22,7 @@ Defined in: [src/lib/types/adcp.ts:323](https://github.com/adcontextprotocol/adc
 
 > **action**: `string`
 
-Defined in: [src/lib/types/adcp.ts:324](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/types/adcp.ts#L324)
+Defined in: [src/lib/types/adcp.ts:324](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/adcp.ts#L324)
 
 ***
 
@@ -30,7 +30,7 @@ Defined in: [src/lib/types/adcp.ts:324](https://github.com/adcontextprotocol/adc
 
 > `optional` **results**: `object`
 
-Defined in: [src/lib/types/adcp.ts:325](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/types/adcp.ts#L325)
+Defined in: [src/lib/types/adcp.ts:325](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/adcp.ts#L325)
 
 #### uploaded?
 
@@ -90,7 +90,7 @@ Defined in: [src/lib/types/adcp.ts:325](https://github.com/adcontextprotocol/adc
 
 > `optional` **errors**: `object`[]
 
-Defined in: [src/lib/types/adcp.ts:351](https://github.com/adcontextprotocol/adcp-client/blob/9ed0be764adbd110916d257101c95a577b3f15c8/src/lib/types/adcp.ts#L351)
+Defined in: [src/lib/types/adcp.ts:351](https://github.com/adcontextprotocol/adcp-client/blob/e8953d756e5ce5fafa76c5e8fa2f0316f0da0998/src/lib/types/adcp.ts#L351)
 
 #### creative\_id?
 

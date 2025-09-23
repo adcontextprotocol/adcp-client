@@ -41,7 +41,10 @@
     "prepublishOnly": "npm run clean && npm run build:lib && npm run test:lib",
     "docs": "typedoc",
     "docs:watch": "typedoc --watch",
-    "docs:serve": "echo '📚 Documentation available at: docs/index.html' && echo '🌐 For live preview, enable GitHub Pages or use: npx live-server docs'"
+    "docs:serve": "cd docs && make serve",
+    "docs:serve-simple": "npx live-server docs --port=4000 --open=/index.html",
+    "docs:build": "npm run docs && cd docs && make build",
+    "docs:install": "cd docs && make install"
   },
   "keywords": [
     "adcp",
