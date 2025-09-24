@@ -41,6 +41,43 @@ const activeTasks = new Map<string, {
 }>();
 const conversations = new Map<string, any[]>();
 
+// Helper function to build tool-appropriate parameters
+function buildToolArgs(toolName: string, brief?: string, promotedOffering?: string, additionalParams: any = {}): any {
+  const args: any = {};
+  
+  // Tools that accept brief parameter
+  const briefAcceptingTools = [
+    'get_products', 
+    'create_media_buy', 
+    'update_media_buy',
+    'sync_creatives',
+    'get_media_buy_delivery',
+    'provide_performance_feedback',
+    'get_signals',
+    'activate_signal'
+  ];
+  
+  // Tools that accept promoted_offering parameter  
+  const offeringAcceptingTools = [
+    'get_products',
+    'create_media_buy'
+  ];
+  
+  // Only add parameters that the tool accepts
+  if (briefAcceptingTools.includes(toolName) && brief) {
+    args.brief = brief;
+  }
+  
+  if (offeringAcceptingTools.includes(toolName) && promotedOffering) {
+    args.promoted_offering = promotedOffering;
+  }
+  
+  // Always merge in any explicitly provided tool params
+  Object.assign(args, additionalParams);
+  
+  return args;
+}
+
 // Helper function to convert TaskResult to legacy TestResult format for backward compatibility
 function adaptTaskResultToLegacyFormat(taskResult: TaskResult<any>, agentId: string): TestResult & { 
   status?: string; 
@@ -58,7 +95,7 @@ function adaptTaskResultToLegacyFormat(taskResult: TaskResult<any>, agentId: str
     data: taskResult.success ? taskResult.data : undefined,
     error: taskResult.success ? undefined : taskResult.error,
     timestamp: new Date().toISOString(),
-    debug_logs: taskResult.debugLogs || [],
+    debug_logs: taskResult.debug_logs || [],
     // New async fields
     status: taskResult.status,
     inputRequest: taskResult.status === 'deferred' ? taskResult.deferred : undefined,
@@ -229,9 +266,7 @@ app.post<{
     
     const startTime = Date.now();
     const agentIds = agents.map((a: AgentConfig) => a.id);
-    const args: any = { brief };
-    if (promoted_offering) args.promoted_offering = promoted_offering;
-    if (tool_name) args.tool_name = tool_name;
+    const args = buildToolArgs(tool_name || 'get_products', brief, promoted_offering, tool_name ? { tool_name } : {});
     const results = await Promise.all(
       agentIds.map((agentId: string) => executeTaskOnAgent(agentId, tool_name || 'get_products', args))
     );
@@ -287,8 +322,7 @@ app.post<{
 
     app.log.info(`Testing single agent ${agentId} with brief: "${brief.substring(0, 100)}..."`);
     
-    const args: any = { brief };
-    if (promoted_offering) args.promoted_offering = promoted_offering;
+    const args = buildToolArgs(tool_name || 'get_products', brief, promoted_offering);
     const result = await executeTaskOnAgent(agentId, tool_name || 'get_products', args);
 
     return reply.send({
@@ -500,14 +534,14 @@ app.post('/api/sales/agents/:agentId/query', async (request, reply) => {
     
     // Pass tool-specific params if provided
     const toolParams = body.params || {};
-    const args: any = { brief };
-    if (promotedOffering) args.promoted_offering = promotedOffering;
-    Object.assign(args, toolParams);
+    
+    // Use helper function to build appropriate parameters for this tool
+    const args = buildToolArgs(toolName, brief, promotedOffering, toolParams);
     // Use new async-capable executeTask
     const result = await executeTaskOnAgent(agentId, toolName, args);
     
     // Extract the data from the response structure
-    const extractedData = extractResponseData(result.data) || {};
+    const extractedData = extractResponseData(result) || {};
     
     // Debug: Log the results structure
     app.log.info('Results structure: ' + JSON.stringify({
@@ -515,7 +549,9 @@ app.post('/api/sales/agents/:agentId/query', async (request, reply) => {
       error: result.error,
       status: result.status,
       debug_logs_length: result.debug_logs ? result.debug_logs.length : 'undefined',
-      debug_logs_sample: result.debug_logs ? result.debug_logs.slice(0, 2) : 'undefined'
+      debug_logs_sample: result.debug_logs ? result.debug_logs.slice(0, 2) : 'undefined',
+      products_extracted: extractedData.products ? extractedData.products.length : 'undefined',
+      formats_extracted: extractedData.formats ? extractedData.formats.length : 'undefined'
     }));
     
     // Pass through authentic debug logs only - NO SYNTHETIC FALLBACKS
@@ -732,6 +768,227 @@ app.get('/api/tasks', async (request, reply) => {
 
   } catch (error) {
     app.log.error({ error }, 'List tasks error');
+    return reply.code(500).send({
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+// ==== WEBHOOK & NOTIFICATION ENDPOINTS ====
+
+// Storage for webhook registrations
+const webhookRegistrations = new Map<string, {
+  agentId: string;
+  webhookUrl: string;
+  taskTypes?: string[];
+  createdAt: Date;
+}>();
+
+// Task notification listeners (for real-time updates)
+const taskNotificationCallbacks = new Map<string, (task: any) => void>();
+
+/**
+ * Register webhook for task notifications
+ */
+app.post<{
+  Body: {
+    agentId: string;
+    webhookUrl: string;
+    taskTypes?: string[];
+  };
+}>('/api/webhooks/register', async (request, reply) => {
+  try {
+    const { agentId, webhookUrl, taskTypes } = request.body;
+    
+    if (!agentId || !webhookUrl) {
+      return reply.code(400).send({
+        success: false,
+        error: 'agentId and webhookUrl are required'
+      });
+    }
+
+    const registrationId = `${agentId}-${Date.now()}`;
+    webhookRegistrations.set(registrationId, {
+      agentId,
+      webhookUrl,
+      taskTypes,
+      createdAt: new Date()
+    });
+
+    app.log.info(`Webhook registered for agent ${agentId}: ${webhookUrl}`);
+
+    return reply.send({
+      success: true,
+      registrationId,
+      message: 'Webhook registered successfully'
+    });
+
+  } catch (error) {
+    app.log.error({ error }, 'Register webhook error');
+    return reply.code(500).send({
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+/**
+ * Receive webhook callback from agents
+ */
+app.post<{
+  Params: { token: string };
+  Body: any;
+}>('/api/webhooks/callback/:token', async (request, reply) => {
+  try {
+    const { token } = request.params;
+    const payload = request.body as any;
+    
+    app.log.info({ token, payload }, 'Webhook callback received');
+    
+    // Find the task that this webhook refers to
+    const task = activeTasks.get(token) || activeTasks.get(payload.taskId);
+    
+    if (task) {
+      // Update task status
+      task.status = payload.status || 'completed';
+      if (payload.result) {
+        task.continuation = { result: payload.result };
+      }
+      if (payload.error) {
+        task.status = 'failed';
+        task.continuation = { error: payload.error };
+      }
+      
+      // Notify any listeners
+      taskNotificationCallbacks.forEach(callback => {
+        try {
+          callback({
+            taskId: task.taskId,
+            agentId: task.agentId,
+            toolName: task.toolName,
+            status: task.status,
+            result: task.continuation?.result,
+            error: task.continuation?.error,
+            updatedAt: new Date().toISOString()
+          });
+        } catch (err) {
+          app.log.error({ err }, 'Task notification callback error');
+        }
+      });
+      
+      app.log.info(`Task ${task.taskId} updated via webhook: ${task.status}`);
+    }
+    
+    return reply.send({
+      success: true,
+      message: 'Webhook processed successfully'
+    });
+
+  } catch (error) {
+    app.log.error({ error }, 'Webhook callback error');
+    return reply.code(500).send({
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+/**
+ * Unregister webhook
+ */
+app.delete<{
+  Params: { registrationId: string };
+}>('/api/webhooks/:registrationId', async (request, reply) => {
+  try {
+    const { registrationId } = request.params;
+    
+    const removed = webhookRegistrations.delete(registrationId);
+    
+    if (removed) {
+      app.log.info(`Webhook unregistered: ${registrationId}`);
+      return reply.send({
+        success: true,
+        message: 'Webhook unregistered successfully'
+      });
+    } else {
+      return reply.code(404).send({
+        success: false,
+        error: 'Webhook registration not found'
+      });
+    }
+
+  } catch (error) {
+    app.log.error({ error }, 'Unregister webhook error');
+    return reply.code(500).send({
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+/**
+ * List webhook registrations
+ */
+app.get('/api/webhooks', async (request, reply) => {
+  try {
+    const registrations = Array.from(webhookRegistrations.entries()).map(([id, reg]) => ({
+      id,
+      ...reg,
+      createdAt: reg.createdAt.toISOString()
+    }));
+
+    return reply.send({
+      success: true,
+      webhooks: registrations,
+      total: registrations.length
+    });
+
+  } catch (error) {
+    app.log.error({ error }, 'List webhooks error');
+    return reply.code(500).send({
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+/**
+ * Enhanced task list endpoint with more details
+ */
+app.get('/api/tasks/detailed', async (request, reply) => {
+  try {
+    const tasks = Array.from(activeTasks.values()).map(task => ({
+      taskId: task.taskId,
+      agentId: task.agentId,
+      toolName: task.toolName,
+      status: task.status,
+      startTime: task.startTime.toISOString(),
+      hasWebhook: Array.from(webhookRegistrations.values())
+        .some(reg => reg.agentId === task.agentId),
+      result: task.continuation?.result,
+      error: task.continuation?.error
+    }));
+
+    return reply.send({
+      success: true,
+      tasks,
+      total: tasks.length,
+      timestamp: new Date().toISOString(),
+      summary: {
+        byStatus: tasks.reduce((acc: any, task) => {
+          acc[task.status] = (acc[task.status] || 0) + 1;
+          return acc;
+        }, {}),
+        byAgent: tasks.reduce((acc: any, task) => {
+          acc[task.agentId] = (acc[task.agentId] || 0) + 1;
+          return acc;
+        }, {})
+      }
+    });
+
+  } catch (error) {
+    app.log.error({ error }, 'List detailed tasks error');
     return reply.code(500).send({
       success: false,
       error: error instanceof Error ? error.message : 'Unknown error'
