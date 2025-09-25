@@ -18,6 +18,7 @@ schemas/cache/
 .env.development
 .env.test
 .env.production
+.env.hitl
 
 # Runtime logs
 *.log

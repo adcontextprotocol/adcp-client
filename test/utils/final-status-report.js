@@ -14,8 +14,8 @@ const HITL_CONFIG = {
     a2a: 'http://localhost:8094'
   },
   principals: {
-    sync: 'sync_token_2ea279d8f52c4739bb775323c0e6a38a',
-    async: 'async_token_058870a84fe442a392f176f64f05c475'
+    sync: process.env.HITL_SYNC_TOKEN || 'HITL_SYNC_TOKEN_NOT_SET',
+    async: process.env.HITL_ASYNC_TOKEN || 'HITL_ASYNC_TOKEN_NOT_SET'
   }
 };
 
