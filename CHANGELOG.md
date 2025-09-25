@@ -20,13 +20,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **Node.js Version Specification** - Added `.nvmrc` file specifying Node.js 20 requirement  
-- **HITL Setup Documentation** - Created comprehensive `HITL-SETUP.md` with security-first configuration guide
+- **HITL Setup Documentation** - Created comprehensive `docs/development/hitl-testing.md` with security-first configuration guide
 - **Comprehensive Protocol Testing** - Added protocol compliance, schema validation, and integration contract tests
 - **Security Documentation** - Enhanced README.md with security best practices and environment variable usage
 - **CI Validation** - Added server configuration tests to prevent deployment issues
 
 ### Changed
-- **Testing Strategy** - Implemented comprehensive protocol testing strategy documented in `PROTOCOL-TESTING-STRATEGY.md`
+- **Testing Strategy** - Implemented comprehensive protocol testing strategy documented in `docs/development/protocol-testing.md`
 - **Documentation Updates** - Updated README.md to reflect v0.2.3 changes, security improvements, and Node.js requirements
 
 ### Development
