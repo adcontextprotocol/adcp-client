@@ -377,7 +377,7 @@ describe('A2A Integration Contract Tests', () => {
   test('should handle authentication correctly', async () => {
     setupA2AIntegrationTest();
 
-    const authToken = 'test-bearer-token';
+    const authToken = 'TEST_BEARER_TOKEN_PLACEHOLDER';
     let capturedAuthHeader;
 
     // Override mock to capture auth headers

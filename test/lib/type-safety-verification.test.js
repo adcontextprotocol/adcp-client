@@ -224,7 +224,7 @@ describe('Type Safety Verification for Async Continuations', () => {
 
       const mockHandler = mock.fn(async (context) => {
         if (context.inputRequest.field === 'approval') {
-          return { defer: true, token: 'approval-defer-123' };
+          return { defer: true, token: 'TEST_DEFER_TOKEN_PLACEHOLDER' };
         }
         return 'auto-approve';
       });

@@ -120,9 +120,9 @@ For production deployment with secure token management:
 
 ```bash
 # Set environment variables securely
-export HITL_SYNC_TOKEN="your_secure_token"
-export HITL_ASYNC_TOKEN="your_secure_token"
-export WONDERSTRUCK_TOKEN="your_secure_token"
+export HITL_SYNC_TOKEN="YOUR_SECURE_TOKEN_HERE"
+export HITL_ASYNC_TOKEN="YOUR_SECURE_TOKEN_HERE"
+export WONDERSTRUCK_TOKEN="YOUR_SECURE_TOKEN_HERE"
 
 # Or use your deployment platform's secret management
 ```

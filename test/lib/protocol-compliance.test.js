@@ -178,7 +178,7 @@ describe('A2A Protocol Compliance', () => {
     
     test('should pass authentication token to SDK client correctly', async () => {
       // This test verifies auth token integration without testing HTTP details
-      const authToken = 'test-bearer-token-12345';
+      const authToken = 'TEST_BEARER_TOKEN_PLACEHOLDER';
       let capturedFetchImpl;
       
       // Mock A2AClient.fromCardUrl to capture the fetchImpl
