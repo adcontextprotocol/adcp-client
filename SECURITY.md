@@ -55,7 +55,7 @@ The @adcp/client library implements several security measures by default:
 export AGENT_TOKEN=your-secure-token-here
 
 # ❌ Bad: Hardcoding tokens
-const config = { auth_token_env: 'hardcoded-token-123' }
+const config = { auth_token_env: 'NEVER_HARDCODE_TOKENS_LIKE_THIS' }
 ```
 
 #### 🌐 **Agent URL Configuration**

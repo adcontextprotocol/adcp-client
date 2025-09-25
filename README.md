@@ -13,6 +13,12 @@ Official TypeScript/JavaScript client for the **Ad Context Protocol (AdCP)**. Se
 npm install @adcp/client
 ```
 
+### Requirements
+
+- **Node.js**: Version 18.0.0 or higher (specified in `.nvmrc`)
+- **TypeScript**: 5.3.0+ for full type safety
+- **Peer Dependencies**: `@a2a-js/sdk` and `@modelcontextprotocol/sdk`
+
 ## Quick Start
 
 ```typescript
@@ -24,7 +30,7 @@ const client = new ADCPMultiAgentClient([{
   name: 'Premium Ad Agent', 
   agent_uri: 'https://agent.example.com/mcp/',
   protocol: 'mcp',
-  auth_token: 'your-auth-token'
+  auth_token_env: 'PREMIUM_AGENT_TOKEN' // Secure: references environment variable
 }]);
 
 const agent = client.agent('premium-agent');
@@ -49,9 +55,16 @@ if (result.success) {
 Set your agent configuration once and auto-discover everywhere:
 
 ```bash
-# .env file
-ADCP_AGENTS='[{"id":"agent1","name":"My Agent","agent_uri":"https://agent.example.com","protocol":"mcp","auth_token":"token123"}]'
+# .env file - NEVER commit real tokens to version control
+ADCP_AGENTS='[{"id":"agent1","name":"My Agent","agent_uri":"https://agent.example.com","protocol":"mcp","auth_token_env":"MY_AGENT_TOKEN"}]'
+MY_AGENT_TOKEN=your_actual_token_here
 ```
+
+**Security Best Practices:**
+- Use `auth_token_env` to reference environment variables instead of hardcoding tokens
+- Add `.env` files to `.gitignore`
+- Rotate tokens regularly
+- Use different tokens for different environments
 
 ```typescript
 // Auto-discover agents from environment
@@ -108,10 +121,13 @@ const withHandler = await agent.getProducts(
 ## Key Features
 
 - **🔗 Unified Interface** - Single API for MCP and A2A protocols
-- **⚡ Async Support** - Handle long-running tasks with webhooks and deferrals
-- **🔐 Built-in Auth** - Bearer tokens and API key support
+- **⚡ Async Support** - Handle long-running tasks with webhooks and deferrals  
+- **🔐 Built-in Auth** - Bearer tokens and API key support with environment variable security
 - **🛡️ Type Safe** - Full TypeScript with comprehensive types
 - **📊 Production Ready** - Circuit breakers, retries, and validation
+- **🔒 Security-First** - No hardcoded tokens, SSRF protection, secure defaults
+- **🧪 Protocol Compliance** - 100% A2A and MCP specification compliance
+- **🌐 Cross-Platform** - Works with Node.js 18+ and modern JavaScript environments
 
 ## Async Execution Model
 

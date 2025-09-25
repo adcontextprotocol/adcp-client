@@ -15,14 +15,23 @@ export async function callMCPTool(
   const baseUrl = new URL(agentUrl);
   
   // Prepare auth headers for StreamableHTTP transport
-  const requestInit: RequestInit = {};
+  let requestInit: RequestInit = {};
   if (authToken) {
-    requestInit.headers = createMCPAuthHeaders(authToken);
+    const authHeaders = createMCPAuthHeaders(authToken);
+    requestInit.headers = authHeaders;
     
     // Add to debug logs
     debugLogs.push({
       type: 'info',
-      message: `MCP: Auth token provided (${authToken.substring(0, 10)}...)`,
+      message: `MCP: Auth token provided (${authToken.substring(0, 10)}...) for tool ${toolName}`,
+      timestamp: new Date().toISOString(),
+      headers: authHeaders
+    });
+    
+    // Log the exact headers being set for debugging
+    debugLogs.push({
+      type: 'info',
+      message: `MCP: Setting auth headers: ${JSON.stringify(authHeaders)}`,
       timestamp: new Date().toISOString()
     });
   }
@@ -31,7 +40,7 @@ export async function callMCPTool(
     // First, try to connect using StreamableHTTPClientTransport
     debugLogs.push({
       type: 'info',
-      message: `MCP: Attempting StreamableHTTP connection to ${baseUrl}`,
+      message: `MCP: Attempting StreamableHTTP connection to ${baseUrl} for ${toolName}`,
       timestamp: new Date().toISOString()
     });
     
@@ -48,7 +57,7 @@ export async function callMCPTool(
     
     debugLogs.push({
       type: 'success',
-      message: 'MCP: Connected using StreamableHTTP transport',
+      message: `MCP: Connected using StreamableHTTP transport for ${toolName}`,
       timestamp: new Date().toISOString()
     });
   } catch (error) {
@@ -56,7 +65,7 @@ export async function callMCPTool(
     const errorMessage = error instanceof Error ? error.message : String(error);
     debugLogs.push({
       type: 'error',
-      message: `MCP: StreamableHTTP connection failed: ${errorMessage}`,
+      message: `MCP: StreamableHTTP connection failed for ${toolName}: ${errorMessage}`,
       timestamp: new Date().toISOString(),
       error: error
     });
@@ -64,7 +73,7 @@ export async function callMCPTool(
     // If StreamableHTTP fails, fall back to SSE transport
     debugLogs.push({
       type: 'info',
-      message: 'MCP: Falling back to SSE transport',
+      message: `MCP: Falling back to SSE transport for ${toolName}`,
       timestamp: new Date().toISOString()
     });
     
@@ -83,7 +92,7 @@ export async function callMCPTool(
     
     debugLogs.push({
       type: 'success',
-      message: 'MCP: Connected using SSE transport',
+      message: `MCP: Connected using SSE transport for ${toolName}`,
       timestamp: new Date().toISOString()
     });
   }
@@ -96,6 +105,15 @@ export async function callMCPTool(
       timestamp: new Date().toISOString()
     });
     
+    // For debugging: log the transport headers being used
+    if (authToken) {
+      debugLogs.push({
+        type: 'info',
+        message: `MCP: Transport configured with x-adcp-auth header for ${toolName}`,
+        timestamp: new Date().toISOString()
+      });
+    }
+    
     const response = await mcpClient.callTool({
       name: toolName,
       arguments: args
@@ -103,7 +121,7 @@ export async function callMCPTool(
     
     debugLogs.push({
       type: response?.isError ? 'error' : 'success',
-      message: `MCP: Tool response received (${response?.isError ? 'error' : 'success'})`,
+      message: `MCP: Tool ${toolName} response received (${response?.isError ? 'error' : 'success'})`,
       timestamp: new Date().toISOString(),
       response: response
     });
@@ -114,10 +132,20 @@ export async function callMCPTool(
     const errorMessage = error instanceof Error ? error.message : String(error);
     debugLogs.push({
       type: 'error',
-      message: `MCP: Tool call failed: ${errorMessage}`,
+      message: `MCP: Tool ${toolName} call failed: ${errorMessage}`,
       timestamp: new Date().toISOString(),
       error: error
     });
+    
+    // If this is an auth error, log additional debugging info
+    if (errorMessage.toLowerCase().includes('auth') || errorMessage.toLowerCase().includes('unauthorized')) {
+      debugLogs.push({
+        type: 'warning',
+        message: `MCP: Authentication issue detected for ${toolName} - headers may not be reaching server`,
+        timestamp: new Date().toISOString()
+      });
+    }
+    
     throw error; // Re-throw to maintain error handling
   } finally {
     // Always close the client properly
@@ -126,13 +154,13 @@ export async function callMCPTool(
         await mcpClient.close();
         debugLogs.push({
           type: 'info',
-          message: 'MCP: Client connection closed',
+          message: `MCP: Client connection closed for ${toolName}`,
           timestamp: new Date().toISOString()
         });
       } catch (closeError) {
         debugLogs.push({
           type: 'warning',
-          message: `MCP: Error closing client: ${closeError}`,
+          message: `MCP: Error closing client for ${toolName}: ${closeError}`,
           timestamp: new Date().toISOString()
         });
       }

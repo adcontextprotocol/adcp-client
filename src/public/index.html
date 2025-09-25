@@ -189,6 +189,199 @@
             box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
         }
 
+        /* Task Notification Badge */
+        .task-notification-badge {
+            position: relative;
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .task-notification-badge:hover {
+            color: white !important;
+            background: rgba(255, 255, 255, 0.15) !important;
+        }
+
+        .task-notification-badge.has-tasks {
+            animation: pulse 2s infinite;
+        }
+
+        .task-notification-badge #task-count {
+            background: #ff4757;
+            color: white;
+            font-size: 11px;
+            font-weight: 700;
+            padding: 2px 6px;
+            border-radius: 10px;
+            margin-left: 5px;
+            min-width: 18px;
+            text-align: center;
+            display: inline-block;
+        }
+
+        .task-notification-badge #task-count.zero {
+            background: rgba(255, 255, 255, 0.3);
+            color: rgba(255, 255, 255, 0.7);
+        }
+
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+        }
+
+        /* Task Panel */
+        .task-panel {
+            position: fixed;
+            top: 60px;
+            right: 20px;
+            width: 400px;
+            max-height: 500px;
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 12px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.15);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            z-index: 1002;
+            transform: translateY(-10px);
+            opacity: 0;
+            visibility: hidden;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .task-panel.open {
+            transform: translateY(0);
+            opacity: 1;
+            visibility: visible;
+        }
+
+        .task-panel-header {
+            padding: 20px;
+            border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .task-panel-title {
+            font-size: 16px;
+            font-weight: 700;
+            color: #2d3748;
+            margin: 0;
+        }
+
+        .task-panel-close {
+            background: none;
+            border: none;
+            font-size: 20px;
+            cursor: pointer;
+            color: #718096;
+            padding: 4px;
+            border-radius: 4px;
+            transition: all 0.2s;
+        }
+
+        .task-panel-close:hover {
+            background: rgba(0, 0, 0, 0.1);
+            color: #2d3748;
+        }
+
+        .task-panel-content {
+            max-height: 400px;
+            overflow-y: auto;
+            padding: 0;
+        }
+
+        .task-item {
+            padding: 16px 20px;
+            border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+            transition: background 0.2s;
+        }
+
+        .task-item:last-child {
+            border-bottom: none;
+        }
+
+        .task-item:hover {
+            background: rgba(0, 0, 0, 0.02);
+        }
+
+        .task-item-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+
+        .task-item-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: #2d3748;
+            margin: 0;
+        }
+
+        .task-item-status {
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            padding: 3px 8px;
+            border-radius: 12px;
+            letter-spacing: 0.5px;
+        }
+
+        .task-item-status.submitted {
+            background: #e3f2fd;
+            color: #1976d2;
+        }
+
+        .task-item-status.working {
+            background: #fff3e0;
+            color: #f57c00;
+            animation: working-pulse 1.5s infinite;
+        }
+
+        .task-item-status.completed {
+            background: #e8f5e8;
+            color: #388e3c;
+        }
+
+        .task-item-status.failed {
+            background: #ffebee;
+            color: #d32f2f;
+        }
+
+        .task-item-meta {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 12px;
+            color: #718096;
+        }
+
+        .task-item-agent {
+            font-weight: 500;
+            color: #4a5568;
+        }
+
+        .task-item-time {
+            font-family: monospace;
+        }
+
+        .task-empty-state {
+            padding: 40px 20px;
+            text-align: center;
+            color: #718096;
+        }
+
+        .task-empty-state .empty-icon {
+            font-size: 32px;
+            margin-bottom: 12px;
+            opacity: 0.5;
+        }
+
+        @keyframes working-pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.6; }
+        }
+
         /* Adjust main content to account for navigation */
         .main-content {
             margin-top: 0;
@@ -1721,6 +1914,9 @@
             <div class="nav-links">
                 <a href="/" class="nav-link active">🧪 Agent Testing</a>
                 <a href="/adagents.html" class="nav-link">🔗 AdAgents Manager</a>
+                <div class="nav-link task-notification-badge" id="task-notification-badge" onclick="toggleTaskPanel()" title="Active Tasks">
+                    📋 <span id="task-count">0</span>
+                </div>
             </div>
         </div>
     </nav>
@@ -2253,6 +2449,7 @@
         <div class="debug-header">
             <h3>🔍 Agent Communication Debug</h3>
             <div class="debug-controls">
+                <button class="debug-btn" onclick="copyAllDebugLogs()" style="background: #28a745;">📋 Copy All</button>
                 <button class="debug-btn" onclick="clearAllDebugLogs()" style="background: #dc3545;">🗑️ Clear All</button>
                 <button class="debug-btn" onclick="clearDebugLog()">🗑️ Clear</button>
                 <button class="debug-btn" onclick="toggleDebugPanel()">✖️ Close</button>
@@ -2267,6 +2464,20 @@
         </div>
         <div id="debug-content" class="debug-content">
             <div style="text-align: center; color: #666; padding: 20px;">Waiting for agent communication...</div>
+        </div>
+    </div>
+    
+    <!-- Task Panel -->
+    <div id="task-panel" class="task-panel">
+        <div class="task-panel-header">
+            <h3 class="task-panel-title">Active Tasks</h3>
+            <button class="task-panel-close" onclick="toggleTaskPanel()">✖️</button>
+        </div>
+        <div id="task-panel-content" class="task-panel-content">
+            <div class="task-empty-state">
+                <div class="empty-icon">📋</div>
+                <div>No active tasks</div>
+            </div>
         </div>
     </div>
     
@@ -2302,6 +2513,215 @@
         
         // Initial debug message to confirm script is loading
         console.log('[DEBUG] Sales agents script loaded at', new Date().toISOString());
+        
+        // ============================================================================
+        // Task Management & Notifications
+        // ============================================================================
+        
+        let taskPanel = null;
+        let taskPollInterval = null;
+        let activeTasks = [];
+        let taskNotificationSocket = null;
+        
+        // Initialize task management
+        function initTaskManagement() {
+            taskPanel = document.getElementById('task-panel');
+            startTaskPolling();
+            console.log('[TASKS] Task management initialized');
+        }
+        
+        // Toggle task panel visibility
+        function toggleTaskPanel() {
+            if (!taskPanel) {
+                taskPanel = document.getElementById('task-panel');
+            }
+            
+            const isOpen = taskPanel.classList.contains('open');
+            if (isOpen) {
+                taskPanel.classList.remove('open');
+            } else {
+                taskPanel.classList.add('open');
+                refreshTaskList();
+            }
+        }
+        
+        // Start polling for task updates
+        function startTaskPolling() {
+            if (taskPollInterval) {
+                clearInterval(taskPollInterval);
+            }
+            
+            // Initial load
+            refreshTaskList();
+            
+            // Poll every 5 seconds for task updates
+            taskPollInterval = setInterval(() => {
+                refreshTaskList();
+            }, 5000);
+            
+            console.log('[TASKS] Started task polling');
+        }
+        
+        // Stop task polling
+        function stopTaskPolling() {
+            if (taskPollInterval) {
+                clearInterval(taskPollInterval);
+                taskPollInterval = null;
+                console.log('[TASKS] Stopped task polling');
+            }
+        }
+        
+        // Refresh task list from server
+        async function refreshTaskList() {
+            try {
+                const response = await fetch('/api/tasks/detailed');
+                const result = await response.json();
+                
+                if (result.success) {
+                    updateTaskDisplay(result.tasks);
+                    updateTaskBadge(result.tasks);
+                }
+            } catch (error) {
+                console.error('[TASKS] Error refreshing task list:', error);
+            }
+        }
+        
+        // Update task display in panel
+        function updateTaskDisplay(tasks) {
+            activeTasks = tasks;
+            const contentEl = document.getElementById('task-panel-content');
+            
+            if (!tasks || tasks.length === 0) {
+                contentEl.innerHTML = `
+                    <div class="task-empty-state">
+                        <div class="empty-icon">📋</div>
+                        <div>No active tasks</div>
+                    </div>
+                `;
+                return;
+            }
+            
+            const tasksHtml = tasks.map(task => {
+                const timeAgo = formatTimeAgo(new Date(task.startTime));
+                return `
+                    <div class="task-item">
+                        <div class="task-item-header">
+                            <div class="task-item-title">${formatTaskName(task.toolName)}</div>
+                            <div class="task-item-status ${task.status}">${task.status}</div>
+                        </div>
+                        <div class="task-item-meta">
+                            <div class="task-item-agent">${getAgentName(task.agentId)}</div>
+                            <div class="task-item-time">${timeAgo}</div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+            
+            contentEl.innerHTML = tasksHtml;
+        }
+        
+        // Update task notification badge
+        function updateTaskBadge(tasks) {
+            const badge = document.getElementById('task-notification-badge');
+            const countEl = document.getElementById('task-count');
+            
+            const activeCount = tasks ? tasks.filter(task => 
+                ['submitted', 'working', 'input-required'].includes(task.status)
+            ).length : 0;
+            
+            countEl.textContent = activeCount;
+            countEl.className = activeCount > 0 ? '' : 'zero';
+            badge.className = `nav-link task-notification-badge ${activeCount > 0 ? 'has-tasks' : ''}`;
+        }
+        
+        // Format task name for display
+        function formatTaskName(toolName) {
+            return toolName
+                .replace(/_/g, ' ')
+                .replace(/\b\w/g, l => l.toUpperCase());
+        }
+        
+        // Get agent name by ID
+        function getAgentName(agentId) {
+            if (typeof agents !== 'undefined' && agents) {
+                const agent = agents.find(a => a.id === agentId);
+                return agent ? agent.name : agentId;
+            }
+            return agentId;
+        }
+        
+        // Format time ago display
+        function formatTimeAgo(date) {
+            const now = new Date();
+            const diffMs = now - date;
+            const diffMinutes = Math.floor(diffMs / (1000 * 60));
+            const diffSeconds = Math.floor(diffMs / 1000);
+            
+            if (diffMinutes < 1) {
+                return `${diffSeconds}s ago`;
+            } else if (diffMinutes < 60) {
+                return `${diffMinutes}m ago`;
+            } else {
+                const diffHours = Math.floor(diffMinutes / 60);
+                return `${diffHours}h ago`;
+            }
+        }
+        
+        // Show toast notification for task updates
+        function showTaskNotification(message, type = 'info') {
+            // Create toast container if it doesn't exist
+            let toastContainer = document.getElementById('task-toast-container');
+            if (!toastContainer) {
+                toastContainer = document.createElement('div');
+                toastContainer.id = 'task-toast-container';
+                toastContainer.style.cssText = `
+                    position: fixed;
+                    top: 80px;
+                    right: 20px;
+                    z-index: 1003;
+                    max-width: 350px;
+                `;
+                document.body.appendChild(toastContainer);
+            }
+            
+            // Create toast element
+            const toast = document.createElement('div');
+            toast.style.cssText = `
+                background: rgba(255, 255, 255, 0.95);
+                border-radius: 8px;
+                padding: 12px 16px;
+                margin-bottom: 10px;
+                box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+                backdrop-filter: blur(10px);
+                border-left: 4px solid ${type === 'success' ? '#48bb78' : type === 'error' ? '#f56565' : '#4299e1'};
+                transform: translateX(100%);
+                opacity: 0;
+                transition: all 0.3s ease;
+                font-size: 14px;
+                font-weight: 500;
+                color: #2d3748;
+            `;
+            toast.textContent = message;
+            
+            toastContainer.appendChild(toast);
+            
+            // Animate in
+            setTimeout(() => {
+                toast.style.transform = 'translateX(0)';
+                toast.style.opacity = '1';
+            }, 10);
+            
+            // Remove after 4 seconds
+            setTimeout(() => {
+                toast.style.transform = 'translateX(100%)';
+                toast.style.opacity = '0';
+                setTimeout(() => {
+                    if (toast.parentNode) {
+                        toast.parentNode.removeChild(toast);
+                    }
+                }, 300);
+            }, 4000);
+        }
         
         // ============================================================================
         // Application Initialization (No Auth Required)
@@ -2564,6 +2984,11 @@
                 promoted_offering: promotedOffering
             });
             
+            // Debug: Log the full result structure
+            logEvent('info', `🔧 DEBUG: loadProducts result structure: ${JSON.stringify(result, null, 2)}`);
+            logEvent('info', `🔧 DEBUG: result.products exists? ${!!result?.products}`);
+            logEvent('info', `🔧 DEBUG: result.products length: ${result?.products?.length || 'undefined'}`);
+            
             if (result && result.products) {
                 products = result.products;
                 updateProductsTable();
@@ -2571,7 +2996,23 @@
                 logEvent('success', `Loaded ${products.length} products`);
             } else {
                 setProductsLoadingState(false, 'warning');
-                logEvent('warning', 'No products returned from agent');
+                logEvent('warning', 'No products returned from agent - checking result keys...');
+                logEvent('warning', `🔧 DEBUG: Available result keys: ${Object.keys(result || {}).join(', ')}`);
+                
+                // Check other possible locations for products
+                if (result?.data?.products) {
+                    logEvent('info', '🔧 DEBUG: Found products in result.data.products, using those');
+                    products = result.data.products;
+                    updateProductsTable();
+                    setProductsLoadingState(false, 'success');
+                    logEvent('success', `Loaded ${products.length} products from result.data.products`);
+                } else if (result?.structuredContent?.products) {
+                    logEvent('info', '🔧 DEBUG: Found products in result.structuredContent.products, using those');
+                    products = result.structuredContent.products;
+                    updateProductsTable();
+                    setProductsLoadingState(false, 'success');
+                    logEvent('success', `Loaded ${products.length} products from result.structuredContent.products`);
+                }
             }
         }
         
@@ -3557,6 +3998,12 @@
                 }
             }
             
+            // Handle direct products/formats response (new server format)
+            if (result.products && !result.inventory_response) {
+                logEvent('success', `🔧 Found ${result.products.length} products in direct server response`);
+                // Products already at correct location, no need to move
+            }
+            
             return result;
         }
         
@@ -4477,6 +4924,50 @@
             console.log('All debug logs cleared');
         }
         
+        function copyAllDebugLogs() {
+            if (!debugEntries || debugEntries.length === 0) {
+                alert('No debug logs to copy');
+                return;
+            }
+            
+            let copyText = '=== AdCP Debug Logs ===\n';
+            copyText += `Generated: ${new Date().toISOString()}\n`;
+            copyText += `Total Entries: ${debugEntries.length}\n\n`;
+            
+            debugEntries.forEach((entry, index) => {
+                copyText += `--- Entry ${index + 1}: ${entry.title} ---\n`;
+                copyText += `Time: ${entry.timestamp}\n`;
+                copyText += `Type: ${entry.type}\n`;
+                if (entry.method) copyText += `Method: ${entry.method}\n`;
+                if (entry.protocol) copyText += `Protocol: ${entry.protocol}\n`;
+                if (entry.url) copyText += `URL: ${entry.url}\n`;
+                if (entry.headers) copyText += `Headers: ${JSON.stringify(entry.headers, null, 2)}\n`;
+                if (entry.body) {
+                    copyText += `Body:\n${typeof entry.body === 'string' ? entry.body : JSON.stringify(entry.body, null, 2)}\n`;
+                }
+                copyText += '\n';
+            });
+            
+            copyText += '=== End Debug Logs ===';
+            
+            // Copy to clipboard
+            navigator.clipboard.writeText(copyText).then(() => {
+                // Show temporary success message
+                const button = document.querySelector('button[onclick="copyAllDebugLogs()"]');
+                const originalText = button.innerHTML;
+                button.innerHTML = '✅ Copied!';
+                button.style.background = '#198754';
+                setTimeout(() => {
+                    button.innerHTML = originalText;
+                    button.style.background = '#28a745';
+                }, 2000);
+            }).catch(err => {
+                console.error('Failed to copy to clipboard:', err);
+                // Fallback: show text in a modal or alert
+                alert('Copy failed. Debug logs:\n\n' + copyText);
+            });
+        }
+        
         function escapeHtml(text) {
             const div = document.createElement('div');
             div.textContent = text;
@@ -4745,6 +5236,20 @@
                         `).join('')}
                     </div>
                 `;
+                
+                // Store entry in debugEntries for Copy All functionality
+                debugEntries.push({
+                    type: isError ? 'error' : 'success',
+                    title: `Call ${groupIndex + 1}: ${methodName}`,
+                    timestamp: firstLog.timestamp,
+                    method: methodName,
+                    protocol: 'MCP',
+                    url: agent?.agent_uri || 'unknown',
+                    headers: {},
+                    body: group.map(log => `${log.type.toUpperCase()}: ${log.message}`).join('\n'),
+                    element: callCard,
+                    isError: isError
+                });
                 
                 const debugContent = document.getElementById('debug-content');
                 if (debugContent) {
@@ -7405,6 +7910,9 @@ ${JSON.stringify(result, null, 2)}
         document.addEventListener('DOMContentLoaded', async function() {
             // Agents are loaded dynamically from API - no hardcoded defaults
             // This prevents issues with mismatched agent IDs
+            
+            // Initialize task management
+            initTaskManagement();
             
             // Initialize debug panel button position since it starts open
             const toggleBtn = document.querySelector('.toggle-debug-btn');

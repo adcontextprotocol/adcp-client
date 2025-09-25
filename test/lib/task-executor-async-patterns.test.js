@@ -433,7 +433,7 @@ describe('TaskExecutor Async Patterns (PR #78)', () => {
     test('should handle handler deferral with resume capability', async () => {
       const mockHandler = mock.fn(async (context) => {
         if (context.inputRequest.field === 'approval') {
-          return { defer: true, token: 'defer-token-123' };
+          return { defer: true, token: 'TEST_DEFER_TOKEN_PLACEHOLDER' };
         }
         return 'auto-approve';
       });

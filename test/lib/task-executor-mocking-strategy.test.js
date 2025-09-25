@@ -270,7 +270,7 @@ describe('TaskExecutor Mocking Strategies', () => {
         size: mock.fn(() => mockStorage.size)
       };
 
-      const mockHandler = mock.fn(async () => ({ defer: true, token: 'storage-test-token' }));
+      const mockHandler = mock.fn(async () => ({ defer: true, token: 'TEST_STORAGE_TOKEN_PLACEHOLDER' }));
 
       ProtocolClient.callTool = mock.fn(async (agent, taskName, params) => {
         if (taskName === 'continue_task') {

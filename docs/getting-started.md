@@ -19,7 +19,7 @@ import { ADCPClient } from '@adcp/client';
 
 // Create a client for a single agent
 const client = ADCPClient.simple('https://agent.example.com/mcp/', {
-  authToken: 'your-auth-token'
+  authToken: 'YOUR_AUTH_TOKEN_HERE'
 });
 
 // Execute a task
@@ -105,7 +105,7 @@ For testing, you can provide tokens directly:
 
 ```typescript
 const client = ADCPClient.simple('https://agent.example.com', {
-  authToken: 'bearer-token-here'
+  authToken: 'YOUR_BEARER_TOKEN_HERE'
 });
 ```
 

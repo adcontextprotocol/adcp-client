@@ -498,7 +498,7 @@ describe('TaskExecutor Error Scenarios', () => {
         })
       };
 
-      const deferHandler = mock.fn(async () => ({ defer: true, token: 'storage-fail-token' }));
+      const deferHandler = mock.fn(async () => ({ defer: true, token: 'TEST_STORAGE_FAIL_TOKEN_PLACEHOLDER' }));
 
       ProtocolClient.callTool = mock.fn(async () => ({
         status: ADCP_STATUS.INPUT_REQUIRED,

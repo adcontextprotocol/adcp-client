@@ -72,9 +72,26 @@ export class ProtocolResponseParser {
    * Get ADCP status from response
    */
   getStatus(response: any): ADCPStatus | null {
+    // Check top-level status first (A2A and direct responses)
     if (response?.status && Object.values(ADCP_STATUS).includes(response.status)) {
       return response.status as ADCPStatus;
     }
+    
+    // Check MCP structuredContent.status
+    if (response?.structuredContent?.status && Object.values(ADCP_STATUS).includes(response.structuredContent.status)) {
+      return response.structuredContent.status as ADCPStatus;
+    }
+    
+    // Check for MCP error responses
+    if (response?.isError === true) {
+      return ADCP_STATUS.FAILED;
+    }
+    
+    // If response has structuredContent or content, assume it's completed
+    if (response?.structuredContent || (response?.content && !response?.isError)) {
+      return ADCP_STATUS.COMPLETED;
+    }
+    
     return null;
   }
 

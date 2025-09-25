@@ -239,7 +239,7 @@ export interface TaskResult<T = any> {
   /** Full conversation history */
   conversation?: Message[];
   /** Debug logs (if debug enabled) */
-  debugLogs?: any[];
+  debug_logs?: any[];
 }
 
 /**
