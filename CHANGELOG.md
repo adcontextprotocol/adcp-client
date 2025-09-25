@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.3] - 2025-09-25
+
+### Fixed
+- **A2A Protocol Compliance** - Fixed message format to use `kind: "message"` and `input` instead of deprecated `parameters` field
+- **Package-Lock Version Sync** - Resolved version mismatch between package.json (0.2.3) and package-lock.json (0.2.2)
+- **MCP Product Extraction** - Fixed product extraction logic for proper display in testing UI
+
+### Security
+- **Authentication Token Management** - Removed all hardcoded authentication tokens from source code
+- **Environment Variable Security** - Added support for `auth_token_env` to reference environment variables instead of hardcoded values
+- **HITL Testing Security** - Created secure HITL setup with `.env.hitl.template` and git-ignored `.env.hitl` file
+- **GitGuardian Compliance** - Achieved full compliance with security scanning requirements
+
+### Added
+- **Node.js Version Specification** - Added `.nvmrc` file specifying Node.js 20 requirement  
+- **HITL Setup Documentation** - Created comprehensive `HITL-SETUP.md` with security-first configuration guide
+- **Comprehensive Protocol Testing** - Added protocol compliance, schema validation, and integration contract tests
+- **Security Documentation** - Enhanced README.md with security best practices and environment variable usage
+- **CI Validation** - Added server configuration tests to prevent deployment issues
+
+### Changed
+- **Testing Strategy** - Implemented comprehensive protocol testing strategy documented in `PROTOCOL-TESTING-STRATEGY.md`
+- **Documentation Updates** - Updated README.md to reflect v0.2.3 changes, security improvements, and Node.js requirements
+
+### Development
+- **Test Organization** - Restructured test suite with protocol-specific test categories
+- **Mock Strategy** - Improved mocking strategy to test at SDK integration level instead of HTTP level
+- **Error Reporting** - Enhanced error messages and debugging information for protocol issues
+
 ## [1.0.0] - 2025-09-20
 
 ### Added
