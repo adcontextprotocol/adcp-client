@@ -35,6 +35,7 @@
     "test:all": "npm run test:server-config && npm run test:lib && npm run test:protocols",
     "test:protocol-comparison": "node test/utils/comprehensive-protocol-comparison.js",
     "test:status-report": "node test/utils/final-status-report.js",
+    "test:production-hitl": "node test-production-hitl-agents.js",
     "test:server-config": "node --test test/server-config.test.js",
     "sync-schemas": "tsx scripts/sync-schemas.ts",
     "generate-types": "tsx scripts/generate-types.ts",

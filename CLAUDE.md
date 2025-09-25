@@ -233,8 +233,9 @@ fly deploy --verbose
 - **USE_REAL_AGENTS**: Set to enable production agents (vs test/demo agents)
 
 #### Production Agent Configuration
-The production `SALES_AGENTS_CONFIG` should contain:
+The production `SALES_AGENTS_CONFIG` can contain various agent types:
 
+**Option 1: AdCP Protocol Test Agents**
 ```json
 {
   "agents": [
@@ -252,6 +253,46 @@ The production `SALES_AGENTS_CONFIG` should contain:
       "agent_uri": "https://test-agent.adcontextprotocol.org/mcp/",
       "protocol": "mcp",
       "auth_token_env": "<AUTH_TOKEN>",
+      "requiresAuth": true
+    }
+  ]
+}
+```
+
+**Option 2: HITL Advertiser Agents (See PRODUCTION-HITL-AGENTS.md)**
+```json
+{
+  "agents": [
+    {
+      "id": "sync_hitl_advertiser_a2a",
+      "name": "Automatic Approval - A2A (10s delay)",
+      "agent_uri": "https://test-agent.sales-agent.scope3.com",
+      "protocol": "a2a",
+      "auth_token_env": "SYNC_HITL_ADVERTISER_TOKEN",
+      "requiresAuth": true
+    },
+    {
+      "id": "sync_hitl_advertiser_mcp",
+      "name": "Automatic Approval - MCP (10s delay)",
+      "agent_uri": "https://test-agent.sales-agent.scope3.com/mcp/",
+      "protocol": "mcp",
+      "auth_token_env": "SYNC_HITL_ADVERTISER_TOKEN",
+      "requiresAuth": true
+    },
+    {
+      "id": "async_hitl_advertiser_a2a",
+      "name": "Async HITL Advertiser - A2A (125s timeout)",
+      "agent_uri": "https://test-agent.sales-agent.scope3.com",
+      "protocol": "a2a",
+      "auth_token_env": "ASYNC_HITL_ADVERTISER_TOKEN",
+      "requiresAuth": true
+    },
+    {
+      "id": "async_hitl_advertiser_mcp",
+      "name": "Async HITL Advertiser - MCP (125s timeout)",
+      "agent_uri": "https://test-agent.sales-agent.scope3.com/mcp/",
+      "protocol": "mcp",
+      "auth_token_env": "ASYNC_HITL_ADVERTISER_TOKEN",
       "requiresAuth": true
     }
   ]
