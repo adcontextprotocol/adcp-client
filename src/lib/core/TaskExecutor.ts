@@ -116,6 +116,30 @@ export class TaskExecutor {
     const startTime = Date.now();
     const workingTimeout = this.config.workingTimeout || 120000; // 120s max per PR #78
     
+    // Register task in active tasks
+    const taskState: TaskState = {
+      taskId,
+      taskName,
+      params,
+      status: 'pending',
+      messages: [],
+      startTime,
+      attempt: 0,
+      maxAttempts: options.maxClarifications || this.config.defaultMaxClarifications || 3,
+      options,
+      agent: { id: agent.id, name: agent.name, protocol: agent.protocol }
+    };
+    this.activeTasks.set(taskId, taskState);
+
+    // Emit task creation event
+    this.emitTaskEvent({
+      taskId,
+      status: 'submitted',
+      taskType: taskName,
+      createdAt: startTime,
+      updatedAt: startTime
+    }, agent.id);
+    
     // Create initial message
     const initialMessage: Message = {
       id: randomUUID(),
@@ -183,10 +207,12 @@ export class TaskExecutor {
     switch (status) {
       case ADCP_STATUS.COMPLETED:
         // Task completed immediately
+        const completedData = this.extractResponseData(response);
+        this.updateTaskStatus(taskId, 'completed', completedData);
         return {
           success: true,
           status: 'completed',
-          data: response.result || response.data || response,
+          data: completedData,
           metadata: {
             taskId,
             taskName,
@@ -196,7 +222,8 @@ export class TaskExecutor {
             clarificationRounds: 0,
             status: 'completed'
           },
-          conversation: messages
+          conversation: messages,
+          debug_logs: debugLogs
         };
 
       case ADCP_STATUS.WORKING:
@@ -227,11 +254,12 @@ export class TaskExecutor {
 
       default:
         // Unknown status - treat as completed if we have data
-        if (response.result || response.data) {
+        const defaultData = this.extractResponseData(response);
+        if (defaultData && (defaultData !== response || response.structuredContent || response.result || response.data)) {
           return {
             success: true,
             status: 'completed',
-            data: response.result || response.data || response,
+            data: defaultData,
             metadata: {
               taskId,
               taskName,
@@ -241,12 +269,35 @@ export class TaskExecutor {
               clarificationRounds: 0,
               status: 'completed'
             },
-            conversation: messages
+            conversation: messages,
+            debug_logs: debugLogs
           };
         } else {
           throw new Error(`Unknown status: ${status || 'undefined'}`);
         }
     }
+  }
+
+  /**
+   * Extract response data from different protocol formats
+   */
+  private extractResponseData(response: any): any {
+    // MCP responses have structuredContent
+    if (response?.structuredContent) {
+      return response.structuredContent;
+    }
+    
+    // A2A responses typically have result or data  
+    if (response?.result) {
+      return response.result;
+    }
+    
+    if (response?.data) {
+      return response.data;
+    }
+    
+    // Fallback to full response
+    return response;
   }
 
   /**
@@ -359,7 +410,8 @@ export class TaskExecutor {
         clarificationRounds: 0,
         status: 'submitted'
       },
-      conversation: messages
+      conversation: messages,
+      debug_logs: debugLogs
     };
   }
 
@@ -447,7 +499,8 @@ export class TaskExecutor {
           clarificationRounds: 1,
           status: 'deferred'
         },
-        conversation: messages
+        conversation: messages,
+        debug_logs: debugLogs
       };
     }
     
@@ -604,7 +657,8 @@ export class TaskExecutor {
         timestamp: new Date().toISOString(),
         clarificationRounds: 0,
         status: 'failed' // metadata status
-      }
+      },
+      debug_logs: debugLogs
     };
   }
 
@@ -621,5 +675,196 @@ export class TaskExecutor {
 
   getActiveTasks(): TaskState[] {
     return Array.from(this.activeTasks.values());
+  }
+
+  // ====== TASK MANAGEMENT & NOTIFICATION METHODS ======
+
+  private taskEventListeners = new Map<string, {
+    callback: (task: TaskInfo) => void;
+    agentId?: string;
+  }[]>();
+
+  private webhookRegistrations = new Map<string, {
+    agent: AgentConfig;
+    webhookUrl: string;
+    taskTypes?: string[];
+  }>();
+
+  /**
+   * Get task list for a specific agent
+   */
+  async getTaskList(agentId: string): Promise<TaskInfo[]> {
+    // First try to get from agent via protocol
+    const agent = this.findAgentById(agentId);
+    if (agent) {
+      try {
+        const response = await ProtocolClient.callTool(agent, 'tasks/list', {});
+        return response.tasks || [];
+      } catch (error) {
+        console.warn('Failed to get remote task list:', error);
+      }
+    }
+
+    // Fall back to local active tasks
+    return Array.from(this.activeTasks.values())
+      .filter(task => task.agent.id === agentId)
+      .map(task => ({
+        taskId: task.taskId,
+        status: task.status,
+        taskType: task.taskName,
+        createdAt: task.startTime,
+        updatedAt: task.startTime, // TODO: track updates
+      }));
+  }
+
+  /**
+   * Get detailed information about a specific task
+   */
+  async getTaskInfo(taskId: string): Promise<TaskInfo | null> {
+    const localTask = this.activeTasks.get(taskId);
+    if (localTask) {
+      return {
+        taskId: localTask.taskId,
+        status: localTask.status,
+        taskType: localTask.taskName,
+        createdAt: localTask.startTime,
+        updatedAt: localTask.startTime,
+      };
+    }
+
+    // Try to get from agent
+    // Note: Would need to know which agent to query
+    return null;
+  }
+
+  /**
+   * Subscribe to task updates for a specific agent
+   */
+  onTaskUpdate(agentId: string, callback: (task: TaskInfo) => void): () => void {
+    const listenerId = randomUUID();
+    const listeners = this.taskEventListeners.get(listenerId) || [];
+    listeners.push({ callback, agentId });
+    this.taskEventListeners.set(listenerId, listeners);
+
+    return () => {
+      this.taskEventListeners.delete(listenerId);
+    };
+  }
+
+  /**
+   * Subscribe to task events with detailed callbacks
+   */
+  onTaskEvents(agentId: string, callbacks: {
+    onTaskCreated?: (task: TaskInfo) => void;
+    onTaskUpdated?: (task: TaskInfo) => void;
+    onTaskCompleted?: (task: TaskInfo) => void;
+    onTaskFailed?: (task: TaskInfo, error: string) => void;
+  }): () => void {
+    const unsubscribeFns: (() => void)[] = [];
+
+    // Create combined handler that routes to specific callbacks
+    const handler = (task: TaskInfo) => {
+      switch (task.status) {
+        case 'submitted':
+        case 'working':
+          callbacks.onTaskCreated?.(task);
+          break;
+        case 'input-required':
+          callbacks.onTaskUpdated?.(task);
+          break;
+        case 'completed':
+          callbacks.onTaskCompleted?.(task);
+          break;
+        case 'failed':
+        case 'rejected':
+          callbacks.onTaskFailed?.(task, task.error || 'Task failed');
+          break;
+        default:
+          callbacks.onTaskUpdated?.(task);
+      }
+    };
+
+    unsubscribeFns.push(this.onTaskUpdate(agentId, handler));
+
+    return () => {
+      unsubscribeFns.forEach(fn => fn());
+    };
+  }
+
+  /**
+   * Register webhook for task notifications
+   */
+  async registerWebhook(agent: AgentConfig, webhookUrl: string, taskTypes?: string[]): Promise<void> {
+    this.webhookRegistrations.set(agent.id, {
+      agent,
+      webhookUrl,
+      taskTypes
+    });
+
+    // TODO: Register with remote agent if it supports webhooks
+    console.log(`Webhook registered for agent ${agent.id}: ${webhookUrl}`);
+  }
+
+  /**
+   * Unregister webhook notifications
+   */
+  async unregisterWebhook(agent: AgentConfig): Promise<void> {
+    this.webhookRegistrations.delete(agent.id);
+    console.log(`Webhook unregistered for agent ${agent.id}`);
+  }
+
+  /**
+   * Emit task event to listeners
+   */
+  private emitTaskEvent(task: TaskInfo, agentId?: string): void {
+    this.taskEventListeners.forEach(listeners => {
+      listeners.forEach(({ callback, agentId: listenerAgentId }) => {
+        if (!listenerAgentId || listenerAgentId === agentId) {
+          try {
+            callback(task);
+          } catch (error) {
+            console.error('Error in task event callback:', error);
+          }
+        }
+      });
+    });
+  }
+
+  /**
+   * Update task status and emit events
+   */
+  private updateTaskStatus(taskId: string, status: TaskStatus, result?: any, error?: string): void {
+    const task = this.activeTasks.get(taskId);
+    if (task) {
+      task.status = status;
+      
+      const taskInfo: TaskInfo = {
+        taskId: task.taskId,
+        status: status,
+        taskType: task.taskName,
+        createdAt: task.startTime,
+        updatedAt: Date.now(),
+        result,
+        error
+      };
+
+      this.emitTaskEvent(taskInfo, task.agent.id);
+
+      // If task is finished, remove from active tasks after a delay
+      if (['completed', 'failed', 'rejected', 'canceled'].includes(status)) {
+        setTimeout(() => {
+          this.activeTasks.delete(taskId);
+        }, 30000); // Keep for 30 seconds for final status checks
+      }
+    }
+  }
+
+  /**
+   * Helper to find agent config by ID
+   */
+  private findAgentById(agentId: string): AgentConfig | undefined {
+    // This would ideally be passed in or stored in the executor
+    // For now, return undefined and fall back to local tasks
+    return undefined;
   }
 }

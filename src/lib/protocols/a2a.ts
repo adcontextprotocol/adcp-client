@@ -39,12 +39,13 @@ export async function callA2ATool(
   const requestPayload = {
     message: {
       messageId: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-      role: "user", 
+      role: "user",
+      kind: "message",  // Required by A2A spec
       parts: [{
         kind: "data",  // A2A spec uses "kind", not "type"
         data: {
           skill: toolName,
-          parameters
+          input: parameters  // A2A spec uses "input", not "parameters"
         }
       }]
     }
@@ -54,7 +55,7 @@ export async function callA2ATool(
   const payloadSize = JSON.stringify(requestPayload).length;
   debugLogs.push({
     type: 'info',
-    message: `A2A: Calling skill ${toolName} with parameters: ${JSON.stringify(parameters)}. Payload size: ${payloadSize} bytes`,
+    message: `A2A: Calling skill ${toolName} with input: ${JSON.stringify(parameters)}. Payload size: ${payloadSize} bytes`,
     timestamp: new Date().toISOString(),
     payloadSize,
     actualPayload: requestPayload

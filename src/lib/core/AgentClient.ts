@@ -6,6 +6,7 @@ import type {
   InputHandler,
   TaskOptions,
   TaskResult,
+  TaskInfo,
   Message
 } from './ConversationTypes';
 import type {
@@ -477,5 +478,54 @@ export class AgentClient {
     }
 
     return result;
+  }
+
+  // ====== TASK MANAGEMENT DELEGATION ======
+
+  /**
+   * List all tasks for this agent
+   */
+  async listTasks(): Promise<TaskInfo[]> {
+    return this.client.listTasks();
+  }
+
+  /**
+   * Get detailed information about a specific task
+   */
+  async getTaskInfo(taskId: string): Promise<TaskInfo | null> {
+    return this.client.getTaskInfo(taskId);
+  }
+
+  /**
+   * Subscribe to task notifications for this agent
+   */
+  onTaskUpdate(callback: (task: TaskInfo) => void): () => void {
+    return this.client.onTaskUpdate(callback);
+  }
+
+  /**
+   * Subscribe to all task events
+   */
+  onTaskEvents(callbacks: {
+    onTaskCreated?: (task: TaskInfo) => void;
+    onTaskUpdated?: (task: TaskInfo) => void;
+    onTaskCompleted?: (task: TaskInfo) => void;
+    onTaskFailed?: (task: TaskInfo, error: string) => void;
+  }): () => void {
+    return this.client.onTaskEvents(callbacks);
+  }
+
+  /**
+   * Register webhook for task notifications
+   */
+  async registerWebhook(webhookUrl: string, taskTypes?: string[]): Promise<void> {
+    return this.client.registerWebhook(webhookUrl, taskTypes);
+  }
+
+  /**
+   * Unregister webhook notifications
+   */
+  async unregisterWebhook(): Promise<void> {
+    return this.client.unregisterWebhook();
   }
 }

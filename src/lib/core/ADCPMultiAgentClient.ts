@@ -7,7 +7,8 @@ import { ConfigurationManager } from './ConfigurationManager';
 import type {
   InputHandler,
   TaskOptions,
-  TaskResult
+  TaskResult,
+  TaskInfo
 } from './ConversationTypes';
 import type {
   GetProductsRequest,
@@ -630,6 +631,158 @@ export class ADCPMultiAgentClient {
       allTasks.push(...agent.getActiveTasks());
     }
     return allTasks;
+  }
+
+  // ====== TASK MANAGEMENT & NOTIFICATIONS ======
+
+  /**
+   * Get all tasks from all agents with detailed information
+   * 
+   * @returns Promise resolving to array of all tasks across agents
+   * 
+   * @example
+   * ```typescript
+   * const allTasks = await client.listAllTasks();
+   * console.log(`Total active tasks: ${allTasks.length}`);
+   * ```
+   */
+  async listAllTasks(): Promise<TaskInfo[]> {
+    const taskPromises = Array.from(this.agentClients.values()).map(agent => 
+      agent.listTasks()
+    );
+    const taskArrays = await Promise.all(taskPromises);
+    return taskArrays.flat();
+  }
+
+  /**
+   * Get tasks for specific agents
+   * 
+   * @param agentIds - Array of agent IDs to get tasks for
+   * @returns Promise resolving to array of tasks from specified agents
+   */
+  async listTasksForAgents(agentIds: string[]): Promise<TaskInfo[]> {
+    const taskPromises = agentIds.map(agentId => {
+      const agent = this.agentClients.get(agentId);
+      return agent ? agent.listTasks() : Promise.resolve([]);
+    });
+    const taskArrays = await Promise.all(taskPromises);
+    return taskArrays.flat();
+  }
+
+  /**
+   * Get task information by ID from any agent
+   * 
+   * @param taskId - ID of the task to find
+   * @returns Promise resolving to task information or null if not found
+   */
+  async getTaskInfo(taskId: string): Promise<TaskInfo | null> {
+    for (const agent of this.agentClients.values()) {
+      const taskInfo = await agent.getTaskInfo(taskId);
+      if (taskInfo) {
+        return taskInfo;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Subscribe to task events from all agents
+   * 
+   * @param callbacks - Event callbacks for different task events
+   * @returns Unsubscribe function that removes all subscriptions
+   * 
+   * @example
+   * ```typescript
+   * const unsubscribe = client.onTaskEvents({
+   *   onTaskCompleted: (task) => {
+   *     console.log(`Task ${task.taskName} completed!`);
+   *   },
+   *   onTaskFailed: (task, error) => {
+   *     console.error(`Task ${task.taskName} failed:`, error);
+   *   }
+   * });
+   * ```
+   */
+  onTaskEvents(callbacks: {
+    onTaskCreated?: (task: TaskInfo) => void;
+    onTaskUpdated?: (task: TaskInfo) => void;
+    onTaskCompleted?: (task: TaskInfo) => void;
+    onTaskFailed?: (task: TaskInfo, error: string) => void;
+  }): () => void {
+    const unsubscribers: (() => void)[] = [];
+    
+    for (const agent of this.agentClients.values()) {
+      const unsubscribe = agent.onTaskEvents(callbacks);
+      unsubscribers.push(unsubscribe);
+    }
+    
+    return () => {
+      unsubscribers.forEach(unsub => unsub());
+    };
+  }
+
+  /**
+   * Subscribe to task updates from all agents
+   * 
+   * @param callback - Function to call when any task status changes
+   * @returns Unsubscribe function
+   */
+  onAnyTaskUpdate(callback: (task: TaskInfo) => void): () => void {
+    const unsubscribers: (() => void)[] = [];
+    
+    for (const agent of this.agentClients.values()) {
+      const unsubscribe = agent.onTaskUpdate(callback);
+      unsubscribers.push(unsubscribe);
+    }
+    
+    return () => {
+      unsubscribers.forEach(unsub => unsub());
+    };
+  }
+
+  /**
+   * Register webhooks for all agents
+   * 
+   * @param webhookUrl - Base webhook URL (will append agent ID)
+   * @param taskTypes - Optional array of task types to watch
+   */
+  async registerWebhooksForAll(webhookUrl: string, taskTypes?: string[]): Promise<void> {
+    const promises = Array.from(this.agentClients.values()).map(agent => 
+      agent.registerWebhook(`${webhookUrl}?agentId=${agent.getAgentId()}`, taskTypes)
+    );
+    await Promise.all(promises);
+  }
+
+  /**
+   * Unregister webhooks for all agents
+   */
+  async unregisterAllWebhooks(): Promise<void> {
+    const promises = Array.from(this.agentClients.values()).map(agent => 
+      agent.unregisterWebhook()
+    );
+    await Promise.all(promises);
+  }
+
+  /**
+   * Get count of active tasks by status
+   * 
+   * @returns Promise resolving to object with counts by status
+   * 
+   * @example
+   * ```typescript
+   * const counts = await client.getTaskCountsByStatus();
+   * console.log(`Working: ${counts.working}, Completed: ${counts.completed}`);
+   * ```
+   */
+  async getTaskCountsByStatus(): Promise<Record<string, number>> {
+    const tasks = await this.listAllTasks();
+    const counts: Record<string, number> = {};
+    
+    for (const task of tasks) {
+      counts[task.status] = (counts[task.status] || 0) + 1;
+    }
+    
+    return counts;
   }
 }
 

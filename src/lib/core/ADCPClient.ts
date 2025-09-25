@@ -31,7 +31,8 @@ import type {
   InputHandler,
   TaskOptions,
   TaskResult,
-  ConversationConfig
+  ConversationConfig,
+  TaskInfo
 } from './ConversationTypes';
 
 /**
@@ -476,6 +477,95 @@ export class ADCPClient {
     return this.executor.getActiveTasks().filter(
       (task: any) => task.agent.id === this.agent.id
     );
+  }
+
+  // ====== TASK MANAGEMENT & NOTIFICATIONS ======
+
+  /**
+   * List all tasks for this agent with detailed information
+   * 
+   * @returns Promise resolving to array of task information
+   * 
+   * @example
+   * ```typescript
+   * const tasks = await client.listTasks();
+   * tasks.forEach(task => {
+   *   console.log(`${task.taskName}: ${task.status}`);
+   * });
+   * ```
+   */
+  async listTasks(): Promise<TaskInfo[]> {
+    return this.executor.getTaskList(this.agent.id);
+  }
+
+  /**
+   * Get detailed information about a specific task
+   * 
+   * @param taskId - ID of the task to get information for
+   * @returns Promise resolving to task information
+   */
+  async getTaskInfo(taskId: string): Promise<TaskInfo | null> {
+    return this.executor.getTaskInfo(taskId);
+  }
+
+  /**
+   * Subscribe to task notifications for this agent
+   * 
+   * @param callback - Function to call when task status changes
+   * @returns Unsubscribe function
+   * 
+   * @example
+   * ```typescript
+   * const unsubscribe = client.onTaskUpdate((task) => {
+   *   console.log(`Task ${task.taskName} is now ${task.status}`);
+   *   if (task.status === 'completed') {
+   *     // Handle completion
+   *   }
+   * });
+   * 
+   * // Later, stop listening
+   * unsubscribe();
+   * ```
+   */
+  onTaskUpdate(callback: (task: TaskInfo) => void): () => void {
+    return this.executor.onTaskUpdate(this.agent.id, callback);
+  }
+
+  /**
+   * Subscribe to all task events (create, update, complete, error)
+   * 
+   * @param callbacks - Event callbacks for different task events
+   * @returns Unsubscribe function
+   */
+  onTaskEvents(callbacks: {
+    onTaskCreated?: (task: TaskInfo) => void;
+    onTaskUpdated?: (task: TaskInfo) => void;  
+    onTaskCompleted?: (task: TaskInfo) => void;
+    onTaskFailed?: (task: TaskInfo, error: string) => void;
+  }): () => void {
+    return this.executor.onTaskEvents(this.agent.id, callbacks);
+  }
+
+  /**
+   * Register webhook URL for receiving task notifications
+   * 
+   * @param webhookUrl - URL to receive webhook notifications
+   * @param taskTypes - Optional array of task types to watch (defaults to all)
+   * 
+   * @example
+   * ```typescript
+   * await client.registerWebhook('https://myapp.com/webhook', ['create_media_buy']);
+   * ```
+   */
+  async registerWebhook(webhookUrl: string, taskTypes?: string[]): Promise<void> {
+    return this.executor.registerWebhook(this.agent, webhookUrl, taskTypes);
+  }
+
+  /**
+   * Unregister webhook notifications
+   */
+  async unregisterWebhook(): Promise<void> {
+    return this.executor.unregisterWebhook(this.agent);
   }
 }
 
