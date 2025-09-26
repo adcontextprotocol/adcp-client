@@ -387,8 +387,48 @@ Should show:
 - Real agent mode should only be enabled in production
 - Never commit actual auth tokens to version control
 
+## NPM Publishing & Release Management
+
+### 🚨 CRITICAL: GitHub Release vs Git Tag 🚨
+
+**IMPORTANT**: This project uses GitHub Actions for automatic npm publishing. The workflow is triggered by **GitHub Releases**, NOT git tags.
+
+#### Correct Release Process:
+1. **Create GitHub Release** (not just a git tag)
+   - Use `gh release create v0.x.x` command
+   - Or create release via GitHub web interface
+   - This triggers the CI/CD workflow automatically
+
+2. **Workflow Trigger**: 
+   - The publish job runs on `github.event_name == 'release' && github.event.action == 'published'`
+   - Located in `.github/workflows/ci.yml` lines 154-186
+
+#### Common Mistake:
+- ❌ **Wrong**: `git tag v0.x.x && git push origin v0.x.x` (only creates tag)
+- ✅ **Correct**: `gh release create v0.x.x` (creates tag AND release)
+
+#### Release Commands:
+```bash
+# Create release (this will trigger npm publish automatically)
+gh release create v0.2.3 --title "v0.2.3" --notes "Release v0.2.3"
+
+# Check if release triggered the workflow
+gh run list --event=release
+
+# Monitor workflow progress
+gh run watch
+```
+
+#### Verification:
+After creating a GitHub release, verify:
+- [ ] GitHub Actions workflow runs automatically
+- [ ] Package is published to npm registry
+- [ ] Version appears at https://npmjs.com/package/@adcp/client
+
+**Remember**: Always use GitHub releases for triggering npm publishing, not just git tags.
+
 ---
 
-*Last updated: 2025-09-11 (Added Fly.io deployment requirements and unit tests)*
+*Last updated: 2025-09-26 (Added NPM publishing and release management section)*
 *Project: AdCP Testing Framework*
 *Environment: Fly.io Production*
