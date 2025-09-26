@@ -545,18 +545,22 @@ export interface Budget {
 
 // create_media_buy response
 /**
- * Current task state - typically 'completed' for successful creation or 'input-required' if approval needed
+ * Current task state - 'completed' for immediate success, 'working' for operations under 120s, 'submitted' for long-running operations, 'input-required' if approval needed
  */
 export interface CreateMediaBuyResponse {
   /**
    * AdCP schema version used for this response
    */
   adcp_version: string;
-  status?: TaskStatus;
+  status: TaskStatus;
+  /**
+   * Unique identifier for tracking this async operation (present for submitted/working status)
+   */
+  task_id?: string;
   /**
    * Publisher's unique identifier for the created media buy
    */
-  media_buy_id: string;
+  media_buy_id?: string;
   /**
    * Buyer's reference identifier for this media buy
    */
@@ -568,7 +572,7 @@ export interface CreateMediaBuyResponse {
   /**
    * Array of created packages
    */
-  packages: {
+  packages?: {
     /**
      * Publisher's unique identifier for the package
      */
@@ -634,7 +638,7 @@ export interface SyncCreativesRequest {
 
 // sync_creatives response
 /**
- * Current approval status of the creative
+ * Current task state - 'completed' for immediate success, 'working' for operations under 120s, 'submitted' for long-running operations
  */
 export type CreativeStatus = 'processing' | 'approved' | 'rejected' | 'pending_review';
 
@@ -654,6 +658,11 @@ export interface SyncCreativesResponse {
    * Context ID for tracking async operations
    */
   context_id?: string;
+  status: TaskStatus;
+  /**
+   * Unique identifier for tracking this async operation (present for submitted/working status)
+   */
+  task_id?: string;
   /**
    * Whether this was a dry run (no actual changes made)
    */
@@ -661,7 +670,7 @@ export interface SyncCreativesResponse {
   /**
    * High-level summary of sync operation results
    */
-  summary: {
+  summary?: {
     /**
      * Total number of creatives processed
      */
@@ -690,7 +699,7 @@ export interface SyncCreativesResponse {
   /**
    * Detailed results for each creative processed
    */
-  results: {
+  results?: {
     /**
      * Creative ID from the request
      */
@@ -1214,13 +1223,18 @@ export interface UpdateMediaBuyRequest1 {
 
 // update_media_buy response
 /**
- * Response payload for update_media_buy task
+ * Current task state - 'completed' for immediate success, 'working' for operations under 120s, 'submitted' for long-running operations, 'input-required' if approval needed
  */
 export interface UpdateMediaBuyResponse {
   /**
    * AdCP schema version used for this response
    */
   adcp_version: string;
+  status: TaskStatus;
+  /**
+   * Unique identifier for tracking this async operation (present for submitted/working status)
+   */
+  task_id?: string;
   /**
    * Publisher's identifier for the media buy
    */
@@ -1236,7 +1250,7 @@ export interface UpdateMediaBuyResponse {
   /**
    * Array of packages that were modified
    */
-  affected_packages: {
+  affected_packages?: {
     /**
      * Publisher's package identifier
      */
