@@ -500,15 +500,32 @@ app.post('/api/sales/agents/:agentId/query', async (request, reply) => {
   try {
     const { agentId } = request.params as { agentId: string };
     const body = request.body as any;
-    
-    // Check if agent exists
+
+    // Check if agent exists in configured agents
     const agents = adcpClient.getAgentConfigs();
-    const agent = agents.find(a => a.id === agentId);
-    
+    let agent = agents.find(a => a.id === agentId);
+
+    // If agent not found in config, check if custom agent details provided in request body
+    if (!agent && body.agentConfig) {
+      app.log.info(`Using custom agent configuration for ${agentId}`);
+      const customAgent = body.agentConfig as AgentConfig;
+      agent = customAgent;
+
+      // Add this agent to the client if not already present
+      if (!adcpClient.hasAgent(agentId)) {
+        try {
+          adcpClient.addAgent(customAgent);
+          app.log.info(`Added custom agent ${agentId} to client`);
+        } catch (error) {
+          app.log.warn(`Could not add custom agent ${agentId}: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+    }
+
     if (!agent) {
       return reply.code(404).send({
         success: false,
-        error: `Agent with ID ${agentId} not found`,
+        error: `Agent with ID ${agentId} not found. Please provide agentConfig in request body for custom agents.`,
         timestamp: new Date().toISOString()
       });
     }
