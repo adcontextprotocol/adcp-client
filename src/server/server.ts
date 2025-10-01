@@ -114,21 +114,56 @@ function createDefaultInputHandler(): InputHandler {
 }
 
 async function executeTaskOnAgent(
-  agentId: string, 
-  toolName: string, 
-  args: any, 
+  agentId: string,
+  toolName: string,
+  args: any,
   inputHandler?: InputHandler
 ): Promise<TestResult & { status?: string; inputRequest?: any; continuation?: any; taskId?: string; webhookUrl?: string; }> {
   try {
     const client = adcpClient.agent(agentId);
-    
-    // Use executeTask for full async support
-    const result = await client.executeTask(
-      toolName,
-      args,
-      inputHandler || createDefaultInputHandler()
-    );
-    
+    const handler = inputHandler || createDefaultInputHandler();
+
+    // Use typed methods instead of generic executeTask
+    let result: TaskResult<any>;
+
+    switch (toolName) {
+      case 'get_products':
+        result = await client.getProducts(args, handler);
+        break;
+      case 'list_creative_formats':
+        result = await client.listCreativeFormats(args, handler);
+        break;
+      case 'create_media_buy':
+        result = await client.createMediaBuy(args, handler);
+        break;
+      case 'update_media_buy':
+        result = await client.updateMediaBuy(args, handler);
+        break;
+      case 'sync_creatives':
+        result = await client.syncCreatives(args, handler);
+        break;
+      case 'list_creatives':
+        result = await client.listCreatives(args, handler);
+        break;
+      case 'get_media_buy_delivery':
+        result = await client.getMediaBuyDelivery(args, handler);
+        break;
+      case 'list_authorized_properties':
+        result = await client.listAuthorizedProperties(args, handler);
+        break;
+      case 'provide_performance_feedback':
+        result = await client.providePerformanceFeedback(args, handler);
+        break;
+      case 'get_signals':
+        result = await client.getSignals(args, handler);
+        break;
+      case 'activate_signal':
+        result = await client.activateSignal(args, handler);
+        break;
+      default:
+        throw new Error(`Unknown or unsupported tool: ${toolName}`);
+    }
+
     // Store active task if it's deferred or submitted
     if (result.status === 'deferred' || result.status === 'submitted') {
       const taskId = result.submitted?.taskId || `deferred-${Date.now()}`;
@@ -141,11 +176,11 @@ async function executeTaskOnAgent(
         startTime: new Date()
       });
     }
-    
+
     return adaptTaskResultToLegacyFormat(result as TaskResult<any>, agentId);
   } catch (error) {
     app.log.error({ error }, 'Error executing task');
-    
+
     // Handle InputRequiredError specifically
     if (error instanceof InputRequiredError) {
       return adaptTaskResultToLegacyFormat({
@@ -156,7 +191,7 @@ async function executeTaskOnAgent(
         debugLogs: []
       } as any as TaskResult<any>, agentId);
     }
-    
+
     return {
       agent_id: agentId,
       agent_name: adcpClient.getAgentConfigs().find(a => a.id === agentId)?.name || agentId,
@@ -495,107 +530,201 @@ function extractResponseData(result: any): any {
   return result || {};
 }
 
-app.post('/api/sales/agents/:agentId/query', async (request, reply) => {
-  // Individual agent query endpoint for main page
+// ==== SPECIFIC TOOL ENDPOINTS ====
+// Clean, typed REST endpoints that directly call client library methods
+
+// Get Products
+app.post<{
+  Params: { agentId: string };
+}>('/api/agents/:agentId/get-products', async (request, reply) => {
   try {
-    const { agentId } = request.params as { agentId: string };
-    const body = request.body as any;
+    const { agentId } = request.params;
+    const params = request.body as any;
 
-    // Check if agent exists in configured agents
-    const agents = adcpClient.getAgentConfigs();
-    let agent = agents.find(a => a.id === agentId);
+    const client = adcpClient.agent(agentId);
+    const result = await client.getProducts(params, createDefaultInputHandler());
 
-    // If agent not found in config, check if custom agent details provided in request body
-    if (!agent && body.agentConfig) {
-      app.log.info(`Using custom agent configuration for ${agentId}`);
-      const customAgent = body.agentConfig as AgentConfig;
-      agent = customAgent;
-
-      // Add this agent to the client if not already present
-      if (!adcpClient.hasAgent(agentId)) {
-        try {
-          adcpClient.addAgent(customAgent);
-          app.log.info(`Added custom agent ${agentId} to client`);
-        } catch (error) {
-          app.log.warn(`Could not add custom agent ${agentId}: ${error instanceof Error ? error.message : String(error)}`);
-        }
-      }
-    }
-
-    if (!agent) {
-      return reply.code(404).send({
-        success: false,
-        error: `Agent with ID ${agentId} not found. Please provide agentConfig in request body for custom agents.`,
-        timestamp: new Date().toISOString()
-      });
-    }
-
-    // Use the existing testAgents function with tool-specific parameters
-    app.log.info({
-      agentId,
-      toolName: body.tool,
-      body,
-      agent: { id: agent.id, name: agent.name, protocol: agent.protocol, uri: agent.agent_uri }
-    }, `Query endpoint received request for agent ${agentId}`);
-    
-    const toolName = body.tool;
-    if (!toolName) {
-      return reply.code(400).send({
-        success: false,
-        error: 'Missing required parameter: tool'
-      });
-    }
-    
-    const brief = body.brief || body.brandStory || body.message || 'Test query';
-    const promotedOffering = body.promoted_offering || body.offering;
-    
-    // Pass tool-specific params if provided
-    const toolParams = body.params || {};
-    
-    // Use helper function to build appropriate parameters for this tool
-    const args = buildToolArgs(toolName, brief, promotedOffering, toolParams);
-    // Use new async-capable executeTask
-    const result = await executeTaskOnAgent(agentId, toolName, args);
-    
-    // Extract the data from the response structure
-    const extractedData = extractResponseData(result) || {};
-    
-    // Debug: Log the results structure
-    app.log.info('Results structure: ' + JSON.stringify({
+    return reply.send({
       success: result.success,
+      data: result.data,
       error: result.error,
-      status: result.status,
-      debug_logs_length: result.debug_logs ? result.debug_logs.length : 'undefined',
-      debug_logs_sample: result.debug_logs ? result.debug_logs.slice(0, 2) : 'undefined',
-      products_extracted: extractedData.products ? extractedData.products.length : 'undefined',
-      formats_extracted: extractedData.formats ? extractedData.formats.length : 'undefined'
-    }));
-    
-    // Pass through authentic debug logs only - NO SYNTHETIC FALLBACKS
-    let debugLogs: any[] = [];
-    
-    if (result.debug_logs && result.debug_logs.length > 0) {
-      // Pass through the authentic debug logs directly
-      debugLogs = result.debug_logs;
-    }
-    
-    // Format the response to match what the UI expects, with new async fields
-    const response = {
-      success: result.success,
-      products: extractedData.products || [],
-      formats: extractedData.formats || [],
-      debug_logs: debugLogs,
-      status: result.status,
+      metadata: result.metadata,
+      debug_logs: result.debug_logs,
       timestamp: new Date().toISOString()
-    };
-    
-    return reply.send(response);
+    });
   } catch (error) {
-    app.log.error('Failed to query agent: ' + (error instanceof Error ? error.message : String(error)));
+    app.log.error({ error }, 'Get products error');
     return reply.code(500).send({
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown error',
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+// List Creative Formats
+app.post<{
+  Params: { agentId: string };
+}>('/api/agents/:agentId/list-creative-formats', async (request, reply) => {
+  try {
+    const { agentId } = request.params;
+    const params = request.body as any;
+
+    const client = adcpClient.agent(agentId);
+    const result = await client.listCreativeFormats(params, createDefaultInputHandler());
+
+    return reply.send({
+      success: result.success,
+      data: result.data,
+      error: result.error,
+      metadata: result.metadata,
+      debug_logs: result.debug_logs,
       timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    app.log.error({ error }, 'List creative formats error');
+    return reply.code(500).send({
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+// Create Media Buy
+app.post<{
+  Params: { agentId: string };
+}>('/api/agents/:agentId/create-media-buy', async (request, reply) => {
+  try {
+    const { agentId } = request.params;
+    const params = request.body as any;
+
+    const client = adcpClient.agent(agentId);
+    const result = await client.createMediaBuy(params, createDefaultInputHandler());
+
+    return reply.send({
+      success: result.success,
+      data: result.data,
+      error: result.error,
+      metadata: result.metadata,
+      debug_logs: result.debug_logs,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    app.log.error({ error }, 'Create media buy error');
+    return reply.code(500).send({
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+// Update Media Buy
+app.post<{
+  Params: { agentId: string };
+}>('/api/agents/:agentId/update-media-buy', async (request, reply) => {
+  try {
+    const { agentId } = request.params;
+    const params = request.body as any;
+
+    const client = adcpClient.agent(agentId);
+    const result = await client.updateMediaBuy(params, createDefaultInputHandler());
+
+    return reply.send({
+      success: result.success,
+      data: result.data,
+      error: result.error,
+      metadata: result.metadata,
+      debug_logs: result.debug_logs,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    app.log.error({ error }, 'Update media buy error');
+    return reply.code(500).send({
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+// Sync Creatives
+app.post<{
+  Params: { agentId: string };
+}>('/api/agents/:agentId/sync-creatives', async (request, reply) => {
+  try {
+    const { agentId } = request.params;
+    const params = request.body as any;
+
+    const client = adcpClient.agent(agentId);
+    const result = await client.syncCreatives(params, createDefaultInputHandler());
+
+    return reply.send({
+      success: result.success,
+      data: result.data,
+      error: result.error,
+      metadata: result.metadata,
+      debug_logs: result.debug_logs,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    app.log.error({ error }, 'Sync creatives error');
+    return reply.code(500).send({
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+// List Creatives
+app.post<{
+  Params: { agentId: string };
+}>('/api/agents/:agentId/list-creatives', async (request, reply) => {
+  try {
+    const { agentId } = request.params;
+    const params = request.body as any;
+
+    const client = adcpClient.agent(agentId);
+    const result = await client.listCreatives(params, createDefaultInputHandler());
+
+    return reply.send({
+      success: result.success,
+      data: result.data,
+      error: result.error,
+      metadata: result.metadata,
+      debug_logs: result.debug_logs,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    app.log.error({ error }, 'List creatives error');
+    return reply.code(500).send({
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+// Get Media Buy Delivery
+app.post<{
+  Params: { agentId: string };
+}>('/api/agents/:agentId/get-media-buy-delivery', async (request, reply) => {
+  try {
+    const { agentId } = request.params;
+    const params = request.body as any;
+
+    const client = adcpClient.agent(agentId);
+    const result = await client.getMediaBuyDelivery(params, createDefaultInputHandler());
+
+    return reply.send({
+      success: result.success,
+      data: result.data,
+      error: result.error,
+      metadata: result.metadata,
+      debug_logs: result.debug_logs,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    app.log.error({ error }, 'Get media buy delivery error');
+    return reply.code(500).send({
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error'
     });
   }
 });
