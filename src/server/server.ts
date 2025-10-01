@@ -114,21 +114,56 @@ function createDefaultInputHandler(): InputHandler {
 }
 
 async function executeTaskOnAgent(
-  agentId: string, 
-  toolName: string, 
-  args: any, 
+  agentId: string,
+  toolName: string,
+  args: any,
   inputHandler?: InputHandler
 ): Promise<TestResult & { status?: string; inputRequest?: any; continuation?: any; taskId?: string; webhookUrl?: string; }> {
   try {
     const client = adcpClient.agent(agentId);
-    
-    // Use executeTask for full async support
-    const result = await client.executeTask(
-      toolName,
-      args,
-      inputHandler || createDefaultInputHandler()
-    );
-    
+    const handler = inputHandler || createDefaultInputHandler();
+
+    // Use typed methods instead of generic executeTask
+    let result: TaskResult<any>;
+
+    switch (toolName) {
+      case 'get_products':
+        result = await client.getProducts(args, handler);
+        break;
+      case 'list_creative_formats':
+        result = await client.listCreativeFormats(args, handler);
+        break;
+      case 'create_media_buy':
+        result = await client.createMediaBuy(args, handler);
+        break;
+      case 'update_media_buy':
+        result = await client.updateMediaBuy(args, handler);
+        break;
+      case 'sync_creatives':
+        result = await client.syncCreatives(args, handler);
+        break;
+      case 'list_creatives':
+        result = await client.listCreatives(args, handler);
+        break;
+      case 'get_media_buy_delivery':
+        result = await client.getMediaBuyDelivery(args, handler);
+        break;
+      case 'list_authorized_properties':
+        result = await client.listAuthorizedProperties(args, handler);
+        break;
+      case 'provide_performance_feedback':
+        result = await client.providePerformanceFeedback(args, handler);
+        break;
+      case 'get_signals':
+        result = await client.getSignals(args, handler);
+        break;
+      case 'activate_signal':
+        result = await client.activateSignal(args, handler);
+        break;
+      default:
+        throw new Error(`Unknown or unsupported tool: ${toolName}`);
+    }
+
     // Store active task if it's deferred or submitted
     if (result.status === 'deferred' || result.status === 'submitted') {
       const taskId = result.submitted?.taskId || `deferred-${Date.now()}`;
@@ -141,11 +176,11 @@ async function executeTaskOnAgent(
         startTime: new Date()
       });
     }
-    
+
     return adaptTaskResultToLegacyFormat(result as TaskResult<any>, agentId);
   } catch (error) {
     app.log.error({ error }, 'Error executing task');
-    
+
     // Handle InputRequiredError specifically
     if (error instanceof InputRequiredError) {
       return adaptTaskResultToLegacyFormat({
@@ -156,7 +191,7 @@ async function executeTaskOnAgent(
         debugLogs: []
       } as any as TaskResult<any>, agentId);
     }
-    
+
     return {
       agent_id: agentId,
       agent_name: adcpClient.getAgentConfigs().find(a => a.id === agentId)?.name || agentId,

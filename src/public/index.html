@@ -1896,6 +1896,59 @@
             padding: 0 16px 16px 16px;
             border-top: 1px solid rgba(255, 255, 255, 0.1);
         }
+
+        /* Modal Styles */
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.5);
+            backdrop-filter: blur(5px);
+            overflow-y: auto;
+        }
+
+        .modal-content {
+            background-color: white;
+            margin: 40px auto;
+            padding: 30px;
+            border-radius: 12px;
+            max-width: 600px;
+            max-height: calc(100vh - 80px);
+            overflow-y: auto;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+            position: relative;
+            animation: modalSlideIn 0.3s ease-out;
+        }
+
+        @keyframes modalSlideIn {
+            from {
+                transform: translateY(-50px);
+                opacity: 0;
+            }
+            to {
+                transform: translateY(0);
+                opacity: 1;
+            }
+        }
+
+        .modal .close {
+            color: #999;
+            float: right;
+            font-size: 28px;
+            font-weight: bold;
+            line-height: 20px;
+            cursor: pointer;
+            transition: color 0.2s;
+        }
+
+        .modal .close:hover,
+        .modal .close:focus {
+            color: #333;
+        }
     </style>
 </head>
 <body>
@@ -2343,51 +2396,166 @@
 
         <!-- Creative Create Modal -->
         <div id="creative-create-modal" class="modal" style="display: none;">
-            <div class="modal-content" style="max-width: 800px;">
+            <div class="modal-content" style="max-width: 900px;">
                 <span class="close" onclick="closeCreateModal()">&times;</span>
                 <h3>➕ Create New Creative Assets</h3>
-                
+
                 <div class="param-group">
                     <label>Creation Mode:</label>
                     <select id="create-mode" onchange="updateCreateUI()">
-                        <option value="single">Single Creative</option>
-                        <option value="batch">Batch Create</option>
+                        <option value="single">Single Creative (Form)</option>
+                        <option value="json">Single Creative (Paste JSON)</option>
+                        <option value="batch">Batch Create (JSON Array)</option>
                     </select>
                 </div>
-                
+
+                <!-- JSON Paste Mode -->
+                <div id="json-create" class="upload-section" style="display: none;">
+                    <div class="param-group">
+                        <label>Paste Creative JSON:</label>
+                        <textarea id="single-creative-json" rows="20" style="width: 100%; font-family: monospace; font-size: 12px;" placeholder='{
+  "creativeId": "creative_wonderstruck_test",
+  "creativeName": "Wonderstruck Mushroom 300x250",
+  "brandAgentId": "48",
+  "format": {
+    "formatId": "DISPLAY_300x250",
+    "dimensions": { "width": 300, "height": 250 }
+  },
+  "content": {
+    "productUrl": "https://example.com/creative.jpg",
+    "clickThroughUrl": "https://example.com",
+    "htmlSnippet": "<a href=\"...\">...</a>",
+    "impressionTrackers": ["https://tracker.example.com/impression"]
+  },
+  "status": "active"
+}'></textarea>
+                        <small style="color: #666; display: block; margin-top: 5px;">
+                            💡 JSON will be sent as-is to the agent without any field name translation
+                        </small>
+                    </div>
+                </div>
+
                 <div id="single-create" class="upload-section">
+                    <!-- Step 1: Select Format -->
                     <div class="param-group">
-                        <label>Creative Name:</label>
-                        <input type="text" id="creative-name" placeholder="My Creative">
-                    </div>
-                    
-                    <div class="param-group">
-                        <label>Creative Type:</label>
-                        <select id="creative-type">
-                            <option value="image">Image</option>
-                            <option value="video">Video</option>
-                            <option value="html">HTML5</option>
-                            <option value="native">Native</option>
+                        <label>Select Creative Format: <span style="color: red;">*</span></label>
+                        <select id="creative-format-selector" onchange="onCreativeFormatSelected()">
+                            <option value="">-- Choose a format --</option>
                         </select>
+                        <small style="color: #666; display: block; margin-top: 5px;">
+                            Select from available formats advertised by the agent
+                        </small>
                     </div>
-                    
-                    <div class="param-group">
-                        <label>Media URL:</label>
-                        <input type="text" id="creative-url" placeholder="https://example.com/creative.jpg">
+
+                    <div id="format-requirements" style="display: none; background: #f0f8ff; padding: 12px; border-radius: 6px; margin-bottom: 15px; border-left: 4px solid #4299e1;">
+                        <strong style="color: #2c5282;">📋 Format Requirements:</strong>
+                        <div id="format-req-details" style="margin-top: 8px; font-size: 13px; color: #2d3748;"></div>
                     </div>
-                    
-                    <div class="param-group">
-                        <label>Dimensions (Width x Height):</label>
-                        <div style="display: flex; gap: 10px;">
-                            <input type="number" id="creative-width" placeholder="300" style="width: 100px;">
-                            <span>x</span>
-                            <input type="number" id="creative-height" placeholder="250" style="width: 100px;">
+
+                    <!-- Step 2: Basic Info -->
+                    <div id="creative-fields" style="display: none;">
+                        <div class="param-group">
+                            <label>Creative Name: <span style="color: red;">*</span></label>
+                            <input type="text" id="creative-name" placeholder="My Creative">
                         </div>
-                    </div>
-                    
-                    <div class="param-group">
-                        <label>Tags (comma-separated):</label>
-                        <input type="text" id="creative-tags" placeholder="campaign1, product-launch, Q4">
+
+                        <!-- Asset Content (based on type) -->
+                        <div class="param-group">
+                            <label>Asset Type:</label>
+                            <div style="display: flex; gap: 15px; margin-bottom: 10px;">
+                                <label style="display: flex; align-items: center; gap: 5px;">
+                                    <input type="radio" name="asset-source" value="hosted" checked onchange="toggleAssetSource()">
+                                    Hosted Asset (URL)
+                                </label>
+                                <label style="display: flex; align-items: center; gap: 5px;">
+                                    <input type="radio" name="asset-source" value="snippet" onchange="toggleAssetSource()">
+                                    Third-Party Snippet
+                                </label>
+                            </div>
+                        </div>
+
+                        <div class="param-group" id="hosted-asset-fields">
+                            <label>Media URL: <span style="color: red;">*</span></label>
+                            <input type="text" id="creative-url" placeholder="https://example.com/creative.jpg">
+                            <small style="color: #666; display: block; margin-top: 5px;">
+                                URL to your hosted creative asset
+                            </small>
+                        </div>
+
+                        <div class="param-group" id="snippet-asset-fields" style="display: none;">
+                            <label>Third-Party Snippet: <span style="color: red;">*</span></label>
+                            <select id="snippet-type" style="margin-bottom: 8px;">
+                                <option value="html">HTML</option>
+                                <option value="javascript">JavaScript</option>
+                                <option value="amp">AMP</option>
+                            </select>
+                            <textarea id="creative-snippet" rows="4" placeholder="<script>...</script>" style="width: 100%; font-family: monospace; font-size: 12px;"></textarea>
+                            <small style="color: #666; display: block; margin-top: 5px;">
+                                Paste your third-party ad tag or snippet
+                            </small>
+                        </div>
+
+                        <!-- Tracking URLs -->
+                        <div class="param-group">
+                            <label>Impression Trackers (one per line):</label>
+                            <textarea id="impression-trackers" rows="3" placeholder="https://tracker.example.com/imp?id=123&#10;https://analytics.example.com/pixel?campaign=abc" style="width: 100%; font-size: 12px;"></textarea>
+                            <small style="color: #666; display: block; margin-top: 5px;">
+                                Third-party impression tracking pixels (fired on ad view)
+                            </small>
+                        </div>
+
+                        <div class="param-group">
+                            <label>Click Trackers (one per line):</label>
+                            <textarea id="click-trackers" rows="3" placeholder="https://tracker.example.com/click?id=123&#10;https://analytics.example.com/click?campaign=abc" style="width: 100%; font-size: 12px;"></textarea>
+                            <small style="color: #666; display: block; margin-top: 5px;">
+                                Third-party click tracking URLs (fired on ad click)
+                            </small>
+                        </div>
+
+                        <!-- Video-specific fields -->
+                        <div id="video-specific-fields" style="display: none;">
+                            <div class="param-group">
+                                <label>Video Duration (seconds):</label>
+                                <input type="number" id="video-duration" placeholder="30" min="1">
+                            </div>
+
+                            <div class="param-group">
+                                <label>VAST URL (optional):</label>
+                                <input type="text" id="vast-url" placeholder="https://example.com/vast.xml">
+                                <small style="color: #666; display: block; margin-top: 5px;">
+                                    VAST XML URL for video ads
+                                </small>
+                            </div>
+                        </div>
+
+                        <!-- Native-specific fields -->
+                        <div id="native-specific-fields" style="display: none;">
+                            <div class="param-group">
+                                <label>Title:</label>
+                                <input type="text" id="native-title" placeholder="Headline text">
+                            </div>
+
+                            <div class="param-group">
+                                <label>Description:</label>
+                                <textarea id="native-description" rows="2" placeholder="Description text"></textarea>
+                            </div>
+
+                            <div class="param-group">
+                                <label>Call to Action:</label>
+                                <input type="text" id="native-cta" placeholder="Learn More">
+                            </div>
+                        </div>
+
+                        <!-- Additional metadata -->
+                        <div class="param-group">
+                            <label>Tags (comma-separated):</label>
+                            <input type="text" id="creative-tags" placeholder="campaign1, product-launch, Q4">
+                        </div>
+
+                        <div class="param-group">
+                            <label>Landing Page URL:</label>
+                            <input type="text" id="landing-url" placeholder="https://example.com/landing">
+                        </div>
                     </div>
                 </div>
                 
@@ -4048,7 +4216,7 @@
             if (toolName === 'get_products') {
                 requestBody.brandStory = params.brief || "ADCP Testing Suite execution";
                 requestBody.offering = params.promoted_offering || null;
-            } else if (toolName !== 'list_creative_formats' && toolName !== 'manage_creative_assets' && toolName !== 'list_creatives') {
+            } else if (toolName !== 'list_creative_formats' && toolName !== 'sync_creatives' && toolName !== 'list_creatives') {
                 // For other tools that might need brief, include it but not offering
                 requestBody.brandStory = params.brief || "ADCP Testing Suite execution";
             }
@@ -4838,12 +5006,23 @@
                 logEvent('info', `Generated ${assets.length} creative assets`);
                 
                 // Call ADCP manage_creative_assets with upload action
-                const result = await callADCPTool(selectedAgent, 'manage_creative_assets', {
-                    action: 'upload',
-                    assets: assets,
-                    media_buy_id: mediaBuyId,
-                    buyer_ref: `creative_upload_${Date.now()}`
-                });
+                // Build sync_creatives params
+                const syncParams = {
+                    creatives: assets
+                };
+
+                // Add assignments if media buy is specified
+                if (mediaBuyId) {
+                    syncParams.assignments = {};
+                    assets.forEach(asset => {
+                        const creativeId = asset.id || asset.creative_id || asset.creativeId;
+                        if (creativeId) {
+                            syncParams.assignments[creativeId] = [mediaBuyId];
+                        }
+                    });
+                }
+
+                const result = await callADCPTool(selectedAgent, 'sync_creatives', syncParams);
                 
                 logEvent('success', `Successfully uploaded ${assets.length} creative assets to ${mediaBuyId}`);
                 
@@ -7753,25 +7932,166 @@ ${JSON.stringify(result, null, 2)}
         // ============================================================================
         
         function showCreateModal() {
-            document.getElementById('creative-create-modal').style.display = 'block';
+            // Load creative formats first
+            if (creativeFormats.length === 0) {
+                logEvent('warning', 'No creative formats loaded. Loading formats first...');
+                refreshCreativeFormats().then(() => {
+                    populateFormatSelector();
+                    document.getElementById('creative-create-modal').style.display = 'block';
+                });
+            } else {
+                populateFormatSelector();
+                document.getElementById('creative-create-modal').style.display = 'block';
+            }
         }
-        
+
         function closeCreateModal() {
             document.getElementById('creative-create-modal').style.display = 'none';
+            resetCreateForm();
         }
-        
+
         function showUpdateModal() {
             document.getElementById('creative-update-modal').style.display = 'block';
         }
-        
+
         function closeUpdateModal() {
             document.getElementById('creative-update-modal').style.display = 'none';
         }
-        
+
         function updateCreateUI() {
             const mode = document.getElementById('create-mode').value;
             document.getElementById('single-create').style.display = mode === 'single' ? 'block' : 'none';
+            document.getElementById('json-create').style.display = mode === 'json' ? 'block' : 'none';
             document.getElementById('batch-create').style.display = mode === 'batch' ? 'block' : 'none';
+        }
+
+        function populateFormatSelector() {
+            const selector = document.getElementById('creative-format-selector');
+            selector.innerHTML = '<option value="">-- Choose a format --</option>';
+
+            if (creativeFormats.length === 0) {
+                selector.innerHTML += '<option value="" disabled>No formats available - refresh formats first</option>';
+                return;
+            }
+
+            creativeFormats.forEach(format => {
+                const option = document.createElement('option');
+                option.value = format.format_id;
+
+                // Extract dimensions from various possible locations
+                let width = '?', height = '?';
+
+                if (format.dimensions && format.dimensions.width && format.dimensions.height) {
+                    width = format.dimensions.width;
+                    height = format.dimensions.height;
+                } else if (format.assets_required && Array.isArray(format.assets_required)) {
+                    // Try to extract from assets_required array
+                    const dimensionAsset = format.assets_required.find(a => a.width && a.height);
+                    if (dimensionAsset) {
+                        width = dimensionAsset.width;
+                        height = dimensionAsset.height;
+                    }
+                } else if (format.format_id && format.format_id.includes('x')) {
+                    // Try to parse from format_id like "300x250"
+                    const match = format.format_id.match(/(\d+)x(\d+)/);
+                    if (match) {
+                        width = match[1];
+                        height = match[2];
+                    }
+                }
+
+                option.textContent = `${format.name || format.format_id} (${width}×${height})`;
+                option.dataset.format = JSON.stringify(format);
+                selector.appendChild(option);
+            });
+        }
+
+        function onCreativeFormatSelected() {
+            const selector = document.getElementById('creative-format-selector');
+            const selectedOption = selector.options[selector.selectedIndex];
+
+            if (!selectedOption || !selectedOption.dataset.format) {
+                document.getElementById('format-requirements').style.display = 'none';
+                document.getElementById('creative-fields').style.display = 'none';
+                return;
+            }
+
+            const format = JSON.parse(selectedOption.dataset.format);
+
+            // Extract dimensions (same logic as populateFormatSelector)
+            let width = '?', height = '?';
+            if (format.dimensions && format.dimensions.width && format.dimensions.height) {
+                width = format.dimensions.width;
+                height = format.dimensions.height;
+            } else if (format.assets_required && Array.isArray(format.assets_required)) {
+                const dimensionAsset = format.assets_required.find(a => a.width && a.height);
+                if (dimensionAsset) {
+                    width = dimensionAsset.width;
+                    height = dimensionAsset.height;
+                }
+            } else if (format.format_id && format.format_id.includes('x')) {
+                const match = format.format_id.match(/(\d+)x(\d+)/);
+                if (match) {
+                    width = match[1];
+                    height = match[2];
+                }
+            }
+
+            // Show format requirements
+            const reqDetails = document.getElementById('format-req-details');
+            let reqHTML = `<strong>${format.name || format.format_id}</strong><br>`;
+            reqHTML += `Dimensions: ${width} × ${height}px`;
+
+            if (format.aspect_ratio) {
+                reqHTML += ` (${format.aspect_ratio})`;
+            }
+
+            if (format.file_types && format.file_types.length > 0) {
+                reqHTML += `<br>Supported types: ${format.file_types.join(', ')}`;
+            }
+
+            if (format.max_file_size) {
+                const sizeMB = (format.max_file_size / (1024 * 1024)).toFixed(1);
+                reqHTML += `<br>Max file size: ${sizeMB} MB`;
+            }
+
+            if (format.duration_range) {
+                reqHTML += `<br>Duration: ${format.duration_range.min}-${format.duration_range.max} seconds`;
+            }
+
+            reqDetails.innerHTML = reqHTML;
+            document.getElementById('format-requirements').style.display = 'block';
+            document.getElementById('creative-fields').style.display = 'block';
+
+            // Show/hide type-specific fields
+            const formatType = format.type || (format.format_id?.includes('video') ? 'video' : format.format_id?.includes('native') ? 'native' : 'display');
+            document.getElementById('video-specific-fields').style.display = formatType === 'video' ? 'block' : 'none';
+            document.getElementById('native-specific-fields').style.display = formatType === 'native' ? 'block' : 'none';
+        }
+
+        function toggleAssetSource() {
+            const source = document.querySelector('input[name="asset-source"]:checked').value;
+            document.getElementById('hosted-asset-fields').style.display = source === 'hosted' ? 'block' : 'none';
+            document.getElementById('snippet-asset-fields').style.display = source === 'snippet' ? 'block' : 'none';
+        }
+
+        function resetCreateForm() {
+            document.getElementById('creative-format-selector').value = '';
+            document.getElementById('creative-name').value = '';
+            document.getElementById('creative-url').value = '';
+            document.getElementById('creative-snippet').value = '';
+            document.getElementById('impression-trackers').value = '';
+            document.getElementById('click-trackers').value = '';
+            document.getElementById('creative-tags').value = '';
+            document.getElementById('landing-url').value = '';
+            document.getElementById('video-duration').value = '';
+            document.getElementById('vast-url').value = '';
+            document.getElementById('native-title').value = '';
+            document.getElementById('native-description').value = '';
+            document.getElementById('native-cta').value = '';
+            document.getElementById('single-creative-json').value = '';
+            document.getElementById('format-requirements').style.display = 'none';
+            document.getElementById('creative-fields').style.display = 'none';
         }
         
         function updateUpdateUI() {
@@ -7788,42 +8108,169 @@ ${JSON.stringify(result, null, 2)}
                 input.value = '';
             }
         }
-        
+
         async function executeCreativeCreate() {
             const selectedAgent = agents.find(a => a.id === document.getElementById('agent-selector').value);
             if (!selectedAgent) {
                 alert('Please select an agent first');
                 return;
             }
-            
+
             // Get the create button and add loading state
             const createButton = event.target;
             const originalText = createButton.textContent;
             createButton.disabled = true;
             createButton.textContent = 'Creating...';
-            
+
             try {
                 const mode = document.getElementById('create-mode').value;
                 let assets = [];
-                
-                if (mode === 'single') {
-                    // Build single creative asset
-                    const width = parseInt(document.getElementById('creative-width').value) || 300;
-                    const height = parseInt(document.getElementById('creative-height').value) || 250;
+
+                if (mode === 'json') {
+                    // Parse single creative JSON and pass through as-is
+                    try {
+                        const jsonStr = document.getElementById('single-creative-json').value.trim();
+                        if (!jsonStr) {
+                            alert('Please paste creative JSON');
+                            return;
+                        }
+
+                        const creative = JSON.parse(jsonStr);
+
+                        // Send the JSON as-is - no translation
+                        assets.push(creative);
+
+                    } catch (e) {
+                        alert('Invalid JSON: ' + e.message);
+                        return;
+                    }
+                } else if (mode === 'single') {
+                    // Validate required fields
+                    const formatSelector = document.getElementById('creative-format-selector');
+                    if (!formatSelector.value) {
+                        alert('Please select a creative format');
+                        return;
+                    }
+
+                    const creativeName = document.getElementById('creative-name').value.trim();
+                    if (!creativeName) {
+                        alert('Please enter a creative name');
+                        return;
+                    }
+
+                    // Get selected format
+                    const selectedOption = formatSelector.options[formatSelector.selectedIndex];
+                    const format = JSON.parse(selectedOption.dataset.format);
+
+                    // Extract dimensions (same logic as other functions)
+                    let width, height;
+                    if (format.dimensions && format.dimensions.width && format.dimensions.height) {
+                        width = format.dimensions.width;
+                        height = format.dimensions.height;
+                    } else if (format.assets_required && Array.isArray(format.assets_required)) {
+                        const dimensionAsset = format.assets_required.find(a => a.width && a.height);
+                        if (dimensionAsset) {
+                            width = dimensionAsset.width;
+                            height = dimensionAsset.height;
+                        }
+                    } else if (format.format_id && format.format_id.includes('x')) {
+                        const match = format.format_id.match(/(\d+)x(\d+)/);
+                        if (match) {
+                            width = parseInt(match[1]);
+                            height = parseInt(match[2]);
+                        }
+                    }
+
+                    // Determine asset source
+                    const assetSource = document.querySelector('input[name="asset-source"]:checked').value;
+
+                    const asset = {
+                        name: creativeName,
+                        format: format.format_id,
+                        status: 'active'
+                    };
+
+                    // Add dimensions if we found them
+                    if (width && height) {
+                        asset.dimensions = { width, height };
+                    }
+
+                    // Asset content
+                    if (assetSource === 'hosted') {
+                        const mediaUrl = document.getElementById('creative-url').value.trim();
+                        if (!mediaUrl) {
+                            alert('Please enter a media URL');
+                            return;
+                        }
+                        asset.media_url = mediaUrl;
+                    } else {
+                        const snippet = document.getElementById('creative-snippet').value.trim();
+                        if (!snippet) {
+                            alert('Please enter a creative snippet');
+                            return;
+                        }
+                        asset.snippet = snippet;
+                        asset.snippet_type = document.getElementById('snippet-type').value;
+                    }
+
+                    // Trackers
+                    const impressionTrackers = document.getElementById('impression-trackers').value
+                        .split('\n')
+                        .map(t => t.trim())
+                        .filter(t => t);
+                    if (impressionTrackers.length > 0) {
+                        asset.impression_trackers = impressionTrackers;
+                    }
+
+                    const clickTrackers = document.getElementById('click-trackers').value
+                        .split('\n')
+                        .map(t => t.trim())
+                        .filter(t => t);
+                    if (clickTrackers.length > 0) {
+                        asset.click_trackers = clickTrackers;
+                    }
+
+                    // Landing URL
+                    const landingUrl = document.getElementById('landing-url').value.trim();
+                    if (landingUrl) {
+                        asset.landing_url = landingUrl;
+                    }
+
+                    // Video-specific fields
+                    const formatType = format.type || (format.format_id?.includes('video') ? 'video' : format.format_id?.includes('native') ? 'native' : 'display');
+                    if (formatType === 'video') {
+                        const duration = document.getElementById('video-duration').value;
+                        if (duration) {
+                            asset.duration = parseInt(duration);
+                        }
+                        const vastUrl = document.getElementById('vast-url').value.trim();
+                        if (vastUrl) {
+                            asset.vast_url = vastUrl;
+                        }
+                    }
+
+                    // Native-specific fields
+                    if (formatType === 'native') {
+                        const title = document.getElementById('native-title').value.trim();
+                        const description = document.getElementById('native-description').value.trim();
+                        const cta = document.getElementById('native-cta').value.trim();
+
+                        asset.native_elements = {};
+                        if (title) asset.native_elements.title = title;
+                        if (description) asset.native_elements.description = description;
+                        if (cta) asset.native_elements.cta = cta;
+                    }
+
+                    // Tags
                     const tags = document.getElementById('creative-tags').value
                         .split(',')
                         .map(t => t.trim())
                         .filter(t => t);
-                    
-                    assets.push({
-                        name: document.getElementById('creative-name').value || 'Untitled Creative',
-                        type: document.getElementById('creative-type').value,
-                        media_url: document.getElementById('creative-url').value || 'https://example.com/creative.jpg',
-                        format: `${width}x${height}`,
-                        dimensions: { width, height },
-                        tags: tags.length > 0 ? tags : ['test'],
-                        status: 'active'
-                    });
+                    if (tags.length > 0) {
+                        asset.tags = tags;
+                    }
+
+                    assets.push(asset);
                 } else {
                     // Parse batch JSON
                     try {
@@ -7833,23 +8280,30 @@ ${JSON.stringify(result, null, 2)}
                         return;
                     }
                 }
-                
-                const assignToMediaBuy = document.getElementById('assign-to-media-buy').checked;
-                const mediaBuyId = assignToMediaBuy ? document.getElementById('target-media-buy-id').value : null;
-                
+
+                const assignToMediaBuy = document.getElementById('assign-to-media-buy')?.checked;
+                const mediaBuyId = assignToMediaBuy ? document.getElementById('target-media-buy-id')?.value : null;
+
+                // Use sync_creatives, not manage_creative_assets
                 const params = {
-                    action: 'create',
-                    assets: assets
+                    creatives: assets
                 };
-                
+
+                // Add assignments if media buy is specified
                 if (mediaBuyId) {
-                    params.media_buy_id = mediaBuyId;
+                    params.assignments = {};
+                    assets.forEach(asset => {
+                        const creativeId = asset.id || asset.creative_id || asset.creativeId;
+                        if (creativeId) {
+                            params.assignments[creativeId] = [mediaBuyId];
+                        }
+                    });
                 }
-                
+
                 logEvent('info', `➕ Creating ${assets.length} creative(s)...`);
-                
-                const result = await callADCPTool(selectedAgent, 'manage_creative_assets', params);
-                
+
+                const result = await callADCPTool(selectedAgent, 'sync_creatives', params);
+
                 if (result && result.success) {
                     logEvent('success', `✅ Successfully created ${assets.length} creative(s)`);
                     displayCreativeResults(result.data || result);
@@ -8033,10 +8487,11 @@ ${JSON.stringify(result, null, 2)}
             
             logEvent('info', `🔗 Assigning creative ${creativeId} to media buy ${mediaBuyId}...`);
             
-            callADCPTool(selectedAgent, 'manage_creative_assets', {
-                action: 'assign',
-                creative_ids: [creativeId],
-                media_buy_id: mediaBuyId
+            // Use sync_creatives to update assignments
+            callADCPTool(selectedAgent, 'sync_creatives', {
+                assignments: {
+                    [creativeId]: [mediaBuyId]
+                }
             }).then(result => {
                 if (result && result.success) {
                     logEvent('success', `✅ Creative assigned successfully`);
