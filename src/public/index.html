@@ -3501,32 +3501,32 @@
             }
             
             // AdCP spec compliance check for creative formats
+            // Based on Format interface in tools.generated.ts
             const adcpViolations = [];
-            
-            // Required fields per AdCP spec
+
+            // REQUIRED fields per AdCP spec (no ? in schema)
             if (!format.format_id) adcpViolations.push('Missing format_id');
             if (!format.name) adcpViolations.push('Missing name');
             if (!format.type) adcpViolations.push('Missing type');
-            if (format.is_standard === undefined) adcpViolations.push('Missing is_standard');
-            if (!format.category) adcpViolations.push('Missing category');
-            if (format.accepts_3p_tags === undefined) adcpViolations.push('Missing accepts_3p_tags');
-            
-            // Check for required arrays
-            if (!format.assets_required || !Array.isArray(format.assets_required)) {
-                adcpViolations.push('Missing or invalid assets_required array');
-            }
-            
-            // Type validation
+
+            // OPTIONAL fields - only validate types if present
             if (format.is_standard !== undefined && typeof format.is_standard !== 'boolean') {
                 adcpViolations.push('is_standard should be boolean');
             }
             if (format.accepts_3p_tags !== undefined && typeof format.accepts_3p_tags !== 'boolean') {
                 adcpViolations.push('accepts_3p_tags should be boolean');
             }
-            
-            // Category validation
             if (format.category && !['standard', 'custom'].includes(format.category)) {
                 adcpViolations.push('category should be "standard" or "custom"');
+            }
+            if (format.assets_required && !Array.isArray(format.assets_required)) {
+                adcpViolations.push('assets_required should be an array');
+            }
+
+            // Type must be one of the allowed values
+            const validTypes = ['audio', 'video', 'display', 'native', 'dooh', 'rich_media', 'universal'];
+            if (format.type && !validTypes.includes(format.type)) {
+                adcpViolations.push(`type "${format.type}" is not valid`);
             }
             
             if (adcpViolations.length === 0) {
