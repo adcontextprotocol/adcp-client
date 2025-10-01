@@ -440,18 +440,45 @@ Everything is automated based on conventional commits.
 
 ### Conventional Commit Types
 
-| Type | Description | Version Bump |
-|------|-------------|--------------|
-| `feat:` | New feature | Minor (0.x.0) |
-| `fix:` | Bug fix | Patch (0.0.x) |
-| `feat!:` or `BREAKING CHANGE:` | Breaking change | Major (x.0.0) |
-| `docs:` | Documentation only | None |
-| `chore:` | Maintenance tasks | None |
-| `refactor:` | Code refactoring | None |
-| `test:` | Adding/updating tests | None |
-| `perf:` | Performance improvements | Patch (0.0.x) |
-| `ci:` | CI configuration | None |
-| `build:` | Build system changes | None |
+| Type | Description | Version Bump | Example |
+|------|-------------|--------------|---------|
+| `feat:` | New feature (library code) | Minor (0.x.0) | `feat: add webhook support` |
+| `fix:` | Bug fix (library code) | Patch (0.0.x) | `fix: resolve timeout issue` |
+| `feat!:` or `BREAKING CHANGE:` | Breaking change | Major (x.0.0) | `feat!: redesign API` |
+| `docs:` | Documentation only | None | `docs: update README` |
+| `chore:` | Maintenance tasks | None | `chore: update deps` |
+| `refactor:` | Code refactoring | None | `refactor: simplify logic` |
+| `test:` | Adding/updating tests | None | `test: add unit tests` |
+| `perf:` | Performance improvements | Patch (0.0.x) | `perf: optimize parser` |
+| `ci:` | CI configuration | None | `ci: update workflow` |
+| `build:` | Build system changes | None | `build: update tsconfig` |
+
+### Commit Scopes for Library vs Testing
+
+**IMPORTANT**: To avoid releasing when only server/testing code changes, use appropriate scopes:
+
+**Library Changes (triggers release)**:
+```bash
+feat: add new tool                    # Library feature
+fix: resolve auth bug                 # Library bug fix
+perf: optimize client performance     # Library performance
+refactor: simplify protocol logic     # Library refactoring
+```
+
+**Testing/Server Changes (NO release)**:
+```bash
+chore(server): update UI styling      # Server/UI changes
+test(server): add integration test    # Test framework changes
+chore(testing): update test UI        # Testing UI changes
+docs(testing): update testing guide   # Testing docs
+ci: update deployment workflow        # CI changes (no release)
+```
+
+**Mixed Changes**: If you change both library AND server code in one PR, use the library type:
+```bash
+feat: add webhook support
+# This commit includes both library changes and test UI updates
+```
 
 ### Commit Linting
 

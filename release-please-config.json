@@ -17,7 +17,16 @@
         { "type": "test", "section": "Tests", "hidden": true },
         { "type": "build", "section": "Build System", "hidden": true },
         { "type": "ci", "section": "Continuous Integration", "hidden": true }
-      ]
+      ],
+      "extra-files": [
+        "src/lib/version.ts"
+      ],
+      "include-component-in-tag": false,
+      "skip-github-release": false,
+      "draft": false,
+      "prerelease": false
     }
-  }
+  },
+  "changelog-path": "CHANGELOG.md",
+  "changelog-type": "default"
 }

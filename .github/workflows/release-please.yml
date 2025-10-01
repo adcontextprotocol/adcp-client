@@ -4,6 +4,19 @@ on:
   push:
     branches:
       - main
+    # Only trigger when library code or package files change
+    # Skip when only server/testing UI changes
+    paths-ignore:
+      - 'src/public/**'
+      - 'src/server/**'
+      - 'test/**'
+      - '**.test.js'
+      - '**.test.ts'
+      - 'docs/**'
+      - 'fly.toml'
+      - '.nvmrc'
+      - '.vscode/**'
+      - '.idea/**'
 
 permissions:
   contents: write
