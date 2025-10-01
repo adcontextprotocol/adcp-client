@@ -635,6 +635,205 @@ app.post('/api/sales/agents/:agentId/query', async (request, reply) => {
   }
 });
 
+// ==== SPECIFIC TOOL ENDPOINTS ====
+// Clean, typed REST endpoints that directly call client library methods
+
+// Get Products
+app.post<{
+  Params: { agentId: string };
+}>('/api/agents/:agentId/get-products', async (request, reply) => {
+  try {
+    const { agentId } = request.params;
+    const params = request.body as any;
+
+    const client = adcpClient.agent(agentId);
+    const result = await client.getProducts(params, createDefaultInputHandler());
+
+    return reply.send({
+      success: result.success,
+      data: result.data,
+      error: result.error,
+      metadata: result.metadata,
+      debug_logs: result.debug_logs,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    app.log.error({ error }, 'Get products error');
+    return reply.code(500).send({
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+// List Creative Formats
+app.post<{
+  Params: { agentId: string };
+}>('/api/agents/:agentId/list-creative-formats', async (request, reply) => {
+  try {
+    const { agentId } = request.params;
+    const params = request.body as any;
+
+    const client = adcpClient.agent(agentId);
+    const result = await client.listCreativeFormats(params, createDefaultInputHandler());
+
+    return reply.send({
+      success: result.success,
+      data: result.data,
+      error: result.error,
+      metadata: result.metadata,
+      debug_logs: result.debug_logs,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    app.log.error({ error }, 'List creative formats error');
+    return reply.code(500).send({
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+// Create Media Buy
+app.post<{
+  Params: { agentId: string };
+}>('/api/agents/:agentId/create-media-buy', async (request, reply) => {
+  try {
+    const { agentId } = request.params;
+    const params = request.body as any;
+
+    const client = adcpClient.agent(agentId);
+    const result = await client.createMediaBuy(params, createDefaultInputHandler());
+
+    return reply.send({
+      success: result.success,
+      data: result.data,
+      error: result.error,
+      metadata: result.metadata,
+      debug_logs: result.debug_logs,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    app.log.error({ error }, 'Create media buy error');
+    return reply.code(500).send({
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+// Update Media Buy
+app.post<{
+  Params: { agentId: string };
+}>('/api/agents/:agentId/update-media-buy', async (request, reply) => {
+  try {
+    const { agentId } = request.params;
+    const params = request.body as any;
+
+    const client = adcpClient.agent(agentId);
+    const result = await client.updateMediaBuy(params, createDefaultInputHandler());
+
+    return reply.send({
+      success: result.success,
+      data: result.data,
+      error: result.error,
+      metadata: result.metadata,
+      debug_logs: result.debug_logs,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    app.log.error({ error }, 'Update media buy error');
+    return reply.code(500).send({
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+// Sync Creatives
+app.post<{
+  Params: { agentId: string };
+}>('/api/agents/:agentId/sync-creatives', async (request, reply) => {
+  try {
+    const { agentId } = request.params;
+    const params = request.body as any;
+
+    const client = adcpClient.agent(agentId);
+    const result = await client.syncCreatives(params, createDefaultInputHandler());
+
+    return reply.send({
+      success: result.success,
+      data: result.data,
+      error: result.error,
+      metadata: result.metadata,
+      debug_logs: result.debug_logs,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    app.log.error({ error }, 'Sync creatives error');
+    return reply.code(500).send({
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+// List Creatives
+app.post<{
+  Params: { agentId: string };
+}>('/api/agents/:agentId/list-creatives', async (request, reply) => {
+  try {
+    const { agentId } = request.params;
+    const params = request.body as any;
+
+    const client = adcpClient.agent(agentId);
+    const result = await client.listCreatives(params, createDefaultInputHandler());
+
+    return reply.send({
+      success: result.success,
+      data: result.data,
+      error: result.error,
+      metadata: result.metadata,
+      debug_logs: result.debug_logs,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    app.log.error({ error }, 'List creatives error');
+    return reply.code(500).send({
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+// Get Media Buy Delivery
+app.post<{
+  Params: { agentId: string };
+}>('/api/agents/:agentId/get-media-buy-delivery', async (request, reply) => {
+  try {
+    const { agentId } = request.params;
+    const params = request.body as any;
+
+    const client = adcpClient.agent(agentId);
+    const result = await client.getMediaBuyDelivery(params, createDefaultInputHandler());
+
+    return reply.send({
+      success: result.success,
+      data: result.data,
+      error: result.error,
+      metadata: result.metadata,
+      debug_logs: result.debug_logs,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    app.log.error({ error }, 'Get media buy delivery error');
+    return reply.code(500).send({
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
 // ==== NEW ASYNC API ENDPOINTS ====
 
 // Execute task with full async support

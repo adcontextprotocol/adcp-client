@@ -4191,142 +4191,62 @@
         // ADCP Tool Execution
         // ============================================================================
         
+        /**
+         * Call an AdCP tool on a specific agent using typed REST endpoints
+         * @param {Object} agent - The agent configuration
+         * @param {string} toolName - The AdCP tool name (get_products, sync_creatives, etc.)
+         * @param {Object} params - Tool-specific parameters
+         * @returns {Promise<Object>} - Tool response with data
+         */
         async function callADCPTool(agent, toolName, params) {
-            logEvent('info', `🔧 DEBUG: callADCPTool called with toolName='${toolName}', agent=${agent.name} (ID: ${agent.id})`);
-            return await callADCPToolBackend(agent, toolName, params);
-        }
-        
-        async function callADCPToolBackend(agent, toolName, params) {
-            logEvent('info', `🔧 DEBUG: callADCPToolBackend called with toolName='${toolName}'`);
-            const testingHeaders = collectTestingHeaders();
-            
-            const headers = {
-                'Content-Type': 'application/json',
-                ...testingHeaders
+            // Map tool names to endpoint paths
+            const toolEndpoints = {
+                'get_products': 'get-products',
+                'list_creative_formats': 'list-creative-formats',
+                'create_media_buy': 'create-media-buy',
+                'update_media_buy': 'update-media-buy',
+                'sync_creatives': 'sync-creatives',
+                'list_creatives': 'list-creatives',
+                'get_media_buy_delivery': 'get-media-buy-delivery'
             };
-            
-            // Create request body with tool parameter
-            const requestBody = {
-                agentConfig: agent,
-                tool: toolName
-            };
-            logEvent('info', `🔧 DEBUG: requestBody.tool='${requestBody.tool}'`);
-            
-            // Add brief and offering only for tools that use them
-            if (toolName === 'get_products') {
-                requestBody.brandStory = params.brief || "ADCP Testing Suite execution";
-                requestBody.offering = params.promoted_offering || null;
-            } else if (toolName !== 'list_creative_formats' && toolName !== 'sync_creatives' && toolName !== 'list_creatives') {
-                // For other tools that might need brief, include it but not offering
-                requestBody.brandStory = params.brief || "ADCP Testing Suite execution";
+
+            const endpoint = toolEndpoints[toolName];
+            if (!endpoint) {
+                throw new Error(`Unknown tool: ${toolName}`);
             }
-            
-            // Always include the tool-specific params
-            if (params && Object.keys(params).length > 0) {
-                requestBody.params = params;
-            }
-            
-            // Log the outgoing request to backend API
-            logEvent('info', `🔄 Backend API Request: POST /api/sales/agents/${agent.id}/query`);
-            logEvent('info', `📤 Request Headers: ${JSON.stringify(headers, null, 2)}`);
-            logEvent('info', `📤 Request Body: ${JSON.stringify(requestBody, null, 2)}`);
-            
-            const response = await fetch(`/api/sales/agents/${agent.id}/query`, {
+
+            const url = `/api/agents/${agent.id}/${endpoint}`;
+
+            logEvent('info', `🔄 API Request: POST ${url}`);
+            logEvent('info', `📤 Params: ${JSON.stringify(params, null, 2)}`);
+
+            const response = await fetch(url, {
                 method: 'POST',
-                headers: headers,
-                body: JSON.stringify(requestBody)
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(params)
             });
-            
-            // Log the response
-            logEvent('info', `📥 Response Status: ${response.status} ${response.statusText}`);
-            
+
             const result = await response.json();
-            logEvent('info', `📥 Response Body: ${JSON.stringify(result, null, 2)}`);
-            
-            // Always display debug logs from backend if available (even for errors)
-            
+            logEvent('info', `📥 Response: ${response.status} ${response.statusText}`);
+
+            // Display debug logs if available
             if (result.debug_logs && Array.isArray(result.debug_logs)) {
                 displayDebugLogs(result.debug_logs, agent);
-            } else if (result.debugLogs && Array.isArray(result.debugLogs)) {
-                // Handle legacy property name
-                displayDebugLogs(result.debugLogs, agent);
             }
-            
-            // Always display validation results if available (even for errors)
-            if (result.validation) {
-                displayValidationResult(result.validation, agent);
+
+            // Handle errors
+            if (!response.ok || !result.success) {
+                const errorMsg = result.error || `HTTP ${response.status}`;
+                logEvent('error', `❌ Error: ${errorMsg}`);
+                throw new Error(errorMsg);
             }
-            
-            // Handle error responses
-            if (!response.ok || result.error) {
-                // For failed requests, ensure we show debug info even if no structured debug_logs
-                if (result.error && (!result.debug_logs || result.debug_logs.length === 0)) {
-                    // Create a synthetic debug entry from the error
-                    const syntheticDebugLogs = [{
-                        timestamp: result.timestamp || new Date().toISOString(),
-                        type: 'error',
-                        protocol: result.protocol || 'unknown',
-                        message: result.error,
-                        details: result.recommendation ? `Recommendation: ${result.recommendation}` : undefined
-                    }];
-                    displayDebugLogs(syntheticDebugLogs, agent);
-                }
-                
-                logEvent('error', `❌ API Error: ${result.error?.message || result.error || result.message || `HTTP ${response.status}`}`);
-                throw new Error(result.error?.message || result.error || result.message || `HTTP ${response.status}`);
-            }
-            
-            // Normalize response - extract products from A2A structure if present
-            if (result.inventory_response) {
-                // Handle new backend-normalized structure (products already extracted)
-                if (result.inventory_response.products && Array.isArray(result.inventory_response.products)) {
-                    logEvent('success', `🔧 Extracted ${result.inventory_response.products.length} products from A2A response`);
-                    result.products = result.inventory_response.products;
-                    
-                    // Also include other useful data if available
-                    if (result.inventory_response.additional_data) {
-                        const additionalData = result.inventory_response.additional_data;
-                        if (additionalData.targeting_options) {
-                            result.targeting_options = additionalData.targeting_options;
-                        }
-                        if (additionalData.campaign_recommendations) {
-                            result.campaign_recommendations = additionalData.campaign_recommendations;
-                        }
-                    }
-                }
-                // Fallback: handle old nested structure if present
-                else if (result.inventory_response.result) {
-                    const a2aResult = result.inventory_response.result;
-                    
-                    // Extract products from A2A artifacts structure
-                    if (a2aResult.artifacts && a2aResult.artifacts.length > 0) {
-                        const artifact = a2aResult.artifacts[0];
-                        if (artifact.parts && artifact.parts.length > 0) {
-                            const part = artifact.parts[0];
-                            if (part.data && part.data.products) {
-                                logEvent('success', `🔧 Extracted ${part.data.products.length} products from nested A2A response`);
-                                result.products = part.data.products;
-                                
-                                // Also include other useful data
-                                if (part.data.targeting_options) {
-                                    result.targeting_options = part.data.targeting_options;
-                                }
-                                if (part.data.campaign_recommendations) {
-                                    result.campaign_recommendations = part.data.campaign_recommendations;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            
-            // Handle direct products/formats response (new server format)
-            if (result.products && !result.inventory_response) {
-                logEvent('success', `🔧 Found ${result.products.length} products in direct server response`);
-                // Products already at correct location, no need to move
-            }
-            
-            return result;
+
+            logEvent('success', `✅ ${toolName} completed successfully`);
+
+            // Return the data directly
+            return result.data || result;
         }
         
         function collectTestingHeaders() {
