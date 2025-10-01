@@ -2031,6 +2031,13 @@
                         <input type="checkbox" id="fixed-price-filter">
                         Fixed Price Only
                     </label>
+
+                    <input type="number"
+                           id="min-exposures-filter"
+                           placeholder="Min exposures"
+                           min="0"
+                           style="padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; width: 130px;"
+                           title="Minimum impressions needed for measurement validity (e.g., 10000)">
                 </div>
             </div>
             
@@ -3023,6 +3030,7 @@
             const formatTypesSelect = document.getElementById('format-types-filter');
             const formatTypes = Array.from(formatTypesSelect.selectedOptions).map(opt => opt.value);
             const isFixedPrice = document.getElementById('fixed-price-filter').checked;
+            const minExposures = document.getElementById('min-exposures-filter').value;
 
             // Show loading state
             setProductsLoadingState(true);
@@ -3041,7 +3049,7 @@
             };
 
             // Add filters if any are specified
-            if (deliveryType || formatTypes.length > 0 || isFixedPrice) {
+            if (deliveryType || formatTypes.length > 0 || isFixedPrice || minExposures) {
                 params.filters = {};
 
                 if (deliveryType) {
@@ -3054,6 +3062,10 @@
 
                 if (isFixedPrice) {
                     params.filters.is_fixed_price = true;
+                }
+
+                if (minExposures) {
+                    params.filters.min_exposures = parseInt(minExposures, 10);
                 }
             }
 

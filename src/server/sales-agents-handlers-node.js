@@ -1663,13 +1663,14 @@ class SalesAgentsHandlers {
         paramText += `\nADCP VERSION: ${additionalParams.adcp_version || '1.6.0'}`;
 
         // Add filters if present
-        if (toolName === 'get_products' && (additionalParams.filters || additionalParams.delivery_type || additionalParams.format_types || additionalParams.is_fixed_price)) {
+        if (toolName === 'get_products' && (additionalParams.filters || additionalParams.delivery_type || additionalParams.format_types || additionalParams.is_fixed_price || additionalParams.min_exposures)) {
             paramText += '\n\nFILTERS:';
 
             const filters = additionalParams.filters || {};
             const deliveryType = additionalParams.delivery_type || filters.delivery_type;
             const formatTypes = additionalParams.format_types || filters.format_types;
             const isFixedPrice = additionalParams.is_fixed_price !== undefined ? additionalParams.is_fixed_price : filters.is_fixed_price;
+            const minExposures = additionalParams.min_exposures || filters.min_exposures;
 
             if (deliveryType) {
                 paramText += `\n- Delivery Type: ${deliveryType}`;
@@ -1679,6 +1680,9 @@ class SalesAgentsHandlers {
             }
             if (isFixedPrice !== undefined) {
                 paramText += `\n- Fixed Price Only: ${isFixedPrice ? 'Yes' : 'No'}`;
+            }
+            if (minExposures !== undefined) {
+                paramText += `\n- Minimum Exposures: ${minExposures.toLocaleString()}`;
             }
         }
 
@@ -1967,7 +1971,7 @@ Please process this ${toolName} request according to AdCP specifications.`;
                 req.adcp_version = additionalParams.adcp_version || '1.6.0';
 
                 // Add filters if provided
-                if (additionalParams.filters || additionalParams.delivery_type || additionalParams.format_types || additionalParams.is_fixed_price) {
+                if (additionalParams.filters || additionalParams.delivery_type || additionalParams.format_types || additionalParams.is_fixed_price || additionalParams.min_exposures) {
                     req.filters = {};
 
                     // Handle nested filters object
@@ -1991,11 +1995,14 @@ Please process this ${toolName} request according to AdCP specifications.`;
                     if (additionalParams.standard_formats_only !== undefined) {
                         req.filters.standard_formats_only = additionalParams.standard_formats_only;
                     }
+                    if (additionalParams.min_exposures !== undefined) {
+                        req.filters.min_exposures = additionalParams.min_exposures;
+                    }
                 }
 
                 // Include any other additional params that might be relevant
                 Object.keys(additionalParams).forEach(key => {
-                    if (!['delivery_type', 'format_types', 'is_fixed_price', 'format_ids', 'standard_formats_only', 'filters', 'adcp_version'].includes(key)) {
+                    if (!['delivery_type', 'format_types', 'is_fixed_price', 'format_ids', 'standard_formats_only', 'min_exposures', 'filters', 'adcp_version'].includes(key)) {
                         req[key] = additionalParams[key];
                     }
                 });
