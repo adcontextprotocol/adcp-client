@@ -2015,19 +2015,14 @@ Please process this ${toolName} request according to AdCP specifications.`;
             } else {
                 // For all other tools (list_creative_formats, list_creatives, etc.)
                 // Build request with AdCP version and merge in all additionalParams
+                // AdCP specification: see src/lib/types/tools.generated.ts
                 const req = {
                     adcp_version: additionalParams.adcp_version || '1.6.0'
                 };
 
-                // Add brief and offering if provided
-                if (brandStory) {
-                    req.brief = brandStory;
-                }
-                if (userProvidedOffering) {
-                    req.promoted_offering = userProvidedOffering;
-                }
-
                 // Merge in all additional parameters
+                // This respects the caller's intent and avoids sending extra fields
+                // Only parameters explicitly in additionalParams will be sent
                 Object.keys(additionalParams).forEach(key => {
                     if (key !== 'adcp_version') {
                         req[key] = additionalParams[key];
