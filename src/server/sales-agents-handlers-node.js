@@ -2013,12 +2013,28 @@ Please process this ${toolName} request according to AdCP specifications.`;
                     }
                 };
             } else {
-                toolArguments = {
-                    req: {
-                        brief: brandStory,
-                        promoted_offering: userProvidedOffering || 'Testing product for advertising campaign discovery'
-                    }
+                // For all other tools (list_creative_formats, list_creatives, etc.)
+                // Build request with AdCP version and merge in all additionalParams
+                const req = {
+                    adcp_version: additionalParams.adcp_version || '1.6.0'
                 };
+
+                // Add brief and offering if provided
+                if (brandStory) {
+                    req.brief = brandStory;
+                }
+                if (userProvidedOffering) {
+                    req.promoted_offering = userProvidedOffering;
+                }
+
+                // Merge in all additional parameters
+                Object.keys(additionalParams).forEach(key => {
+                    if (key !== 'adcp_version') {
+                        req[key] = additionalParams[key];
+                    }
+                });
+
+                toolArguments = { req };
             }
             
             const toolCall = {
