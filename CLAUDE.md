@@ -389,46 +389,110 @@ Should show:
 
 ## NPM Publishing & Release Management
 
-### 🚨 CRITICAL: GitHub Release vs Git Tag 🚨
+### 🚨 AUTOMATED RELEASE PROCESS 🚨
 
-**IMPORTANT**: This project uses GitHub Actions for automatic npm publishing. The workflow is triggered by **GitHub Releases**, NOT git tags.
+**IMPORTANT**: This project uses **Release Please** for fully automated releases. You should NEVER manually:
+- Edit CHANGELOG.md
+- Bump version in package.json
+- Create GitHub releases
+- Publish to npm
 
-#### Correct Release Process:
-1. **Create GitHub Release** (not just a git tag)
-   - Use `gh release create v0.x.x` command
-   - Or create release via GitHub web interface
-   - This triggers the CI/CD workflow automatically
+Everything is automated based on conventional commits.
 
-2. **Workflow Trigger**: 
-   - The publish job runs on `github.event_name == 'release' && github.event.action == 'published'`
-   - Located in `.github/workflows/ci.yml` lines 154-186
+### How It Works
 
-#### Common Mistake:
-- ❌ **Wrong**: `git tag v0.x.x && git push origin v0.x.x` (only creates tag)
-- ✅ **Correct**: `gh release create v0.x.x` (creates tag AND release)
+1. **Commit using conventional commit format**:
+   ```bash
+   # Feature (minor bump: 0.2.3 → 0.3.0)
+   git commit -m "feat: add new tool support"
 
-#### Release Commands:
+   # Bug fix (patch bump: 0.2.3 → 0.2.4)
+   git commit -m "fix: resolve authentication issue"
+
+   # Breaking change (major bump: 0.2.3 → 1.0.0)
+   git commit -m "feat!: change API signature"
+   # or
+   git commit -m "feat: new API
+
+   BREAKING CHANGE: old API removed"
+   ```
+
+2. **Push to main branch**:
+   ```bash
+   git push origin main
+   ```
+
+3. **Release Please creates/updates a Release PR**:
+   - PR title: "chore(main): release X.Y.Z"
+   - Automatically updates CHANGELOG.md
+   - Automatically bumps version in package.json
+   - Aggregates all commits since last release
+
+4. **Review and merge the Release PR**:
+   - Check the generated CHANGELOG.md
+   - Verify version bump is correct
+   - Merge when ready to release
+
+5. **Automatic publishing**:
+   - Merging Release PR creates a GitHub release
+   - GitHub release triggers npm publish automatically
+   - Package appears on npm registry
+
+### Conventional Commit Types
+
+| Type | Description | Version Bump |
+|------|-------------|--------------|
+| `feat:` | New feature | Minor (0.x.0) |
+| `fix:` | Bug fix | Patch (0.0.x) |
+| `feat!:` or `BREAKING CHANGE:` | Breaking change | Major (x.0.0) |
+| `docs:` | Documentation only | None |
+| `chore:` | Maintenance tasks | None |
+| `refactor:` | Code refactoring | None |
+| `test:` | Adding/updating tests | None |
+| `perf:` | Performance improvements | Patch (0.0.x) |
+| `ci:` | CI configuration | None |
+| `build:` | Build system changes | None |
+
+### Commit Linting
+
+All PRs are automatically checked for conventional commit format:
+- PR title must follow conventional commits
+- All commits in PR must follow conventional commits
+- CI will fail if commits don't follow the format
+
+### Verification Commands
+
 ```bash
-# Create release (this will trigger npm publish automatically)
-gh release create v0.2.3 --title "v0.2.3" --notes "Release v0.2.3"
+# Check if Release PR exists
+gh pr list --label "autorelease: pending"
 
-# Check if release triggered the workflow
-gh run list --event=release
+# View release history
+gh release list
 
-# Monitor workflow progress
-gh run watch
+# Check npm package versions
+npm view @adcp/client versions
+
+# Monitor release workflow
+gh run list --workflow=release-please.yml
 ```
 
-#### Verification:
-After creating a GitHub release, verify:
-- [ ] GitHub Actions workflow runs automatically
-- [ ] Package is published to npm registry
-- [ ] Version appears at https://npmjs.com/package/@adcp/client
+### Emergency Manual Release (Use ONLY if automated process fails)
 
-**Remember**: Always use GitHub releases for triggering npm publishing, not just git tags.
+```bash
+# 1. Manually update version
+npm version patch|minor|major
+
+# 2. Create GitHub release
+gh release create v$(node -p "require('./package.json').version") --generate-notes
+
+# 3. Publish to npm (GitHub Actions should do this automatically)
+npm publish --access public
+```
+
+**Remember**: Trust the automation. Just write good conventional commits and merge Release PRs.
 
 ---
 
-*Last updated: 2025-09-26 (Added NPM publishing and release management section)*
+*Last updated: 2025-10-01 (Migrated to Release Please for automated releases)*
 *Project: AdCP Testing Framework*
 *Environment: Fly.io Production*
