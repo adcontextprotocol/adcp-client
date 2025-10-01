@@ -2000,13 +2000,44 @@
         <div class="section">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
                 <h3>📦 Available Products <span style="color: #666; font-size: 14px; font-weight: normal;">- Auto-loaded with agent data</span></h3>
-                <div style="display: flex; align-items: center; gap: 10px;">
-                    <input type="text" 
-                           id="promoted-offering-refresh" 
-                           placeholder="Promoted offering" 
-                           value="gourmet robot food" 
-                           style="padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; width: 200px;"
+                <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+                    <input type="text"
+                           id="promoted-offering-refresh"
+                           placeholder="Promoted offering"
+                           value="gourmet robot food"
+                           style="padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; width: 180px;"
                            title="Specify the promoted offering for product discovery">
+
+                    <select id="delivery-type-filter"
+                            style="padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px;"
+                            title="Filter by delivery type">
+                        <option value="">All Delivery Types</option>
+                        <option value="guaranteed">Guaranteed</option>
+                        <option value="non_guaranteed">Non-Guaranteed</option>
+                    </select>
+
+                    <select id="format-types-filter"
+                            multiple
+                            size="3"
+                            style="padding: 4px 8px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; width: 120px;"
+                            title="Filter by format types (Ctrl+click for multiple)">
+                        <option value="video">Video</option>
+                        <option value="display">Display</option>
+                        <option value="audio">Audio</option>
+                    </select>
+
+                    <label style="display: flex; align-items: center; gap: 5px; font-size: 14px; cursor: pointer;"
+                           title="Show only fixed-price products">
+                        <input type="checkbox" id="fixed-price-filter">
+                        Fixed Price Only
+                    </label>
+
+                    <input type="number"
+                           id="min-exposures-filter"
+                           placeholder="Min exposures"
+                           min="0"
+                           style="padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; width: 130px;"
+                           title="Minimum impressions needed for measurement validity (e.g., 10000)">
                 </div>
             </div>
             
@@ -2045,7 +2076,32 @@
         <div class="section">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
                 <h3>🎨 Creative Formats</h3>
-                <span style="color: #666; font-size: 14px;">Auto-loaded with agent data</span>
+                <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+                    <select id="format-type-filter"
+                            style="padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px;"
+                            title="Filter by format type">
+                        <option value="">All Types</option>
+                        <option value="audio">Audio</option>
+                        <option value="video">Video</option>
+                        <option value="display">Display</option>
+                    </select>
+
+                    <select id="format-category-filter"
+                            style="padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px;"
+                            title="Filter by category">
+                        <option value="">All Categories</option>
+                        <option value="standard">Standard</option>
+                        <option value="custom">Custom</option>
+                    </select>
+
+                    <label style="display: flex; align-items: center; gap: 5px; font-size: 14px; cursor: pointer;"
+                           title="Show only IAB standard formats">
+                        <input type="checkbox" id="standard-only-filter">
+                        IAB Standard Only
+                    </label>
+
+                    <span style="color: #666; font-size: 14px;">Auto-loaded with agent data</span>
+                </div>
             </div>
             
             <div style="overflow-x: auto;">
@@ -2970,21 +3026,54 @@
         async function loadProducts() {
             const selectedAgentId = document.getElementById('agent-selector').value;
             const promotedOffering = document.getElementById('promoted-offering-refresh').value || 'gourmet robot food';
-            
+
+            // Get filter values
+            const deliveryType = document.getElementById('delivery-type-filter').value;
+            const formatTypesSelect = document.getElementById('format-types-filter');
+            const formatTypes = Array.from(formatTypesSelect.selectedOptions).map(opt => opt.value);
+            const isFixedPrice = document.getElementById('fixed-price-filter').checked;
+            const minExposures = document.getElementById('min-exposures-filter').value;
+
             // Show loading state
             setProductsLoadingState(true);
-            
+
             const selectedAgent = agents.find(a => a.id === selectedAgentId);
             if (!selectedAgent) {
                 setProductsLoadingState(false, 'error');
                 throw new Error('Agent not found');
             }
-            
-            logEvent('info', `🔧 DEBUG: loadProducts calling callADCPTool with 'get_products'`);
-            const result = await callADCPTool(selectedAgent, 'get_products', {
+
+            // Build AdCP-compliant parameters
+            const params = {
                 brief: 'Discover available advertising products for testing',
-                promoted_offering: promotedOffering
-            });
+                promoted_offering: promotedOffering,
+                adcp_version: '1.6.0'
+            };
+
+            // Add filters if any are specified
+            if (deliveryType || formatTypes.length > 0 || isFixedPrice || minExposures) {
+                params.filters = {};
+
+                if (deliveryType) {
+                    params.filters.delivery_type = deliveryType;
+                }
+
+                if (formatTypes.length > 0) {
+                    params.filters.format_types = formatTypes;
+                }
+
+                if (isFixedPrice) {
+                    params.filters.is_fixed_price = true;
+                }
+
+                if (minExposures) {
+                    params.filters.min_exposures = parseInt(minExposures, 10);
+                }
+            }
+
+            logEvent('info', `🔧 DEBUG: loadProducts calling callADCPTool with 'get_products'`);
+            logEvent('info', `🔧 DEBUG: Parameters: ${JSON.stringify(params, null, 2)}`);
+            const result = await callADCPTool(selectedAgent, 'get_products', params);
             
             // Debug: Log the full result structure
             logEvent('info', `🔧 DEBUG: loadProducts result structure: ${JSON.stringify(result, null, 2)}`);
@@ -3020,18 +3109,40 @@
         
         async function loadCreativeFormats() {
             const selectedAgentId = document.getElementById('agent-selector').value;
-            
+
+            // Get filter values
+            const formatType = document.getElementById('format-type-filter').value;
+            const formatCategory = document.getElementById('format-category-filter').value;
+            const standardOnly = document.getElementById('standard-only-filter').checked;
+
             // Show loading state
             setFormatsLoadingState(true);
-            
+
             const selectedAgent = agents.find(a => a.id === selectedAgentId);
             if (!selectedAgent) {
                 setFormatsLoadingState(false, 'error');
                 throw new Error('Agent not found');
             }
-            
+
+            // Build AdCP-compliant parameters
+            const params = {
+                adcp_version: '1.6.0'
+            };
+
+            // Add filters if specified
+            if (formatType) {
+                params.type = formatType;
+            }
+            if (formatCategory) {
+                params.category = formatCategory;
+            }
+            if (standardOnly) {
+                params.standard_only = true;
+            }
+
             logEvent('info', `🔧 DEBUG: loadCreativeFormats calling callADCPTool with 'list_creative_formats'`);
-            const result = await callADCPTool(selectedAgent, 'list_creative_formats', {});
+            logEvent('info', `🔧 DEBUG: Parameters: ${JSON.stringify(params, null, 2)}`);
+            const result = await callADCPTool(selectedAgent, 'list_creative_formats', params);
             
             if (result && result.formats) {
                 creativeFormats = result.formats;

@@ -1655,10 +1655,39 @@ class SalesAgentsHandlers {
      * Create A2A message following current ADCP specification
      * Uses only text parts as skill parts are not supported by current agents
      */
-    createA2AMessage(messageId, requestText, toolName, brandStory, userProvidedOffering) {
-        // Create comprehensive text request that includes all necessary information
-        const fullRequestText = `${requestText}\n\nTOOL REQUEST: ${toolName}\nBRIEF: ${brandStory}${userProvidedOffering ? `\nPROMOTED OFFERING: ${userProvidedOffering}` : ''}`;
-        
+    createA2AMessage(messageId, requestText, toolName, brandStory, userProvidedOffering, additionalParams = {}) {
+        // Build comprehensive text request with AdCP-compliant parameters
+        let paramText = `TOOL REQUEST: ${toolName}\nBRIEF: ${brandStory}${userProvidedOffering ? `\nPROMOTED OFFERING: ${userProvidedOffering}` : ''}`;
+
+        // Add AdCP version
+        paramText += `\nADCP VERSION: ${additionalParams.adcp_version || '1.6.0'}`;
+
+        // Add filters if present
+        if (toolName === 'get_products' && (additionalParams.filters || additionalParams.delivery_type || additionalParams.format_types || additionalParams.is_fixed_price || additionalParams.min_exposures)) {
+            paramText += '\n\nFILTERS:';
+
+            const filters = additionalParams.filters || {};
+            const deliveryType = additionalParams.delivery_type || filters.delivery_type;
+            const formatTypes = additionalParams.format_types || filters.format_types;
+            const isFixedPrice = additionalParams.is_fixed_price !== undefined ? additionalParams.is_fixed_price : filters.is_fixed_price;
+            const minExposures = additionalParams.min_exposures || filters.min_exposures;
+
+            if (deliveryType) {
+                paramText += `\n- Delivery Type: ${deliveryType}`;
+            }
+            if (formatTypes && formatTypes.length > 0) {
+                paramText += `\n- Format Types: ${formatTypes.join(', ')}`;
+            }
+            if (isFixedPrice !== undefined) {
+                paramText += `\n- Fixed Price Only: ${isFixedPrice ? 'Yes' : 'No'}`;
+            }
+            if (minExposures !== undefined) {
+                paramText += `\n- Minimum Exposures: ${minExposures.toLocaleString()}`;
+            }
+        }
+
+        const fullRequestText = `${requestText}\n\n${paramText}`;
+
         const baseParts = [
             {
                 kind: 'text',
@@ -1682,7 +1711,7 @@ class SalesAgentsHandlers {
     /**
      * Query A2A protocol agent for inventory with structured brief
      */
-    async queryA2AAgent(agent, brandStory, userProvidedOffering = null, toolName = 'get_products') {
+    async queryA2AAgent(agent, brandStory, userProvidedOffering = null, toolName = 'get_products', additionalParams = {}) {
         // Apply concurrent request limiting
         return await this.withConcurrencyLimit(async () => {
             // Validate URL before making requests
@@ -1732,29 +1761,30 @@ Please process this ${toolName} request according to AdCP specifications.`;
             
             // Create message using ADCP PR #48 specification with explicit skill invocation
             const inventoryRequest = this.createA2AMessage(
-                messageId, 
-                requestText, 
-                toolName, 
-                brandStory, 
-                userProvidedOffering, 
-                true // Use explicit skill invocation
+                messageId,
+                requestText,
+                toolName,
+                brandStory,
+                userProvidedOffering,
+                additionalParams
             );
-            
+
             // Try explicit skill invocation first
             let response = await client.sendMessage(inventoryRequest);
-            
+
             // If payload validation fails, try with simplified text approach
             if (response.error && (response.error.code === -32600 || (response.error.message && response.error.message.includes('validation')))) {
                 console.log('A2A request failed with validation error, trying simplified approach...');
                 const simplifiedText = `Please help with ${toolName} for: ${brandStory}`;
                 const fallbackRequest = this.createA2AMessage(
-                    messageId + '_fallback', 
-                    simplifiedText, 
-                    toolName, 
-                    brandStory, 
-                    userProvidedOffering
+                    messageId + '_fallback',
+                    simplifiedText,
+                    toolName,
+                    brandStory,
+                    userProvidedOffering,
+                    additionalParams
                 );
-                
+
                 response = await client.sendMessage(fallbackRequest);
             }
             
@@ -1858,7 +1888,7 @@ Please process this ${toolName} request according to AdCP specifications.`;
     /**
      * Query MCP protocol agent for inventory using proper tool discovery
      */
-    async queryMCPAgent(agent, brandStory, userProvidedOffering = null, toolName = 'get_products') {
+    async queryMCPAgent(agent, brandStory, userProvidedOffering = null, toolName = 'get_products', additionalParams = {}) {
         // Apply concurrent request limiting
         return await this.withConcurrencyLimit(async () => {
             // Create operation logger to track the entire MCP operation
@@ -1925,15 +1955,59 @@ Please process this ${toolName} request according to AdCP specifications.`;
             
             // Build tool arguments
             let toolArguments;
-            
+
             if (toolName === 'get_products') {
-                toolArguments = {
-                    req: {
-                        brief: brandStory,
-                        promoted_offering: userProvidedOffering || 'Testing product for advertising campaign discovery',
-                        strategy_id: null
-                    }
+                // Build AdCP-compliant get_products request
+                const req = {
+                    promoted_offering: userProvidedOffering || 'Testing product for advertising campaign discovery'
                 };
+
+                // Add optional AdCP parameters
+                if (brandStory) {
+                    req.brief = brandStory;
+                }
+
+                // Add adcp_version if provided, otherwise use package version
+                req.adcp_version = additionalParams.adcp_version || '1.6.0';
+
+                // Add filters if provided
+                if (additionalParams.filters || additionalParams.delivery_type || additionalParams.format_types || additionalParams.is_fixed_price || additionalParams.min_exposures) {
+                    req.filters = {};
+
+                    // Handle nested filters object
+                    if (additionalParams.filters) {
+                        Object.assign(req.filters, additionalParams.filters);
+                    }
+
+                    // Handle top-level filter parameters (for backward compatibility)
+                    if (additionalParams.delivery_type) {
+                        req.filters.delivery_type = additionalParams.delivery_type;
+                    }
+                    if (additionalParams.format_types) {
+                        req.filters.format_types = additionalParams.format_types;
+                    }
+                    if (additionalParams.is_fixed_price !== undefined) {
+                        req.filters.is_fixed_price = additionalParams.is_fixed_price;
+                    }
+                    if (additionalParams.format_ids) {
+                        req.filters.format_ids = additionalParams.format_ids;
+                    }
+                    if (additionalParams.standard_formats_only !== undefined) {
+                        req.filters.standard_formats_only = additionalParams.standard_formats_only;
+                    }
+                    if (additionalParams.min_exposures !== undefined) {
+                        req.filters.min_exposures = additionalParams.min_exposures;
+                    }
+                }
+
+                // Include any other additional params that might be relevant
+                Object.keys(additionalParams).forEach(key => {
+                    if (!['delivery_type', 'format_types', 'is_fixed_price', 'format_ids', 'standard_formats_only', 'min_exposures', 'filters', 'adcp_version'].includes(key)) {
+                        req[key] = additionalParams[key];
+                    }
+                });
+
+                toolArguments = { req };
             } else if (toolName === 'create_media_buy') {
                 toolArguments = {
                     req: {
@@ -1946,12 +2020,23 @@ Please process this ${toolName} request according to AdCP specifications.`;
                     }
                 };
             } else {
-                toolArguments = {
-                    req: {
-                        brief: brandStory,
-                        promoted_offering: userProvidedOffering || 'Testing product for advertising campaign discovery'
-                    }
+                // For all other tools (list_creative_formats, list_creatives, etc.)
+                // Build request with AdCP version and merge in all additionalParams
+                // AdCP specification: see src/lib/types/tools.generated.ts
+                const req = {
+                    adcp_version: additionalParams.adcp_version || '1.6.0'
                 };
+
+                // Merge in all additional parameters
+                // This respects the caller's intent and avoids sending extra fields
+                // Only parameters explicitly in additionalParams will be sent
+                Object.keys(additionalParams).forEach(key => {
+                    if (key !== 'adcp_version') {
+                        req[key] = additionalParams[key];
+                    }
+                });
+
+                toolArguments = { req };
             }
             
             const toolCall = {
@@ -2182,7 +2267,7 @@ Please process this ${toolName} request according to AdCP specifications.`;
     /**
      * Query a single sales agent for inventory
      */
-    async querySalesAgent(agentId, brandStory, userProvidedOffering = null, customAgentConfig = null, toolName = 'get_products') {
+    async querySalesAgent(agentId, brandStory, userProvidedOffering = null, customAgentConfig = null, toolName = 'get_products', additionalParams = {}) {
         try {
             let agent;
             
@@ -2210,16 +2295,16 @@ Please process this ${toolName} request according to AdCP specifications.`;
 
             // Query based on protocol
             if (agent.protocol === 'a2a') {
-                const result = await this.queryA2AAgent(agent, brandStory, userProvidedOffering, toolName);
+                const result = await this.queryA2AAgent(agent, brandStory, userProvidedOffering, toolName, additionalParams);
                 response = result.response;
                 debugLogs = result.debugLogs || [];
                 validation = result.validation || null;
-                
+
                 if (result.response && result.response.error) {
                     throw new Error(result.response.message || 'A2A agent returned an error');
                 }
             } else if (agent.protocol === 'mcp') {
-                const result = await this.queryMCPAgent(agent, brandStory, userProvidedOffering, toolName);
+                const result = await this.queryMCPAgent(agent, brandStory, userProvidedOffering, toolName, additionalParams);
                 response = result.response;
                 debugLogs = result.debugLogs || [];
                 validation = result.validation || null;
