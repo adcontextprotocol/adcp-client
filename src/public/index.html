@@ -3408,7 +3408,7 @@
                     </td>
                     <td style="padding: 12px; border: 1px solid #dee2e6;">${format.iab_specification || 'N/A'}</td>
                     <td style="padding: 12px; border: 1px solid #dee2e6;">${formatAssetsRequired(format.assets_required)}</td>
-                    <td style="padding: 12px; border: 1px solid #dee2e6;">${format.requirements || 'Standard'}</td>
+                    <td style="padding: 12px; border: 1px solid #dee2e6;">${formatRequirements(format.requirements)}</td>
                     <td style="padding: 12px; border: 1px solid #dee2e6; text-align: center;">${getFormatValidationStatusIcon(format)}</td>
                     <td style="padding: 12px; border: 1px solid #dee2e6; text-align: center;">
                         ${formatSourceDisplay(format.source)}
@@ -3419,20 +3419,61 @@
         
         function formatAssetsRequired(assets) {
             if (!assets) return 'N/A';
-            
+
             if (Array.isArray(assets)) {
-                return assets.join(', ');
+                return assets.map(asset => {
+                    if (typeof asset === 'object') {
+                        // Try to extract meaningful info from asset object
+                        if (asset.asset_type) return asset.asset_type;
+                        if (asset.name) return asset.name;
+                        if (asset.type) return asset.type;
+                        return JSON.stringify(asset);
+                    }
+                    return String(asset);
+                }).join(', ');
             }
-            
+
             if (typeof assets === 'object') {
                 return Object.entries(assets)
-                    .map(([key, value]) => `${key}: ${value}`)
+                    .map(([key, value]) => {
+                        if (typeof value === 'object') {
+                            return `${key}: ${JSON.stringify(value)}`;
+                        }
+                        return `${key}: ${value}`;
+                    })
                     .join(', ');
             }
-            
+
             return String(assets);
         }
-        
+
+        function formatRequirements(requirements) {
+            if (!requirements) return 'Standard';
+
+            if (typeof requirements === 'string') {
+                return requirements;
+            }
+
+            if (Array.isArray(requirements)) {
+                return requirements.map(req =>
+                    typeof req === 'object' ? JSON.stringify(req) : String(req)
+                ).join(', ');
+            }
+
+            if (typeof requirements === 'object') {
+                return Object.entries(requirements)
+                    .map(([key, value]) => {
+                        if (typeof value === 'object') {
+                            return `${key}: ${JSON.stringify(value)}`;
+                        }
+                        return `${key}: ${value}`;
+                    })
+                    .join(', ');
+            }
+
+            return String(requirements);
+        }
+
         function formatSourceDisplay(source) {
             if (!source) return '<span style="color: #999;">Unknown</span>';
             
