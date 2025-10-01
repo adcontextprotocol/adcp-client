@@ -44,7 +44,7 @@
     "lint": "echo 'Linting not yet configured'",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist/",
-    "prepublishOnly": "npm run clean && (npm run sync-schemas || echo 'Schema sync failed, continuing...') && npm run generate-types && npm run build:lib && node --test test/lib/adcp-client.test.js test/lib/validation.test.js",
+    "prepublishOnly": "npm run clean && (test -f src/lib/types/tools.generated.ts || npm run sync-schemas) && (test -f src/lib/types/tools.generated.ts || npm run generate-types) && npm run build:lib && node --test test/lib/adcp-client.test.js test/lib/validation.test.js",
     "docs": "typedoc",
     "docs:watch": "typedoc --watch",
     "docs:serve": "cd docs && make serve",
