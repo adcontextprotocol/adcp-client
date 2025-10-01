@@ -2000,13 +2000,36 @@
         <div class="section">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
                 <h3>📦 Available Products <span style="color: #666; font-size: 14px; font-weight: normal;">- Auto-loaded with agent data</span></h3>
-                <div style="display: flex; align-items: center; gap: 10px;">
-                    <input type="text" 
-                           id="promoted-offering-refresh" 
-                           placeholder="Promoted offering" 
-                           value="gourmet robot food" 
-                           style="padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; width: 200px;"
+                <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+                    <input type="text"
+                           id="promoted-offering-refresh"
+                           placeholder="Promoted offering"
+                           value="gourmet robot food"
+                           style="padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; width: 180px;"
                            title="Specify the promoted offering for product discovery">
+
+                    <select id="delivery-type-filter"
+                            style="padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px;"
+                            title="Filter by delivery type">
+                        <option value="">All Delivery Types</option>
+                        <option value="guaranteed">Guaranteed</option>
+                        <option value="non_guaranteed">Non-Guaranteed</option>
+                    </select>
+
+                    <select id="format-types-filter"
+                            multiple
+                            style="padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; max-width: 150px; height: 38px;"
+                            title="Filter by format types (Ctrl+click for multiple)">
+                        <option value="video">Video</option>
+                        <option value="display">Display</option>
+                        <option value="audio">Audio</option>
+                    </select>
+
+                    <label style="display: flex; align-items: center; gap: 5px; font-size: 14px; cursor: pointer;"
+                           title="Show only fixed-price products">
+                        <input type="checkbox" id="fixed-price-filter">
+                        Fixed Price Only
+                    </label>
                 </div>
             </div>
             
@@ -2968,21 +2991,49 @@
         async function loadProducts() {
             const selectedAgentId = document.getElementById('agent-selector').value;
             const promotedOffering = document.getElementById('promoted-offering-refresh').value || 'gourmet robot food';
-            
+
+            // Get filter values
+            const deliveryType = document.getElementById('delivery-type-filter').value;
+            const formatTypesSelect = document.getElementById('format-types-filter');
+            const formatTypes = Array.from(formatTypesSelect.selectedOptions).map(opt => opt.value);
+            const isFixedPrice = document.getElementById('fixed-price-filter').checked;
+
             // Show loading state
             setProductsLoadingState(true);
-            
+
             const selectedAgent = agents.find(a => a.id === selectedAgentId);
             if (!selectedAgent) {
                 setProductsLoadingState(false, 'error');
                 throw new Error('Agent not found');
             }
-            
-            logEvent('info', `🔧 DEBUG: loadProducts calling callADCPTool with 'get_products'`);
-            const result = await callADCPTool(selectedAgent, 'get_products', {
+
+            // Build AdCP-compliant parameters
+            const params = {
                 brief: 'Discover available advertising products for testing',
-                promoted_offering: promotedOffering
-            });
+                promoted_offering: promotedOffering,
+                adcp_version: '1.6.0'
+            };
+
+            // Add filters if any are specified
+            if (deliveryType || formatTypes.length > 0 || isFixedPrice) {
+                params.filters = {};
+
+                if (deliveryType) {
+                    params.filters.delivery_type = deliveryType;
+                }
+
+                if (formatTypes.length > 0) {
+                    params.filters.format_types = formatTypes;
+                }
+
+                if (isFixedPrice) {
+                    params.filters.is_fixed_price = true;
+                }
+            }
+
+            logEvent('info', `🔧 DEBUG: loadProducts calling callADCPTool with 'get_products'`);
+            logEvent('info', `🔧 DEBUG: Parameters: ${JSON.stringify(params, null, 2)}`);
+            const result = await callADCPTool(selectedAgent, 'get_products', params);
             
             // Debug: Log the full result structure
             logEvent('info', `🔧 DEBUG: loadProducts result structure: ${JSON.stringify(result, null, 2)}`);
