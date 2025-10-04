@@ -286,16 +286,28 @@ export class TaskExecutor {
     if (response?.structuredContent) {
       return response.structuredContent;
     }
-    
-    // A2A responses typically have result or data  
+
+    // A2A responses typically have result with artifacts
     if (response?.result) {
+      // Check if this is an A2A artifact structure
+      if (response.result.artifacts && Array.isArray(response.result.artifacts)) {
+        // Extract data from the first artifact's first part
+        const artifacts = response.result.artifacts;
+        if (artifacts.length > 0 && artifacts[0].parts && Array.isArray(artifacts[0].parts)) {
+          const firstPart = artifacts[0].parts[0];
+          if (firstPart?.data) {
+            return firstPart.data;
+          }
+        }
+      }
+      // Otherwise return the result as-is
       return response.result;
     }
-    
+
     if (response?.data) {
       return response.data;
     }
-    
+
     // Fallback to full response
     return response;
   }
