@@ -10,6 +10,7 @@ export { ADCPMultiAgentClient, AgentCollection as NewAgentCollection, createADCP
 export { ConfigurationManager } from './core/ConfigurationManager';
 export { TaskExecutor } from './core/TaskExecutor';
 export { ProtocolResponseParser, responseParser, ADCP_STATUS, type ADCPStatus } from './core/ProtocolResponseParser';
+export { ResponseValidator, responseValidator, type ValidationResult, type ValidationOptions } from './core/ResponseValidator';
 // ====== CONVERSATION TYPES ======
 export type {
   Message,
