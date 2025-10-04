@@ -3293,9 +3293,8 @@
             }
 
             // Build AdCP-compliant parameters
-            const params = {
-                adcp_version: '1.6.0'
-            };
+            // Note: adcp_version is not supported by current agent implementations for list_creative_formats
+            const params = {};
 
             // Add filters if specified
             if (formatType) {
