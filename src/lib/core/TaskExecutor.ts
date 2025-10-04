@@ -207,7 +207,7 @@ export class TaskExecutor {
     switch (status) {
       case ADCP_STATUS.COMPLETED:
         // Task completed immediately
-        const completedData = this.extractResponseData(response);
+        const completedData = this.extractResponseData(response, debugLogs);
         this.updateTaskStatus(taskId, 'completed', completedData);
         return {
           success: true,
@@ -254,7 +254,7 @@ export class TaskExecutor {
 
       default:
         // Unknown status - treat as completed if we have data
-        const defaultData = this.extractResponseData(response);
+        const defaultData = this.extractResponseData(response, debugLogs);
         if (defaultData && (defaultData !== response || response.structuredContent || response.result || response.data)) {
           return {
             success: true,
@@ -280,10 +280,15 @@ export class TaskExecutor {
 
   /**
    * Extract response data from different protocol formats
+   *
+   * @internal Exposed for testing purposes
    */
-  private extractResponseData(response: any): any {
+  public extractResponseData(response: any, debugLogs?: any[]): any {
     // MCP responses have structuredContent
     if (response?.structuredContent) {
+      this.logDebug(debugLogs, 'info', 'Extracting data from MCP structuredContent', {
+        hasStructuredContent: true
+      });
       return response.structuredContent;
     }
 
@@ -296,20 +301,50 @@ export class TaskExecutor {
         if (artifacts.length > 0 && artifacts[0].parts && Array.isArray(artifacts[0].parts)) {
           const firstPart = artifacts[0].parts[0];
           if (firstPart?.data) {
+            this.logDebug(debugLogs, 'info', 'Extracting data from A2A artifact structure', {
+              artifactCount: artifacts.length,
+              partCount: artifacts[0].parts.length,
+              dataKeys: Object.keys(firstPart.data || {})
+            });
             return firstPart.data;
           }
         }
+        this.logDebug(debugLogs, 'warning', 'A2A artifacts found but no data extracted', {
+          artifactCount: artifacts.length,
+          hasFirstPart: !!artifacts[0]?.parts?.[0]
+        });
       }
       // Otherwise return the result as-is
+      this.logDebug(debugLogs, 'info', 'Returning A2A result directly (no artifacts)', {
+        hasArtifacts: !!response.result.artifacts
+      });
       return response.result;
     }
 
     if (response?.data) {
+      this.logDebug(debugLogs, 'info', 'Extracting data from response.data field');
       return response.data;
     }
 
     // Fallback to full response
+    this.logDebug(debugLogs, 'warning', 'No standard data structure found, returning full response', {
+      responseKeys: Object.keys(response || {})
+    });
     return response;
+  }
+
+  /**
+   * Helper to add debug logs safely
+   */
+  private logDebug(debugLogs: any[] | undefined, type: string, message: string, details?: any) {
+    if (debugLogs && Array.isArray(debugLogs)) {
+      debugLogs.push({
+        type,
+        message,
+        timestamp: new Date().toISOString(),
+        details
+      });
+    }
   }
 
   /**

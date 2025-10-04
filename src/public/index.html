@@ -3324,26 +3324,26 @@
         
         async function loadCreatives() {
             const selectedAgentId = document.getElementById('agent-selector').value;
-            
+
             // Show loading state (if there's a creatives section)
             setCreativesLoadingState(true);
-            
+
             const selectedAgent = agents.find(a => a.id === selectedAgentId);
             if (!selectedAgent) {
                 setCreativesLoadingState(false, 'error');
                 throw new Error('Agent not found');
             }
-            
+
             logEvent('info', `🔧 DEBUG: loadCreatives calling callADCPTool with 'list_creatives'`);
             const result = await callADCPTool(selectedAgent, 'list_creatives', {
                 // Add any default parameters if needed
             });
-            
+
             if (result && result.creatives) {
                 // Update creatives table if it exists
                 setCreativesLoadingState(false, 'success');
                 logEvent('success', `Loaded ${result.creatives.length} creatives`);
-                
+
                 // Find and update creatives table if it exists
                 const creativesTable = document.getElementById('creatives-list');
                 if (creativesTable) {
@@ -3353,6 +3353,103 @@
                 setCreativesLoadingState(false, 'warning');
                 logEvent('warning', 'No creatives returned from agent');
             }
+        }
+
+        /**
+         * Update the creatives display table with loaded creatives
+         */
+        function updateCreativesDisplay(creatives) {
+            const creativesTable = document.getElementById('creatives-list');
+            if (!creativesTable) {
+                logEvent('warning', 'Creatives table element not found in DOM');
+                return;
+            }
+
+            if (!creatives || creatives.length === 0) {
+                creativesTable.innerHTML = `
+                    <div style="padding: 20px; text-align: center;">
+                        <p style="color: #666;">No creatives found</p>
+                    </div>
+                `;
+                return;
+            }
+
+            let html = `
+                <div style="max-height: 400px; overflow-y: auto;">
+                    <table style="width: 100%; border-collapse: collapse;">
+                        <thead>
+                            <tr style="border-bottom: 2px solid #ddd; background: #f8f9fa;">
+                                <th style="padding: 12px; text-align: left;">ID</th>
+                                <th style="padding: 12px; text-align: left;">Name</th>
+                                <th style="padding: 12px; text-align: left;">Format</th>
+                                <th style="padding: 12px; text-align: left;">Status</th>
+                                <th style="padding: 12px; text-align: left;">Dimensions</th>
+                                <th style="padding: 12px; text-align: left;">Preview</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+            `;
+
+            creatives.forEach(creative => {
+                const creativeId = creative.id || creative.creative_id || 'N/A';
+                const status = creative.status || 'unknown';
+                const statusColor = status === 'active' || status === 'approved' ? '#28a745' :
+                                   status === 'pending' || status === 'review' ? '#ffc107' :
+                                   status === 'rejected' || status === 'failed' ? '#dc3545' :
+                                   status === 'archived' ? '#6c757d' : '#000';
+
+                const dimensions = creative.width && creative.height
+                    ? `${creative.width}×${creative.height}`
+                    : 'N/A';
+
+                const hasPreview = creative.url || creative.media_url;
+                const previewUrl = creative.url || creative.media_url;
+
+                html += `
+                    <tr style="border-bottom: 1px solid #eee;">
+                        <td style="padding: 12px; font-family: monospace; font-size: 11px;">
+                            <div style="max-width: 150px; overflow: hidden; text-overflow: ellipsis;" title="${creativeId}">
+                                ${creativeId}
+                            </div>
+                        </td>
+                        <td style="padding: 12px;">
+                            <strong>${creative.name || 'Unnamed'}</strong>
+                        </td>
+                        <td style="padding: 12px;">
+                            <span style="background: #e9ecef; padding: 4px 8px; border-radius: 4px; font-size: 12px;">
+                                ${creative.format || 'unknown'}
+                            </span>
+                        </td>
+                        <td style="padding: 12px;">
+                            <span style="color: ${statusColor}; font-weight: bold; font-size: 12px;">
+                                ${status}
+                            </span>
+                        </td>
+                        <td style="padding: 12px; font-size: 12px; color: #666;">
+                            ${dimensions}
+                        </td>
+                        <td style="padding: 12px;">
+                            ${hasPreview ? `
+                                <a href="${previewUrl}" target="_blank" style="color: #007bff; text-decoration: none;">
+                                    🔗 View
+                                </a>
+                            ` : '<span style="color: #999;">N/A</span>'}
+                        </td>
+                    </tr>
+                `;
+            });
+
+            html += `
+                        </tbody>
+                    </table>
+                </div>
+                <div style="padding: 12px; background: #f8f9fa; border-top: 1px solid #dee2e6; font-size: 13px; color: #666;">
+                    <strong>Total:</strong> ${creatives.length} creative${creatives.length === 1 ? '' : 's'}
+                </div>
+            `;
+
+            creativesTable.innerHTML = html;
+            logEvent('info', `Updated creatives display with ${creatives.length} items`);
         }
 
         // Helper functions for section loading states
