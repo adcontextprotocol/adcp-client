@@ -271,7 +271,7 @@ export class ADCPClient {
   ): Promise<TaskResult<GetProductsResponse>> {
     return this.executeAndHandle<GetProductsResponse>(
       'get_products',
-      'onGetProductsComplete',
+      'onGetProductsStatusChange',
       params,
       inputHandler,
       options
@@ -292,7 +292,7 @@ export class ADCPClient {
   ): Promise<TaskResult<ListCreativeFormatsResponse>> {
     return this.executeAndHandle<ListCreativeFormatsResponse>(
       'list_creative_formats',
-      'onListCreativeFormatsComplete',
+      'onListCreativeFormatsStatusChange',
       params,
       inputHandler,
       options
@@ -313,7 +313,7 @@ export class ADCPClient {
   ): Promise<TaskResult<CreateMediaBuyResponse>> {
     return this.executeAndHandle<CreateMediaBuyResponse>(
       'create_media_buy',
-      'onCreateMediaBuyComplete',
+      'onCreateMediaBuyStatusChange',
       params,
       inputHandler,
       options
@@ -334,7 +334,7 @@ export class ADCPClient {
   ): Promise<TaskResult<UpdateMediaBuyResponse>> {
     return this.executeAndHandle<UpdateMediaBuyResponse>(
       'update_media_buy',
-      'onUpdateMediaBuyComplete',
+      'onUpdateMediaBuyStatusChange',
       params,
       inputHandler,
       options
@@ -355,7 +355,7 @@ export class ADCPClient {
   ): Promise<TaskResult<SyncCreativesResponse>> {
     return this.executeAndHandle<SyncCreativesResponse>(
       'sync_creatives',
-      'onSyncCreativesComplete',
+      'onSyncCreativesStatusChange',
       params,
       inputHandler,
       options
@@ -376,7 +376,7 @@ export class ADCPClient {
   ): Promise<TaskResult<ListCreativesResponse>> {
     return this.executeAndHandle<ListCreativesResponse>(
       'list_creatives',
-      'onListCreativesComplete',
+      'onListCreativesStatusChange',
       params,
       inputHandler,
       options
@@ -397,7 +397,7 @@ export class ADCPClient {
   ): Promise<TaskResult<GetMediaBuyDeliveryResponse>> {
     return this.executeAndHandle<GetMediaBuyDeliveryResponse>(
       'get_media_buy_delivery',
-      'onGetMediaBuyDeliveryComplete',
+      'onGetMediaBuyDeliveryStatusChange',
       params,
       inputHandler,
       options
@@ -418,7 +418,7 @@ export class ADCPClient {
   ): Promise<TaskResult<ListAuthorizedPropertiesResponse>> {
     return this.executeAndHandle<ListAuthorizedPropertiesResponse>(
       'list_authorized_properties',
-      'onListAuthorizedPropertiesComplete',
+      'onListAuthorizedPropertiesStatusChange',
       params,
       inputHandler,
       options
@@ -439,7 +439,7 @@ export class ADCPClient {
   ): Promise<TaskResult<ProvidePerformanceFeedbackResponse>> {
     return this.executeAndHandle<ProvidePerformanceFeedbackResponse>(
       'provide_performance_feedback',
-      'onProvidePerformanceFeedbackComplete',
+      'onProvidePerformanceFeedbackStatusChange',
       params,
       inputHandler,
       options
@@ -462,7 +462,7 @@ export class ADCPClient {
   ): Promise<TaskResult<GetSignalsResponse>> {
     return this.executeAndHandle<GetSignalsResponse>(
       'get_signals',
-      'onGetSignalsComplete',
+      'onGetSignalsStatusChange',
       params,
       inputHandler,
       options
@@ -483,7 +483,7 @@ export class ADCPClient {
   ): Promise<TaskResult<ActivateSignalResponse>> {
     return this.executeAndHandle<ActivateSignalResponse>(
       'activate_signal',
-      'onActivateSignalComplete',
+      'onActivateSignalStatusChange',
       params,
       inputHandler,
       options

@@ -25,7 +25,7 @@ npm install @adcp/client
 ## Quick Start: Distributed Operations
 
 ```typescript
-import { ADCPMultiAgentClient, createOperationId } from '@adcp/client';
+import { ADCPMultiAgentClient } from '@adcp/client';
 
 // Configure agents and handlers
 const client = new ADCPMultiAgentClient([
@@ -43,45 +43,71 @@ const client = new ADCPMultiAgentClient([
   // Webhook URL template (macros: {agent_id}, {task_type}, {operation_id})
   webhookUrlTemplate: 'https://myapp.com/webhook/{task_type}/{agent_id}/{operation_id}',
 
-  // Single handlers work for BOTH sync and async completions
-  handlers: {
-    onGetProductsComplete: (response, metadata) => {
-      console.log(`Got ${response.products?.length} products`);
-      console.log(`Via: ${metadata.operation_id}`);
-      db.saveProducts(metadata.operation_id, response.products);
-    },
+  // Activity callback - fires for ALL events (requests, responses, status changes, webhooks)
+  onActivity: (activity) => {
+    console.log(`[${activity.type}] ${activity.task_type} - ${activity.operation_id}`);
+    // Log to monitoring, update UI, etc.
+  },
 
-    onTaskFailed: (metadata, error) => {
-      console.error(`Operation ${metadata.operation_id} failed: ${error}`);
-      db.markFailed(metadata.operation_id, error);
+  // Status change handlers - called for ALL status changes (completed, failed, needs_input, working, etc)
+  handlers: {
+    onGetProductsStatusChange: (response, metadata) => {
+      // Called for sync completion, async webhook, AND status changes
+      console.log(`[${metadata.status}] Got products for ${metadata.operation_id}`);
+
+      if (metadata.status === 'completed') {
+        db.saveProducts(metadata.operation_id, response.products);
+      } else if (metadata.status === 'failed') {
+        db.markFailed(metadata.operation_id, metadata.error);
+      } else if (metadata.status === 'needs_input') {
+        // Handle clarification needed
+        console.log('Needs input:', response.message);
+      }
     }
   }
 });
 
-// Execute operation
-const operationId = createOperationId();
+// Execute operation - library handles operation IDs, webhook URLs, context management
 const agent = client.agent('agent_x');
+const result = await agent.getProducts({ brief: 'Coffee brands' });
 
-const result = await agent.getProducts(
-  { brief: 'Coffee brands' },
-  null, // No input handler = allow webhooks
-  {
-    contextId: operationId,
-    webhookUrl: agent.getWebhookUrl('get_products', operationId)
-  }
-);
+// onActivity fired: protocol_request
+// onActivity fired: protocol_response
 
 // Check result
 if (result.status === 'completed') {
   // Agent completed synchronously!
-  console.log('Sync:', result.data.products);
-  // Handler ALREADY fired ✓
+  console.log('✅ Sync completion:', result.data.products.length, 'products');
+  // onGetProductsStatusChange handler ALREADY fired with status='completed' ✓
 }
 
 if (result.status === 'submitted') {
   // Agent will send webhook when complete
-  console.log('Async - webhook will arrive at:', result.submitted?.webhookUrl);
-  // Handler will fire when webhook arrives ✓
+  console.log('⏳ Async - webhook registered at:', result.submitted?.webhookUrl);
+  // onGetProductsStatusChange handler will fire when webhook arrives ✓
+}
+```
+
+### Handling Clarifications (needs_input)
+
+When an agent needs more information, you can continue the conversation:
+
+```typescript
+const result = await agent.getProducts({ brief: 'Coffee brands' });
+
+if (result.status === 'needs_input') {
+  console.log('❓ Agent needs clarification:', result.needs_input?.message);
+  // onActivity fired: status_change (needs_input)
+
+  // Continue the conversation with the same agent
+  const refined = await agent.continueConversation('Only premium brands above $50');
+  // onActivity fired: protocol_request
+  // onActivity fired: protocol_response
+
+  if (refined.status === 'completed') {
+    console.log('✅ Got refined results:', refined.data.products.length);
+    // onGetProductsStatusChange handler fired ✓
+  }
 }
 ```
 
@@ -166,24 +192,29 @@ Activity types:
 
 ## Notifications (Agent-Initiated)
 
-Agents can send periodic updates (like delivery reports) without you requesting them.
-
-**Mental Model**: Notifications are status updates for an ongoing operation:
-- `notification_type: 'scheduled'` → Progress update (like `status: 'working'`)
-- `notification_type: 'final'` → Operation complete (like `status: 'completed'`)
-- `notification_type: 'delayed'` → Still waiting (extended timeline)
+**Mental Model**: Notifications are operations that get set up when you create a media buy. The agent sends periodic updates (like delivery reports) to the webhook URL you configured during media buy creation.
 
 ```typescript
+// When creating a media buy, agent registers for delivery notifications
+const result = await agent.createMediaBuy({
+  campaign_id: 'camp_123',
+  budget: { amount: 10000, currency: 'USD' }
+  // Agent internally sets up recurring delivery_report notifications
+});
+
+// Later, agent sends notifications to your webhook
 const client = new ADCPMultiAgentClient(agents, {
   handlers: {
     onMediaBuyDeliveryNotification: (notification, metadata) => {
-      console.log(`Report ${metadata.sequence_number}: ${metadata.notification_type}`);
+      console.log(`Report #${metadata.sequence_number}: ${metadata.notification_type}`);
 
-      // Save as status update for this operation
-      // All notifications for same agent + month share operation_id
+      // notification_type indicates progress:
+      // 'scheduled' → Progress update (like status: 'working')
+      // 'final' → Operation complete (like status: 'completed')
+      // 'delayed' → Still waiting (extended timeline)
+
       db.saveDeliveryUpdate(metadata.operation_id, notification);
 
-      // If final report, mark operation complete
       if (metadata.notification_type === 'final') {
         db.markOperationComplete(metadata.operation_id);
       }
@@ -192,7 +223,7 @@ const client = new ADCPMultiAgentClient(agents, {
 });
 ```
 
-Notifications use the **same webhook URL pattern**:
+Notifications use the **same webhook URL pattern** as regular operations:
 ```
 POST https://myapp.com/webhook/media_buy_delivery/agent_x/delivery_report_agent_x_2025-10
 ```

@@ -31,6 +31,10 @@ export interface WebhookMetadata {
   agent_id: string;
   /** Task type/tool name */
   task_type: string;
+  /** Task status (completed, failed, needs_input, working, etc) */
+  status?: string;
+  /** Error message if status is failed */
+  error?: string;
   /** Timestamp */
   timestamp: string;
 }
@@ -96,28 +100,23 @@ export interface Activity {
  * Configuration for async handler with typed callbacks
  */
 export interface AsyncHandlerConfig {
-  // AdCP tool completion handlers
-  onGetProductsComplete?: (response: GetProductsResponse, metadata: WebhookMetadata) => void | Promise<void>;
-  onListCreativeFormatsComplete?: (response: ListCreativeFormatsResponse, metadata: WebhookMetadata) => void | Promise<void>;
-  onCreateMediaBuyComplete?: (response: CreateMediaBuyResponse, metadata: WebhookMetadata) => void | Promise<void>;
-  onUpdateMediaBuyComplete?: (response: UpdateMediaBuyResponse, metadata: WebhookMetadata) => void | Promise<void>;
-  onSyncCreativesComplete?: (response: SyncCreativesResponse, metadata: WebhookMetadata) => void | Promise<void>;
-  onListCreativesComplete?: (response: ListCreativesResponse, metadata: WebhookMetadata) => void | Promise<void>;
-  onGetMediaBuyDeliveryComplete?: (response: GetMediaBuyDeliveryResponse, metadata: WebhookMetadata) => void | Promise<void>;
-  onListAuthorizedPropertiesComplete?: (response: ListAuthorizedPropertiesResponse, metadata: WebhookMetadata) => void | Promise<void>;
-  onProvidePerformanceFeedbackComplete?: (response: ProvidePerformanceFeedbackResponse, metadata: WebhookMetadata) => void | Promise<void>;
-  onGetSignalsComplete?: (response: GetSignalsResponse, metadata: WebhookMetadata) => void | Promise<void>;
-  onActivateSignalComplete?: (response: ActivateSignalResponse, metadata: WebhookMetadata) => void | Promise<void>;
+  // AdCP tool status change handlers - called for ALL status changes (completed, failed, needs_input, working, etc)
+  onGetProductsStatusChange?: (response: GetProductsResponse, metadata: WebhookMetadata) => void | Promise<void>;
+  onListCreativeFormatsStatusChange?: (response: ListCreativeFormatsResponse, metadata: WebhookMetadata) => void | Promise<void>;
+  onCreateMediaBuyStatusChange?: (response: CreateMediaBuyResponse, metadata: WebhookMetadata) => void | Promise<void>;
+  onUpdateMediaBuyStatusChange?: (response: UpdateMediaBuyResponse, metadata: WebhookMetadata) => void | Promise<void>;
+  onSyncCreativesStatusChange?: (response: SyncCreativesResponse, metadata: WebhookMetadata) => void | Promise<void>;
+  onListCreativesStatusChange?: (response: ListCreativesResponse, metadata: WebhookMetadata) => void | Promise<void>;
+  onGetMediaBuyDeliveryStatusChange?: (response: GetMediaBuyDeliveryResponse, metadata: WebhookMetadata) => void | Promise<void>;
+  onListAuthorizedPropertiesStatusChange?: (response: ListAuthorizedPropertiesResponse, metadata: WebhookMetadata) => void | Promise<void>;
+  onProvidePerformanceFeedbackStatusChange?: (response: ProvidePerformanceFeedbackResponse, metadata: WebhookMetadata) => void | Promise<void>;
+  onGetSignalsStatusChange?: (response: GetSignalsResponse, metadata: WebhookMetadata) => void | Promise<void>;
+  onActivateSignalStatusChange?: (response: ActivateSignalResponse, metadata: WebhookMetadata) => void | Promise<void>;
 
-  // Status handlers
-  onTaskSubmitted?: (metadata: WebhookMetadata) => void | Promise<void>;
-  onTaskWorking?: (metadata: WebhookMetadata, message?: string) => void | Promise<void>;
-  onTaskFailed?: (metadata: WebhookMetadata, error: string) => void | Promise<void>;
+  // Fallback handler for any task status change
+  onTaskStatusChange?: (response: any, metadata: WebhookMetadata) => void | Promise<void>;
 
-  // Fallback handler
-  onTaskComplete?: (response: any, metadata: WebhookMetadata) => void | Promise<void>;
-
-  // Activity logging
+  // Activity logging (low-level protocol events)
   onActivity?: (activity: Activity) => void | Promise<void>;
 
   // Notification handlers (agent-initiated, no operation_id)
@@ -155,6 +154,8 @@ export class AsyncHandler {
       task_id: payload.task_id,
       agent_id: agentId || 'unknown',
       task_type: payload.task_type,
+      status: payload.status,
+      error: payload.error,
       timestamp: payload.timestamp || new Date().toISOString()
     };
 
@@ -193,26 +194,9 @@ export class AsyncHandler {
       return;
     }
 
-    // Handle based on status for regular task completions
-    switch (payload.status) {
-      case 'submitted':
-        await this.config.onTaskSubmitted?.(metadata);
-        break;
-
-      case 'working':
-        await this.config.onTaskWorking?.(metadata, payload.message);
-        break;
-
-      case 'completed':
-        await this.handleCompletion(payload.task_type, payload.result, metadata);
-        break;
-
-      case 'failed':
-      case 'rejected':
-      case 'canceled':
-        await this.config.onTaskFailed?.(metadata, payload.error || `Task ${payload.status}`);
-        break;
-    }
+    // All status changes go through the specific handler
+    // The handler receives metadata with status and can act accordingly
+    await this.handleCompletion(payload.task_type, payload.result, metadata);
   }
 
   /**
@@ -222,52 +206,52 @@ export class AsyncHandler {
     // Route to specific handler based on task type
     switch (taskType) {
       case 'get_products':
-        await this.config.onGetProductsComplete?.(result, metadata);
+        await this.config.onGetProductsStatusChange?.(result, metadata);
         break;
 
       case 'list_creative_formats':
-        await this.config.onListCreativeFormatsComplete?.(result, metadata);
+        await this.config.onListCreativeFormatsStatusChange?.(result, metadata);
         break;
 
       case 'create_media_buy':
-        await this.config.onCreateMediaBuyComplete?.(result, metadata);
+        await this.config.onCreateMediaBuyStatusChange?.(result, metadata);
         break;
 
       case 'update_media_buy':
-        await this.config.onUpdateMediaBuyComplete?.(result, metadata);
+        await this.config.onUpdateMediaBuyStatusChange?.(result, metadata);
         break;
 
       case 'sync_creatives':
-        await this.config.onSyncCreativesComplete?.(result, metadata);
+        await this.config.onSyncCreativesStatusChange?.(result, metadata);
         break;
 
       case 'list_creatives':
-        await this.config.onListCreativesComplete?.(result, metadata);
+        await this.config.onListCreativesStatusChange?.(result, metadata);
         break;
 
       case 'get_media_buy_delivery':
-        await this.config.onGetMediaBuyDeliveryComplete?.(result, metadata);
+        await this.config.onGetMediaBuyDeliveryStatusChange?.(result, metadata);
         break;
 
       case 'list_authorized_properties':
-        await this.config.onListAuthorizedPropertiesComplete?.(result, metadata);
+        await this.config.onListAuthorizedPropertiesStatusChange?.(result, metadata);
         break;
 
       case 'provide_performance_feedback':
-        await this.config.onProvidePerformanceFeedbackComplete?.(result, metadata);
+        await this.config.onProvidePerformanceFeedbackStatusChange?.(result, metadata);
         break;
 
       case 'get_signals':
-        await this.config.onGetSignalsComplete?.(result, metadata);
+        await this.config.onGetSignalsStatusChange?.(result, metadata);
         break;
 
       case 'activate_signal':
-        await this.config.onActivateSignalComplete?.(result, metadata);
+        await this.config.onActivateSignalStatusChange?.(result, metadata);
         break;
 
       default:
         // Fallback to generic handler
-        await this.config.onTaskComplete?.(result, metadata);
+        await this.config.onTaskStatusChange?.(result, metadata);
         break;
     }
   }

@@ -32,69 +32,136 @@ const configuredAgents = ConfigurationManager.loadAgentsFromEnv();
 
 // Webhook configuration
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET;
-const BASE_URL = process.env.NODE_ENV === 'production' ? 'https://adcp-testing.fly.dev' : 'http://localhost:8080';
+const WEBHOOK_URL_TEMPLATE = process.env.WEBHOOK_URL_TEMPLATE;
 
-// Webhook URL template - customize to match your routing structure
-// Available macros: {agent_id}, {task_type}, {operation_id}
-const WEBHOOK_URL_TEMPLATE = process.env.WEBHOOK_URL_TEMPLATE ||
-  `${BASE_URL}/webhook/{task_type}/{agent_id}/{operation_id}`;
+if (!WEBHOOK_URL_TEMPLATE) {
+  console.warn('⚠️  WEBHOOK_URL_TEMPLATE not set - async operations will fail');
+  console.log('💡 Set WEBHOOK_URL_TEMPLATE for distributed async operations:');
+  console.log('   WEBHOOK_URL_TEMPLATE=https://myapp.com/webhook/{task_type}/{agent_id}/{operation_id}');
+  console.log('   Available macros: {agent_id}, {task_type}, {operation_id}');
+}
 
+// In-memory event storage (simple example - no database needed)
+interface StoredEvent {
+  id: string;
+  timestamp: string;
+  type: string;
+  operation_id?: string;
+  agent_id?: string;
+  task_type?: string;
+  status?: string;
+  payload?: any;
+  metadata?: any;
+}
+
+const eventStore: StoredEvent[] = [];
+const MAX_EVENTS = 1000; // Keep last 1000 events
+
+function storeEvent(event: Omit<StoredEvent, 'id' | 'timestamp'>) {
+  const storedEvent: StoredEvent = {
+    id: `evt_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+    timestamp: new Date().toISOString(),
+    ...event
+  };
+
+  eventStore.unshift(storedEvent); // Add to front
+  if (eventStore.length > MAX_EVENTS) {
+    eventStore.length = MAX_EVENTS; // Trim to max
+  }
+
+  return storedEvent;
+}
+
+// ADCPClient configuration with in-memory event storage
 const clientConfig: ADCPClientConfig = {
-  // Webhook configuration with macro substitution
   webhookUrlTemplate: WEBHOOK_URL_TEMPLATE,
+  webhookSecret: WEBHOOK_SECRET,
 
-  // Activity logging for all protocol interactions
-  // TODO: Fix type error with onActivity
-  // onActivity: (activity) => {
-  //   app.log.debug('ADCP Activity:', {
-  //     type: activity.type,
-  //     operation_id: activity.operation_id,
-  //     agent_id: activity.agent_id,
-  //     task_type: activity.task_type,
-  //     status: activity.status
-  //   });
-  // },
+  // Activity logging - store ALL events
+  onActivity: (activity) => {
+    storeEvent({
+      type: activity.type,
+      operation_id: activity.operation_id,
+      agent_id: activity.agent_id,
+      task_type: activity.task_type,
+      status: activity.status,
+      payload: activity.payload
+    });
 
-  // Task completion handlers (for both sync and webhook responses)
-  handlers: {
-    onGetProductsComplete: (response, metadata) => {
-      app.log.info(`Products received: ${response.products?.length || 0} products for operation ${metadata.operation_id}`);
-      // Example: Save to database
-      // db.saveProducts(metadata.operation_id, response.products);
-    },
-    onSyncCreativesComplete: (response, metadata) => {
-      app.log.info(`Creatives synced: ${response.summary?.total_processed || 0} creatives for operation ${metadata.operation_id}`);
-      // Example: Update database
-      // response.results?.forEach(r => db.updateCreativeStatus(r.creative_id, r.status));
-    },
-    onCreateMediaBuyComplete: (response, metadata) => {
-      app.log.info(`Media buy created: ${response.media_buy_id} for operation ${metadata.operation_id}`);
-      // Example: Save to database
-      // db.saveMediaBuy(metadata.operation_id, response);
-    },
-    onMediaBuyDeliveryNotification: (notification, metadata) => {
-      app.log.info(`Delivery notification (${metadata.notification_type}): ${notification.media_buy_deliveries?.length || 0} deliveries`);
-      // Example: Save delivery data
-      // notification.media_buy_deliveries?.forEach(d => db.saveDelivery(d));
-    },
-    onTaskFailed: (metadata, error) => {
-      app.log.error(`Task failed for operation ${metadata.operation_id}: ${error}`);
-      // Example: Update status
-      // db.markTaskFailed(metadata.task_id, error);
-    }
+    app.log.debug({
+      activity_type: activity.type,
+      operation_id: activity.operation_id,
+      agent_id: activity.agent_id
+    }, 'ADCP Activity');
   },
 
-  webhookSecret: WEBHOOK_SECRET
+  // Status change handlers - called for ALL status changes (completed, failed, needs_input, working, etc)
+  handlers: {
+    onGetProductsStatusChange: (response, metadata) => {
+      const status = (metadata as any).status || 'completed'; // Get actual status from webhook
+      storeEvent({
+        type: 'handler_called',
+        operation_id: metadata.operation_id,
+        agent_id: metadata.agent_id,
+        task_type: 'get_products',
+        status,
+        payload: response,
+        metadata
+      });
+      app.log.info(`[${status}] Products: ${response.products?.length || 0} for ${metadata.operation_id}`);
+    },
+
+    onSyncCreativesStatusChange: (response, metadata) => {
+      const status = (metadata as any).status || 'completed';
+      storeEvent({
+        type: 'handler_called',
+        operation_id: metadata.operation_id,
+        agent_id: metadata.agent_id,
+        task_type: 'sync_creatives',
+        status,
+        payload: response,
+        metadata
+      });
+      app.log.info(`[${status}] Creatives synced: ${response.summary?.total_processed || 0} for ${metadata.operation_id}`);
+    },
+
+    onCreateMediaBuyStatusChange: (response, metadata) => {
+      const status = (metadata as any).status || 'completed';
+      storeEvent({
+        type: 'handler_called',
+        operation_id: metadata.operation_id,
+        agent_id: metadata.agent_id,
+        task_type: 'create_media_buy',
+        status,
+        payload: response,
+        metadata
+      });
+      app.log.info(`[${status}] Media buy created: ${response.media_buy_id} for ${metadata.operation_id}`);
+    },
+
+    onMediaBuyDeliveryNotification: (notification, metadata) => {
+      storeEvent({
+        type: 'notification_received',
+        operation_id: metadata.operation_id,
+        agent_id: metadata.agent_id,
+        task_type: 'media_buy_delivery',
+        status: metadata.notification_type,
+        payload: notification,
+        metadata
+      });
+      app.log.info(`📊 Delivery notification (${metadata.notification_type}): ${notification.media_buy_deliveries?.length || 0} deliveries`);
+    }
+  }
 };
 
 const adcpClient = new ADCPMultiAgentClient(configuredAgents, clientConfig);
 
 // Storage for active tasks and conversations
-const activeTasks = new Map<string, { 
-  taskId: string; 
-  agentId: string; 
-  toolName: string; 
-  continuation?: any; // Will store deferred/submitted continuation data 
+const activeTasks = new Map<string, {
+  taskId: string;
+  agentId: string;
+  toolName: string;
+  continuation?: any; // Will store deferred/submitted continuation data
   status: string;
   startTime: Date;
 }>();
@@ -1159,6 +1226,50 @@ app.get('/api/webhooks', async (request, reply) => {
 });
 
 /**
+ * Get all stored events
+ */
+app.get('/api/events', async (request, reply) => {
+  try {
+    return reply.send({
+      success: true,
+      events: eventStore,
+      total: eventStore.length,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    app.log.error({ error }, 'Get events error');
+    return reply.code(500).send({
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+/**
+ * Get events for a specific operation
+ */
+app.get('/api/events/:operationId', async (request, reply) => {
+  try {
+    const { operationId } = request.params as { operationId: string };
+    const events = eventStore.filter(e => e.operation_id === operationId);
+
+    return reply.send({
+      success: true,
+      operation_id: operationId,
+      events,
+      total: events.length,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    app.log.error({ error }, 'Get operation events error');
+    return reply.code(500).send({
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+/**
  * Enhanced task list endpoint with more details
  */
 app.get('/api/tasks/detailed', async (request, reply) => {
@@ -1441,32 +1552,47 @@ app.post<{
     const payload = request.body;
     const signature = request.headers['x-adcp-signature'] as string | undefined;
 
-    app.log.info(`Webhook received: ${taskType} for operation ${operationId} from agent ${agentId}`);
+    app.log.info(`Webhook received: ${taskType} for operation ${operationId}`);
 
-    // Validate payload task_type matches URL if provided
-    if (payload && typeof payload === 'object' && 'task_type' in payload) {
-      const payloadTaskType = (payload as any).task_type;
-      if (payloadTaskType && payloadTaskType !== taskType) {
-        app.log.error(`Task type mismatch: URL says ${taskType}, payload says ${payloadTaskType}`);
-        return reply.code(400).send({
-          success: false,
-          error: `Task type mismatch: expected ${taskType}, got ${payloadTaskType}`,
-          timestamp: new Date().toISOString()
-        });
-      }
+    // TODO: Validate payload against JSON schema for task_type
+    // Should validate structure matches GetProductsResponse, CreateMediaBuyResponse, etc.
+    // based on task_type value
+
+    // Validate payload has required fields
+    if (!payload || typeof payload !== 'object') {
+      return reply.code(400).send({
+        success: false,
+        error: 'Invalid payload: must be an object',
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    // Validate payload task_type matches URL
+    const payloadTaskType = (payload as any).task_type;
+    if (payloadTaskType && payloadTaskType !== taskType) {
+      app.log.error(`Task type mismatch: URL says ${taskType}, payload says ${payloadTaskType}`);
+      return reply.code(400).send({
+        success: false,
+        error: `Task type mismatch: expected ${taskType}, got ${payloadTaskType}`,
+        timestamp: new Date().toISOString()
+      });
     }
 
     // Inject URL parameters into payload for handlers
-    const enrichedPayload = payload && typeof payload === 'object'
-      ? { ...payload, operation_id: operationId, task_type: taskType }
-      : { operation_id: operationId, task_type: taskType };
+    const enrichedPayload = {
+      ...payload,
+      operation_id: operationId,
+      task_type: taskType
+    };
 
-    // Route webhook to the specific agent's client
+    // Handle webhook - agents are NOT stateful, but URL contains agent_id for routing
+    // The webhook URL was generated with this agent_id during operation setup
+    // We use it to look up the correct agent configuration (auth, protocol, etc)
     const agent = adcpClient.agent(agentId);
     const handled = await agent.handleWebhook(enrichedPayload, signature);
 
     if (!handled) {
-      app.log.warn(`Webhook not handled - no handlers configured for agent ${agentId}`);
+      app.log.warn(`Webhook not handled - no handlers configured`);
     }
 
     return reply.send({
