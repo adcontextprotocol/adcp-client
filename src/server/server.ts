@@ -3,12 +3,13 @@ import Fastify, { FastifyInstance } from 'fastify';
 import fastifyStatic from '@fastify/static';
 import fastifyCors from '@fastify/cors';
 import path from 'path';
-import { 
-  ADCPMultiAgentClient, 
-  ConfigurationManager, 
+import {
+  ADCPMultiAgentClient,
+  ConfigurationManager,
   getStandardFormats,
   type TaskResult,
   type InputHandler,
+  type ADCPClientConfig,
   ADCP_STATUS,
   InputRequiredError
 } from '../lib';
@@ -26,9 +27,67 @@ const app: FastifyInstance = Fastify({
   }
 });
 
-// Initialize ADCP client with configured agents  
+// Initialize ADCP client with configured agents
 const configuredAgents = ConfigurationManager.loadAgentsFromEnv();
-const adcpClient = new ADCPMultiAgentClient(configuredAgents);
+
+// Webhook configuration
+const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET;
+const BASE_URL = process.env.NODE_ENV === 'production' ? 'https://adcp-testing.fly.dev' : 'http://localhost:8080';
+
+// Webhook URL template - customize to match your routing structure
+// Available macros: {agent_id}, {task_type}, {operation_id}
+const WEBHOOK_URL_TEMPLATE = process.env.WEBHOOK_URL_TEMPLATE ||
+  `${BASE_URL}/webhook/{task_type}/{agent_id}/{operation_id}`;
+
+const clientConfig: ADCPClientConfig = {
+  // Webhook configuration with macro substitution
+  webhookUrlTemplate: WEBHOOK_URL_TEMPLATE,
+
+  // Activity logging for all protocol interactions
+  // TODO: Fix type error with onActivity
+  // onActivity: (activity) => {
+  //   app.log.debug('ADCP Activity:', {
+  //     type: activity.type,
+  //     operation_id: activity.operation_id,
+  //     agent_id: activity.agent_id,
+  //     task_type: activity.task_type,
+  //     status: activity.status
+  //   });
+  // },
+
+  // Task completion handlers (for both sync and webhook responses)
+  handlers: {
+    onGetProductsComplete: (response, metadata) => {
+      app.log.info(`Products received: ${response.products?.length || 0} products for operation ${metadata.operation_id}`);
+      // Example: Save to database
+      // db.saveProducts(metadata.operation_id, response.products);
+    },
+    onSyncCreativesComplete: (response, metadata) => {
+      app.log.info(`Creatives synced: ${response.summary?.total_processed || 0} creatives for operation ${metadata.operation_id}`);
+      // Example: Update database
+      // response.results?.forEach(r => db.updateCreativeStatus(r.creative_id, r.status));
+    },
+    onCreateMediaBuyComplete: (response, metadata) => {
+      app.log.info(`Media buy created: ${response.media_buy_id} for operation ${metadata.operation_id}`);
+      // Example: Save to database
+      // db.saveMediaBuy(metadata.operation_id, response);
+    },
+    onMediaBuyDeliveryNotification: (notification, metadata) => {
+      app.log.info(`Delivery notification (${metadata.notification_type}): ${notification.media_buy_deliveries?.length || 0} deliveries`);
+      // Example: Save delivery data
+      // notification.media_buy_deliveries?.forEach(d => db.saveDelivery(d));
+    },
+    onTaskFailed: (metadata, error) => {
+      app.log.error(`Task failed for operation ${metadata.operation_id}: ${error}`);
+      // Example: Update status
+      // db.markTaskFailed(metadata.task_id, error);
+    }
+  },
+
+  webhookSecret: WEBHOOK_SECRET
+};
+
+const adcpClient = new ADCPMultiAgentClient(configuredAgents, clientConfig);
 
 // Storage for active tasks and conversations
 const activeTasks = new Map<string, { 
@@ -1348,6 +1407,88 @@ const start = async () => {
     process.exit(1);
   }
 };
+
+// ====== WEBHOOK ENDPOINT ======
+
+// Webhook handler is now integrated into ADCPClient - no separate import needed
+
+/**
+ * Unified webhook endpoint for async AdCP operations and notifications
+ * URL format: /webhook/{task_type}/{agent_id}/{operation_id}
+ *
+ * Task Completion Examples:
+ *   /webhook/get_products/agent_x/op_123
+ *   /webhook/sync_creatives/agent_y/op_456
+ *   /webhook/create_media_buy/agent_z/op_789
+ *
+ * Notification Example:
+ *   /webhook/media_buy_delivery/agent_x/delivery_report_seat123_2025-10
+ *
+ * The URL tells us:
+ *   1. What response type to expect (task_type)
+ *   2. Which agent sent it (agent_id)
+ *   3. Which operation/report period this is for (operation_id)
+ *
+ * Notifications are distinguished by task_type=media_buy_delivery and
+ * presence of notification_type field in the payload.
+ */
+app.post<{
+  Params: { task_type: string; agent_id: string; operation_id: string };
+  Body: any;
+}>('/webhook/:task_type/:agent_id/:operation_id', async (request, reply) => {
+  try {
+    const { task_type: taskType, agent_id: agentId, operation_id: operationId } = request.params;
+    const payload = request.body;
+    const signature = request.headers['x-adcp-signature'] as string | undefined;
+
+    app.log.info(`Webhook received: ${taskType} for operation ${operationId} from agent ${agentId}`);
+
+    // Validate payload task_type matches URL if provided
+    if (payload && typeof payload === 'object' && 'task_type' in payload) {
+      const payloadTaskType = (payload as any).task_type;
+      if (payloadTaskType && payloadTaskType !== taskType) {
+        app.log.error(`Task type mismatch: URL says ${taskType}, payload says ${payloadTaskType}`);
+        return reply.code(400).send({
+          success: false,
+          error: `Task type mismatch: expected ${taskType}, got ${payloadTaskType}`,
+          timestamp: new Date().toISOString()
+        });
+      }
+    }
+
+    // Inject URL parameters into payload for handlers
+    const enrichedPayload = payload && typeof payload === 'object'
+      ? { ...payload, operation_id: operationId, task_type: taskType }
+      : { operation_id: operationId, task_type: taskType };
+
+    // Route webhook to the specific agent's client
+    const agent = adcpClient.agent(agentId);
+    const handled = await agent.handleWebhook(enrichedPayload, signature);
+
+    if (!handled) {
+      app.log.warn(`Webhook not handled - no handlers configured for agent ${agentId}`);
+    }
+
+    return reply.send({
+      success: true,
+      received: true,
+      handled,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    app.log.error('Webhook handling error');
+
+    // Return 401 for signature verification failures
+    const statusCode = error instanceof Error && error.message.includes('signature') ? 401 : 500;
+
+    return reply.code(statusCode).send({
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error',
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
 
 // Handle graceful shutdown
 let shutdownInProgress = false;

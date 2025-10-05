@@ -25,6 +25,29 @@ export type {
   ConversationConfig
 } from './core/ConversationTypes';
 
+// ====== TASK EVENT TYPES ======
+export type {
+  BaseTaskEvent,
+  ProtocolRequestEvent,
+  ProtocolResponseEvent,
+  TaskStatusEvent,
+  ObjectEvent,
+  TaskEvent,
+  TaskEventCallbacks
+} from './core/TaskEventTypes';
+export { createOperationId } from './core/TaskEventTypes';
+
+// ====== ASYNC HANDLER ======
+export type {
+  AsyncHandlerConfig,
+  WebhookMetadata,
+  WebhookPayload,
+  Activity,
+  NotificationMetadata,
+  MediaBuyDeliveryNotification
+} from './core/AsyncHandler';
+export { AsyncHandler, createAsyncHandler } from './core/AsyncHandler';
+
 // ====== INPUT HANDLERS ======
 export * from './handlers/types';
 

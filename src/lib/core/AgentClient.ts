@@ -74,6 +74,28 @@ export class AgentClient {
     this.client = new ADCPClient(agent, config);
   }
 
+  /**
+   * Handle webhook from agent (async task completion or notifications)
+   *
+   * @param payload - Webhook payload from agent
+   * @param signature - Optional signature for verification
+   * @returns Whether webhook was handled successfully
+   */
+  async handleWebhook(payload: any, signature?: string): Promise<boolean> {
+    return this.client.handleWebhook(payload, signature);
+  }
+
+  /**
+   * Generate webhook URL for a specific task and operation
+   *
+   * @param taskType - Type of task (e.g., 'get_products', 'media_buy_delivery')
+   * @param operationId - Operation ID for this request
+   * @returns Full webhook URL
+   */
+  getWebhookUrl(taskType: string, operationId: string): string {
+    return this.client.getWebhookUrl(taskType, operationId);
+  }
+
   // ====== MEDIA BUY TASKS ======
 
   /**
