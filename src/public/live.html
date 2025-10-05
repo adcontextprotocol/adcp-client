@@ -1,0 +1,539 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AdCP Live Operations</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 2rem;
+            color: #1a202c;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        header {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 16px;
+            padding: 2rem;
+            margin-bottom: 2rem;
+            box-shadow: 0 8px 32px rgba(31, 38, 135, 0.15);
+        }
+
+        h1 {
+            font-size: 2rem;
+            font-weight: 700;
+            margin-bottom: 0.5rem;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .subtitle {
+            color: #718096;
+            font-size: 1rem;
+        }
+
+        .operation-config {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 16px;
+            padding: 2rem;
+            margin-bottom: 2rem;
+            box-shadow: 0 8px 32px rgba(31, 38, 135, 0.15);
+        }
+
+        .config-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr auto;
+            gap: 1rem;
+            margin-bottom: 1rem;
+        }
+
+        label {
+            display: block;
+            font-size: 0.875rem;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+            color: #4a5568;
+        }
+
+        select, input, textarea {
+            width: 100%;
+            padding: 0.75rem;
+            border: 2px solid #e2e8f0;
+            border-radius: 8px;
+            font-family: inherit;
+            font-size: 0.875rem;
+            transition: all 0.2s;
+        }
+
+        select:focus, input:focus, textarea:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        textarea {
+            resize: vertical;
+            min-height: 80px;
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .button {
+            padding: 0.75rem 1.5rem;
+            border: none;
+            border-radius: 8px;
+            font-weight: 600;
+            font-size: 0.875rem;
+            cursor: pointer;
+            transition: all 0.2s;
+            align-self: end;
+        }
+
+        .button-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .button-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+
+        .button-primary:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .activity-stream {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 16px;
+            padding: 2rem;
+            margin-bottom: 2rem;
+            box-shadow: 0 8px 32px rgba(31, 38, 135, 0.15);
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        .stream-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+            padding-bottom: 1rem;
+            border-bottom: 2px solid #e2e8f0;
+        }
+
+        .stream-title {
+            font-size: 1.25rem;
+            font-weight: 700;
+        }
+
+        .live-indicator {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.875rem;
+            font-weight: 600;
+            color: #48bb78;
+        }
+
+        .live-dot {
+            width: 8px;
+            height: 8px;
+            background: #48bb78;
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .activity-item {
+            padding: 0.75rem;
+            border-left: 3px solid #e2e8f0;
+            margin-bottom: 0.5rem;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.813rem;
+            line-height: 1.5;
+            animation: slideIn 0.3s ease-out;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateX(-10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateX(0);
+            }
+        }
+
+        .activity-protocol_request { border-left-color: #667eea; }
+        .activity-protocol_response { border-left-color: #48bb78; }
+        .activity-webhook_received { border-left-color: #9f7aea; }
+        .activity-handler_called { border-left-color: #ed8936; }
+        .activity-error { border-left-color: #f56565; }
+
+        .activity-time {
+            color: #a0aec0;
+            margin-right: 0.5rem;
+        }
+
+        .activity-agent {
+            color: #667eea;
+            font-weight: 600;
+            margin-right: 0.5rem;
+        }
+
+        .agent-cards {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 1.5rem;
+        }
+
+        .agent-card {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 16px;
+            padding: 1.5rem;
+            box-shadow: 0 8px 32px rgba(31, 38, 135, 0.15);
+            transition: all 0.3s;
+        }
+
+        .agent-card.pending {
+            opacity: 0.6;
+        }
+
+        .agent-card.working {
+            border: 2px solid #ed8936;
+        }
+
+        .agent-card.completed {
+            border: 2px solid #48bb78;
+        }
+
+        .agent-card.error {
+            border: 2px solid #f56565;
+        }
+
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+            padding-bottom: 1rem;
+            border-bottom: 2px solid #e2e8f0;
+        }
+
+        .agent-name {
+            font-weight: 700;
+            font-size: 1.125rem;
+        }
+
+        .agent-protocol {
+            font-size: 0.75rem;
+            font-weight: 600;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            background: #e2e8f0;
+            color: #4a5568;
+        }
+
+        .agent-status {
+            font-size: 0.875rem;
+            font-weight: 600;
+            margin-bottom: 1rem;
+        }
+
+        .status-pending { color: #a0aec0; }
+        .status-working { color: #ed8936; }
+        .status-completed { color: #48bb78; }
+        .status-error { color: #f56565; }
+
+        .agent-result {
+            background: #f7fafc;
+            border-radius: 8px;
+            padding: 1rem;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.813rem;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
+        .result-summary {
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+            color: #4a5568;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 3rem;
+            color: #a0aec0;
+        }
+
+        pre {
+            margin: 0;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🚀 Live Operations</h1>
+            <p class="subtitle">Execute ONE operation across multiple agents and see everything happen in real-time</p>
+        </header>
+
+        <div class="operation-config">
+            <div class="config-grid">
+                <div>
+                    <label>Tool</label>
+                    <select id="toolSelect">
+                        <option value="get_products">Get Products</option>
+                        <option value="list_creative_formats">List Creative Formats</option>
+                        <option value="create_media_buy">Create Media Buy</option>
+                        <option value="sync_creatives">Sync Creatives</option>
+                        <option value="list_creatives">List Creatives</option>
+                    </select>
+                </div>
+                <div>
+                    <label>Brief</label>
+                    <input type="text" id="briefInput" placeholder="Coffee brands for millennials" value="Coffee brands for millennials">
+                </div>
+                <div>
+                    <label>Promoted Offering (optional)</label>
+                    <input type="text" id="offeringInput" placeholder="Artisan coffee blends">
+                </div>
+                <div>
+                    <button id="executeBtn" class="button button-primary">Execute All</button>
+                </div>
+            </div>
+            <div>
+                <label>Additional Parameters (JSON)</label>
+                <textarea id="paramsInput" placeholder='{"budget": 50000}'></textarea>
+            </div>
+        </div>
+
+        <div class="activity-stream">
+            <div class="stream-header">
+                <h2 class="stream-title">📡 Live Activity Stream</h2>
+                <div class="live-indicator">
+                    <span class="live-dot"></span>
+                    <span>LIVE</span>
+                </div>
+            </div>
+            <div id="activityLog">
+                <div class="empty-state">Waiting for operation...</div>
+            </div>
+        </div>
+
+        <div id="agentCards" class="agent-cards">
+            <!-- Agent cards populated dynamically -->
+        </div>
+    </div>
+
+    <script>
+        let agents = [];
+        let activityLog = [];
+
+        // Fetch available agents
+        async function loadAgents() {
+            try {
+                const response = await fetch('/api/sales/agents');
+                const data = await response.json();
+                agents = data.data?.agents || [];
+                renderAgentCards();
+            } catch (error) {
+                console.error('Failed to load agents:', error);
+            }
+        }
+
+        function renderAgentCards() {
+            const container = document.getElementById('agentCards');
+            if (agents.length === 0) {
+                container.innerHTML = '<div class="empty-state">No agents configured</div>';
+                return;
+            }
+
+            container.innerHTML = agents.map(agent => `
+                <div class="agent-card pending" id="card-${agent.id}">
+                    <div class="card-header">
+                        <div class="agent-name">${agent.name || agent.id}</div>
+                        <div class="agent-protocol">${agent.protocol.toUpperCase()}</div>
+                    </div>
+                    <div class="agent-status status-pending" id="status-${agent.id}">⏳ Ready</div>
+                    <div class="agent-result" id="result-${agent.id}">
+                        <div class="empty-state">No results yet</div>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function addActivity(type, agentId, message) {
+            const time = new Date().toLocaleTimeString();
+            const item = document.createElement('div');
+            item.className = `activity-item activity-${type}`;
+            item.innerHTML = `
+                <span class="activity-time">${time}</span>
+                <span class="activity-agent">${agentId}</span>
+                <span>${message}</span>
+            `;
+
+            const log = document.getElementById('activityLog');
+            if (log.querySelector('.empty-state')) {
+                log.innerHTML = '';
+            }
+            log.insertBefore(item, log.firstChild);
+
+            // Keep only last 50 items
+            while (log.children.length > 50) {
+                log.removeChild(log.lastChild);
+            }
+        }
+
+        function updateAgentCard(agentId, status, result) {
+            const card = document.getElementById(`card-${agentId}`);
+            const statusEl = document.getElementById(`status-${agentId}`);
+            const resultEl = document.getElementById(`result-${agentId}`);
+
+            if (!card) return;
+
+            // Update card state
+            card.className = `agent-card ${status}`;
+
+            // Update status text
+            const statusText = {
+                pending: '⏳ Pending',
+                working: '⚙️ Working...',
+                completed: '✅ Completed',
+                error: '❌ Error'
+            }[status] || status;
+            statusEl.textContent = statusText;
+            statusEl.className = `agent-status status-${status}`;
+
+            // Update result
+            if (result) {
+                if (typeof result === 'object') {
+                    const summary = getSummary(result);
+                    resultEl.innerHTML = `
+                        <div class="result-summary">${summary}</div>
+                        <pre>${JSON.stringify(result, null, 2)}</pre>
+                    `;
+                } else {
+                    resultEl.innerHTML = `<pre>${result}</pre>`;
+                }
+            }
+        }
+
+        function getSummary(result) {
+            if (result.products) return `📦 ${result.products.length} products`;
+            if (result.formats) return `🎨 ${result.formats.length} formats`;
+            if (result.media_buy_id) return `💰 Media Buy: ${result.media_buy_id}`;
+            if (result.results) return `✨ ${result.results.length} items synced`;
+            return '✓ Success';
+        }
+
+        async function executeOperation() {
+            const tool = document.getElementById('toolSelect').value;
+            const brief = document.getElementById('briefInput').value;
+            const offering = document.getElementById('offeringInput').value;
+            const paramsText = document.getElementById('paramsInput').value;
+
+            let additionalParams = {};
+            if (paramsText.trim()) {
+                try {
+                    additionalParams = JSON.parse(paramsText);
+                } catch (e) {
+                    alert('Invalid JSON in additional parameters');
+                    return;
+                }
+            }
+
+            const params = {
+                brief: brief || 'Test operation',
+                promoted_offering: offering || undefined,
+                ...additionalParams
+            };
+
+            // Reset all cards to pending
+            agents.forEach(agent => {
+                updateAgentCard(agent.id, 'pending', null);
+            });
+
+            // Clear activity log
+            document.getElementById('activityLog').innerHTML = '';
+
+            addActivity('protocol_request', 'system', `Executing ${tool} across ${agents.length} agents`);
+
+            // Execute against all agents in parallel
+            const promises = agents.map(async (agent) => {
+                try {
+                    addActivity('protocol_request', agent.id, `Sending ${tool} request`);
+                    updateAgentCard(agent.id, 'working', null);
+
+                    const response = await fetch(`/api/sales/agents/${agent.id}/query`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ tool_name: tool, ...params })
+                    });
+
+                    const data = await response.json();
+
+                    if (data.success) {
+                        addActivity('protocol_response', agent.id, `Response received (${data.result.status || 'completed'})`);
+
+                        if (data.result.status === 'submitted') {
+                            updateAgentCard(agent.id, 'working', { message: 'Webhook pending...', ...data.result.submitted });
+                            addActivity('webhook_received', agent.id, `Async operation - waiting for webhook`);
+                        } else {
+                            updateAgentCard(agent.id, 'completed', data.result.data);
+                            addActivity('handler_called', agent.id, `Handler fired - operation complete`);
+                        }
+                    } else {
+                        throw new Error(data.error || 'Unknown error');
+                    }
+                } catch (error) {
+                    addActivity('error', agent.id, `Error: ${error.message}`);
+                    updateAgentCard(agent.id, 'error', { error: error.message });
+                }
+            });
+
+            await Promise.all(promises);
+            addActivity('protocol_response', 'system', `Operation complete across all agents`);
+        }
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            loadAgents();
+            document.getElementById('executeBtn').addEventListener('click', executeOperation);
+        });
+
+        // Poll for webhook updates every 2 seconds
+        setInterval(async () => {
+            // In a real implementation, this would use WebSocket or SSE for live updates
+            // For now, this is a placeholder for the live streaming feature
+        }, 2000);
+    </script>
+</body>
+</html>
