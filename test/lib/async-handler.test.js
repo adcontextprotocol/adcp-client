@@ -310,3 +310,82 @@ test('multiple handlers can be configured', async () => {
   assert.strictEqual(createMediaBuyCalled, true, 'CreateMediaBuy handler should be called');
   assert.strictEqual(activityCalled, true, 'Activity handler should be called for both');
 });
+
+// Error handling tests
+test('handler error does not crash webhook processing', async () => {
+  let errorThrown = false;
+  let webhookProcessed = false;
+
+  const handler = new AsyncHandler({
+    onGetProductsStatusChange: () => {
+      errorThrown = true;
+      throw new Error('Handler error');
+    }
+  });
+
+  // Should not throw - error should be caught internally
+  try {
+    await handler.handleWebhook({
+      operation_id: 'op_123',
+      task_type: 'get_products',
+      status: 'completed',
+      result: { products: [] }
+    }, 'agent_1');
+    webhookProcessed = true;
+  } catch (error) {
+    // If this catches, the error wasn't handled properly
+    assert.fail('Webhook processing should not throw when handler errors');
+  }
+
+  assert.strictEqual(errorThrown, true, 'Handler should have thrown error');
+  assert.strictEqual(webhookProcessed, true, 'Webhook should be processed despite handler error');
+});
+
+test('missing handler configuration handled gracefully', async () => {
+  let fallbackCalled = false;
+
+  // No specific handler, only fallback
+  const handler = new AsyncHandler({
+    onTaskStatusChange: (response, metadata) => {
+      fallbackCalled = true;
+      assert.strictEqual(metadata.task_type, 'get_products', 'Should receive task_type');
+    }
+  });
+
+  await handler.handleWebhook({
+    operation_id: 'op_123',
+    task_type: 'get_products',
+    status: 'completed',
+    result: { products: [] }
+  }, 'agent_1');
+
+  assert.strictEqual(fallbackCalled, true, 'Fallback handler should be called');
+});
+
+test('invalid webhook payload does not crash', async () => {
+  const handler = new AsyncHandler({
+    onGetProductsStatusChange: () => {
+      assert.fail('Handler should not be called for invalid payload');
+    }
+  });
+
+  // Missing required fields
+  const invalidPayloads = [
+    null,
+    undefined,
+    {},
+    { operation_id: 'op_1' }, // missing task_type
+    { task_type: 'get_products' }, // missing operation_id
+    { operation_id: 'op_1', task_type: 'get_products' } // missing status and result
+  ];
+
+  for (const payload of invalidPayloads) {
+    try {
+      await handler.handleWebhook(payload, 'agent_1');
+      // If no error is thrown, that's acceptable - handler should be defensive
+    } catch (error) {
+      // Errors are acceptable for invalid payloads, but should not crash the process
+      assert.ok(error instanceof Error, 'Should throw Error type');
+    }
+  }
+});

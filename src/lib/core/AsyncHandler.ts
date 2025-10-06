@@ -203,56 +203,65 @@ export class AsyncHandler {
    * Handle task completion - route to specific handler
    */
   private async handleCompletion(taskType: string, result: any, metadata: WebhookMetadata): Promise<void> {
+    let handler: ((result: any, metadata: WebhookMetadata) => void | Promise<void>) | undefined;
+
     // Route to specific handler based on task type
     switch (taskType) {
       case 'get_products':
-        await this.config.onGetProductsStatusChange?.(result, metadata);
+        handler = this.config.onGetProductsStatusChange;
         break;
 
       case 'list_creative_formats':
-        await this.config.onListCreativeFormatsStatusChange?.(result, metadata);
+        handler = this.config.onListCreativeFormatsStatusChange;
         break;
 
       case 'create_media_buy':
-        await this.config.onCreateMediaBuyStatusChange?.(result, metadata);
+        handler = this.config.onCreateMediaBuyStatusChange;
         break;
 
       case 'update_media_buy':
-        await this.config.onUpdateMediaBuyStatusChange?.(result, metadata);
+        handler = this.config.onUpdateMediaBuyStatusChange;
         break;
 
       case 'sync_creatives':
-        await this.config.onSyncCreativesStatusChange?.(result, metadata);
+        handler = this.config.onSyncCreativesStatusChange;
         break;
 
       case 'list_creatives':
-        await this.config.onListCreativesStatusChange?.(result, metadata);
+        handler = this.config.onListCreativesStatusChange;
         break;
 
       case 'get_media_buy_delivery':
-        await this.config.onGetMediaBuyDeliveryStatusChange?.(result, metadata);
+        handler = this.config.onGetMediaBuyDeliveryStatusChange;
         break;
 
       case 'list_authorized_properties':
-        await this.config.onListAuthorizedPropertiesStatusChange?.(result, metadata);
+        handler = this.config.onListAuthorizedPropertiesStatusChange;
         break;
 
       case 'provide_performance_feedback':
-        await this.config.onProvidePerformanceFeedbackStatusChange?.(result, metadata);
+        handler = this.config.onProvidePerformanceFeedbackStatusChange;
         break;
 
       case 'get_signals':
-        await this.config.onGetSignalsStatusChange?.(result, metadata);
+        handler = this.config.onGetSignalsStatusChange;
         break;
 
       case 'activate_signal':
-        await this.config.onActivateSignalStatusChange?.(result, metadata);
+        handler = this.config.onActivateSignalStatusChange;
         break;
+    }
 
-      default:
-        // Fallback to generic handler
-        await this.config.onTaskStatusChange?.(result, metadata);
-        break;
+    // Call specific handler if configured, otherwise fallback to generic handler
+    const handlerToCall = handler || this.config.onTaskStatusChange;
+
+    if (handlerToCall) {
+      try {
+        await handlerToCall(result, metadata);
+      } catch (error) {
+        // Log error but don't crash webhook processing
+        console.error(`Error in handler for task ${taskType}:`, error);
+      }
     }
   }
 

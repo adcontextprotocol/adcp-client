@@ -72,6 +72,24 @@ function storeEvent(event: Omit<StoredEvent, 'id' | 'timestamp'>) {
   return storedEvent;
 }
 
+// Authentication helper for sensitive endpoints
+// In production, use a proper API key management system
+const EVENTS_API_KEY = process.env.EVENTS_API_KEY || 'dev-key-change-in-production';
+
+function authenticateRequest(request: any, reply: any): boolean {
+  const apiKey = request.headers['x-api-key'];
+
+  if (!apiKey || apiKey !== EVENTS_API_KEY) {
+    reply.code(401).send({
+      success: false,
+      error: 'Unauthorized - valid X-API-Key header required'
+    });
+    return false;
+  }
+
+  return true;
+}
+
 // ADCPClient configuration with in-memory event storage
 const clientConfig: ADCPClientConfig = {
   webhookUrlTemplate: WEBHOOK_URL_TEMPLATE,
@@ -98,7 +116,7 @@ const clientConfig: ADCPClientConfig = {
   // Status change handlers - called for ALL status changes (completed, failed, needs_input, working, etc)
   handlers: {
     onGetProductsStatusChange: (response, metadata) => {
-      const status = (metadata as any).status || 'completed'; // Get actual status from webhook
+      const status = metadata.status || 'completed'; // Get actual status from webhook
       storeEvent({
         type: 'handler_called',
         operation_id: metadata.operation_id,
@@ -112,7 +130,7 @@ const clientConfig: ADCPClientConfig = {
     },
 
     onSyncCreativesStatusChange: (response, metadata) => {
-      const status = (metadata as any).status || 'completed';
+      const status = metadata.status || 'completed';
       storeEvent({
         type: 'handler_called',
         operation_id: metadata.operation_id,
@@ -126,7 +144,7 @@ const clientConfig: ADCPClientConfig = {
     },
 
     onCreateMediaBuyStatusChange: (response, metadata) => {
-      const status = (metadata as any).status || 'completed';
+      const status = metadata.status || 'completed';
       storeEvent({
         type: 'handler_called',
         operation_id: metadata.operation_id,
@@ -1227,8 +1245,11 @@ app.get('/api/webhooks', async (request, reply) => {
 
 /**
  * Get all stored events
+ * Requires authentication via X-API-Key header
  */
 app.get('/api/events', async (request, reply) => {
+  if (!authenticateRequest(request, reply)) return;
+
   try {
     return reply.send({
       success: true,
@@ -1247,8 +1268,11 @@ app.get('/api/events', async (request, reply) => {
 
 /**
  * Get events for a specific operation
+ * Requires authentication via X-API-Key header
  */
 app.get('/api/events/:operationId', async (request, reply) => {
+  if (!authenticateRequest(request, reply)) return;
+
   try {
     const { operationId } = request.params as { operationId: string };
     const events = eventStore.filter(e => e.operation_id === operationId);
