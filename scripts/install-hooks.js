@@ -27,7 +27,14 @@ const prePushHook = `#!/bin/bash
 
 echo "🔍 Running pre-push validation..."
 
-# Run the comprehensive CI validation
+# Check if schema cache exists
+if [ ! -d "schemas/cache/latest" ]; then
+  echo "⚠️  Schema cache not found - this is your first push"
+  echo "📥 Downloading schemas from AdCP specification..."
+  npm run sync-schemas
+fi
+
+# Run the comprehensive CI validation (includes schema validation)
 npm run ci:pre-push
 
 if [ $? -ne 0 ]; then
@@ -37,6 +44,7 @@ if [ $? -ne 0 ]; then
   echo ""
   echo "💡 To skip this hook (not recommended): git push --no-verify"
   echo "💡 To run validation manually: npm run ci:validate"
+  echo "💡 Schema issues? Try: npm run sync-schemas && npm run generate-types"
   echo ""
   exit 1
 fi
@@ -93,11 +101,13 @@ function installHooks() {
 
   log('✅ Pre-push hook installed successfully!', 'green');
   log('', 'reset');
+  log('⚠️  Note: Git hooks may not work in all environments (worktrees, some git clients)', 'yellow');
+  log('   CI on GitHub is the source of truth for validation', 'yellow');
+  log('', 'reset');
   log('🔧 What happens now:', 'blue');
-  log('  • Before each git push, validation will run automatically', 'reset');
+  log('  • Before each git push, validation should run automatically', 'reset');
   log('  • If validation fails, the push will be blocked', 'reset');
-  log('  • Run "npm run ci:validate" to test validation manually', 'reset');
-  log('  • Use "git push --no-verify" to skip validation (not recommended)', 'reset');
+  log('  • Run "npm run ci:quick" to test validation manually', 'reset');
   log('', 'reset');
   log('💡 Available validation commands:', 'blue');
   log('  • npm run ci:validate     - Full CI validation', 'reset');

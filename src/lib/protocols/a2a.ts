@@ -14,14 +14,26 @@ export async function callA2ATool(
   debugLogs: any[] = []
 ): Promise<any> {
   // Create authenticated fetch if needed
-  const fetchImpl = authToken ? 
+  // Send both auth headers to support different server implementations
+  const fetchImpl = authToken ?
     async (url: string | URL | Request, options?: RequestInit) => {
+      const headers = {
+        'Authorization': `Bearer ${authToken}`,
+        'x-adcp-auth': authToken,
+        ...(options?.headers || {})
+      };
+
+      debugLogs.push({
+        type: 'info',
+        message: `A2A: Fetch with auth headers`,
+        timestamp: new Date().toISOString(),
+        url: url.toString(),
+        headers: { ...headers, 'Authorization': 'Bearer ***', 'x-adcp-auth': '***' }
+      });
+
       return fetch(url, {
         ...options,
-        headers: {
-          'Authorization': `Bearer ${authToken}`,
-          ...(options?.headers || {})
-        }
+        headers
       });
     } : undefined;
   
