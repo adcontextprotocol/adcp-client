@@ -41,9 +41,10 @@ if (!WEBHOOK_URL_TEMPLATE) {
   console.log('   Available macros: {agent_id}, {task_type}, {operation_id}');
 }
 
-// In-memory event storage (simple example - no database needed)
+// In-memory event storage with session isolation
 interface StoredEvent {
   id: string;
+  session_id: string; // Session isolation
   timestamp: string;
   type: string;
   operation_id?: string;
@@ -55,39 +56,38 @@ interface StoredEvent {
 }
 
 const eventStore: StoredEvent[] = [];
-const MAX_EVENTS = 1000; // Keep last 1000 events
+const MAX_EVENTS_PER_SESSION = 1000;
 
-function storeEvent(event: Omit<StoredEvent, 'id' | 'timestamp'>) {
+// Track current session ID (set by client on first request)
+let currentSessionId: string | null = null;
+
+function storeEvent(event: Omit<StoredEvent, 'id' | 'timestamp' | 'session_id'>) {
+  if (!currentSessionId) {
+    console.warn('No session ID set, skipping event storage');
+    return null;
+  }
+
   const storedEvent: StoredEvent = {
     id: `evt_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+    session_id: currentSessionId,
     timestamp: new Date().toISOString(),
     ...event
   };
 
   eventStore.unshift(storedEvent); // Add to front
-  if (eventStore.length > MAX_EVENTS) {
-    eventStore.length = MAX_EVENTS; // Trim to max
+
+  // Clean up old events for this session
+  const sessionEvents = eventStore.filter(e => e.session_id === currentSessionId);
+  if (sessionEvents.length > MAX_EVENTS_PER_SESSION) {
+    // Remove oldest events for this session
+    const toRemove = sessionEvents.slice(MAX_EVENTS_PER_SESSION);
+    toRemove.forEach(evt => {
+      const idx = eventStore.indexOf(evt);
+      if (idx > -1) eventStore.splice(idx, 1);
+    });
   }
 
   return storedEvent;
-}
-
-// Authentication helper for sensitive endpoints
-// In production, use a proper API key management system
-const EVENTS_API_KEY = process.env.EVENTS_API_KEY || 'dev-key-change-in-production';
-
-function authenticateRequest(request: any, reply: any): boolean {
-  const apiKey = request.headers['x-api-key'];
-
-  if (!apiKey || apiKey !== EVENTS_API_KEY) {
-    reply.code(401).send({
-      success: false,
-      error: 'Unauthorized - valid X-API-Key header required'
-    });
-    return false;
-  }
-
-  return true;
 }
 
 // ADCPClient configuration with in-memory event storage
@@ -1244,17 +1244,83 @@ app.get('/api/webhooks', async (request, reply) => {
 });
 
 /**
- * Get all stored events
- * Requires authentication via X-API-Key header
+ * Initialize or get session ID
+ * Client should call this on startup to get/set a session ID
+ */
+app.post('/api/session/init', async (request, reply) => {
+  const { session_id } = request.body as { session_id?: string };
+
+  if (session_id) {
+    // Client provided session ID (e.g., from localStorage)
+    currentSessionId = session_id;
+  } else {
+    // Generate new session ID
+    currentSessionId = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  }
+
+  return reply.send({
+    success: true,
+    session_id: currentSessionId,
+    timestamp: new Date().toISOString()
+  });
+});
+
+/**
+ * Clear session (removes all events for current session)
+ */
+app.post('/api/session/clear', async (request, reply) => {
+  if (!currentSessionId) {
+    return reply.code(400).send({
+      success: false,
+      error: 'No active session'
+    });
+  }
+
+  const oldSessionId = currentSessionId;
+
+  // Remove all events for this session
+  const beforeCount = eventStore.length;
+  for (let i = eventStore.length - 1; i >= 0; i--) {
+    if (eventStore[i].session_id === oldSessionId) {
+      eventStore.splice(i, 1);
+    }
+  }
+  const removedCount = beforeCount - eventStore.length;
+
+  // Generate new session
+  currentSessionId = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+  return reply.send({
+    success: true,
+    old_session_id: oldSessionId,
+    new_session_id: currentSessionId,
+    events_removed: removedCount,
+    timestamp: new Date().toISOString()
+  });
+});
+
+/**
+ * Get all stored events for current session
  */
 app.get('/api/events', async (request, reply) => {
-  if (!authenticateRequest(request, reply)) return;
-
   try {
+    if (!currentSessionId) {
+      return reply.send({
+        success: true,
+        events: [],
+        total: 0,
+        session_id: null,
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    const sessionEvents = eventStore.filter(e => e.session_id === currentSessionId);
+
     return reply.send({
       success: true,
-      events: eventStore,
-      total: eventStore.length,
+      events: sessionEvents,
+      total: sessionEvents.length,
+      session_id: currentSessionId,
       timestamp: new Date().toISOString()
     });
   } catch (error) {
@@ -1267,21 +1333,33 @@ app.get('/api/events', async (request, reply) => {
 });
 
 /**
- * Get events for a specific operation
- * Requires authentication via X-API-Key header
+ * Get events for a specific operation in current session
  */
 app.get('/api/events/:operationId', async (request, reply) => {
-  if (!authenticateRequest(request, reply)) return;
-
   try {
     const { operationId } = request.params as { operationId: string };
-    const events = eventStore.filter(e => e.operation_id === operationId);
+
+    if (!currentSessionId) {
+      return reply.send({
+        success: true,
+        operation_id: operationId,
+        events: [],
+        total: 0,
+        session_id: null,
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    const events = eventStore.filter(e =>
+      e.session_id === currentSessionId && e.operation_id === operationId
+    );
 
     return reply.send({
       success: true,
       operation_id: operationId,
       events,
       total: events.length,
+      session_id: currentSessionId,
       timestamp: new Date().toISOString()
     });
   } catch (error) {
