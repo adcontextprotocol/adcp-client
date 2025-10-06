@@ -2680,11 +2680,10 @@
             </div>
         </div>
         <div class="debug-tabs">
-            <button class="tab-btn active" onclick="showDebugTab('all')" data-tab="all">All Logs</button>
-            <button class="tab-btn" onclick="showDebugTab('requests')" data-tab="requests">Requests</button>
-            <button class="tab-btn" onclick="showDebugTab('responses')" data-tab="responses">Responses</button>
-            <button class="tab-btn" onclick="showDebugTab('validation')" data-tab="validation">Validation</button>
-            <button class="tab-btn" onclick="showDebugTab('errors')" data-tab="errors">Errors</button>
+            <button class="tab-btn active" onclick="showDebugTab('debug')" data-tab="debug">Debug Logs</button>
+            <button class="tab-btn" onclick="showDebugTab('events')" data-tab="events">Events</button>
+            <button class="tab-btn" onclick="showDebugTab('tasks')" data-tab="tasks">Tasks</button>
+            <button class="tab-btn" onclick="showDebugTab('notifications')" data-tab="notifications">Notifications</button>
         </div>
         <div id="debug-content" class="debug-content">
             <div style="text-align: center; color: #666; padding: 20px;">Waiting for agent communication...</div>
@@ -2814,33 +2813,65 @@
         function updateTaskDisplay(tasks) {
             activeTasks = tasks;
             const contentEl = document.getElementById('task-panel-content');
-            
+
             if (!tasks || tasks.length === 0) {
                 contentEl.innerHTML = `
                     <div class="task-empty-state">
                         <div class="empty-icon">📋</div>
-                        <div>No active tasks</div>
+                        <div>No tasks</div>
                     </div>
                 `;
                 return;
             }
-            
-            const tasksHtml = tasks.map(task => {
-                const timeAgo = formatTimeAgo(new Date(task.startTime));
-                return `
-                    <div class="task-item">
-                        <div class="task-item-header">
-                            <div class="task-item-title">${formatTaskName(task.toolName)}</div>
-                            <div class="task-item-status ${task.status}">${task.status}</div>
+
+            // Separate active and completed tasks
+            const activeTasksList = tasks.filter(t => t.isActive !== false && ['submitted', 'working', 'input-required'].includes(t.status));
+            const completedTasksList = tasks.filter(t => t.isActive === false || ['completed', 'failed', 'rejected', 'canceled'].includes(t.status));
+
+            let tasksHtml = '';
+
+            // Show active tasks first
+            if (activeTasksList.length > 0) {
+                tasksHtml += '<div style="font-weight: 600; margin-bottom: 8px; color: #666; font-size: 12px;">ACTIVE</div>';
+                tasksHtml += activeTasksList.map(task => {
+                    const timeAgo = formatTimeAgo(new Date(task.startTime));
+                    return `
+                        <div class="task-item">
+                            <div class="task-item-header">
+                                <div class="task-item-title">${formatTaskName(task.toolName)}</div>
+                                <div class="task-item-status ${task.status}">${task.status}</div>
+                            </div>
+                            <div class="task-item-meta">
+                                <div class="task-item-agent">${getAgentName(task.agentId)}</div>
+                                <div class="task-item-time">${timeAgo}</div>
+                            </div>
                         </div>
-                        <div class="task-item-meta">
-                            <div class="task-item-agent">${getAgentName(task.agentId)}</div>
-                            <div class="task-item-time">${timeAgo}</div>
+                    `;
+                }).join('');
+            }
+
+            // Show completed tasks
+            if (completedTasksList.length > 0) {
+                tasksHtml += `<div style="font-weight: 600; margin: 16px 0 8px 0; color: #666; font-size: 12px;">RECENT HISTORY (${completedTasksList.length})</div>`;
+                tasksHtml += completedTasksList.slice(0, 20).map(task => {
+                    const timeAgo = task.endTime ? formatTimeAgo(new Date(task.endTime)) : formatTimeAgo(new Date(task.startTime));
+                    const statusClass = task.status === 'completed' ? 'completed' : task.status === 'failed' ? 'failed' : task.status;
+                    const duration = task.duration_ms ? `${(task.duration_ms / 1000).toFixed(1)}s` : '';
+                    return `
+                        <div class="task-item" style="opacity: 0.7;">
+                            <div class="task-item-header">
+                                <div class="task-item-title">${formatTaskName(task.toolName)}</div>
+                                <div class="task-item-status ${statusClass}">${task.status}</div>
+                            </div>
+                            <div class="task-item-meta">
+                                <div class="task-item-agent">${getAgentName(task.agentId)}</div>
+                                <div class="task-item-time">${timeAgo}${duration ? ` · ${duration}` : ''}</div>
+                            </div>
                         </div>
-                    </div>
-                `;
-            }).join('');
-            
+                    `;
+                }).join('');
+            }
+
             contentEl.innerHTML = tasksHtml;
         }
         
@@ -5194,8 +5225,11 @@
         // ============================================================================
         
         let debugPanelOpen = false; // Start with panel hidden by default
-        let currentDebugTab = 'all';
+        let currentDebugTab = 'debug';
         let debugEntries = [];
+        let eventStoreData = []; // Store events from event store
+        let currentOperationPrefix = null; // Track current operation prefix for filtering
+        let eventPollInterval = null; // Interval for polling event store
         
         function toggleDebugPanel() {
             debugPanelOpen = !debugPanelOpen;
@@ -5220,9 +5254,9 @@
             }
         }
         
-        function showDebugTab(tab) {
+        async function showDebugTab(tab) {
             currentDebugTab = tab;
-            
+
             // Update tab buttons
             document.querySelectorAll('.tab-btn').forEach(btn => {
                 if (btn.dataset.tab === tab) {
@@ -5231,7 +5265,28 @@
                     btn.classList.remove('active');
                 }
             });
-            
+
+            // Stop polling if switching away from event tabs
+            if (eventPollInterval && tab === 'debug') {
+                clearInterval(eventPollInterval);
+                eventPollInterval = null;
+            }
+
+            // If switching to event store tabs, fetch fresh data and start polling
+            if (tab === 'events' || tab === 'tasks' || tab === 'notifications') {
+                await refreshEventStore();
+
+                // Start auto-refresh every 3 seconds
+                if (!eventPollInterval) {
+                    eventPollInterval = setInterval(async () => {
+                        if (currentDebugTab !== 'debug' && debugPanelOpen) {
+                            await refreshEventStore();
+                            redrawDebugEntries();
+                        }
+                    }, 3000);
+                }
+            }
+
             // Filter and redraw entries
             redrawDebugEntries();
         }
@@ -5239,22 +5294,31 @@
         function redrawDebugEntries() {
             const content = document.getElementById('debug-content');
             content.innerHTML = '';
-            
+
+            // Handle event store tabs
+            if (currentDebugTab === 'events') {
+                displayEventsTab();
+                return;
+            } else if (currentDebugTab === 'tasks') {
+                displayTasksTab();
+                return;
+            } else if (currentDebugTab === 'notifications') {
+                displayNotificationsTab();
+                return;
+            }
+
+            // Handle debug logs tab (original functionality)
             const filteredEntries = debugEntries.filter(entry => {
-                if (currentDebugTab === 'all') return true;
-                if (currentDebugTab === 'requests' && entry.type === 'request') return true;
-                if (currentDebugTab === 'responses' && entry.type === 'response') return true;
-                if (currentDebugTab === 'validation' && entry.type === 'validation') return true;
-                if (currentDebugTab === 'errors' && entry.type === 'error') return true;
-                return false;
+                // Show all entries for 'debug' tab
+                return true;
             });
-            
+
             filteredEntries.forEach(entry => {
                 content.appendChild(entry.element);
             });
-            
+
             if (filteredEntries.length === 0) {
-                content.innerHTML = '<div style="text-align: center; color: #666; padding: 20px;">No entries to display</div>';
+                content.innerHTML = '<div style="text-align: center; color: #666; padding: 20px;">No debug logs to display</div>';
             }
         }
         
@@ -5316,7 +5380,175 @@
                 alert('Copy failed. Debug logs:\n\n' + copyText);
             });
         }
-        
+
+        // ============================================================================
+        // Event Store Functions
+        // ============================================================================
+
+        async function refreshEventStore() {
+            try {
+                // Fetch recent events (no filter = last 100 events by default)
+                const response = await fetch('/api/events?limit=200');
+                const result = await response.json();
+
+                if (result.success) {
+                    eventStoreData = result.events || [];
+                    console.log(`[EVENT STORE] Loaded ${eventStoreData.length} events`);
+                } else {
+                    console.error('[EVENT STORE] Failed to fetch events:', result.error);
+                    eventStoreData = [];
+                }
+            } catch (error) {
+                console.error('[EVENT STORE] Error fetching events:', error);
+                eventStoreData = [];
+            }
+        }
+
+        function displayEventsTab() {
+            const content = document.getElementById('debug-content');
+
+            // Filter for protocol events
+            const protocolEvents = eventStoreData.filter(e =>
+                e.type === 'protocol_request' ||
+                e.type === 'protocol_response' ||
+                e.type === 'activity'
+            );
+
+            if (protocolEvents.length === 0) {
+                content.innerHTML = '<div style="text-align: center; color: #666; padding: 20px;">No protocol events found</div>';
+                return;
+            }
+
+            protocolEvents.forEach(event => {
+                const eventDiv = document.createElement('div');
+                eventDiv.className = 'debug-entry ' + (event.type === 'protocol_request' ? 'request' : 'response');
+
+                const timestamp = new Date(event.timestamp).toLocaleTimeString();
+                const eventType = event.type.replace('protocol_', '').toUpperCase();
+
+                eventDiv.innerHTML = `
+                    <div class="debug-entry-header">
+                        <div class="debug-entry-title">${eventType}: ${event.operation_id || 'N/A'}</div>
+                        <div class="debug-entry-time">${timestamp}</div>
+                    </div>
+                    <div class="debug-entry-details">
+                        <div><strong>Agent:</strong> ${event.agent_id || 'N/A'}</div>
+                        <div><strong>Task:</strong> ${event.task_type || 'N/A'}</div>
+                        ${event.status ? `<div><strong>Status:</strong> ${event.status}</div>` : ''}
+                        ${event.payload ? `<details style="margin-top: 8px;">
+                            <summary style="cursor: pointer; color: #4a9eff;">View Payload</summary>
+                            <pre class="debug-json">${escapeHtml(JSON.stringify(event.payload, null, 2))}</pre>
+                        </details>` : ''}
+                    </div>
+                `;
+
+                content.appendChild(eventDiv);
+            });
+        }
+
+        function displayTasksTab() {
+            const content = document.getElementById('debug-content');
+
+            // Filter for task status events
+            const taskEvents = eventStoreData.filter(e =>
+                e.type === 'handler_called' ||
+                e.type === 'status_update' ||
+                e.status
+            );
+
+            if (taskEvents.length === 0) {
+                content.innerHTML = '<div style="text-align: center; color: #666; padding: 20px;">No task events found</div>';
+                return;
+            }
+
+            // Group by operation_id
+            const grouped = {};
+            taskEvents.forEach(event => {
+                const opId = event.operation_id || 'unknown';
+                if (!grouped[opId]) grouped[opId] = [];
+                grouped[opId].push(event);
+            });
+
+            Object.entries(grouped).forEach(([opId, events]) => {
+                const taskDiv = document.createElement('div');
+                taskDiv.className = 'debug-entry';
+
+                const latestEvent = events[0];
+                const timestamp = new Date(latestEvent.timestamp).toLocaleTimeString();
+                const statusClass = latestEvent.status === 'completed' ? 'success' :
+                                  latestEvent.status === 'failed' ? 'error' : 'pending';
+
+                taskDiv.innerHTML = `
+                    <div class="debug-entry-header">
+                        <div class="debug-entry-title">
+                            ${latestEvent.task_type || 'Task'}
+                            <span class="debug-status ${statusClass}">${latestEvent.status || 'unknown'}</span>
+                        </div>
+                        <div class="debug-entry-time">${timestamp}</div>
+                    </div>
+                    <div class="debug-entry-details">
+                        <div><strong>Operation:</strong> ${opId}</div>
+                        <div><strong>Agent:</strong> ${latestEvent.agent_id || 'N/A'}</div>
+                        <div><strong>Events:</strong> ${events.length}</div>
+                        <details style="margin-top: 8px;">
+                            <summary style="cursor: pointer; color: #4a9eff;">View History (${events.length} events)</summary>
+                            <div style="margin-top: 8px;">
+                                ${events.map((e, i) => `
+                                    <div style="padding: 4px 0; border-top: 1px solid #333;">
+                                        <strong>${i + 1}.</strong> ${e.type} - ${e.status || 'N/A'}
+                                        <span style="color: #999; font-size: 11px;">(${new Date(e.timestamp).toLocaleTimeString()})</span>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </details>
+                    </div>
+                `;
+
+                content.appendChild(taskDiv);
+            });
+        }
+
+        function displayNotificationsTab() {
+            const content = document.getElementById('debug-content');
+
+            // Filter for notification events
+            const notificationEvents = eventStoreData.filter(e =>
+                e.type === 'notification_received' ||
+                e.type === 'webhook_received'
+            );
+
+            if (notificationEvents.length === 0) {
+                content.innerHTML = '<div style="text-align: center; color: #666; padding: 20px;">No notifications found</div>';
+                return;
+            }
+
+            notificationEvents.forEach(event => {
+                const notifDiv = document.createElement('div');
+                notifDiv.className = 'debug-entry';
+
+                const timestamp = new Date(event.timestamp).toLocaleTimeString();
+
+                notifDiv.innerHTML = `
+                    <div class="debug-entry-header">
+                        <div class="debug-entry-title">📬 ${event.type.replace(/_/g, ' ').toUpperCase()}</div>
+                        <div class="debug-entry-time">${timestamp}</div>
+                    </div>
+                    <div class="debug-entry-details">
+                        <div><strong>Operation:</strong> ${event.operation_id || 'N/A'}</div>
+                        <div><strong>Agent:</strong> ${event.agent_id || 'N/A'}</div>
+                        ${event.task_type ? `<div><strong>Task:</strong> ${event.task_type}</div>` : ''}
+                        ${event.status ? `<div><strong>Status:</strong> ${event.status}</div>` : ''}
+                        ${event.payload ? `<details style="margin-top: 8px;">
+                            <summary style="cursor: pointer; color: #4a9eff;">View Notification Data</summary>
+                            <pre class="debug-json">${escapeHtml(JSON.stringify(event.payload, null, 2))}</pre>
+                        </details>` : ''}
+                    </div>
+                `;
+
+                content.appendChild(notifDiv);
+            });
+        }
+
         function escapeHtml(text) {
             const div = document.createElement('div');
             div.textContent = text;

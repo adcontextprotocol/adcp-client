@@ -58,6 +58,43 @@ interface StoredEvent {
 const eventStore: StoredEvent[] = [];
 const MAX_EVENTS = 10000; // Keep last 10k events across all sessions
 
+// Completed task history (keeps last 1000 completed tasks for viewing)
+interface CompletedTask {
+  taskId: string;
+  agentId: string;
+  toolName: string;
+  status: 'completed' | 'failed' | 'rejected' | 'canceled';
+  startTime: string;
+  endTime: string;
+  duration_ms: number;
+  result?: any;
+  error?: string;
+}
+
+const completedTasks: CompletedTask[] = [];
+const MAX_COMPLETED_TASKS = 1000;
+
+function archiveCompletedTask(task: any, finalStatus: 'completed' | 'failed' | 'rejected' | 'canceled') {
+  const completedTask: CompletedTask = {
+    taskId: task.taskId,
+    agentId: task.agentId,
+    toolName: task.toolName,
+    status: finalStatus,
+    startTime: task.startTime.toISOString(),
+    endTime: new Date().toISOString(),
+    duration_ms: Date.now() - task.startTime.getTime(),
+    result: task.continuation?.result,
+    error: task.continuation?.error
+  };
+
+  completedTasks.unshift(completedTask); // Add to front
+  if (completedTasks.length > MAX_COMPLETED_TASKS) {
+    completedTasks.length = MAX_COMPLETED_TASKS; // Trim to max
+  }
+
+  return completedTask;
+}
+
 function storeEvent(event: Omit<StoredEvent, 'id' | 'timestamp'>) {
   const storedEvent: StoredEvent = {
     id: `evt_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
@@ -936,6 +973,7 @@ app.get('/api/tasks/:taskId', async (request, reply) => {
       const elapsedMs = Date.now() - task.startTime.getTime();
       if (elapsedMs > 10000) { // After 10 seconds, mark as completed
         status = 'completed';
+        archiveCompletedTask(task, 'completed'); // Archive before deleting
         activeTasks.delete(taskId); // Clean up completed task
       }
     }
@@ -977,12 +1015,13 @@ app.post('/api/tasks/:taskId/continue', async (request, reply) => {
     // TODO: This needs to be implemented properly with the continuation token system
     // For now, simulate resuming by re-executing the task with the input
     const result = await executeTaskOnAgent(
-      task.agentId, 
-      task.toolName, 
+      task.agentId,
+      task.toolName,
       { ...input, continued: true }
     );
 
-    // Clean up the task
+    // Archive and clean up the task
+    archiveCompletedTask(task, result.success ? 'completed' : 'failed');
     activeTasks.delete(taskId);
 
     return result; // executeTaskOnAgent already returns the adapted format
@@ -1237,39 +1276,34 @@ app.get('/api/webhooks', async (request, reply) => {
  */
 app.get('/api/events', async (request, reply) => {
   try {
-    const { prefix, operation_id } = request.query as { prefix?: string; operation_id?: string };
-
-    // Require either prefix or operation_id
-    if (!prefix && !operation_id) {
-      return reply.code(400).send({
-        success: false,
-        error: 'Must provide either "prefix" or "operation_id" query parameter'
-      });
-    }
-
-    // Enforce minimum prefix length for security (prevent enumeration)
-    if (prefix && prefix.length < 16) {
-      return reply.code(400).send({
-        success: false,
-        error: 'Prefix must be at least 16 characters long'
-      });
-    }
+    const { prefix, operation_id, limit } = request.query as { prefix?: string; operation_id?: string; limit?: string };
 
     let filteredEvents: StoredEvent[];
 
     if (operation_id) {
       // Exact match
       filteredEvents = eventStore.filter(e => e.operation_id === operation_id);
-    } else {
+    } else if (prefix) {
+      // Enforce minimum prefix length for security (prevent enumeration)
+      if (prefix.length < 16) {
+        return reply.code(400).send({
+          success: false,
+          error: 'Prefix must be at least 16 characters long'
+        });
+      }
       // Prefix match (for session filtering)
-      filteredEvents = eventStore.filter(e => e.operation_id?.startsWith(prefix!));
+      filteredEvents = eventStore.filter(e => e.operation_id?.startsWith(prefix));
+    } else {
+      // No filter - return recent events (limit to 100 by default)
+      const maxLimit = limit ? Math.min(parseInt(limit), 500) : 100;
+      filteredEvents = eventStore.slice(0, maxLimit);
     }
 
     return reply.send({
       success: true,
       events: filteredEvents,
       total: filteredEvents.length,
-      filtered_by: operation_id ? { operation_id } : { prefix },
+      filtered_by: operation_id ? { operation_id } : prefix ? { prefix } : { recent: true },
       timestamp: new Date().toISOString()
     });
   } catch (error) {
@@ -1283,10 +1317,15 @@ app.get('/api/events', async (request, reply) => {
 
 /**
  * Enhanced task list endpoint with more details
+ * Includes both active and completed tasks
  */
 app.get('/api/tasks/detailed', async (request, reply) => {
   try {
-    const tasks = Array.from(activeTasks.values()).map(task => ({
+    const { include_completed } = request.query as { include_completed?: string };
+    const includeCompleted = include_completed === 'true';
+
+    // Get active tasks
+    const activeTasks_list = Array.from(activeTasks.values()).map(task => ({
       taskId: task.taskId,
       agentId: task.agentId,
       toolName: task.toolName,
@@ -1294,21 +1333,59 @@ app.get('/api/tasks/detailed', async (request, reply) => {
       startTime: task.startTime.toISOString(),
       hasWebhook: Array.from(webhookRegistrations.values())
         .some(reg => reg.agentId === task.agentId),
-      result: task.continuation?.result,
-      error: task.continuation?.error
+      result: task.continuation?.result || undefined,
+      error: task.continuation?.error || undefined,
+      isActive: true,
+      duration_ms: undefined as number | undefined,
+      endTime: undefined as string | undefined
     }));
+
+    // Combine with completed tasks if requested (or always include last 50)
+    let allTasks = [...activeTasks_list];
+    if (includeCompleted) {
+      allTasks = [...activeTasks_list, ...completedTasks.map(ct => ({
+        taskId: ct.taskId,
+        agentId: ct.agentId,
+        toolName: ct.toolName,
+        status: ct.status,
+        startTime: ct.startTime,
+        endTime: ct.endTime,
+        duration_ms: ct.duration_ms,
+        hasWebhook: false,
+        result: ct.result || undefined,
+        error: ct.error || undefined,
+        isActive: false
+      }))];
+    } else {
+      // Always include last 50 completed tasks for history
+      allTasks = [...activeTasks_list, ...completedTasks.slice(0, 50).map(ct => ({
+        taskId: ct.taskId,
+        agentId: ct.agentId,
+        toolName: ct.toolName,
+        status: ct.status,
+        startTime: ct.startTime,
+        endTime: ct.endTime,
+        duration_ms: ct.duration_ms,
+        hasWebhook: false,
+        result: ct.result || undefined,
+        error: ct.error || undefined,
+        isActive: false
+      }))];
+    }
 
     return reply.send({
       success: true,
-      tasks,
-      total: tasks.length,
+      tasks: allTasks,
+      active_count: activeTasks_list.length,
+      completed_count: completedTasks.length,
+      total: allTasks.length,
       timestamp: new Date().toISOString(),
       summary: {
-        byStatus: tasks.reduce((acc: any, task) => {
+        byStatus: allTasks.reduce((acc: any, task) => {
           acc[task.status] = (acc[task.status] || 0) + 1;
           return acc;
         }, {}),
-        byAgent: tasks.reduce((acc: any, task) => {
+        byAgent: allTasks.reduce((acc: any, task) => {
           acc[task.agentId] = (acc[task.agentId] || 0) + 1;
           return acc;
         }, {})
