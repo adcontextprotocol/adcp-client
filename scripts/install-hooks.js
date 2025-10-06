@@ -19,6 +19,40 @@ function log(message, color = 'reset') {
   console.log(`${colors[color]}${message}${colors.reset}`);
 }
 
+// Commit-msg hook content - validates commit message format
+const commitMsgHook = `#!/bin/bash
+
+# Commit-msg hook to validate commit message format
+# Ensures commits follow conventional commits format
+
+COMMIT_MSG_FILE=$1
+COMMIT_MSG=$(cat "$COMMIT_MSG_FILE")
+
+# Skip validation for merge commits
+if echo "$COMMIT_MSG" | grep -qE "^Merge (branch|pull request)"; then
+  exit 0
+fi
+
+# Run commitlint
+echo "$COMMIT_MSG" | npx commitlint --config commitlint.config.js
+
+if [ $? -ne 0 ]; then
+  echo ""
+  echo "❌ Commit message does not follow conventional commits format!"
+  echo ""
+  echo "📝 Format: <type>: <description>"
+  echo ""
+  echo "Types: feat, fix, docs, style, refactor, perf, test, build, ci, chore"
+  echo ""
+  echo "Examples:"
+  echo "  feat: add new feature"
+  echo "  fix: resolve bug in authentication"
+  echo "  docs: update README"
+  echo ""
+  exit 1
+fi
+`;
+
 // Pre-push hook content
 const prePushHook = `#!/bin/bash
 
@@ -27,7 +61,14 @@ const prePushHook = `#!/bin/bash
 
 echo "🔍 Running pre-push validation..."
 
-# Run the comprehensive CI validation
+# Check if schema cache exists
+if [ ! -d "schemas/cache/latest" ]; then
+  echo "⚠️  Schema cache not found - this is your first push"
+  echo "📥 Downloading schemas from AdCP specification..."
+  npm run sync-schemas
+fi
+
+# Run the comprehensive CI validation (includes schema validation)
 npm run ci:pre-push
 
 if [ $? -ne 0 ]; then
@@ -35,8 +76,8 @@ if [ $? -ne 0 ]; then
   echo "❌ Pre-push validation failed!"
   echo "🔧 Fix the issues above before pushing"
   echo ""
-  echo "💡 To skip this hook (not recommended): git push --no-verify"
   echo "💡 To run validation manually: npm run ci:validate"
+  echo "💡 Schema issues? Try: npm run sync-schemas && npm run generate-types"
   echo ""
   exit 1
 fi
@@ -67,43 +108,61 @@ function installHooks() {
   
   const hooksDir = path.join(gitDir, 'hooks');
   const prePushPath = path.join(hooksDir, 'pre-push');
+  const commitMsgPath = path.join(hooksDir, 'commit-msg');
 
   // Create hooks directory if it doesn't exist
   if (!fs.existsSync(hooksDir)) {
     fs.mkdirSync(hooksDir, { recursive: true });
   }
 
-  // Check if pre-push hook already exists
-  if (fs.existsSync(prePushPath)) {
-    log('⚠️  Pre-push hook already exists', 'yellow');
-    const existingContent = fs.readFileSync(prePushPath, 'utf8');
-    if (existingContent.includes('npm run ci:pre-push')) {
-      log('✅ Pre-push hook is already configured', 'green');
-      return;
-    } else {
-      log('🔄 Updating existing pre-push hook...', 'blue');
+  let installed = 0;
+
+  // Install commit-msg hook
+  if (fs.existsSync(commitMsgPath)) {
+    const existingContent = fs.readFileSync(commitMsgPath, 'utf8');
+    if (!existingContent.includes('commitlint')) {
+      fs.writeFileSync(commitMsgPath, commitMsgHook);
+      fs.chmodSync(commitMsgPath, 0o755);
+      installed++;
     }
+  } else {
+    fs.writeFileSync(commitMsgPath, commitMsgHook);
+    fs.chmodSync(commitMsgPath, 0o755);
+    installed++;
   }
 
-  // Write the pre-push hook
-  fs.writeFileSync(prePushPath, prePushHook);
-  
-  // Make it executable
-  fs.chmodSync(prePushPath, 0o755);
+  // Install pre-push hook
+  if (fs.existsSync(prePushPath)) {
+    const existingContent = fs.readFileSync(prePushPath, 'utf8');
+    if (!existingContent.includes('npm run ci:pre-push')) {
+      fs.writeFileSync(prePushPath, prePushHook);
+      fs.chmodSync(prePushPath, 0o755);
+      installed++;
+    }
+  } else {
+    fs.writeFileSync(prePushPath, prePushHook);
+    fs.chmodSync(prePushPath, 0o755);
+    installed++;
+  }
 
-  log('✅ Pre-push hook installed successfully!', 'green');
+  if (installed === 0) {
+    log('✅ Git hooks are already configured', 'green');
+    return;
+  }
+
+  log(`✅ Installed ${installed} git hook(s) successfully!`, 'green');
   log('', 'reset');
-  log('🔧 What happens now:', 'blue');
-  log('  • Before each git push, validation will run automatically', 'reset');
-  log('  • If validation fails, the push will be blocked', 'reset');
-  log('  • Run "npm run ci:validate" to test validation manually', 'reset');
-  log('  • Use "git push --no-verify" to skip validation (not recommended)', 'reset');
+  log('🪝 Installed hooks:', 'blue');
+  log('  • commit-msg - Validates commit message format (conventional commits)', 'reset');
+  log('  • pre-push   - Runs schema checks, typecheck, build, and tests', 'reset');
   log('', 'reset');
-  log('💡 Available validation commands:', 'blue');
-  log('  • npm run ci:validate     - Full CI validation', 'reset');
-  log('  • npm run ci:quick        - Quick checks (typecheck + build + test)', 'reset');
-  log('  • npm run ci:schema-check - Schema synchronization check', 'reset');
-  log('  • npm run ci:pre-push     - Pre-push validation (schema + quick)', 'reset');
+  log('⚠️  Note: Git hooks may not work in all environments (worktrees, some git clients)', 'yellow');
+  log('   CI on GitHub is the source of truth for validation', 'yellow');
+  log('', 'reset');
+  log('💡 What this prevents:', 'blue');
+  log('  • Commit messages that fail CI commitlint checks', 'reset');
+  log('  • Pushing code that doesn\'t build or pass tests', 'reset');
+  log('  • Schema synchronization issues', 'reset');
 }
 
 // CLI execution
