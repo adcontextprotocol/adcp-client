@@ -1,6 +1,6 @@
 {
   "name": "@adcp/client",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "AdCP client library with protocol support for MCP and A2A, includes testing framework",
   "main": "dist/lib/index.js",
   "types": "dist/lib/index.d.ts",
@@ -25,7 +25,7 @@
     "build": "npm run build:lib && tsc && cp -r src/public dist/",
     "build:lib": "tsc --project tsconfig.lib.json",
     "start": "node dist/server/server.js",
-    "test": "node --test test/*.test.js",
+    "test": "node --test test/*.test.js test/lib/*.test.js",
     "test:lib": "node --test test/lib/*.test.js",
     "test:e2e": "node test/e2e/adcp-e2e.test.js",
     "test:protocols": "node test/run-protocol-tests.js",
