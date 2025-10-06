@@ -161,7 +161,8 @@ describe('TaskExecutor Async Patterns (PR #78)', { skip: process.env.CI ? 'Slow 
       });
 
       const executor = new TaskExecutor({
-        workingTimeout: 10000 // 10 second timeout for testing
+        workingTimeout: 10000,
+        pollingInterval: 10 // Fast polling for tests
       });
 
       const result = await executor.executeTask(
@@ -185,7 +186,8 @@ describe('TaskExecutor Async Patterns (PR #78)', { skip: process.env.CI ? 'Slow 
       ProtocolClient.callTool = mock.fn(async () => mockResponse);
 
       const executor = new TaskExecutor({
-        workingTimeout: 100 // Very short timeout for testing
+        workingTimeout: 100,
+        pollingInterval: 10 // Fast polling for tests
       });
 
       await assert.rejects(
@@ -661,7 +663,8 @@ describe('TaskExecutor Async Patterns (PR #78)', { skip: process.env.CI ? 'Slow 
       }));
 
       const executor = new TaskExecutor({
-        workingTimeout: 50 // Very short for testing
+        workingTimeout: 50,
+        pollingInterval: 10 // Fast polling for tests
       });
 
       const startTime = Date.now();

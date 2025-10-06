@@ -85,6 +85,8 @@ export class TaskExecutor {
     private config: {
       /** Default timeout for 'working' status (max 120s per PR #78) */
       workingTimeout?: number;
+      /** Polling interval for 'working' status in milliseconds (default: 2000ms) */
+      pollingInterval?: number;
       /** Default max clarification attempts */
       defaultMaxClarifications?: number;
       /** Enable conversation storage */
@@ -365,7 +367,7 @@ export class TaskExecutor {
     // TODO: Implement SSE/streaming connection waiting
     // For now, simulate by polling tasks/get endpoint
     const workingTimeout = this.config.workingTimeout || 120000;
-    const pollInterval = 2000; // Poll every 2 seconds
+    const pollInterval = this.config.pollingInterval || 2000;
     const deadline = Date.now() + workingTimeout;
     
     while (Date.now() < deadline) {

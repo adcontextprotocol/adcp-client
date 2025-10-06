@@ -142,7 +142,7 @@ describe('TaskExecutor Async Patterns - Master Test Suite', () => {
     }
   });
 
-  test('should validate integration between all patterns', { skip: process.env.CI ? 'Slow test - skipped in CI' : false }, async () => {
+  test('should validate integration between all patterns', async () => {
     const { TaskExecutor, ProtocolClient, createFieldHandler } = require('../../dist/lib/index.js');
     
     const mockAgent = {
@@ -191,7 +191,8 @@ describe('TaskExecutor Async Patterns - Master Test Suite', () => {
       });
 
       const executor = new TaskExecutor({
-        workingTimeout: 5000
+        workingTimeout: 5000,
+        pollingInterval: 10 // Fast polling for tests
       });
 
       const result = await executor.executeTask(

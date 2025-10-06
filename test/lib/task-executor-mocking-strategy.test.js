@@ -101,7 +101,7 @@ describe('TaskExecutor Mocking Strategies', { skip: process.env.CI ? 'Slow tests
       });
 
       // Trigger the simulated webhook
-      await new Promise(resolve => setTimeout(resolve, 150));
+      await new Promise(resolve => setTimeout(resolve, 10));
       
       assert.strictEqual(mockWebhookManager.generateUrl.mock.callCount(), 1);
       assert.strictEqual(mockWebhookManager.registerWebhook.mock.callCount(), 1);
@@ -364,7 +364,8 @@ describe('TaskExecutor Mocking Strategies', { skip: process.env.CI ? 'Slow tests
       });
 
       const executor = new TaskExecutor({
-        workingTimeout: 10000 // Long timeout to allow polling
+        workingTimeout: 10000,
+        pollingInterval: 10 // Fast polling for tests
       });
 
       const startTime = Date.now();
@@ -375,15 +376,13 @@ describe('TaskExecutor Mocking Strategies', { skip: process.env.CI ? 'Slow tests
       );
 
       const elapsed = Date.now() - startTime;
-      
+
       assert.strictEqual(result.success, true);
       assert.strictEqual(result.data.polls, 3);
       assert(pollCount >= 3, 'Should have polled at least 3 times');
-      
-      // Should complete reasonably quickly (polling every 2s by default)
-      // but allow some margin for test execution
-      assert(elapsed >= 4000, 'Should take at least 4 seconds for 2 polls');
-      assert(elapsed < 8000, 'Should not take more than 8 seconds');
+
+      // With fast polling (10ms), should complete very quickly
+      assert(elapsed < 1000, 'Should complete within 1 second with fast polling');
     });
 
     test('should handle rapid polling scenarios', async () => {
@@ -403,7 +402,8 @@ describe('TaskExecutor Mocking Strategies', { skip: process.env.CI ? 'Slow tests
       });
 
       const executor = new TaskExecutor({
-        workingTimeout: 2000 // Short timeout
+        workingTimeout: 2000,
+        pollingInterval: 10 // Fast polling for tests
       });
 
       const result = await executor.executeTask(
@@ -566,7 +566,8 @@ describe('TaskExecutor Mocking Strategies', { skip: process.env.CI ? 'Slow tests
       });
 
       const executor = new TaskExecutor({
-        workingTimeout: 5000 // 5 second timeout
+        workingTimeout: 5000,
+        pollingInterval: 10 // Fast polling for tests
       });
 
       const startTime = Date.now();

@@ -507,7 +507,7 @@ describe('Handler-Controlled Flow Integration Tests', { skip: process.env.CI ? '
     test('should handle async handler promises properly', async () => {
       const asyncHandler = mock.fn(async (context) => {
         // Simulate async work
-        await new Promise(resolve => setTimeout(resolve, 100));
+        await new Promise(resolve => setTimeout(resolve, 10));
         return `async-result-for-${context.inputRequest.field}`;
       });
 
