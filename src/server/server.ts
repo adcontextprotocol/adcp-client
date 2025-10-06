@@ -41,10 +41,10 @@ if (!WEBHOOK_URL_TEMPLATE) {
   console.log('   Available macros: {agent_id}, {task_type}, {operation_id}');
 }
 
-// In-memory event storage with session isolation
+// In-memory event storage
+// Session isolation is handled client-side by including session ID in operation_id
 interface StoredEvent {
   id: string;
-  session_id: string; // Session isolation
   timestamp: string;
   type: string;
   operation_id?: string;
@@ -56,35 +56,18 @@ interface StoredEvent {
 }
 
 const eventStore: StoredEvent[] = [];
-const MAX_EVENTS_PER_SESSION = 1000;
+const MAX_EVENTS = 10000; // Keep last 10k events across all sessions
 
-// Track current session ID (set by client on first request)
-let currentSessionId: string | null = null;
-
-function storeEvent(event: Omit<StoredEvent, 'id' | 'timestamp' | 'session_id'>) {
-  if (!currentSessionId) {
-    console.warn('No session ID set, skipping event storage');
-    return null;
-  }
-
+function storeEvent(event: Omit<StoredEvent, 'id' | 'timestamp'>) {
   const storedEvent: StoredEvent = {
     id: `evt_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-    session_id: currentSessionId,
     timestamp: new Date().toISOString(),
     ...event
   };
 
   eventStore.unshift(storedEvent); // Add to front
-
-  // Clean up old events for this session
-  const sessionEvents = eventStore.filter(e => e.session_id === currentSessionId);
-  if (sessionEvents.length > MAX_EVENTS_PER_SESSION) {
-    // Remove oldest events for this session
-    const toRemove = sessionEvents.slice(MAX_EVENTS_PER_SESSION);
-    toRemove.forEach(evt => {
-      const idx = eventStore.indexOf(evt);
-      if (idx > -1) eventStore.splice(idx, 1);
-    });
+  if (eventStore.length > MAX_EVENTS) {
+    eventStore.length = MAX_EVENTS; // Trim to max
   }
 
   return storedEvent;
@@ -1244,126 +1227,35 @@ app.get('/api/webhooks', async (request, reply) => {
 });
 
 /**
- * Initialize or get session ID
- * Client should call this on startup to get/set a session ID
- */
-app.post('/api/session/init', async (request, reply) => {
-  const { session_id } = request.body as { session_id?: string };
-
-  if (session_id) {
-    // Client provided session ID (e.g., from localStorage)
-    currentSessionId = session_id;
-  } else {
-    // Generate new session ID
-    currentSessionId = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-  }
-
-  return reply.send({
-    success: true,
-    session_id: currentSessionId,
-    timestamp: new Date().toISOString()
-  });
-});
-
-/**
- * Clear session (removes all events for current session)
- */
-app.post('/api/session/clear', async (request, reply) => {
-  if (!currentSessionId) {
-    return reply.code(400).send({
-      success: false,
-      error: 'No active session'
-    });
-  }
-
-  const oldSessionId = currentSessionId;
-
-  // Remove all events for this session
-  const beforeCount = eventStore.length;
-  for (let i = eventStore.length - 1; i >= 0; i--) {
-    if (eventStore[i].session_id === oldSessionId) {
-      eventStore.splice(i, 1);
-    }
-  }
-  const removedCount = beforeCount - eventStore.length;
-
-  // Generate new session
-  currentSessionId = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-
-  return reply.send({
-    success: true,
-    old_session_id: oldSessionId,
-    new_session_id: currentSessionId,
-    events_removed: removedCount,
-    timestamp: new Date().toISOString()
-  });
-});
-
-/**
- * Get all stored events for current session
+ * Get events filtered by operation_id prefix (stateless)
+ * Client includes session ID in operation_id (e.g., "session_abc_op_123")
+ * Query params:
+ *   - prefix: Filter by operation_id prefix (e.g., "session_abc")
+ *   - operation_id: Filter by exact operation_id
  */
 app.get('/api/events', async (request, reply) => {
   try {
-    if (!currentSessionId) {
-      return reply.send({
-        success: true,
-        events: [],
-        total: 0,
-        session_id: null,
-        timestamp: new Date().toISOString()
-      });
-    }
+    const { prefix, operation_id } = request.query as { prefix?: string; operation_id?: string };
 
-    const sessionEvents = eventStore.filter(e => e.session_id === currentSessionId);
+    let filteredEvents = eventStore;
+
+    if (operation_id) {
+      // Exact match
+      filteredEvents = eventStore.filter(e => e.operation_id === operation_id);
+    } else if (prefix) {
+      // Prefix match (for session filtering)
+      filteredEvents = eventStore.filter(e => e.operation_id?.startsWith(prefix));
+    }
 
     return reply.send({
       success: true,
-      events: sessionEvents,
-      total: sessionEvents.length,
-      session_id: currentSessionId,
+      events: filteredEvents,
+      total: filteredEvents.length,
+      filtered_by: operation_id ? { operation_id } : prefix ? { prefix } : null,
       timestamp: new Date().toISOString()
     });
   } catch (error) {
     app.log.error({ error }, 'Get events error');
-    return reply.code(500).send({
-      success: false,
-      error: error instanceof Error ? error.message : 'Unknown error'
-    });
-  }
-});
-
-/**
- * Get events for a specific operation in current session
- */
-app.get('/api/events/:operationId', async (request, reply) => {
-  try {
-    const { operationId } = request.params as { operationId: string };
-
-    if (!currentSessionId) {
-      return reply.send({
-        success: true,
-        operation_id: operationId,
-        events: [],
-        total: 0,
-        session_id: null,
-        timestamp: new Date().toISOString()
-      });
-    }
-
-    const events = eventStore.filter(e =>
-      e.session_id === currentSessionId && e.operation_id === operationId
-    );
-
-    return reply.send({
-      success: true,
-      operation_id: operationId,
-      events,
-      total: events.length,
-      session_id: currentSessionId,
-      timestamp: new Date().toISOString()
-    });
-  } catch (error) {
-    app.log.error({ error }, 'Get operation events error');
     return reply.code(500).send({
       success: false,
       error: error instanceof Error ? error.message : 'Unknown error'
