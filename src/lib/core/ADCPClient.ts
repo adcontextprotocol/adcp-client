@@ -34,6 +34,9 @@ import type {
   ConversationConfig,
   TaskInfo
 } from './ConversationTypes';
+import type { Activity, AsyncHandlerConfig, WebhookPayload } from './AsyncHandler';
+import { AsyncHandler } from './AsyncHandler';
+import * as crypto from 'crypto';
 
 /**
  * Configuration for ADCPClient
@@ -45,6 +48,26 @@ export interface ADCPClientConfig extends ConversationConfig {
   userAgent?: string;
   /** Additional headers to include in requests */
   headers?: Record<string, string>;
+  /** Activity callback for observability (logging, UI updates, etc) */
+  onActivity?: (activity: Activity) => void | Promise<void>;
+  /** Task completion handlers - called for both sync responses and webhook completions */
+  handlers?: AsyncHandlerConfig;
+  /** Webhook secret for signature verification (recommended for production) */
+  webhookSecret?: string;
+  /**
+   * Webhook URL template with macro substitution
+   *
+   * Available macros:
+   * - {agent_id} - Agent ID
+   * - {task_type} - Task type (e.g., sync_creatives, media_buy_delivery)
+   * - {operation_id} - Operation ID
+   *
+   * @example
+   * Path-based: "https://myapp.com/webhook/{task_type}/{agent_id}/{operation_id}"
+   * Query string: "https://myapp.com/webhook?agent={agent_id}&op={operation_id}&type={task_type}"
+   * Custom: "https://myapp.com/api/v1/adcp/{agent_id}?operation={operation_id}"
+   */
+  webhookUrlTemplate?: string;
 }
 
 /**
@@ -63,7 +86,8 @@ export interface ADCPClientConfig extends ConversationConfig {
  */
 export class ADCPClient {
   private executor: TaskExecutor;
-  
+  private asyncHandler?: AsyncHandler;
+
   constructor(
     private agent: AgentConfig,
     private config: ADCPClientConfig = {}
@@ -73,6 +97,148 @@ export class ADCPClient {
       defaultMaxClarifications: config.defaultMaxClarifications || 3,
       enableConversationStorage: config.persistConversations !== false
     });
+
+    // Create async handler if handlers are provided
+    if (config.handlers) {
+      this.asyncHandler = new AsyncHandler(config.handlers);
+    }
+  }
+
+  /**
+   * Handle webhook from agent (async task completion)
+   *
+   * @param payload - Webhook payload from agent
+   * @param signature - Optional signature for verification (if webhookSecret configured)
+   * @returns Whether webhook was handled successfully
+   *
+   * @example
+   * ```typescript
+   * app.post('/webhook', async (req, res) => {
+   *   const signature = req.headers['x-adcp-signature'];
+   *   const handled = await client.handleWebhook(req.body, signature);
+   *   res.json({ received: handled });
+   * });
+   * ```
+   */
+  async handleWebhook(payload: WebhookPayload, signature?: string): Promise<boolean> {
+    // Verify signature if secret is configured
+    if (this.config.webhookSecret) {
+      if (!signature) {
+        throw new Error('Webhook signature required but not provided');
+      }
+
+      const isValid = this.verifyWebhookSignature(payload, signature);
+      if (!isValid) {
+        throw new Error('Invalid webhook signature');
+      }
+    }
+
+    // Emit activity
+    await this.config.onActivity?.({
+      type: 'webhook_received',
+      operation_id: payload.operation_id,
+      agent_id: this.agent.id,
+      context_id: payload.context_id,
+      task_id: payload.task_id,
+      task_type: payload.task_type,
+      status: payload.status,
+      payload: payload.result,
+      timestamp: payload.timestamp || new Date().toISOString()
+    });
+
+    // Handle through async handler if configured
+    if (this.asyncHandler) {
+      await this.asyncHandler.handleWebhook(payload, this.agent.id);
+      return true;
+    }
+
+    return false;
+  }
+
+  /**
+   * Generate webhook URL using macro substitution
+   *
+   * @param taskType - Type of task (e.g., 'get_products', 'media_buy_delivery')
+   * @param operationId - Operation ID for this request
+   * @returns Full webhook URL with macros replaced
+   *
+   * @example
+   * ```typescript
+   * // With template: "https://myapp.com/webhook/{task_type}/{agent_id}/{operation_id}"
+   * const webhookUrl = client.getWebhookUrl('sync_creatives', 'op_123');
+   * // Returns: https://myapp.com/webhook/sync_creatives/agent_x/op_123
+   *
+   * // With template: "https://myapp.com/webhook?agent={agent_id}&op={operation_id}"
+   * const webhookUrl = client.getWebhookUrl('sync_creatives', 'op_123');
+   * // Returns: https://myapp.com/webhook?agent=agent_x&op=op_123
+   * ```
+   */
+  getWebhookUrl(taskType: string, operationId: string): string {
+    if (!this.config.webhookUrlTemplate) {
+      throw new Error('webhookUrlTemplate not configured - cannot generate webhook URL');
+    }
+
+    // Macro substitution
+    return this.config.webhookUrlTemplate
+      .replace(/{agent_id}/g, this.agent.id)
+      .replace(/{task_type}/g, taskType)
+      .replace(/{operation_id}/g, operationId);
+  }
+
+  /**
+   * Verify webhook signature using HMAC-SHA256
+   */
+  private verifyWebhookSignature(payload: any, signature: string): boolean {
+    if (!this.config.webhookSecret) {
+      return false;
+    }
+
+    const hmac = crypto.createHmac('sha256', this.config.webhookSecret);
+    const payloadString = JSON.stringify(payload);
+    hmac.update(payloadString);
+    const expectedSignature = hmac.digest('hex');
+
+    return crypto.timingSafeEqual(
+      Buffer.from(signature),
+      Buffer.from(expectedSignature)
+    );
+  }
+
+  /**
+   * Execute task and call appropriate handler on completion
+   */
+  private async executeAndHandle<T>(
+    taskType: string,
+    handlerName: keyof AsyncHandlerConfig,
+    params: any,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<T>> {
+    const result = await this.executor.executeTask<T>(
+      this.agent,
+      taskType,
+      params,
+      inputHandler,
+      options
+    );
+
+    // Call handler if task completed successfully and handler is configured
+    if (result.status === 'completed' && result.success && this.asyncHandler) {
+      const handler = this.config.handlers?.[handlerName] as any;
+      if (handler) {
+        const metadata = {
+          operation_id: options?.contextId || 'sync',
+          context_id: options?.contextId,
+          task_id: result.metadata.taskId,
+          agent_id: this.agent.id,
+          task_type: taskType,
+          timestamp: new Date().toISOString()
+        };
+        await handler(result.data, metadata);
+      }
+    }
+
+    return result;
   }
 
   // ====== MEDIA BUY TASKS ======
@@ -103,9 +269,9 @@ export class ADCPClient {
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<GetProductsResponse>> {
-    return this.executor.executeTask<GetProductsResponse>(
-      this.agent,
+    return this.executeAndHandle<GetProductsResponse>(
       'get_products',
+      'onGetProductsStatusChange',
       params,
       inputHandler,
       options
@@ -124,9 +290,9 @@ export class ADCPClient {
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<ListCreativeFormatsResponse>> {
-    return this.executor.executeTask<ListCreativeFormatsResponse>(
-      this.agent,
+    return this.executeAndHandle<ListCreativeFormatsResponse>(
       'list_creative_formats',
+      'onListCreativeFormatsStatusChange',
       params,
       inputHandler,
       options
@@ -145,9 +311,9 @@ export class ADCPClient {
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<CreateMediaBuyResponse>> {
-    return this.executor.executeTask<CreateMediaBuyResponse>(
-      this.agent,
+    return this.executeAndHandle<CreateMediaBuyResponse>(
       'create_media_buy',
+      'onCreateMediaBuyStatusChange',
       params,
       inputHandler,
       options
@@ -166,9 +332,9 @@ export class ADCPClient {
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<UpdateMediaBuyResponse>> {
-    return this.executor.executeTask<UpdateMediaBuyResponse>(
-      this.agent,
+    return this.executeAndHandle<UpdateMediaBuyResponse>(
       'update_media_buy',
+      'onUpdateMediaBuyStatusChange',
       params,
       inputHandler,
       options
@@ -187,9 +353,9 @@ export class ADCPClient {
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<SyncCreativesResponse>> {
-    return this.executor.executeTask<SyncCreativesResponse>(
-      this.agent,
+    return this.executeAndHandle<SyncCreativesResponse>(
       'sync_creatives',
+      'onSyncCreativesStatusChange',
       params,
       inputHandler,
       options
@@ -208,9 +374,9 @@ export class ADCPClient {
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<ListCreativesResponse>> {
-    return this.executor.executeTask<ListCreativesResponse>(
-      this.agent,
+    return this.executeAndHandle<ListCreativesResponse>(
       'list_creatives',
+      'onListCreativesStatusChange',
       params,
       inputHandler,
       options
@@ -229,9 +395,9 @@ export class ADCPClient {
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<GetMediaBuyDeliveryResponse>> {
-    return this.executor.executeTask<GetMediaBuyDeliveryResponse>(
-      this.agent,
+    return this.executeAndHandle<GetMediaBuyDeliveryResponse>(
       'get_media_buy_delivery',
+      'onGetMediaBuyDeliveryStatusChange',
       params,
       inputHandler,
       options
@@ -250,9 +416,9 @@ export class ADCPClient {
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<ListAuthorizedPropertiesResponse>> {
-    return this.executor.executeTask<ListAuthorizedPropertiesResponse>(
-      this.agent,
+    return this.executeAndHandle<ListAuthorizedPropertiesResponse>(
       'list_authorized_properties',
+      'onListAuthorizedPropertiesStatusChange',
       params,
       inputHandler,
       options
@@ -271,9 +437,9 @@ export class ADCPClient {
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<ProvidePerformanceFeedbackResponse>> {
-    return this.executor.executeTask<ProvidePerformanceFeedbackResponse>(
-      this.agent,
+    return this.executeAndHandle<ProvidePerformanceFeedbackResponse>(
       'provide_performance_feedback',
+      'onProvidePerformanceFeedbackStatusChange',
       params,
       inputHandler,
       options
@@ -294,9 +460,9 @@ export class ADCPClient {
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<GetSignalsResponse>> {
-    return this.executor.executeTask<GetSignalsResponse>(
-      this.agent,
+    return this.executeAndHandle<GetSignalsResponse>(
       'get_signals',
+      'onGetSignalsStatusChange',
       params,
       inputHandler,
       options
@@ -315,9 +481,9 @@ export class ADCPClient {
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<ActivateSignalResponse>> {
-    return this.executor.executeTask<ActivateSignalResponse>(
-      this.agent,
+    return this.executeAndHandle<ActivateSignalResponse>(
       'activate_signal',
+      'onActivateSignalStatusChange',
       params,
       inputHandler,
       options

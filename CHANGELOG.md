@@ -5,6 +5,81 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2025-10-05
+
+### Changed
+
+#### **BREAKING CHANGE: Handler Naming Convention**
+- **All async handlers renamed** from `onXXXComplete` to `onXXXStatusChange` to better reflect their behavior
+- Handlers now receive ALL status changes (completed, failed, needs_input, working, submitted), not just completions
+- `WebhookMetadata` interface extended with `status` and `error` fields for status inspection
+
+**Affected Handlers:**
+- `onGetProductsComplete` → `onGetProductsStatusChange`
+- `onListCreativeFormatsComplete` → `onListCreativeFormatsStatusChange`
+- `onCreateMediaBuyComplete` → `onCreateMediaBuyStatusChange`
+- `onUpdateMediaBuyComplete` → `onUpdateMediaBuyStatusChange`
+- `onSubmitMediaBuyComplete` → `onSubmitMediaBuyStatusChange`
+- `onCancelMediaBuyComplete` → `onCancelMediaBuyStatusChange`
+- `onManageCreativeAssetsComplete` → `onManageCreativeAssetsStatusChange`
+- `onSyncCreativesComplete` → `onSyncCreativesStatusChange`
+- `onListCreativesComplete` → `onListCreativesStatusChange`
+- `onGetMediaBuyComplete` → `onGetMediaBuyStatusChange`
+- `onListMediaBuysComplete` → `onListMediaBuysStatusChange`
+- `onTaskComplete` → `onTaskStatusChange` (fallback handler)
+
+#### **BREAKING CHANGE: Removed Separate Status Handlers**
+- Removed `onTaskSubmitted`, `onTaskWorking`, and `onTaskFailed` handlers
+- All status changes now route through the typed handlers (e.g., `onGetProductsStatusChange`)
+- Use `metadata.status` to check status type within your handlers
+
+### Added
+- **Status field** in `WebhookMetadata` interface to identify the current task status
+- **Error field** in `WebhookMetadata` interface for failed task error messages
+- **Comprehensive test suite** for async handler status changes (12 tests covering all status types)
+- **In-memory event storage** in example server for debugging and observability
+- **Events API endpoints** (`/api/events` and `/api/events/:operationId`) for querying stored events
+
+### Migration Guide
+
+**Before (v0.3.0):**
+```typescript
+const client = new ADCPMultiAgentClient(agents, {
+  handlers: {
+    onGetProductsComplete: (response, metadata) => {
+      console.log('Products received:', response.products);
+    },
+    onTaskFailed: (metadata, error) => {
+      console.error('Task failed:', error);
+    }
+  }
+});
+```
+
+**After (v0.4.0):**
+```typescript
+const client = new ADCPMultiAgentClient(agents, {
+  handlers: {
+    onGetProductsStatusChange: (response, metadata) => {
+      // Check status to handle different cases
+      if (metadata.status === 'completed') {
+        console.log('Products received:', response.products);
+      } else if (metadata.status === 'failed') {
+        console.error('Task failed:', metadata.error);
+      } else if (metadata.status === 'needs_input') {
+        console.log('Clarification needed:', response.message);
+      }
+    }
+  }
+});
+```
+
+**Why this change?**
+- Handlers were already receiving all status changes, but the `Complete` suffix was misleading
+- Separate status handlers (`onTaskFailed`, etc.) were redundant with typed handlers
+- New naming is more honest about behavior and simplifies the API surface
+- `metadata.status` provides clear, type-safe status inspection
+
 ## [0.3.0](https://github.com/adcontextprotocol/adcp-client/compare/v0.2.4...v0.3.0) (2025-10-04)
 
 

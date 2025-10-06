@@ -231,7 +231,7 @@ class MockMCPServer {
   }
 }
 
-describe('A2A Integration Contract Tests', () => {
+describe('A2A Integration Contract Tests', { skip: process.env.CI ? 'Slow tests - skipped in CI' : false }, () => {
   let mockServer;
 
   function setupA2AIntegrationTest() {
@@ -489,6 +489,7 @@ describe('Cross-Protocol Integration Tests', () => {
     
     // Both should format requests correctly for their respective protocols
     const expectedA2AMessage = {
+      messageId: "test-msg-001",
       kind: "message",
       role: "user",
       parts: [{

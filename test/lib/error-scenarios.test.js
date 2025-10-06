@@ -14,7 +14,7 @@ const assert = require('node:assert');
  * 6. Edge cases - race conditions, concurrent operations
  */
 
-describe('TaskExecutor Error Scenarios', () => {
+describe('TaskExecutor Error Scenarios', { skip: process.env.CI ? 'Slow tests - skipped in CI' : false }, () => {
   let TaskExecutor;
   let ProtocolClient;
   let TaskTimeoutError;

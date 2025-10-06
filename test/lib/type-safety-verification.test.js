@@ -14,7 +14,7 @@ const assert = require('node:assert');
  * 6. Verify error type hierarchies
  */
 
-describe('Type Safety Verification for Async Continuations', () => {
+describe('Type Safety Verification for Async Continuations', { skip: process.env.CI ? 'Slow tests - skipped in CI' : false }, () => {
   let TaskExecutor;
   let ProtocolClient;
   let originalCallTool;

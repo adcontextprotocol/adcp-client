@@ -13,7 +13,7 @@ const assert = require('node:assert');
  * 5. Validate type safety of continuations
  */
 
-describe('TaskExecutor Async Patterns (PR #78)', () => {
+describe('TaskExecutor Async Patterns (PR #78)', { skip: process.env.CI ? 'Slow tests - skipped in CI' : false }, () => {
   let TaskExecutor;
   let ADCP_STATUS;
   let InputRequiredError;

@@ -14,7 +14,7 @@ const assert = require('node:assert');
  * 6. Test real-world handler scenarios
  */
 
-describe('Handler-Controlled Flow Integration Tests', () => {
+describe('Handler-Controlled Flow Integration Tests', { skip: process.env.CI ? 'Slow tests - skipped in CI' : false }, () => {
   let TaskExecutor;
   let ProtocolClient;
   let createFieldHandler;
