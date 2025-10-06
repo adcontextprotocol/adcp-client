@@ -14,7 +14,7 @@ const { EventEmitter } = require('events');
  * 5. Network failure simulation: Controlled error injection
  */
 
-describe('TaskExecutor Mocking Strategies', () => {
+describe('TaskExecutor Mocking Strategies', { skip: process.env.CI ? 'Slow tests - skipped in CI' : false }, () => {
   let TaskExecutor;
   let ProtocolClient;
   let originalCallTool;

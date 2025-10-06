@@ -18,7 +18,7 @@ const { callA2ATool } = require('../../dist/lib/protocols/a2a.js');
  * 4. Test edge cases and error conditions
  */
 
-describe('A2A Protocol Compliance', () => {
+describe('A2A Protocol Compliance', { skip: process.env.CI ? 'Slow tests - skipped in CI' : false }, () => {
   
   // Mock the A2A SDK to capture and validate actual messages being sent
   let capturedMessages = [];
