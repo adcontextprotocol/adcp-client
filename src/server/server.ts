@@ -1230,28 +1230,46 @@ app.get('/api/webhooks', async (request, reply) => {
  * Get events filtered by operation_id prefix (stateless)
  * Client includes session ID in operation_id (e.g., "session_abc_op_123")
  * Query params:
- *   - prefix: Filter by operation_id prefix (e.g., "session_abc")
+ *   - prefix: Filter by operation_id prefix (min 16 chars for security)
  *   - operation_id: Filter by exact operation_id
+ *
+ * Security: Requires either prefix (>=16 chars) or exact operation_id to prevent enumeration
  */
 app.get('/api/events', async (request, reply) => {
   try {
     const { prefix, operation_id } = request.query as { prefix?: string; operation_id?: string };
 
-    let filteredEvents = eventStore;
+    // Require either prefix or operation_id
+    if (!prefix && !operation_id) {
+      return reply.code(400).send({
+        success: false,
+        error: 'Must provide either "prefix" or "operation_id" query parameter'
+      });
+    }
+
+    // Enforce minimum prefix length for security (prevent enumeration)
+    if (prefix && prefix.length < 16) {
+      return reply.code(400).send({
+        success: false,
+        error: 'Prefix must be at least 16 characters long'
+      });
+    }
+
+    let filteredEvents: StoredEvent[];
 
     if (operation_id) {
       // Exact match
       filteredEvents = eventStore.filter(e => e.operation_id === operation_id);
-    } else if (prefix) {
+    } else {
       // Prefix match (for session filtering)
-      filteredEvents = eventStore.filter(e => e.operation_id?.startsWith(prefix));
+      filteredEvents = eventStore.filter(e => e.operation_id?.startsWith(prefix!));
     }
 
     return reply.send({
       success: true,
       events: filteredEvents,
       total: filteredEvents.length,
-      filtered_by: operation_id ? { operation_id } : prefix ? { prefix } : null,
+      filtered_by: operation_id ? { operation_id } : { prefix },
       timestamp: new Date().toISOString()
     });
   } catch (error) {
