@@ -211,10 +211,16 @@ export class TaskExecutor {
         // Task completed immediately
         const completedData = this.extractResponseData(response, debugLogs);
         this.updateTaskStatus(taskId, 'completed', completedData);
+
+        // Check if the actual operation succeeded (not just the task)
+        // Some agents return { success: false, message: "error" } even with status: completed
+        const operationSuccess = completedData?.success !== false;
+
         return {
-          success: true,
+          success: operationSuccess,
           status: 'completed',
           data: completedData,
+          error: operationSuccess ? undefined : (completedData?.message || 'Operation failed'),
           metadata: {
             taskId,
             taskName,
@@ -258,10 +264,14 @@ export class TaskExecutor {
         // Unknown status - treat as completed if we have data
         const defaultData = this.extractResponseData(response, debugLogs);
         if (defaultData && (defaultData !== response || response.structuredContent || response.result || response.data)) {
+          // Check if the actual operation succeeded
+          const defaultSuccess = defaultData?.success !== false;
+
           return {
-            success: true,
+            success: defaultSuccess,
             status: 'completed',
             data: defaultData,
+            error: defaultSuccess ? undefined : (defaultData?.message || 'Operation failed'),
             metadata: {
               taskId,
               taskName,
@@ -377,10 +387,14 @@ export class TaskExecutor {
         const taskInfo = await this.getTaskStatus(agent, taskId);
         
         if (taskInfo.status === ADCP_STATUS.COMPLETED) {
+          // Check if the actual operation succeeded
+          const workingSuccess = taskInfo.result?.success !== false;
+
           return {
-            success: true,
+            success: workingSuccess,
             status: 'completed',
             data: taskInfo.result,
+            error: workingSuccess ? undefined : (taskInfo.result?.message || 'Operation failed'),
             metadata: {
               taskId,
               taskName,
@@ -587,10 +601,14 @@ export class TaskExecutor {
       const status = await this.getTaskStatus(agent, taskId);
       
       if (status.status === ADCP_STATUS.COMPLETED) {
+        // Check if the actual operation succeeded
+        const pollSuccess = status.result?.success !== false;
+
         return {
-          success: true,
+          success: pollSuccess,
           status: 'completed',
           data: status.result,
+          error: pollSuccess ? undefined : (status.result?.message || 'Operation failed'),
           metadata: {
             taskId,
             taskName: status.taskType,
