@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1](https://github.com/adcontextprotocol/adcp-client/compare/v0.3.0...v0.3.1) (2025-10-08)
+
+
+### Features
+
+* add event store visibility and persist completed tasks ([#35](https://github.com/adcontextprotocol/adcp-client/issues/35)) ([5470662](https://github.com/adcontextprotocol/adcp-client/commit/5470662983ca4b1df3562e2224436e067c145b35))
+
+
+### Bug Fixes
+
+* A2A protocol response parsing and clean up CI ([#30](https://github.com/adcontextprotocol/adcp-client/issues/30)) ([d320a1d](https://github.com/adcontextprotocol/adcp-client/commit/d320a1d585da56d9da4de9c2c58e4af360e84814))
+* distinguish task completion from operation success ([#34](https://github.com/adcontextprotocol/adcp-client/issues/34)) ([34b8d88](https://github.com/adcontextprotocol/adcp-client/commit/34b8d889745d96f60e00d7f5da45ae19fa253a18))
+
+
+### Performance Improvements
+
+* speed up test suite with configurable polling interval ([#33](https://github.com/adcontextprotocol/adcp-client/issues/33)) ([9fa9a0e](https://github.com/adcontextprotocol/adcp-client/commit/9fa9a0eed6bc65c9215298a83e23a4147316cca3))
+
+
+### Code Refactoring
+
+* rename handlers to onXXXStatusChange and add in-memory event storage ([#31](https://github.com/adcontextprotocol/adcp-client/issues/31)) ([2fcf59f](https://github.com/adcontextprotocol/adcp-client/commit/2fcf59f37e801a2e12262a918d176c556a10f908))
+
 ## [0.4.0] - 2025-10-05
 
 ### Changed
