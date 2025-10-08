@@ -29,13 +29,9 @@ jobs:
       - uses: googleapis/release-please-action@v4
         id: release
         with:
-          # Release type determines how versions are bumped
-          release-type: node
-          # Package name in package.json
-          package-name: '@adcp/client'
-          # Use conventional commits for changelog generation
-          bump-minor-pre-major: true
-          bump-patch-for-minor-pre-major: true
+          # Configuration is in release-please-config.json
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
 
       # Publish to NPM when a release is created
       - name: Checkout code
