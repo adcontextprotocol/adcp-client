@@ -126,4 +126,4 @@ playwright-report/
 *.pem
 *.key
 *.p12
-*.pfx
+*.pfxscripts/manual-testing/test-local-agent.ts
