@@ -95,7 +95,10 @@ export class ADCPClient {
     this.executor = new TaskExecutor({
       workingTimeout: config.workingTimeout || 120000, // Max 120s for working status
       defaultMaxClarifications: config.defaultMaxClarifications || 3,
-      enableConversationStorage: config.persistConversations !== false
+      enableConversationStorage: config.persistConversations !== false,
+      webhookUrlTemplate: config.webhookUrlTemplate,
+      agentId: agent.id,
+      webhookSecret: config.webhookSecret
     });
 
     // Create async handler if handlers are provided
@@ -108,28 +111,35 @@ export class ADCPClient {
    * Handle webhook from agent (async task completion)
    *
    * @param payload - Webhook payload from agent
-   * @param signature - Optional signature for verification (if webhookSecret configured)
+   * @param signature - X-ADCP-Signature header (format: "sha256=...")
+   * @param timestamp - X-ADCP-Timestamp header (Unix timestamp)
    * @returns Whether webhook was handled successfully
    *
    * @example
    * ```typescript
    * app.post('/webhook', async (req, res) => {
    *   const signature = req.headers['x-adcp-signature'];
-   *   const handled = await client.handleWebhook(req.body, signature);
-   *   res.json({ received: handled });
+   *   const timestamp = req.headers['x-adcp-timestamp'];
+   *
+   *   try {
+   *     const handled = await client.handleWebhook(req.body, signature, timestamp);
+   *     res.status(200).json({ received: handled });
+   *   } catch (error) {
+   *     res.status(401).json({ error: error.message });
+   *   }
    * });
    * ```
    */
-  async handleWebhook(payload: WebhookPayload, signature?: string): Promise<boolean> {
+  async handleWebhook(payload: WebhookPayload, signature?: string, timestamp?: string | number): Promise<boolean> {
     // Verify signature if secret is configured
     if (this.config.webhookSecret) {
-      if (!signature) {
-        throw new Error('Webhook signature required but not provided');
+      if (!signature || !timestamp) {
+        throw new Error('Webhook signature and timestamp required but not provided');
       }
 
-      const isValid = this.verifyWebhookSignature(payload, signature);
+      const isValid = this.verifyWebhookSignature(payload, signature, timestamp);
       if (!isValid) {
-        throw new Error('Invalid webhook signature');
+        throw new Error('Invalid webhook signature or timestamp too old');
       }
     }
 
@@ -186,17 +196,106 @@ export class ADCPClient {
   }
 
   /**
-   * Verify webhook signature using HMAC-SHA256
+   * Create an HTTP webhook handler that automatically verifies signatures
+   *
+   * This helper creates a standard HTTP handler (Express/Next.js/etc.) that:
+   * - Extracts X-ADCP-Signature and X-ADCP-Timestamp headers
+   * - Verifies HMAC signature (if webhookSecret configured)
+   * - Validates timestamp freshness
+   * - Calls handleWebhook() with proper error handling
+   *
+   * @returns HTTP handler function compatible with Express, Next.js, etc.
+   *
+   * @example Express
+   * ```typescript
+   * const client = new ADCPClient(agent, {
+   *   webhookSecret: 'your-secret-key',
+   *   handlers: {
+   *     onSyncCreativesStatusChange: async (result) => {
+   *       console.log('Creative synced:', result);
+   *     }
+   *   }
+   * });
+   *
+   * app.post('/webhook', client.createWebhookHandler());
+   * ```
+   *
+   * @example Next.js API Route
+   * ```typescript
+   * export default client.createWebhookHandler();
+   * ```
    */
-  private verifyWebhookSignature(payload: any, signature: string): boolean {
+  createWebhookHandler() {
+    return async (req: any, res: any) => {
+      try {
+        // Extract headers (case-insensitive)
+        const signature = req.headers['x-adcp-signature'] || req.headers['X-ADCP-Signature'];
+        const timestamp = req.headers['x-adcp-timestamp'] || req.headers['X-ADCP-Timestamp'];
+
+        // Parse body if needed
+        const payload = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
+
+        // Handle webhook with automatic verification
+        const handled = await this.handleWebhook(payload, signature, timestamp);
+
+        // Return success
+        if (res.json) {
+          res.status(202).json({ status: 'accepted', received: handled });
+        } else {
+          res.writeHead(202, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ status: 'accepted', received: handled }));
+        }
+      } catch (error: any) {
+        // Return error
+        const statusCode = error.message.includes('signature') || error.message.includes('timestamp') ? 401 : 500;
+
+        if (res.json) {
+          res.status(statusCode).json({ error: error.message });
+        } else {
+          res.writeHead(statusCode, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: error.message }));
+        }
+      }
+    };
+  }
+
+  /**
+   * Verify webhook signature using HMAC-SHA256 per AdCP PR #86 spec
+   *
+   * Signature format: sha256={hex_signature}
+   * Message format: {timestamp}.{json_payload}
+   *
+   * @param payload - Webhook payload object
+   * @param signature - X-ADCP-Signature header value (format: "sha256=...")
+   * @param timestamp - X-ADCP-Timestamp header value (Unix timestamp)
+   * @returns true if signature is valid
+   */
+  verifyWebhookSignature(payload: any, signature: string, timestamp: string | number): boolean {
     if (!this.config.webhookSecret) {
       return false;
     }
 
+    // Validate timestamp freshness (reject requests older than 5 minutes)
+    const now = Math.floor(Date.now() / 1000);
+    const ts = typeof timestamp === 'string' ? parseInt(timestamp) : timestamp;
+
+    if (Math.abs(now - ts) > 300) {
+      return false; // Request too old or from future
+    }
+
+    // Build message per AdCP spec: {timestamp}.{json_payload}
+    const message = `${ts}.${JSON.stringify(payload)}`;
+
+    // Calculate expected signature
     const hmac = crypto.createHmac('sha256', this.config.webhookSecret);
-    const payloadString = JSON.stringify(payload);
-    hmac.update(payloadString);
-    const expectedSignature = hmac.digest('hex');
+    hmac.update(message);
+    const expectedSignature = `sha256=${hmac.digest('hex')}`;
+
+    // Constant-time comparison to prevent timing attacks
+    // Check length first to avoid timingSafeEqual error
+    if (signature.length !== expectedSignature.length) {
+      return false;
+    }
 
     return crypto.timingSafeEqual(
       Buffer.from(signature),

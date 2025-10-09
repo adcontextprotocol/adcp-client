@@ -19,17 +19,34 @@ export class ProtocolClient {
     agent: AgentConfig,
     toolName: string,
     args: Record<string, any>,
-    debugLogs: any[] = []
+    debugLogs: any[] = [],
+    webhookUrl?: string,
+    webhookSecret?: string
   ): Promise<any> {
     validateAgentUrl(agent.agent_uri);
-    
+
     const authToken = getAuthToken(agent);
-    
+
+    // Include push_notification_config in args if provided (AdCP spec)
+    // Format: { url: string, authentication: { schemes: string[], credentials: string } }
+    const argsWithWebhook = webhookUrl
+      ? {
+          ...args,
+          push_notification_config: {
+            url: webhookUrl,
+            authentication: {
+              schemes: ['HMAC-SHA256'],
+              credentials: webhookSecret || 'placeholder_secret_min_32_characters_required'
+            }
+          }
+        }
+      : args;
+
     if (agent.protocol === 'mcp') {
       return callMCPTool(
         agent.agent_uri,
         toolName,
-        args,
+        argsWithWebhook,
         authToken,
         debugLogs
       );
@@ -37,7 +54,7 @@ export class ProtocolClient {
       return callA2ATool(
         agent.agent_uri,
         toolName,
-        args, // This maps to 'parameters' in callA2ATool
+        argsWithWebhook, // This maps to 'parameters' in callA2ATool
         authToken,
         debugLogs
       );

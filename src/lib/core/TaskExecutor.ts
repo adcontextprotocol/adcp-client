@@ -95,12 +95,32 @@ export class TaskExecutor {
       webhookManager?: WebhookManager;
       /** Storage for deferred task state */
       deferredStorage?: Storage<DeferredTaskState>;
+      /** Webhook URL template for protocol-level webhook support */
+      webhookUrlTemplate?: string;
+      /** Agent ID for webhook URL generation */
+      agentId?: string;
+      /** Webhook secret for HMAC authentication (min 32 chars) */
+      webhookSecret?: string;
     } = {}
   ) {
     this.responseParser = new ProtocolResponseParser();
     if (config.enableConversationStorage) {
       this.conversationStorage = new Map();
     }
+  }
+
+  /**
+   * Generate webhook URL for protocol-level webhook support
+   */
+  private generateWebhookUrl(taskName: string, operationId: string): string | undefined {
+    if (!this.config.webhookUrlTemplate || !this.config.agentId) {
+      return undefined;
+    }
+
+    return this.config.webhookUrlTemplate
+      .replace(/{agent_id}/g, this.config.agentId)
+      .replace(/{task_type}/g, taskName)
+      .replace(/{operation_id}/g, operationId);
   }
 
   /**
@@ -153,10 +173,13 @@ export class TaskExecutor {
 
     // Start streaming connection
     const debugLogs: any[] = [];
-    
+
+    // Generate webhook URL if template is configured
+    const webhookUrl = this.generateWebhookUrl(taskName, taskId);
+
     try {
-      // Send initial request and get streaming response
-      const response = await ProtocolClient.callTool(agent, taskName, params, debugLogs);
+      // Send initial request and get streaming response with webhook URL
+      const response = await ProtocolClient.callTool(agent, taskName, params, debugLogs, webhookUrl, this.config.webhookSecret);
       
       // Add initial response message
       const responseMessage: Message = {
