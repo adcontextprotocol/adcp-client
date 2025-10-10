@@ -1818,12 +1818,23 @@
             background: rgba(0, 0, 0, 0.05);
             border: 1px solid rgba(0, 0, 0, 0.1);
             border-radius: 4px;
-            padding: 8px;
-            font-size: 11px;
+            padding: 12px;
+            font-size: 12px;
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', 'Consolas', monospace;
             color: var(--text-secondary);
-            margin: 0;
-            max-height: 200px;
+            margin: 8px 0;
+            max-height: 400px;
             overflow-y: auto;
+            overflow-x: auto;
+            white-space: pre-wrap;
+            word-break: break-word;
+            line-height: 1.5;
+        }
+
+        .debug-log-data.error {
+            background: rgba(239, 68, 68, 0.1);
+            border-color: rgba(239, 68, 68, 0.3);
+            color: #dc2626;
         }
         
         /* Debug Call Card Styles */
@@ -2229,14 +2240,22 @@
                     <label>Test Scenarios (optional):</label>
                     <select id="test-scenarios" onchange="loadTestScenario()">
                         <option value="">Select a test scenario...</option>
-                        <option value="basic-campaign">Basic Campaign</option>
-                        <option value="geo-targeted">Geo-Targeted Campaign</option>
-                        <option value="axe-segments">AXE Segment Campaign</option>
-                        <option value="frequency-capped">Frequency Capped Campaign</option>
-                        <option value="premium-budget">Premium Budget Campaign</option>
+                        <optgroup label="Campaign Examples">
+                            <option value="basic-campaign">Basic Campaign</option>
+                            <option value="geo-targeted">Geo-Targeted Campaign</option>
+                            <option value="axe-segments">AXE Segment Campaign</option>
+                            <option value="frequency-capped">Frequency Capped Campaign</option>
+                            <option value="premium-budget">Premium Budget Campaign</option>
+                        </optgroup>
+                        <optgroup label="AI-Powered Test Scenarios">
+                            <option value="test-delay-response">Test: Delayed Response (10s)</option>
+                            <option value="test-rejection">Test: Rejection Scenario</option>
+                            <option value="test-human-approval">Test: Human Approval Workflow</option>
+                            <option value="test-slow-delivery">Test: Slow Delivery + Outage</option>
+                        </optgroup>
                     </select>
                     <small style="color: #666; display: block; margin-top: 5px;">
-                        Pre-populate fields with realistic test data
+                        Pre-populate fields with realistic test data or AI-powered test scenarios
                     </small>
                 </div>
                 
@@ -2257,7 +2276,10 @@
                 
                 <div class="param-group">
                     <label>Advertiser/Offering Description (required):</label>
-                    <textarea id="promoted-offering" placeholder="Describe the advertiser and what is being promoted..." rows="3" required></textarea>
+                    <textarea id="promoted-offering" placeholder="Describe the advertiser and what is being promoted... (e.g., 'Sustainable coffee brand targeting millennials' or for testing: 'Wait 10 seconds before responding' or 'Reject this with reason Budget exceeds inventory')" rows="3" required></textarea>
+                    <small style="color: #666; display: block; margin-top: 5px;">
+                        💡 <strong>AI-Powered Testing:</strong> Use natural language to test scenarios like delays, rejections, or approval workflows. Examples: "Simulate human approval with 5 minute delay" or "Ask for brand logo"
+                    </small>
                 </div>
                 
                 <div class="param-group">
@@ -2343,14 +2365,8 @@
                     </label>
                 </div>
                 
-                <div class="param-group">
-                    <label>
-                        <input type="checkbox" id="connect-sse"> 
-                        Auto-connect SSE after creation
-                    </label>
-                </div>
-                
-                
+
+
                 <div class="param-group">
                     <label>Jump to Event (X-Jump-To-Event):</label>
                     <select id="jump-to-state">
@@ -3023,7 +3039,91 @@
         
         // Initialize on page load
         initializeApp();
-        
+
+        // ============================================================================
+        // Webhook Event Polling
+        // ============================================================================
+
+        async function pollWebhookEvents() {
+            try {
+                const response = await fetch('/api/events?limit=100');
+                const result = await response.json();
+
+                if (result.success && result.events) {
+                    result.events.forEach(event => {
+                        // Process events that we haven't seen before
+                        if (new Date(event.timestamp).getTime() > lastEventCheck) {
+                            handleWebhookEvent(event);
+                        }
+                    });
+                    lastEventCheck = Date.now();
+                }
+            } catch (error) {
+                console.error('Failed to poll webhook events:', error);
+            }
+        }
+
+        function handleWebhookEvent(event) {
+            logEvent('webhook', `[${event.type}] ${event.task_type || 'Unknown'}: ${event.status || ''}`);
+
+            // Update media buy status if this is a media buy related event
+            if (event.task_type === 'create_media_buy' && event.payload) {
+                const mediaBuy = mediaBuys.find(mb => mb.id === event.payload.media_buy_id);
+                if (mediaBuy && event.payload.status) {
+                    mediaBuy.status = event.payload.status;
+                    updateMediaBuysTable();
+                }
+            }
+
+            // Log to debug panel with full event details
+            if (event.type === 'handler_called' || event.status) {
+                const eventEntry = document.createElement('div');
+                eventEntry.className = 'debug-entry';
+                eventEntry.innerHTML = `
+                    <div class="debug-header">
+                        <span style="color: #333; font-weight: bold;">📡 Webhook Event: ${event.task_type || 'Unknown'}</span>
+                        <span class="timestamp">${new Date(event.timestamp).toLocaleTimeString()}</span>
+                    </div>
+                    <div class="debug-content-item">
+                        <div style="margin-bottom: 8px;">
+                            <strong>Status:</strong> ${event.status || 'N/A'}<br>
+                            <strong>Operation ID:</strong> ${event.operation_id || 'N/A'}<br>
+                            <strong>Agent ID:</strong> ${event.agent_id || 'N/A'}
+                        </div>
+                        <pre style="background: #f8f9fa; padding: 10px; border-radius: 4px; font-size: 12px; overflow-x: auto; color: #333;">${JSON.stringify(event.payload || event, null, 2)}</pre>
+                    </div>
+                `;
+
+                debugEntries.push({
+                    type: 'webhook-event',
+                    element: eventEntry,
+                    timestamp: Date.now(),
+                    isError: event.status === 'failed'
+                });
+
+                redrawDebugEntries();
+            }
+        }
+
+        function startWebhookPolling() {
+            if (eventPollInterval) return;
+
+            // Poll every 3 seconds
+            eventPollInterval = setInterval(pollWebhookEvents, 3000);
+            logEvent('info', '📡 Started webhook event polling');
+        }
+
+        function stopWebhookPolling() {
+            if (eventPollInterval) {
+                clearInterval(eventPollInterval);
+                eventPollInterval = null;
+                logEvent('info', '📡 Stopped webhook event polling');
+            }
+        }
+
+        // Start polling automatically when page loads
+        startWebhookPolling();
+
         // ============================================================================
         // Global State Management
         // ============================================================================
@@ -3033,10 +3133,10 @@
         let creativeFormats = [];
         let mediaBuys = [];
         let selectedProducts = new Set();
-        let mediaBuyMonitors = new Map(); // Track SSE connections per media buy
-        let sseConnection = null;
         let agentCardCache = new Map(); // Cache agent card/capabilities to avoid repeated discovery calls
         let eventLogCount = 0;
+        let lastEventCheck = 0; // Track last event fetch time
+        let eventPollInterval = null; // Event polling interval
         
         // Clean old agent card cache entries every 10 minutes
         setInterval(() => {
@@ -4036,18 +4136,12 @@
         
         function getMediaBuyActions(mediaBuy) {
             const status = mediaBuy.status?.toLowerCase();
-            const isMonitoring = mediaBuyMonitors.has(mediaBuy.id);
-            const monitorBtn = isMonitoring 
-                ? `<button class="btn btn-small btn-danger" onclick="stopMonitoring('${mediaBuy.id}')">🔴 Stop</button>`
-                : `<button class="btn btn-small btn-secondary" onclick="startMonitoring('${mediaBuy.id}')">📡 Monitor</button>`;
-            
             switch (status) {
                 case 'pending':
                     return `
                         <button class="btn btn-small" onclick="approveMediaBuy('${mediaBuy.id}')">Approve</button>
                         <button class="btn btn-small" onclick="editMediaBuy('${mediaBuy.id}')">Edit</button>
                         <button class="btn btn-danger btn-small" onclick="cancelMediaBuy('${mediaBuy.id}')">Cancel</button>
-                        ${monitorBtn}
                     `;
                 case 'active':
                 case 'optimizing':
@@ -4055,264 +4149,20 @@
                         <button class="btn btn-small" onclick="updateMediaBuy('${mediaBuy.id}')">Update</button>
                         <button class="btn btn-small" onclick="addCreativeAssets('${mediaBuy.id}')">+Creative</button>
                         <button class="btn btn-small" onclick="pauseMediaBuy('${mediaBuy.id}')">⏸</button>
-                        ${monitorBtn}
                     `;
                 case 'paused':
                     return `
                         <button class="btn btn-small" onclick="resumeMediaBuy('${mediaBuy.id}')">Resume</button>
                         <button class="btn btn-small" onclick="updateMediaBuy('${mediaBuy.id}')">Update</button>
                         <button class="btn btn-danger btn-small" onclick="endMediaBuy('${mediaBuy.id}')">End</button>
-                        ${monitorBtn}
                     `;
                 default:
                     return `
                         <button class="btn btn-small" onclick="viewMediaBuy('${mediaBuy.id}')">View</button>
-                        ${monitorBtn}
                     `;
             }
         }
 
-        // ============================================================================
-        // SSE Client for Real-time Updates
-        // ============================================================================
-        
-        function toggleSSEConnection() {
-            if (sseConnection) {
-                disconnectSSE();
-            } else {
-                connectSSE();
-            }
-        }
-        
-        function connectSSE() {
-            const selectedAgent = agents.find(a => a.id === document.getElementById('agent-selector').value);
-            if (!selectedAgent) {
-                logEvent('error', 'Please select an agent first');
-                return;
-            }
-            
-            try {
-                // Construct SSE URL with testing parameters
-                const params = new URLSearchParams();
-                if (mediaBuys.length > 0) {
-                    params.set('media_buys', mediaBuys.map(mb => mb.id).join(','));
-                }
-                
-                // Add current test session if available
-                const testSessionId = document.getElementById('test-session-id');
-                if (testSessionId && testSessionId.value) {
-                    params.set('X-Test-Session-ID', testSessionId.value);
-                }
-                
-                const sseUrl = `${selectedAgent.agent_uri}/sse?${params.toString()}`;
-                
-                sseConnection = new EventSource(sseUrl);
-                
-                sseConnection.onopen = () => {
-                    updateSSEStatus('🟢 Connected', 'Disconnect');
-                    logEvent('success', 'SSE connection established');
-                };
-                
-                sseConnection.onmessage = (event) => {
-                    const data = JSON.parse(event.data);
-                    handleSSEEvent('message', data);
-                };
-                
-                sseConnection.addEventListener('status-change', (event) => {
-                    const data = JSON.parse(event.data);
-                    handleSSEEvent('status-change', data);
-                });
-                
-                sseConnection.addEventListener('metrics-update', (event) => {
-                    const data = JSON.parse(event.data);
-                    handleSSEEvent('metrics-update', data);
-                });
-                
-                sseConnection.addEventListener('test-event', (event) => {
-                    const data = JSON.parse(event.data);
-                    handleSSEEvent('test-event', data);
-                });
-                
-                sseConnection.onerror = (error) => {
-                    logEvent('error', 'SSE connection error');
-                    updateSSEStatus('🔴 Error', 'Reconnect');
-                    
-                    // Auto-reconnect after 5 seconds
-                    setTimeout(() => {
-                        if (sseConnection && sseConnection.readyState === EventSource.CLOSED) {
-                            connectSSE();
-                        }
-                    }, 5000);
-                };
-                
-            } catch (error) {
-                logEvent('error', `Failed to connect SSE: ${error.message}`);
-                updateSSEStatus('🔴 Disconnected', 'Connect');
-            }
-        }
-        
-        function disconnectSSE() {
-            if (sseConnection) {
-                sseConnection.close();
-                sseConnection = null;
-                updateSSEStatus('🔴 Disconnected', 'Connect');
-                logEvent('info', 'SSE connection closed');
-            }
-        }
-        
-        function updateSSEStatus(status, buttonText) {
-            document.getElementById('sse-status').textContent = `SSE: ${status.replace(/🟢|🔴/, '').trim()}`;
-            document.getElementById('sse-indicator').textContent = status.match(/🟢|🔴/)?.[0] || '';
-            document.getElementById('sse-toggle-btn').textContent = buttonText;
-        }
-        
-        function handleSSEEvent(eventType, data) {
-            logEvent('sse', `[${eventType.toUpperCase()}] ${JSON.stringify(data)}`);
-            
-            switch (eventType) {
-                case 'status-change':
-                    updateMediaBuyStatus(data);
-                    break;
-                case 'metrics-update':
-                    updateMediaBuyMetrics(data);
-                    break;
-                case 'test-event':
-                    logEvent('test', `Test event: ${data.message || JSON.stringify(data)}`);
-                    break;
-                default:
-                    // Handle general messages
-                    break;
-            }
-        }
-        
-        function updateMediaBuyStatus(data) {
-            const row = document.querySelector(`[data-mb-id="${data.media_buy_id}"]`);
-            if (row) {
-                const statusCell = row.children[1];
-                const status = getStatusIndicator(data.status);
-                statusCell.innerHTML = `${status} ${data.status}`;
-                
-                // Update the mediaBuys array
-                const mediaBuy = mediaBuys.find(mb => mb.id === data.media_buy_id);
-                if (mediaBuy) {
-                    mediaBuy.status = data.status;
-                }
-            }
-        }
-        
-        function updateMediaBuyMetrics(data) {
-            const row = document.querySelector(`[data-mb-id="${data.media_buy_id}"]`);
-            if (row) {
-                const spentCell = row.children[3];
-                const impressionsCell = row.children[4];
-                const ctrCell = row.children[5];
-                
-                // Update the mediaBuys array
-                const mediaBuy = mediaBuys.find(mb => mb.id === data.media_buy_id);
-                if (mediaBuy) {
-                    if (data.spent !== undefined) {
-                        mediaBuy.spent = data.spent;
-                        const spentPercentage = mediaBuy.budget > 0 ? (mediaBuy.spent / mediaBuy.budget * 100).toFixed(1) : '0';
-                        spentCell.innerHTML = `$${mediaBuy.spent.toLocaleString()} (${spentPercentage}%)`;
-                    }
-                    
-                    if (data.impressions !== undefined) {
-                        mediaBuy.impressions = data.impressions;
-                        impressionsCell.innerHTML = data.impressions.toLocaleString();
-                    }
-                    
-                    if (data.ctr !== undefined) {
-                        mediaBuy.ctr = data.ctr;
-                        ctrCell.innerHTML = `${data.ctr}%`;
-                    }
-                }
-            }
-        }
-
-        // ============================================================================
-        // Media Buy Monitoring (Contextual SSE)
-        // ============================================================================
-        
-        function startMonitoring(mediaBuyId) {
-            if (mediaBuyMonitors.has(mediaBuyId)) {
-                return;
-            }
-            
-            const selectedAgent = agents.find(a => a.id === document.getElementById('agent-selector').value);
-            if (!selectedAgent) {
-                alert('Please select an agent first');
-                return;
-            }
-            
-            try {
-                // Construct SSE URL for this specific media buy
-                const params = new URLSearchParams();
-                params.set('media_buy_id', mediaBuyId);
-                
-                const sseUrl = `${selectedAgent.agent_uri}/sse?${params.toString()}`;
-                
-                const eventSource = new EventSource(sseUrl);
-                
-                eventSource.onopen = function() {
-                    addEventLogEntry('sse', `Started monitoring ${mediaBuyId}`);
-                    updateMediaBuysTable(); // Refresh to show stop button
-                };
-                
-                eventSource.onmessage = function(event) {
-                    try {
-                        const data = JSON.parse(event.data);
-                        handleSSEEvent(data.type || 'message', { ...data, media_buy_id: mediaBuyId });
-                    } catch (e) {
-                        addEventLogEntry('error', `SSE parse error for ${mediaBuyId}: ${e.message}`);
-                    }
-                };
-                
-                eventSource.onerror = function(error) {
-                    addEventLogEntry('error', `SSE error for ${mediaBuyId}`);
-                    
-                    // Clean up on error
-                    eventSource.close();
-                    mediaBuyMonitors.delete(mediaBuyId);
-                    updateMediaBuysTable();
-                };
-                
-                // Store the connection
-                mediaBuyMonitors.set(mediaBuyId, eventSource);
-                
-            } catch (error) {
-                alert(`Failed to start monitoring: ${error.message}`);
-            }
-        }
-        
-        function stopMonitoring(mediaBuyId) {
-            const eventSource = mediaBuyMonitors.get(mediaBuyId);
-            if (eventSource) {
-                eventSource.close();
-                mediaBuyMonitors.delete(mediaBuyId);
-                addEventLogEntry('info', `Stopped monitoring ${mediaBuyId}`);
-                updateMediaBuysTable(); // Refresh to show monitor button
-            }
-        }
-        
-        function addEventLogEntry(type, message) {
-            // Create a simple event log entry in the browser console and potentially a notification area
-            const timestamp = new Date().toLocaleTimeString();
-            const logMessage = `[${timestamp}] ${type.toUpperCase()}: ${message}`;
-            
-            // If there's still an event log area in the UI, add to it
-            const eventLog = document.getElementById('event-log');
-            if (eventLog) {
-                const entry = document.createElement('div');
-                entry.className = `event-entry ${type}`;
-                entry.innerHTML = `
-                    <span class="timestamp">${timestamp}</span>
-                    <span class="event-type">[${type.toUpperCase()}]</span>
-                    <span class="event-message">${message}</span>
-                `;
-                eventLog.appendChild(entry);
-                eventLog.scrollTop = eventLog.scrollHeight;
-            }
-        }
 
         // ============================================================================
         // ADCP Tool Execution
@@ -4526,8 +4376,49 @@
                     document.getElementById('frequency-cap-limit').value = '5';
                     document.getElementById('frequency-cap-period').value = 'week';
                     break;
+
+                // AI-Powered Test Scenarios
+                case 'test-delay-response':
+                    document.getElementById('campaign-name').value = 'Test: Delayed Response';
+                    document.getElementById('buyer-ref').value = 'TEST-DELAY-001';
+                    document.getElementById('po-number').value = 'PO-TEST-DELAY-001';
+                    document.getElementById('promoted-offering').value = 'Wait 10 seconds before responding';
+                    document.getElementById('campaign-budget').value = '5000';
+                    document.getElementById('budget-currency').value = 'USD';
+                    document.getElementById('budget-pacing').value = 'even';
+                    break;
+
+                case 'test-rejection':
+                    document.getElementById('campaign-name').value = 'Test: Rejection Scenario';
+                    document.getElementById('buyer-ref').value = 'TEST-REJECT-001';
+                    document.getElementById('po-number').value = 'PO-TEST-REJECT-001';
+                    document.getElementById('promoted-offering').value = 'Reject this media buy with reason: Budget exceeds available inventory';
+                    document.getElementById('campaign-budget').value = '5000';
+                    document.getElementById('budget-currency').value = 'USD';
+                    document.getElementById('budget-pacing').value = 'even';
+                    break;
+
+                case 'test-human-approval':
+                    document.getElementById('campaign-name').value = 'Test: Human Approval Workflow';
+                    document.getElementById('buyer-ref').value = 'TEST-HITL-001';
+                    document.getElementById('po-number').value = 'PO-TEST-HITL-001';
+                    document.getElementById('promoted-offering').value = 'Simulate human approval workflow with 5 minute review delay';
+                    document.getElementById('campaign-budget').value = '10000';
+                    document.getElementById('budget-currency').value = 'USD';
+                    document.getElementById('budget-pacing').value = 'even';
+                    break;
+
+                case 'test-slow-delivery':
+                    document.getElementById('campaign-name').value = 'Test: Slow Delivery + Outage';
+                    document.getElementById('buyer-ref').value = 'TEST-DELIVERY-001';
+                    document.getElementById('po-number').value = 'PO-TEST-DELIVERY-001';
+                    document.getElementById('promoted-offering').value = 'Test slow delivery profile, then simulate platform outage on day 3';
+                    document.getElementById('campaign-budget').value = '15000';
+                    document.getElementById('budget-currency').value = 'USD';
+                    document.getElementById('budget-pacing').value = 'even';
+                    break;
             }
-            
+
             logEvent('info', `Loaded test scenario: ${scenario}`);
         }
         
@@ -4585,7 +4476,6 @@
             
             // Collect testing configuration
             const enableTestMode = document.getElementById('enable-test-mode').checked;
-            const autoConnectSSE = document.getElementById('connect-sse').checked;
             const jumpToState = document.getElementById('jump-to-state').value;
             
             // Build selected products array
@@ -4671,35 +4561,64 @@
                 const result = await callADCPTool(selectedAgent, 'create_media_buy', createMediaBuyParams);
                 
                 console.log('✅ ADCP create_media_buy response:', result);
-                
-                // Add ADCP response to debug panel  
+
+                // Check if response contains errors
+                const responseHasErrors = result.errors && Array.isArray(result.errors) && result.errors.length > 0;
+
+                // Add ADCP response to debug panel
                 const responseEntry = document.createElement('div');
-                responseEntry.className = 'debug-entry';
+                responseEntry.className = responseHasErrors ? 'debug-entry error' : 'debug-entry';
+                const responseIcon = responseHasErrors ? '❌' : '📥';
+                const responseStyle = responseHasErrors ? 'background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3); padding: 10px; border-radius: 4px; font-size: 12px; overflow-x: auto; color: #dc2626;' : 'background: #f8f9fa; padding: 10px; border-radius: 4px; font-size: 12px; overflow-x: auto; color: #333;';
+
                 responseEntry.innerHTML = `
                     <div class="debug-header">
-                        <span style="color: #333; font-weight: bold;">📥 ADCP create_media_buy Response</span>
+                        <span style="color: ${responseHasErrors ? '#dc2626' : '#333'}; font-weight: bold;">${responseIcon} ADCP create_media_buy Response ${responseHasErrors ? '(ERROR)' : ''}</span>
                         <span class="timestamp">${new Date().toLocaleTimeString()}</span>
                     </div>
                     <div class="debug-content-item">
-                        <pre style="background: #f8f9fa; padding: 10px; border-radius: 4px; font-size: 12px; overflow-x: auto; color: #333;">${JSON.stringify(result, null, 2)}</pre>
+                        <pre style="${responseStyle}">${JSON.stringify(result, null, 2)}</pre>
                     </div>
                 `;
-                
+
                 debugEntries.push({
                     type: 'adcp-response',
                     element: responseEntry,
                     timestamp: Date.now(),
-                    isError: false
+                    isError: responseHasErrors
                 });
                 
                 // Redraw debug panel to show new entries
                 redrawDebugEntries();
-                
-                logEvent('success', `Media buy created: ${result.media_buy_id || 'Unknown ID'}`);
-                
-                // Add to media buys list
+
+                // Check if the response has errors
+                const hasErrors = result.errors && Array.isArray(result.errors) && result.errors.length > 0;
+                const hasMediaBuyId = result.media_buy_id && result.media_buy_id !== null;
+
+                if (hasErrors) {
+                    // Show error details
+                    const errorMessages = result.errors.map(err =>
+                        `[${err.code}] ${err.message}${err.details ? '\nDetails: ' + JSON.stringify(err.details) : ''}`
+                    ).join('\n\n');
+
+                    logEvent('error', `Media buy creation failed:\n${errorMessages}`);
+                    alert(`Media buy creation failed:\n\n${errorMessages}`);
+
+                    // Don't add to media buys list or close modal on error
+                    return;
+                }
+
+                if (!hasMediaBuyId) {
+                    logEvent('error', 'Media buy creation failed: No media_buy_id returned');
+                    alert('Media buy creation failed: No media_buy_id returned');
+                    return;
+                }
+
+                logEvent('success', `Media buy created: ${result.media_buy_id}`);
+
+                // Add to media buys list only on success
                 const newMediaBuy = {
-                    id: result.media_buy_id || `MB-${Date.now()}`,
+                    id: result.media_buy_id,
                     name: campaignName,
                     status: result.status || 'pending',
                     budget: budget,
@@ -4708,15 +4627,10 @@
                     ctr: 0,
                     created: new Date().toISOString()
                 };
-                
+
                 mediaBuys.push(newMediaBuy);
                 updateMediaBuysTable();
-                
-                // Connect SSE if requested
-                if (autoConnectSSE && !sseConnection) {
-                    connectSSE();
-                }
-                
+
                 // Clear selection and close modal
                 selectedProducts.clear();
                 updateProductsTable();
@@ -5214,9 +5128,69 @@
         
         function viewMediaBuy(mediaBuyId) {
             const mediaBuy = mediaBuys.find(mb => mb.id === mediaBuyId);
-            if (mediaBuy) {
-                logEvent('info', `Viewing media buy: ${JSON.stringify(mediaBuy, null, 2)}`);
+            if (!mediaBuy) {
+                alert('Media buy not found');
+                return;
             }
+
+            // Create a modal or expandable view showing media buy details
+            const detailsHTML = `
+                <div style="background: white; padding: 20px; border-radius: 8px; max-width: 600px; margin: 20px auto;">
+                    <h3>Media Buy Details</h3>
+                    <table style="width: 100%; border-collapse: collapse;">
+                        <tr style="border-bottom: 1px solid #ddd;">
+                            <td style="padding: 8px; font-weight: bold;">Media Buy ID:</td>
+                            <td style="padding: 8px;">${mediaBuy.id}</td>
+                        </tr>
+                        <tr style="border-bottom: 1px solid #ddd;">
+                            <td style="padding: 8px; font-weight: bold;">Name:</td>
+                            <td style="padding: 8px;">${mediaBuy.name || 'Unnamed Campaign'}</td>
+                        </tr>
+                        <tr style="border-bottom: 1px solid #ddd;">
+                            <td style="padding: 8px; font-weight: bold;">Status:</td>
+                            <td style="padding: 8px;">${mediaBuy.status}</td>
+                        </tr>
+                        <tr style="border-bottom: 1px solid #ddd;">
+                            <td style="padding: 8px; font-weight: bold;">Budget:</td>
+                            <td style="padding: 8px;">$${mediaBuy.budget?.toLocaleString() || '0'}</td>
+                        </tr>
+                        <tr style="border-bottom: 1px solid #ddd;">
+                            <td style="padding: 8px; font-weight: bold;">Spent:</td>
+                            <td style="padding: 8px;">$${mediaBuy.spent?.toLocaleString() || '0'} (${mediaBuy.budget ? ((mediaBuy.spent / mediaBuy.budget) * 100).toFixed(1) : '0'}%)</td>
+                        </tr>
+                        <tr style="border-bottom: 1px solid #ddd;">
+                            <td style="padding: 8px; font-weight: bold;">Impressions:</td>
+                            <td style="padding: 8px;">${mediaBuy.impressions?.toLocaleString() || '0'}</td>
+                        </tr>
+                        <tr style="border-bottom: 1px solid #ddd;">
+                            <td style="padding: 8px; font-weight: bold;">CTR:</td>
+                            <td style="padding: 8px;">${mediaBuy.ctr || '0'}%</td>
+                        </tr>
+                        <tr style="border-bottom: 1px solid #ddd;">
+                            <td style="padding: 8px; font-weight: bold;">Created:</td>
+                            <td style="padding: 8px;">${mediaBuy.created ? new Date(mediaBuy.created).toLocaleString() : 'Unknown'}</td>
+                        </tr>
+                    </table>
+                    <div style="margin-top: 20px;">
+                        <pre style="background: #f5f5f5; padding: 10px; border-radius: 4px; overflow-x: auto;">${JSON.stringify(mediaBuy, null, 2)}</pre>
+                    </div>
+                </div>
+            `;
+
+            // Show in an alert as a simple solution (could be enhanced with a modal)
+            logEvent('info', `Viewing media buy: ${mediaBuy.id}`);
+
+            // Create a temporary container to display the details
+            const existingView = document.getElementById('media-buy-detail-view');
+            if (existingView) {
+                existingView.remove();
+            }
+
+            const detailView = document.createElement('div');
+            detailView.id = 'media-buy-detail-view';
+            detailView.style.cssText = 'position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 10000; background: rgba(0,0,0,0.8); padding: 20px; border-radius: 8px; max-width: 90%; max-height: 90%; overflow: auto;';
+            detailView.innerHTML = detailsHTML + '<button onclick="document.getElementById(\'media-buy-detail-view\').remove()" style="margin-top: 10px; padding: 10px 20px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;">Close</button>';
+            document.body.appendChild(detailView);
         }
         
 
@@ -5712,6 +5686,63 @@
                 return `[Error serializing object: ${error.message}]`;
             }
         }
+
+        function formatErrorMessage(data) {
+            // If it's an error object with specific structure, format it nicely
+            if (data && typeof data === 'object') {
+                // Handle MCP/A2A error format
+                if (data.content && Array.isArray(data.content)) {
+                    const errorText = data.content
+                        .map(c => c.text || c)
+                        .join('\n\n');
+
+                    // Try to pretty-print any JSON in the error
+                    try {
+                        // Check if it contains validation errors
+                        if (errorText.includes('validation errors')) {
+                            // Split into lines and format
+                            const lines = errorText.split('\n');
+                            const formatted = lines.map(line => {
+                                // Indent field names
+                                if (line.match(/^[a-z_]+$/)) {
+                                    return `  • ${line}`;
+                                }
+                                // Indent error details
+                                if (line.trim().startsWith('Field required') ||
+                                    line.trim().startsWith('type=') ||
+                                    line.trim().startsWith('input_value=')) {
+                                    return `    ${line.trim()}`;
+                                }
+                                return line;
+                            });
+                            return formatted.join('\n');
+                        }
+                    } catch (e) {
+                        // If parsing fails, return original
+                    }
+
+                    return errorText;
+                }
+
+                // Handle standard error objects
+                if (data.error) {
+                    return formatErrorMessage(data.error);
+                }
+
+                // Handle error with message
+                if (data.message) {
+                    let result = `Error: ${data.message}`;
+                    if (data.code) result = `[${data.code}] ${result}`;
+                    if (data.details) {
+                        result += `\n\nDetails:\n${safeStringify(data.details)}`;
+                    }
+                    return result;
+                }
+            }
+
+            // Fallback to regular stringification
+            return safeStringify(data);
+        }
         
         function toggleCallDetails(callId) {
             try {
@@ -5805,16 +5836,22 @@
                         <div class="debug-call-toggle">▼</div>
                     </div>
                     <div id="${callId}" class="debug-call-details" style="display: none;">
-                        ${group.map(log => `
+                        ${group.map(log => {
+                            const isError = log.type === 'error';
+                            const formattedData = log.response ?
+                                (isError ? formatErrorMessage(log.response) : safeStringify(log.response)) :
+                                '';
+                            return `
                             <div class="debug-log-entry ${log.type}">
                                 <div class="debug-log-header">
                                     <span class="debug-log-type">${escapeHtml(log.type.toUpperCase())}</span>
                                     <span class="debug-log-time">${formatTime(log.timestamp)}</span>
                                 </div>
                                 <div class="debug-log-message">${escapeHtml(log.message || 'No message')}</div>
-                                ${log.response ? `<pre class="debug-log-data">${escapeHtml(safeStringify(log.response))}</pre>` : ''}
+                                ${formattedData ? `<pre class="debug-log-data ${isError ? 'error' : ''}">${escapeHtml(formattedData)}</pre>` : ''}
                             </div>
-                        `).join('')}
+                            `;
+                        }).join('')}
                     </div>
                 `;
                 
@@ -6612,12 +6649,19 @@
                     let bodyContent = response.body;
                     let unwrappedResponse = null;
                     let rawErrorMessage = null;
-                    
+                    let isError = response.status >= 400;
+
                     if (typeof bodyContent === 'string') {
                         try {
                             const parsed = JSON.parse(bodyContent);
-                            bodyContent = JSON.stringify(parsed, null, 2);
-                            
+
+                            // Use formatErrorMessage for errors
+                            if (isError) {
+                                bodyContent = formatErrorMessage(parsed);
+                            } else {
+                                bodyContent = JSON.stringify(parsed, null, 2);
+                            }
+
                             // Check for embedded MCP response in error message
                             if (parsed.error && parsed.error.message && parsed.error.message.includes('HTTP')) {
                                 const match = parsed.error.message.match(/HTTP \d+\): (.+)$/);
@@ -6633,25 +6677,30 @@
                         } catch (e) {
                             // Keep as string
                         }
-                    } else {
-                        bodyContent = JSON.stringify(bodyContent, null, 2);
+                    } else if (typeof bodyContent === 'object') {
+                        // Use formatErrorMessage for error objects
+                        if (isError) {
+                            bodyContent = formatErrorMessage(bodyContent);
+                        } else {
+                            bodyContent = JSON.stringify(bodyContent, null, 2);
+                        }
                     }
-                    
+
                     // Show unwrapped response as primary body if available
                     if (unwrappedResponse) {
-                        const unwrappedContent = JSON.stringify(unwrappedResponse, null, 2);
+                        const unwrappedContent = formatErrorMessage(unwrappedResponse);
                         const unwrappedId = 'unwrapped-' + Date.now() + '-' + Math.random();
                         window[unwrappedId] = unwrappedContent;
                         html += `
                             <div style="margin-top: 8px;">
                                 <strong>Body:</strong>
                                 <button class="debug-copy-btn" onclick="copyDirectContent('${unwrappedId}')">Copy</button>
-                                <div class="debug-json" style="background: #1e3a2e;">
-                                    <pre>${escapeHtml(unwrappedContent)}</pre>
+                                <div class="debug-json error" style="background: rgba(239, 68, 68, 0.1); border-color: rgba(239, 68, 68, 0.3);">
+                                    <pre style="color: #dc2626;">${escapeHtml(unwrappedContent)}</pre>
                                 </div>
                             </div>
                         `;
-                        
+
                         // Show wrapped version as collapsible raw details
                         const rawErrorId = 'raw-error-' + Date.now() + '-' + Math.random();
                         window[rawErrorId] = rawErrorMessage;
@@ -6674,12 +6723,15 @@
                         // Show original body content if no unwrapped response
                         const bodyContentId = 'body-content-' + Date.now() + '-' + Math.random();
                         window[bodyContentId] = bodyContent;
+                        const errorClass = isError ? 'error' : '';
+                        const errorStyle = isError ? 'background: rgba(239, 68, 68, 0.1); border-color: rgba(239, 68, 68, 0.3);' : '';
+                        const errorTextStyle = isError ? 'color: #dc2626;' : '';
                         html += `
                             <div style="margin-top: 8px;">
                                 <strong>Body:</strong>
                                 <button class="debug-copy-btn" onclick="copyDirectContent('${bodyContentId}')">Copy</button>
-                                <div class="debug-json">
-                                    <pre>${escapeHtml(bodyContent)}</pre>
+                                <div class="debug-json ${errorClass}" style="${errorStyle}">
+                                    <pre style="${errorTextStyle}">${escapeHtml(bodyContent)}</pre>
                                 </div>
                             </div>
                         `;
