@@ -697,6 +697,22 @@ function extractResponseData(result: any): any {
 // ==== SPECIFIC TOOL ENDPOINTS ====
 // Clean, typed REST endpoints that directly call client library methods
 
+/**
+ * Helper function to get or create agent client from request
+ * Handles both configured agents and dynamic agents from UI
+ */
+function getAgentClient(agentId: string, agentConfig?: AgentConfig) {
+  try {
+    return adcpClient.agent(agentId);
+  } catch (error) {
+    if (agentConfig) {
+      const tempClient = new ADCPMultiAgentClient([agentConfig], clientConfig);
+      return tempClient.agent(agentConfig.id);
+    }
+    throw new Error(`Agent ${agentId} not found and no configuration provided`);
+  }
+}
+
 // Get Products
 app.post<{
   Params: { agentId: string };
@@ -706,26 +722,12 @@ app.post<{
     const { agentId } = request.params;
     const body = request.body as any;
 
-    // Extract agent config if provided (for dynamic agents)
+    // Extract agent config and remove from params
     const agentConfig = body.agentConfig;
     const params = { ...body };
     delete params.agentConfig;
 
-    // Try to get configured agent first, or use provided config
-    let client;
-    try {
-      client = adcpClient.agent(agentId);
-    } catch (error) {
-      // Agent not found in configuration, check if config was provided
-      if (agentConfig) {
-        // Create temporary client with provided config
-        const tempClient = new ADCPMultiAgentClient([agentConfig], clientConfig);
-        client = tempClient.agent(agentConfig.id);
-      } else {
-        throw new Error(`Agent ${agentId} not found and no configuration provided`);
-      }
-    }
-
+    const client = getAgentClient(agentId, agentConfig);
     const result = await client.getProducts(params, createDefaultInputHandler());
 
     return reply.send({
@@ -751,12 +753,18 @@ app.post<{
 // List Creative Formats
 app.post<{
   Params: { agentId: string };
+  Body: { agentConfig?: AgentConfig; [key: string]: any };
 }>('/api/agents/:agentId/list-creative-formats', async (request, reply) => {
   try {
     const { agentId } = request.params;
-    const params = request.body as any;
+    const body = request.body as any;
 
-    const client = adcpClient.agent(agentId);
+    // Extract agent config and remove from params
+    const agentConfig = body.agentConfig;
+    const params = { ...body };
+    delete params.agentConfig;
+
+    const client = getAgentClient(agentId, agentConfig);
     const result = await client.listCreativeFormats(params, createDefaultInputHandler());
 
     return reply.send({
@@ -779,12 +787,17 @@ app.post<{
 // Create Media Buy
 app.post<{
   Params: { agentId: string };
+  Body: { agentConfig?: AgentConfig; [key: string]: any };
 }>('/api/agents/:agentId/create-media-buy', async (request, reply) => {
   try {
     const { agentId } = request.params;
-    const params = request.body as any;
+    const body = request.body as any;
 
-    const client = adcpClient.agent(agentId);
+    const agentConfig = body.agentConfig;
+    const params = { ...body };
+    delete params.agentConfig;
+
+    const client = getAgentClient(agentId, agentConfig);
     const result = await client.createMediaBuy(params, createDefaultInputHandler());
 
     return reply.send({
@@ -807,12 +820,17 @@ app.post<{
 // Update Media Buy
 app.post<{
   Params: { agentId: string };
+  Body: { agentConfig?: AgentConfig; [key: string]: any };
 }>('/api/agents/:agentId/update-media-buy', async (request, reply) => {
   try {
     const { agentId } = request.params;
-    const params = request.body as any;
+    const body = request.body as any;
 
-    const client = adcpClient.agent(agentId);
+    const agentConfig = body.agentConfig;
+    const params = { ...body };
+    delete params.agentConfig;
+
+    const client = getAgentClient(agentId, agentConfig);
     const result = await client.updateMediaBuy(params, createDefaultInputHandler());
 
     return reply.send({
@@ -835,12 +853,17 @@ app.post<{
 // Sync Creatives
 app.post<{
   Params: { agentId: string };
+  Body: { agentConfig?: AgentConfig; [key: string]: any };
 }>('/api/agents/:agentId/sync-creatives', async (request, reply) => {
   try {
     const { agentId } = request.params;
-    const params = request.body as any;
+    const body = request.body as any;
 
-    const client = adcpClient.agent(agentId);
+    const agentConfig = body.agentConfig;
+    const params = { ...body };
+    delete params.agentConfig;
+
+    const client = getAgentClient(agentId, agentConfig);
     const result = await client.syncCreatives(params, createDefaultInputHandler());
 
     return reply.send({
@@ -863,12 +886,17 @@ app.post<{
 // List Creatives
 app.post<{
   Params: { agentId: string };
+  Body: { agentConfig?: AgentConfig; [key: string]: any };
 }>('/api/agents/:agentId/list-creatives', async (request, reply) => {
   try {
     const { agentId } = request.params;
-    const params = request.body as any;
+    const body = request.body as any;
 
-    const client = adcpClient.agent(agentId);
+    const agentConfig = body.agentConfig;
+    const params = { ...body };
+    delete params.agentConfig;
+
+    const client = getAgentClient(agentId, agentConfig);
     const result = await client.listCreatives(params, createDefaultInputHandler());
 
     return reply.send({
@@ -891,12 +919,17 @@ app.post<{
 // Get Media Buy Delivery
 app.post<{
   Params: { agentId: string };
+  Body: { agentConfig?: AgentConfig; [key: string]: any };
 }>('/api/agents/:agentId/get-media-buy-delivery', async (request, reply) => {
   try {
     const { agentId } = request.params;
-    const params = request.body as any;
+    const body = request.body as any;
 
-    const client = adcpClient.agent(agentId);
+    const agentConfig = body.agentConfig;
+    const params = { ...body };
+    delete params.agentConfig;
+
+    const client = getAgentClient(agentId, agentConfig);
     const result = await client.getMediaBuyDelivery(params, createDefaultInputHandler());
 
     return reply.send({
