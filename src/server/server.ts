@@ -664,13 +664,13 @@ function extractResponseData(result: any): any {
             // It's JSON, keep the count message
           } catch (e) {
             // Not JSON, use as user message
-            textMessage = textContent.text.length > 200 ? 
-              textContent.text.substring(0, 200) + '...' : 
+            textMessage = textContent.text.length > 200 ?
+              textContent.text.substring(0, 200) + '...' :
               textContent.text;
           }
         }
       }
-      
+
       return {
         products: result.structuredContent.products || [],
         formats: result.structuredContent.formats || [],
@@ -678,8 +678,8 @@ function extractResponseData(result: any): any {
       };
     }
   }
-  
-  // 9. Check for note/error structure (MCP error response)
+
+  // 8. Check for note/error structure (MCP error response)
   if (result?.note || result?.error) {
     const response = {
       products: [],
@@ -700,12 +700,32 @@ function extractResponseData(result: any): any {
 // Get Products
 app.post<{
   Params: { agentId: string };
+  Body: { agentConfig?: AgentConfig; [key: string]: any };
 }>('/api/agents/:agentId/get-products', async (request, reply) => {
   try {
     const { agentId } = request.params;
-    const params = request.body as any;
+    const body = request.body as any;
 
-    const client = adcpClient.agent(agentId);
+    // Extract agent config if provided (for dynamic agents)
+    const agentConfig = body.agentConfig;
+    const params = { ...body };
+    delete params.agentConfig;
+
+    // Try to get configured agent first, or use provided config
+    let client;
+    try {
+      client = adcpClient.agent(agentId);
+    } catch (error) {
+      // Agent not found in configuration, check if config was provided
+      if (agentConfig) {
+        // Create temporary client with provided config
+        const tempClient = new ADCPMultiAgentClient([agentConfig], clientConfig);
+        client = tempClient.agent(agentConfig.id);
+      } else {
+        throw new Error(`Agent ${agentId} not found and no configuration provided`);
+      }
+    }
+
     const result = await client.getProducts(params, createDefaultInputHandler());
 
     return reply.send({
@@ -717,10 +737,13 @@ app.post<{
       timestamp: new Date().toISOString()
     });
   } catch (error) {
-    app.log.error({ error }, 'Get products error');
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    const errorStack = error instanceof Error ? error.stack : undefined;
+    app.log.error({ error: errorMessage, stack: errorStack }, 'Get products error');
     return reply.code(500).send({
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown error'
+      error: errorMessage,
+      timestamp: new Date().toISOString()
     });
   }
 });
