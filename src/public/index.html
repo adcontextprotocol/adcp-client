@@ -3121,9 +3121,6 @@
             }
         }
 
-        // Start polling automatically when page loads
-        startWebhookPolling();
-
         // ============================================================================
         // Global State Management
         // ============================================================================
@@ -8843,7 +8840,10 @@ ${JSON.stringify(result, null, 2)}
             generateNewTestSession();
             
             logEvent('info', 'ADCP Media Buy Testing Suite initialized');
-            
+
+            // Start webhook event polling
+            startWebhookPolling();
+
             // Initialize debug panel with welcome message
             const debugContent = document.getElementById('debug-content');
             if (debugContent) {
