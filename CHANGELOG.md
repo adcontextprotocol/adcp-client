@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.3](https://github.com/adcontextprotocol/adcp-client/compare/v0.4.2...v0.4.3) (2025-10-10)
+
+
+### Bug Fixes
+
+* improve UI error handling and add webhook support ([#41](https://github.com/adcontextprotocol/adcp-client/issues/41)) ([08dfe52](https://github.com/adcontextprotocol/adcp-client/commit/08dfe528143583797491830c6051937e107287e0))
+* support dynamic agents added via UI ([#40](https://github.com/adcontextprotocol/adcp-client/issues/40)) ([ec3b9d1](https://github.com/adcontextprotocol/adcp-client/commit/ec3b9d1cf2e2bec68e91e17f3f5b5b365edf9893))
+
 ## [0.4.2](https://github.com/adcontextprotocol/adcp-client/compare/v0.4.1...v0.4.2) (2025-10-09)
 
 
