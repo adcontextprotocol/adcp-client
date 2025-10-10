@@ -4347,12 +4347,18 @@
             logEvent('info', `🔄 API Request: POST ${url}`);
             logEvent('info', `📤 Params: ${JSON.stringify(params, null, 2)}`);
 
+            // Include agent config for dynamic agents (custom agents added via UI)
+            const requestBody = {
+                ...params,
+                agentConfig: agent
+            };
+
             const response = await fetch(url, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
                 },
-                body: JSON.stringify(params)
+                body: JSON.stringify(requestBody)
             });
 
             const result = await response.json();
