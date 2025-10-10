@@ -62,6 +62,42 @@ await client.connect(transport); // This automatically calls initialize internal
 - `server.js` - Express server host/port configuration (if used)
 - `fly.toml` - Should have `internal_port = 8080`
 
+## Recent Changes
+
+### AI-Powered Test Orchestration (2025-10-10)
+**Update**: Mock server now supports natural language test instructions via AI orchestration (PR #334 in adcontextprotocol/salesagent).
+
+**Key Changes**:
+- `promoted_offering` field now accepts natural language test instructions
+- AI interprets instructions like "Wait 10 seconds before responding" or "Reject with reason: Budget too high"
+- Creative `name` fields can control per-creative test behavior
+- No API contract changes - same field names, just AI interpretation instead of regex
+
+**Usage Examples**:
+```javascript
+// Delay testing
+promoted_offering: 'Wait 10 seconds before responding'
+
+// Rejection testing
+promoted_offering: 'Reject this media buy with reason: Budget exceeds inventory'
+
+// Human-in-the-loop testing
+promoted_offering: 'Simulate human approval workflow with 5 minute delay'
+
+// Per-creative control
+creatives: [
+  { name: 'approve this banner', ... },
+  { name: 'reject for missing URL', ... }
+]
+```
+
+**Documentation**: See [AI-Powered Test Orchestration Guide](./docs/guides/AI-TEST-ORCHESTRATION.md)
+
+**UI Updates**:
+- Added help text explaining natural language test instructions
+- Added 4 pre-built AI test scenarios in dropdown
+- Updated placeholders with test instruction examples
+
 ## Recent Issues Fixed
 
 ### Server Host/Port Configuration Issue (2025-09-11)
