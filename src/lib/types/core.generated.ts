@@ -1,5 +1,5 @@
-// Generated AdCP core types from official schemas v1.6.0
-// Generated at: 2025-09-23T21:14:56.765Z
+// Generated AdCP core types from official schemas v1.7.0
+// Generated at: 2025-10-12T21:09:37.319Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -69,16 +69,12 @@ export interface Package {
    * ID of the product this package is based on
    */
   product_id?: string;
-  /**
-   * Array of product IDs to include in this package
-   */
-  products?: string[];
   budget?: Budget;
   /**
    * Impression goal for this package
    */
   impressions?: number;
-  targeting_overlay?: Targeting;
+  targeting_overlay?: TargetingOverlay;
   /**
    * Creative assets assigned to this package
    */
@@ -104,53 +100,25 @@ export interface Budget {
   pacing?: Pacing;
 }
 /**
- * Audience targeting criteria
+ * Optional geographic refinements for media buys. Most targeting should be expressed in the brief and handled by the publisher. These fields are primarily for geographic restrictions (RCT testing, regulatory compliance).
  */
-export interface Targeting {
+export interface TargetingOverlay {
   /**
-   * Target specific countries (ISO codes)
+   * Restrict delivery to specific countries (ISO codes). Use for regulatory compliance or RCT testing.
    */
   geo_country_any_of?: string[];
   /**
-   * Target specific regions/states
+   * Restrict delivery to specific regions/states. Use for regulatory compliance or RCT testing.
    */
   geo_region_any_of?: string[];
   /**
-   * Target specific metro areas (DMA codes)
+   * Restrict delivery to specific metro areas (DMA codes). Use for regulatory compliance or RCT testing.
    */
   geo_metro_any_of?: string[];
   /**
-   * Target specific postal/ZIP codes
+   * Restrict delivery to specific postal/ZIP codes. Use for regulatory compliance or RCT testing.
    */
   geo_postal_code_any_of?: string[];
-  /**
-   * Audience segment IDs to target
-   */
-  audience_segment_any_of?: string[];
-  /**
-   * AXE segment ID to include for targeting
-   */
-  axe_include_segment?: string;
-  /**
-   * AXE segment ID to exclude from targeting
-   */
-  axe_exclude_segment?: string;
-  /**
-   * Signal IDs from get_signals
-   */
-  signals?: string[];
-  /**
-   * Target specific device types
-   */
-  device_type_any_of?: ('desktop' | 'mobile' | 'tablet' | 'connected_tv' | 'smart_speaker')[];
-  /**
-   * Target specific operating systems
-   */
-  os_any_of?: ('windows' | 'macos' | 'ios' | 'android' | 'linux' | 'roku' | 'tvos' | 'other')[];
-  /**
-   * Target specific browsers
-   */
-  browser_any_of?: ('chrome' | 'firefox' | 'safari' | 'edge' | 'other')[];
   frequency_cap?: FrequencyCap;
 }
 /**
@@ -178,29 +146,9 @@ export interface CreativeAssignment {
 
 // CREATIVE-ASSET SCHEMA
 /**
- * Creative asset for upload to library - supports both hosted assets and third-party snippets
+ * Creative asset for upload to library - supports static assets, generative formats, and third-party snippets
  */
-export type CreativeAsset = CreativeAsset1 & CreativeAsset2;
-/**
- * Type of snippet content
- */
-export type SnippetType = 'vast_xml' | 'vast_url' | 'html' | 'javascript' | 'iframe' | 'daast_url';
-/**
- * Sub-asset for multi-asset creative formats, including carousel images and native ad template variables
- */
-export type SubAsset = SubAsset1 & SubAsset2;
-export type SubAsset2 =
-  | {
-      [k: string]: unknown;
-    }
-  | {
-      [k: string]: unknown;
-    };
-export type CreativeAsset2 = {
-  [k: string]: unknown;
-};
-
-export interface CreativeAsset1 {
+export interface CreativeAsset {
   /**
    * Unique identifier for the creative
    */
@@ -209,61 +157,245 @@ export interface CreativeAsset1 {
    * Human-readable creative name
    */
   name: string;
+  format_id: FormatID;
   /**
-   * Creative format type (e.g., video, audio, display)
+   * Assets required by the format, keyed by asset_role
    */
-  format: string;
+  assets: {
+    /**
+     * This interface was referenced by `undefined`'s JSON-Schema definition
+     * via the `patternProperty` "^[a-zA-Z0-9_-]+$".
+     */
+    [k: string]:
+      | ImageAsset
+      | VideoAsset
+      | AudioAsset
+      | TextAsset
+      | HTMLAsset
+      | CSSAsset
+      | JavaScriptAsset
+      | PromotedOfferingsAsset
+      | URLAsset;
+  };
   /**
-   * URL of the creative file (for hosted assets)
+   * Preview contexts for generative formats - defines what scenarios to generate previews for
    */
-  media_url?: string;
-  /**
-   * Third-party tag, VAST XML, or code snippet (for third-party served assets)
-   */
-  snippet?: string;
-  snippet_type?: SnippetType;
-  /**
-   * Landing page URL for the creative
-   */
-  click_url?: string;
-  /**
-   * Duration in milliseconds (for video/audio)
-   */
-  duration?: number;
-  /**
-   * Width in pixels (for video/display)
-   */
-  width?: number;
-  /**
-   * Height in pixels (for video/display)
-   */
-  height?: number;
+  inputs?: {
+    /**
+     * Human-readable name for this preview variant
+     */
+    name: string;
+    /**
+     * Macro values to apply for this preview
+     */
+    macros?: {
+      [k: string]: string;
+    };
+    /**
+     * Natural language description of the context for AI-generated content
+     */
+    context_description?: string;
+  }[];
   /**
    * User-defined tags for organization and searchability
    */
   tags?: string[];
   /**
-   * Sub-assets for multi-asset formats like carousels
+   * For generative creatives: set to true to approve and finalize, false to request regeneration with updated assets/message. Omit for non-generative creatives.
    */
-  assets?: SubAsset[];
+  approved?: boolean;
 }
-export interface SubAsset1 {
+/**
+ * Format identifier specifying which format this creative conforms to
+ */
+export interface FormatID {
   /**
-   * Type of asset. Common types: headline, body_text, thumbnail_image, product_image, featured_image, logo, cta_text, price_text, sponsor_name, author_name, click_url
+   * URL of the agent that defines this format (e.g., 'https://creatives.adcontextprotocol.org' for standard formats, or 'https://publisher.com/.well-known/adcp/sales' for custom formats)
    */
-  asset_type?: string;
+  agent_url: string;
   /**
-   * Unique identifier for the asset within the creative
+   * Format identifier within the agent's namespace (e.g., 'display_300x250', 'video_standard_30s')
    */
-  asset_id?: string;
+  id: string;
+}
+/**
+ * Image asset with URL and dimensions
+ */
+export interface ImageAsset {
+  asset_type: 'image';
   /**
-   * URL for media assets (images, videos, etc.)
+   * URL to the image asset
    */
-  content_uri?: string;
+  url: string;
   /**
-   * Text content for text-based assets like headlines, body text, CTA text, etc.
+   * Image width in pixels
    */
-  content?: string | string[];
+  width?: number;
+  /**
+   * Image height in pixels
+   */
+  height?: number;
+  /**
+   * Image file format (jpg, png, gif, webp, etc.)
+   */
+  format?: string;
+  /**
+   * Alternative text for accessibility
+   */
+  alt_text?: string;
+}
+/**
+ * Video asset with URL and specifications
+ */
+export interface VideoAsset {
+  asset_type: 'video';
+  /**
+   * URL to the video asset
+   */
+  url: string;
+  /**
+   * Video width in pixels
+   */
+  width?: number;
+  /**
+   * Video height in pixels
+   */
+  height?: number;
+  /**
+   * Video duration in milliseconds
+   */
+  duration_ms?: number;
+  /**
+   * Video file format (mp4, webm, mov, etc.)
+   */
+  format?: string;
+  /**
+   * Video bitrate in kilobits per second
+   */
+  bitrate_kbps?: number;
+}
+/**
+ * Audio asset with URL and specifications
+ */
+export interface AudioAsset {
+  asset_type: 'audio';
+  /**
+   * URL to the audio asset
+   */
+  url: string;
+  /**
+   * Audio duration in milliseconds
+   */
+  duration_ms?: number;
+  /**
+   * Audio file format (mp3, wav, aac, etc.)
+   */
+  format?: string;
+  /**
+   * Audio bitrate in kilobits per second
+   */
+  bitrate_kbps?: number;
+}
+/**
+ * Text content asset
+ */
+export interface TextAsset {
+  asset_type: 'text';
+  /**
+   * Text content
+   */
+  content: string;
+  /**
+   * Maximum character length constraint
+   */
+  max_length?: number;
+  /**
+   * Language code (e.g., 'en', 'es', 'fr')
+   */
+  language?: string;
+}
+/**
+ * HTML content asset
+ */
+export interface HTMLAsset {
+  asset_type: 'html';
+  /**
+   * HTML content
+   */
+  content: string;
+  /**
+   * HTML version (e.g., 'HTML5')
+   */
+  version?: string;
+}
+/**
+ * CSS stylesheet asset
+ */
+export interface CSSAsset {
+  asset_type: 'css';
+  /**
+   * CSS content
+   */
+  content: string;
+  /**
+   * CSS media query context (e.g., 'screen', 'print')
+   */
+  media?: string;
+}
+/**
+ * JavaScript code asset
+ */
+export interface JavaScriptAsset {
+  asset_type: 'javascript';
+  /**
+   * JavaScript content
+   */
+  content: string;
+  /**
+   * JavaScript module type
+   */
+  module_type?: 'esm' | 'commonjs' | 'script';
+}
+/**
+ * Reference to promoted offerings specification
+ */
+export interface PromotedOfferingsAsset {
+  asset_type: 'promoted_offerings';
+  /**
+   * URL of the advertiser's brand or offering (e.g., https://retailer.com)
+   */
+  url?: string;
+  /**
+   * Brand colors
+   */
+  colors?: {
+    primary?: string;
+    secondary?: string;
+    accent?: string;
+    [k: string]: unknown;
+  };
+  /**
+   * Brand fonts
+   */
+  fonts?: string[];
+  /**
+   * Brand tone/voice
+   */
+  tone?: string;
+}
+/**
+ * URL reference asset
+ */
+export interface URLAsset {
+  asset_type: 'url';
+  /**
+   * URL reference
+   */
+  url: string;
+  /**
+   * Description of what this URL points to
+   */
+  description?: string;
 }
 
 // PRODUCT SCHEMA
@@ -337,14 +469,31 @@ export interface Product1 {
    */
   is_fixed_price: boolean;
   /**
-   * Cost per thousand impressions in USD
+   * Cost per thousand impressions
    */
   cpm?: number;
   /**
-   * Minimum budget requirement in USD
+   * ISO 4217 currency code
+   */
+  currency?: string;
+  /**
+   * Minimum budget requirement
    */
   min_spend?: number;
+  /**
+   * Estimated exposures/impressions for guaranteed products
+   */
+  estimated_exposures?: number;
+  /**
+   * Minimum CPM for non-guaranteed products (bids below this are rejected)
+   */
+  floor_cpm?: number;
+  /**
+   * Recommended CPM to achieve min_exposures target for non-guaranteed products
+   */
+  recommended_cpm?: number;
   measurement?: Measurement;
+  reporting_capabilities?: ReportingCapabilities;
   creative_policy?: CreativePolicy;
   /**
    * Whether this is a custom product
@@ -423,6 +572,43 @@ export interface Measurement {
   reporting: string;
 }
 /**
+ * Reporting capabilities available for a product
+ */
+export interface ReportingCapabilities {
+  /**
+   * Supported reporting frequency options
+   *
+   * @minItems 1
+   */
+  available_reporting_frequencies: ['hourly' | 'daily' | 'monthly', ...('hourly' | 'daily' | 'monthly')[]];
+  /**
+   * Expected delay in minutes before reporting data becomes available (e.g., 240 for 4-hour delay)
+   */
+  expected_delay_minutes: number;
+  /**
+   * Timezone for reporting periods. Use 'UTC' or IANA timezone (e.g., 'America/New_York'). Critical for daily/monthly frequency alignment.
+   */
+  timezone: string;
+  /**
+   * Whether this product supports webhook-based reporting notifications
+   */
+  supports_webhooks: boolean;
+  /**
+   * Metrics available in reporting. Impressions and spend are always implicitly included.
+   */
+  available_metrics: (
+    | 'impressions'
+    | 'spend'
+    | 'clicks'
+    | 'ctr'
+    | 'video_completions'
+    | 'completion_rate'
+    | 'conversions'
+    | 'viewability'
+    | 'engagement_rate'
+  )[];
+}
+/**
  * Creative requirements and restrictions for a product
  */
 export interface CreativePolicy {
@@ -442,53 +628,25 @@ export interface CreativePolicy {
 
 // TARGETING SCHEMA
 /**
- * Audience targeting criteria
+ * Optional geographic refinements for media buys. Most targeting should be expressed in the brief and handled by the publisher. These fields are primarily for geographic restrictions (RCT testing, regulatory compliance).
  */
-export interface Targeting {
+export interface TargetingOverlay {
   /**
-   * Target specific countries (ISO codes)
+   * Restrict delivery to specific countries (ISO codes). Use for regulatory compliance or RCT testing.
    */
   geo_country_any_of?: string[];
   /**
-   * Target specific regions/states
+   * Restrict delivery to specific regions/states. Use for regulatory compliance or RCT testing.
    */
   geo_region_any_of?: string[];
   /**
-   * Target specific metro areas (DMA codes)
+   * Restrict delivery to specific metro areas (DMA codes). Use for regulatory compliance or RCT testing.
    */
   geo_metro_any_of?: string[];
   /**
-   * Target specific postal/ZIP codes
+   * Restrict delivery to specific postal/ZIP codes. Use for regulatory compliance or RCT testing.
    */
   geo_postal_code_any_of?: string[];
-  /**
-   * Audience segment IDs to target
-   */
-  audience_segment_any_of?: string[];
-  /**
-   * AXE segment ID to include for targeting
-   */
-  axe_include_segment?: string;
-  /**
-   * AXE segment ID to exclude from targeting
-   */
-  axe_exclude_segment?: string;
-  /**
-   * Signal IDs from get_signals
-   */
-  signals?: string[];
-  /**
-   * Target specific device types
-   */
-  device_type_any_of?: ('desktop' | 'mobile' | 'tablet' | 'connected_tv' | 'smart_speaker')[];
-  /**
-   * Target specific operating systems
-   */
-  os_any_of?: ('windows' | 'macos' | 'ios' | 'android' | 'linux' | 'roku' | 'tvos' | 'other')[];
-  /**
-   * Target specific browsers
-   */
-  browser_any_of?: ('chrome' | 'firefox' | 'safari' | 'edge' | 'other')[];
   frequency_cap?: FrequencyCap;
 }
 /**
