@@ -3,26 +3,38 @@
 
 // get_products parameters
 /**
+ * Request parameters for discovering available advertising products
+ */
+export type GetProductsRequest = GetProductsRequest1 & GetProductsRequest2;
+/**
+ * Brand information manifest providing brand context, assets, and product catalog. Can be provided inline or as a URL reference to a hosted manifest.
+ */
+export type BrandManifestReference = BrandManifest | string;
+/**
+ * Inline brand manifest object
+ */
+export type BrandManifest = BrandManifest1 & BrandManifest2;
+export type BrandManifest1 = {
+  [k: string]: unknown;
+};
+/**
  * Type of inventory delivery
  */
 export type DeliveryType = 'guaranteed' | 'non_guaranteed';
+export type GetProductsRequest2 = {
+  [k: string]: unknown;
+};
 
-/**
- * Request parameters for discovering available advertising products
- */
-export interface GetProductsRequest {
-  /**
-   * AdCP schema version for this request
-   */
-  adcp_version?: string;
+export interface GetProductsRequest1 {
   /**
    * Natural language description of campaign requirements
    */
   brief?: string;
   /**
-   * Description of advertiser and what is being promoted
+   * DEPRECATED: Use brand_manifest instead. Legacy field for describing what is being promoted.
    */
-  promoted_offering: string;
+  promoted_offering?: string;
+  brand_manifest?: BrandManifestReference;
   /**
    * Structured filters for product discovery
    */
@@ -39,7 +51,7 @@ export interface GetProductsRequest {
     /**
      * Filter by specific format IDs
      */
-    format_ids?: string[];
+    format_ids?: FormatID[];
     /**
      * Only return products accepting IAB standard formats
      */
@@ -48,603 +60,6 @@ export interface GetProductsRequest {
      * Minimum exposures/impressions needed for measurement validity
      */
     min_exposures?: number;
-  };
-}
-
-
-// get_products response
-/**
- * Current task state
- */
-export type TaskStatus =
-  | 'submitted'
-  | 'working'
-  | 'input-required'
-  | 'completed'
-  | 'canceled'
-  | 'failed'
-  | 'rejected'
-  | 'auth-required'
-  | 'unknown';
-/**
- * Represents available advertising inventory
- */
-export type Product = Product1 & Product2;
-/**
- * Type of identifier for this property
- */
-export type PropertyIdentifierTypes =
-  | 'domain'
-  | 'subdomain'
-  | 'network_id'
-  | 'ios_bundle'
-  | 'android_package'
-  | 'apple_app_store_id'
-  | 'google_play_id'
-  | 'roku_store_id'
-  | 'fire_tv_asin'
-  | 'samsung_app_id'
-  | 'apple_tv_bundle'
-  | 'bundle_id'
-  | 'venue_id'
-  | 'screen_id'
-  | 'openooh_venue_type'
-  | 'rss_url'
-  | 'apple_podcast_id'
-  | 'spotify_show_id'
-  | 'podcast_guid';
-/**
- * Type of inventory delivery
- */
-export type Product2 =
-  | {
-      [k: string]: unknown;
-    }
-  | {
-      [k: string]: unknown;
-    };
-
-/**
- * Response payload for get_products task
- */
-export interface GetProductsResponse {
-  /**
-   * AdCP schema version used for this response
-   */
-  adcp_version: string;
-  status?: TaskStatus;
-  /**
-   * Array of matching products
-   */
-  products: Product[];
-  /**
-   * Task-specific errors and warnings (e.g., product filtering issues)
-   */
-  errors?: Error[];
-}
-export interface Product1 {
-  /**
-   * Unique identifier for the product
-   */
-  product_id: string;
-  /**
-   * Human-readable product name
-   */
-  name: string;
-  /**
-   * Detailed description of the product and its inventory
-   */
-  description: string;
-  /**
-   * Array of advertising properties covered by this product for adagents.json validation
-   *
-   * @minItems 1
-   */
-  properties?: [Property, ...Property[]];
-  /**
-   * Tags identifying groups of properties covered by this product (use list_authorized_properties to get full property details)
-   *
-   * @minItems 1
-   */
-  property_tags?: [string, ...string[]];
-  /**
-   * Array of supported creative format IDs - use list_creative_formats to get full format details
-   */
-  format_ids: string[];
-  delivery_type: DeliveryType;
-  /**
-   * Whether this product has fixed pricing (true) or uses auction (false)
-   */
-  is_fixed_price: boolean;
-  /**
-   * Cost per thousand impressions
-   */
-  cpm?: number;
-  /**
-   * ISO 4217 currency code
-   */
-  currency?: string;
-  /**
-   * Minimum budget requirement
-   */
-  min_spend?: number;
-  /**
-   * Estimated exposures/impressions for guaranteed products
-   */
-  estimated_exposures?: number;
-  /**
-   * Minimum CPM for non-guaranteed products (bids below this are rejected)
-   */
-  floor_cpm?: number;
-  /**
-   * Recommended CPM to achieve min_exposures target for non-guaranteed products
-   */
-  recommended_cpm?: number;
-  measurement?: Measurement;
-  reporting_capabilities?: ReportingCapabilities;
-  creative_policy?: CreativePolicy;
-  /**
-   * Whether this is a custom product
-   */
-  is_custom?: boolean;
-  /**
-   * Explanation of why this product matches the brief (only included when brief is provided)
-   */
-  brief_relevance?: string;
-  /**
-   * Expiration timestamp for custom products
-   */
-  expires_at?: string;
-}
-/**
- * An advertising property that can be validated via adagents.json
- */
-export interface Property {
-  /**
-   * Type of advertising property
-   */
-  property_type: 'website' | 'mobile_app' | 'ctv_app' | 'dooh' | 'podcast' | 'radio' | 'streaming_audio';
-  /**
-   * Human-readable property name
-   */
-  name: string;
-  /**
-   * Array of identifiers for this property
-   *
-   * @minItems 1
-   */
-  identifiers: [
-    {
-      type: PropertyIdentifierTypes;
-      /**
-       * The identifier value. For domain type: 'example.com' matches www.example.com and m.example.com only; 'subdomain.example.com' matches that specific subdomain; '*.example.com' matches all subdomains
-       */
-      value: string;
-    },
-    ...{
-      type: PropertyIdentifierTypes;
-      /**
-       * The identifier value. For domain type: 'example.com' matches www.example.com and m.example.com only; 'subdomain.example.com' matches that specific subdomain; '*.example.com' matches all subdomains
-       */
-      value: string;
-    }[]
-  ];
-  /**
-   * Tags for categorization and grouping (e.g., network membership, content categories)
-   */
-  tags?: string[];
-  /**
-   * Domain where adagents.json should be checked for authorization validation
-   */
-  publisher_domain: string;
-}
-/**
- * Measurement capabilities included with a product
- */
-export interface Measurement {
-  /**
-   * Type of measurement
-   */
-  type: string;
-  /**
-   * Attribution methodology
-   */
-  attribution: string;
-  /**
-   * Attribution window
-   */
-  window?: string;
-  /**
-   * Reporting frequency and format
-   */
-  reporting: string;
-}
-/**
- * Reporting capabilities available for a product
- */
-export interface ReportingCapabilities {
-  /**
-   * Supported reporting frequency options
-   *
-   * @minItems 1
-   */
-  available_reporting_frequencies: ['hourly' | 'daily' | 'monthly', ...('hourly' | 'daily' | 'monthly')[]];
-  /**
-   * Expected delay in minutes before reporting data becomes available (e.g., 240 for 4-hour delay)
-   */
-  expected_delay_minutes: number;
-  /**
-   * Timezone for reporting periods. Use 'UTC' or IANA timezone (e.g., 'America/New_York'). Critical for daily/monthly frequency alignment.
-   */
-  timezone: string;
-  /**
-   * Whether this product supports webhook-based reporting notifications
-   */
-  supports_webhooks: boolean;
-  /**
-   * Metrics available in reporting. Impressions and spend are always implicitly included.
-   */
-  available_metrics: (
-    | 'impressions'
-    | 'spend'
-    | 'clicks'
-    | 'ctr'
-    | 'video_completions'
-    | 'completion_rate'
-    | 'conversions'
-    | 'viewability'
-    | 'engagement_rate'
-  )[];
-}
-/**
- * Creative requirements and restrictions for a product
- */
-export interface CreativePolicy {
-  /**
-   * Co-branding requirement
-   */
-  co_branding: 'required' | 'optional' | 'none';
-  /**
-   * Landing page requirements
-   */
-  landing_page: 'any' | 'retailer_site_only' | 'must_include_retailer';
-  /**
-   * Whether creative templates are provided
-   */
-  templates_available: boolean;
-}
-/**
- * Standard error structure for task-specific errors and warnings
- */
-export interface Error {
-  /**
-   * Error code for programmatic handling
-   */
-  code: string;
-  /**
-   * Human-readable error message
-   */
-  message: string;
-  /**
-   * Field path associated with the error (e.g., 'packages[0].targeting')
-   */
-  field?: string;
-  /**
-   * Suggested fix for the error
-   */
-  suggestion?: string;
-  /**
-   * Seconds to wait before retrying the operation
-   */
-  retry_after?: number;
-  /**
-   * Additional task-specific error details
-   */
-  details?: {
-    [k: string]: unknown;
-  };
-}
-
-
-// list_creative_formats parameters
-/**
- * Request parameters for discovering supported creative formats
- */
-export interface ListCreativeFormatsRequest {
-  /**
-   * AdCP schema version for this request
-   */
-  adcp_version?: string;
-  /**
-   * Return only these specific format IDs (e.g., from get_products response)
-   */
-  format_ids?: string[];
-  /**
-   * Filter by format type (technical categories with distinct requirements)
-   */
-  type?: 'audio' | 'video' | 'display' | 'dooh';
-  /**
-   * Filter to formats that include these asset types. For third-party tags, search for 'html' or 'javascript'. E.g., ['image', 'text'] returns formats with images and text, ['javascript'] returns formats accepting JavaScript tags.
-   */
-  asset_types?: ('image' | 'video' | 'audio' | 'text' | 'html' | 'javascript' | 'url')[];
-  /**
-   * Filter to formats with specific dimensions (e.g., '300x250', '728x90'). Useful with asset_types to find specific sizes like '300x250 JavaScript'
-   */
-  dimensions?: string;
-  /**
-   * Search for formats by name (case-insensitive partial match)
-   */
-  name_search?: string;
-}
-
-
-// list_creative_formats response
-/**
- * Current task state
- */
-export interface ListCreativeFormatsResponse {
-  /**
-   * AdCP schema version used for this response
-   */
-  adcp_version: string;
-  status?: TaskStatus;
-  /**
-   * Full format definitions for all formats this agent supports. Each format's authoritative source is indicated by its agent_url field.
-   */
-  formats: Format[];
-  /**
-   * Optional: Creative agents that provide additional formats. Buyers can recursively query these agents to discover more formats. No authentication required for list_creative_formats.
-   */
-  creative_agents?: {
-    /**
-     * Base URL for the creative agent (e.g., 'https://reference.adcp.org', 'https://dco.example.com'). Call list_creative_formats on this URL to get its formats.
-     */
-    agent_url: string;
-    /**
-     * Human-readable name for the creative agent
-     */
-    agent_name?: string;
-    /**
-     * Capabilities this creative agent provides
-     */
-    capabilities?: ('validation' | 'assembly' | 'generation' | 'preview')[];
-    [k: string]: unknown;
-  }[];
-  /**
-   * Task-specific errors and warnings (e.g., format availability issues)
-   */
-  errors?: Error[];
-}
-/**
- * Represents a creative format with its requirements
- */
-export interface Format {
-  /**
-   * Unique identifier for the format
-   */
-  format_id: string;
-  /**
-   * Base URL of the agent that provides this format (authoritative source). E.g., 'https://reference.adcp.org', 'https://dco.example.com'
-   */
-  agent_url?: string;
-  /**
-   * Human-readable format name
-   */
-  name: string;
-  /**
-   * Plain text explanation of what this format does and what assets it requires
-   */
-  description?: string;
-  /**
-   * Optional preview image URL for format browsing/discovery UI
-   */
-  preview_image?: string;
-  /**
-   * Optional URL to showcase page with examples and interactive demos of this format
-   */
-  example_url?: string;
-  /**
-   * Media type of this format - determines rendering method and asset requirements
-   */
-  type: 'audio' | 'video' | 'display' | 'native' | 'dooh' | 'rich_media' | 'universal';
-  /**
-   * Format category
-   */
-  category?: 'standard' | 'custom';
-  /**
-   * Whether this format follows IAB specifications or AdCP standard format definitions (found in /schemas/v1/standard-formats/)
-   */
-  is_standard?: boolean;
-  /**
-   * Technical specifications for this format (e.g., dimensions, duration, file size limits, codecs)
-   */
-  requirements?: {
-    [k: string]: unknown;
-  };
-  /**
-   * Array of required assets or asset groups for this format. Can contain individual assets or repeatable asset sequences (e.g., carousel products, slideshow frames).
-   */
-  assets_required?: (
-    | {
-        /**
-         * Identifier for this asset in the format
-         */
-        asset_id: string;
-        /**
-         * Type of asset
-         */
-        asset_type: 'image' | 'video' | 'audio' | 'text' | 'html' | 'javascript' | 'url' | 'brand_manifest';
-        /**
-         * Purpose of this asset (e.g., 'hero_image', 'logo', 'headline', 'cta_button')
-         */
-        asset_role?: string;
-        /**
-         * Whether this asset is required
-         */
-        required?: boolean;
-        /**
-         * Technical requirements for this asset (dimensions, file size, duration, etc.)
-         */
-        requirements?: {
-          [k: string]: unknown;
-        };
-        [k: string]: unknown;
-      }
-    | {
-        /**
-         * Identifier for this asset group (e.g., 'product', 'slide', 'card')
-         */
-        asset_group_id: string;
-        /**
-         * Indicates this is a repeatable asset group
-         */
-        repeatable: true;
-        /**
-         * Minimum number of repetitions required
-         */
-        min_count: number;
-        /**
-         * Maximum number of repetitions allowed
-         */
-        max_count: number;
-        /**
-         * Assets within each repetition of this group
-         */
-        assets: {
-          /**
-           * Identifier for this asset within the group
-           */
-          asset_id: string;
-          /**
-           * Type of asset
-           */
-          asset_type: 'image' | 'video' | 'audio' | 'text' | 'html' | 'javascript' | 'url' | 'brand_manifest';
-          /**
-           * Purpose of this asset
-           */
-          asset_role?: string;
-          /**
-           * Whether this asset is required in each repetition
-           */
-          required?: boolean;
-          /**
-           * Technical requirements for this asset
-           */
-          requirements?: {
-            [k: string]: unknown;
-          };
-          [k: string]: unknown;
-        }[];
-        [k: string]: unknown;
-      }
-  )[];
-  /**
-   * Delivery method specifications (e.g., hosted, VAST, third-party tags)
-   */
-  delivery?: {
-    [k: string]: unknown;
-  };
-  /**
-   * Whether this format can accept third-party served creative tags as an alternative to hosted assets
-   */
-  accepts_3p_tags?: boolean;
-  /**
-   * List of universal macros supported by this format (e.g., MEDIA_BUY_ID, CACHEBUSTER, DEVICE_ID). Used for validation and developer tooling.
-   */
-  supported_macros?: string[];
-}
-/**
- * Standard error structure for task-specific errors and warnings
- */
-
-// create_media_buy parameters
-/**
- * Package configuration for media buy creation
- */
-export type PackageRequest =
-  | (
-      | {
-          [k: string]: unknown;
-        }
-      | {
-          [k: string]: unknown;
-        }
-    )
-  | (
-      | {
-          [k: string]: unknown;
-        }
-      | {
-          [k: string]: unknown;
-        }
-    );
-/**
- * Brand information manifest serving as the namespace and identity for this media buy. Provides brand context, assets, and product catalog. Can be cached and reused across multiple requests.
- */
-export type BrandManifest = BrandManifest1 & BrandManifest2;
-export type BrandManifest1 = {
-  [k: string]: unknown;
-};
-/**
- * Campaign start timing: 'asap' or ISO 8601 date-time
- */
-export type StartTiming = 'asap' | string;
-/**
- * Budget pacing strategy
- */
-export type Pacing = 'even' | 'asap' | 'front_loaded';
-
-/**
- * Request parameters for creating a media buy
- */
-export interface CreateMediaBuyRequest {
-  /**
-   * AdCP schema version for this request
-   */
-  adcp_version?: string;
-  /**
-   * Buyer's reference identifier for this media buy
-   */
-  buyer_ref: string;
-  /**
-   * Array of package configurations
-   */
-  packages: PackageRequest[];
-  brand_manifest: BrandManifest;
-  /**
-   * DEPRECATED: Use brand_manifest instead. Legacy field for describing what is being promoted.
-   */
-  promoted_offering?: string;
-  /**
-   * Purchase order number for tracking
-   */
-  po_number?: string;
-  start_time: StartTiming;
-  /**
-   * Campaign end date/time in ISO 8601 format
-   */
-  end_time: string;
-  budget: Budget;
-  reporting_webhook?: PushNotificationConfig & {
-    /**
-     * Frequency for automated reporting delivery. Must be supported by all products in the media buy.
-     */
-    reporting_frequency: 'hourly' | 'daily' | 'monthly';
-    /**
-     * Optional list of metrics to include in webhook notifications. If omitted, all available metrics are included. Must be subset of product's available_metrics.
-     */
-    requested_metrics?: (
-      | 'impressions'
-      | 'spend'
-      | 'clicks'
-      | 'ctr'
-      | 'video_completions'
-      | 'completion_rate'
-      | 'conversions'
-      | 'viewability'
-      | 'engagement_rate'
-    )[];
-    [k: string]: unknown;
   };
 }
 export interface BrandManifest2 {
@@ -870,142 +285,1127 @@ export interface BrandManifest2 {
   };
 }
 /**
- * Budget configuration for a media buy or package
+ * Structured format identifier with agent URL and format name
  */
-export interface Budget {
+export interface FormatID {
   /**
-   * Total budget amount
+   * URL of the agent that defines this format (e.g., 'https://creatives.adcontextprotocol.org' for standard formats, or 'https://publisher.com/.well-known/adcp/sales' for custom formats)
    */
-  total: number;
+  agent_url: string;
+  /**
+   * Format identifier within the agent's namespace (e.g., 'display_300x250', 'video_standard_30s')
+   */
+  id: string;
+}
+
+
+// get_products response
+/**
+ * Represents available advertising inventory
+ */
+export type Product = Product1 & Product2;
+/**
+ * Type of identifier for this property
+ */
+export type PropertyIdentifierTypes =
+  | 'domain'
+  | 'subdomain'
+  | 'network_id'
+  | 'ios_bundle'
+  | 'android_package'
+  | 'apple_app_store_id'
+  | 'google_play_id'
+  | 'roku_store_id'
+  | 'fire_tv_asin'
+  | 'samsung_app_id'
+  | 'apple_tv_bundle'
+  | 'bundle_id'
+  | 'venue_id'
+  | 'screen_id'
+  | 'openooh_venue_type'
+  | 'rss_url'
+  | 'apple_podcast_id'
+  | 'spotify_show_id'
+  | 'podcast_guid';
+/**
+ * Type of inventory delivery
+ */
+export type PricingOption =
+  | CPMFixedRatePricingOption
+  | CPMAuctionPricingOption
+  | VCPMFixedRatePricingOption
+  | VCPMAuctionPricingOption
+  | CPCPricingOption
+  | CPCVPricingOption
+  | CPVPricingOption
+  | CPPPricingOption
+  | FlatRatePricingOption;
+export type Product2 =
+  | {
+      [k: string]: unknown;
+    }
+  | {
+      [k: string]: unknown;
+    };
+
+/**
+ * Response payload for get_products task
+ */
+export interface GetProductsResponse {
+  /**
+   * Array of matching products
+   */
+  products: Product[];
+  /**
+   * Task-specific errors and warnings (e.g., product filtering issues)
+   */
+  errors?: Error[];
+}
+export interface Product1 {
+  /**
+   * Unique identifier for the product
+   */
+  product_id: string;
+  /**
+   * Human-readable product name
+   */
+  name: string;
+  /**
+   * Detailed description of the product and its inventory
+   */
+  description: string;
+  /**
+   * Array of advertising properties covered by this product for adagents.json validation
+   *
+   * @minItems 1
+   */
+  properties?: [Property, ...Property[]];
+  /**
+   * Tags identifying groups of properties covered by this product (use list_authorized_properties to get full property details)
+   *
+   * @minItems 1
+   */
+  property_tags?: [string, ...string[]];
+  /**
+   * Array of supported creative format IDs - structured format_id objects with agent_url and id
+   */
+  format_ids: FormatID[];
+  delivery_type: DeliveryType;
+  /**
+   * Available pricing models for this product
+   *
+   * @minItems 1
+   */
+  pricing_options: [PricingOption, ...PricingOption[]];
+  /**
+   * Estimated exposures/impressions for guaranteed products
+   */
+  estimated_exposures?: number;
+  measurement?: Measurement;
+  /**
+   * Measurement provider and methodology for delivery metrics. The buyer accepts the declared provider as the source of truth for the buy. REQUIRED for all products.
+   */
+  delivery_measurement: {
+    /**
+     * Measurement provider(s) used for this product (e.g., 'Google Ad Manager with IAS viewability', 'Nielsen DAR', 'Geopath for DOOH impressions')
+     */
+    provider: string;
+    /**
+     * Additional details about measurement methodology in plain language (e.g., 'MRC-accredited viewability. 50% in-view for 1s display / 2s video', 'Panel-based demographic measurement updated monthly')
+     */
+    notes?: string;
+    [k: string]: unknown;
+  };
+  reporting_capabilities?: ReportingCapabilities;
+  creative_policy?: CreativePolicy;
+  /**
+   * Whether this is a custom product
+   */
+  is_custom?: boolean;
+  /**
+   * Explanation of why this product matches the brief (only included when brief is provided)
+   */
+  brief_relevance?: string;
+  /**
+   * Expiration timestamp for custom products
+   */
+  expires_at?: string;
+}
+/**
+ * An advertising property that can be validated via adagents.json
+ */
+export interface Property {
+  /**
+   * Type of advertising property
+   */
+  property_type: 'website' | 'mobile_app' | 'ctv_app' | 'dooh' | 'podcast' | 'radio' | 'streaming_audio';
+  /**
+   * Human-readable property name
+   */
+  name: string;
+  /**
+   * Array of identifiers for this property
+   *
+   * @minItems 1
+   */
+  identifiers: [
+    {
+      type: PropertyIdentifierTypes;
+      /**
+       * The identifier value. For domain type: 'example.com' matches www.example.com and m.example.com only; 'subdomain.example.com' matches that specific subdomain; '*.example.com' matches all subdomains
+       */
+      value: string;
+    },
+    ...{
+      type: PropertyIdentifierTypes;
+      /**
+       * The identifier value. For domain type: 'example.com' matches www.example.com and m.example.com only; 'subdomain.example.com' matches that specific subdomain; '*.example.com' matches all subdomains
+       */
+      value: string;
+    }[]
+  ];
+  /**
+   * Tags for categorization and grouping (e.g., network membership, content categories)
+   */
+  tags?: string[];
+  /**
+   * Domain where adagents.json should be checked for authorization validation
+   */
+  publisher_domain: string;
+}
+/**
+ * Structured format identifier with agent URL and format name
+ */
+export interface CPMFixedRatePricingOption {
+  /**
+   * Unique identifier for this pricing option within the product (e.g., 'cpm_usd_guaranteed')
+   */
+  pricing_option_id: string;
+  /**
+   * Cost per 1,000 impressions
+   */
+  pricing_model: 'cpm';
+  /**
+   * Fixed CPM rate (cost per 1,000 impressions)
+   */
+  rate: number;
   /**
    * ISO 4217 currency code
    */
   currency: string;
-  pacing?: Pacing;
+  /**
+   * Minimum spend requirement per package using this pricing option, in the specified currency
+   */
+  min_spend_per_package?: number;
 }
 /**
- * Webhook configuration for asynchronous task notifications. Uses A2A-compatible PushNotificationConfig structure. Supports Bearer tokens (simple) or HMAC signatures (production-recommended).
+ * Cost Per Mille (cost per 1,000 impressions) with auction-based pricing - common for programmatic/non-guaranteed inventory
  */
-export interface PushNotificationConfig {
+export interface CPMAuctionPricingOption {
   /**
-   * Webhook endpoint URL for task status notifications
+   * Unique identifier for this pricing option within the product (e.g., 'cpm_usd_auction')
    */
-  url: string;
+  pricing_option_id: string;
   /**
-   * Optional client-provided token for webhook validation. Echoed back in webhook payload to validate request authenticity.
+   * Cost per 1,000 impressions
    */
-  token?: string;
+  pricing_model: 'cpm';
   /**
-   * Authentication configuration for webhook delivery (A2A-compatible)
+   * ISO 4217 currency code
    */
-  authentication: {
+  currency: string;
+  /**
+   * Pricing guidance for auction-based CPM bidding
+   */
+  price_guidance: {
     /**
-     * Array of authentication schemes. Supported: ['Bearer'] for simple token auth, ['HMAC-SHA256'] for signature verification (recommended for production)
-     *
-     * @minItems 1
-     * @maxItems 1
+     * Minimum bid price - publisher will reject bids under this value
      */
-    schemes: ['Bearer' | 'HMAC-SHA256'];
+    floor: number;
     /**
-     * Credentials for authentication. For Bearer: token sent in Authorization header. For HMAC-SHA256: shared secret used to generate signature. Minimum 32 characters. Exchanged out-of-band during onboarding.
+     * 25th percentile winning price
      */
-    credentials: string;
+    p25?: number;
+    /**
+     * Median winning price
+     */
+    p50?: number;
+    /**
+     * 75th percentile winning price
+     */
+    p75?: number;
+    /**
+     * 90th percentile winning price
+     */
+    p90?: number;
+    [k: string]: unknown;
+  };
+  /**
+   * Minimum spend requirement per package using this pricing option, in the specified currency
+   */
+  min_spend_per_package?: number;
+}
+/**
+ * Viewable Cost Per Mille (cost per 1,000 viewable impressions) with guaranteed fixed rate - impressions meeting MRC viewability standard (50% pixels in-view for 1 second for display, 2 seconds for video)
+ */
+export interface VCPMFixedRatePricingOption {
+  /**
+   * Unique identifier for this pricing option within the product (e.g., 'vcpm_usd_guaranteed')
+   */
+  pricing_option_id: string;
+  /**
+   * Cost per 1,000 viewable impressions (MRC standard)
+   */
+  pricing_model: 'vcpm';
+  /**
+   * Fixed vCPM rate (cost per 1,000 viewable impressions)
+   */
+  rate: number;
+  /**
+   * ISO 4217 currency code
+   */
+  currency: string;
+  /**
+   * Minimum spend requirement per package using this pricing option, in the specified currency
+   */
+  min_spend_per_package?: number;
+}
+/**
+ * Viewable Cost Per Mille (cost per 1,000 viewable impressions) with auction-based pricing - impressions meeting MRC viewability standard (50% pixels in-view for 1 second for display, 2 seconds for video)
+ */
+export interface VCPMAuctionPricingOption {
+  /**
+   * Unique identifier for this pricing option within the product (e.g., 'vcpm_usd_auction')
+   */
+  pricing_option_id: string;
+  /**
+   * Cost per 1,000 viewable impressions (MRC standard)
+   */
+  pricing_model: 'vcpm';
+  /**
+   * ISO 4217 currency code
+   */
+  currency: string;
+  /**
+   * Statistical guidance for auction pricing
+   */
+  price_guidance: {
+    /**
+     * Minimum acceptable bid price
+     */
+    floor: number;
+    /**
+     * 25th percentile of recent winning bids
+     */
+    p25?: number;
+    /**
+     * Median of recent winning bids
+     */
+    p50?: number;
+    /**
+     * 75th percentile of recent winning bids
+     */
+    p75?: number;
+    /**
+     * 90th percentile of recent winning bids
+     */
+    p90?: number;
+    [k: string]: unknown;
+  };
+  /**
+   * Minimum spend requirement per package using this pricing option, in the specified currency
+   */
+  min_spend_per_package?: number;
+}
+/**
+ * Cost Per Click fixed-rate pricing for performance-driven advertising campaigns
+ */
+export interface CPCPricingOption {
+  /**
+   * Unique identifier for this pricing option within the product (e.g., 'cpc_usd_fixed')
+   */
+  pricing_option_id: string;
+  /**
+   * Cost per click
+   */
+  pricing_model: 'cpc';
+  /**
+   * Fixed CPC rate (cost per click)
+   */
+  rate: number;
+  /**
+   * ISO 4217 currency code
+   */
+  currency: string;
+  /**
+   * Minimum spend requirement per package using this pricing option, in the specified currency
+   */
+  min_spend_per_package?: number;
+}
+/**
+ * Cost Per Completed View (100% video/audio completion) fixed-rate pricing
+ */
+export interface CPCVPricingOption {
+  /**
+   * Unique identifier for this pricing option within the product (e.g., 'cpcv_usd_guaranteed')
+   */
+  pricing_option_id: string;
+  /**
+   * Cost per completed view (100% completion)
+   */
+  pricing_model: 'cpcv';
+  /**
+   * Fixed CPCV rate (cost per 100% completion)
+   */
+  rate: number;
+  /**
+   * ISO 4217 currency code
+   */
+  currency: string;
+  /**
+   * Minimum spend requirement per package using this pricing option, in the specified currency
+   */
+  min_spend_per_package?: number;
+}
+/**
+ * Cost Per View (at publisher-defined threshold) fixed-rate pricing for video/audio
+ */
+export interface CPVPricingOption {
+  /**
+   * Unique identifier for this pricing option within the product (e.g., 'cpv_usd_50pct')
+   */
+  pricing_option_id: string;
+  /**
+   * Cost per view at threshold
+   */
+  pricing_model: 'cpv';
+  /**
+   * Fixed CPV rate (cost per view)
+   */
+  rate: number;
+  /**
+   * ISO 4217 currency code
+   */
+  currency: string;
+  /**
+   * CPV-specific parameters defining the view threshold
+   */
+  parameters: {
+    view_threshold:
+      | number
+      | {
+          /**
+           * Seconds of viewing required (e.g., 30 for YouTube-style '30 seconds = view')
+           */
+          duration_seconds: number;
+        };
+  };
+  /**
+   * Minimum spend requirement per package using this pricing option, in the specified currency
+   */
+  min_spend_per_package?: number;
+}
+/**
+ * Cost Per Point (Gross Rating Point) fixed-rate pricing for TV and audio campaigns requiring demographic measurement
+ */
+export interface CPPPricingOption {
+  /**
+   * Unique identifier for this pricing option within the product (e.g., 'cpp_usd_p18-49')
+   */
+  pricing_option_id: string;
+  /**
+   * Cost per Gross Rating Point
+   */
+  pricing_model: 'cpp';
+  /**
+   * Fixed CPP rate (cost per rating point)
+   */
+  rate: number;
+  /**
+   * ISO 4217 currency code
+   */
+  currency: string;
+  /**
+   * CPP-specific parameters for demographic targeting and GRP requirements
+   */
+  parameters: {
+    /**
+     * Target demographic in Nielsen format: P/M/W/A/C + age range. Examples: P18-49 (Persons 18-49), M25-54 (Men 25-54), W35+ (Women 35+), A18-34 (Adults 18-34), C2-11 (Children 2-11)
+     */
+    demographic: string;
+    /**
+     * Minimum GRPs/TRPs required for this pricing option
+     */
+    min_points?: number;
+  };
+  /**
+   * Minimum spend requirement per package using this pricing option, in the specified currency
+   */
+  min_spend_per_package?: number;
+}
+/**
+ * Flat rate pricing for DOOH, sponsorships, and time-based campaigns - fixed cost regardless of delivery volume
+ */
+export interface FlatRatePricingOption {
+  /**
+   * Unique identifier for this pricing option within the product (e.g., 'flat_rate_usd_24h_takeover')
+   */
+  pricing_option_id: string;
+  /**
+   * Fixed cost regardless of delivery volume
+   */
+  pricing_model: 'flat_rate';
+  /**
+   * Flat rate cost
+   */
+  rate: number;
+  /**
+   * ISO 4217 currency code
+   */
+  currency: string;
+  /**
+   * Whether this is a fixed rate (true) or auction-based (false)
+   */
+  is_fixed: true;
+  /**
+   * Flat rate parameters for DOOH and time-based campaigns
+   */
+  parameters?: {
+    /**
+     * Duration in hours for time-based flat rate pricing (DOOH)
+     */
+    duration_hours?: number;
+    /**
+     * Guaranteed share of voice as percentage (DOOH, 0-100)
+     */
+    sov_percentage?: number;
+    /**
+     * Duration of ad loop rotation in seconds (DOOH)
+     */
+    loop_duration_seconds?: number;
+    /**
+     * Minimum number of times ad plays per hour (DOOH frequency guarantee)
+     */
+    min_plays_per_hour?: number;
+    /**
+     * Named venue package identifier for DOOH (e.g., 'times_square_network', 'airport_terminals')
+     */
+    venue_package?: string;
+    /**
+     * Estimated impressions for this flat rate option (informational, commonly used with SOV or time-based DOOH)
+     */
+    estimated_impressions?: number;
+    /**
+     * Specific daypart for time-based pricing (e.g., 'morning_commute', 'evening_prime', 'overnight')
+     */
+    daypart?: string;
+  };
+  /**
+   * Minimum spend requirement per package using this pricing option, in the specified currency
+   */
+  min_spend_per_package?: number;
+}
+/**
+ * Measurement capabilities included with a product
+ */
+export interface Measurement {
+  /**
+   * Type of measurement
+   */
+  type: string;
+  /**
+   * Attribution methodology
+   */
+  attribution: string;
+  /**
+   * Attribution window
+   */
+  window?: string;
+  /**
+   * Reporting frequency and format
+   */
+  reporting: string;
+}
+/**
+ * Reporting capabilities available for a product
+ */
+export interface ReportingCapabilities {
+  /**
+   * Supported reporting frequency options
+   *
+   * @minItems 1
+   */
+  available_reporting_frequencies: ['hourly' | 'daily' | 'monthly', ...('hourly' | 'daily' | 'monthly')[]];
+  /**
+   * Expected delay in minutes before reporting data becomes available (e.g., 240 for 4-hour delay)
+   */
+  expected_delay_minutes: number;
+  /**
+   * Timezone for reporting periods. Use 'UTC' or IANA timezone (e.g., 'America/New_York'). Critical for daily/monthly frequency alignment.
+   */
+  timezone: string;
+  /**
+   * Whether this product supports webhook-based reporting notifications
+   */
+  supports_webhooks: boolean;
+  /**
+   * Metrics available in reporting. Impressions and spend are always implicitly included.
+   */
+  available_metrics: (
+    | 'impressions'
+    | 'spend'
+    | 'clicks'
+    | 'ctr'
+    | 'video_completions'
+    | 'completion_rate'
+    | 'conversions'
+    | 'viewability'
+    | 'engagement_rate'
+  )[];
+}
+/**
+ * Creative requirements and restrictions for a product
+ */
+export interface CreativePolicy {
+  /**
+   * Co-branding requirement
+   */
+  co_branding: 'required' | 'optional' | 'none';
+  /**
+   * Landing page requirements
+   */
+  landing_page: 'any' | 'retailer_site_only' | 'must_include_retailer';
+  /**
+   * Whether creative templates are provided
+   */
+  templates_available: boolean;
+}
+/**
+ * Standard error structure for task-specific errors and warnings
+ */
+export interface Error {
+  /**
+   * Error code for programmatic handling
+   */
+  code: string;
+  /**
+   * Human-readable error message
+   */
+  message: string;
+  /**
+   * Field path associated with the error (e.g., 'packages[0].targeting')
+   */
+  field?: string;
+  /**
+   * Suggested fix for the error
+   */
+  suggestion?: string;
+  /**
+   * Seconds to wait before retrying the operation
+   */
+  retry_after?: number;
+  /**
+   * Additional task-specific error details
+   */
+  details?: {
+    [k: string]: unknown;
   };
 }
 
 
-// create_media_buy response
+// list_creative_formats parameters
 /**
- * Current task state - 'completed' for immediate success, 'working' for operations under 120s, 'submitted' for long-running operations, 'input-required' if approval needed
+ * Request parameters for discovering supported creative formats
  */
-export interface CreateMediaBuyResponse {
+export interface ListCreativeFormatsRequest {
   /**
-   * AdCP schema version used for this response
+   * Return only these specific format IDs (e.g., from get_products response)
    */
-  adcp_version: string;
-  status: TaskStatus;
+  format_ids?: FormatID[];
   /**
-   * Unique identifier for tracking this async operation (present for submitted/working status)
+   * Filter by format type (technical categories with distinct requirements)
    */
-  task_id?: string;
+  type?: 'audio' | 'video' | 'display' | 'dooh';
   /**
-   * Publisher's unique identifier for the created media buy
+   * Filter to formats that include these asset types. For third-party tags, search for 'html' or 'javascript'. E.g., ['image', 'text'] returns formats with images and text, ['javascript'] returns formats accepting JavaScript tags.
    */
-  media_buy_id?: string;
+  asset_types?: ('image' | 'video' | 'audio' | 'text' | 'html' | 'javascript' | 'url')[];
   /**
-   * Buyer's reference identifier for this media buy
+   * Maximum width in pixels (inclusive). Returns formats where ANY render has width <= this value. For multi-render formats, matches if at least one render fits.
    */
-  buyer_ref: string;
+  max_width?: number;
   /**
-   * ISO 8601 timestamp for creative upload deadline
+   * Maximum height in pixels (inclusive). Returns formats where ANY render has height <= this value. For multi-render formats, matches if at least one render fits.
    */
-  creative_deadline?: string;
+  max_height?: number;
   /**
-   * Array of created packages
+   * Minimum width in pixels (inclusive). Returns formats where ANY render has width >= this value.
    */
-  packages?: {
+  min_width?: number;
+  /**
+   * Minimum height in pixels (inclusive). Returns formats where ANY render has height >= this value.
+   */
+  min_height?: number;
+  /**
+   * Filter for responsive formats that adapt to container size. When true, returns formats without fixed dimensions.
+   */
+  is_responsive?: boolean;
+  /**
+   * Search for formats by name (case-insensitive partial match)
+   */
+  name_search?: string;
+}
+/**
+ * Structured format identifier with agent URL and format name
+ */
+
+// list_creative_formats response
+/**
+ * Response payload for list_creative_formats task
+ */
+export interface ListCreativeFormatsResponse {
+  /**
+   * Full format definitions for all formats this agent supports. Each format's authoritative source is indicated by its agent_url field.
+   */
+  formats: Format[];
+  /**
+   * Optional: Creative agents that provide additional formats. Buyers can recursively query these agents to discover more formats. No authentication required for list_creative_formats.
+   */
+  creative_agents?: {
     /**
-     * Publisher's unique identifier for the package
+     * Base URL for the creative agent (e.g., 'https://reference.adcp.org', 'https://dco.example.com'). Call list_creative_formats on this URL to get its formats.
      */
-    package_id: string;
+    agent_url: string;
     /**
-     * Buyer's reference identifier for the package
+     * Human-readable name for the creative agent
      */
-    buyer_ref: string;
+    agent_name?: string;
+    /**
+     * Capabilities this creative agent provides
+     */
+    capabilities?: ('validation' | 'assembly' | 'generation' | 'preview')[];
+    [k: string]: unknown;
   }[];
   /**
-   * Task-specific errors and warnings (e.g., partial package creation failures)
+   * Task-specific errors and warnings (e.g., format availability issues)
    */
   errors?: Error[];
+}
+/**
+ * Represents a creative format with its requirements
+ */
+export interface Format {
+  /**
+   * Unique identifier for the format
+   */
+  format_id: string;
+  /**
+   * Base URL of the agent that provides this format (authoritative source). E.g., 'https://reference.adcp.org', 'https://dco.example.com'
+   */
+  agent_url?: string;
+  /**
+   * Human-readable format name
+   */
+  name: string;
+  /**
+   * Plain text explanation of what this format does and what assets it requires
+   */
+  description?: string;
+  /**
+   * Optional preview image URL for format browsing/discovery UI. Should be 400x300px (4:3 aspect ratio) PNG or JPG. Used as thumbnail/card image in format browsers.
+   */
+  preview_image?: string;
+  /**
+   * Optional URL to showcase page with examples and interactive demos of this format
+   */
+  example_url?: string;
+  /**
+   * Media type of this format - determines rendering method and asset requirements
+   */
+  type: 'audio' | 'video' | 'display' | 'native' | 'dooh' | 'rich_media' | 'universal';
+  /**
+   * Specification of rendered pieces for this format. Most formats produce a single render. Companion ad formats (video + banner), adaptive formats, and multi-placement formats produce multiple renders. Each render specifies its role and dimensions.
+   *
+   * @minItems 1
+   */
+  renders?: [
+    {
+      /**
+       * Semantic role of this rendered piece (e.g., 'primary', 'companion', 'mobile_variant')
+       */
+      role: string;
+      /**
+       * Dimensions for this rendered piece
+       */
+      dimensions: {
+        /**
+         * Fixed width in specified units
+         */
+        width?: number;
+        /**
+         * Fixed height in specified units
+         */
+        height?: number;
+        /**
+         * Minimum width for responsive renders
+         */
+        min_width?: number;
+        /**
+         * Minimum height for responsive renders
+         */
+        min_height?: number;
+        /**
+         * Maximum width for responsive renders
+         */
+        max_width?: number;
+        /**
+         * Maximum height for responsive renders
+         */
+        max_height?: number;
+        /**
+         * Indicates which dimensions are responsive/fluid
+         */
+        responsive?: {
+          width: boolean;
+          height: boolean;
+          [k: string]: unknown;
+        };
+        /**
+         * Fixed aspect ratio constraint (e.g., '16:9', '4:3', '1:1')
+         */
+        aspect_ratio?: string;
+        /**
+         * Unit of measurement for dimensions
+         */
+        unit: 'px' | 'dp' | 'inches' | 'cm';
+        [k: string]: unknown;
+      };
+      [k: string]: unknown;
+    },
+    ...{
+      /**
+       * Semantic role of this rendered piece (e.g., 'primary', 'companion', 'mobile_variant')
+       */
+      role: string;
+      /**
+       * Dimensions for this rendered piece
+       */
+      dimensions: {
+        /**
+         * Fixed width in specified units
+         */
+        width?: number;
+        /**
+         * Fixed height in specified units
+         */
+        height?: number;
+        /**
+         * Minimum width for responsive renders
+         */
+        min_width?: number;
+        /**
+         * Minimum height for responsive renders
+         */
+        min_height?: number;
+        /**
+         * Maximum width for responsive renders
+         */
+        max_width?: number;
+        /**
+         * Maximum height for responsive renders
+         */
+        max_height?: number;
+        /**
+         * Indicates which dimensions are responsive/fluid
+         */
+        responsive?: {
+          width: boolean;
+          height: boolean;
+          [k: string]: unknown;
+        };
+        /**
+         * Fixed aspect ratio constraint (e.g., '16:9', '4:3', '1:1')
+         */
+        aspect_ratio?: string;
+        /**
+         * Unit of measurement for dimensions
+         */
+        unit: 'px' | 'dp' | 'inches' | 'cm';
+        [k: string]: unknown;
+      };
+      [k: string]: unknown;
+    }[]
+  ];
+  /**
+   * Array of required assets or asset groups for this format. Can contain individual assets or repeatable asset sequences (e.g., carousel products, slideshow frames).
+   */
+  assets_required?: (
+    | {
+        /**
+         * Identifier for this asset in the format
+         */
+        asset_id: string;
+        /**
+         * Type of asset
+         */
+        asset_type: 'image' | 'video' | 'audio' | 'text' | 'html' | 'javascript' | 'url' | 'brand_manifest';
+        /**
+         * Purpose of this asset (e.g., 'hero_image', 'logo', 'headline', 'cta_button')
+         */
+        asset_role?: string;
+        /**
+         * Whether this asset is required
+         */
+        required?: boolean;
+        /**
+         * Technical requirements for this asset (dimensions, file size, duration, etc.)
+         */
+        requirements?: {
+          [k: string]: unknown;
+        };
+        [k: string]: unknown;
+      }
+    | {
+        /**
+         * Identifier for this asset group (e.g., 'product', 'slide', 'card')
+         */
+        asset_group_id: string;
+        /**
+         * Indicates this is a repeatable asset group
+         */
+        repeatable: true;
+        /**
+         * Minimum number of repetitions required
+         */
+        min_count: number;
+        /**
+         * Maximum number of repetitions allowed
+         */
+        max_count: number;
+        /**
+         * Assets within each repetition of this group
+         */
+        assets: {
+          /**
+           * Identifier for this asset within the group
+           */
+          asset_id: string;
+          /**
+           * Type of asset
+           */
+          asset_type: 'image' | 'video' | 'audio' | 'text' | 'html' | 'javascript' | 'url' | 'brand_manifest';
+          /**
+           * Purpose of this asset
+           */
+          asset_role?: string;
+          /**
+           * Whether this asset is required in each repetition
+           */
+          required?: boolean;
+          /**
+           * Technical requirements for this asset
+           */
+          requirements?: {
+            [k: string]: unknown;
+          };
+          [k: string]: unknown;
+        }[];
+        [k: string]: unknown;
+      }
+  )[];
+  /**
+   * Delivery method specifications (e.g., hosted, VAST, third-party tags)
+   */
+  delivery?: {
+    [k: string]: unknown;
+  };
+  /**
+   * List of universal macros supported by this format (e.g., MEDIA_BUY_ID, CACHEBUSTER, DEVICE_ID). Used for validation and developer tooling.
+   */
+  supported_macros?: string[];
+  /**
+   * For generative formats: array of format IDs that this format can generate. When a format accepts inputs like brand_manifest and message, this specifies what concrete output formats can be produced (e.g., a generative banner format might output standard image banner formats).
+   */
+  output_format_ids?: string[];
 }
 /**
  * Standard error structure for task-specific errors and warnings
  */
 
-// sync_creatives parameters
+// create_media_buy parameters
 /**
- * Request parameters for syncing creative assets with upsert semantics - supports bulk operations, patch updates, and assignment management
+ * Request parameters for creating a media buy
  */
-export interface SyncCreativesRequest {
+export type CreateMediaBuyRequest = CreateMediaBuyRequest1 & CreateMediaBuyRequest2;
+/**
+ * Package configuration for media buy creation
+ */
+export type PackageRequest = PackageRequest1 & PackageRequest2;
+export type PackageRequest1 =
+  | {
+      [k: string]: unknown;
+    }
+  | {
+      [k: string]: unknown;
+    };
+/**
+ * Budget pacing strategy
+ */
+export type Pacing = 'even' | 'asap' | 'front_loaded';
+/**
+ * VAST (Video Ad Serving Template) tag for third-party video ad serving
+ */
+export type VASTAsset = VASTAsset1 & VASTAsset2;
+export type VASTAsset2 =
+  | {
+      [k: string]: unknown;
+    }
+  | {
+      [k: string]: unknown;
+    };
+/**
+ * DAAST (Digital Audio Ad Serving Template) tag for third-party audio ad serving
+ */
+export type DAASTAsset = DAASTAsset1 & DAASTAsset2;
+export type DAASTAsset2 =
+  | {
+      [k: string]: unknown;
+    }
+  | {
+      [k: string]: unknown;
+    };
+/**
+ * Brand information manifest serving as the namespace and identity for this media buy. Provides brand context, assets, and product catalog. Can be provided inline or as a URL reference to a hosted manifest. Can be cached and reused across multiple requests.
+ */
+export type StartTiming = 'asap' | string;
+export type CreateMediaBuyRequest2 = {
+  [k: string]: unknown;
+};
+
+export interface CreateMediaBuyRequest1 {
   /**
-   * AdCP schema version for this request
+   * Buyer's reference identifier for this media buy
    */
-  adcp_version?: string;
+  buyer_ref: string;
   /**
-   * Array of creative assets to sync (create or update)
+   * Array of package configurations
+   */
+  packages: PackageRequest[];
+  brand_manifest?: BrandManifestReference;
+  /**
+   * DEPRECATED: Use brand_manifest instead. Legacy field for describing what is being promoted.
+   */
+  promoted_offering?: string;
+  /**
+   * Purchase order number for tracking
+   */
+  po_number?: string;
+  start_time: StartTiming;
+  /**
+   * Campaign end date/time in ISO 8601 format
+   */
+  end_time: string;
+  /**
+   * Total budget for this media buy. Currency is determined by the pricing_option_id selected in each package.
+   */
+  budget: number;
+  reporting_webhook?: PushNotificationConfig & {
+    /**
+     * Frequency for automated reporting delivery. Must be supported by all products in the media buy.
+     */
+    reporting_frequency: 'hourly' | 'daily' | 'monthly';
+    /**
+     * Optional list of metrics to include in webhook notifications. If omitted, all available metrics are included. Must be subset of product's available_metrics.
+     */
+    requested_metrics?: (
+      | 'impressions'
+      | 'spend'
+      | 'clicks'
+      | 'ctr'
+      | 'video_completions'
+      | 'completion_rate'
+      | 'conversions'
+      | 'viewability'
+      | 'engagement_rate'
+    )[];
+    [k: string]: unknown;
+  };
+}
+export interface PackageRequest2 {
+  /**
+   * Buyer's reference identifier for this package
+   */
+  buyer_ref?: string;
+  /**
+   * Product ID for this package (recommended - replaces deprecated products array)
+   */
+  product_id?: string;
+  /**
+   * @deprecated
+   * DEPRECATED: Use product_id instead. Array of product IDs - only first product will be used
+   */
+  products?: string[];
+  /**
+   * Array of format IDs that will be used for this package - must be supported by the product. If omitted, defaults to all formats supported by the product.
+   *
+   * @minItems 1
+   */
+  format_ids?: [FormatID, ...FormatID[]];
+  /**
+   * Budget allocation for this package in the media buy's currency
+   */
+  budget?: number;
+  pacing?: Pacing;
+  /**
+   * ID of the selected pricing option from the product's pricing_options array
+   */
+  pricing_option_id?: string;
+  /**
+   * Bid price for auction-based CPM pricing (required if using cpm-auction-option)
+   */
+  bid_price?: number;
+  targeting_overlay?: TargetingOverlay;
+  /**
+   * Creative IDs to assign to this package at creation time (references existing library creatives)
+   */
+  creative_ids?: string[];
+  /**
+   * Full creative objects to upload and assign to this package at creation time (alternative to creative_ids - creatives will be added to library). Supports both static and generative creatives.
    *
    * @maxItems 100
    */
-  creatives: CreativeAsset[];
+  creatives?: CreativeAsset[];
+}
+/**
+ * Structured format identifier with agent URL and format name
+ */
+export interface TargetingOverlay {
   /**
-   * When true, only provided fields are updated (partial update). When false, entire creative is replaced (full upsert).
+   * Restrict delivery to specific countries (ISO codes). Use for regulatory compliance or RCT testing.
    */
-  patch?: boolean;
+  geo_country_any_of?: string[];
   /**
-   * Optional bulk assignment of creatives to packages
+   * Restrict delivery to specific regions/states. Use for regulatory compliance or RCT testing.
    */
-  assignments?: {
-    /**
-     * Array of package IDs to assign this creative to
-     *
-     * This interface was referenced by `undefined`'s JSON-Schema definition
-     * via the `patternProperty` "^[a-zA-Z0-9_-]+$".
-     */
-    [k: string]: string[];
-  };
+  geo_region_any_of?: string[];
   /**
-   * When true, creatives not included in this sync will be archived. Use with caution for full library replacement.
+   * Restrict delivery to specific metro areas (DMA codes). Use for regulatory compliance or RCT testing.
    */
-  delete_missing?: boolean;
+  geo_metro_any_of?: string[];
   /**
-   * When true, preview changes without applying them. Returns what would be created/updated/deleted.
+   * Restrict delivery to specific postal/ZIP codes. Use for regulatory compliance or RCT testing.
    */
-  dry_run?: boolean;
+  geo_postal_code_any_of?: string[];
+  frequency_cap?: FrequencyCap;
+}
+/**
+ * Frequency capping settings for package-level application
+ */
+export interface FrequencyCap {
   /**
-   * Validation strictness. 'strict' fails entire sync on any validation error. 'lenient' processes valid creatives and reports errors.
+   * Minutes to suppress after impression
    */
-  validation_mode?: 'strict' | 'lenient';
-  push_notification_config?: PushNotificationConfig;
+  suppress_minutes: number;
 }
 /**
  * Creative asset for upload to library - supports static assets, generative formats, and third-party snippets
@@ -1019,7 +1419,7 @@ export interface CreativeAsset {
    * Human-readable creative name
    */
   name: string;
-  format_id: FormatID;
+  format_id: FormatID1;
   /**
    * Assets required by the format, keyed by asset_role
    */
@@ -1036,6 +1436,8 @@ export interface CreativeAsset {
       | HTMLAsset
       | CSSAsset
       | JavaScriptAsset
+      | VASTAsset
+      | DAASTAsset
       | PromotedOfferingsAsset
       | URLAsset;
   };
@@ -1068,9 +1470,9 @@ export interface CreativeAsset {
   approved?: boolean;
 }
 /**
- * Format identifier specifying which format this creative conforms to
+ * Structured format identifier with agent URL and format name
  */
-export interface FormatID {
+export interface FormatID1 {
   /**
    * URL of the agent that defines this format (e.g., 'https://creatives.adcontextprotocol.org' for standard formats, or 'https://publisher.com/.well-known/adcp/sales' for custom formats)
    */
@@ -1218,6 +1620,93 @@ export interface JavaScriptAsset {
    */
   module_type?: 'esm' | 'commonjs' | 'script';
 }
+export interface VASTAsset1 {
+  asset_type?: 'vast';
+  /**
+   * URL endpoint that returns VAST XML
+   */
+  url?: string;
+  /**
+   * Inline VAST XML content
+   */
+  content?: string;
+  /**
+   * VAST specification version
+   */
+  vast_version?: '2.0' | '3.0' | '4.0' | '4.1' | '4.2';
+  /**
+   * Whether VPAID (Video Player-Ad Interface Definition) is supported
+   */
+  vpaid_enabled?: boolean;
+  /**
+   * Maximum allowed wrapper/redirect depth
+   */
+  max_wrapper_depth?: number;
+  /**
+   * Expected video duration in milliseconds (if known)
+   */
+  duration_ms?: number;
+  /**
+   * Tracking events supported by this VAST tag
+   */
+  tracking_events?: (
+    | 'start'
+    | 'firstQuartile'
+    | 'midpoint'
+    | 'thirdQuartile'
+    | 'complete'
+    | 'impression'
+    | 'click'
+    | 'pause'
+    | 'resume'
+    | 'skip'
+    | 'mute'
+    | 'unmute'
+    | 'fullscreen'
+    | 'exitFullscreen'
+    | 'playerExpand'
+    | 'playerCollapse'
+  )[];
+}
+export interface DAASTAsset1 {
+  asset_type?: 'daast';
+  /**
+   * URL endpoint that returns DAAST XML
+   */
+  url?: string;
+  /**
+   * Inline DAAST XML content
+   */
+  content?: string;
+  /**
+   * DAAST specification version
+   */
+  daast_version?: '1.0' | '1.1';
+  /**
+   * Expected audio duration in milliseconds (if known)
+   */
+  duration_ms?: number;
+  /**
+   * Tracking events supported by this DAAST tag
+   */
+  tracking_events?: (
+    | 'start'
+    | 'firstQuartile'
+    | 'midpoint'
+    | 'thirdQuartile'
+    | 'complete'
+    | 'impression'
+    | 'pause'
+    | 'resume'
+    | 'skip'
+    | 'mute'
+    | 'unmute'
+  )[];
+  /**
+   * Whether companion display ads are included
+   */
+  companion_ads?: boolean;
+}
 /**
  * Reference to promoted offerings specification
  */
@@ -1259,32 +1748,123 @@ export interface URLAsset {
    */
   description?: string;
 }
+export interface PushNotificationConfig {
+  /**
+   * Webhook endpoint URL for task status notifications
+   */
+  url: string;
+  /**
+   * Optional client-provided token for webhook validation. Echoed back in webhook payload to validate request authenticity.
+   */
+  token?: string;
+  /**
+   * Authentication configuration for webhook delivery (A2A-compatible)
+   */
+  authentication: {
+    /**
+     * Array of authentication schemes. Supported: ['Bearer'] for simple token auth, ['HMAC-SHA256'] for signature verification (recommended for production)
+     *
+     * @minItems 1
+     * @maxItems 1
+     */
+    schemes: ['Bearer' | 'HMAC-SHA256'];
+    /**
+     * Credentials for authentication. For Bearer: token sent in Authorization header. For HMAC-SHA256: shared secret used to generate signature. Minimum 32 characters. Exchanged out-of-band during onboarding.
+     */
+    credentials: string;
+  };
+}
+
+
+// create_media_buy response
 /**
- * Optional webhook configuration for async sync notifications. Publisher will send webhook when sync completes if operation takes longer than immediate response time (typically for large bulk operations or manual approval/HITL).
+ * Response payload for create_media_buy task
+ */
+export interface CreateMediaBuyResponse {
+  /**
+   * Publisher's unique identifier for the created media buy
+   */
+  media_buy_id?: string;
+  /**
+   * Buyer's reference identifier for this media buy
+   */
+  buyer_ref: string;
+  /**
+   * ISO 8601 timestamp for creative upload deadline
+   */
+  creative_deadline?: string;
+  /**
+   * Array of created packages
+   */
+  packages?: {
+    /**
+     * Publisher's unique identifier for the package
+     */
+    package_id: string;
+    /**
+     * Buyer's reference identifier for the package
+     */
+    buyer_ref: string;
+  }[];
+  /**
+   * Task-specific errors and warnings (e.g., partial package creation failures)
+   */
+  errors?: Error[];
+}
+/**
+ * Standard error structure for task-specific errors and warnings
+ */
+
+// sync_creatives parameters
+/**
+ * VAST (Video Ad Serving Template) tag for third-party video ad serving
+ */
+export interface SyncCreativesRequest {
+  /**
+   * Array of creative assets to sync (create or update)
+   *
+   * @maxItems 100
+   */
+  creatives: CreativeAsset[];
+  /**
+   * When true, only provided fields are updated (partial update). When false, entire creative is replaced (full upsert).
+   */
+  patch?: boolean;
+  /**
+   * Optional bulk assignment of creatives to packages
+   */
+  assignments?: {
+    /**
+     * Array of package IDs to assign this creative to
+     *
+     * This interface was referenced by `undefined`'s JSON-Schema definition
+     * via the `patternProperty` "^[a-zA-Z0-9_-]+$".
+     */
+    [k: string]: string[];
+  };
+  /**
+   * When true, creatives not included in this sync will be archived. Use with caution for full library replacement.
+   */
+  delete_missing?: boolean;
+  /**
+   * When true, preview changes without applying them. Returns what would be created/updated/deleted.
+   */
+  dry_run?: boolean;
+  /**
+   * Validation strictness. 'strict' fails entire sync on any validation error. 'lenient' processes valid creatives and reports errors.
+   */
+  validation_mode?: 'strict' | 'lenient';
+  push_notification_config?: PushNotificationConfig;
+}
+/**
+ * Creative asset for upload to library - supports static assets, generative formats, and third-party snippets
  */
 
 // sync_creatives response
 /**
- * Current task state - 'completed' for immediate success, 'working' for operations under 120s, 'submitted' for long-running operations
+ * Response from creative sync operation with results for each creative
  */
 export interface SyncCreativesResponse {
-  /**
-   * AdCP schema version used for this response
-   */
-  adcp_version: string;
-  /**
-   * Human-readable result message (e.g., 'Synced 3 creatives: 2 created, 1 updated')
-   */
-  message: string;
-  /**
-   * Context ID for tracking async operations and conversational approval workflows
-   */
-  context_id?: string;
-  status: TaskStatus;
-  /**
-   * Unique identifier for tracking this async operation (present for submitted/working status)
-   */
-  task_id?: string;
   /**
    * Whether this was a dry run (no actual changes made)
    */
@@ -1354,19 +1934,11 @@ export type CreativeStatus = 'processing' | 'approved' | 'rejected' | 'pending_r
  * Status of a creative asset
  */
 export type CreativeStatus1 = 'processing' | 'approved' | 'rejected' | 'pending_review';
-/**
- * Filter by third-party snippet type
- */
-export type SnippetType = 'vast_xml' | 'vast_url' | 'html' | 'javascript' | 'iframe' | 'daast_url';
 
 /**
  * Request parameters for querying creative assets from the centralized library with filtering, sorting, and pagination
  */
 export interface ListCreativesRequest {
-  /**
-   * AdCP schema version for this request
-   */
-  adcp_version?: string;
   /**
    * Filter criteria for querying creatives
    */
@@ -1430,7 +2002,6 @@ export interface ListCreativesRequest {
      * Filter for unassigned creatives when true, assigned creatives when false
      */
     unassigned?: boolean;
-    snippet_type?: SnippetType;
     /**
      * Filter creatives that have performance data when true
      */
@@ -1510,18 +2081,6 @@ export type SubAsset2 =
  */
 export interface ListCreativesResponse {
   /**
-   * AdCP schema version used for this response
-   */
-  adcp_version: string;
-  /**
-   * Human-readable result message
-   */
-  message: string;
-  /**
-   * Context ID for tracking related operations
-   */
-  context_id?: string;
-  /**
    * Summary of the query that was executed
    */
   query_summary: {
@@ -1583,10 +2142,7 @@ export interface ListCreativesResponse {
      * Human-readable creative name
      */
     name: string;
-    /**
-     * Creative format type
-     */
-    format: string;
+    format_id: FormatID;
     status: CreativeStatus;
     /**
      * When the creative was uploaded to the library
@@ -1601,10 +2157,26 @@ export interface ListCreativesResponse {
      */
     media_url?: string;
     /**
-     * Third-party tag, VAST XML, or code snippet (for third-party assets)
+     * Assets for this creative, keyed by asset_role
      */
-    snippet?: string;
-    snippet_type?: SnippetType;
+    assets?: {
+      /**
+       * This interface was referenced by `undefined`'s JSON-Schema definition
+       * via the `patternProperty` "^[a-zA-Z0-9_-]+$".
+       */
+      [k: string]:
+        | ImageAsset
+        | VideoAsset
+        | AudioAsset
+        | TextAsset
+        | HTMLAsset
+        | CSSAsset
+        | JavaScriptAsset
+        | VASTAsset
+        | DAASTAsset
+        | PromotedOfferingsAsset
+        | URLAsset;
+    };
     /**
      * Landing page URL for the creative
      */
@@ -1723,6 +2295,9 @@ export interface ListCreativesResponse {
     archived?: number;
   };
 }
+/**
+ * Format identifier specifying which format this creative conforms to
+ */
 export interface SubAsset1 {
   /**
    * Type of asset. Common types: headline, body_text, thumbnail_image, product_image, featured_image, logo, cta_text, price_text, sponsor_name, author_name, click_url
@@ -1757,10 +2332,6 @@ export type UpdateMediaBuyRequest2 = {
 
 export interface UpdateMediaBuyRequest1 {
   /**
-   * AdCP schema version for this request
-   */
-  adcp_version?: string;
-  /**
    * Publisher's ID of the media buy to update
    */
   media_buy_id?: string;
@@ -1777,7 +2348,10 @@ export interface UpdateMediaBuyRequest1 {
    * New end date/time in ISO 8601 format
    */
   end_time?: string;
-  budget?: Budget;
+  /**
+   * Updated total budget for this media buy. Currency is determined by the pricing_option_id selected in each package.
+   */
+  budget?: number;
   /**
    * Package-specific updates
    */
@@ -1792,23 +2366,14 @@ export interface UpdateMediaBuyRequest1 {
   push_notification_config?: PushNotificationConfig;
 }
 /**
- * Budget configuration for a media buy or package
+ * Optional webhook configuration for async update notifications. Publisher will send webhook when update completes if operation takes longer than immediate response time.
  */
 
 // update_media_buy response
 /**
- * Current task state - 'completed' for immediate success, 'working' for operations under 120s, 'submitted' for long-running operations, 'input-required' if approval needed
+ * Response payload for update_media_buy task
  */
 export interface UpdateMediaBuyResponse {
-  /**
-   * AdCP schema version used for this response
-   */
-  adcp_version: string;
-  status: TaskStatus;
-  /**
-   * Unique identifier for tracking this async operation (present for submitted/working status)
-   */
-  task_id?: string;
   /**
    * Publisher's identifier for the media buy
    */
@@ -1849,10 +2414,6 @@ export interface UpdateMediaBuyResponse {
  */
 export interface GetMediaBuyDeliveryRequest {
   /**
-   * AdCP schema version for this request
-   */
-  adcp_version?: string;
-  /**
    * Array of publisher media buy IDs to get delivery data for
    */
   media_buy_ids?: string[];
@@ -1879,13 +2440,14 @@ export interface GetMediaBuyDeliveryRequest {
 
 // get_media_buy_delivery response
 /**
+ * Pricing model used for this media buy
+ */
+export type PricingModel = 'cpm' | 'vcpm' | 'cpc' | 'cpcv' | 'cpv' | 'cpp' | 'flat_rate';
+
+/**
  * Response payload for get_media_buy_delivery task
  */
 export interface GetMediaBuyDeliveryResponse {
-  /**
-   * AdCP schema version used for this response
-   */
-  adcp_version: string;
   /**
    * Type of webhook notification (only present in webhook deliveries): scheduled = regular periodic update, final = campaign completed, delayed = data not yet available, adjusted = resending period with updated data
    */
@@ -1965,10 +2527,6 @@ export interface GetMediaBuyDeliveryResponse {
      */
     status: 'pending' | 'active' | 'paused' | 'completed' | 'failed' | 'reporting_delayed';
     /**
-     * Human-readable message (typically present when status is reporting_delayed or failed)
-     */
-    message?: string;
-    /**
      * When delayed data is expected to be available (only present when status is reporting_delayed)
      */
     expected_availability?: string;
@@ -1976,39 +2534,18 @@ export interface GetMediaBuyDeliveryResponse {
      * Indicates this delivery contains updated data for a previously reported period. Buyer should replace previous period data with these totals.
      */
     is_adjusted?: boolean;
-    /**
-     * Aggregate metrics for this media buy across all packages
-     */
-    totals: {
+    pricing_model?: PricingModel;
+    totals: DeliveryMetrics & {
       /**
-       * Total impressions delivered
+       * Effective rate paid per unit based on pricing_model (e.g., actual CPM for 'cpm', actual cost per completed view for 'cpcv', actual cost per point for 'cpp')
        */
-      impressions: number;
-      /**
-       * Total amount spent
-       */
-      spend: number;
-      /**
-       * Total clicks (if applicable)
-       */
-      clicks?: number;
-      /**
-       * Click-through rate (clicks/impressions)
-       */
-      ctr?: number;
-      /**
-       * Total video completions (if applicable)
-       */
-      video_completions?: number;
-      /**
-       * Video completion rate (completions/impressions)
-       */
-      completion_rate?: number;
+      effective_rate?: number;
+      [k: string]: unknown;
     };
     /**
      * Metrics broken down by package
      */
-    by_package: {
+    by_package: (DeliveryMetrics & {
       /**
        * Publisher's package identifier
        */
@@ -2018,26 +2555,11 @@ export interface GetMediaBuyDeliveryResponse {
        */
       buyer_ref?: string;
       /**
-       * Package impressions
-       */
-      impressions: number;
-      /**
-       * Package spend
-       */
-      spend: number;
-      /**
-       * Package clicks
-       */
-      clicks?: number;
-      /**
-       * Package video completions
-       */
-      video_completions?: number;
-      /**
        * Delivery pace (1.0 = on track, <1.0 = behind, >1.0 = ahead)
        */
       pacing_index?: number;
-    }[];
+      [k: string]: unknown;
+    })[];
     /**
      * Day-by-day delivery
      */
@@ -2062,6 +2584,140 @@ export interface GetMediaBuyDeliveryResponse {
   errors?: Error[];
 }
 /**
+ * Standard delivery metrics that can be reported at media buy, package, or creative level
+ */
+export interface DeliveryMetrics {
+  /**
+   * Impressions delivered
+   */
+  impressions?: number;
+  /**
+   * Amount spent
+   */
+  spend?: number;
+  /**
+   * Total clicks
+   */
+  clicks?: number;
+  /**
+   * Click-through rate (clicks/impressions)
+   */
+  ctr?: number;
+  /**
+   * Views at threshold (for CPV)
+   */
+  views?: number;
+  /**
+   * 100% completions (for CPCV)
+   */
+  completed_views?: number;
+  /**
+   * DEPRECATED: Use completed_views instead
+   */
+  video_completions?: number;
+  /**
+   * Completion rate (completed_views/impressions)
+   */
+  completion_rate?: number;
+  /**
+   * Conversions (reserved for future CPA pricing support)
+   */
+  conversions?: number;
+  /**
+   * Leads generated (reserved for future CPL pricing support)
+   */
+  leads?: number;
+  /**
+   * Gross Rating Points delivered (for CPP)
+   */
+  grps?: number;
+  /**
+   * Unique reach - units depend on measurement provider (e.g., individuals, households, devices, cookies). See delivery_measurement.provider for methodology.
+   */
+  reach?: number;
+  /**
+   * Average frequency per individual (typically measured over campaign duration, but can vary by measurement provider)
+   */
+  frequency?: number;
+  /**
+   * Video quartile completion data
+   */
+  quartile_data?: {
+    /**
+     * 25% completion views
+     */
+    q1_views?: number;
+    /**
+     * 50% completion views
+     */
+    q2_views?: number;
+    /**
+     * 75% completion views
+     */
+    q3_views?: number;
+    /**
+     * 100% completion views
+     */
+    q4_views?: number;
+    [k: string]: unknown;
+  };
+  /**
+   * DOOH-specific metrics (only included for DOOH campaigns)
+   */
+  dooh_metrics?: {
+    /**
+     * Number of times ad played in rotation
+     */
+    loop_plays?: number;
+    /**
+     * Number of unique screens displaying the ad
+     */
+    screens_used?: number;
+    /**
+     * Total display time in seconds
+     */
+    screen_time_seconds?: number;
+    /**
+     * Actual share of voice delivered (0.0 to 1.0)
+     */
+    sov_achieved?: number;
+    /**
+     * Explanation of how DOOH impressions were calculated
+     */
+    calculation_notes?: string;
+    /**
+     * Per-venue performance breakdown
+     */
+    venue_breakdown?: {
+      /**
+       * Venue identifier
+       */
+      venue_id: string;
+      /**
+       * Human-readable venue name
+       */
+      venue_name?: string;
+      /**
+       * Venue type (e.g., 'airport', 'transit', 'retail', 'billboard')
+       */
+      venue_type?: string;
+      /**
+       * Impressions delivered at this venue
+       */
+      impressions: number;
+      /**
+       * Loop plays at this venue
+       */
+      loop_plays?: number;
+      /**
+       * Number of screens used at this venue
+       */
+      screens_used?: number;
+    }[];
+  };
+  [k: string]: unknown;
+}
+/**
  * Standard error structure for task-specific errors and warnings
  */
 
@@ -2070,10 +2726,6 @@ export interface GetMediaBuyDeliveryResponse {
  * Request parameters for discovering all properties this agent is authorized to represent
  */
 export interface ListAuthorizedPropertiesRequest {
-  /**
-   * AdCP schema version for this request
-   */
-  adcp_version?: string;
   /**
    * Filter properties by specific tags (optional)
    */
@@ -2100,10 +2752,6 @@ export type AdvertisingChannels =
  * Response payload for list_authorized_properties task
  */
 export interface ListAuthorizedPropertiesResponse {
-  /**
-   * AdCP schema version used for this response
-   */
-  adcp_version: string;
   /**
    * Array of all properties this agent is authorized to represent
    */
@@ -2140,6 +2788,10 @@ export interface ListAuthorizedPropertiesResponse {
    */
   portfolio_description?: string;
   /**
+   * Publisher's advertising content policies, restrictions, and guidelines in natural language. May include prohibited categories, blocked advertisers, restricted tactics, brand safety requirements, or links to full policy documentation.
+   */
+  advertising_policies?: string;
+  /**
    * Task-specific errors and warnings (e.g., property availability issues)
    */
   errors?: Error[];
@@ -2153,10 +2805,6 @@ export interface ListAuthorizedPropertiesResponse {
  * Request payload for provide_performance_feedback task
  */
 export interface ProvidePerformanceFeedbackRequest {
-  /**
-   * AdCP schema version for this request
-   */
-  adcp_version?: string;
   /**
    * Publisher's media buy identifier
    */
@@ -2211,17 +2859,9 @@ export interface ProvidePerformanceFeedbackRequest {
  */
 export interface ProvidePerformanceFeedbackResponse {
   /**
-   * AdCP schema version used for this response
-   */
-  adcp_version: string;
-  /**
    * Whether the performance feedback was successfully received
    */
   success: boolean;
-  /**
-   * Optional human-readable message about the feedback processing
-   */
-  message?: string;
   /**
    * Task-specific errors and warnings (e.g., invalid measurement period, missing campaign data)
    */
@@ -2236,10 +2876,6 @@ export interface ProvidePerformanceFeedbackResponse {
  * Request parameters for discovering signals based on description
  */
 export interface GetSignalsRequest {
-  /**
-   * AdCP schema version for this request
-   */
-  adcp_version?: string;
   /**
    * Natural language description of the desired signals
    */
@@ -2303,18 +2939,6 @@ export interface GetSignalsRequest {
  * Response payload for get_signals task
  */
 export interface GetSignalsResponse {
-  /**
-   * AdCP schema version used for this response
-   */
-  adcp_version: string;
-  /**
-   * Human-readable summary of the signal discovery results
-   */
-  message: string;
-  /**
-   * Session continuity identifier for follow-up requests
-   */
-  context_id: string;
   /**
    * Array of matching signals
    */
@@ -2401,10 +3025,6 @@ export interface GetSignalsResponse {
  */
 export interface ActivateSignalRequest {
   /**
-   * AdCP schema version for this request
-   */
-  adcp_version?: string;
-  /**
    * The universal identifier for the signal to activate
    */
   signal_agent_segment_id: string;
@@ -2421,26 +3041,9 @@ export interface ActivateSignalRequest {
 
 // activate_signal response
 /**
- * Current activation state: 'submitted' (pending), 'working' (processing), 'completed' (deployed), 'failed', 'input-required' (needs auth), etc.
+ * Response payload for activate_signal task
  */
 export interface ActivateSignalResponse {
-  /**
-   * AdCP schema version used for this response
-   */
-  adcp_version: string;
-  /**
-   * Human-readable summary of the activation status
-   */
-  message: string;
-  /**
-   * Session continuity identifier for tracking progress
-   */
-  context_id: string;
-  /**
-   * Unique identifier for tracking the activation
-   */
-  task_id: string;
-  status: TaskStatus;
   /**
    * The platform-specific ID to use once activated
    */
