@@ -32,7 +32,7 @@ async function demonstrateGenerativeCreatives() {
         creative_id: `static_banner_${Date.now()}`,
         name: 'Static Display Banner 300x250',
         format_id: {
-          agent_url: 'https://creatives.adcontextprotocol.org',
+          agent_url: 'https://creative.adcontextprotocol.org',
           id: 'display_300x250'
         },
         assets: {
@@ -67,7 +67,7 @@ async function demonstrateGenerativeCreatives() {
         creative_id: `gen_banner_${Date.now()}`,
         name: 'AI-Generated Display Banner',
         format_id: {
-          agent_url: 'https://creatives.adcontextprotocol.org',
+          agent_url: 'https://creative.adcontextprotocol.org',
           id: 'display_300x250_generative'
         },
         assets: {
@@ -121,7 +121,7 @@ async function demonstrateGenerativeCreatives() {
         creative_id: 'gen_banner_12345', // Existing creative ID from previous sync
         name: 'AI-Generated Display Banner',
         format_id: {
-          agent_url: 'https://creatives.adcontextprotocol.org',
+          agent_url: 'https://creative.adcontextprotocol.org',
           id: 'display_300x250_generative'
         },
         assets: {
@@ -154,7 +154,7 @@ async function demonstrateGenerativeCreatives() {
         creative_id: 'gen_banner_12345',
         name: 'AI-Generated Display Banner',
         format_id: {
-          agent_url: 'https://creatives.adcontextprotocol.org',
+          agent_url: 'https://creative.adcontextprotocol.org',
           id: 'display_300x250_generative'
         },
         assets: {

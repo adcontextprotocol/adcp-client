@@ -24,7 +24,7 @@ async function syncWonderstruckCreative() {
         creative_id: `wonderstruck_display_${Date.now()}`,
         name: 'Wonderstruck Display 300x250',
         format_id: {
-          agent_url: 'https://creatives.adcontextprotocol.org',
+          agent_url: 'https://creative.adcontextprotocol.org',
           id: 'display_300x250'
         },
         assets: {
