@@ -1,12 +1,12 @@
 import axios from 'axios';
-import { 
-  AdAgentsJson, 
-  AuthorizedAgent, 
-  AdAgentsValidationResult, 
-  ValidationError, 
+import {
+  AdAgentsJson,
+  AuthorizedAgent,
+  AdAgentsValidationResult,
+  ValidationError,
   ValidationWarning,
   AgentCardValidationResult
-} from './types/adcp';
+} from './lib/types/adcp';
 
 export class AdAgentsManager {
   

@@ -3152,7 +3152,7 @@
         // ADCP Tool Definitions (Official 6 tools from ADCP specification)
         const ADCP_TOOLS = {
             get_products: {
-                params: ['brief', 'promoted_offering'],
+                params: ['brief', 'brand_manifest'],
                 required: ['brief'],
                 description: 'Discover available advertising products'
             },
@@ -3321,7 +3321,7 @@
         
         async function loadProducts() {
             const selectedAgentId = document.getElementById('agent-selector').value;
-            const promotedOffering = document.getElementById('promoted-offering-refresh').value || 'gourmet robot food';
+            const brandManifest = document.getElementById('promoted-offering-refresh').value || 'gourmet robot food';
 
             // Get filter values
             const deliveryType = document.getElementById('delivery-type-filter').value;
@@ -3342,7 +3342,7 @@
             // Build AdCP-compliant parameters
             const params = {
                 brief: 'Discover available advertising products for testing',
-                promoted_offering: promotedOffering,
+                brand_manifest: brandManifest,
                 adcp_version: '1.6.0'
             };
 
@@ -3632,9 +3632,9 @@
         
         async function refreshProducts() {
             const selectedAgentId = document.getElementById('agent-selector').value;
-            const promotedOffering = document.getElementById('promoted-offering-refresh').value || 'gourmet robot food';
+            const brandManifest = document.getElementById('promoted-offering-refresh').value || 'gourmet robot food';
             logEvent('info', `Selected agent ID: ${selectedAgentId}`);
-            logEvent('info', `Promoted offering: ${promotedOffering}`);
+            logEvent('info', `Promoted offering: ${brandManifest}`);
             
             const selectedAgent = agents.find(a => a.id === selectedAgentId);
             if (!selectedAgent) {
@@ -3651,12 +3651,12 @@
             
             logEvent('info', `Found agent: ${selectedAgent.name}, has auth token: ${!!selectedAgent.auth_token}`);
             logEvent('info', `Agent config: ${JSON.stringify(selectedAgent, null, 2)}`);
-            logEvent('info', 'Refreshing products with promoted offering: ' + promotedOffering);
+            logEvent('info', 'Refreshing products with promoted offering: ' + brandManifest);
             
             try {
                 const result = await callADCPTool(selectedAgent, 'get_products', {
                     brief: 'Discover available advertising products for testing',
-                    promoted_offering: promotedOffering
+                    brand_manifest: brandManifest
                 });
                 
                 if (result && result.products) {
@@ -4439,7 +4439,7 @@
             const campaignName = document.getElementById('campaign-name').value || 'Untitled Campaign';
             const buyerRef = document.getElementById('buyer-ref').value;
             const poNumber = document.getElementById('po-number').value;
-            const promotedOffering = document.getElementById('promoted-offering').value;
+            const brandManifest = document.getElementById('promoted-offering').value;
             const budget = parseFloat(document.getElementById('campaign-budget').value) || 0;
             const currency = document.getElementById('budget-currency').value || 'USD';
             const dailyCap = document.getElementById('daily-cap').value;
@@ -4466,7 +4466,7 @@
                 alert('PO Number is required');
                 return;
             }
-            if (!promotedOffering) {
+            if (!brandManifest) {
                 logEvent('error', 'Advertiser/Offering Description is required');
                 alert('Advertiser/Offering Description is required');
                 return;
@@ -4531,7 +4531,7 @@
                 const createMediaBuyParams = {
                     buyer_ref: buyerRef,
                     packages: packages,
-                    promoted_offering: promotedOffering,
+                    brand_manifest: brandManifest,
                     po_number: poNumber,
                     start_time: startDate ? new Date(startDate).toISOString() : new Date().toISOString(),
                     end_time: endDate ? new Date(endDate).toISOString() : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),

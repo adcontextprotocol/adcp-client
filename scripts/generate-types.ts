@@ -229,7 +229,7 @@ function loadCoreSchema(schemaName: string): any {
 
 async function generateToolTypes(tools: ToolDefinition[]) {
   console.log('🔧 Generating tool parameter and response types...');
-  
+
   let toolTypes = '// Tool Parameter and Response Types\n';
   toolTypes += '// Generated from official AdCP schemas\n\n';
 

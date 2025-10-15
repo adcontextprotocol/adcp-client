@@ -1,6 +1,9 @@
 // AdCP Types - Based on official AdCP specification
 // https://adcontextprotocol.org/docs/reference/data-models
 
+// Import structured FormatID from generated core types
+import type { FormatID } from './core.generated';
+
 export interface MediaBuy {
   id: string;
   campaign_name?: string;
@@ -70,7 +73,7 @@ export interface AdvertisingProduct {
 }
 
 export interface CreativeFormat {
-  format_id: string;
+  format_id: FormatID;
   name: string;
   dimensions: {
     width: number;
@@ -175,7 +178,7 @@ export interface AgentConfig {
 export interface TestRequest {
   agents: AgentConfig[];
   brief: string;
-  promoted_offering?: string;
+  brand_manifest?: string; // Replaces deprecated promoted_offering
   tool_name?: string;
 }
 
@@ -299,7 +302,7 @@ export interface ListCreativesRequest {
 }
 
 export interface CreativeFilters {
-  format?: string | string[];
+  format?: FormatID | FormatID[];
   type?: ('image' | 'video' | 'html' | 'native') | ('image' | 'video' | 'html' | 'native')[];
   status?: string | string[];
   tags?: string | string[];

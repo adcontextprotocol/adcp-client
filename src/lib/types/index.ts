@@ -19,3 +19,6 @@ export type {
   ListCreativesRequest,
   ListCreativesResponse
 } from './adcp';
+
+// Re-export FormatID from generated core types
+export type { FormatID } from './core.generated';

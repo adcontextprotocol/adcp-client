@@ -3,10 +3,6 @@
 
 // get_products parameters
 /**
- * Request parameters for discovering available advertising products
- */
-export type GetProductsRequest = GetProductsRequest1 & GetProductsRequest2;
-/**
  * Brand information manifest providing brand context, assets, and product catalog. Can be provided inline or as a URL reference to a hosted manifest.
  */
 export type BrandManifestReference = BrandManifest | string;
@@ -21,20 +17,16 @@ export type BrandManifest1 = {
  * Type of inventory delivery
  */
 export type DeliveryType = 'guaranteed' | 'non_guaranteed';
-export type GetProductsRequest2 = {
-  [k: string]: unknown;
-};
 
-export interface GetProductsRequest1 {
+/**
+ * Request parameters for discovering available advertising products
+ */
+export interface GetProductsRequest {
   /**
    * Natural language description of campaign requirements
    */
   brief?: string;
-  /**
-   * DEPRECATED: Use brand_manifest instead. Legacy field for describing what is being promoted.
-   */
-  promoted_offering?: string;
-  brand_manifest?: BrandManifestReference;
+  brand_manifest: BrandManifestReference;
   /**
    * Structured filters for product discovery
    */
@@ -995,10 +987,7 @@ export interface ListCreativeFormatsResponse {
  * Represents a creative format with its requirements
  */
 export interface Format {
-  /**
-   * Unique identifier for the format
-   */
-  format_id: string;
+  format_id: FormatID;
   /**
    * Base URL of the agent that provides this format (authoritative source). E.g., 'https://reference.adcp.org', 'https://dco.example.com'
    */
@@ -1226,28 +1215,26 @@ export interface Format {
   /**
    * For generative formats: array of format IDs that this format can generate. When a format accepts inputs like brand_manifest and message, this specifies what concrete output formats can be produced (e.g., a generative banner format might output standard image banner formats).
    */
-  output_format_ids?: string[];
+  output_format_ids?: FormatID1[];
+}
+/**
+ * Structured format identifier with agent URL and format name
+ */
+export interface FormatID1 {
+  /**
+   * URL of the agent that defines this format (e.g., 'https://creatives.adcontextprotocol.org' for standard formats, or 'https://publisher.com/.well-known/adcp/sales' for custom formats)
+   */
+  agent_url: string;
+  /**
+   * Format identifier within the agent's namespace (e.g., 'display_300x250', 'video_standard_30s')
+   */
+  id: string;
 }
 /**
  * Standard error structure for task-specific errors and warnings
  */
 
 // create_media_buy parameters
-/**
- * Request parameters for creating a media buy
- */
-export type CreateMediaBuyRequest = CreateMediaBuyRequest1 & CreateMediaBuyRequest2;
-/**
- * Package configuration for media buy creation
- */
-export type PackageRequest = PackageRequest1 & PackageRequest2;
-export type PackageRequest1 =
-  | {
-      [k: string]: unknown;
-    }
-  | {
-      [k: string]: unknown;
-    };
 /**
  * Budget pacing strategy
  */
@@ -1278,11 +1265,11 @@ export type DAASTAsset2 =
  * Brand information manifest serving as the namespace and identity for this media buy. Provides brand context, assets, and product catalog. Can be provided inline or as a URL reference to a hosted manifest. Can be cached and reused across multiple requests.
  */
 export type StartTiming = 'asap' | string;
-export type CreateMediaBuyRequest2 = {
-  [k: string]: unknown;
-};
 
-export interface CreateMediaBuyRequest1 {
+/**
+ * Request parameters for creating a media buy
+ */
+export interface CreateMediaBuyRequest {
   /**
    * Buyer's reference identifier for this media buy
    */
@@ -1291,11 +1278,7 @@ export interface CreateMediaBuyRequest1 {
    * Array of package configurations
    */
   packages: PackageRequest[];
-  brand_manifest?: BrandManifestReference;
-  /**
-   * DEPRECATED: Use brand_manifest instead. Legacy field for describing what is being promoted.
-   */
-  promoted_offering?: string;
+  brand_manifest: BrandManifestReference;
   /**
    * Purchase order number for tracking
    */
@@ -1331,20 +1314,18 @@ export interface CreateMediaBuyRequest1 {
     [k: string]: unknown;
   };
 }
-export interface PackageRequest2 {
+/**
+ * Package configuration for media buy creation
+ */
+export interface PackageRequest {
   /**
    * Buyer's reference identifier for this package
    */
-  buyer_ref?: string;
+  buyer_ref: string;
   /**
-   * Product ID for this package (recommended - replaces deprecated products array)
+   * Product ID for this package
    */
-  product_id?: string;
-  /**
-   * @deprecated
-   * DEPRECATED: Use product_id instead. Array of product IDs - only first product will be used
-   */
-  products?: string[];
+  product_id: string;
   /**
    * Array of format IDs that will be used for this package - must be supported by the product. If omitted, defaults to all formats supported by the product.
    *
@@ -1354,12 +1335,12 @@ export interface PackageRequest2 {
   /**
    * Budget allocation for this package in the media buy's currency
    */
-  budget?: number;
+  budget: number;
   pacing?: Pacing;
   /**
    * ID of the selected pricing option from the product's pricing_options array
    */
-  pricing_option_id?: string;
+  pricing_option_id: string;
   /**
    * Bid price for auction-based CPM pricing (required if using cpm-auction-option)
    */
@@ -1471,19 +1452,6 @@ export interface CreativeAsset {
 }
 /**
  * Structured format identifier with agent URL and format name
- */
-export interface FormatID1 {
-  /**
-   * URL of the agent that defines this format (e.g., 'https://creatives.adcontextprotocol.org' for standard formats, or 'https://publisher.com/.well-known/adcp/sales' for custom formats)
-   */
-  agent_url: string;
-  /**
-   * Format identifier within the agent's namespace (e.g., 'display_300x250', 'video_standard_30s')
-   */
-  id: string;
-}
-/**
- * Image asset with URL and dimensions
  */
 export interface ImageAsset {
   asset_type: 'image';
@@ -2611,10 +2579,6 @@ export interface DeliveryMetrics {
    * 100% completions (for CPCV)
    */
   completed_views?: number;
-  /**
-   * DEPRECATED: Use completed_views instead
-   */
-  video_completions?: number;
   /**
    * Completion rate (completed_views/impressions)
    */

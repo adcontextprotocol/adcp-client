@@ -221,19 +221,20 @@ function buildToolArgs(toolName: string, brief?: string, promotedOffering?: stri
     'activate_signal'
   ];
   
-  // Tools that accept promoted_offering parameter  
-  const offeringAcceptingTools = [
+  // Tools that accept brand_manifest parameter
+  const brandManifestAcceptingTools = [
     'get_products',
     'create_media_buy'
   ];
-  
+
   // Only add parameters that the tool accepts
   if (briefAcceptingTools.includes(toolName) && brief) {
     args.brief = brief;
   }
-  
-  if (offeringAcceptingTools.includes(toolName) && promotedOffering) {
-    args.promoted_offering = promotedOffering;
+
+  if (brandManifestAcceptingTools.includes(toolName) && promotedOffering) {
+    // Convert promoted_offering to brand_manifest format (simple string reference)
+    args.brand_manifest = promotedOffering;
   }
   
   // Always merge in any explicitly provided tool params
@@ -443,7 +444,7 @@ app.post<{
   Reply: ApiResponse<TestResponse>;
 }>('/api/test', async (request, reply) => {
   try {
-    const { agents, brief, promoted_offering, tool_name } = request.body as TestRequest;
+    const { agents, brief, brand_manifest, tool_name } = request.body as TestRequest;
     
     if (!agents || agents.length === 0) {
       return reply.code(400).send({
@@ -465,7 +466,7 @@ app.post<{
     
     const startTime = Date.now();
     const agentIds = agents.map((a: AgentConfig) => a.id);
-    const args = buildToolArgs(tool_name || 'get_products', brief, promoted_offering, tool_name ? { tool_name } : {});
+    const args = buildToolArgs(tool_name || 'get_products', brief, brand_manifest, tool_name ? { tool_name } : {});
     const results = await Promise.all(
       agentIds.map((agentId: string) => executeTaskOnAgent(agentId, tool_name || 'get_products', args))
     );
@@ -504,12 +505,12 @@ app.post<{
 // Test a single agent
 app.post<{
   Params: { agentId: string };
-  Body: { brief: string; promoted_offering?: string; tool_name?: string };
+  Body: { brief: string; brand_manifest?: string; tool_name?: string };
   Reply: ApiResponse<TestResponse>;
 }>('/api/agent/:agentId/test', async (request, reply) => {
   try {
     const { agentId } = request.params;
-    const { brief, promoted_offering, tool_name } = request.body;
+    const { brief, brand_manifest, tool_name } = request.body;
 
     if (!brief || brief.trim().length === 0) {
       return reply.code(400).send({
@@ -520,8 +521,8 @@ app.post<{
     }
 
     app.log.info(`Testing single agent ${agentId} with brief: "${brief.substring(0, 100)}..."`);
-    
-    const args = buildToolArgs(tool_name || 'get_products', brief, promoted_offering);
+
+    const args = buildToolArgs(tool_name || 'get_products', brief, brand_manifest);
     const result = await executeTaskOnAgent(agentId, tool_name || 'get_products', args);
 
     return reply.send({
