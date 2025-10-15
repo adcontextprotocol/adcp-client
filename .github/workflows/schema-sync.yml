@@ -84,14 +84,16 @@ jobs:
         echo ""
         exit 1
         
+    - name: Build library
+      run: npm run build:lib
+
     - name: Run tests with updated schemas
       run: |
         npm run typecheck
         npm test
-        
+
     - name: Validate package exports
       run: |
-        npm run build:lib
         node -e "
           const pkg = require('./package.json');
           const fs = require('fs');

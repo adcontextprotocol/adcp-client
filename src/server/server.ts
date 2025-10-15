@@ -160,7 +160,7 @@ const clientConfig: ADCPClientConfig = {
         payload: response,
         metadata
       });
-      app.log.info(`[${status}] Creatives synced: ${response.summary?.total_processed || 0} for ${metadata.operation_id}`);
+      app.log.info(`[${status}] Creatives synced: ${response.creatives?.length || 0} for ${metadata.operation_id}`);
     },
 
     onCreateMediaBuyStatusChange: (response, metadata) => {

@@ -17,17 +17,29 @@ async function syncWonderstruckCreative() {
   console.log(`   URI: ${agent.config.agent_uri}`);
   console.log(`   Protocol: ${agent.config.protocol}\n`);
 
-  // Prepare the creative sync request
+  // Prepare the creative sync request using new AdCP v1.7.0 format
   const syncRequest: SyncCreativesRequest = {
     creatives: [
       {
         creative_id: `wonderstruck_display_${Date.now()}`,
         name: 'Wonderstruck Display 300x250',
-        format: 'display_300x250',
-        media_url: 'https://storage.googleapis.com/scope3-assets-swift-catfish/customers/1/brand-agents/48/assets/079fadf7-ec79-4fcc-81b1-f3c6df585d5b.jpg',
-        click_url: 'https://wonderstruck.org',
-        width: 300,
-        height: 250,
+        format_id: {
+          agent_url: 'https://creative.adcontextprotocol.org',
+          id: 'display_300x250'
+        },
+        assets: {
+          image: {
+            asset_type: 'image',
+            url: 'https://storage.googleapis.com/scope3-assets-swift-catfish/customers/1/brand-agents/48/assets/079fadf7-ec79-4fcc-81b1-f3c6df585d5b.jpg',
+            width: 300,
+            height: 250
+          },
+          click_url: {
+            asset_type: 'url',
+            url: 'https://wonderstruck.org',
+            description: 'Wonderstruck organization website'
+          }
+        },
         tags: ['display', 'banner', '300x250', 'wonderstruck']
       }
     ]
@@ -36,10 +48,9 @@ async function syncWonderstruckCreative() {
   console.log('📤 Syncing creative asset...');
   console.log(`   Creative ID: ${syncRequest.creatives[0].creative_id}`);
   console.log(`   Name: ${syncRequest.creatives[0].name}`);
-  console.log(`   Format: ${syncRequest.creatives[0].format}`);
-  console.log(`   Dimensions: ${syncRequest.creatives[0].width}x${syncRequest.creatives[0].height}`);
-  console.log(`   Media URL: ${syncRequest.creatives[0].media_url}`);
-  console.log(`   Click URL: ${syncRequest.creatives[0].click_url}\n`);
+  console.log(`   Format ID: ${syncRequest.creatives[0].format_id.agent_url}/${syncRequest.creatives[0].format_id.id}`);
+  console.log(`   Image URL: ${syncRequest.creatives[0].assets.image.asset_type === 'image' ? syncRequest.creatives[0].assets.image.url : 'N/A'}`);
+  console.log(`   Click URL: ${syncRequest.creatives[0].assets.click_url.asset_type === 'url' ? syncRequest.creatives[0].assets.click_url.url : 'N/A'}\n`);
 
   try {
     const result = await agent.syncCreatives(syncRequest);
