@@ -325,32 +325,6 @@ export class TaskExecutor {
         hasStructuredContent: true,
         keys: Object.keys(response.structuredContent)
       });
-
-      // Check if structuredContent has a nested 'result' field (non-standard MCP server response)
-      // The AdCP spec expects direct fields (e.g., { formats: [...] }), but some servers
-      // incorrectly wrap data in a 'result' field, sometimes as stringified JSON
-      if (response.structuredContent.result) {
-        // If result is a string, parse it
-        if (typeof response.structuredContent.result === 'string') {
-          this.logDebug(debugLogs, 'info', 'Parsing stringified result from structuredContent');
-          try {
-            return JSON.parse(response.structuredContent.result);
-          } catch (parseError) {
-            this.logDebug(debugLogs, 'warning', 'Failed to parse stringified result', {
-              error: parseError instanceof Error ? parseError.message : String(parseError)
-            });
-            // Fall through to return structuredContent as-is
-          }
-        }
-        // If result is an object, unwrap it
-        else if (typeof response.structuredContent.result === 'object' && !Array.isArray(response.structuredContent.result)) {
-          this.logDebug(debugLogs, 'info', 'Unwrapping nested result object from structuredContent', {
-            resultKeys: Object.keys(response.structuredContent.result)
-          });
-          return response.structuredContent.result;
-        }
-      }
-
       return response.structuredContent;
     }
 

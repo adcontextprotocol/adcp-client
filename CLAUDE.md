@@ -427,42 +427,31 @@ Should show:
 
 ### 🚨 AUTOMATED RELEASE PROCESS 🚨
 
-**IMPORTANT**: This project uses **Release Please** for fully automated releases. You should NEVER manually:
-- Edit CHANGELOG.md
-- Bump version in package.json
-- Create GitHub releases
-- Publish to npm
-
-Everything is automated based on conventional commits.
+**IMPORTANT**: This project uses **Changesets** for version management and releases.
 
 ### How It Works
 
-1. **Commit using conventional commit format**:
+1. **Create a changeset for your changes**:
    ```bash
-   # Feature (minor bump: 0.2.3 → 0.3.0)
-   git commit -m "feat: add new tool support"
+   npm run changeset
+   ```
+   This will prompt you to:
+   - Select the version bump type (patch/minor/major)
+   - Write a summary of the changes
+   - Create a markdown file in `.changeset/`
 
-   # Bug fix (patch bump: 0.2.3 → 0.2.4)
-   git commit -m "fix: resolve authentication issue"
-
-   # Breaking change (major bump: 0.2.3 → 1.0.0)
-   git commit -m "feat!: change API signature"
-   # or
-   git commit -m "feat: new API
-
-   BREAKING CHANGE: old API removed"
+2. **Commit the changeset with your code**:
+   ```bash
+   git add .changeset/
+   git commit -m "feat: add new feature"
+   git push
    ```
 
-2. **Push to main branch**:
-   ```bash
-   git push origin main
-   ```
-
-3. **Release Please creates/updates a Release PR**:
-   - PR title: "chore(main): release X.Y.Z"
+3. **GitHub Actions creates a Release PR**:
+   - PR title: "chore: release package"
    - Automatically updates CHANGELOG.md
    - Automatically bumps version in package.json
-   - Aggregates all commits since last release
+   - Combines all changesets since last release
 
 4. **Review and merge the Release PR**:
    - Check the generated CHANGELOG.md
@@ -471,91 +460,92 @@ Everything is automated based on conventional commits.
 
 5. **Automatic publishing**:
    - Merging Release PR creates a GitHub release
-   - GitHub release triggers npm publish automatically
+   - GitHub Actions publishes to npm automatically
    - Package appears on npm registry
 
-### Conventional Commit Types
+### Version Bump Guidelines
 
-| Type | Description | Version Bump | Example |
-|------|-------------|--------------|---------|
-| `feat:` | New feature (library code) | Minor (0.x.0) | `feat: add webhook support` |
-| `fix:` | Bug fix (library code) | Patch (0.0.x) | `fix: resolve timeout issue` |
-| `feat!:` or `BREAKING CHANGE:` | Breaking change | Major (x.0.0) | `feat!: redesign API` |
-| `docs:` | Documentation only | None | `docs: update README` |
-| `chore:` | Maintenance tasks | None | `chore: update deps` |
-| `refactor:` | Code refactoring | None | `refactor: simplify logic` |
-| `test:` | Adding/updating tests | None | `test: add unit tests` |
-| `perf:` | Performance improvements | Patch (0.0.x) | `perf: optimize parser` |
-| `ci:` | CI configuration | None | `ci: update workflow` |
-| `build:` | Build system changes | None | `build: update tsconfig` |
+| Type | When to Use | Example |
+|------|-------------|---------|
+| `patch` | Bug fixes, minor improvements | 2.0.1 → 2.0.2 |
+| `minor` | New features, non-breaking changes | 2.0.1 → 2.1.0 |
+| `major` | Breaking changes | 2.0.1 → 3.0.0 |
 
-### Commit Scopes for Library vs Testing
+### Creating Changesets
 
-**IMPORTANT**: To avoid releasing when only server/testing code changes, use appropriate scopes:
-
-**Library Changes (triggers release)**:
+**For a single change:**
 ```bash
-feat: add new tool                    # Library feature
-fix: resolve auth bug                 # Library bug fix
-perf: optimize client performance     # Library performance
-refactor: simplify protocol logic     # Library refactoring
+npm run changeset
+# Select: patch/minor/major
+# Write: "fix: resolve authentication issue"
 ```
 
-**Testing/Server Changes (NO release)**:
+**For multiple changes in one PR:**
 ```bash
-chore(server): update UI styling      # Server/UI changes
-test(server): add integration test    # Test framework changes
-chore(testing): update test UI        # Testing UI changes
-docs(testing): update testing guide   # Testing docs
-ci: update deployment workflow        # CI changes (no release)
+npm run changeset  # First change
+npm run changeset  # Second change
+# Commit all changesets together
 ```
 
-**Mixed Changes**: If you change both library AND server code in one PR, use the library type:
+### Changeset Examples
+
+**Bug Fix (patch):**
 ```bash
-feat: add webhook support
-# This commit includes both library changes and test UI updates
+npm run changeset
+# Select: patch
+# Summary: "Fixed MCP structuredContent parsing for stringified JSON"
 ```
 
-### Commit Linting
+**New Feature (minor):**
+```bash
+npm run changeset
+# Select: minor
+# Summary: "Added webhook signature verification support"
+```
 
-All PRs are automatically checked for conventional commit format:
-- PR title must follow conventional commits
-- All commits in PR must follow conventional commits
-- CI will fail if commits don't follow the format
+**Breaking Change (major):**
+```bash
+npm run changeset
+# Select: major
+# Summary: "Removed deprecated Agent class, use ADCPClient instead"
+```
 
 ### Verification Commands
 
 ```bash
-# Check if Release PR exists
-gh pr list --label "autorelease: pending"
+# Check current version
+npm version
 
-# View release history
-gh release list
+# View changesets that haven't been released
+ls .changeset/*.md
 
 # Check npm package versions
 npm view @adcp/client versions
 
+# View release history
+gh release list
+
 # Monitor release workflow
-gh run list --workflow=release-please.yml
+gh run list --workflow=release.yml
 ```
 
 ### Emergency Manual Release (Use ONLY if automated process fails)
 
 ```bash
-# 1. Manually update version
-npm version patch|minor|major
+# 1. Version packages
+npm run version
 
-# 2. Create GitHub release
+# 2. Publish to npm
+npm run release
+
+# 3. Create GitHub release
 gh release create v$(node -p "require('./package.json').version") --generate-notes
-
-# 3. Publish to npm (GitHub Actions should do this automatically)
-npm publish --access public
 ```
 
-**Remember**: Trust the automation. Just write good conventional commits and merge Release PRs.
+**Remember**: Always create a changeset for library changes. The automation handles the rest.
 
 ---
 
-*Last updated: 2025-10-01 (Migrated to Release Please for automated releases)*
+*Last updated: 2025-10-17 (Migrated to Changesets for version management)*
 *Project: AdCP Testing Framework*
 *Environment: Fly.io Production*
