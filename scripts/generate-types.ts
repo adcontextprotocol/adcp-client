@@ -76,21 +76,30 @@ interface ToolDefinition {
 }
 
 // Load AdCP tool schemas from cache
-function loadToolSchema(toolName: string, taskType: 'media-buy' | 'signals' = 'media-buy'): any {
+function loadToolSchema(toolName: string, taskType: 'media-buy' | 'signals' | 'creative' = 'media-buy'): any {
   try {
     const kebabName = toolName.replace(/_/g, '-');
-    const requestRef = `/schemas/v1/${taskType}/${kebabName}-request.json`;
-    const responseRef = `/schemas/v1/${taskType}/${kebabName}-response.json`;
-    
-    console.log(`📥 Loading ${toolName} schema from cache...`);
-    
-    const requestSchema = loadCachedSchema(requestRef);
-    const responseSchema = loadCachedSchema(responseRef);
-    
+    let requestRef = `/schemas/v1/${taskType}/${kebabName}-request.json`;
+    let responseRef = `/schemas/v1/${taskType}/${kebabName}-response.json`;
+
+    console.log(`📥 Loading ${toolName} schema from cache (${taskType})...`);
+
+    let requestSchema = loadCachedSchema(requestRef);
+    let responseSchema = loadCachedSchema(responseRef);
+
+    // Fallback: Try media-buy namespace if creative namespace fails
+    if ((!requestSchema || !responseSchema) && taskType === 'creative') {
+      console.log(`   ↪️  Trying media-buy namespace for ${toolName}...`);
+      requestRef = `/schemas/v1/media-buy/${kebabName}-request.json`;
+      responseRef = `/schemas/v1/media-buy/${kebabName}-response.json`;
+      requestSchema = loadCachedSchema(requestRef);
+      responseSchema = loadCachedSchema(responseRef);
+    }
+
     if (!requestSchema || !responseSchema) {
       throw new Error(`Missing request or response schema for ${toolName}`);
     }
-    
+
     // Combine into the expected format
     return {
       description: `Official AdCP ${toolName} tool schema`,
@@ -107,19 +116,20 @@ function loadToolSchema(toolName: string, taskType: 'media-buy' | 'signals' = 'm
 }
 
 // Load official AdCP tools from cached schema index
-function loadOfficialAdCPToolsWithTypes(): {mediaBuyTools: string[], signalsTools: string[]} {
+function loadOfficialAdCPToolsWithTypes(): {mediaBuyTools: string[], creativeTools: string[], signalsTools: string[]} {
   try {
     console.log('📥 Loading official AdCP tools from cached schema index...');
     const indexPath = path.join(LATEST_CACHE_DIR, 'index.json');
-    
+
     if (!existsSync(indexPath)) {
       throw new Error('Schema index not found in cache');
     }
-    
+
     const schemaIndex = JSON.parse(readFileSync(indexPath, 'utf8'));
     const mediaBuyTools: string[] = [];
+    const creativeTools: string[] = [];
     const signalsTools: string[] = [];
-    
+
     // Extract tools from media-buy tasks
     if (schemaIndex.schemas?.['media-buy']?.tasks) {
       const mediaBuyTasks = schemaIndex.schemas['media-buy'].tasks;
@@ -129,7 +139,17 @@ function loadOfficialAdCPToolsWithTypes(): {mediaBuyTools: string[], signalsTool
         mediaBuyTools.push(toolName);
       }
     }
-    
+
+    // Extract tools from creative tasks
+    if (schemaIndex.schemas?.creative?.tasks) {
+      const creativeTasks = schemaIndex.schemas.creative.tasks;
+      for (const taskName of Object.keys(creativeTasks)) {
+        // Convert kebab-case to snake_case (e.g., "preview-creative" -> "preview_creative")
+        const toolName = taskName.replace(/-/g, '_');
+        creativeTools.push(toolName);
+      }
+    }
+
     // Extract tools from signals tasks
     if (schemaIndex.schemas?.signals?.tasks) {
       const signalsTasks = schemaIndex.schemas.signals.tasks;
@@ -139,23 +159,25 @@ function loadOfficialAdCPToolsWithTypes(): {mediaBuyTools: string[], signalsTool
         signalsTools.push(toolName);
       }
     }
-    
-    console.log(`✅ Discovered ${mediaBuyTools.length + signalsTools.length} official AdCP tools:`);
+
+    console.log(`✅ Discovered ${mediaBuyTools.length + creativeTools.length + signalsTools.length} official AdCP tools:`);
     console.log(`   📈 Media-buy tools: ${mediaBuyTools.join(', ')}`);
+    console.log(`   🎨 Creative tools: ${creativeTools.join(', ')}`);
     console.log(`   🎯 Signals tools: ${signalsTools.join(', ')}`);
-    
-    return { mediaBuyTools, signalsTools };
+
+    return { mediaBuyTools, creativeTools, signalsTools };
   } catch (error) {
     console.warn(`⚠️  Failed to load cached tools, falling back to known tools:`, error.message);
     // Fallback to known tools if the cache fails
     return {
       mediaBuyTools: [
         'get_products',
-        'list_creative_formats', 
+        'list_creative_formats',
         'create_media_buy',
         'sync_creatives',
         'list_creatives'
       ],
+      creativeTools: [],
       signalsTools: []
     };
   }
@@ -164,20 +186,26 @@ function loadOfficialAdCPToolsWithTypes(): {mediaBuyTools: string[], signalsTool
 // Load tool definitions from cached schemas
 function loadAdCPTools(): ToolDefinition[] {
   const tools: ToolDefinition[] = [];
-  
+  const processedTools = new Set<string>();
+
   // Get the official tools list from cached schema index
-  const { mediaBuyTools, signalsTools } = loadOfficialAdCPToolsWithTypes();
-  
+  const { mediaBuyTools, creativeTools, signalsTools } = loadOfficialAdCPToolsWithTypes();
+
   // Process media-buy tools
   for (const toolName of mediaBuyTools) {
+    if (processedTools.has(toolName)) {
+      console.log(`⏭️  Skipping ${toolName} - already processed`);
+      continue;
+    }
+
     const schema = loadToolSchema(toolName, 'media-buy');
     if (schema) {
       // Convert snake_case to camelCase for method names
       const methodName = toolName.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase());
-      
+
       // Determine single-agent-only tools (transactional operations)
       const singleAgentOnly = ['create_media_buy', 'update_media_buy'].includes(toolName);
-      
+
       tools.push({
         name: toolName,
         methodName,
@@ -186,23 +214,29 @@ function loadAdCPTools(): ToolDefinition[] {
         responseSchema: schema.properties?.response || {},
         singleAgentOnly
       });
-      
+
+      processedTools.add(toolName);
       console.log(`✅ Loaded ${toolName} from cached media-buy schema`);
     } else {
       console.warn(`⚠️  Skipping ${toolName} - no schema available`);
     }
   }
-  
-  // Process signals tools
-  for (const toolName of signalsTools) {
-    const schema = loadToolSchema(toolName, 'signals');
+
+  // Process creative tools
+  for (const toolName of creativeTools) {
+    if (processedTools.has(toolName)) {
+      console.log(`⏭️  Skipping ${toolName} - already processed`);
+      continue;
+    }
+
+    const schema = loadToolSchema(toolName, 'creative');
     if (schema) {
       // Convert snake_case to camelCase for method names
       const methodName = toolName.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase());
-      
-      // Signals tools are typically multi-agent friendly
+
+      // Creative tools are typically single-agent
       const singleAgentOnly = false;
-      
+
       tools.push({
         name: toolName,
         methodName,
@@ -211,13 +245,45 @@ function loadAdCPTools(): ToolDefinition[] {
         responseSchema: schema.properties?.response || {},
         singleAgentOnly
       });
-      
+
+      processedTools.add(toolName);
+      console.log(`✅ Loaded ${toolName} from cached creative schema`);
+    } else {
+      console.warn(`⚠️  Skipping ${toolName} - no schema available`);
+    }
+  }
+
+  // Process signals tools
+  for (const toolName of signalsTools) {
+    if (processedTools.has(toolName)) {
+      console.log(`⏭️  Skipping ${toolName} - already processed`);
+      continue;
+    }
+
+    const schema = loadToolSchema(toolName, 'signals');
+    if (schema) {
+      // Convert snake_case to camelCase for method names
+      const methodName = toolName.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase());
+
+      // Signals tools are typically multi-agent friendly
+      const singleAgentOnly = false;
+
+      tools.push({
+        name: toolName,
+        methodName,
+        description: schema.description || `Execute ${toolName} operation`,
+        paramsSchema: schema.properties?.request || {},
+        responseSchema: schema.properties?.response || {},
+        singleAgentOnly
+      });
+
+      processedTools.add(toolName);
       console.log(`✅ Loaded ${toolName} from cached signals schema`);
     } else {
       console.warn(`⚠️  Skipping ${toolName} - no schema available`);
     }
   }
-  
+
   return tools;
 }
 

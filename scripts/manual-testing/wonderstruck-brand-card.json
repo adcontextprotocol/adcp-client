@@ -1,0 +1,105 @@
+{
+  "brand_name": "Wonderstruck Podcast",
+  "tagline": "Taking on the Transformative",
+  "mission": "Exploring consciousness, spiritual experiences, and transformative topics through expert interviews and deep investigations into experiences beyond mainstream materialism.",
+  "website": "https://wonderstruck.org",
+  "brand_voice": {
+    "tone": "scholarly, curious, open-minded, contemplative",
+    "personality": "intellectual, exploratory, mystical, philosophical",
+    "values": [
+      "intellectual curiosity",
+      "open-minded exploration",
+      "consciousness investigation",
+      "transformative experiences"
+    ]
+  },
+  "visual_identity": {
+    "primary_colors": [
+      {
+        "name": "Gold",
+        "hex": "#FFB400",
+        "usage": "Primary brand color, highlights, accents"
+      },
+      {
+        "name": "Navy",
+        "hex": "#011221",
+        "usage": "Dark backgrounds, text, primary dark"
+      },
+      {
+        "name": "Accent Blue",
+        "hex": "#4054B2",
+        "usage": "Secondary accents, links, interactive elements"
+      }
+    ],
+    "logo": {
+      "url": "https://wonderstruck.org/wp-content/uploads/2022/04/logo.svg",
+      "format": "svg",
+      "variants": ["full_color", "reversed"]
+    },
+    "typography": {
+      "heading_style": "clean, modern sans-serif",
+      "body_style": "readable, professional",
+      "aesthetic": "minimalist, contemporary"
+    },
+    "imagery_style": "cosmic, celestial, stars, philosophical, minimalist duotone",
+    "design_principles": [
+      "clean and modern",
+      "cosmic and mystical elements",
+      "minimalist approach",
+      "philosophical visual metaphors"
+    ]
+  },
+  "target_audience": "Spiritually curious adults, consciousness researchers, philosophy enthusiasts, and meditation practitioners who are intellectually curious, open to extraordinary experiences, and seeking transformative insights into consciousness studies and unexplained phenomena.",
+  "content_themes": [
+    "consciousness exploration",
+    "spiritual experiences",
+    "transformative practices",
+    "extraordinary phenomena",
+    "philosophical inquiry",
+    "meditation and mindfulness"
+  ],
+  "host": {
+    "name": "Elizabeth Rovere",
+    "image": "duotone portrait style"
+  },
+  "asset_library": [
+    {
+      "asset_id": "logo_svg",
+      "type": "image",
+      "url": "https://wonderstruck.org/wp-content/uploads/2022/04/logo.svg",
+      "format": "svg",
+      "description": "Wonderstruck logo",
+      "usage": "primary logo for all placements"
+    },
+    {
+      "asset_id": "display_300x250",
+      "type": "image",
+      "url": "https://storage.googleapis.com/scope3-assets-swift-catfish/customers/1/brand-agents/48/assets/079fadf7-ec79-4fcc-81b1-f3c6df585d5b.jpg",
+      "format": "jpg",
+      "dimensions": {
+        "width": 300,
+        "height": 250
+      },
+      "description": "300x250 display banner with cosmic imagery",
+      "usage": "display advertising, banner placements"
+    }
+  ],
+  "call_to_actions": [
+    "Listen Now",
+    "Explore Episodes",
+    "Subscribe",
+    "Learn More",
+    "Join the Journey"
+  ],
+  "prohibited_content": [
+    "superficial self-help",
+    "materialistic messaging",
+    "closed-minded perspectives",
+    "anti-intellectual content"
+  ],
+  "brand_guidelines": {
+    "voice_guidelines": "Maintain an intellectual yet accessible tone. Balance scholarly rigor with openness to mystery and wonder. Avoid dogmatism while maintaining thoughtful skepticism.",
+    "visual_guidelines": "Use cosmic and celestial imagery. Maintain clean, minimalist design. Primary gold (#FFB400) for highlights against navy (#011221) backgrounds. Embrace mystical elements while staying sophisticated.",
+    "messaging_guidelines": "Focus on transformation, consciousness, and extraordinary human experiences. Lead with curiosity and intellectual exploration. Avoid making definitive claims about unexplained phenomena."
+  }
+}

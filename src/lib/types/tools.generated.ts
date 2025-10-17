@@ -989,10 +989,6 @@ export interface ListCreativeFormatsResponse {
 export interface Format {
   format_id: FormatID;
   /**
-   * Base URL of the agent that provides this format (authoritative source). E.g., 'https://reference.adcp.org', 'https://dco.example.com'
-   */
-  agent_url?: string;
-  /**
    * Human-readable format name
    */
   name: string;

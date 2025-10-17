@@ -8,6 +8,14 @@ export type { ADCPClientConfig } from './core/ADCPClient';
 export { AgentClient, type TaskResponseTypeMap, type AdcpTaskName } from './core/AgentClient';
 export { ADCPMultiAgentClient, AgentCollection as NewAgentCollection, createADCPMultiAgentClient } from './core/ADCPMultiAgentClient';
 export { ConfigurationManager } from './core/ConfigurationManager';
+export {
+  CreativeAgentClient,
+  createCreativeAgentClient,
+  STANDARD_CREATIVE_AGENTS,
+  type CreativeFormat,
+  type CreativeFormatType,
+  type CreativeAgentClientConfig
+} from './core/CreativeAgentClient';
 export { TaskExecutor } from './core/TaskExecutor';
 export { ProtocolResponseParser, responseParser, ADCP_STATUS, type ADCPStatus } from './core/ProtocolResponseParser';
 export { ResponseValidator, responseValidator, type ValidationResult, type ValidationOptions } from './core/ResponseValidator';

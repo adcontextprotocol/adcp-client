@@ -4,6 +4,8 @@ import type { AgentConfig } from '../types';
 import { AgentClient } from './AgentClient';
 import type { ADCPClientConfig } from './ADCPClient';
 import { ConfigurationManager } from './ConfigurationManager';
+import { CreativeAgentClient, STANDARD_CREATIVE_AGENTS } from './CreativeAgentClient';
+import type { CreativeFormat } from './CreativeAgentClient';
 import type {
   InputHandler,
   TaskOptions,
@@ -777,12 +779,121 @@ export class ADCPMultiAgentClient {
   async getTaskCountsByStatus(): Promise<Record<string, number>> {
     const tasks = await this.listAllTasks();
     const counts: Record<string, number> = {};
-    
+
     for (const task of tasks) {
       counts[task.status] = (counts[task.status] || 0) + 1;
     }
-    
+
     return counts;
+  }
+
+  // ====== CREATIVE AGENT OPERATIONS ======
+
+  /**
+   * Create a creative agent client
+   *
+   * @param agentUrl - URL of the creative agent
+   * @param protocol - Protocol to use (defaults to 'mcp')
+   * @param authToken - Optional authentication token
+   * @returns CreativeAgentClient instance
+   *
+   * @example
+   * ```typescript
+   * // Use standard creative agent
+   * const creativeAgent = client.createCreativeAgent(
+   *   'https://creative.adcontextprotocol.org/mcp'
+   * );
+   *
+   * // List formats
+   * const formats = await creativeAgent.listFormats();
+   * ```
+   */
+  createCreativeAgent(
+    agentUrl: string,
+    protocol: 'mcp' | 'a2a' = 'mcp',
+    authToken?: string
+  ): CreativeAgentClient {
+    return new CreativeAgentClient({
+      agentUrl,
+      protocol,
+      authToken,
+      ...this.config
+    });
+  }
+
+  /**
+   * Get the standard AdCP creative agent
+   *
+   * @param protocol - Protocol to use (defaults to 'mcp')
+   * @returns CreativeAgentClient instance for standard agent
+   *
+   * @example
+   * ```typescript
+   * const creativeAgent = client.getStandardCreativeAgent();
+   * const formats = await creativeAgent.listFormats();
+   * ```
+   */
+  getStandardCreativeAgent(protocol: 'mcp' | 'a2a' = 'mcp'): CreativeAgentClient {
+    const agentUrl = protocol === 'mcp'
+      ? STANDARD_CREATIVE_AGENTS.ADCP_REFERENCE
+      : STANDARD_CREATIVE_AGENTS.ADCP_REFERENCE_A2A;
+
+    return this.createCreativeAgent(agentUrl, protocol);
+  }
+
+  /**
+   * Discover creative formats from standard creative agent
+   *
+   * Convenience method to quickly get formats from the standard AdCP creative agent
+   *
+   * @returns Promise resolving to array of creative formats
+   *
+   * @example
+   * ```typescript
+   * const formats = await client.discoverFormats();
+   *
+   * // Find specific format
+   * const banner = formats.find(f => f.format_id.id === 'display_300x250_image');
+   * ```
+   */
+  async discoverFormats(): Promise<CreativeFormat[]> {
+    const creativeAgent = this.getStandardCreativeAgent();
+    return creativeAgent.listFormats();
+  }
+
+  /**
+   * Find creative formats by type
+   *
+   * @param type - Format type to filter by
+   * @returns Promise resolving to matching formats
+   *
+   * @example
+   * ```typescript
+   * const videoFormats = await client.findFormatsByType('video');
+   * const displayFormats = await client.findFormatsByType('display');
+   * ```
+   */
+  async findFormatsByType(type: 'audio' | 'video' | 'display' | 'native' | 'dooh' | 'rich_media' | 'universal'): Promise<CreativeFormat[]> {
+    const creativeAgent = this.getStandardCreativeAgent();
+    return creativeAgent.findByType(type);
+  }
+
+  /**
+   * Find creative formats by dimensions
+   *
+   * @param width - Width in pixels
+   * @param height - Height in pixels
+   * @returns Promise resolving to matching formats
+   *
+   * @example
+   * ```typescript
+   * // Find all 300x250 formats
+   * const mediumRectangles = await client.findFormatsByDimensions(300, 250);
+   * ```
+   */
+  async findFormatsByDimensions(width: number, height: number): Promise<CreativeFormat[]> {
+    const creativeAgent = this.getStandardCreativeAgent();
+    return creativeAgent.findByDimensions(width, height);
   }
 }
 
