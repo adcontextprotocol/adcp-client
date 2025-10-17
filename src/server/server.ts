@@ -6,6 +6,7 @@ import path from 'path';
 import {
   ADCPMultiAgentClient,
   ConfigurationManager,
+  CreativeAgentClient,
   getStandardFormats,
   type TaskResult,
   type InputHandler,
@@ -1187,23 +1188,21 @@ app.post<{
       });
     }
 
-    // Create temporary agent config
-    const agentConfig: AgentConfig = {
-      id: 'temp_creative_agent',
-      name: 'Creative Agent',
-      agent_uri: agentUrl,
-      protocol
-    };
+    // Use the official CreativeAgentClient library class
+    const creativeClient = new CreativeAgentClient({
+      agentUrl,
+      protocol,
+      ...clientConfig
+    });
 
-    const client = getAgentClient('temp_creative_agent', agentConfig);
-    const result = await client.listCreativeFormats(params, createDefaultInputHandler());
+    // Use the library's listFormats method which handles response parsing
+    const formats = await creativeClient.listFormats(params);
 
     return reply.send({
-      success: result.success,
-      data: result.data,
-      error: result.error,
-      metadata: result.metadata,
-      debug_logs: result.debug_logs,
+      success: true,
+      data: { formats },
+      metadata: {},
+      debug_logs: [], // CreativeAgentClient doesn't expose debug logs directly
       timestamp: new Date().toISOString()
     });
   } catch (error) {
@@ -1234,18 +1233,16 @@ app.post<{
       });
     }
 
-    // Create temporary agent config
-    const agentConfig: AgentConfig = {
-      id: 'temp_creative_agent',
-      name: 'Creative Agent',
-      agent_uri: agentUrl,
-      protocol
-    };
+    // Use the official CreativeAgentClient library class
+    const creativeClient = new CreativeAgentClient({
+      agentUrl,
+      protocol,
+      ...clientConfig
+    });
 
-    const client = getAgentClient('temp_creative_agent', agentConfig);
-
-    // Use the generic executeTask method
-    const result = await client.executeTask(toolName, params, createDefaultInputHandler());
+    // Access the underlying ADCPClient for generic tool execution
+    const adcpClient = creativeClient.getClient();
+    const result = await adcpClient.executeTask(toolName, params, createDefaultInputHandler());
 
     return reply.send({
       success: result.success,
