@@ -233,8 +233,16 @@ function buildToolArgs(toolName: string, brief?: string, promotedOffering?: stri
   }
 
   if (brandManifestAcceptingTools.includes(toolName) && promotedOffering) {
-    // Convert promoted_offering to brand_manifest format (simple string reference)
-    args.brand_manifest = promotedOffering;
+    // brand_manifest must be either a valid URL or a BrandManifest object
+    try {
+      new URL(promotedOffering);
+      args.brand_manifest = promotedOffering; // It's a valid URL
+    } catch {
+      // Not a URL, create a BrandManifest object
+      args.brand_manifest = {
+        name: promotedOffering
+      };
+    }
   }
   
   // Always merge in any explicitly provided tool params
