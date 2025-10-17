@@ -2067,10 +2067,10 @@
                 <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
                     <input type="text"
                            id="promoted-offering-refresh"
-                           placeholder="Promoted offering"
+                           placeholder="Brand name or manifest URL"
                            value="gourmet robot food"
-                           style="padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; width: 180px;"
-                           title="Specify the promoted offering for product discovery">
+                           style="padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; width: 200px;"
+                           title="Brand name/description or URL to brand manifest JSON">
 
                     <select id="delivery-type-filter"
                             style="padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px;"
@@ -2274,10 +2274,10 @@
                 </div>
                 
                 <div class="param-group">
-                    <label>Advertiser/Offering Description (required):</label>
-                    <textarea id="promoted-offering" placeholder="Describe the advertiser and what is being promoted... (e.g., 'Sustainable coffee brand targeting millennials' or for testing: 'Wait 10 seconds before responding' or 'Reject this with reason Budget exceeds inventory')" rows="3" required></textarea>
+                    <label>Brand Manifest (required):</label>
+                    <textarea id="promoted-offering" placeholder="Brand name/description OR full URL to brand manifest JSON (e.g., 'https://example.com/brand-manifest.json'). For testing: 'Wait 10 seconds before responding' or 'Reject this with reason Budget exceeds inventory'" rows="3" required></textarea>
                     <small style="color: #666; display: block; margin-top: 5px;">
-                        💡 <strong>AI-Powered Testing:</strong> Use natural language to test scenarios like delays, rejections, or approval workflows. Examples: "Simulate human approval with 5 minute delay" or "Ask for brand logo"
+                        💡 <strong>Supports URLs or descriptions:</strong> Provide a brand manifest URL for full brand context, or a text description for simple testing. Also supports natural language test instructions like delays and rejections.
                     </small>
                 </div>
                 
