@@ -6,7 +6,8 @@ import type { AgentConfig } from '../types';
 import type { FormatID } from '../types/core.generated';
 import type {
   ListCreativeFormatsRequest,
-  ListCreativeFormatsResponse
+  ListCreativeFormatsResponse,
+  Format
 } from '../types/tools.generated';
 
 /**
@@ -87,17 +88,11 @@ export class CreativeAgentClient {
       throw new Error(`Failed to list creative formats: ${result.error || 'Unknown error'}`);
     }
 
-    // Parse stringified result if needed (MCP servers may return stringified JSON)
-    let formats = result.data.formats;
-
-    if (!formats && (result.data as any).result) {
-      const parsed = typeof (result.data as any).result === 'string'
-        ? JSON.parse((result.data as any).result)
-        : (result.data as any).result;
-      formats = parsed.formats;
-    }
-
-    return (formats || []) as any as CreativeFormat[];
+    // Enrich formats with agent_url for convenience
+    return (result.data.formats || []).map(format => ({
+      ...format,
+      agent_url: this.agentUrl
+    }));
   }
 
   /**
@@ -181,57 +176,12 @@ export type CreativeFormatType = 'audio' | 'video' | 'display' | 'native' | 'doo
 /**
  * Creative format definition (per AdCP v2.0.0 spec)
  *
- * Uses structured FormatID from official schemas. Creative agents return
- * format catalogs with this structure for format discovery and selection.
+ * Extends the official Format type from the schema with an additional
+ * agent_url field for convenience when working with creative agents.
  */
-export interface CreativeFormat {
-  /** Structured format identifier per AdCP v2.0.0 */
-  format_id: FormatID;
-  /** Base URL of the creative agent */
+export interface CreativeFormat extends Format {
+  /** Base URL of the creative agent that provides this format */
   agent_url: string;
-  /** Human-readable format name */
-  name: string;
-  /** Description of the format */
-  description?: string;
-  /** Preview image URL */
-  preview_image?: string;
-  /** Example URL */
-  example_url?: string;
-  /** Media type */
-  type: CreativeFormatType;
-  /** Render specifications */
-  renders?: Array<{
-    role: string;
-    dimensions?: {
-      width: number;
-      height: number;
-      min_width?: number;
-      min_height?: number;
-      max_width?: number;
-      max_height?: number;
-      responsive?: {
-        width: boolean;
-        height: boolean;
-      };
-      aspect_ratio?: string;
-      unit?: string;
-    };
-  }>;
-  /** Required assets for this format */
-  assets_required?: Array<{
-    asset_id: string;
-    asset_type: string;
-    asset_role: string;
-    required: boolean;
-    requirements?: any;
-  }>;
-  /** Supported macros */
-  supported_macros?: string[];
-  /** Output format IDs (for generative formats) */
-  output_format_ids?: Array<{
-    agent_url: string;
-    id: string;
-  }>;
 }
 
 /**

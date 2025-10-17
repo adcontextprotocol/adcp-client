@@ -23,7 +23,8 @@ import type {
   GetSignalsRequest,
   GetSignalsResponse,
   ActivateSignalRequest,
-  ActivateSignalResponse
+  ActivateSignalResponse,
+  Format
 } from '../types/tools.generated';
 
 import { TaskExecutor, DeferredTaskError } from './TaskExecutor';
@@ -870,17 +871,7 @@ export class ADCPClient {
   static async discoverCreativeFormats(
     creativeAgentUrl: string,
     protocol: 'mcp' | 'a2a' = 'mcp'
-  ): Promise<Array<{
-    format_id: { agent_url: string; id: string };
-    agent_url: string;
-    name: string;
-    description?: string;
-    type?: string;
-    renders?: Array<{
-      role: string;
-      dimensions?: { width: number; height: number };
-    }>;
-  }>> {
+  ): Promise<Format[]> {
     const client = new ADCPClient(
       {
         id: 'creative_agent_discovery',
@@ -897,18 +888,7 @@ export class ADCPClient {
       throw new Error(`Failed to discover creative formats: ${result.error || 'Unknown error'}`);
     }
 
-    // The creative agent returns formats in a result field that may be stringified JSON
-    let formats = result.data.formats;
-
-    if (!formats && (result.data as any).result) {
-      // Parse stringified result if needed
-      const parsed = typeof (result.data as any).result === 'string'
-        ? JSON.parse((result.data as any).result)
-        : (result.data as any).result;
-      formats = parsed.formats;
-    }
-
-    return formats as any || [];
+    return result.data.formats || [];
   }
 }
 

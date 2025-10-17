@@ -322,7 +322,8 @@ export class TaskExecutor {
     // MCP responses have structuredContent
     if (response?.structuredContent) {
       this.logDebug(debugLogs, 'info', 'Extracting data from MCP structuredContent', {
-        hasStructuredContent: true
+        hasStructuredContent: true,
+        keys: Object.keys(response.structuredContent)
       });
       return response.structuredContent;
     }

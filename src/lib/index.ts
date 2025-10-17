@@ -109,7 +109,13 @@ export type {
   ListAuthorizedPropertiesRequest, ListAuthorizedPropertiesResponse,
   ProvidePerformanceFeedbackRequest, ProvidePerformanceFeedbackResponse,
   GetSignalsRequest, GetSignalsResponse,
-  ActivateSignalRequest, ActivateSignalResponse
+  ActivateSignalRequest, ActivateSignalResponse,
+  // Core data structures
+  Format,
+  Product,
+  PackageRequest,
+  CreativeAsset,
+  CreativePolicy
 } from './types/tools.generated';
 
 // ====== PROTOCOL CLIENTS ======

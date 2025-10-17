@@ -1,6 +1,6 @@
 {
   "name": "@adcp/client",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "AdCP client library with protocol support for MCP and A2A, includes testing framework",
   "main": "dist/lib/index.js",
   "types": "dist/lib/index.d.ts",
@@ -30,6 +30,9 @@
     "test:lib": "node --test test/lib/*.test.js",
     "test:e2e": "node test/e2e/adcp-e2e.test.js",
     "test:protocols": "node test/run-protocol-tests.js",
+    "changeset": "changeset",
+    "version": "changeset version",
+    "release": "changeset publish",
     "test:protocol-compliance": "node test/run-protocol-tests.js --only compliance",
     "test:protocol-schema": "node test/run-protocol-tests.js --only schema",
     "test:protocol-integration": "node test/run-protocol-tests.js --only integration",
@@ -94,6 +97,7 @@
   "devDependencies": {
     "@a2a-js/sdk": "^0.3.4",
     "@apidevtools/json-schema-ref-parser": "^14.2.1",
+    "@changesets/cli": "^2.29.7",
     "@commitlint/cli": "^18.4.3",
     "@commitlint/config-conventional": "^18.4.3",
     "@fastify/cors": "^9.0.1",
