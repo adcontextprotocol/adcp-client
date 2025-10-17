@@ -1,0 +1,593 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Creative Agent Testing - AdCP</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --primary-gradient: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            --success-gradient: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+            --surface-primary: rgba(255, 255, 255, 0.95);
+            --text-primary: #1a202c;
+            --text-secondary: #4a5568;
+            --accent-blue: #4299e1;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            line-height: 1.6;
+            color: var(--text-primary);
+            max-width: 1600px;
+            margin: 0 auto;
+            padding: 0;
+            background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+            min-height: 100vh;
+        }
+
+        .top-nav {
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+            color: white;
+            padding: 24px 40px;
+            box-shadow: 0 8px 32px rgba(30, 60, 114, 0.3);
+        }
+
+        .nav-container {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .nav-brand h2 {
+            margin: 0;
+            font-size: 1.5rem;
+            font-weight: 700;
+        }
+
+        .nav-links {
+            display: flex;
+            gap: 1.5rem;
+        }
+
+        .nav-link {
+            color: rgba(255, 255, 255, 0.9);
+            text-decoration: none;
+            padding: 0.5rem 1rem;
+            border-radius: 8px;
+            transition: all 0.3s;
+        }
+
+        .nav-link:hover {
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .nav-link.active {
+            background: rgba(255, 255, 255, 0.2);
+            font-weight: 600;
+        }
+
+        .container {
+            padding: 2rem;
+        }
+
+        .header {
+            margin-bottom: 2rem;
+        }
+
+        h1 {
+            font-size: 2.5rem;
+            font-weight: 800;
+            background: linear-gradient(135deg, #1a4d3a 0%, #2d7a5a 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 0.5rem;
+        }
+
+        .subtitle {
+            font-size: 1.125rem;
+            color: var(--text-secondary);
+            font-weight: 500;
+        }
+
+        .section {
+            background: var(--surface-primary);
+            border-radius: 16px;
+            padding: 2rem;
+            margin-bottom: 2rem;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+        }
+
+        .form-group {
+            margin-bottom: 1.5rem;
+        }
+
+        label {
+            display: block;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+            color: var(--text-primary);
+        }
+
+        input[type="text"],
+        input[type="url"],
+        select,
+        textarea {
+            width: 100%;
+            padding: 0.75rem;
+            border: 2px solid #e2e8f0;
+            border-radius: 8px;
+            font-size: 1rem;
+            transition: border-color 0.3s;
+        }
+
+        input:focus,
+        select:focus,
+        textarea:focus {
+            outline: none;
+            border-color: var(--accent-blue);
+        }
+
+        .button {
+            background: var(--primary-gradient);
+            color: white;
+            border: none;
+            padding: 0.875rem 1.5rem;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        .button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 16px rgba(0, 0, 0, 0.2);
+        }
+
+        .button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .button-secondary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+
+        .results {
+            background: #f7fafc;
+            border-radius: 8px;
+            padding: 1.5rem;
+            margin-top: 1.5rem;
+        }
+
+        .results pre {
+            background: white;
+            padding: 1rem;
+            border-radius: 8px;
+            overflow-x: auto;
+            font-size: 0.875rem;
+        }
+
+        .debug-logs {
+            margin-top: 2rem;
+        }
+
+        .debug-log-entry {
+            background: white;
+            border-left: 4px solid var(--accent-blue);
+            padding: 1rem;
+            margin-bottom: 1rem;
+            border-radius: 4px;
+        }
+
+        .debug-log-entry.request {
+            border-left-color: #48bb78;
+        }
+
+        .debug-log-entry.response {
+            border-left-color: #ed8936;
+        }
+
+        .log-header {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 0.5rem;
+            font-weight: 600;
+        }
+
+        .log-body {
+            background: #f7fafc;
+            padding: 0.75rem;
+            border-radius: 4px;
+            overflow-x: auto;
+            font-family: 'Monaco', 'Courier New', monospace;
+            font-size: 0.875rem;
+        }
+
+        .error {
+            background: #fff5f5;
+            border-left: 4px solid #fc466b;
+            padding: 1rem;
+            border-radius: 4px;
+            color: #c53030;
+        }
+
+        .success {
+            background: #f0fff4;
+            border-left: 4px solid #38ef7d;
+            padding: 1rem;
+            border-radius: 4px;
+            color: #22543d;
+        }
+
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 2rem;
+        }
+
+        .loading.active {
+            display: block;
+        }
+
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid var(--accent-blue);
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .agent-manager {
+            display: flex;
+            gap: 1rem;
+            margin-bottom: 1rem;
+        }
+
+        .agent-list {
+            background: #f7fafc;
+            border-radius: 8px;
+            padding: 1rem;
+            margin-top: 1rem;
+        }
+
+        .agent-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.75rem;
+            background: white;
+            border-radius: 6px;
+            margin-bottom: 0.5rem;
+        }
+
+        .agent-item:last-child {
+            margin-bottom: 0;
+        }
+
+        .remove-btn {
+            background: #fc466b;
+            color: white;
+            border: none;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.875rem;
+        }
+
+        .remove-btn:hover {
+            background: #e53e3e;
+        }
+    </style>
+</head>
+<body>
+    <!-- Top Navigation -->
+    <nav class="top-nav">
+        <div class="nav-container">
+            <div class="nav-brand">
+                <h2>🎨 Creative Agent Testing</h2>
+            </div>
+            <div class="nav-links">
+                <a href="/" class="nav-link">🧪 Media Buy Testing</a>
+                <a href="/creative-testing.html" class="nav-link active">🎨 Creative Agent Testing</a>
+                <a href="/adagents.html" class="nav-link">🔗 AdAgents Manager</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container">
+        <div class="header">
+            <h1>Creative Agent Testing</h1>
+            <p class="subtitle">Test creative agent tools and format discovery</p>
+        </div>
+
+        <!-- Agent Configuration -->
+        <div class="section">
+            <h3>🔧 Configure Creative Agent</h3>
+            <div class="form-group">
+                <label for="agentSelect">Select Agent:</label>
+                <select id="agentSelect">
+                    <option value="default">AdCP Reference Creative Agent (MCP)</option>
+                </select>
+            </div>
+            <div class="agent-manager">
+                <input type="url" id="customAgentUrl" placeholder="https://creative.example.com/mcp" style="flex: 1;">
+                <input type="text" id="customAgentName" placeholder="Agent Name" style="flex: 1;">
+                <button class="button button-secondary" onclick="addCustomAgent()">Add Custom Agent</button>
+            </div>
+            <div id="customAgentsList" class="agent-list" style="display: none;"></div>
+        </div>
+
+        <!-- Test List Creative Formats -->
+        <div class="section">
+            <h3>📋 List Creative Formats</h3>
+            <p>Discover all creative formats available from the selected agent.</p>
+            <button class="button" onclick="testListFormats()">List Formats</button>
+            <div id="formatResults" class="results" style="display: none;"></div>
+        </div>
+
+        <!-- Generic Tool Test -->
+        <div class="section">
+            <h3>🛠️ Generic Tool Test</h3>
+            <p>Test any creative agent tool with custom parameters (JSON format).</p>
+            <div class="form-group">
+                <label for="toolName">Tool Name:</label>
+                <input type="text" id="toolName" placeholder="list_creative_formats">
+            </div>
+            <div class="form-group">
+                <label for="toolParams">Parameters (JSON):</label>
+                <textarea id="toolParams" rows="6" placeholder='{"format_type": "display"}'>{}</textarea>
+            </div>
+            <button class="button" onclick="testGenericTool()">Execute Tool</button>
+            <div id="genericResults" class="results" style="display: none;"></div>
+        </div>
+
+        <!-- Debug Logs -->
+        <div class="section">
+            <h3>🔍 Debug Logs</h3>
+            <div id="debugLogs"></div>
+        </div>
+
+        <!-- Loading Indicator -->
+        <div id="loading" class="loading">
+            <div class="spinner"></div>
+            <p>Processing request...</p>
+        </div>
+    </div>
+
+    <script>
+        // State management
+        const state = {
+            customAgents: [],
+            currentAgent: {
+                url: 'https://creative.adcontextprotocol.org/mcp',
+                name: 'AdCP Reference Creative Agent (MCP)',
+                protocol: 'mcp'
+            },
+            debugLogs: []
+        };
+
+        // Initialize page
+        window.addEventListener('DOMContentLoaded', () => {
+            loadCustomAgents();
+        });
+
+        // Add custom agent
+        function addCustomAgent() {
+            const url = document.getElementById('customAgentUrl').value.trim();
+            const name = document.getElementById('customAgentName').value.trim();
+
+            if (!url || !name) {
+                alert('Please provide both URL and name');
+                return;
+            }
+
+            // Detect protocol from URL
+            const protocol = url.includes('/mcp') ? 'mcp' : 'a2a';
+
+            const agent = { url, name, protocol };
+            state.customAgents.push(agent);
+            localStorage.setItem('creativeAgents', JSON.stringify(state.customAgents));
+
+            // Clear inputs
+            document.getElementById('customAgentUrl').value = '';
+            document.getElementById('customAgentName').value = '';
+
+            // Refresh agent list
+            loadCustomAgents();
+        }
+
+        // Load custom agents from localStorage
+        function loadCustomAgents() {
+            const stored = localStorage.getItem('creativeAgents');
+            if (stored) {
+                state.customAgents = JSON.parse(stored);
+            }
+
+            // Update select dropdown
+            const select = document.getElementById('agentSelect');
+            select.innerHTML = '<option value="default">AdCP Reference Creative Agent (MCP)</option>';
+
+            state.customAgents.forEach((agent, index) => {
+                const option = document.createElement('option');
+                option.value = `custom_${index}`;
+                option.textContent = `${agent.name} (${agent.protocol.toUpperCase()})`;
+                select.appendChild(option);
+            });
+
+            // Update custom agents list
+            const list = document.getElementById('customAgentsList');
+            if (state.customAgents.length === 0) {
+                list.style.display = 'none';
+                return;
+            }
+
+            list.style.display = 'block';
+            list.innerHTML = state.customAgents.map((agent, index) => `
+                <div class="agent-item">
+                    <span><strong>${agent.name}</strong> - ${agent.url} (${agent.protocol.toUpperCase()})</span>
+                    <button class="remove-btn" onclick="removeCustomAgent(${index})">Remove</button>
+                </div>
+            `).join('');
+
+            // Listen for selection changes
+            select.addEventListener('change', () => {
+                const value = select.value;
+                if (value === 'default') {
+                    state.currentAgent = {
+                        url: 'https://creative.adcontextprotocol.org/mcp',
+                        name: 'AdCP Reference Creative Agent (MCP)',
+                        protocol: 'mcp'
+                    };
+                } else {
+                    const index = parseInt(value.split('_')[1]);
+                    state.currentAgent = state.customAgents[index];
+                }
+            });
+        }
+
+        // Remove custom agent
+        function removeCustomAgent(index) {
+            state.customAgents.splice(index, 1);
+            localStorage.setItem('creativeAgents', JSON.stringify(state.customAgents));
+            loadCustomAgents();
+        }
+
+        // Test list formats
+        async function testListFormats() {
+            const resultsDiv = document.getElementById('formatResults');
+            const loading = document.getElementById('loading');
+
+            try {
+                loading.classList.add('active');
+                resultsDiv.style.display = 'none';
+
+                const response = await fetch('/api/creative/list-formats', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        agentUrl: state.currentAgent.url,
+                        protocol: state.currentAgent.protocol
+                    })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    displayResults(resultsDiv, data.data, 'success');
+                    if (data.debug_logs) {
+                        displayDebugLogs(data.debug_logs);
+                    }
+                } else {
+                    displayResults(resultsDiv, { error: data.error }, 'error');
+                }
+
+            } catch (error) {
+                displayResults(resultsDiv, { error: error.message }, 'error');
+            } finally {
+                loading.classList.remove('active');
+            }
+        }
+
+        // Test generic tool
+        async function testGenericTool() {
+            const toolName = document.getElementById('toolName').value.trim();
+            const toolParamsText = document.getElementById('toolParams').value.trim();
+            const resultsDiv = document.getElementById('genericResults');
+            const loading = document.getElementById('loading');
+
+            if (!toolName) {
+                alert('Please provide a tool name');
+                return;
+            }
+
+            let params;
+            try {
+                params = JSON.parse(toolParamsText);
+            } catch (error) {
+                alert('Invalid JSON in parameters: ' + error.message);
+                return;
+            }
+
+            try {
+                loading.classList.add('active');
+                resultsDiv.style.display = 'none';
+
+                const response = await fetch('/api/creative/execute-tool', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        agentUrl: state.currentAgent.url,
+                        protocol: state.currentAgent.protocol,
+                        toolName,
+                        params
+                    })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    displayResults(resultsDiv, data.data, 'success');
+                    if (data.debug_logs) {
+                        displayDebugLogs(data.debug_logs);
+                    }
+                } else {
+                    displayResults(resultsDiv, { error: data.error }, 'error');
+                }
+
+            } catch (error) {
+                displayResults(resultsDiv, { error: error.message }, 'error');
+            } finally {
+                loading.classList.remove('active');
+            }
+        }
+
+        // Display results
+        function displayResults(container, data, type) {
+            container.style.display = 'block';
+            container.className = 'results ' + type;
+            container.innerHTML = `<pre>${JSON.stringify(data, null, 2)}</pre>`;
+        }
+
+        // Display debug logs
+        function displayDebugLogs(logs) {
+            const debugDiv = document.getElementById('debugLogs');
+
+            if (!Array.isArray(logs) || logs.length === 0) {
+                return;
+            }
+
+            logs.forEach(log => {
+                const entry = document.createElement('div');
+                entry.className = `debug-log-entry ${log.type || 'info'}`;
+
+                const header = document.createElement('div');
+                header.className = 'log-header';
+                header.innerHTML = `
+                    <span>${log.type === 'request' ? '➡️ Request' : '⬅️ Response'} - ${log.method || log.tool || 'Unknown'}</span>
+                    <span>${log.timestamp || new Date().toISOString()}</span>
+                `;
+
+                const body = document.createElement('div');
+                body.className = 'log-body';
+                body.textContent = JSON.stringify(log.body || log, null, 2);
+
+                entry.appendChild(header);
+                entry.appendChild(body);
+                debugDiv.appendChild(entry);
+            });
+        }
+    </script>
+</body>
+</html>

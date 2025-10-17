@@ -1166,6 +1166,105 @@ const webhookRegistrations = new Map<string, {
 const taskNotificationCallbacks = new Map<string, (task: any) => void>();
 
 /**
+ * Creative Agent Testing Endpoints
+ */
+
+// List creative formats from a creative agent
+app.post<{
+  Body: {
+    agentUrl: string;
+    protocol?: 'mcp' | 'a2a';
+    params?: Record<string, any>;
+  };
+}>('/api/creative/list-formats', async (request, reply) => {
+  try {
+    const { agentUrl, protocol = 'mcp', params = {} } = request.body;
+
+    if (!agentUrl) {
+      return reply.code(400).send({
+        success: false,
+        error: 'agentUrl is required'
+      });
+    }
+
+    // Create temporary agent config
+    const agentConfig: AgentConfig = {
+      id: 'temp_creative_agent',
+      name: 'Creative Agent',
+      agent_uri: agentUrl,
+      protocol
+    };
+
+    const client = getAgentClient('temp_creative_agent', agentConfig);
+    const result = await client.listCreativeFormats(params, createDefaultInputHandler());
+
+    return reply.send({
+      success: result.success,
+      data: result.data,
+      error: result.error,
+      metadata: result.metadata,
+      debug_logs: result.debug_logs,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    app.log.error({ error }, 'List creative formats error');
+    return reply.code(500).send({
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+// Execute any tool on a creative agent (generic interface)
+app.post<{
+  Body: {
+    agentUrl: string;
+    protocol?: 'mcp' | 'a2a';
+    toolName: string;
+    params?: Record<string, any>;
+  };
+}>('/api/creative/execute-tool', async (request, reply) => {
+  try {
+    const { agentUrl, protocol = 'mcp', toolName, params = {} } = request.body;
+
+    if (!agentUrl || !toolName) {
+      return reply.code(400).send({
+        success: false,
+        error: 'agentUrl and toolName are required'
+      });
+    }
+
+    // Create temporary agent config
+    const agentConfig: AgentConfig = {
+      id: 'temp_creative_agent',
+      name: 'Creative Agent',
+      agent_uri: agentUrl,
+      protocol
+    };
+
+    const client = getAgentClient('temp_creative_agent', agentConfig);
+
+    // Use the generic executeTask method
+    const result = await client.executeTask(toolName, params, createDefaultInputHandler());
+
+    return reply.send({
+      success: result.success,
+      data: result.data,
+      error: result.error,
+      metadata: result.metadata,
+      debug_logs: result.debug_logs,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    app.log.error({ error }, 'Execute creative tool error');
+    return reply.code(500).send({
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+/**
  * Register webhook for task notifications
  */
 app.post<{
