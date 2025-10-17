@@ -2310,6 +2310,12 @@
                 
                 <div class="param-group">
                     <label>Flight Dates:</label>
+                    <div style="margin-bottom: 8px;">
+                        <label style="display: flex; align-items: center; gap: 8px;">
+                            <input type="checkbox" id="start-asap" style="width: auto;">
+                            <span>Start ASAP (immediate campaign start)</span>
+                        </label>
+                    </div>
                     <div style="display: flex; gap: 10px;">
                         <input type="date" id="start-date">
                         <span>to</span>
@@ -4271,12 +4277,23 @@
             // Set default dates
             const startDate = document.getElementById('start-date');
             const endDate = document.getElementById('end-date');
+            const startAsapCheckbox = document.getElementById('start-asap');
             const today = new Date();
             const nextWeek = new Date(today.getTime() + 7 * 24 * 60 * 60 * 1000);
-            
+
             startDate.value = today.toISOString().split('T')[0];
             endDate.value = nextWeek.toISOString().split('T')[0];
-            
+
+            // Add event listener to ASAP checkbox
+            startAsapCheckbox.addEventListener('change', function() {
+                startDate.disabled = this.checked;
+                if (this.checked) {
+                    startDate.style.opacity = '0.5';
+                } else {
+                    startDate.style.opacity = '1';
+                }
+            });
+
             // Show modal
             document.getElementById('create-media-buy-modal').style.display = 'block';
         }
@@ -4444,6 +4461,7 @@
             const currency = document.getElementById('budget-currency').value || 'USD';
             const dailyCap = document.getElementById('daily-cap').value;
             const pacing = document.getElementById('budget-pacing').value || 'even';
+            const startAsap = document.getElementById('start-asap').checked;
             const startDate = document.getElementById('start-date').value;
             const endDate = document.getElementById('end-date').value;
             
@@ -4533,7 +4551,7 @@
                     packages: packages,
                     brand_manifest: brandManifest,
                     po_number: poNumber,
-                    start_time: startDate ? new Date(startDate).toISOString() : new Date().toISOString(),
+                    start_time: startAsap ? 'asap' : (startDate ? new Date(startDate).toISOString() : new Date().toISOString()),
                     end_time: endDate ? new Date(endDate).toISOString() : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
                     budget: budgetConfig
                 };

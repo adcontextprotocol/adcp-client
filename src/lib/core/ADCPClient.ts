@@ -832,6 +832,84 @@ export class ADCPClient {
   async unregisterWebhook(): Promise<void> {
     return this.executor.unregisterWebhook(this.agent);
   }
+
+  // ====== STATIC HELPER METHODS ======
+
+  /**
+   * Query a creative agent to discover available creative formats
+   *
+   * This is a static utility method that allows you to query any creative agent
+   * (like creative.adcontextprotocol.org) to discover what formats are available
+   * before creating a media buy.
+   *
+   * @param creativeAgentUrl - URL of the creative agent (e.g., 'https://creative.adcontextprotocol.org/mcp')
+   * @param protocol - Protocol to use ('mcp' or 'a2a'), defaults to 'mcp'
+   * @returns Promise resolving to the list of available formats
+   *
+   * @example
+   * ```typescript
+   * // Discover formats from the standard creative agent
+   * const formats = await ADCPClient.discoverCreativeFormats(
+   *   'https://creative.adcontextprotocol.org/mcp'
+   * );
+   *
+   * // Find a specific format
+   * const banner = formats.find(f => f.format_id.id === 'display_300x250_image');
+   *
+   * // Use the format in a media buy
+   * await salesAgent.createMediaBuy({
+   *   packages: [{
+   *     format_ids: [{
+   *       agent_url: banner.format_id.agent_url,
+   *       id: banner.format_id.id
+   *     }]
+   *   }]
+   * });
+   * ```
+   */
+  static async discoverCreativeFormats(
+    creativeAgentUrl: string,
+    protocol: 'mcp' | 'a2a' = 'mcp'
+  ): Promise<Array<{
+    format_id: { agent_url: string; id: string };
+    agent_url: string;
+    name: string;
+    description?: string;
+    type?: string;
+    renders?: Array<{
+      role: string;
+      dimensions?: { width: number; height: number };
+    }>;
+  }>> {
+    const client = new ADCPClient(
+      {
+        id: 'creative_agent_discovery',
+        name: 'Creative Agent',
+        agent_uri: creativeAgentUrl,
+        protocol
+      },
+      {}
+    );
+
+    const result = await client.listCreativeFormats({});
+
+    if (!result.success || !result.data) {
+      throw new Error(`Failed to discover creative formats: ${result.error || 'Unknown error'}`);
+    }
+
+    // The creative agent returns formats in a result field that may be stringified JSON
+    let formats = result.data.formats;
+
+    if (!formats && (result.data as any).result) {
+      // Parse stringified result if needed
+      const parsed = typeof (result.data as any).result === 'string'
+        ? JSON.parse((result.data as any).result)
+        : (result.data as any).result;
+      formats = parsed.formats;
+    }
+
+    return formats as any || [];
+  }
 }
 
 /**
