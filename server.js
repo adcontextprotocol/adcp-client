@@ -8,8 +8,8 @@ const express = require('express');
 const path = require('path');
 const cors = require('cors');
 
-// Import the working sales agents handlers (adapted for Node.js)
-const { SalesAgentsHandlers } = require('./src/sales-agents-handlers-node');
+// Import the library-based sales agents handlers
+const { SalesAgentsHandlers } = require('./dist/server/sales-agents-handlers');
 
 const app = express();
 const port = process.env.PORT || 8080;

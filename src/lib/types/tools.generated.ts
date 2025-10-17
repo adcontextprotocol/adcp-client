@@ -83,7 +83,6 @@ export interface BrandManifest2 {
      * Logo height in pixels
      */
     height?: number;
-    [k: string]: unknown;
   }[];
   /**
    * Brand color palette
@@ -109,7 +108,6 @@ export interface BrandManifest2 {
      * Text color (hex format)
      */
     text?: string;
-    [k: string]: unknown;
   };
   /**
    * Brand typography guidelines
@@ -127,7 +125,6 @@ export interface BrandManifest2 {
      * URLs to web font files if using custom fonts
      */
     font_urls?: string[];
-    [k: string]: unknown;
   };
   /**
    * Brand voice and messaging tone (e.g., 'professional', 'casual', 'humorous', 'trustworthy', 'innovative')
@@ -233,7 +230,6 @@ export interface BrandManifest2 {
      * Whether this disclaimer must appear
      */
     required?: boolean;
-    [k: string]: unknown;
   }[];
   /**
    * Industry or vertical (e.g., 'retail', 'automotive', 'finance', 'healthcare')
@@ -255,7 +251,6 @@ export interface BrandManifest2 {
      * Contact phone number
      */
     phone?: string;
-    [k: string]: unknown;
   };
   /**
    * Additional brand metadata
@@ -273,7 +268,6 @@ export interface BrandManifest2 {
      * Brand card version number
      */
     version?: string;
-    [k: string]: unknown;
   };
 }
 /**
@@ -406,7 +400,6 @@ export interface Product1 {
      * Additional details about measurement methodology in plain language (e.g., 'MRC-accredited viewability. 50% in-view for 1s display / 2s video', 'Panel-based demographic measurement updated monthly')
      */
     notes?: string;
-    [k: string]: unknown;
   };
   reporting_capabilities?: ReportingCapabilities;
   creative_policy?: CreativePolicy;
@@ -530,7 +523,6 @@ export interface CPMAuctionPricingOption {
      * 90th percentile winning price
      */
     p90?: number;
-    [k: string]: unknown;
   };
   /**
    * Minimum spend requirement per package using this pricing option, in the specified currency
@@ -602,7 +594,6 @@ export interface VCPMAuctionPricingOption {
      * 90th percentile of recent winning bids
      */
     p90?: number;
-    [k: string]: unknown;
   };
   /**
    * Minimum spend requirement per package using this pricing option, in the specified currency
@@ -976,7 +967,6 @@ export interface ListCreativeFormatsResponse {
      * Capabilities this creative agent provides
      */
     capabilities?: ('validation' | 'assembly' | 'generation' | 'preview')[];
-    [k: string]: unknown;
   }[];
   /**
    * Task-specific errors and warnings (e.g., format availability issues)
@@ -1053,7 +1043,6 @@ export interface Format {
         responsive?: {
           width: boolean;
           height: boolean;
-          [k: string]: unknown;
         };
         /**
          * Fixed aspect ratio constraint (e.g., '16:9', '4:3', '1:1')
@@ -1063,9 +1052,7 @@ export interface Format {
          * Unit of measurement for dimensions
          */
         unit: 'px' | 'dp' | 'inches' | 'cm';
-        [k: string]: unknown;
       };
-      [k: string]: unknown;
     },
     ...{
       /**
@@ -1106,7 +1093,6 @@ export interface Format {
         responsive?: {
           width: boolean;
           height: boolean;
-          [k: string]: unknown;
         };
         /**
          * Fixed aspect ratio constraint (e.g., '16:9', '4:3', '1:1')
@@ -1116,9 +1102,7 @@ export interface Format {
          * Unit of measurement for dimensions
          */
         unit: 'px' | 'dp' | 'inches' | 'cm';
-        [k: string]: unknown;
       };
-      [k: string]: unknown;
     }[]
   ];
   /**
@@ -1148,7 +1132,6 @@ export interface Format {
         requirements?: {
           [k: string]: unknown;
         };
-        [k: string]: unknown;
       }
     | {
         /**
@@ -1193,9 +1176,7 @@ export interface Format {
           requirements?: {
             [k: string]: unknown;
           };
-          [k: string]: unknown;
         }[];
-        [k: string]: unknown;
       }
   )[];
   /**
@@ -1307,7 +1288,6 @@ export interface CreateMediaBuyRequest {
       | 'viewability'
       | 'engagement_rate'
     )[];
-    [k: string]: unknown;
   };
 }
 /**
@@ -1687,7 +1667,6 @@ export interface PromotedOfferingsAsset {
     primary?: string;
     secondary?: string;
     accent?: string;
-    [k: string]: unknown;
   };
   /**
    * Brand fonts
@@ -2066,7 +2045,6 @@ export interface ListCreativesResponse {
     sort_applied?: {
       field?: string;
       direction?: 'asc' | 'desc';
-      [k: string]: unknown;
     };
   };
   /**
@@ -2504,7 +2482,6 @@ export interface GetMediaBuyDeliveryResponse {
        * Effective rate paid per unit based on pricing_model (e.g., actual CPM for 'cpm', actual cost per completed view for 'cpcv', actual cost per point for 'cpp')
        */
       effective_rate?: number;
-      [k: string]: unknown;
     };
     /**
      * Metrics broken down by package
@@ -2522,7 +2499,6 @@ export interface GetMediaBuyDeliveryResponse {
        * Delivery pace (1.0 = on track, <1.0 = behind, >1.0 = ahead)
        */
       pacing_index?: number;
-      [k: string]: unknown;
     })[];
     /**
      * Day-by-day delivery
@@ -2619,7 +2595,6 @@ export interface DeliveryMetrics {
      * 100% completion views
      */
     q4_views?: number;
-    [k: string]: unknown;
   };
   /**
    * DOOH-specific metrics (only included for DOOH campaigns)
