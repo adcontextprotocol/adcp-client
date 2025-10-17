@@ -75,6 +75,74 @@ interface ToolDefinition {
   singleAgentOnly?: boolean;
 }
 
+/**
+ * Recursively remove additionalProperties: true from schema to enforce strict typing
+ * This prevents [k: string]: unknown in generated TypeScript types
+ */
+function enforceStrictSchema(schema: any): any {
+  if (!schema || typeof schema !== 'object') {
+    return schema;
+  }
+
+  // Create a shallow copy
+  const strictSchema = { ...schema };
+
+  // Remove additionalProperties if it's true
+  if (strictSchema.additionalProperties === true) {
+    delete strictSchema.additionalProperties;
+  }
+
+  // Recursively process nested schemas
+  if (strictSchema.properties) {
+    strictSchema.properties = Object.fromEntries(
+      Object.entries(strictSchema.properties).map(([key, value]) => [
+        key,
+        enforceStrictSchema(value)
+      ])
+    );
+  }
+
+  if (strictSchema.items) {
+    if (Array.isArray(strictSchema.items)) {
+      strictSchema.items = strictSchema.items.map(enforceStrictSchema);
+    } else {
+      strictSchema.items = enforceStrictSchema(strictSchema.items);
+    }
+  }
+
+  if (strictSchema.allOf) {
+    strictSchema.allOf = strictSchema.allOf.map(enforceStrictSchema);
+  }
+
+  if (strictSchema.anyOf) {
+    strictSchema.anyOf = strictSchema.anyOf.map(enforceStrictSchema);
+  }
+
+  if (strictSchema.oneOf) {
+    strictSchema.oneOf = strictSchema.oneOf.map(enforceStrictSchema);
+  }
+
+  if (strictSchema.definitions) {
+    strictSchema.definitions = Object.fromEntries(
+      Object.entries(strictSchema.definitions).map(([key, value]) => [
+        key,
+        enforceStrictSchema(value)
+      ])
+    );
+  }
+
+  if (strictSchema.$defs) {
+    strictSchema.$defs = Object.fromEntries(
+      Object.entries(strictSchema.$defs).map(([key, value]) => [
+        key,
+        enforceStrictSchema(value)
+      ])
+    );
+  }
+
+  return strictSchema;
+}
+
 // Load AdCP tool schemas from cache
 function loadToolSchema(toolName: string, taskType: 'media-buy' | 'signals' | 'creative' = 'media-buy'): any {
   try {
@@ -324,9 +392,12 @@ async function generateToolTypes(tools: ToolDefinition[]) {
       // Generate parameter types
       if (tool.paramsSchema) {
         const paramTypeName = `${tool.methodName.charAt(0).toUpperCase() + tool.methodName.slice(1)}Request`;
-        const paramTypes = await compile(tool.paramsSchema, paramTypeName, {
+        // Enforce strict schema (remove additionalProperties: true)
+        const strictParamsSchema = enforceStrictSchema(tool.paramsSchema);
+        const paramTypes = await compile(strictParamsSchema, paramTypeName, {
           bannerComment: '',
           style: { semi: true, singleQuote: true },
+          additionalProperties: false, // Disable [k: string]: unknown for type safety
           $refOptions: {
             resolve: {
               cache: refResolver
@@ -340,12 +411,15 @@ async function generateToolTypes(tools: ToolDefinition[]) {
         }
       }
 
-      // Generate response types  
+      // Generate response types
       if (tool.responseSchema) {
         const responseTypeName = `${tool.methodName.charAt(0).toUpperCase() + tool.methodName.slice(1)}Response`;
-        const responseTypes = await compile(tool.responseSchema, responseTypeName, {
+        // Enforce strict schema (remove additionalProperties: true)
+        const strictResponseSchema = enforceStrictSchema(tool.responseSchema);
+        const responseTypes = await compile(strictResponseSchema, responseTypeName, {
           bannerComment: '',
           style: { semi: true, singleQuote: true },
+          additionalProperties: false, // Disable [k: string]: unknown for type safety
           $refOptions: {
             resolve: {
               cache: refResolver
@@ -648,12 +722,15 @@ async function generateTypes() {
       
       if (schema) {
         console.log(`🔧 Generating TypeScript types for ${schemaName}...`);
-        const types = await compile(schema, schemaName, {
+        // Enforce strict schema (remove additionalProperties: true)
+        const strictSchema = enforceStrictSchema(schema);
+        const types = await compile(strictSchema, schemaName, {
           bannerComment: '',
           style: {
             semi: true,
             singleQuote: true
           },
+          additionalProperties: false, // Disable [k: string]: unknown for type safety
           $refOptions: {
             resolve: {
               cache: refResolver

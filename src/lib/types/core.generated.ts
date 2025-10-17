@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas v2.0.0
-// Generated at: 2025-10-17T02:26:01.045Z
+// Generated at: 2025-10-17T10:46:01.107Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -487,7 +487,6 @@ export interface PromotedOfferingsAsset {
     primary?: string;
     secondary?: string;
     accent?: string;
-    [k: string]: unknown;
   };
   /**
    * Brand fonts
@@ -615,7 +614,6 @@ export interface Product1 {
      * Additional details about measurement methodology in plain language (e.g., 'MRC-accredited viewability. 50% in-view for 1s display / 2s video', 'Panel-based demographic measurement updated monthly')
      */
     notes?: string;
-    [k: string]: unknown;
   };
   reporting_capabilities?: ReportingCapabilities;
   creative_policy?: CreativePolicy;
@@ -752,7 +750,6 @@ export interface CPMAuctionPricingOption {
      * 90th percentile winning price
      */
     p90?: number;
-    [k: string]: unknown;
   };
   /**
    * Minimum spend requirement per package using this pricing option, in the specified currency
@@ -824,7 +821,6 @@ export interface VCPMAuctionPricingOption {
      * 90th percentile of recent winning bids
      */
     p90?: number;
-    [k: string]: unknown;
   };
   /**
    * Minimum spend requirement per package using this pricing option, in the specified currency

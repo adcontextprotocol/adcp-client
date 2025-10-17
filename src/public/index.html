@@ -2175,17 +2175,16 @@
                             <th style="padding: 12px; text-align: left; border: 1px solid #dee2e6;">Format ID</th>
                             <th style="padding: 12px; text-align: left; border: 1px solid #dee2e6;">Name</th>
                             <th style="padding: 12px; text-align: left; border: 1px solid #dee2e6;">Type</th>
-                            <th style="padding: 12px; text-align: left; border: 1px solid #dee2e6; width: 100px;">IAB Standard</th>
-                            <th style="padding: 12px; text-align: left; border: 1px solid #dee2e6;">IAB Specification</th>
+                            <th style="padding: 12px; text-align: left; border: 1px solid #dee2e6;">Dimensions</th>
+                            <th style="padding: 12px; text-align: left; border: 1px solid #dee2e6; width: 100px;">Generative</th>
+                            <th style="padding: 12px; text-align: left; border: 1px solid #dee2e6;">Output Formats</th>
                             <th style="padding: 12px; text-align: left; border: 1px solid #dee2e6;">Assets Required</th>
-                            <th style="padding: 12px; text-align: left; border: 1px solid #dee2e6;">Requirements</th>
                             <th style="padding: 12px; text-align: left; border: 1px solid #dee2e6; width: 80px;">AdCP</th>
-                            <th style="padding: 12px; text-align: left; border: 1px solid #dee2e6; width: 100px;">Source</th>
                         </tr>
                     </thead>
                     <tbody id="creative-formats-tbody">
                         <tr>
-                            <td colspan="9" style="padding: 20px; text-align: center; color: #666;">
+                            <td colspan="8" style="padding: 20px; text-align: center; color: #666;">
                                 No creative formats loaded. Click "Refresh Creative Formats" to discover available formats.
                             </td>
                         </tr>
@@ -3348,8 +3347,7 @@
             // Build AdCP-compliant parameters
             const params = {
                 brief: 'Discover available advertising products for testing',
-                brand_manifest: brandManifest,
-                adcp_version: '1.6.0'
+                brand_manifest: brandManifest
             };
 
             // Add filters if any are specified
@@ -3911,23 +3909,101 @@
             
             tbody.innerHTML = creativeFormats.map(format => `
                 <tr>
-                    <td style="padding: 12px; border: 1px solid #dee2e6;">${format.format_id || 'N/A'}</td>
+                    <td style="padding: 12px; border: 1px solid #dee2e6; font-family: monospace; font-size: 0.9em;">${formatFormatId(format.format_id)}</td>
                     <td style="padding: 12px; border: 1px solid #dee2e6;">${format.name || 'Unnamed Format'}</td>
-                    <td style="padding: 12px; border: 1px solid #dee2e6;">${format.type || 'N/A'}</td>
-                    <td style="padding: 12px; border: 1px solid #dee2e6; text-align: center;">
-                        ${format.is_standard ? '✅ Yes' : '❌ No'}
+                    <td style="padding: 12px; border: 1px solid #dee2e6;">
+                        <span style="background: #e3f2fd; padding: 4px 8px; border-radius: 4px; font-size: 0.85em;">
+                            ${format.type || 'N/A'}
+                        </span>
                     </td>
-                    <td style="padding: 12px; border: 1px solid #dee2e6;">${format.iab_specification || 'N/A'}</td>
+                    <td style="padding: 12px; border: 1px solid #dee2e6; font-size: 0.9em;">${formatDimensions(format.renders)}</td>
+                    <td style="padding: 12px; border: 1px solid #dee2e6; text-align: center;">
+                        ${formatGenerativeStatus(format.output_format_ids)}
+                    </td>
+                    <td style="padding: 12px; border: 1px solid #dee2e6; font-size: 0.85em;">${formatOutputFormats(format.output_format_ids)}</td>
                     <td style="padding: 12px; border: 1px solid #dee2e6;">${formatAssetsRequired(format.assets_required)}</td>
-                    <td style="padding: 12px; border: 1px solid #dee2e6;">${formatRequirements(format.requirements)}</td>
                     <td style="padding: 12px; border: 1px solid #dee2e6; text-align: center;">${getFormatValidationStatusIcon(format)}</td>
-                    <td style="padding: 12px; border: 1px solid #dee2e6; text-align: center;">
-                        ${formatSourceDisplay(format.source)}
-                    </td>
                 </tr>
             `).join('');
         }
-        
+
+        function formatFormatId(formatId) {
+            if (!formatId) return 'N/A';
+
+            // If it's a structured format ID object (AdCP v2.0)
+            if (typeof formatId === 'object' && formatId.id) {
+                const agentUrl = formatId.agent_url || '';
+                const domain = agentUrl ? new URL(agentUrl).hostname.replace('www.', '') : '';
+                return `<div style="line-height: 1.4;">
+                    <div><strong>${formatId.id}</strong></div>
+                    ${domain ? `<div style="color: #666; font-size: 0.85em;">${domain}</div>` : ''}
+                </div>`;
+            }
+
+            // Legacy string format
+            return String(formatId);
+        }
+
+        function formatDimensions(renders) {
+            if (!renders || !Array.isArray(renders) || renders.length === 0) {
+                return '<span style="color: #999;">No dimensions</span>';
+            }
+
+            return renders.map(render => {
+                const dims = render.dimensions;
+                if (!dims) return 'Unknown';
+
+                let result = '';
+                if (dims.width && dims.height) {
+                    result = `${dims.width}×${dims.height}${dims.unit || 'px'}`;
+                } else if (dims.min_width || dims.max_width) {
+                    const min = dims.min_width || '?';
+                    const max = dims.max_width || '?';
+                    result = `${min}-${max}×${dims.height || '?'}${dims.unit || 'px'}`;
+                }
+
+                if (dims.aspect_ratio) {
+                    result += ` (${dims.aspect_ratio})`;
+                }
+
+                if (render.role && renders.length > 1) {
+                    result = `<div style="margin: 2px 0;"><strong>${render.role}:</strong> ${result}</div>`;
+                }
+
+                return result;
+            }).join('');
+        }
+
+        function formatGenerativeStatus(outputFormatIds) {
+            if (!outputFormatIds || !Array.isArray(outputFormatIds) || outputFormatIds.length === 0) {
+                return '<span style="color: #999;">—</span>';
+            }
+
+            return `<span style="background: #4caf50; color: white; padding: 4px 8px; border-radius: 4px; font-weight: 500;">
+                ✨ Yes
+            </span>`;
+        }
+
+        function formatOutputFormats(outputFormatIds) {
+            if (!outputFormatIds || !Array.isArray(outputFormatIds) || outputFormatIds.length === 0) {
+                return '<span style="color: #999;">—</span>';
+            }
+
+            const formatNames = outputFormatIds.map(id => {
+                if (typeof id === 'object' && id.id) {
+                    return id.id;
+                }
+                return String(id);
+            });
+
+            if (formatNames.length > 3) {
+                const first3 = formatNames.slice(0, 3).join(', ');
+                return `<div title="${formatNames.join(', ')}">${first3}... (+${formatNames.length - 3} more)</div>`;
+            }
+
+            return formatNames.join(', ');
+        }
+
         function formatAssetsRequired(assets) {
             if (!assets) return 'N/A';
 
@@ -3985,20 +4061,6 @@
             return String(requirements);
         }
 
-        function formatSourceDisplay(source) {
-            if (!source) return '<span style="color: #999;">Unknown</span>';
-            
-            switch (source.toLowerCase()) {
-                case 'agent':
-                    return '<span style="color: #28a745; font-weight: bold;">🤖 Agent</span>';
-                case 'standard':
-                case 'adcp_standard':
-                    return '<span style="color: #007bff; font-weight: bold;">📚 Standard</span>';
-                default:
-                    return `<span style="color: #6c757d;">${source}</span>`;
-            }
-        }
-        
         function getFormatValidationStatusIcon(format) {
             // Check if format has validation information from backend
             if (format.validation !== undefined) {
@@ -4010,42 +4072,45 @@
                     return '<span title="Validation Error">⚠️</span>';
                 }
             }
-            
-            // AdCP spec compliance check for creative formats
-            // Based on Format interface in tools.generated.ts
+
+            // AdCP v2.0 spec compliance check for creative formats
+            // Based on Format interface at src/lib/types/tools.generated.ts:979
             const adcpViolations = [];
 
-            // REQUIRED fields per AdCP spec (no ? in schema)
+            // REQUIRED fields per AdCP v2.0 spec
             if (!format.format_id) adcpViolations.push('Missing format_id');
             if (!format.name) adcpViolations.push('Missing name');
             if (!format.type) adcpViolations.push('Missing type');
 
-            // OPTIONAL fields - only validate types if present
-            if (format.is_standard !== undefined && typeof format.is_standard !== 'boolean') {
-                adcpViolations.push('is_standard should be boolean');
-            }
-            if (format.accepts_3p_tags !== undefined && typeof format.accepts_3p_tags !== 'boolean') {
-                adcpViolations.push('accepts_3p_tags should be boolean');
-            }
-            if (format.category && !['standard', 'custom'].includes(format.category)) {
-                adcpViolations.push('category should be "standard" or "custom"');
-            }
-            if (format.assets_required && !Array.isArray(format.assets_required)) {
-                adcpViolations.push('assets_required should be an array');
-            }
-
-            // Type must be one of the allowed values
+            // Type must be one of the allowed values in AdCP v2.0
             const validTypes = ['audio', 'video', 'display', 'native', 'dooh', 'rich_media', 'universal'];
             if (format.type && !validTypes.includes(format.type)) {
-                adcpViolations.push(`type "${format.type}" is not valid`);
+                adcpViolations.push(`Invalid type: ${format.type}`);
             }
-            
+
+            // Validate format_id structure if present
+            if (format.format_id && typeof format.format_id === 'object') {
+                if (!format.format_id.agent_url) adcpViolations.push('format_id missing agent_url');
+                if (!format.format_id.id) adcpViolations.push('format_id missing id');
+            }
+
+            // Validate optional arrays if present
+            if (format.assets_required && !Array.isArray(format.assets_required)) {
+                adcpViolations.push('assets_required must be array');
+            }
+            if (format.renders && !Array.isArray(format.renders)) {
+                adcpViolations.push('renders must be array');
+            }
+            if (format.output_format_ids && !Array.isArray(format.output_format_ids)) {
+                adcpViolations.push('output_format_ids must be array');
+            }
+
             if (adcpViolations.length === 0) {
-                return '<span title="AdCP Spec Compliant">✅</span>';
+                return '<span title="AdCP v2.0 Spec Compliant">✅</span>';
             } else if (adcpViolations.length <= 2) {
-                return `<span title="Minor AdCP violations: ${adcpViolations.join(', ')}" style="color: orange;">⚠️</span>`;
+                return `<span title="Minor violations: ${adcpViolations.join(', ')}" style="color: orange;">⚠️</span>`;
             } else {
-                return `<span title="Major AdCP violations: ${adcpViolations.join(', ')}" style="color: red;">❌</span>`;
+                return `<span title="Major violations: ${adcpViolations.join(', ')}" style="color: red;">❌</span>`;
             }
         }
 
