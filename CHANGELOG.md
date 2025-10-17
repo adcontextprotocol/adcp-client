@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0](https://github.com/adcontextprotocol/adcp-client/compare/v0.4.2...v0.5.0) (2025-10-17)
+
+
+### ⚠ BREAKING CHANGES
+
+* Updated to AdCP v2.0.0 schemas with structured FormatID. Format discovery now returns FormatID objects instead of strings.
+
+### Features
+
+* add creative agent support and update to AdCP v2.0.0 schemas ([#45](https://github.com/adcontextprotocol/adcp-client/issues/45)) ([6fe3dea](https://github.com/adcontextprotocol/adcp-client/commit/6fe3dea220067d73b760b64eac13630b3ef9b67b))
+* add generative creative support (AdCP v2.0.0) - dynamic schema management ([#43](https://github.com/adcontextprotocol/adcp-client/issues/43)) ([b141533](https://github.com/adcontextprotocol/adcp-client/commit/b1415335ba17b06a5aaafd040120ed98f376e067))
+* enforce strict FormatID typing and remove deprecated fields ([#44](https://github.com/adcontextprotocol/adcp-client/issues/44)) ([af32459](https://github.com/adcontextprotocol/adcp-client/commit/af32459fc07a971953b2dbda92be70df70a98513))
+
+
+### Bug Fixes
+
+* improve UI error handling and add webhook support ([#41](https://github.com/adcontextprotocol/adcp-client/issues/41)) ([08dfe52](https://github.com/adcontextprotocol/adcp-client/commit/08dfe528143583797491830c6051937e107287e0))
+* support dynamic agents added via UI ([#40](https://github.com/adcontextprotocol/adcp-client/issues/40)) ([ec3b9d1](https://github.com/adcontextprotocol/adcp-client/commit/ec3b9d1cf2e2bec68e91e17f3f5b5b365edf9893))
+
 ## [0.4.2](https://github.com/adcontextprotocol/adcp-client/compare/v0.4.1...v0.4.2) (2025-10-09)
 
 
