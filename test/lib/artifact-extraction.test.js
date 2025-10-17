@@ -229,6 +229,80 @@ describe('Artifact Extraction Tests', () => {
       assert.ok(extractedData.formats);
       assert.strictEqual(extractedData.formats.length, 1);
     });
+
+    it('should parse stringified JSON from structuredContent.result', async () => {
+      // Real-world case: some MCP servers return stringified JSON in result field
+      const mockResponse = {
+        structuredContent: {
+          result: JSON.stringify({
+            formats: [
+              { format_id: { agent_url: 'https://creative.example.com', id: 'format1' }, name: 'Format 1' },
+              { format_id: { agent_url: 'https://creative.example.com', id: 'format2' }, name: 'Format 2' }
+            ]
+          })
+        }
+      };
+
+      const debugLogs = [];
+      const extractedData = executor.extractResponseData(mockResponse, debugLogs);
+
+      assert.ok(extractedData.formats, 'Should extract formats from parsed result');
+      assert.strictEqual(extractedData.formats.length, 2);
+      assert.strictEqual(extractedData.formats[0].name, 'Format 1');
+
+      // Check debug logs
+      const parseLog = debugLogs.find(log =>
+        log.message.includes('Parsing stringified result')
+      );
+      assert.ok(parseLog, 'Should log string parsing');
+    });
+
+    it('should unwrap object from structuredContent.result', async () => {
+      // Case: structuredContent has nested result object (not stringified)
+      const mockResponse = {
+        structuredContent: {
+          result: {
+            products: [
+              { product_id: 'p1', name: 'Product 1' }
+            ]
+          }
+        }
+      };
+
+      const debugLogs = [];
+      const extractedData = executor.extractResponseData(mockResponse, debugLogs);
+
+      assert.ok(extractedData.products, 'Should extract products from unwrapped result');
+      assert.strictEqual(extractedData.products.length, 1);
+
+      // Check debug logs
+      const unwrapLog = debugLogs.find(log =>
+        log.message.includes('Unwrapping nested result object')
+      );
+      assert.ok(unwrapLog, 'Should log object unwrapping');
+    });
+
+    it('should handle invalid JSON in structuredContent.result gracefully', async () => {
+      const mockResponse = {
+        structuredContent: {
+          result: 'invalid json {',
+          formats: [] // fallback data
+        }
+      };
+
+      const debugLogs = [];
+      const extractedData = executor.extractResponseData(mockResponse, debugLogs);
+
+      // Should fall back to returning structuredContent with invalid result
+      assert.ok(extractedData.result);
+      assert.ok(extractedData.formats);
+
+      // Check debug logs
+      const warningLog = debugLogs.find(log =>
+        log.type === 'warning' && log.message.includes('Failed to parse')
+      );
+      assert.ok(warningLog, 'Should log parse failure warning');
+    });
   });
 
   describe('Protocol-Agnostic Behavior', () => {
