@@ -365,7 +365,10 @@
             <h3>Step 3: Provide Assets</h3>
             <div id="selectedFormatInfo"></div>
             <div id="assetInputs"></div>
-            <button class="button button-success" onclick="buildCreative()">Build Creative</button>
+            <div style="display: flex; gap: 1rem;">
+                <button class="button" onclick="previewCreative()">Preview Creative</button>
+                <button class="button button-success" onclick="buildCreative()">Build Creative</button>
+            </div>
         </div>
 
         <!-- Step 4: Preview -->
@@ -551,58 +554,90 @@
             return types[assetType] || '*';
         }
 
-        // Build creative with provided assets
-        async function buildCreative() {
+        // Collect assets from form
+        function collectAssets() {
+            const assetsRequired = state.selectedFormat.assets_required || [];
+            const creativeAssets = {};
+
+            for (let i = 0; i < assetsRequired.length; i++) {
+                const asset = assetsRequired[i];
+                const input = document.getElementById(`asset_${i}`);
+
+                if (!input) continue;
+
+                if (input.type === 'file') {
+                    if (input.files.length > 0) {
+                        // For file uploads, we'd need to handle file upload
+                        // For now, just show a message
+                        creativeAssets[asset.asset_id] = {
+                            type: asset.asset_type,
+                            file: input.files[0].name
+                        };
+                    }
+                } else {
+                    creativeAssets[asset.asset_id] = input.value;
+                }
+            }
+
+            return creativeAssets;
+        }
+
+        // Preview creative with provided assets
+        async function previewCreative() {
             const loading = document.getElementById('loading');
 
             try {
                 loading.classList.add('active');
+                const creativeAssets = collectAssets();
 
-                // Collect asset data
-                const assetsRequired = state.selectedFormat.assets_required || [];
-                const creativeAssets = {};
-
-                for (let i = 0; i < assetsRequired.length; i++) {
-                    const asset = assetsRequired[i];
-                    const input = document.getElementById(`asset_${i}`);
-
-                    if (!input) continue;
-
-                    if (input.type === 'file') {
-                        if (input.files.length > 0) {
-                            // For file uploads, we'd need to handle file upload
-                            // For now, just show a message
-                            creativeAssets[asset.asset_id] = {
-                                type: asset.asset_type,
-                                file: input.files[0].name
-                            };
-                        }
-                    } else {
-                        creativeAssets[asset.asset_id] = input.value;
-                    }
-                }
-
-                // Call sync_creatives to build the creative
-                const response = await fetch('/api/creative/sync-creatives', {
+                const response = await fetch('/api/creative/preview-creative', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         agentUrl: state.agentUrl,
                         protocol: state.protocol,
-                        creatives: [{
-                            creative_id: `test_creative_${Date.now()}`,
-                            name: `Test ${state.selectedFormat.name}`,
-                            format_id: state.selectedFormat.format_id,
-                            assets: creativeAssets
-                        }],
-                        dry_run: true // Preview mode
+                        format_id: state.selectedFormat.format_id,
+                        assets: creativeAssets
                     })
                 });
 
                 const data = await response.json();
 
                 if (data.success) {
-                    displayPreview(data.data);
+                    displayPreview(data.data, 'preview');
+                } else {
+                    showError('Failed to preview creative: ' + (data.error || 'Unknown error'));
+                }
+            } catch (error) {
+                showError('Error previewing creative: ' + error.message);
+            } finally {
+                loading.classList.remove('active');
+            }
+        }
+
+        // Build creative with provided assets
+        async function buildCreative() {
+            const loading = document.getElementById('loading');
+
+            try {
+                loading.classList.add('active');
+                const creativeAssets = collectAssets();
+
+                const response = await fetch('/api/creative/build-creative', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        agentUrl: state.agentUrl,
+                        protocol: state.protocol,
+                        format_id: state.selectedFormat.format_id,
+                        assets: creativeAssets
+                    })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    displayPreview(data.data, 'build');
                 } else {
                     showError('Failed to build creative: ' + (data.error || 'Unknown error'));
                 }
@@ -614,24 +649,29 @@
         }
 
         // Display creative preview
-        function displayPreview(result) {
+        function displayPreview(result, mode) {
             const previewSection = document.getElementById('previewSection');
             const previewContainer = document.getElementById('previewContainer');
 
             // Show preview section
             previewSection.classList.remove('hidden');
 
-            // Get preview URL from first creative
-            const creative = result.creatives && result.creatives[0];
+            // Check for preview_url or creative_url in result
+            const previewUrl = result.preview_url || result.creative_url;
 
-            if (creative && creative.preview_url) {
+            if (previewUrl) {
+                const modeLabel = mode === 'build' ? 'Built Creative' : 'Creative Preview';
                 previewContainer.innerHTML = `
-                    <iframe src="${creative.preview_url}" title="Creative Preview"></iframe>
+                    <div style="width: 100%;">
+                        <p style="color: var(--accent-green); font-weight: 600; margin-bottom: 1rem;">✓ ${modeLabel}</p>
+                        <iframe src="${previewUrl}" title="${modeLabel}"></iframe>
+                    </div>
                 `;
             } else {
+                const modeLabel = mode === 'build' ? 'built' : 'previewed';
                 previewContainer.innerHTML = `
                     <div>
-                        <p style="color: var(--accent-green); font-weight: 600;">✓ Creative built successfully!</p>
+                        <p style="color: var(--accent-green); font-weight: 600;">✓ Creative ${modeLabel} successfully!</p>
                         <pre style="background: white; padding: 1rem; border-radius: 8px; text-align: left; overflow-x: auto;">
 ${JSON.stringify(result, null, 2)}
                         </pre>

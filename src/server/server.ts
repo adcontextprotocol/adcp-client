@@ -1214,22 +1214,22 @@ app.post<{
   }
 });
 
-// Sync creatives (build/preview)
+// Build creative
 app.post<{
   Body: {
     agentUrl: string;
     protocol?: 'mcp' | 'a2a';
-    creatives: any[];
-    dry_run?: boolean;
+    format_id: any;
+    assets: Record<string, any>;
   };
-}>('/api/creative/sync-creatives', async (request, reply) => {
+}>('/api/creative/build-creative', async (request, reply) => {
   try {
-    const { agentUrl, protocol = 'mcp', creatives, dry_run = false } = request.body;
+    const { agentUrl, protocol = 'mcp', format_id, assets } = request.body;
 
-    if (!agentUrl || !creatives || !Array.isArray(creatives)) {
+    if (!agentUrl || !format_id) {
       return reply.code(400).send({
         success: false,
-        error: 'agentUrl and creatives array are required'
+        error: 'agentUrl and format_id are required'
       });
     }
 
@@ -1240,11 +1240,11 @@ app.post<{
       ...clientConfig
     });
 
-    // Access the underlying ADCPClient to call sync_creatives
+    // Access the underlying ADCPClient to call build_creative
     const adcpClient = creativeClient.getClient();
-    const result = await adcpClient.executeTask('sync_creatives', {
-      creatives,
-      dry_run
+    const result = await adcpClient.executeTask('build_creative', {
+      format_id,
+      assets
     }, createDefaultInputHandler());
 
     return reply.send({
@@ -1256,7 +1256,57 @@ app.post<{
       timestamp: new Date().toISOString()
     });
   } catch (error) {
-    app.log.error({ error }, 'Sync creatives error');
+    app.log.error({ error }, 'Build creative error');
+    return reply.code(500).send({
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+// Preview creative
+app.post<{
+  Body: {
+    agentUrl: string;
+    protocol?: 'mcp' | 'a2a';
+    format_id: any;
+    assets: Record<string, any>;
+  };
+}>('/api/creative/preview-creative', async (request, reply) => {
+  try {
+    const { agentUrl, protocol = 'mcp', format_id, assets } = request.body;
+
+    if (!agentUrl || !format_id) {
+      return reply.code(400).send({
+        success: false,
+        error: 'agentUrl and format_id are required'
+      });
+    }
+
+    // Use the official CreativeAgentClient library class
+    const creativeClient = new CreativeAgentClient({
+      agentUrl,
+      protocol,
+      ...clientConfig
+    });
+
+    // Access the underlying ADCPClient to call preview_creative
+    const adcpClient = creativeClient.getClient();
+    const result = await adcpClient.executeTask('preview_creative', {
+      format_id,
+      assets
+    }, createDefaultInputHandler());
+
+    return reply.send({
+      success: result.success,
+      data: result.data,
+      error: result.error,
+      metadata: result.metadata,
+      debug_logs: result.debug_logs,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    app.log.error({ error }, 'Preview creative error');
     return reply.code(500).send({
       success: false,
       error: error instanceof Error ? error.message : 'Unknown error'
