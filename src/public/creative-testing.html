@@ -15,6 +15,7 @@
             --text-primary: #1a202c;
             --text-secondary: #4a5568;
             --accent-blue: #4299e1;
+            --accent-green: #48bb78;
         }
 
         body {
@@ -100,6 +101,12 @@
             box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
         }
 
+        .section h3 {
+            margin-top: 0;
+            margin-bottom: 1.5rem;
+            font-size: 1.5rem;
+        }
+
         .form-group {
             margin-bottom: 1.5rem;
         }
@@ -113,6 +120,7 @@
 
         input[type="text"],
         input[type="url"],
+        input[type="file"],
         select,
         textarea {
             width: 100%;
@@ -121,6 +129,7 @@
             border-radius: 8px;
             font-size: 1rem;
             transition: border-color 0.3s;
+            box-sizing: border-box;
         }
 
         input:focus,
@@ -153,75 +162,110 @@
             transform: none;
         }
 
-        .button-secondary {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        .button-success {
+            background: var(--success-gradient);
         }
 
-        .results {
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 1rem;
+        }
+
+        thead {
             background: #f7fafc;
-            border-radius: 8px;
-            padding: 1.5rem;
-            margin-top: 1.5rem;
         }
 
-        .results pre {
-            background: white;
+        th, td {
             padding: 1rem;
-            border-radius: 8px;
-            overflow-x: auto;
-            font-size: 0.875rem;
+            text-align: left;
+            border-bottom: 1px solid #e2e8f0;
         }
 
-        .debug-logs {
-            margin-top: 2rem;
-        }
-
-        .debug-log-entry {
-            background: white;
-            border-left: 4px solid var(--accent-blue);
-            padding: 1rem;
-            margin-bottom: 1rem;
-            border-radius: 4px;
-        }
-
-        .debug-log-entry.request {
-            border-left-color: #48bb78;
-        }
-
-        .debug-log-entry.response {
-            border-left-color: #ed8936;
-        }
-
-        .log-header {
-            display: flex;
-            justify-content: space-between;
-            margin-bottom: 0.5rem;
+        th {
             font-weight: 600;
+            color: var(--text-primary);
         }
 
-        .log-body {
+        tr:hover {
             background: #f7fafc;
-            padding: 0.75rem;
-            border-radius: 4px;
-            overflow-x: auto;
-            font-family: 'Monaco', 'Courier New', monospace;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 0.25rem 0.75rem;
+            border-radius: 12px;
             font-size: 0.875rem;
+            font-weight: 500;
         }
 
-        .error {
-            background: #fff5f5;
-            border-left: 4px solid #fc466b;
-            padding: 1rem;
-            border-radius: 4px;
-            color: #c53030;
+        .badge-display {
+            background: #e3f2fd;
+            color: #1976d2;
         }
 
-        .success {
-            background: #f0fff4;
-            border-left: 4px solid #38ef7d;
+        .badge-video {
+            background: #fce4ec;
+            color: #c2185b;
+        }
+
+        .badge-native {
+            background: #f3e5f5;
+            color: #7b1fa2;
+        }
+
+        .badge-dooh {
+            background: #fff3e0;
+            color: #ef6c00;
+        }
+
+        .select-format-btn {
+            background: var(--accent-blue);
+            color: white;
+            border: none;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 500;
+        }
+
+        .select-format-btn:hover {
+            background: #3182ce;
+        }
+
+        .asset-input {
+            background: #f7fafc;
             padding: 1rem;
-            border-radius: 4px;
-            color: #22543d;
+            border-radius: 8px;
+            margin-bottom: 1rem;
+        }
+
+        .asset-input label {
+            font-size: 0.875rem;
+            color: var(--text-secondary);
+        }
+
+        .preview-container {
+            background: #f7fafc;
+            border-radius: 8px;
+            padding: 2rem;
+            text-align: center;
+            min-height: 300px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .preview-container iframe {
+            width: 100%;
+            height: 500px;
+            border: none;
+            border-radius: 8px;
+        }
+
+        .preview-container img {
+            max-width: 100%;
+            border-radius: 8px;
         }
 
         .loading {
@@ -249,45 +293,26 @@
             100% { transform: rotate(360deg); }
         }
 
-        .agent-manager {
-            display: flex;
-            gap: 1rem;
-            margin-bottom: 1rem;
+        .hidden {
+            display: none;
         }
 
-        .agent-list {
-            background: #f7fafc;
-            border-radius: 8px;
+        .error {
+            background: #fff5f5;
+            border-left: 4px solid #fc466b;
             padding: 1rem;
+            border-radius: 4px;
+            color: #c53030;
             margin-top: 1rem;
         }
 
-        .agent-item {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 0.75rem;
-            background: white;
-            border-radius: 6px;
-            margin-bottom: 0.5rem;
-        }
-
-        .agent-item:last-child {
-            margin-bottom: 0;
-        }
-
-        .remove-btn {
-            background: #fc466b;
-            color: white;
-            border: none;
-            padding: 0.5rem 1rem;
-            border-radius: 6px;
-            cursor: pointer;
-            font-size: 0.875rem;
-        }
-
-        .remove-btn:hover {
-            background: #e53e3e;
+        .success {
+            background: #f0fff4;
+            border-left: 4px solid #38ef7d;
+            padding: 1rem;
+            border-radius: 4px;
+            color: #22543d;
+            margin-top: 1rem;
         }
     </style>
 </head>
@@ -308,285 +333,325 @@
 
     <div class="container">
         <div class="header">
-            <h1>Creative Agent Testing</h1>
-            <p class="subtitle">Test creative agent tools and format discovery</p>
+            <h1>Creative Lifecycle Testing</h1>
+            <p class="subtitle">Discover formats → Select format → Provide assets → Build creative → Preview</p>
         </div>
 
-        <!-- Agent Configuration -->
+        <!-- Step 1: Agent Configuration -->
         <div class="section">
-            <h3>🔧 Configure Creative Agent</h3>
+            <h3>Step 1: Select Creative Agent</h3>
             <div class="form-group">
-                <label for="agentSelect">Select Agent:</label>
-                <select id="agentSelect">
-                    <option value="default">AdCP Reference Creative Agent (MCP)</option>
+                <label for="agentUrl">Creative Agent URL:</label>
+                <input type="url" id="agentUrl" value="https://creative.adcontextprotocol.org/mcp" placeholder="https://creative.example.com/mcp">
+            </div>
+            <div class="form-group">
+                <label for="agentProtocol">Protocol:</label>
+                <select id="agentProtocol">
+                    <option value="mcp">MCP</option>
+                    <option value="a2a">A2A</option>
                 </select>
             </div>
-            <div class="agent-manager">
-                <input type="url" id="customAgentUrl" placeholder="https://creative.example.com/mcp" style="flex: 1;">
-                <input type="text" id="customAgentName" placeholder="Agent Name" style="flex: 1;">
-                <button class="button button-secondary" onclick="addCustomAgent()">Add Custom Agent</button>
-            </div>
-            <div id="customAgentsList" class="agent-list" style="display: none;"></div>
+            <button class="button" onclick="loadFormats()">Load Formats</button>
         </div>
 
-        <!-- Test List Creative Formats -->
-        <div class="section">
-            <h3>📋 List Creative Formats</h3>
-            <p>Discover all creative formats available from the selected agent.</p>
-            <button class="button" onclick="testListFormats()">List Formats</button>
-            <div id="formatResults" class="results" style="display: none;"></div>
+        <!-- Step 2: Format Selection -->
+        <div class="section hidden" id="formatsSection">
+            <h3>Step 2: Select Creative Format</h3>
+            <div id="formatsTable"></div>
         </div>
 
-        <!-- Generic Tool Test -->
-        <div class="section">
-            <h3>🛠️ Generic Tool Test</h3>
-            <p>Test any creative agent tool with custom parameters (JSON format).</p>
-            <div class="form-group">
-                <label for="toolName">Tool Name:</label>
-                <input type="text" id="toolName" placeholder="list_creative_formats">
-            </div>
-            <div class="form-group">
-                <label for="toolParams">Parameters (JSON):</label>
-                <textarea id="toolParams" rows="6" placeholder='{"format_type": "display"}'>{}</textarea>
-            </div>
-            <button class="button" onclick="testGenericTool()">Execute Tool</button>
-            <div id="genericResults" class="results" style="display: none;"></div>
+        <!-- Step 3: Asset Upload -->
+        <div class="section hidden" id="assetsSection">
+            <h3>Step 3: Provide Assets</h3>
+            <div id="selectedFormatInfo"></div>
+            <div id="assetInputs"></div>
+            <button class="button button-success" onclick="buildCreative()">Build Creative</button>
         </div>
 
-        <!-- Debug Logs -->
-        <div class="section">
-            <h3>🔍 Debug Logs</h3>
-            <div id="debugLogs"></div>
+        <!-- Step 4: Preview -->
+        <div class="section hidden" id="previewSection">
+            <h3>Step 4: Preview Creative</h3>
+            <div class="preview-container" id="previewContainer">
+                <p style="color: #a0aec0;">Creative preview will appear here</p>
+            </div>
         </div>
 
         <!-- Loading Indicator -->
         <div id="loading" class="loading">
             <div class="spinner"></div>
-            <p>Processing request...</p>
+            <p>Processing...</p>
         </div>
     </div>
 
     <script>
         // State management
         const state = {
-            customAgents: [],
-            currentAgent: {
-                url: 'https://creative.adcontextprotocol.org/mcp',
-                name: 'AdCP Reference Creative Agent (MCP)',
-                protocol: 'mcp'
-            },
-            debugLogs: []
+            agentUrl: 'https://creative.adcontextprotocol.org/mcp',
+            protocol: 'mcp',
+            formats: [],
+            selectedFormat: null,
+            assets: {}
         };
 
-        // Initialize page
-        window.addEventListener('DOMContentLoaded', () => {
-            loadCustomAgents();
-        });
-
-        // Add custom agent
-        function addCustomAgent() {
-            const url = document.getElementById('customAgentUrl').value.trim();
-            const name = document.getElementById('customAgentName').value.trim();
-
-            if (!url || !name) {
-                alert('Please provide both URL and name');
-                return;
-            }
-
-            // Detect protocol from URL
-            const protocol = url.includes('/mcp') ? 'mcp' : 'a2a';
-
-            const agent = { url, name, protocol };
-            state.customAgents.push(agent);
-            localStorage.setItem('creativeAgents', JSON.stringify(state.customAgents));
-
-            // Clear inputs
-            document.getElementById('customAgentUrl').value = '';
-            document.getElementById('customAgentName').value = '';
-
-            // Refresh agent list
-            loadCustomAgents();
-        }
-
-        // Load custom agents from localStorage
-        function loadCustomAgents() {
-            const stored = localStorage.getItem('creativeAgents');
-            if (stored) {
-                state.customAgents = JSON.parse(stored);
-            }
-
-            // Update select dropdown
-            const select = document.getElementById('agentSelect');
-            select.innerHTML = '<option value="default">AdCP Reference Creative Agent (MCP)</option>';
-
-            state.customAgents.forEach((agent, index) => {
-                const option = document.createElement('option');
-                option.value = `custom_${index}`;
-                option.textContent = `${agent.name} (${agent.protocol.toUpperCase()})`;
-                select.appendChild(option);
-            });
-
-            // Update custom agents list
-            const list = document.getElementById('customAgentsList');
-            if (state.customAgents.length === 0) {
-                list.style.display = 'none';
-                return;
-            }
-
-            list.style.display = 'block';
-            list.innerHTML = state.customAgents.map((agent, index) => `
-                <div class="agent-item">
-                    <span><strong>${agent.name}</strong> - ${agent.url} (${agent.protocol.toUpperCase()})</span>
-                    <button class="remove-btn" onclick="removeCustomAgent(${index})">Remove</button>
-                </div>
-            `).join('');
-
-            // Listen for selection changes
-            select.addEventListener('change', () => {
-                const value = select.value;
-                if (value === 'default') {
-                    state.currentAgent = {
-                        url: 'https://creative.adcontextprotocol.org/mcp',
-                        name: 'AdCP Reference Creative Agent (MCP)',
-                        protocol: 'mcp'
-                    };
-                } else {
-                    const index = parseInt(value.split('_')[1]);
-                    state.currentAgent = state.customAgents[index];
-                }
-            });
-        }
-
-        // Remove custom agent
-        function removeCustomAgent(index) {
-            state.customAgents.splice(index, 1);
-            localStorage.setItem('creativeAgents', JSON.stringify(state.customAgents));
-            loadCustomAgents();
-        }
-
-        // Test list formats
-        async function testListFormats() {
-            const resultsDiv = document.getElementById('formatResults');
+        // Load creative formats from agent
+        async function loadFormats() {
+            const agentUrl = document.getElementById('agentUrl').value;
+            const protocol = document.getElementById('agentProtocol').value;
             const loading = document.getElementById('loading');
+            const formatsSection = document.getElementById('formatsSection');
 
             try {
                 loading.classList.add('active');
-                resultsDiv.style.display = 'none';
+                formatsSection.classList.add('hidden');
+
+                state.agentUrl = agentUrl;
+                state.protocol = protocol;
 
                 const response = await fetch('/api/creative/list-formats', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        agentUrl: state.currentAgent.url,
-                        protocol: state.currentAgent.protocol
-                    })
+                    body: JSON.stringify({ agentUrl, protocol })
                 });
 
                 const data = await response.json();
 
-                if (data.success) {
-                    displayResults(resultsDiv, data.data, 'success');
-                    if (data.debug_logs) {
-                        displayDebugLogs(data.debug_logs);
-                    }
+                if (data.success && data.data.formats) {
+                    state.formats = data.data.formats;
+                    displayFormatsTable(state.formats);
+                    formatsSection.classList.remove('hidden');
                 } else {
-                    displayResults(resultsDiv, { error: data.error }, 'error');
+                    showError('Failed to load formats: ' + (data.error || 'Unknown error'));
                 }
-
             } catch (error) {
-                displayResults(resultsDiv, { error: error.message }, 'error');
+                showError('Error loading formats: ' + error.message);
             } finally {
                 loading.classList.remove('active');
             }
         }
 
-        // Test generic tool
-        async function testGenericTool() {
-            const toolName = document.getElementById('toolName').value.trim();
-            const toolParamsText = document.getElementById('toolParams').value.trim();
-            const resultsDiv = document.getElementById('genericResults');
+        // Display formats in a table
+        function displayFormatsTable(formats) {
+            const container = document.getElementById('formatsTable');
+
+            const html = `
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Format Name</th>
+                            <th>Type</th>
+                            <th>Dimensions</th>
+                            <th>Description</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${formats.map((format, index) => {
+                            const dimensions = format.renders && format.renders[0]?.dimensions
+                                ? `${format.renders[0].dimensions.width}x${format.renders[0].dimensions.height}`
+                                : 'Variable';
+
+                            return `
+                                <tr>
+                                    <td><strong>${format.name}</strong></td>
+                                    <td><span class="badge badge-${format.type}">${format.type}</span></td>
+                                    <td>${dimensions}</td>
+                                    <td>${format.description || 'No description'}</td>
+                                    <td>
+                                        <button class="select-format-btn" onclick="selectFormat(${index})">
+                                            Select
+                                        </button>
+                                    </td>
+                                </tr>
+                            `;
+                        }).join('')}
+                    </tbody>
+                </table>
+            `;
+
+            container.innerHTML = html;
+        }
+
+        // Select a format and show asset inputs
+        function selectFormat(index) {
+            const format = state.formats[index];
+            state.selectedFormat = format;
+            state.assets = {};
+
+            // Show format info
+            const infoDiv = document.getElementById('selectedFormatInfo');
+            infoDiv.innerHTML = `
+                <div style="background: #f7fafc; padding: 1rem; border-radius: 8px; margin-bottom: 1.5rem;">
+                    <h4 style="margin-top: 0;">${format.name}</h4>
+                    <p style="color: #4a5568;">${format.description || 'No description'}</p>
+                    <p style="font-size: 0.875rem; color: #718096;">
+                        Format ID: <code>${format.format_id.id}</code>
+                    </p>
+                </div>
+            `;
+
+            // Show asset inputs
+            const assetsDiv = document.getElementById('assetInputs');
+            const assetsRequired = format.assets_required || [];
+
+            if (assetsRequired.length === 0) {
+                assetsDiv.innerHTML = '<p style="color: #718096;">This format requires no assets.</p>';
+            } else {
+                const inputsHtml = assetsRequired.map((asset, idx) => {
+                    const inputType = getInputType(asset.asset_type);
+                    const isRequired = asset.required ? 'required' : '';
+
+                    return `
+                        <div class="asset-input">
+                            <label>
+                                ${asset.asset_id}
+                                ${asset.required ? '<span style="color: #fc466b;">*</span>' : ''}
+                            </label>
+                            <p style="font-size: 0.875rem; color: #718096; margin: 0.5rem 0;">
+                                ${asset.requirements?.description || `${asset.asset_type} asset`}
+                            </p>
+                            ${inputType === 'file'
+                                ? `<input type="file" id="asset_${idx}" ${isRequired} accept="${getAcceptType(asset.asset_type)}">`
+                                : inputType === 'textarea'
+                                ? `<textarea id="asset_${idx}" rows="4" ${isRequired} placeholder="Enter ${asset.asset_type}..."></textarea>`
+                                : `<input type="${inputType}" id="asset_${idx}" ${isRequired} placeholder="Enter ${asset.asset_id}...">`
+                            }
+                        </div>
+                    `;
+                }).join('');
+
+                assetsDiv.innerHTML = inputsHtml;
+            }
+
+            // Show assets section
+            document.getElementById('assetsSection').classList.remove('hidden');
+            document.getElementById('previewSection').classList.add('hidden');
+
+            // Scroll to assets section
+            document.getElementById('assetsSection').scrollIntoView({ behavior: 'smooth' });
+        }
+
+        // Get input type based on asset type
+        function getInputType(assetType) {
+            const fileTypes = ['image', 'video', 'html', 'brand_manifest'];
+            const textareaTypes = ['text'];
+
+            if (fileTypes.includes(assetType)) return 'file';
+            if (textareaTypes.includes(assetType)) return 'textarea';
+            return 'text';
+        }
+
+        // Get accept attribute for file inputs
+        function getAcceptType(assetType) {
+            const types = {
+                'image': 'image/*',
+                'video': 'video/*',
+                'html': '.html,.htm',
+                'brand_manifest': '.json'
+            };
+            return types[assetType] || '*';
+        }
+
+        // Build creative with provided assets
+        async function buildCreative() {
             const loading = document.getElementById('loading');
-
-            if (!toolName) {
-                alert('Please provide a tool name');
-                return;
-            }
-
-            let params;
-            try {
-                params = JSON.parse(toolParamsText);
-            } catch (error) {
-                alert('Invalid JSON in parameters: ' + error.message);
-                return;
-            }
 
             try {
                 loading.classList.add('active');
-                resultsDiv.style.display = 'none';
 
-                const response = await fetch('/api/creative/execute-tool', {
+                // Collect asset data
+                const assetsRequired = state.selectedFormat.assets_required || [];
+                const creativeAssets = {};
+
+                for (let i = 0; i < assetsRequired.length; i++) {
+                    const asset = assetsRequired[i];
+                    const input = document.getElementById(`asset_${i}`);
+
+                    if (!input) continue;
+
+                    if (input.type === 'file') {
+                        if (input.files.length > 0) {
+                            // For file uploads, we'd need to handle file upload
+                            // For now, just show a message
+                            creativeAssets[asset.asset_id] = {
+                                type: asset.asset_type,
+                                file: input.files[0].name
+                            };
+                        }
+                    } else {
+                        creativeAssets[asset.asset_id] = input.value;
+                    }
+                }
+
+                // Call sync_creatives to build the creative
+                const response = await fetch('/api/creative/sync-creatives', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        agentUrl: state.currentAgent.url,
-                        protocol: state.currentAgent.protocol,
-                        toolName,
-                        params
+                        agentUrl: state.agentUrl,
+                        protocol: state.protocol,
+                        creatives: [{
+                            creative_id: `test_creative_${Date.now()}`,
+                            name: `Test ${state.selectedFormat.name}`,
+                            format_id: state.selectedFormat.format_id,
+                            assets: creativeAssets
+                        }],
+                        dry_run: true // Preview mode
                     })
                 });
 
                 const data = await response.json();
 
                 if (data.success) {
-                    displayResults(resultsDiv, data.data, 'success');
-                    if (data.debug_logs) {
-                        displayDebugLogs(data.debug_logs);
-                    }
+                    displayPreview(data.data);
                 } else {
-                    displayResults(resultsDiv, { error: data.error }, 'error');
+                    showError('Failed to build creative: ' + (data.error || 'Unknown error'));
                 }
-
             } catch (error) {
-                displayResults(resultsDiv, { error: error.message }, 'error');
+                showError('Error building creative: ' + error.message);
             } finally {
                 loading.classList.remove('active');
             }
         }
 
-        // Display results
-        function displayResults(container, data, type) {
-            container.style.display = 'block';
-            container.className = 'results ' + type;
-            container.innerHTML = `<pre>${JSON.stringify(data, null, 2)}</pre>`;
-        }
+        // Display creative preview
+        function displayPreview(result) {
+            const previewSection = document.getElementById('previewSection');
+            const previewContainer = document.getElementById('previewContainer');
 
-        // Display debug logs
-        function displayDebugLogs(logs) {
-            const debugDiv = document.getElementById('debugLogs');
+            // Show preview section
+            previewSection.classList.remove('hidden');
 
-            if (!Array.isArray(logs) || logs.length === 0) {
-                return;
+            // Get preview URL from first creative
+            const creative = result.creatives && result.creatives[0];
+
+            if (creative && creative.preview_url) {
+                previewContainer.innerHTML = `
+                    <iframe src="${creative.preview_url}" title="Creative Preview"></iframe>
+                `;
+            } else {
+                previewContainer.innerHTML = `
+                    <div>
+                        <p style="color: var(--accent-green); font-weight: 600;">✓ Creative built successfully!</p>
+                        <pre style="background: white; padding: 1rem; border-radius: 8px; text-align: left; overflow-x: auto;">
+${JSON.stringify(result, null, 2)}
+                        </pre>
+                    </div>
+                `;
             }
 
-            logs.forEach(log => {
-                const entry = document.createElement('div');
-                entry.className = `debug-log-entry ${log.type || 'info'}`;
+            // Scroll to preview
+            previewSection.scrollIntoView({ behavior: 'smooth' });
+        }
 
-                const header = document.createElement('div');
-                header.className = 'log-header';
-                header.innerHTML = `
-                    <span>${log.type === 'request' ? '➡️ Request' : '⬅️ Response'} - ${log.method || log.tool || 'Unknown'}</span>
-                    <span>${log.timestamp || new Date().toISOString()}</span>
-                `;
+        // Show error message
+        function showError(message) {
+            const container = document.getElementById('formatsTable') || document.getElementById('assetInputs');
+            const errorDiv = document.createElement('div');
+            errorDiv.className = 'error';
+            errorDiv.textContent = message;
+            container.appendChild(errorDiv);
 
-                const body = document.createElement('div');
-                body.className = 'log-body';
-                body.textContent = JSON.stringify(log.body || log, null, 2);
-
-                entry.appendChild(header);
-                entry.appendChild(body);
-                debugDiv.appendChild(entry);
-            });
+            setTimeout(() => errorDiv.remove(), 5000);
         }
     </script>
 </body>

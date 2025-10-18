@@ -1214,22 +1214,22 @@ app.post<{
   }
 });
 
-// Execute any tool on a creative agent (generic interface)
+// Sync creatives (build/preview)
 app.post<{
   Body: {
     agentUrl: string;
     protocol?: 'mcp' | 'a2a';
-    toolName: string;
-    params?: Record<string, any>;
+    creatives: any[];
+    dry_run?: boolean;
   };
-}>('/api/creative/execute-tool', async (request, reply) => {
+}>('/api/creative/sync-creatives', async (request, reply) => {
   try {
-    const { agentUrl, protocol = 'mcp', toolName, params = {} } = request.body;
+    const { agentUrl, protocol = 'mcp', creatives, dry_run = false } = request.body;
 
-    if (!agentUrl || !toolName) {
+    if (!agentUrl || !creatives || !Array.isArray(creatives)) {
       return reply.code(400).send({
         success: false,
-        error: 'agentUrl and toolName are required'
+        error: 'agentUrl and creatives array are required'
       });
     }
 
@@ -1240,9 +1240,12 @@ app.post<{
       ...clientConfig
     });
 
-    // Access the underlying ADCPClient for generic tool execution
+    // Access the underlying ADCPClient to call sync_creatives
     const adcpClient = creativeClient.getClient();
-    const result = await adcpClient.executeTask(toolName, params, createDefaultInputHandler());
+    const result = await adcpClient.executeTask('sync_creatives', {
+      creatives,
+      dry_run
+    }, createDefaultInputHandler());
 
     return reply.send({
       success: result.success,
@@ -1253,7 +1256,7 @@ app.post<{
       timestamp: new Date().toISOString()
     });
   } catch (error) {
-    app.log.error({ error }, 'Execute creative tool error');
+    app.log.error({ error }, 'Sync creatives error');
     return reply.code(500).send({
       success: false,
       error: error instanceof Error ? error.message : 'Unknown error'
