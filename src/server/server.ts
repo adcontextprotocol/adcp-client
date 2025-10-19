@@ -11,6 +11,7 @@ import {
   type TaskResult,
   type InputHandler,
   type ADCPClientConfig,
+  type FormatID,
   ADCP_STATUS,
   InputRequiredError
 } from '../lib';
@@ -1219,7 +1220,7 @@ app.post<{
   Body: {
     agentUrl: string;
     protocol?: 'mcp' | 'a2a';
-    format_id: any;
+    format_id: FormatID;
     assets: Record<string, any>;
   };
 }>('/api/creative/build-creative', async (request, reply) => {
@@ -1273,7 +1274,7 @@ app.post<{
   Body: {
     agentUrl: string;
     protocol?: 'mcp' | 'a2a';
-    format_id: any;
+    format_id: FormatID;
     assets: Record<string, any>;
   };
 }>('/api/creative/preview-creative', async (request, reply) => {
@@ -1304,13 +1305,6 @@ app.post<{
         assets
       }
     }, createDefaultInputHandler());
-
-    // Debug log the result
-    console.log('=== PREVIEW CREATIVE RESULT ===');
-    console.log('Success:', result.success);
-    console.log('Error:', result.error);
-    console.log('Data keys:', result.data ? Object.keys(result.data) : 'null');
-    console.log('================================');
 
     return reply.send({
       success: result.success,
