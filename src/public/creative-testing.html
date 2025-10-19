@@ -500,8 +500,8 @@
                 assetsDiv.innerHTML = '<p style="color: #718096;">This format requires no assets.</p>';
             } else {
                 const inputsHtml = assetsRequired.map((asset, idx) => {
-                    const inputType = getInputType(asset.asset_type);
                     const isRequired = asset.required ? 'required' : '';
+                    const inputHtml = getAssetInputHtml(asset, idx, isRequired);
 
                     return `
                         <div class="asset-input">
@@ -512,12 +512,7 @@
                             <p style="font-size: 0.875rem; color: #718096; margin: 0.5rem 0;">
                                 ${asset.requirements?.description || `${asset.asset_type} asset`}
                             </p>
-                            ${inputType === 'file'
-                                ? `<input type="file" id="asset_${idx}" ${isRequired} accept="${getAcceptType(asset.asset_type)}">`
-                                : inputType === 'textarea'
-                                ? `<textarea id="asset_${idx}" rows="4" ${isRequired} placeholder="Enter ${asset.asset_type}..."></textarea>`
-                                : `<input type="${inputType}" id="asset_${idx}" ${isRequired} placeholder="Enter ${asset.asset_id}...">`
-                            }
+                            ${inputHtml}
                         </div>
                     `;
                 }).join('');
@@ -533,25 +528,73 @@
             document.getElementById('assetsSection').scrollIntoView({ behavior: 'smooth' });
         }
 
-        // Get input type based on asset type
-        function getInputType(assetType) {
-            const fileTypes = ['image', 'video', 'html', 'brand_manifest'];
-            const textareaTypes = ['text'];
+        // Get asset input HTML based on asset type
+        function getAssetInputHtml(asset, idx, isRequired) {
+            const assetType = asset.asset_type;
+            const assetId = asset.asset_id;
 
-            if (fileTypes.includes(assetType)) return 'file';
-            if (textareaTypes.includes(assetType)) return 'textarea';
-            return 'text';
+            // For brand_manifest: offer URL or JSON paste options
+            if (assetType === 'brand_manifest') {
+                return `
+                    <div style="margin-bottom: 0.5rem;">
+                        <label style="font-size: 0.875rem; margin-bottom: 0.25rem;">
+                            <input type="radio" name="asset_${idx}_type" value="url" checked onchange="toggleAssetInput(${idx}, 'url')"> URL
+                            <input type="radio" name="asset_${idx}_type" value="json" onchange="toggleAssetInput(${idx}, 'json')" style="margin-left: 1rem;"> JSON
+                        </label>
+                    </div>
+                    <input type="url" id="asset_${idx}" ${isRequired} placeholder="https://example.com/brand.json" style="display: block;">
+                    <textarea id="asset_${idx}_json" rows="6" ${isRequired} placeholder='{"name": "Brand Name", ...}' style="display: none;"></textarea>
+                `;
+            }
+
+            // For url asset type: just URL input
+            if (assetType === 'url') {
+                return `<input type="url" id="asset_${idx}" ${isRequired} placeholder="https://example.com">`;
+            }
+
+            // For text/generation prompts: textarea
+            if (assetType === 'text' || assetId.includes('prompt') || assetId.includes('brief')) {
+                return `<textarea id="asset_${idx}" rows="4" ${isRequired} placeholder="Enter ${assetType}..."></textarea>`;
+            }
+
+            // For HTML: textarea with larger size
+            if (assetType === 'html') {
+                return `<textarea id="asset_${idx}" rows="10" ${isRequired} placeholder="<html>...</html>"></textarea>`;
+            }
+
+            // For images/videos: file upload only
+            if (assetType === 'image') {
+                return `<input type="file" id="asset_${idx}" ${isRequired} accept="image/*">`;
+            }
+
+            if (assetType === 'video') {
+                return `<input type="file" id="asset_${idx}" ${isRequired} accept="video/*">`;
+            }
+
+            // Default: text input
+            return `<input type="text" id="asset_${idx}" ${isRequired} placeholder="Enter ${assetId}...">`;
         }
 
-        // Get accept attribute for file inputs
-        function getAcceptType(assetType) {
-            const types = {
-                'image': 'image/*',
-                'video': 'video/*',
-                'html': '.html,.htm',
-                'brand_manifest': '.json'
-            };
-            return types[assetType] || '*';
+        // Toggle between URL and JSON input for brand_manifest
+        function toggleAssetInput(idx, type) {
+            const urlInput = document.getElementById(`asset_${idx}`);
+            const jsonInput = document.getElementById(`asset_${idx}_json`);
+
+            if (type === 'url') {
+                urlInput.style.display = 'block';
+                jsonInput.style.display = 'none';
+                jsonInput.removeAttribute('required');
+                if (urlInput.hasAttribute('data-required')) {
+                    urlInput.setAttribute('required', '');
+                }
+            } else {
+                urlInput.style.display = 'none';
+                jsonInput.style.display = 'block';
+                urlInput.removeAttribute('required');
+                if (jsonInput.hasAttribute('data-required')) {
+                    jsonInput.setAttribute('required', '');
+                }
+            }
         }
 
         // Collect assets from form
@@ -565,17 +608,36 @@
 
                 if (!input) continue;
 
-                if (input.type === 'file') {
+                // Check if this is a brand_manifest with JSON option
+                if (asset.asset_type === 'brand_manifest') {
+                    const jsonInput = document.getElementById(`asset_${i}_json`);
+                    if (jsonInput && jsonInput.style.display !== 'none' && jsonInput.value) {
+                        // Parse JSON input
+                        try {
+                            creativeAssets[asset.asset_id] = JSON.parse(jsonInput.value);
+                        } catch (e) {
+                            // If JSON parsing fails, send as string and let the agent handle it
+                            creativeAssets[asset.asset_id] = jsonInput.value;
+                        }
+                    } else if (input.value) {
+                        // URL input
+                        creativeAssets[asset.asset_id] = input.value;
+                    }
+                } else if (input.type === 'file') {
                     if (input.files.length > 0) {
-                        // For file uploads, we'd need to handle file upload
-                        // For now, just show a message
+                        // For file uploads, we'd need to handle actual file upload
+                        // For now, show placeholder (this would need proper implementation)
                         creativeAssets[asset.asset_id] = {
                             type: asset.asset_type,
-                            file: input.files[0].name
+                            filename: input.files[0].name,
+                            note: 'File upload not yet implemented - would need to upload to storage first'
                         };
                     }
                 } else {
-                    creativeAssets[asset.asset_id] = input.value;
+                    // Text, textarea, URL inputs
+                    if (input.value) {
+                        creativeAssets[asset.asset_id] = input.value;
+                    }
                 }
             }
 

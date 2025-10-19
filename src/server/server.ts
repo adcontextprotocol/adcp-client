@@ -1241,10 +1241,14 @@ app.post<{
     });
 
     // Access the underlying ADCPClient to call build_creative
+    // The creative agent expects FormatID object {agent_url, id} at top level AND in creative_manifest
     const adcpClient = creativeClient.getClient();
     const result = await adcpClient.executeTask('build_creative', {
       format_id,
-      assets
+      creative_manifest: {
+        format_id,
+        assets
+      }
     }, createDefaultInputHandler());
 
     return reply.send({
@@ -1291,11 +1295,22 @@ app.post<{
     });
 
     // Access the underlying ADCPClient to call preview_creative
+    // The creative agent expects FormatID object {agent_url, id} at top level AND in creative_manifest
     const adcpClient = creativeClient.getClient();
     const result = await adcpClient.executeTask('preview_creative', {
       format_id,
-      assets
+      creative_manifest: {
+        format_id,
+        assets
+      }
     }, createDefaultInputHandler());
+
+    // Debug log the result
+    console.log('=== PREVIEW CREATIVE RESULT ===');
+    console.log('Success:', result.success);
+    console.log('Error:', result.error);
+    console.log('Data keys:', result.data ? Object.keys(result.data) : 'null');
+    console.log('================================');
 
     return reply.send({
       success: result.success,
