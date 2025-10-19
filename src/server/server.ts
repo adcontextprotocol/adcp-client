@@ -6,10 +6,12 @@ import path from 'path';
 import {
   ADCPMultiAgentClient,
   ConfigurationManager,
+  CreativeAgentClient,
   getStandardFormats,
   type TaskResult,
   type InputHandler,
   type ADCPClientConfig,
+  type FormatID,
   ADCP_STATUS,
   InputRequiredError
 } from '../lib';
@@ -1164,6 +1166,162 @@ const webhookRegistrations = new Map<string, {
 
 // Task notification listeners (for real-time updates)
 const taskNotificationCallbacks = new Map<string, (task: any) => void>();
+
+/**
+ * Creative Agent Testing Endpoints
+ */
+
+// List creative formats from a creative agent
+app.post<{
+  Body: {
+    agentUrl: string;
+    protocol?: 'mcp' | 'a2a';
+    params?: Record<string, any>;
+  };
+}>('/api/creative/list-formats', async (request, reply) => {
+  try {
+    const { agentUrl, protocol = 'mcp', params = {} } = request.body;
+
+    if (!agentUrl) {
+      return reply.code(400).send({
+        success: false,
+        error: 'agentUrl is required'
+      });
+    }
+
+    // Use the official CreativeAgentClient library class
+    const creativeClient = new CreativeAgentClient({
+      agentUrl,
+      protocol,
+      ...clientConfig
+    });
+
+    // Use the library's listFormats method which handles response parsing
+    const formats = await creativeClient.listFormats(params);
+
+    return reply.send({
+      success: true,
+      data: { formats },
+      metadata: {},
+      debug_logs: [], // CreativeAgentClient doesn't expose debug logs directly
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    app.log.error({ error }, 'List creative formats error');
+    return reply.code(500).send({
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+// Build creative
+app.post<{
+  Body: {
+    agentUrl: string;
+    protocol?: 'mcp' | 'a2a';
+    format_id: FormatID;
+    assets: Record<string, any>;
+  };
+}>('/api/creative/build-creative', async (request, reply) => {
+  try {
+    const { agentUrl, protocol = 'mcp', format_id, assets } = request.body;
+
+    if (!agentUrl || !format_id) {
+      return reply.code(400).send({
+        success: false,
+        error: 'agentUrl and format_id are required'
+      });
+    }
+
+    // Use the official CreativeAgentClient library class
+    const creativeClient = new CreativeAgentClient({
+      agentUrl,
+      protocol,
+      ...clientConfig
+    });
+
+    // Access the underlying ADCPClient to call build_creative
+    // The creative agent expects FormatID object {agent_url, id} at top level AND in creative_manifest
+    const adcpClient = creativeClient.getClient();
+    const result = await adcpClient.executeTask('build_creative', {
+      format_id,
+      creative_manifest: {
+        format_id,
+        assets
+      }
+    }, createDefaultInputHandler());
+
+    return reply.send({
+      success: result.success,
+      data: result.data,
+      error: result.error,
+      metadata: result.metadata,
+      debug_logs: result.debug_logs,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    app.log.error({ error }, 'Build creative error');
+    return reply.code(500).send({
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+// Preview creative
+app.post<{
+  Body: {
+    agentUrl: string;
+    protocol?: 'mcp' | 'a2a';
+    format_id: FormatID;
+    assets: Record<string, any>;
+  };
+}>('/api/creative/preview-creative', async (request, reply) => {
+  try {
+    const { agentUrl, protocol = 'mcp', format_id, assets } = request.body;
+
+    if (!agentUrl || !format_id) {
+      return reply.code(400).send({
+        success: false,
+        error: 'agentUrl and format_id are required'
+      });
+    }
+
+    // Use the official CreativeAgentClient library class
+    const creativeClient = new CreativeAgentClient({
+      agentUrl,
+      protocol,
+      ...clientConfig
+    });
+
+    // Access the underlying ADCPClient to call preview_creative
+    // The creative agent expects FormatID object {agent_url, id} at top level AND in creative_manifest
+    const adcpClient = creativeClient.getClient();
+    const result = await adcpClient.executeTask('preview_creative', {
+      format_id,
+      creative_manifest: {
+        format_id,
+        assets
+      }
+    }, createDefaultInputHandler());
+
+    return reply.send({
+      success: result.success,
+      data: result.data,
+      error: result.error,
+      metadata: result.metadata,
+      debug_logs: result.debug_logs,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    app.log.error({ error }, 'Preview creative error');
+    return reply.code(500).send({
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
 
 /**
  * Register webhook for task notifications

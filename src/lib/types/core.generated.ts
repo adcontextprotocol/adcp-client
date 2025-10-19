@@ -1,5 +1,5 @@
-// Generated AdCP core types from official schemas v2.0.0
-// Generated at: 2025-10-17T10:46:01.107Z
+// Generated AdCP core types from official schemas v2.1.0
+// Generated at: 2025-10-19T20:37:13.836Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -170,6 +170,17 @@ export type DAASTAsset = DAASTAsset1 & DAASTAsset2;
 export type DAASTAsset2 = {
   [k: string]: unknown;
 };
+/**
+ * Brand information manifest containing assets, themes, and guidelines. Can be provided inline or as a URL reference to a hosted manifest.
+ */
+export type BrandManifestReference = BrandManifest | string;
+/**
+ * Inline brand manifest object
+ */
+export type BrandManifest = BrandManifest1 & BrandManifest2;
+export type BrandManifest1 = {
+  [k: string]: unknown;
+};
 
 /**
  * Creative asset for upload to library - supports static assets, generative formats, and third-party snippets
@@ -202,7 +213,7 @@ export interface CreativeAsset {
       | JavaScriptAsset
       | VASTAsset
       | DAASTAsset
-      | PromotedOfferingsAsset
+      | PromotedOfferings
       | URLAsset;
   };
   /**
@@ -250,7 +261,6 @@ export interface FormatID {
  * Image asset with URL and dimensions
  */
 export interface ImageAsset {
-  asset_type: 'image';
   /**
    * URL to the image asset
    */
@@ -276,7 +286,6 @@ export interface ImageAsset {
  * Video asset with URL and specifications
  */
 export interface VideoAsset {
-  asset_type: 'video';
   /**
    * URL to the video asset
    */
@@ -306,7 +315,6 @@ export interface VideoAsset {
  * Audio asset with URL and specifications
  */
 export interface AudioAsset {
-  asset_type: 'audio';
   /**
    * URL to the audio asset
    */
@@ -328,15 +336,10 @@ export interface AudioAsset {
  * Text content asset
  */
 export interface TextAsset {
-  asset_type: 'text';
   /**
    * Text content
    */
   content: string;
-  /**
-   * Maximum character length constraint
-   */
-  max_length?: number;
   /**
    * Language code (e.g., 'en', 'es', 'fr')
    */
@@ -346,7 +349,6 @@ export interface TextAsset {
  * HTML content asset
  */
 export interface HTMLAsset {
-  asset_type: 'html';
   /**
    * HTML content
    */
@@ -360,7 +362,6 @@ export interface HTMLAsset {
  * CSS stylesheet asset
  */
 export interface CSSAsset {
-  asset_type: 'css';
   /**
    * CSS content
    */
@@ -374,7 +375,6 @@ export interface CSSAsset {
  * JavaScript code asset
  */
 export interface JavaScriptAsset {
-  asset_type: 'javascript';
   /**
    * JavaScript content
    */
@@ -385,7 +385,6 @@ export interface JavaScriptAsset {
   module_type?: 'esm' | 'commonjs' | 'script';
 }
 export interface VASTAsset1 {
-  asset_type?: 'vast';
   /**
    * URL endpoint that returns VAST XML
    */
@@ -402,10 +401,6 @@ export interface VASTAsset1 {
    * Whether VPAID (Video Player-Ad Interface Definition) is supported
    */
   vpaid_enabled?: boolean;
-  /**
-   * Maximum allowed wrapper/redirect depth
-   */
-  max_wrapper_depth?: number;
   /**
    * Expected video duration in milliseconds (if known)
    */
@@ -433,7 +428,6 @@ export interface VASTAsset1 {
   )[];
 }
 export interface DAASTAsset1 {
-  asset_type?: 'daast';
   /**
    * URL endpoint that returns DAAST XML
    */
@@ -472,36 +466,301 @@ export interface DAASTAsset1 {
   companion_ads?: boolean;
 }
 /**
- * Reference to promoted offerings specification
+ * Complete offering specification combining brand manifest, product selectors, and asset filters. Provides all context needed for creative generation about what is being promoted.
  */
-export interface PromotedOfferingsAsset {
-  asset_type: 'promoted_offerings';
+export interface PromotedOfferings {
+  brand_manifest: BrandManifestReference;
+  product_selectors?: PromotedProducts;
   /**
-   * URL of the advertiser's brand or offering (e.g., https://retailer.com)
+   * Inline offerings for campaigns without a product catalog. Each offering has a name, description, and associated assets.
+   */
+  offerings?: {
+    /**
+     * Offering name (e.g., 'Winter Sale', 'New Product Launch')
+     */
+    name: string;
+    /**
+     * Description of what's being offered
+     */
+    description?: string;
+    /**
+     * Assets specific to this offering
+     */
+    assets?: {
+      [k: string]: unknown;
+    }[];
+  }[];
+  /**
+   * Selectors to choose specific assets from the brand manifest
+   */
+  asset_selectors?: {
+    /**
+     * Select assets with specific tags (e.g., ['holiday', 'premium'])
+     */
+    tags?: string[];
+    /**
+     * Filter by asset type (e.g., ['image', 'video'])
+     */
+    asset_types?: (
+      | 'image'
+      | 'video'
+      | 'audio'
+      | 'vast'
+      | 'daast'
+      | 'text'
+      | 'url'
+      | 'html'
+      | 'css'
+      | 'javascript'
+      | 'webhook'
+    )[];
+    /**
+     * Exclude assets with these tags
+     */
+    exclude_tags?: string[];
+  };
+}
+export interface BrandManifest2 {
+  /**
+   * Primary brand URL for context and asset discovery. Creative agents can infer brand information from this URL.
    */
   url?: string;
   /**
-   * Brand colors
+   * Brand or business name
+   */
+  name?: string;
+  /**
+   * Brand logo assets with semantic tags for different use cases
+   */
+  logos?: {
+    /**
+     * URL to the logo asset
+     */
+    url: string;
+    /**
+     * Semantic tags describing the logo variant (e.g., 'dark', 'light', 'square', 'horizontal', 'icon')
+     */
+    tags?: string[];
+    /**
+     * Logo width in pixels
+     */
+    width?: number;
+    /**
+     * Logo height in pixels
+     */
+    height?: number;
+  }[];
+  /**
+   * Brand color palette
    */
   colors?: {
+    /**
+     * Primary brand color (hex format)
+     */
     primary?: string;
+    /**
+     * Secondary brand color (hex format)
+     */
     secondary?: string;
+    /**
+     * Accent color (hex format)
+     */
     accent?: string;
+    /**
+     * Background color (hex format)
+     */
+    background?: string;
+    /**
+     * Text color (hex format)
+     */
+    text?: string;
   };
   /**
-   * Brand fonts
+   * Brand typography guidelines
    */
-  fonts?: string[];
+  fonts?: {
+    /**
+     * Primary font family name
+     */
+    primary?: string;
+    /**
+     * Secondary font family name
+     */
+    secondary?: string;
+    /**
+     * URLs to web font files if using custom fonts
+     */
+    font_urls?: string[];
+  };
   /**
-   * Brand tone/voice
+   * Brand voice and messaging tone (e.g., 'professional', 'casual', 'humorous', 'trustworthy', 'innovative')
    */
   tone?: string;
+  /**
+   * Brand tagline or slogan
+   */
+  tagline?: string;
+  /**
+   * Brand asset library with explicit assets and tags. Assets are referenced inline with URLs pointing to CDN-hosted files.
+   */
+  assets?: {
+    /**
+     * Unique identifier for this asset
+     */
+    asset_id: string;
+    /**
+     * Type of asset
+     */
+    asset_type: 'image' | 'video' | 'audio' | 'text';
+    /**
+     * URL to CDN-hosted asset file
+     */
+    url: string;
+    /**
+     * Tags for asset discovery (e.g., 'holiday', 'lifestyle', 'product_shot')
+     */
+    tags?: string[];
+    /**
+     * Human-readable asset name
+     */
+    name?: string;
+    /**
+     * Asset description or usage notes
+     */
+    description?: string;
+    /**
+     * Image/video width in pixels
+     */
+    width?: number;
+    /**
+     * Image/video height in pixels
+     */
+    height?: number;
+    /**
+     * Video/audio duration in seconds
+     */
+    duration_seconds?: number;
+    /**
+     * File size in bytes
+     */
+    file_size_bytes?: number;
+    /**
+     * File format (e.g., 'jpg', 'mp4', 'mp3')
+     */
+    format?: string;
+    /**
+     * Additional asset-specific metadata
+     */
+    metadata?: {
+      [k: string]: unknown;
+    };
+  }[];
+  /**
+   * Product catalog information for e-commerce advertisers. Enables SKU-level creative generation and product selection.
+   */
+  product_catalog?: {
+    /**
+     * URL to product catalog feed
+     */
+    feed_url: string;
+    /**
+     * Format of the product feed
+     */
+    feed_format?: 'google_merchant_center' | 'facebook_catalog' | 'custom';
+    /**
+     * Product categories available in the catalog (for filtering)
+     */
+    categories?: string[];
+    /**
+     * When the product catalog was last updated
+     */
+    last_updated?: string;
+    /**
+     * How frequently the product catalog is updated
+     */
+    update_frequency?: 'realtime' | 'hourly' | 'daily' | 'weekly';
+  };
+  /**
+   * Legal disclaimers or required text that must appear in creatives
+   */
+  disclaimers?: {
+    /**
+     * Disclaimer text
+     */
+    text: string;
+    /**
+     * When this disclaimer applies (e.g., 'financial_products', 'health_claims', 'all')
+     */
+    context?: string;
+    /**
+     * Whether this disclaimer must appear
+     */
+    required?: boolean;
+  }[];
+  /**
+   * Industry or vertical (e.g., 'retail', 'automotive', 'finance', 'healthcare')
+   */
+  industry?: string;
+  /**
+   * Primary target audience description
+   */
+  target_audience?: string;
+  /**
+   * Brand contact information
+   */
+  contact?: {
+    /**
+     * Contact email
+     */
+    email?: string;
+    /**
+     * Contact phone number
+     */
+    phone?: string;
+  };
+  /**
+   * Additional brand metadata
+   */
+  metadata?: {
+    /**
+     * When this brand manifest was created
+     */
+    created_date?: string;
+    /**
+     * When this brand manifest was last updated
+     */
+    updated_date?: string;
+    /**
+     * Brand card version number
+     */
+    version?: string;
+  };
+}
+/**
+ * Selectors to choose which products/offerings from the brand manifest product catalog to promote
+ */
+export interface PromotedProducts {
+  /**
+   * Direct product SKU references from the brand manifest product catalog
+   */
+  manifest_skus?: string[];
+  /**
+   * Select products by tags from the brand manifest product catalog (e.g., 'organic', 'sauces', 'holiday')
+   */
+  manifest_tags?: string[];
+  /**
+   * Select products from a specific category in the brand manifest product catalog (e.g., 'beverages/soft-drinks', 'food/sauces')
+   */
+  manifest_category?: string;
+  /**
+   * Natural language query to select products from the brand manifest (e.g., 'all Kraft Heinz pasta sauces', 'organic products under $20')
+   */
+  manifest_query?: string;
 }
 /**
  * URL reference asset
  */
 export interface URLAsset {
-  asset_type: 'url';
   /**
    * URL reference
    */

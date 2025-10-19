@@ -1106,20 +1106,32 @@ export interface Format {
     }[]
   ];
   /**
-   * Array of required assets or asset groups for this format. Can contain individual assets or repeatable asset sequences (e.g., carousel products, slideshow frames).
+   * Array of required assets or asset groups for this format. Each asset is identified by its asset_id, which must be used as the key in creative manifests. Can contain individual assets or repeatable asset sequences (e.g., carousel products, slideshow frames).
    */
   assets_required?: (
     | {
         /**
-         * Identifier for this asset in the format
+         * Unique identifier for this asset. Creative manifests MUST use this exact value as the key in the assets object.
          */
         asset_id: string;
         /**
          * Type of asset
          */
-        asset_type: 'image' | 'video' | 'audio' | 'text' | 'html' | 'javascript' | 'url' | 'brand_manifest';
+        asset_type:
+          | 'image'
+          | 'video'
+          | 'audio'
+          | 'vast'
+          | 'daast'
+          | 'text'
+          | 'html'
+          | 'css'
+          | 'javascript'
+          | 'url'
+          | 'webhook'
+          | 'promoted_offerings';
         /**
-         * Purpose of this asset (e.g., 'hero_image', 'logo', 'headline', 'cta_button')
+         * Optional descriptive label for this asset's purpose (e.g., 'hero_image', 'logo'). Not used for referencing assets in manifests—use asset_id instead. This field is for human-readable documentation and UI display only.
          */
         asset_role?: string;
         /**
@@ -1161,9 +1173,21 @@ export interface Format {
           /**
            * Type of asset
            */
-          asset_type: 'image' | 'video' | 'audio' | 'text' | 'html' | 'javascript' | 'url' | 'brand_manifest';
+          asset_type:
+            | 'image'
+            | 'video'
+            | 'audio'
+            | 'vast'
+            | 'daast'
+            | 'text'
+            | 'html'
+            | 'css'
+            | 'javascript'
+            | 'url'
+            | 'webhook'
+            | 'promoted_offerings';
           /**
-           * Purpose of this asset
+           * Optional descriptive label for this asset's purpose (e.g., 'hero_image', 'logo'). Not used for referencing assets in manifests—use asset_id instead. This field is for human-readable documentation and UI display only.
            */
           asset_role?: string;
           /**
@@ -1239,7 +1263,11 @@ export type DAASTAsset2 =
       [k: string]: unknown;
     };
 /**
- * Brand information manifest serving as the namespace and identity for this media buy. Provides brand context, assets, and product catalog. Can be provided inline or as a URL reference to a hosted manifest. Can be cached and reused across multiple requests.
+ * Brand information manifest containing assets, themes, and guidelines. Can be provided inline or as a URL reference to a hosted manifest.
+ */
+export type BrandManifestReference1 = BrandManifest1 | string;
+/**
+ * Campaign start timing: 'asap' or ISO 8601 date-time
  */
 export type StartTiming = 'asap' | string;
 
@@ -1255,7 +1283,7 @@ export interface CreateMediaBuyRequest {
    * Array of package configurations
    */
   packages: PackageRequest[];
-  brand_manifest: BrandManifestReference;
+  brand_manifest: BrandManifestReference1;
   /**
    * Purchase order number for tracking
    */
@@ -1395,7 +1423,7 @@ export interface CreativeAsset {
       | JavaScriptAsset
       | VASTAsset
       | DAASTAsset
-      | PromotedOfferingsAsset
+      | PromotedOfferings
       | URLAsset;
   };
   /**
@@ -1430,7 +1458,6 @@ export interface CreativeAsset {
  * Structured format identifier with agent URL and format name
  */
 export interface ImageAsset {
-  asset_type: 'image';
   /**
    * URL to the image asset
    */
@@ -1456,7 +1483,6 @@ export interface ImageAsset {
  * Video asset with URL and specifications
  */
 export interface VideoAsset {
-  asset_type: 'video';
   /**
    * URL to the video asset
    */
@@ -1486,7 +1512,6 @@ export interface VideoAsset {
  * Audio asset with URL and specifications
  */
 export interface AudioAsset {
-  asset_type: 'audio';
   /**
    * URL to the audio asset
    */
@@ -1508,15 +1533,10 @@ export interface AudioAsset {
  * Text content asset
  */
 export interface TextAsset {
-  asset_type: 'text';
   /**
    * Text content
    */
   content: string;
-  /**
-   * Maximum character length constraint
-   */
-  max_length?: number;
   /**
    * Language code (e.g., 'en', 'es', 'fr')
    */
@@ -1526,7 +1546,6 @@ export interface TextAsset {
  * HTML content asset
  */
 export interface HTMLAsset {
-  asset_type: 'html';
   /**
    * HTML content
    */
@@ -1540,7 +1559,6 @@ export interface HTMLAsset {
  * CSS stylesheet asset
  */
 export interface CSSAsset {
-  asset_type: 'css';
   /**
    * CSS content
    */
@@ -1554,7 +1572,6 @@ export interface CSSAsset {
  * JavaScript code asset
  */
 export interface JavaScriptAsset {
-  asset_type: 'javascript';
   /**
    * JavaScript content
    */
@@ -1565,7 +1582,6 @@ export interface JavaScriptAsset {
   module_type?: 'esm' | 'commonjs' | 'script';
 }
 export interface VASTAsset1 {
-  asset_type?: 'vast';
   /**
    * URL endpoint that returns VAST XML
    */
@@ -1582,10 +1598,6 @@ export interface VASTAsset1 {
    * Whether VPAID (Video Player-Ad Interface Definition) is supported
    */
   vpaid_enabled?: boolean;
-  /**
-   * Maximum allowed wrapper/redirect depth
-   */
-  max_wrapper_depth?: number;
   /**
    * Expected video duration in milliseconds (if known)
    */
@@ -1613,7 +1625,6 @@ export interface VASTAsset1 {
   )[];
 }
 export interface DAASTAsset1 {
-  asset_type?: 'daast';
   /**
    * URL endpoint that returns DAAST XML
    */
@@ -1652,36 +1663,82 @@ export interface DAASTAsset1 {
   companion_ads?: boolean;
 }
 /**
- * Reference to promoted offerings specification
+ * Complete offering specification combining brand manifest, product selectors, and asset filters. Provides all context needed for creative generation about what is being promoted.
  */
-export interface PromotedOfferingsAsset {
-  asset_type: 'promoted_offerings';
+export interface PromotedOfferings {
+  brand_manifest: BrandManifestReference;
+  product_selectors?: PromotedProducts;
   /**
-   * URL of the advertiser's brand or offering (e.g., https://retailer.com)
+   * Inline offerings for campaigns without a product catalog. Each offering has a name, description, and associated assets.
    */
-  url?: string;
+  offerings?: {
+    /**
+     * Offering name (e.g., 'Winter Sale', 'New Product Launch')
+     */
+    name: string;
+    /**
+     * Description of what's being offered
+     */
+    description?: string;
+    /**
+     * Assets specific to this offering
+     */
+    assets?: {
+      [k: string]: unknown;
+    }[];
+  }[];
   /**
-   * Brand colors
+   * Selectors to choose specific assets from the brand manifest
    */
-  colors?: {
-    primary?: string;
-    secondary?: string;
-    accent?: string;
+  asset_selectors?: {
+    /**
+     * Select assets with specific tags (e.g., ['holiday', 'premium'])
+     */
+    tags?: string[];
+    /**
+     * Filter by asset type (e.g., ['image', 'video'])
+     */
+    asset_types?: (
+      | 'image'
+      | 'video'
+      | 'audio'
+      | 'vast'
+      | 'daast'
+      | 'text'
+      | 'url'
+      | 'html'
+      | 'css'
+      | 'javascript'
+      | 'webhook'
+    )[];
+    /**
+     * Exclude assets with these tags
+     */
+    exclude_tags?: string[];
   };
+}
+export interface PromotedProducts {
   /**
-   * Brand fonts
+   * Direct product SKU references from the brand manifest product catalog
    */
-  fonts?: string[];
+  manifest_skus?: string[];
   /**
-   * Brand tone/voice
+   * Select products by tags from the brand manifest product catalog (e.g., 'organic', 'sauces', 'holiday')
    */
-  tone?: string;
+  manifest_tags?: string[];
+  /**
+   * Select products from a specific category in the brand manifest product catalog (e.g., 'beverages/soft-drinks', 'food/sauces')
+   */
+  manifest_category?: string;
+  /**
+   * Natural language query to select products from the brand manifest (e.g., 'all Kraft Heinz pasta sauces', 'organic products under $20')
+   */
+  manifest_query?: string;
 }
 /**
  * URL reference asset
  */
 export interface URLAsset {
-  asset_type: 'url';
   /**
    * URL reference
    */
@@ -1691,6 +1748,9 @@ export interface URLAsset {
    */
   description?: string;
 }
+/**
+ * Webhook configuration for asynchronous task notifications. Uses A2A-compatible PushNotificationConfig structure. Supports Bearer tokens (simple) or HMAC signatures (production-recommended).
+ */
 export interface PushNotificationConfig {
   /**
    * Webhook endpoint URL for task status notifications
@@ -2116,7 +2176,7 @@ export interface ListCreativesResponse {
         | JavaScriptAsset
         | VASTAsset
         | DAASTAsset
-        | PromotedOfferingsAsset
+        | PromotedOfferings
         | URLAsset;
     };
     /**
