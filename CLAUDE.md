@@ -429,6 +429,21 @@ Should show:
 
 **IMPORTANT**: This project uses **Changesets** for version management and releases.
 
+### 🚨 CRITICAL: Never Manually Edit package.json Version! 🚨
+
+**DO NOT** manually change the `version` field in `package.json` - changesets will handle this automatically.
+
+**What happened when we broke this rule:**
+- We manually bumped `package.json` from 2.0.2 to 2.1.0 (to match AdCP schema version)
+- Changesets calculated: 2.1.0 + minor changeset = **2.2.0** (WRONG!)
+- We skipped version 2.1.0 entirely
+- Had to revert package.json to 2.0.2 and let changesets correctly calculate 2.0.2 → 2.1.0
+
+**The correct separation:**
+- `package.json` version = **Library version** (managed by changesets)
+- `src/lib/version.ts` ADCP_VERSION = **AdCP schema version** (can differ from library version)
+- These are independent and serve different purposes!
+
 ### How It Works
 
 1. **Create a changeset for your changes**:
@@ -447,21 +462,32 @@ Should show:
    git push
    ```
 
-3. **GitHub Actions creates a Release PR**:
-   - PR title: "chore: release package"
-   - Automatically updates CHANGELOG.md
-   - Automatically bumps version in package.json
-   - Combines all changesets since last release
+3. **Create a PR and merge to main**:
+   - Create PR from your feature branch
+   - **Do NOT manually edit package.json version**
+   - Merge PR to main when approved
 
-4. **Review and merge the Release PR**:
+4. **GitHub Actions creates a Release PR automatically**:
+   - **Triggered by**: Push to main with changeset files
+   - **PR title**: "chore: release package"
+   - **What it does**:
+     - Automatically updates CHANGELOG.md
+     - Automatically bumps version in package.json
+     - Combines all changesets since last release
+     - Deletes changeset files
+   - **No new branch needed**: The Release PR is auto-created by GitHub Actions
+
+5. **Review and merge the Release PR**:
    - Check the generated CHANGELOG.md
-   - Verify version bump is correct
+   - Verify version bump is correct (e.g., 2.0.2 → 2.1.0)
+   - **Important**: Verify it's not skipping versions!
    - Merge when ready to release
 
-5. **Automatic publishing**:
-   - Merging Release PR creates a GitHub release
+6. **Automatic publishing**:
+   - Merging Release PR triggers publish workflow
    - GitHub Actions publishes to npm automatically
-   - Package appears on npm registry
+   - Package appears on npm registry within ~1 minute
+   - Verify: `npm view @adcp/client version`
 
 ### Version Bump Guidelines
 
@@ -544,8 +570,91 @@ gh release create v$(node -p "require('./package.json').version") --generate-not
 
 **Remember**: Always create a changeset for library changes. The automation handles the rest.
 
+### Troubleshooting
+
+#### Release PR is calculating wrong version (skipping versions)
+
+**Symptom**: Release PR says it will publish 2.2.0 but we're at 2.0.2 (skipping 2.1.0)
+
+**Cause**: Someone manually edited `package.json` version field
+
+**Fix**:
+1. Close the incorrect Release PR
+2. Create a fix PR to revert `package.json` to the current npm version:
+   ```bash
+   # Check what's on npm
+   npm view @adcp/client version  # e.g., 2.0.2
+
+   # Edit package.json to match npm version
+   # Edit src/lib/version.ts LIBRARY_VERSION to match
+   # Keep ADCP_VERSION at its correct value
+
+   git add package.json src/lib/version.ts
+   git commit -m "fix: revert library version to match npm"
+   git push
+   ```
+3. Merge the fix PR to main
+4. GitHub Actions will create a new Release PR with correct version
+5. Merge the new Release PR
+
+#### No Release PR created after merging to main
+
+**Possible causes**:
+- No changeset files in `.changeset/` directory
+- Changeset files were not committed
+- Release workflow disabled or failing
+
+**Fix**:
+```bash
+# Check for changesets
+ls .changeset/*.md
+
+# If no changesets, create one and merge a new PR
+npm run changeset
+```
+
+#### Release PR merged but package not published to npm
+
+**Check**:
+```bash
+# View workflow runs
+gh run list --workflow=release.yml --limit 3
+
+# Check if publish failed
+gh run view <run-id>
+```
+
+**Common issues**:
+- NPM_TOKEN secret expired or incorrect
+- Package.json version already exists on npm
+- Build failed during publish
+
+### Quick Reference
+
+**Normal release workflow (no manual version edits needed):**
+1. Make changes on feature branch
+2. Run `npm run changeset` and commit
+3. Create PR and merge to main
+4. Wait for auto-generated Release PR
+5. Review and merge Release PR
+6. Package publishes to npm automatically
+
+**Do NOT do:**
+- ❌ Manually edit `package.json` version
+- ❌ Manually edit CHANGELOG.md
+- ❌ Create release branches manually
+- ❌ Run `npm version` command
+- ❌ Tag releases manually
+
+**Let changesets handle:**
+- ✅ Version bumping
+- ✅ CHANGELOG generation
+- ✅ Release PR creation
+- ✅ Git tags
+- ✅ npm publishing
+
 ---
 
-*Last updated: 2025-10-17 (Migrated to Changesets for version management)*
+*Last updated: 2025-10-19 (Added release troubleshooting and version management warnings)*
 *Project: AdCP Testing Framework*
 *Environment: Fly.io Production*
