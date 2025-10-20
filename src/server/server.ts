@@ -1248,10 +1248,10 @@ app.post<{
     });
 
     // Access the underlying ADCPClient to call build_creative
-    // The creative agent expects FormatID object {agent_url, id} at top level AND in creative_manifest
+    // Per AdCP v2.1.0 schema: target_format_id at top level, format_id in creative_manifest
     const adcpClient = creativeClient.getClient();
     const result = await adcpClient.executeTask('build_creative', {
-      format_id,
+      target_format_id: format_id,
       creative_manifest: {
         format_id,
         assets
@@ -1306,7 +1306,7 @@ app.post<{
     });
 
     // Access the underlying ADCPClient to call preview_creative
-    // The creative agent expects FormatID object {agent_url, id} at top level AND in creative_manifest
+    // Per AdCP v2.1.0 schema: format_id at top level and in creative_manifest
     const adcpClient = creativeClient.getClient();
     const result = await adcpClient.executeTask('preview_creative', {
       format_id,
