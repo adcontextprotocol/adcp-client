@@ -4,21 +4,21 @@
 /**
  * AdCP client library version
  */
-export const LIBRARY_VERSION = '2.1.0';
+export const LIBRARY_VERSION = '2.2.0';
 
 /**
  * AdCP specification version this library is compatible with
  */
-export const ADCP_VERSION = '2.1.0';
+export const ADCP_VERSION = '2.2.0';
 
 /**
  * Full version information
  */
 export const VERSION_INFO = {
-  library: '2.1.0',
-  adcp: '2.1.0',
+  library: '2.2.0',
+  adcp: '2.2.0',
   compatible: true,
-  generatedAt: '2025-10-20T11:01:51.458Z'
+  generatedAt: '2025-10-20T11:02:06.078Z'
 } as const;
 
 /**
