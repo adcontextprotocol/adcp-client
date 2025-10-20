@@ -1,5 +1,5 @@
-// Generated Zod schemas from official AdCP schemas v2.1.0
-// Generated at: 2025-10-20T09:03:13.772Z
+// Generated Zod schemas from official AdCP schemas v2.2.0
+// Generated at: 2025-10-20T11:01:56.073Z
 // These schemas provide runtime validation for AdCP data structures
 
 import { z } from 'zod';
