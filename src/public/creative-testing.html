@@ -411,6 +411,16 @@
                     <option value="a2a">A2A</option>
                 </select>
             </div>
+            <div class="form-group">
+                <label for="geminiApiKey">
+                    Gemini API Key (optional - required for build_creative):
+                </label>
+                <input type="password" id="geminiApiKey" placeholder="Enter your Gemini API key for generative formats">
+                <p style="font-size: 0.875rem; color: #718096; margin: 0.5rem 0 0 0;">
+                    Get a free API key at <a href="https://aistudio.google.com/apikey" target="_blank" style="color: #4299e1;">Google AI Studio</a>.
+                    Only needed for <code>build_creative</code> with generative formats.
+                </p>
+            </div>
             <button class="button" onclick="loadFormats()">Load Formats</button>
         </div>
 
@@ -836,16 +846,25 @@
             try {
                 loading.classList.add('active');
                 const creativeAssets = collectAssets();
+                const geminiApiKey = document.getElementById('geminiApiKey').value;
+
+                // Build request body
+                const requestBody = {
+                    agentUrl: state.agentUrl,
+                    protocol: state.protocol,
+                    format_id: state.selectedFormat.format_id,
+                    assets: creativeAssets
+                };
+
+                // Add Gemini API key if provided
+                if (geminiApiKey) {
+                    requestBody.gemini_api_key = geminiApiKey;
+                }
 
                 const response = await fetch('/api/creative/build-creative', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        agentUrl: state.agentUrl,
-                        protocol: state.protocol,
-                        format_id: state.selectedFormat.format_id,
-                        assets: creativeAssets
-                    })
+                    body: JSON.stringify(requestBody)
                 });
 
                 const data = await response.json();

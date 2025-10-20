@@ -1228,10 +1228,11 @@ app.post<{
     protocol?: 'mcp' | 'a2a';
     format_id: FormatID;
     assets: Record<string, any>;
+    gemini_api_key?: string;
   };
 }>('/api/creative/build-creative', async (request, reply) => {
   try {
-    const { agentUrl, protocol = 'mcp', format_id, assets } = request.body;
+    const { agentUrl, protocol = 'mcp', format_id, assets, gemini_api_key } = request.body;
 
     if (!agentUrl || !format_id) {
       return reply.code(400).send({
@@ -1240,11 +1241,20 @@ app.post<{
       });
     }
 
+    // Build client config with custom headers if API key provided
+    const customConfig = { ...clientConfig };
+    if (gemini_api_key) {
+      customConfig.headers = {
+        ...clientConfig.headers,
+        'x-gemini-api-key': gemini_api_key
+      };
+    }
+
     // Use the official CreativeAgentClient library class
     const creativeClient = new CreativeAgentClient({
       agentUrl,
       protocol,
-      ...clientConfig
+      ...customConfig
     });
 
     // Access the underlying ADCPClient to call build_creative
