@@ -604,11 +604,11 @@
             `;
 
             // Check if format is generative
-            // A format is generative if it has generation_prompt or output_format_id
+            // A format is generative if it has generation_prompt or output_format_ids
             const hasGenerationPrompt = format.assets_required?.some(a => a.asset_id === 'generation_prompt');
-            const isGenerative = format.output_format_id != null || hasGenerationPrompt;
+            const isGenerative = (format.output_format_ids && format.output_format_ids.length > 0) || hasGenerationPrompt;
             console.log('Format:', format.name);
-            console.log('Has output_format_id:', format.output_format_id);
+            console.log('Has output_format_ids:', format.output_format_ids);
             console.log('Has generation_prompt:', hasGenerationPrompt);
             console.log('Is generative:', isGenerative);
 
@@ -875,22 +875,51 @@
             // Show preview section
             previewSection.classList.remove('hidden');
 
-            // Check for preview_url or creative_url in result
-            const previewUrl = result.preview_url || result.creative_url;
+            const modeLabel = mode === 'build' ? 'Built Creative' : 'Creative Preview';
 
-            if (previewUrl) {
-                const modeLabel = mode === 'build' ? 'Built Creative' : 'Creative Preview';
+            // Handle new schema structure: preview_creative returns { previews: [...] }
+            if (result.previews && Array.isArray(result.previews) && result.previews.length > 0) {
+                let html = `<div style="width: 100%;">
+                    <p style="color: var(--accent-green); font-weight: 600; margin-bottom: 1rem;">✓ ${modeLabel}</p>`;
+
+                result.previews.forEach((preview, idx) => {
+                    if (preview.renders && Array.isArray(preview.renders)) {
+                        preview.renders.forEach((render, renderIdx) => {
+                            const renderLabel = preview.renders.length > 1
+                                ? `${render.role || 'Render'} (${render.dimensions?.width}x${render.dimensions?.height})`
+                                : '';
+
+                            html += `
+                                <div style="margin-bottom: 1rem;">
+                                    ${renderLabel ? `<p style="font-weight: 500; margin-bottom: 0.5rem;">${renderLabel}</p>` : ''}
+                                    <iframe src="${render.preview_url}"
+                                            title="${modeLabel} ${renderLabel}"
+                                            style="width: ${render.dimensions?.width || 300}px; height: ${render.dimensions?.height || 250}px; border: 1px solid #ddd; border-radius: 4px;">
+                                    </iframe>
+                                </div>`;
+                        });
+                    }
+                });
+
+                html += '</div>';
+                previewContainer.innerHTML = html;
+            }
+            // Legacy: Check for direct preview_url or creative_url in result
+            else if (result.preview_url || result.creative_url) {
+                const previewUrl = result.preview_url || result.creative_url;
                 previewContainer.innerHTML = `
                     <div style="width: 100%;">
                         <p style="color: var(--accent-green); font-weight: 600; margin-bottom: 1rem;">✓ ${modeLabel}</p>
                         <iframe src="${previewUrl}" title="${modeLabel}"></iframe>
                     </div>
                 `;
-            } else {
-                const modeLabel = mode === 'build' ? 'built' : 'previewed';
+            }
+            // Fallback: Show JSON
+            else {
+                const modeLabel2 = mode === 'build' ? 'built' : 'previewed';
                 previewContainer.innerHTML = `
                     <div>
-                        <p style="color: var(--accent-green); font-weight: 600;">✓ Creative ${modeLabel} successfully!</p>
+                        <p style="color: var(--accent-green); font-weight: 600;">✓ Creative ${modeLabel2} successfully!</p>
                         <pre style="background: white; padding: 1rem; border-radius: 8px; text-align: left; overflow-x: auto;">
 ${JSON.stringify(result, null, 2)}
                         </pre>

@@ -24,6 +24,10 @@ import type {
   ListAuthorizedPropertiesResponse,
   ProvidePerformanceFeedbackRequest,
   ProvidePerformanceFeedbackResponse,
+  BuildCreativeRequest,
+  BuildCreativeResponse,
+  PreviewCreativeRequest,
+  PreviewCreativeResponse,
   GetSignalsRequest,
   GetSignalsResponse,
   ActivateSignalRequest,
@@ -182,6 +186,22 @@ export class Agent {
   }
 
   /**
+   * Official AdCP build_creative tool schema
+   * Official AdCP build_creative tool schema
+   */
+  async buildCreative(params: BuildCreativeRequest): Promise<ToolResult<BuildCreativeResponse>> {
+    return this.callTool<BuildCreativeResponse>('build_creative', params);
+  }
+
+  /**
+   * Official AdCP preview_creative tool schema
+   * Official AdCP preview_creative tool schema
+   */
+  async previewCreative(params: PreviewCreativeRequest): Promise<ToolResult<PreviewCreativeResponse>> {
+    return this.callTool<PreviewCreativeResponse>('preview_creative', params);
+  }
+
+  /**
    * Official AdCP get_signals tool schema
    * Official AdCP get_signals tool schema
    */
@@ -268,6 +288,22 @@ export class AgentCollection {
    */
   async providePerformanceFeedback(params: ProvidePerformanceFeedbackRequest): Promise<ToolResult<ProvidePerformanceFeedbackResponse>[]> {
     return this.callToolOnAll<ProvidePerformanceFeedbackResponse>('provide_performance_feedback', params);
+  }
+
+  /**
+   * Official AdCP build_creative tool schema (across multiple agents)
+   * Official AdCP build_creative tool schema
+   */
+  async buildCreative(params: BuildCreativeRequest): Promise<ToolResult<BuildCreativeResponse>[]> {
+    return this.callToolOnAll<BuildCreativeResponse>('build_creative', params);
+  }
+
+  /**
+   * Official AdCP preview_creative tool schema (across multiple agents)
+   * Official AdCP preview_creative tool schema
+   */
+  async previewCreative(params: PreviewCreativeRequest): Promise<ToolResult<PreviewCreativeResponse>[]> {
+    return this.callToolOnAll<PreviewCreativeResponse>('preview_creative', params);
   }
 
   /**
