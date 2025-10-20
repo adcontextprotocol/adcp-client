@@ -5134,7 +5134,7 @@
             const creative = {
                 creative_id: `${namePrefix}_${format.format_id}_${Date.now()}`,
                 name: `${namePrefix} - ${format.name || format.format_id}`,
-                format: format.format_id,
+                format_id: format.format_id,
                 media_url: null,
                 package_assignments: [] // Will be filled by caller
             };
@@ -8608,7 +8608,7 @@ ${JSON.stringify(result, null, 2)}
 
                     const asset = {
                         name: creativeName,
-                        format: format.format_id,
+                        format_id: format.format_id,
                         status: 'active'
                     };
 
