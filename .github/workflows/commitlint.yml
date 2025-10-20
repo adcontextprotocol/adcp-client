@@ -20,9 +20,7 @@ jobs:
 
       - name: Install commitlint
         run: |
-          npm install --save-dev @commitlint/config-conventional @commitlint/cli || \
-          (echo "Retry 1 failed, waiting 30s..." && sleep 30 && npm install --save-dev @commitlint/config-conventional @commitlint/cli) || \
-          (echo "Retry 2 failed, waiting 60s..." && sleep 60 && npm install --save-dev @commitlint/config-conventional @commitlint/cli)
+          npm install --save-dev @commitlint/config-conventional @commitlint/cli || npm install --save-dev @commitlint/config-conventional @commitlint/cli || npm install --save-dev @commitlint/config-conventional @commitlint/cli
 
       - name: Validate PR title follows conventional commits
         env:
