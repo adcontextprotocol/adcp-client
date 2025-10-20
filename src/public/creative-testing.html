@@ -413,12 +413,12 @@
             </div>
             <div class="form-group">
                 <label for="geminiApiKey">
-                    Gemini API Key (optional - required for build_creative):
+                    Gemini API Key (optional):
                 </label>
                 <input type="password" id="geminiApiKey" placeholder="Enter your Gemini API key for generative formats">
                 <p style="font-size: 0.875rem; color: #718096; margin: 0.5rem 0 0 0;">
                     Get a free API key at <a href="https://aistudio.google.com/apikey" target="_blank" style="color: #4299e1;">Google AI Studio</a>.
-                    Only needed for <code>build_creative</code> with generative formats.
+                    Required for <code>build_creative</code>. Optional for <code>preview_creative</code> (enables AI-generated previews instead of placeholders).
                 </p>
             </div>
             <button class="button" onclick="loadFormats()">Load Formats</button>
