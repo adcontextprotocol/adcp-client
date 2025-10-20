@@ -411,17 +411,6 @@
                     <option value="a2a">A2A</option>
                 </select>
             </div>
-            <div class="form-group" id="geminiKeySection" style="display: none;">
-                <label for="geminiApiKey">
-                    Gemini API Key (for reference server):
-                </label>
-                <input type="password" id="geminiApiKey" placeholder="Enter your Gemini API key">
-                <p style="font-size: 0.875rem; color: #718096; margin: 0.5rem 0 0 0;">
-                    <strong>Note:</strong> This is specific to the AdCP reference creative server.
-                    Get a free API key at <a href="https://aistudio.google.com/apikey" target="_blank" style="color: #4299e1;">Google AI Studio</a>.
-                    Required for <code>build_creative</code>, optional for <code>preview_creative</code>.
-                </p>
-            </div>
             <button class="button" onclick="loadFormats()">Load Formats</button>
         </div>
 
@@ -488,35 +477,6 @@
             selectedFormat: null,
             assets: {}
         };
-
-        // Check if agent URL is the official AdCP creative agent
-        function isAdcpCreativeAgent(url) {
-            return url && url.includes('creative.adcontextprotocol.org');
-        }
-
-        // Toggle Gemini API key field based on agent URL
-        function updateGeminiKeyVisibility() {
-            const agentUrl = document.getElementById('agentUrl').value;
-            const geminiKeySection = document.getElementById('geminiKeySection');
-
-            if (isAdcpCreativeAgent(agentUrl)) {
-                geminiKeySection.style.display = 'block';
-            } else {
-                geminiKeySection.style.display = 'none';
-            }
-        }
-
-        // Initialize on page load
-        document.addEventListener('DOMContentLoaded', function() {
-            updateGeminiKeyVisibility();
-
-            // Add event listener to agent URL input
-            const agentUrlInput = document.getElementById('agentUrl');
-            if (agentUrlInput) {
-                agentUrlInput.addEventListener('input', updateGeminiKeyVisibility);
-                agentUrlInput.addEventListener('change', updateGeminiKeyVisibility);
-            }
-        });
 
         // Load creative formats from agent
         async function loadFormats() {
@@ -838,25 +798,16 @@
             try {
                 loading.classList.add('active');
                 const creativeAssets = collectAssets();
-                const geminiApiKey = document.getElementById('geminiApiKey').value;
-
-                // Build request body
-                const requestBody = {
-                    agentUrl: state.agentUrl,
-                    protocol: state.protocol,
-                    format_id: state.selectedFormat.format_id,
-                    assets: creativeAssets
-                };
-
-                // Add Gemini API key if provided
-                if (geminiApiKey) {
-                    requestBody.gemini_api_key = geminiApiKey;
-                }
 
                 const response = await fetch('/api/creative/preview-creative', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(requestBody)
+                    body: JSON.stringify({
+                        agentUrl: state.agentUrl,
+                        protocol: state.protocol,
+                        format_id: state.selectedFormat.format_id,
+                        assets: creativeAssets
+                    })
                 });
 
                 const data = await response.json();
@@ -885,25 +836,16 @@
             try {
                 loading.classList.add('active');
                 const creativeAssets = collectAssets();
-                const geminiApiKey = document.getElementById('geminiApiKey').value;
-
-                // Build request body
-                const requestBody = {
-                    agentUrl: state.agentUrl,
-                    protocol: state.protocol,
-                    format_id: state.selectedFormat.format_id,
-                    assets: creativeAssets
-                };
-
-                // Add Gemini API key if provided
-                if (geminiApiKey) {
-                    requestBody.gemini_api_key = geminiApiKey;
-                }
 
                 const response = await fetch('/api/creative/build-creative', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(requestBody)
+                    body: JSON.stringify({
+                        agentUrl: state.agentUrl,
+                        protocol: state.protocol,
+                        format_id: state.selectedFormat.format_id,
+                        assets: creativeAssets
+                    })
                 });
 
                 const data = await response.json();
