@@ -22,3 +22,6 @@ export type {
 
 // Re-export FormatID from generated core types
 export type { FormatID } from './core.generated';
+
+// Re-export Zod schemas for runtime validation
+export * from './schemas.generated';
