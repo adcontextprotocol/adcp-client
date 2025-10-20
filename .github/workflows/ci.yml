@@ -116,32 +116,82 @@ jobs:
           echo "✅ No high or critical vulnerabilities found"
         fi
 
-  publish-dry-run:
-    name: Publish Dry Run
+  changeset-check:
+    name: Changeset Check
     runs-on: ubuntu-latest
-    needs: [test, quality, security]
     if: github.event_name == 'pull_request'
-    
+
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
-      
+      with:
+        fetch-depth: 0
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20.x'
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Check for changeset
+      run: |
+        # Check if any library code was modified (src/lib/, package.json)
+        LIBRARY_FILES_CHANGED=$(git diff --name-only origin/${{ github.base_ref }}...HEAD | grep -E '^(src/lib/|package\.json|scripts/(sync-schemas|generate-types)\.ts)' || true)
+
+        if [ -n "$LIBRARY_FILES_CHANGED" ]; then
+          echo "📝 Library files were modified:"
+          echo "$LIBRARY_FILES_CHANGED"
+
+          # Check if there are any changesets (excluding README.md)
+          CHANGESET_FILES=$(find .changeset -name '*.md' ! -name 'README.md' 2>/dev/null || true)
+
+          if [ -z "$CHANGESET_FILES" ]; then
+            echo ""
+            echo "❌ Library code was modified but no changeset was found!"
+            echo ""
+            echo "Please run: npm run changeset"
+            echo ""
+            echo "This will create a changeset file describing your changes."
+            echo "Changesets are required for all library changes to ensure proper versioning."
+            exit 1
+          else
+            echo ""
+            echo "✅ Changeset found:"
+            ls -la .changeset/*.md | grep -v README.md
+          fi
+        else
+          echo "ℹ️ No library files modified, changeset not required"
+        fi
+
+  publish-dry-run:
+    name: Publish Dry Run
+    runs-on: ubuntu-latest
+    needs: [test, quality, security, changeset-check]
+    if: github.event_name == 'pull_request'
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
     - name: Setup Node.js
       uses: actions/setup-node@v4
       with:
         node-version: '20.x'
         cache: 'npm'
         registry-url: 'https://registry.npmjs.org'
-        
+
     - name: Install dependencies
       run: npm ci
-      
+
     - name: Test publish (dry run)
       run: |
         # Simulate the full publish process
         npm run prepublishOnly
         npm pack --dry-run
-        
+
         echo "✅ Package is ready for publication"
         echo "📦 Package contents:"
         npm pack --silent | tar -tzf - | head -20
