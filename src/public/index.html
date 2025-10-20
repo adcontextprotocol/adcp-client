@@ -3346,9 +3346,21 @@
             }
 
             // Build AdCP-compliant parameters
+            // brand_manifest must be either a valid URL or a BrandManifest object
+            let brandManifestParam = brandManifest;
+            try {
+                new URL(brandManifest);
+                // It's a valid URL, use as-is
+            } catch {
+                // Not a URL, wrap in BrandManifest object per AdCP spec
+                brandManifestParam = {
+                    name: brandManifest
+                };
+            }
+
             const params = {
                 brief: 'Discover available advertising products for testing',
-                brand_manifest: brandManifest
+                brand_manifest: brandManifestParam
             };
 
             // Add filters if any are specified
@@ -3657,11 +3669,23 @@
             logEvent('info', `Found agent: ${selectedAgent.name}, has auth token: ${!!selectedAgent.auth_token}`);
             logEvent('info', `Agent config: ${JSON.stringify(selectedAgent, null, 2)}`);
             logEvent('info', 'Refreshing products with promoted offering: ' + brandManifest);
-            
+
+            // brand_manifest must be either a valid URL or a BrandManifest object
+            let brandManifestParam = brandManifest;
+            try {
+                new URL(brandManifest);
+                // It's a valid URL, use as-is
+            } catch {
+                // Not a URL, wrap in BrandManifest object per AdCP spec
+                brandManifestParam = {
+                    name: brandManifest
+                };
+            }
+
             try {
                 const result = await callADCPTool(selectedAgent, 'get_products', {
                     brief: 'Discover available advertising products for testing',
-                    brand_manifest: brandManifest
+                    brand_manifest: brandManifestParam
                 });
                 
                 if (result && result.products) {
@@ -4610,12 +4634,24 @@
                     product_id: product.product_id,
                     targeting_overlay: Object.keys(targetingOverlay).length > 0 ? targetingOverlay : undefined
                 }));
-                
+
+                // brand_manifest must be either a valid URL or a BrandManifest object
+                let brandManifestParam = brandManifest;
+                try {
+                    new URL(brandManifest);
+                    // It's a valid URL, use as-is
+                } catch {
+                    // Not a URL, wrap in BrandManifest object per AdCP spec
+                    brandManifestParam = {
+                        name: brandManifest
+                    };
+                }
+
                 // Build ADCP create_media_buy parameters
                 const createMediaBuyParams = {
                     buyer_ref: buyerRef,
                     packages: packages,
-                    brand_manifest: brandManifest,
+                    brand_manifest: brandManifestParam,
                     po_number: poNumber,
                     start_time: startAsap ? 'asap' : (startDate ? new Date(startDate).toISOString() : new Date().toISOString()),
                     end_time: endDate ? new Date(endDate).toISOString() : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),

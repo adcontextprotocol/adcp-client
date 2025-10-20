@@ -1196,21 +1196,27 @@ app.post<{
       ...clientConfig
     });
 
-    // Use the library's listFormats method which handles response parsing
-    const formats = await creativeClient.listFormats(params);
+    // Access the underlying ADCPClient to get debug logs
+    const adcpClient = creativeClient.getClient();
+    const result = await adcpClient.listCreativeFormats(params);
 
     return reply.send({
-      success: true,
-      data: { formats },
-      metadata: {},
-      debug_logs: [], // CreativeAgentClient doesn't expose debug logs directly
+      success: result.success,
+      data: { formats: result.data?.formats || [] },
+      error: result.error,
+      metadata: result.metadata || {},
+      debug_logs: result.debug_logs || [],
       timestamp: new Date().toISOString()
     });
   } catch (error) {
-    app.log.error({ error }, 'List creative formats error');
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    const errorStack = error instanceof Error ? error.stack : undefined;
+    app.log.error({ error: errorMessage, stack: errorStack }, 'List creative formats error');
     return reply.code(500).send({
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown error'
+      error: errorMessage,
+      debug_logs: [],
+      timestamp: new Date().toISOString()
     });
   }
 });
@@ -1261,10 +1267,14 @@ app.post<{
       timestamp: new Date().toISOString()
     });
   } catch (error) {
-    app.log.error({ error }, 'Build creative error');
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    const errorStack = error instanceof Error ? error.stack : undefined;
+    app.log.error({ error: errorMessage, stack: errorStack }, 'Build creative error');
     return reply.code(500).send({
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown error'
+      error: errorMessage,
+      debug_logs: [],
+      timestamp: new Date().toISOString()
     });
   }
 });
@@ -1315,10 +1325,14 @@ app.post<{
       timestamp: new Date().toISOString()
     });
   } catch (error) {
-    app.log.error({ error }, 'Preview creative error');
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    const errorStack = error instanceof Error ? error.stack : undefined;
+    app.log.error({ error: errorMessage, stack: errorStack }, 'Preview creative error');
     return reply.code(500).send({
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown error'
+      error: errorMessage,
+      debug_logs: [],
+      timestamp: new Date().toISOString()
     });
   }
 });

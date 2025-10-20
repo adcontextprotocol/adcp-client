@@ -314,6 +314,66 @@
             color: #22543d;
             margin-top: 1rem;
         }
+
+        /* Debug Logs Styles */
+        .debug-section {
+            background: #1e1e1e;
+            border-radius: 8px;
+            padding: 1rem;
+            margin-top: 1rem;
+            max-height: 500px;
+            overflow-y: auto;
+            font-family: 'Monaco', 'Courier New', monospace;
+        }
+
+        .debug-entry {
+            margin: 8px 0;
+            padding: 8px;
+            border-radius: 4px;
+            border-left: 3px solid;
+            font-size: 12px;
+        }
+
+        .debug-entry.request {
+            background: rgba(59, 130, 246, 0.1);
+            border-left-color: #3b82f6;
+            color: #93c5fd;
+        }
+
+        .debug-entry.response {
+            background: rgba(34, 197, 94, 0.1);
+            border-left-color: #22c55e;
+            color: #86efac;
+        }
+
+        .debug-entry.error {
+            background: rgba(239, 68, 68, 0.1);
+            border-left-color: #ef4444;
+            color: #fca5a5;
+        }
+
+        .debug-header {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 4px;
+            font-weight: 600;
+        }
+
+        .debug-time {
+            color: #9ca3af;
+            font-size: 11px;
+        }
+
+        .debug-body {
+            margin-top: 8px;
+            padding: 8px;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 4px;
+            overflow-x: auto;
+            white-space: pre-wrap;
+            word-break: break-word;
+            color: #d1d5db;
+        }
     </style>
 </head>
 <body>
@@ -364,10 +424,24 @@
         <div class="section hidden" id="assetsSection">
             <h3>Step 3: Provide Assets</h3>
             <div id="selectedFormatInfo"></div>
+
+            <!-- Quick Examples -->
+            <div style="background: #f0f9ff; padding: 1rem; border-radius: 8px; margin-bottom: 1.5rem;">
+                <label style="font-weight: 600; margin-bottom: 0.5rem; display: block;">Quick Examples:</label>
+                <select id="quickExamples" onchange="loadQuickExample()" style="width: 100%; margin-bottom: 0.5rem;">
+                    <option value="">-- Select an example --</option>
+                    <option value="nike-shoes">Nike Air Max Shoes</option>
+                    <option value="coffee-brand">Coffee Brand Campaign</option>
+                    <option value="tech-product">Tech Product Launch</option>
+                    <option value="fashion-retail">Fashion Retail Sale</option>
+                </select>
+                <p style="font-size: 0.875rem; color: #4a5568; margin: 0;">Select an example to auto-fill assets for testing</p>
+            </div>
+
             <div id="assetInputs"></div>
             <div style="display: flex; gap: 1rem;">
                 <button class="button" onclick="previewCreative()">Preview Creative</button>
-                <button class="button button-success" onclick="buildCreative()">Build Creative</button>
+                <button class="button button-success" id="buildCreativeBtn" onclick="buildCreative()">Build Creative</button>
             </div>
         </div>
 
@@ -376,6 +450,14 @@
             <h3>Step 4: Preview Creative</h3>
             <div class="preview-container" id="previewContainer">
                 <p style="color: #a0aec0;">Creative preview will appear here</p>
+            </div>
+        </div>
+
+        <!-- Debug Logs -->
+        <div class="section hidden" id="debugSection">
+            <h3>Debug Logs</h3>
+            <div class="debug-section" id="debugLogs">
+                <p style="color: #9ca3af; text-align: center; padding: 2rem;">No logs yet. Try loading formats or previewing a creative.</p>
             </div>
         </div>
 
@@ -418,15 +500,38 @@
 
                 const data = await response.json();
 
-                if (data.success && data.data.formats) {
+                // Always display debug logs if available (even on error)
+                if (data.debug_logs && Array.isArray(data.debug_logs)) {
+                    displayDebugLogs(data.debug_logs);
+                }
+
+                if (data.success && data.data && data.data.formats) {
                     state.formats = data.data.formats;
                     displayFormatsTable(state.formats);
                     formatsSection.classList.remove('hidden');
                 } else {
-                    showError('Failed to load formats: ' + (data.error || 'Unknown error'));
+                    const errorMsg = data.error || 'Unknown error';
+                    showError('Failed to load formats: ' + errorMsg);
+
+                    // Also add error to debug logs if not already there
+                    if (!data.debug_logs || data.debug_logs.length === 0) {
+                        displayDebugLogs([{
+                            type: 'error',
+                            message: errorMsg,
+                            timestamp: new Date().toISOString()
+                        }]);
+                    }
                 }
             } catch (error) {
-                showError('Error loading formats: ' + error.message);
+                const errorMsg = 'Error loading formats: ' + error.message;
+                showError(errorMsg);
+
+                // Add to debug logs
+                displayDebugLogs([{
+                    type: 'error',
+                    message: errorMsg,
+                    timestamp: new Date().toISOString()
+                }]);
             } finally {
                 loading.classList.remove('active');
             }
@@ -480,6 +585,12 @@
             state.selectedFormat = format;
             state.assets = {};
 
+            // Reset quick examples dropdown
+            const examplesDropdown = document.getElementById('quickExamples');
+            if (examplesDropdown) {
+                examplesDropdown.value = '';
+            }
+
             // Show format info
             const infoDiv = document.getElementById('selectedFormatInfo');
             infoDiv.innerHTML = `
@@ -491,6 +602,28 @@
                     </p>
                 </div>
             `;
+
+            // Check if format is generative
+            // A format is generative if it has generation_prompt or output_format_id
+            const hasGenerationPrompt = format.assets_required?.some(a => a.asset_id === 'generation_prompt');
+            const isGenerative = format.output_format_id != null || hasGenerationPrompt;
+            console.log('Format:', format.name);
+            console.log('Has output_format_id:', format.output_format_id);
+            console.log('Has generation_prompt:', hasGenerationPrompt);
+            console.log('Is generative:', isGenerative);
+
+            const buildBtn = document.getElementById('buildCreativeBtn');
+            if (buildBtn) {
+                if (isGenerative) {
+                    buildBtn.style.display = 'inline-block';
+                    console.log('Build button shown');
+                } else {
+                    buildBtn.style.display = 'none';
+                    console.log('Build button hidden - not generative');
+                }
+            } else {
+                console.error('Build button not found!');
+            }
 
             // Show asset inputs
             const assetsDiv = document.getElementById('assetInputs');
@@ -533,8 +666,8 @@
             const assetType = asset.asset_type;
             const assetId = asset.asset_id;
 
-            // For brand_manifest: offer URL or JSON paste options
-            if (assetType === 'brand_manifest') {
+            // For brand_manifest or promoted_offerings: offer URL or JSON paste options
+            if (assetType === 'brand_manifest' || assetType === 'promoted_offerings') {
                 return `
                     <div style="margin-bottom: 0.5rem;">
                         <label style="font-size: 0.875rem; margin-bottom: 0.25rem;">
@@ -543,7 +676,7 @@
                         </label>
                     </div>
                     <input type="url" id="asset_${idx}" ${isRequired} placeholder="https://example.com/brand.json" style="display: block;">
-                    <textarea id="asset_${idx}_json" rows="6" ${isRequired} placeholder='{"name": "Brand Name", ...}' style="display: none;"></textarea>
+                    <textarea id="asset_${idx}_json" rows="10" ${isRequired} placeholder='{"brand_manifest": {"name": "Brand Name", ...}}' style="display: none;"></textarea>
                 `;
             }
 
@@ -608,8 +741,8 @@
 
                 if (!input) continue;
 
-                // Check if this is a brand_manifest with JSON option
-                if (asset.asset_type === 'brand_manifest') {
+                // Check if this is a brand_manifest or promoted_offerings with JSON option
+                if (asset.asset_type === 'brand_manifest' || asset.asset_type === 'promoted_offerings') {
                     const jsonInput = document.getElementById(`asset_${i}_json`);
                     if (jsonInput && jsonInput.style.display !== 'none' && jsonInput.value) {
                         // Parse JSON input
@@ -633,8 +766,22 @@
                             note: 'File upload not yet implemented - would need to upload to storage first'
                         };
                     }
+                } else if (asset.asset_type === 'text') {
+                    // Text assets must be wrapped in {content: "..."} per schema
+                    if (input.value) {
+                        creativeAssets[asset.asset_id] = {
+                            content: input.value
+                        };
+                    }
+                } else if (asset.asset_type === 'url') {
+                    // URL assets should be wrapped in {url: "..."} per schema
+                    if (input.value) {
+                        creativeAssets[asset.asset_id] = {
+                            url: input.value
+                        };
+                    }
                 } else {
-                    // Text, textarea, URL inputs
+                    // Other types - send as-is
                     if (input.value) {
                         creativeAssets[asset.asset_id] = input.value;
                     }
@@ -664,6 +811,11 @@
                 });
 
                 const data = await response.json();
+
+                // Display debug logs if available
+                if (data.debug_logs && Array.isArray(data.debug_logs)) {
+                    displayDebugLogs(data.debug_logs);
+                }
 
                 if (data.success) {
                     displayPreview(data.data, 'preview');
@@ -697,6 +849,11 @@
                 });
 
                 const data = await response.json();
+
+                // Display debug logs if available
+                if (data.debug_logs && Array.isArray(data.debug_logs)) {
+                    displayDebugLogs(data.debug_logs);
+                }
 
                 if (data.success) {
                     displayPreview(data.data, 'build');
@@ -747,13 +904,279 @@ ${JSON.stringify(result, null, 2)}
 
         // Show error message
         function showError(message) {
-            const container = document.getElementById('formatsTable') || document.getElementById('assetInputs');
-            const errorDiv = document.createElement('div');
-            errorDiv.className = 'error';
-            errorDiv.textContent = message;
-            container.appendChild(errorDiv);
+            // Try multiple containers to ensure error is visible
+            const container = document.getElementById('formatsTable') ||
+                            document.getElementById('assetInputs') ||
+                            document.getElementById('formatsSection');
 
-            setTimeout(() => errorDiv.remove(), 5000);
+            if (container) {
+                const errorDiv = document.createElement('div');
+                errorDiv.className = 'error';
+                errorDiv.textContent = message;
+                container.appendChild(errorDiv);
+
+                setTimeout(() => errorDiv.remove(), 10000); // Show for 10 seconds
+            }
+
+            // Also log to console for debugging
+            console.error('UI Error:', message);
+        }
+
+        // Display debug logs
+        function displayDebugLogs(logs) {
+            if (!logs || !Array.isArray(logs) || logs.length === 0) {
+                return;
+            }
+
+            const debugSection = document.getElementById('debugSection');
+            const debugLogs = document.getElementById('debugLogs');
+
+            // Show debug section
+            debugSection.classList.remove('hidden');
+
+            // Clear initial message
+            if (debugLogs.innerHTML.includes('No logs yet')) {
+                debugLogs.innerHTML = '';
+            }
+
+            // Display each log entry
+            logs.forEach(log => {
+                const entry = document.createElement('div');
+                entry.className = `debug-entry ${log.type || 'request'}`;
+
+                const time = log.timestamp ? new Date(log.timestamp).toLocaleTimeString() : new Date().toLocaleTimeString();
+                const method = log.method || log.operation || 'Unknown';
+                const protocol = log.protocol || 'N/A';
+
+                let headerText = '';
+                if (log.type === 'request') {
+                    headerText = `→ REQUEST: ${method} (${protocol})`;
+                } else if (log.type === 'response') {
+                    headerText = `← RESPONSE: ${log.status || 'OK'}`;
+                } else if (log.type === 'error') {
+                    headerText = `✗ ERROR: ${method}`;
+                } else {
+                    headerText = `${method} (${protocol})`;
+                }
+
+                entry.innerHTML = `
+                    <div class="debug-header">
+                        <span>${headerText}</span>
+                        <span class="debug-time">${time}</span>
+                    </div>
+                    ${log.body || log.message ? `<div class="debug-body">${formatDebugBody(log.body || log.message)}</div>` : ''}
+                `;
+
+                debugLogs.appendChild(entry);
+            });
+
+            // Auto-scroll to bottom
+            debugLogs.scrollTop = debugLogs.scrollHeight;
+        }
+
+        // Format debug body for display
+        function formatDebugBody(body) {
+            if (typeof body === 'string') {
+                try {
+                    const parsed = JSON.parse(body);
+                    return JSON.stringify(parsed, null, 2);
+                } catch (e) {
+                    return body;
+                }
+            } else if (typeof body === 'object') {
+                return JSON.stringify(body, null, 2);
+            }
+            return String(body);
+        }
+
+        // Quick example data
+        const QUICK_EXAMPLES = {
+            'nike-shoes': {
+                name: 'Nike Air Max Shoes',
+                assets: {
+                    url: {
+                        url: 'https://www.nike.com/air-max'
+                    },
+                    promoted_offerings: {
+                        brand_manifest: {
+                            name: 'Nike',
+                            description: 'Just Do It - Athletic footwear and apparel',
+                            tagline: 'Just Do It',
+                            colors: {
+                                primary: '#000000',
+                                secondary: '#FFFFFF'
+                            }
+                        }
+                    },
+                    generation_prompt: {
+                        content: 'Create a dynamic ad showcasing Nike Air Max shoes with bold typography and energetic design'
+                    },
+                    headline: {
+                        content: 'Step into the Future with Nike Air Max'
+                    },
+                    description: {
+                        content: 'Experience unparalleled comfort and style with the latest Air Max technology'
+                    },
+                    call_to_action: {
+                        content: 'Shop Now'
+                    }
+                }
+            },
+            'coffee-brand': {
+                name: 'Artisan Coffee Co.',
+                assets: {
+                    url: {
+                        url: 'https://www.artisancoffee.example.com'
+                    },
+                    promoted_offerings: {
+                        brand_manifest: {
+                            name: 'Artisan Coffee Co.',
+                            description: 'Premium small-batch roasted coffee',
+                            tagline: 'Crafted with Passion',
+                            colors: {
+                                primary: '#3E2723',
+                                secondary: '#D7CCC8'
+                            }
+                        }
+                    },
+                    generation_prompt: {
+                        content: 'Create a warm, inviting ad for artisan coffee with earthy tones and cozy atmosphere'
+                    },
+                    headline: {
+                        content: 'Wake Up to Excellence'
+                    },
+                    description: {
+                        content: 'Discover our hand-selected beans roasted to perfection'
+                    },
+                    call_to_action: {
+                        content: 'Order Fresh Coffee'
+                    }
+                }
+            },
+            'tech-product': {
+                name: 'SmartHome Hub Pro',
+                assets: {
+                    url: {
+                        url: 'https://www.smarthub.example.com'
+                    },
+                    promoted_offerings: {
+                        brand_manifest: {
+                            name: 'TechCo',
+                            description: 'Smart home solutions for modern living',
+                            tagline: 'Your Home, Smarter',
+                            colors: {
+                                primary: '#1976D2',
+                                secondary: '#FFC107'
+                            }
+                        }
+                    },
+                    generation_prompt: {
+                        content: 'Create a sleek, modern tech ad showing connected smart home devices with clean design'
+                    },
+                    headline: {
+                        content: 'Control Everything from Anywhere'
+                    },
+                    description: {
+                        content: 'The SmartHome Hub Pro connects all your devices in one beautiful interface'
+                    },
+                    call_to_action: {
+                        content: 'Pre-Order Now'
+                    }
+                }
+            },
+            'fashion-retail': {
+                name: 'Spring Fashion Sale',
+                assets: {
+                    url: {
+                        url: 'https://www.fashionhouse.example.com/sale'
+                    },
+                    promoted_offerings: {
+                        brand_manifest: {
+                            name: 'Fashion House',
+                            description: 'Contemporary fashion for confident individuals',
+                            tagline: 'Express Yourself',
+                            colors: {
+                                primary: '#E91E63',
+                                secondary: '#9C27B0'
+                            }
+                        }
+                    },
+                    generation_prompt: {
+                        content: 'Create an elegant fashion ad with vibrant spring colors and contemporary styling'
+                    },
+                    headline: {
+                        content: 'Spring Collection - Up to 50% Off'
+                    },
+                    description: {
+                        content: 'Refresh your wardrobe with our stunning new spring collection'
+                    },
+                    call_to_action: {
+                        content: 'Shop the Sale'
+                    }
+                }
+            }
+        };
+
+        // Load a quick example
+        function loadQuickExample() {
+            const select = document.getElementById('quickExamples');
+            const exampleKey = select.value;
+
+            if (!exampleKey || !QUICK_EXAMPLES[exampleKey]) {
+                return;
+            }
+
+            const example = QUICK_EXAMPLES[exampleKey];
+            const assetsRequired = state.selectedFormat?.assets_required || [];
+
+            console.log('Loading example:', exampleKey);
+            console.log('Assets required:', assetsRequired.map(a => a.asset_id));
+            console.log('Example assets:', Object.keys(example.assets));
+
+            // Fill in the asset inputs with example data
+            assetsRequired.forEach((asset, idx) => {
+                const assetId = asset.asset_id;
+                const exampleValue = example.assets[assetId];
+
+                console.log(`Checking asset ${idx}: ${assetId}, has example value:`, exampleValue !== undefined);
+
+                if (exampleValue !== undefined) {
+                    const input = document.getElementById(`asset_${idx}`);
+                    const jsonInput = document.getElementById(`asset_${idx}_json`);
+
+                    console.log(`Input found for asset_${idx}:`, !!input, 'JSON input:', !!jsonInput);
+
+                    // Handle brand_manifest and promoted_offerings specially (complex objects)
+                    if ((assetId === 'brand_manifest' || assetId === 'promoted_offerings') && typeof exampleValue === 'object') {
+                        if (jsonInput) {
+                            jsonInput.value = JSON.stringify(exampleValue, null, 2);
+                            // Switch to JSON input mode
+                            const radioJson = document.querySelector(`input[name="asset_${idx}_type"][value="json"]`);
+                            if (radioJson) {
+                                radioJson.checked = true;
+                                toggleAssetInput(idx, 'json');
+                            }
+                        } else if (input) {
+                            input.value = JSON.stringify(exampleValue);
+                        }
+                    } else if (typeof exampleValue === 'object') {
+                        // For text/url assets that are objects like {content: "..."} or {url: "..."}
+                        if (exampleValue.content && input) {
+                            input.value = exampleValue.content;
+                        } else if (exampleValue.url && input) {
+                            input.value = exampleValue.url;
+                        } else if (input) {
+                            input.value = JSON.stringify(exampleValue);
+                        }
+                    } else if (input) {
+                        input.value = exampleValue;
+                    }
+                } else {
+                    console.log(`No example value for asset: ${assetId}`);
+                }
+            });
+
+            console.log('Example loaded successfully');
         }
     </script>
 </body>
