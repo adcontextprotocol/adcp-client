@@ -786,10 +786,22 @@ async function generateTypes() {
 }
 
 if (require.main === module) {
-  generateTypes().catch(error => {
-    console.error('❌ Failed to generate types:', error);
-    process.exit(1);
-  });
+  (async () => {
+    try {
+      // Generate TypeScript types
+      await generateTypes();
+
+      // Also generate Zod schemas
+      console.log('\n🔄 Generating Zod schemas...');
+      const { generateZodSchemas } = await import('./generate-zod-schemas');
+      await generateZodSchemas();
+
+      console.log('\n✅ All type generation complete!');
+    } catch (error) {
+      console.error('❌ Failed to generate types:', error);
+      process.exit(1);
+    }
+  })();
 }
 
 export { generateTypes };
