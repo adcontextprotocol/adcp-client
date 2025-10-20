@@ -6,10 +6,52 @@ import path from 'path';
 
 // Schema cache configuration
 const SCHEMA_CACHE_DIR = path.join(__dirname, '../schemas/cache');
-const LATEST_CACHE_DIR = path.join(SCHEMA_CACHE_DIR, 'latest');
 
-// Core AdCP schemas to generate
-const ADCP_CORE_SCHEMAS = ['media-buy', 'creative-asset', 'product', 'targeting'];
+// Get the latest version directory dynamically
+function getLatestCacheDir(): string {
+  const { readdirSync, statSync } = require('fs');
+
+  if (!existsSync(SCHEMA_CACHE_DIR)) {
+    throw new Error('Schema cache directory not found');
+  }
+
+  const versions = readdirSync(SCHEMA_CACHE_DIR)
+    .filter(f => statSync(path.join(SCHEMA_CACHE_DIR, f)).isDirectory())
+    .sort()
+    .reverse();
+
+  if (versions.length === 0) {
+    throw new Error('No cached schema versions found');
+  }
+
+  return path.join(SCHEMA_CACHE_DIR, versions[0]);
+}
+
+// Core AdCP schemas to generate - includes all nested types
+const ADCP_CORE_SCHEMAS = [
+  // Primary types
+  'media-buy',
+  'creative-asset',
+  'product',
+  'targeting',
+  // Nested types that should have Zod schemas
+  'brand-manifest',
+  'brand-manifest-ref',
+  'promoted-offerings',
+  'promoted-products',
+  'format',
+  'package',
+  'frequency-cap',
+  'measurement',
+  'delivery-metrics',
+  'creative-policy',
+  'error',
+  'sub-asset',
+  'creative-assignment',
+  'creative-manifest',
+  'performance-feedback',
+  'property'
+];
 
 // Write file only if content differs (excluding timestamp)
 function writeFileIfChanged(filePath: string, newContent: string): boolean {
@@ -38,7 +80,8 @@ function writeFileIfChanged(filePath: string, newContent: string): boolean {
 // Load schema from cache
 function loadCachedSchema(schemaRef: string): any {
   try {
-    const schemaPath = path.join(LATEST_CACHE_DIR, schemaRef.replace('/schemas/v1/', ''));
+    const latestCacheDir = getLatestCacheDir();
+    const schemaPath = path.join(latestCacheDir, schemaRef.replace('/schemas/v1/', ''));
     if (!existsSync(schemaPath)) {
       throw new Error(`Schema not found in cache: ${schemaPath}`);
     }
@@ -52,7 +95,8 @@ function loadCachedSchema(schemaRef: string): any {
 // Get cached AdCP version
 function getCachedAdCPVersion(): string {
   try {
-    const indexPath = path.join(LATEST_CACHE_DIR, 'index.json');
+    const latestCacheDir = getLatestCacheDir();
+    const indexPath = path.join(latestCacheDir, 'index.json');
     if (!existsSync(indexPath)) {
       throw new Error('Schema index not found in cache');
     }
@@ -109,7 +153,8 @@ function loadToolSchema(toolName: string, taskType: 'media-buy' | 'signals' | 'c
 // Load official AdCP tools from cached schema index
 function loadOfficialAdCPTools(): ToolDefinition[] {
   try {
-    const indexPath = path.join(LATEST_CACHE_DIR, 'index.json');
+    const latestCacheDir = getLatestCacheDir();
+    const indexPath = path.join(latestCacheDir, 'index.json');
 
     if (!existsSync(indexPath)) {
       throw new Error('Schema index not found in cache');
@@ -184,8 +229,11 @@ async function generateZodSchemas() {
   console.log('🔄 Generating Zod schemas from AdCP JSON schemas...');
 
   // Check if schemas are cached
-  if (!existsSync(LATEST_CACHE_DIR)) {
+  try {
+    getLatestCacheDir();
+  } catch (error) {
     console.error('❌ Schema cache not found. Please run "npm run sync-schemas" first.');
+    console.error(`   Error: ${error.message}`);
     process.exit(1);
   }
 
