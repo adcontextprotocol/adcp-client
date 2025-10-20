@@ -413,12 +413,13 @@
             </div>
             <div class="form-group" id="geminiKeySection" style="display: none;">
                 <label for="geminiApiKey">
-                    Gemini API Key (optional):
+                    Gemini API Key (for reference server):
                 </label>
-                <input type="password" id="geminiApiKey" placeholder="Enter your Gemini API key for generative formats">
+                <input type="password" id="geminiApiKey" placeholder="Enter your Gemini API key">
                 <p style="font-size: 0.875rem; color: #718096; margin: 0.5rem 0 0 0;">
+                    <strong>Note:</strong> This is specific to the AdCP reference creative server.
                     Get a free API key at <a href="https://aistudio.google.com/apikey" target="_blank" style="color: #4299e1;">Google AI Studio</a>.
-                    Required for <code>build_creative</code>. Optional for <code>preview_creative</code> (enables AI-generated previews instead of placeholders).
+                    Required for <code>build_creative</code>, optional for <code>preview_creative</code>.
                 </p>
             </div>
             <button class="button" onclick="loadFormats()">Load Formats</button>
