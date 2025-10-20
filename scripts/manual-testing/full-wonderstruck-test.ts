@@ -281,7 +281,11 @@ async function fullWonderstruckTest() {
       {
         creative_id: creativeId,
         name: `${brandCard.brand_name} - ${width}x${height} Display`,
-        format: `display_${width}x${height}`,
+        format_id: {
+          agent_url: 'https://creatives.adcontextprotocol.org',
+          id: `display_${width}x${height}`
+        },
+        assets: {},
         media_url: displayAsset.url,
         click_url: brandCard.website,
         width: displayAsset.dimensions.width,
