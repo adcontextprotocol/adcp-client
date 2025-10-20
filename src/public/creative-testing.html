@@ -904,6 +904,43 @@
                 html += '</div>';
                 previewContainer.innerHTML = html;
             }
+            // Handle build_creative response: creative_manifest with assets
+            else if (result.creative_manifest && result.creative_manifest.assets) {
+                const manifest = result.creative_manifest;
+                let html = `<div style="width: 100%;">
+                    <p style="color: var(--accent-green); font-weight: 600; margin-bottom: 1rem;">✓ ${modeLabel}</p>`;
+
+                // Look for HTML asset (most common for generative formats)
+                const htmlAsset = Object.values(manifest.assets).find(asset =>
+                    asset && typeof asset === 'object' && 'html' in asset
+                );
+
+                if (htmlAsset && htmlAsset.html) {
+                    html += `
+                        <div style="margin-bottom: 1rem;">
+                            <iframe srcdoc="${htmlAsset.html.replace(/"/g, '&quot;')}"
+                                    title="${modeLabel}"
+                                    style="width: 300px; height: 250px; border: 1px solid #ddd; border-radius: 4px;">
+                            </iframe>
+                        </div>`;
+                } else {
+                    // Show the assets in a readable format
+                    html += `<div style="background: white; padding: 1rem; border-radius: 8px; text-align: left;">
+                        <h4 style="margin-top: 0;">Generated Assets:</h4>`;
+
+                    Object.entries(manifest.assets).forEach(([assetId, asset]) => {
+                        html += `<div style="margin-bottom: 1rem;">
+                            <strong>${assetId}:</strong>
+                            <pre style="background: #f7fafc; padding: 0.5rem; border-radius: 4px; overflow-x: auto; font-size: 0.875rem;">${JSON.stringify(asset, null, 2)}</pre>
+                        </div>`;
+                    });
+
+                    html += '</div>';
+                }
+
+                html += '</div>';
+                previewContainer.innerHTML = html;
+            }
             // Legacy: Check for direct preview_url or creative_url in result
             else if (result.preview_url || result.creative_url) {
                 const previewUrl = result.preview_url || result.creative_url;
