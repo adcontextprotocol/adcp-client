@@ -793,7 +793,7 @@ if (require.main === module) {
 
       // Also generate Zod schemas
       console.log('\n🔄 Generating Zod schemas...');
-      const { generateZodSchemas } = await import('./generate-zod-schemas');
+      const { generateZodSchemas } = await import('./generate-zod-from-ts');
       await generateZodSchemas();
 
       console.log('\n✅ All type generation complete!');
