@@ -13,6 +13,7 @@ interface SchemaIndex {
     core: { schemas: Record<string, { $ref: string; description: string }> };
     enums: { schemas: Record<string, { $ref: string; description: string }> };
     'media-buy': { tasks: Record<string, any> };
+    creative: { tasks: Record<string, any> };
     signals: { tasks: Record<string, any> };
   };
 }
@@ -107,7 +108,15 @@ async function syncSchemas(version?: string): Promise<void> {
       if (task.response?.$ref) allRefs.add(task.response.$ref);
     }
   }
-  
+
+  // Add creative task schema refs
+  if (schemaIndex.schemas.creative?.tasks) {
+    for (const task of Object.values(schemaIndex.schemas.creative.tasks)) {
+      if (task.request?.$ref) allRefs.add(task.request.$ref);
+      if (task.response?.$ref) allRefs.add(task.response.$ref);
+    }
+  }
+
   // Add signals task schema refs
   if (schemaIndex.schemas.signals?.tasks) {
     for (const task of Object.values(schemaIndex.schemas.signals.tasks)) {
