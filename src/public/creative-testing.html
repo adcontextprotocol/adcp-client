@@ -411,7 +411,7 @@
                     <option value="a2a">A2A</option>
                 </select>
             </div>
-            <div class="form-group">
+            <div class="form-group" id="geminiKeySection" style="display: none;">
                 <label for="geminiApiKey">
                     Gemini API Key (optional):
                 </label>
@@ -487,6 +487,35 @@
             selectedFormat: null,
             assets: {}
         };
+
+        // Check if agent URL is the official AdCP creative agent
+        function isAdcpCreativeAgent(url) {
+            return url && url.includes('creative.adcontextprotocol.org');
+        }
+
+        // Toggle Gemini API key field based on agent URL
+        function updateGeminiKeyVisibility() {
+            const agentUrl = document.getElementById('agentUrl').value;
+            const geminiKeySection = document.getElementById('geminiKeySection');
+
+            if (isAdcpCreativeAgent(agentUrl)) {
+                geminiKeySection.style.display = 'block';
+            } else {
+                geminiKeySection.style.display = 'none';
+            }
+        }
+
+        // Initialize on page load
+        document.addEventListener('DOMContentLoaded', function() {
+            updateGeminiKeyVisibility();
+
+            // Add event listener to agent URL input
+            const agentUrlInput = document.getElementById('agentUrl');
+            if (agentUrlInput) {
+                agentUrlInput.addEventListener('input', updateGeminiKeyVisibility);
+                agentUrlInput.addEventListener('change', updateGeminiKeyVisibility);
+            }
+        });
 
         // Load creative formats from agent
         async function loadFormats() {
