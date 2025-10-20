@@ -22,7 +22,7 @@ jobs:
         cache: 'npm'
         
     - name: Install dependencies
-      run: npm ci --prefer-offline --no-audit || npm ci --prefer-offline --no-audit || npm ci
+      run: npm ci
 
     - name: Sync schemas from AdCP
       run: npm run sync-schemas
@@ -56,7 +56,7 @@ jobs:
         cache: 'npm'
         
     - name: Install dependencies
-      run: npm ci --prefer-offline --no-audit || npm ci --prefer-offline --no-audit || npm ci
+      run: npm ci
       
     - name: Check package.json integrity
       run: |
@@ -100,7 +100,7 @@ jobs:
         cache: 'npm'
         
     - name: Install dependencies
-      run: npm ci --prefer-offline --no-audit || npm ci --prefer-offline --no-audit || npm ci
+      run: npm ci
       
     - name: Run security audit
       run: npm audit --audit-level=moderate
@@ -134,7 +134,7 @@ jobs:
         registry-url: 'https://registry.npmjs.org'
         
     - name: Install dependencies
-      run: npm ci --prefer-offline --no-audit || npm ci --prefer-offline --no-audit || npm ci
+      run: npm ci
       
     - name: Test publish (dry run)
       run: |

@@ -20,7 +20,7 @@ jobs:
 
       - name: Install commitlint
         run: |
-          npm install --save-dev @commitlint/config-conventional @commitlint/cli || npm install --save-dev @commitlint/config-conventional @commitlint/cli || npm install --save-dev @commitlint/config-conventional @commitlint/cli
+          npm install --save-dev @commitlint/config-conventional @commitlint/cli
 
       - name: Validate PR title follows conventional commits
         env:
