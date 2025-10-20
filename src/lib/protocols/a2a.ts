@@ -18,9 +18,9 @@ export async function callA2ATool(
   const fetchImpl = authToken ?
     async (url: string | URL | Request, options?: RequestInit) => {
       const headers = {
+        ...(options?.headers || {}),
         'Authorization': `Bearer ${authToken}`,
-        'x-adcp-auth': authToken,
-        ...(options?.headers || {})
+        'x-adcp-auth': authToken
       };
 
       debugLogs.push({
