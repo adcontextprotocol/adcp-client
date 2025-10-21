@@ -15,12 +15,11 @@ export async function callMCPTool(
   const baseUrl = new URL(agentUrl);
 
   // Create a custom fetch function that adds auth headers to every request
-  // This works around potential issues with the MCP SDK's requestInit.headers handling
-  let customFetch: typeof fetch | undefined = undefined;
-  if (authToken) {
-    const authHeaders = createMCPAuthHeaders(authToken);
+  // Always provide a custom fetch to ensure consistent header handling across all MCP requests
+  const authHeaders = authToken ? createMCPAuthHeaders(authToken) : {};
 
-    // Add to debug logs
+  if (authToken) {
+    // Add to debug logs only when auth is configured
     debugLogs.push({
       type: 'info',
       message: `MCP: Auth token provided (${authToken.substring(0, 10)}...) for tool ${toolName}`,
@@ -28,52 +27,55 @@ export async function callMCPTool(
       headers: authHeaders
     });
 
-    // Log the exact headers being set for debugging
     debugLogs.push({
       type: 'info',
       message: `MCP: Setting auth headers: ${JSON.stringify(authHeaders)}`,
       timestamp: new Date().toISOString()
     });
-
-    // Create custom fetch that injects auth headers into every request
-    customFetch = async (input: RequestInfo | URL, init?: RequestInit) => {
-      // Convert existing headers to plain object for merging
-      let existingHeaders: Record<string, string> = {};
-      if (init?.headers) {
-        if (init.headers instanceof Headers) {
-          init.headers.forEach((value, key) => {
-            existingHeaders[key] = value;
-          });
-        } else if (Array.isArray(init.headers)) {
-          for (const [key, value] of init.headers) {
-            existingHeaders[key] = value;
-          }
-        } else {
-          existingHeaders = { ...init.headers };
-        }
-      }
-
-      // Merge auth headers with existing headers
-      const mergedHeaders = {
-        ...existingHeaders,
-        ...authHeaders  // Auth headers take precedence
-      };
-
-      const mergedInit: RequestInit = {
-        ...init,
-        headers: mergedHeaders
-      };
-
-      debugLogs.push({
-        type: 'info',
-        message: `MCP: Fetch called for ${input} with merged headers`,
-        timestamp: new Date().toISOString(),
-        headers: mergedHeaders
-      });
-
-      return fetch(input, mergedInit);
-    };
   }
+
+  // Create custom fetch that injects auth headers into every request
+  // This ensures ALL requests (including initialization) include auth headers when needed
+  const customFetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    // Convert existing headers to plain object for merging
+    let existingHeaders: Record<string, string> = {};
+    if (init?.headers) {
+      if (init.headers instanceof Headers) {
+        init.headers.forEach((value, key) => {
+          existingHeaders[key] = value;
+        });
+      } else if (Array.isArray(init.headers)) {
+        for (const [key, value] of init.headers) {
+          existingHeaders[key] = value;
+        }
+      } else {
+        existingHeaders = { ...init.headers };
+      }
+    }
+
+    // Merge auth headers with existing headers - auth headers take precedence
+    const mergedHeaders = {
+      ...existingHeaders,
+      ...authHeaders
+    };
+
+    const mergedInit: RequestInit = {
+      ...init,
+      headers: mergedHeaders
+    };
+
+    debugLogs.push({
+      type: 'info',
+      message: `MCP: Fetch to ${typeof input === 'string' ? input : input.toString()}`,
+      timestamp: new Date().toISOString(),
+      hasAuth: !!authToken,
+      headers: authToken
+        ? { ...mergedHeaders, 'x-adcp-auth': '***' }
+        : mergedHeaders
+    });
+
+    return fetch(input, mergedInit);
+  };
 
   try {
     // First, try to connect using StreamableHTTPClientTransport
