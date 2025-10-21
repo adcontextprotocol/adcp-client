@@ -13,9 +13,6 @@ export async function callA2ATool(
   authToken?: string,
   debugLogs: any[] = []
 ): Promise<any> {
-  // Log auth token status for debugging
-  console.log(`[A2A ${toolName}] authToken provided:`, !!authToken, authToken ? `(${authToken.substring(0, 20)}...)` : '(none)');
-
   // Create authenticated fetch that wraps native fetch
   // This ensures ALL requests (including agent card fetching) include auth headers
   const fetchImpl = async (url: string | URL | Request, options?: RequestInit) => {
@@ -44,12 +41,9 @@ export async function callA2ATool(
       })
     };
 
-    const urlString = typeof url === 'string' ? url : url.toString();
-    console.log(`[A2A ${toolName}] Fetch to ${urlString}, hasAuth:`, !!authToken);
-
     debugLogs.push({
       type: 'info',
-      message: `A2A: Fetch to ${urlString}`,
+      message: `A2A: Fetch to ${typeof url === 'string' ? url : url.toString()}`,
       timestamp: new Date().toISOString(),
       hasAuth: !!authToken,
       headers: authToken
