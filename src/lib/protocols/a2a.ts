@@ -13,6 +13,9 @@ export async function callA2ATool(
   authToken?: string,
   debugLogs: any[] = []
 ): Promise<any> {
+  // Log auth token status for debugging
+  console.log(`[A2A ${toolName}] authToken provided:`, !!authToken, authToken ? `(${authToken.substring(0, 20)}...)` : '(none)');
+
   // Create authenticated fetch that wraps native fetch
   // This ensures ALL requests (including agent card fetching) include auth headers
   const fetchImpl = async (url: string | URL | Request, options?: RequestInit) => {
@@ -41,9 +44,12 @@ export async function callA2ATool(
       })
     };
 
+    const urlString = typeof url === 'string' ? url : url.toString();
+    console.log(`[A2A ${toolName}] Fetch to ${urlString}, hasAuth:`, !!authToken);
+
     debugLogs.push({
       type: 'info',
-      message: `A2A: Fetch to ${typeof url === 'string' ? url : url.toString()}`,
+      message: `A2A: Fetch to ${urlString}`,
       timestamp: new Date().toISOString(),
       hasAuth: !!authToken,
       headers: authToken
@@ -62,6 +68,12 @@ export async function callA2ATool(
   const cardUrl = agentUrl.endsWith('/.well-known/agent-card.json')
     ? agentUrl
     : agentUrl.replace(/\/$/, '') + '/.well-known/agent-card.json';
+
+  debugLogs.push({
+    type: 'info',
+    message: `A2A: Creating client for ${cardUrl}`,
+    timestamp: new Date().toISOString()
+  });
 
   const a2aClient = await A2AClient.fromCardUrl(cardUrl, {
     fetchImpl
@@ -94,14 +106,22 @@ export async function callA2ATool(
   });
   
   // Send message using A2A protocol
+  debugLogs.push({
+    type: 'info',
+    message: `A2A: Sending message via sendMessage()`,
+    timestamp: new Date().toISOString(),
+    skill: toolName
+  });
+
   const messageResponse = await a2aClient.sendMessage(requestPayload);
-  
+
   // Add debug log for A2A response
   debugLogs.push({
     type: messageResponse?.error ? 'error' : 'success',
     message: `A2A: Response received (${messageResponse?.error ? 'error' : 'success'})`,
     timestamp: new Date().toISOString(),
-    response: messageResponse
+    response: messageResponse,
+    skill: toolName
   });
   
   // Check for JSON-RPC error in response
