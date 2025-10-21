@@ -429,6 +429,26 @@ Should show:
 
 **IMPORTANT**: This project uses **Changesets** for version management and releases.
 
+### 🚨 REQUIRED: Make Changeset Check a Required Status Check 🚨
+
+The CI workflow includes a `Changeset Check` job that validates changesets are included for library changes. However, this check must be marked as **required** in GitHub repository settings to prevent PRs from merging without changesets.
+
+**To configure (repository admin only):**
+
+1. Go to: `Settings` → `Branches` → `main` branch protection rules
+2. Under "Require status checks to pass before merging", enable:
+   - ✅ `Changeset Check`
+3. Save changes
+
+**Verification**: After configuration, PRs that modify library code without a changeset will be blocked from merging.
+
+**What happened when this wasn't configured:**
+- PR #65 modified `src/lib/protocols/a2a.ts` and `src/lib/protocols/mcp.ts`
+- The `Changeset Check` job correctly failed
+- However, the PR was allowed to merge because the check wasn't required
+- No Release PR was triggered because no changeset existed
+- Had to manually create and merge a changeset in a follow-up PR
+
 ### 🚨 CRITICAL: Never Manually Edit package.json Version! 🚨
 
 **DO NOT** manually change the `version` field in `package.json` - changesets will handle this automatically.
