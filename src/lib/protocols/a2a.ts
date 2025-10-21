@@ -13,36 +13,56 @@ export async function callA2ATool(
   authToken?: string,
   debugLogs: any[] = []
 ): Promise<any> {
-  // Create authenticated fetch if needed
-  // Send both auth headers to support different server implementations
-  const fetchImpl = authToken ?
-    async (url: string | URL | Request, options?: RequestInit) => {
-      const headers = {
-        ...(options?.headers || {}),
+  // Create authenticated fetch that wraps native fetch
+  // This ensures ALL requests (including agent card fetching) include auth headers
+  const fetchImpl = async (url: string | URL | Request, options?: RequestInit) => {
+    // Build headers - always start with existing headers, then add auth if available
+    const existingHeaders: Record<string, string> = {};
+    if (options?.headers) {
+      if (options.headers instanceof Headers) {
+        options.headers.forEach((value, key) => {
+          existingHeaders[key] = value;
+        });
+      } else if (Array.isArray(options.headers)) {
+        for (const [key, value] of options.headers) {
+          existingHeaders[key] = value;
+        }
+      } else {
+        Object.assign(existingHeaders, options.headers);
+      }
+    }
+
+    // Add auth headers if token is provided - these override any existing auth headers
+    const headers: Record<string, string> = {
+      ...existingHeaders,
+      ...(authToken && {
         'Authorization': `Bearer ${authToken}`,
         'x-adcp-auth': authToken
-      };
+      })
+    };
 
-      debugLogs.push({
-        type: 'info',
-        message: `A2A: Fetch with auth headers`,
-        timestamp: new Date().toISOString(),
-        url: url.toString(),
-        headers: { ...headers, 'Authorization': 'Bearer ***', 'x-adcp-auth': '***' }
-      });
+    debugLogs.push({
+      type: 'info',
+      message: `A2A: Fetch to ${typeof url === 'string' ? url : url.toString()}`,
+      timestamp: new Date().toISOString(),
+      hasAuth: !!authToken,
+      headers: authToken
+        ? { ...headers, 'Authorization': 'Bearer ***', 'x-adcp-auth': '***' }
+        : headers
+    });
 
-      return fetch(url, {
-        ...options,
-        headers
-      });
-    } : undefined;
-  
+    return fetch(url, {
+      ...options,
+      headers
+    });
+  };
+
   // Create A2A client using the recommended fromCardUrl method
   // Ensure the URL points to the agent card endpoint
-  const cardUrl = agentUrl.endsWith('/.well-known/agent-card.json') 
-    ? agentUrl 
+  const cardUrl = agentUrl.endsWith('/.well-known/agent-card.json')
+    ? agentUrl
     : agentUrl.replace(/\/$/, '') + '/.well-known/agent-card.json';
-    
+
   const a2aClient = await A2AClient.fromCardUrl(cardUrl, {
     fetchImpl
   });
