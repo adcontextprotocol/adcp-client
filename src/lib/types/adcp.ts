@@ -395,9 +395,14 @@ export interface AdAgentsJson {
   last_updated?: string;
 }
 
+// Re-export Property from generated types for convenience
+export type { Property, PropertyIdentifierTypes } from './tools.generated';
+
 export interface AuthorizedAgent {
   url: string;
   authorized_for: string;
+  // Optional: May be populated by calling list_authorized_properties on the agent
+  authorized_properties?: import('./tools.generated').Property[];
 }
 
 // Validation Types

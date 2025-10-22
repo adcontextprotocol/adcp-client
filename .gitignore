@@ -127,3 +127,5 @@ playwright-report/
 *.key
 *.p12
 *.pfxscripts/manual-testing/test-local-agent.ts
+data/
+*.db*
