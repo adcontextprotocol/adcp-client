@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas v2.2.0
-// Generated at: 2025-10-20T11:01:55.808Z
+// Generated at: 2025-10-22T20:58:36.067Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -129,7 +129,7 @@ export interface FrequencyCap {
   suppress_minutes: number;
 }
 /**
- * Assignment of a creative asset to a package
+ * Assignment of a creative asset to a package with optional placement targeting. Used in create_media_buy and update_media_buy requests. Note: sync_creatives does not support placement_ids - use create/update_media_buy for placement-level targeting.
  */
 export interface CreativeAssignment {
   /**
@@ -140,6 +140,12 @@ export interface CreativeAssignment {
    * Delivery weight for this creative
    */
   weight?: number;
+  /**
+   * Optional array of placement IDs where this creative should run. When omitted, the creative runs on all placements in the package. References placement_id values from the product's placements array.
+   *
+   * @minItems 1
+   */
+  placement_ids?: [string, ...string[]];
 }
 /**
  * Structured format identifier with agent URL and format name
@@ -766,39 +772,16 @@ export interface URLAsset {
    */
   url: string;
   /**
+   * Whether the URL is for human interaction: clickthrough (user clicks, may redirect through ad tech) or tracker (fires in background, returns pixel/204)
+   */
+  url_type?: 'clickthrough' | 'tracker';
+  /**
    * Description of what this URL points to
    */
   description?: string;
 }
 
 // PRODUCT SCHEMA
-/**
- * Represents available advertising inventory
- */
-export type Product = Product1 & Product2;
-/**
- * Type of identifier for this property
- */
-export type PropertyIdentifierTypes =
-  | 'domain'
-  | 'subdomain'
-  | 'network_id'
-  | 'ios_bundle'
-  | 'android_package'
-  | 'apple_app_store_id'
-  | 'google_play_id'
-  | 'roku_store_id'
-  | 'fire_tv_asin'
-  | 'samsung_app_id'
-  | 'apple_tv_bundle'
-  | 'bundle_id'
-  | 'venue_id'
-  | 'screen_id'
-  | 'openooh_venue_type'
-  | 'rss_url'
-  | 'apple_podcast_id'
-  | 'spotify_show_id'
-  | 'podcast_guid';
 /**
  * Type of inventory delivery
  */
@@ -816,11 +799,11 @@ export type PricingOption =
   | CPVPricingOption
   | CPPPricingOption
   | FlatRatePricingOption;
-export type Product2 = {
-  [k: string]: unknown;
-};
 
-export interface Product1 {
+/**
+ * Represents available advertising inventory
+ */
+export interface Product {
   /**
    * Unique identifier for the product
    */
@@ -834,21 +817,58 @@ export interface Product1 {
    */
   description: string;
   /**
-   * Array of advertising properties covered by this product for adagents.json validation
+   * Publisher properties covered by this product. Buyers fetch actual property definitions from each publisher's adagents.json and validate agent authorization.
    *
    * @minItems 1
    */
-  properties?: [Property, ...Property[]];
-  /**
-   * Tags identifying groups of properties covered by this product (use list_authorized_properties to get full property details)
-   *
-   * @minItems 1
-   */
-  property_tags?: [string, ...string[]];
+  publisher_properties: [
+    {
+      /**
+       * Domain where publisher's adagents.json is hosted (e.g., 'cnn.com')
+       */
+      publisher_domain: string;
+      /**
+       * Specific property IDs from the publisher's adagents.json. Mutually exclusive with property_tags.
+       *
+       * @minItems 1
+       */
+      property_ids?: [string, ...string[]];
+      /**
+       * Property tags from the publisher's adagents.json. Product covers all properties with these tags. Mutually exclusive with property_ids.
+       *
+       * @minItems 1
+       */
+      property_tags?: [string, ...string[]];
+    },
+    ...{
+      /**
+       * Domain where publisher's adagents.json is hosted (e.g., 'cnn.com')
+       */
+      publisher_domain: string;
+      /**
+       * Specific property IDs from the publisher's adagents.json. Mutually exclusive with property_tags.
+       *
+       * @minItems 1
+       */
+      property_ids?: [string, ...string[]];
+      /**
+       * Property tags from the publisher's adagents.json. Product covers all properties with these tags. Mutually exclusive with property_ids.
+       *
+       * @minItems 1
+       */
+      property_tags?: [string, ...string[]];
+    }[]
+  ];
   /**
    * Array of supported creative format IDs - structured format_id objects with agent_url and id
    */
   format_ids: FormatID[];
+  /**
+   * Optional array of specific placements within this product. When provided, buyers can target specific placements when assigning creatives.
+   *
+   * @minItems 1
+   */
+  placements?: [Placement, ...Placement[]];
   delivery_type: DeliveryType;
   /**
    * Available pricing models for this product
@@ -890,48 +910,6 @@ export interface Product1 {
   expires_at?: string;
 }
 /**
- * An advertising property that can be validated via adagents.json
- */
-export interface Property {
-  /**
-   * Type of advertising property
-   */
-  property_type: 'website' | 'mobile_app' | 'ctv_app' | 'dooh' | 'podcast' | 'radio' | 'streaming_audio';
-  /**
-   * Human-readable property name
-   */
-  name: string;
-  /**
-   * Array of identifiers for this property
-   *
-   * @minItems 1
-   */
-  identifiers: [
-    {
-      type: PropertyIdentifierTypes;
-      /**
-       * The identifier value. For domain type: 'example.com' matches www.example.com and m.example.com only; 'subdomain.example.com' matches that specific subdomain; '*.example.com' matches all subdomains
-       */
-      value: string;
-    },
-    ...{
-      type: PropertyIdentifierTypes;
-      /**
-       * The identifier value. For domain type: 'example.com' matches www.example.com and m.example.com only; 'subdomain.example.com' matches that specific subdomain; '*.example.com' matches all subdomains
-       */
-      value: string;
-    }[]
-  ];
-  /**
-   * Tags for categorization and grouping (e.g., network membership, content categories)
-   */
-  tags?: string[];
-  /**
-   * Domain where adagents.json should be checked for authorization validation
-   */
-  publisher_domain: string;
-}
-/**
  * Structured format identifier with agent URL and format name
  */
 export interface FormatID {
@@ -943,6 +921,29 @@ export interface FormatID {
    * Format identifier within the agent's namespace (e.g., 'display_300x250', 'video_standard_30s')
    */
   id: string;
+}
+/**
+ * Represents a specific ad placement within a product's inventory
+ */
+export interface Placement {
+  /**
+   * Unique identifier for the placement within the product
+   */
+  placement_id: string;
+  /**
+   * Human-readable name for the placement (e.g., 'Homepage Banner', 'Article Sidebar')
+   */
+  name: string;
+  /**
+   * Detailed description of where and how the placement appears
+   */
+  description?: string;
+  /**
+   * Format IDs supported by this specific placement (subset of product's formats)
+   *
+   * @minItems 1
+   */
+  format_ids?: [FormatID, ...FormatID[]];
 }
 /**
  * Cost Per Mille (cost per 1,000 impressions) with guaranteed fixed rate - common for direct/guaranteed deals

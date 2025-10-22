@@ -287,33 +287,6 @@ export interface FormatID {
 
 // get_products response
 /**
- * Represents available advertising inventory
- */
-export type Product = Product1 & Product2;
-/**
- * Type of identifier for this property
- */
-export type PropertyIdentifierTypes =
-  | 'domain'
-  | 'subdomain'
-  | 'network_id'
-  | 'ios_bundle'
-  | 'android_package'
-  | 'apple_app_store_id'
-  | 'google_play_id'
-  | 'roku_store_id'
-  | 'fire_tv_asin'
-  | 'samsung_app_id'
-  | 'apple_tv_bundle'
-  | 'bundle_id'
-  | 'venue_id'
-  | 'screen_id'
-  | 'openooh_venue_type'
-  | 'rss_url'
-  | 'apple_podcast_id'
-  | 'spotify_show_id'
-  | 'podcast_guid';
-/**
  * Type of inventory delivery
  */
 export type PricingOption =
@@ -326,13 +299,6 @@ export type PricingOption =
   | CPVPricingOption
   | CPPPricingOption
   | FlatRatePricingOption;
-export type Product2 =
-  | {
-      [k: string]: unknown;
-    }
-  | {
-      [k: string]: unknown;
-    };
 
 /**
  * Response payload for get_products task
@@ -347,7 +313,10 @@ export interface GetProductsResponse {
    */
   errors?: Error[];
 }
-export interface Product1 {
+/**
+ * Represents available advertising inventory
+ */
+export interface Product {
   /**
    * Unique identifier for the product
    */
@@ -361,21 +330,58 @@ export interface Product1 {
    */
   description: string;
   /**
-   * Array of advertising properties covered by this product for adagents.json validation
+   * Publisher properties covered by this product. Buyers fetch actual property definitions from each publisher's adagents.json and validate agent authorization.
    *
    * @minItems 1
    */
-  properties?: [Property, ...Property[]];
-  /**
-   * Tags identifying groups of properties covered by this product (use list_authorized_properties to get full property details)
-   *
-   * @minItems 1
-   */
-  property_tags?: [string, ...string[]];
+  publisher_properties: [
+    {
+      /**
+       * Domain where publisher's adagents.json is hosted (e.g., 'cnn.com')
+       */
+      publisher_domain: string;
+      /**
+       * Specific property IDs from the publisher's adagents.json. Mutually exclusive with property_tags.
+       *
+       * @minItems 1
+       */
+      property_ids?: [string, ...string[]];
+      /**
+       * Property tags from the publisher's adagents.json. Product covers all properties with these tags. Mutually exclusive with property_ids.
+       *
+       * @minItems 1
+       */
+      property_tags?: [string, ...string[]];
+    },
+    ...{
+      /**
+       * Domain where publisher's adagents.json is hosted (e.g., 'cnn.com')
+       */
+      publisher_domain: string;
+      /**
+       * Specific property IDs from the publisher's adagents.json. Mutually exclusive with property_tags.
+       *
+       * @minItems 1
+       */
+      property_ids?: [string, ...string[]];
+      /**
+       * Property tags from the publisher's adagents.json. Product covers all properties with these tags. Mutually exclusive with property_ids.
+       *
+       * @minItems 1
+       */
+      property_tags?: [string, ...string[]];
+    }[]
+  ];
   /**
    * Array of supported creative format IDs - structured format_id objects with agent_url and id
    */
   format_ids: FormatID[];
+  /**
+   * Optional array of specific placements within this product. When provided, buyers can target specific placements when assigning creatives.
+   *
+   * @minItems 1
+   */
+  placements?: [Placement, ...Placement[]];
   delivery_type: DeliveryType;
   /**
    * Available pricing models for this product
@@ -417,49 +423,30 @@ export interface Product1 {
   expires_at?: string;
 }
 /**
- * An advertising property that can be validated via adagents.json
+ * Structured format identifier with agent URL and format name
  */
-export interface Property {
+export interface Placement {
   /**
-   * Type of advertising property
+   * Unique identifier for the placement within the product
    */
-  property_type: 'website' | 'mobile_app' | 'ctv_app' | 'dooh' | 'podcast' | 'radio' | 'streaming_audio';
+  placement_id: string;
   /**
-   * Human-readable property name
+   * Human-readable name for the placement (e.g., 'Homepage Banner', 'Article Sidebar')
    */
   name: string;
   /**
-   * Array of identifiers for this property
+   * Detailed description of where and how the placement appears
+   */
+  description?: string;
+  /**
+   * Format IDs supported by this specific placement (subset of product's formats)
    *
    * @minItems 1
    */
-  identifiers: [
-    {
-      type: PropertyIdentifierTypes;
-      /**
-       * The identifier value. For domain type: 'example.com' matches www.example.com and m.example.com only; 'subdomain.example.com' matches that specific subdomain; '*.example.com' matches all subdomains
-       */
-      value: string;
-    },
-    ...{
-      type: PropertyIdentifierTypes;
-      /**
-       * The identifier value. For domain type: 'example.com' matches www.example.com and m.example.com only; 'subdomain.example.com' matches that specific subdomain; '*.example.com' matches all subdomains
-       */
-      value: string;
-    }[]
-  ];
-  /**
-   * Tags for categorization and grouping (e.g., network membership, content categories)
-   */
-  tags?: string[];
-  /**
-   * Domain where adagents.json should be checked for authorization validation
-   */
-  publisher_domain: string;
+  format_ids?: [FormatID, ...FormatID[]];
 }
 /**
- * Structured format identifier with agent URL and format name
+ * Cost Per Mille (cost per 1,000 impressions) with guaranteed fixed rate - common for direct/guaranteed deals
  */
 export interface CPMFixedRatePricingOption {
   /**
@@ -1744,6 +1731,10 @@ export interface URLAsset {
    */
   url: string;
   /**
+   * Whether the URL is for human interaction: clickthrough (user clicks, may redirect through ad tech) or tracker (fires in background, returns pixel/204)
+   */
+  url_type?: 'clickthrough' | 'tracker';
+  /**
    * Description of what this URL points to
    */
   description?: string;
@@ -2718,19 +2709,21 @@ export interface DeliveryMetrics {
 
 // list_authorized_properties parameters
 /**
- * Request parameters for discovering all properties this agent is authorized to represent
+ * Request parameters for discovering which publishers this agent is authorized to represent
  */
 export interface ListAuthorizedPropertiesRequest {
   /**
-   * Filter properties by specific tags (optional)
+   * Filter to specific publisher domains (optional). If omitted, returns all publishers this agent represents.
+   *
+   * @minItems 1
    */
-  tags?: string[];
+  publisher_domains?: [string, ...string[]];
 }
 
 
 // list_authorized_properties response
 /**
- * Type of identifier for this property
+ * Standard advertising channels supported by AdCP
  */
 export type AdvertisingChannels =
   | 'display'
@@ -2744,28 +2737,15 @@ export type AdvertisingChannels =
   | 'social';
 
 /**
- * Response payload for list_authorized_properties task
+ * Response payload for list_authorized_properties task. Lists publisher domains and authorization scope (property_ids or property_tags). Buyers fetch actual property definitions from each publisher's canonical adagents.json file.
  */
 export interface ListAuthorizedPropertiesResponse {
   /**
-   * Array of all properties this agent is authorized to represent
+   * Publisher domains this agent is authorized to represent. Buyers should fetch each publisher's adagents.json to see property definitions and verify this agent is in their authorized_agents list with authorization scope.
+   *
+   * @minItems 1
    */
-  properties: Property[];
-  /**
-   * Metadata for each tag referenced by properties
-   */
-  tags?: {
-    [k: string]: {
-      /**
-       * Human-readable name for this tag
-       */
-      name: string;
-      /**
-       * Description of what this tag represents
-       */
-      description: string;
-    };
-  };
+  publisher_domains: [string, ...string[]];
   /**
    * Primary advertising channels represented in this property portfolio. Helps buying agents quickly filter relevance.
    *
@@ -2787,12 +2767,16 @@ export interface ListAuthorizedPropertiesResponse {
    */
   advertising_policies?: string;
   /**
+   * ISO 8601 timestamp of when the agent's publisher authorization list was last updated. Buyers can use this to determine if their cached publisher adagents.json files might be stale.
+   */
+  last_updated?: string;
+  /**
    * Task-specific errors and warnings (e.g., property availability issues)
    */
   errors?: Error[];
 }
 /**
- * An advertising property that can be validated via adagents.json
+ * Standard error structure for task-specific errors and warnings
  */
 
 // provide_performance_feedback parameters
