@@ -347,6 +347,82 @@ All AdCP tools with full type safety:
 - `activateSignal()` - Activate audience signals
 - `providePerformanceFeedback()` - Send performance feedback
 
+## Property Discovery (AdCP v2.2.0)
+
+Build agent registries by discovering properties agents can sell. Works with AdCP v2.2.0's publisher-domain model.
+
+### How It Works
+
+1. **Agents return publisher domains**: Call `listAuthorizedProperties()` → get `publisher_domains[]`
+2. **Fetch property definitions**: Get `https://{domain}/.well-known/adagents.json` from each domain
+3. **Index properties**: Build fast lookups for "who can sell X?" and "what can agent Y sell?"
+
+### Three Key Queries
+
+```typescript
+import { PropertyCrawler, getPropertyIndex } from '@adcp/client';
+
+// First, crawl agents to discover properties
+const crawler = new PropertyCrawler();
+await crawler.crawlAgents([
+  { agent_url: 'https://agent-x.com', protocol: 'a2a' },
+  { agent_url: 'https://agent-y.com/mcp/', protocol: 'mcp' }
+]);
+
+const index = getPropertyIndex();
+
+// Query 1: Who can sell this property?
+const matches = index.findAgentsForProperty('domain', 'cnn.com');
+// Returns: [{ property, agent_url, publisher_domain }]
+
+// Query 2: What can this agent sell?
+const auth = index.getAgentAuthorizations('https://agent-x.com');
+// Returns: { agent_url, publisher_domains: [...], properties: [...] }
+
+// Query 3: Find by tags
+const premiumProperties = index.findAgentsByPropertyTags(['premium', 'ctv']);
+```
+
+### Full Example
+
+```typescript
+import { PropertyCrawler, getPropertyIndex } from '@adcp/client';
+
+const crawler = new PropertyCrawler();
+
+// Crawl agents - gets publisher_domains from each, then fetches adagents.json
+const result = await crawler.crawlAgents([
+  { agent_url: 'https://sales.cnn.com' },
+  { agent_url: 'https://sales.espn.com' }
+]);
+
+console.log(`✅ ${result.successfulAgents} agents`);
+console.log(`📡 ${result.totalPublisherDomains} publisher domains`);
+console.log(`📦 ${result.totalProperties} properties indexed`);
+
+// Now query
+const index = getPropertyIndex();
+const whoCanSell = index.findAgentsForProperty('ios_bundle', 'com.cnn.app');
+
+for (const match of whoCanSell) {
+  console.log(`${match.agent_url} can sell ${match.property.name}`);
+}
+```
+
+### Property Types
+
+Supports 18 identifier types: `domain`, `subdomain`, `ios_bundle`, `android_package`, `apple_app_store_id`, `google_play_id`, `roku_channel_id`, `podcast_rss_feed`, and more.
+
+### Use Case
+
+Build a registry service that:
+- Periodically crawls agents with `PropertyCrawler`
+- Persists discovered properties to a database
+- Exposes fast query APIs using the in-memory index patterns
+- Provides web UI for browsing properties and agents
+
+Library provides discovery logic - you add persistence layer.
+
 ## Database Schema
 
 Simple unified event log for all operations:
