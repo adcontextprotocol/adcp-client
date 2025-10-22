@@ -1824,7 +1824,6 @@ app.post<{
   }
 });
 
-
 // Start server
 const start = async () => {
   try {

@@ -1,6 +1,11 @@
 // AdCP Client Library - Main Exports
 // A comprehensive type-safe client library for the AdContext Protocol
 
+// ====== PROPERTY DISCOVERY (AdCP v2.2.0) ======
+export { PropertyIndex, getPropertyIndex, resetPropertyIndex, type PropertyMatch, type AgentAuthorization } from './discovery/property-index';
+export { PropertyCrawler, type AgentInfo, type CrawlResult } from './discovery/property-crawler';
+export type { Property, PropertyIdentifier, PropertyIdentifierType, PropertyType, AdAgentsJson } from './discovery/types';
+
 // ====== CORE CONVERSATION-AWARE CLIENTS ======
 // New conversation-aware clients with input handler pattern
 export { ADCPClient, createADCPClient } from './core/ADCPClient';

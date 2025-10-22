@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2025-10-20T16:05:33.469Z
+// Generated at: 2025-10-22T20:58:36.644Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -18,7 +18,8 @@ export const PackageStatusSchema = z.union([z.literal("draft"), z.literal("activ
 
 export const CreativeAssignmentSchema = z.object({
     creative_id: z.string(),
-    weight: z.number().optional()
+    weight: z.number().optional(),
+    placement_ids: z.tuple([z.string()]).rest(z.string()).optional()
 });
 
 export const FormatIDSchema = z.object({
@@ -166,6 +167,7 @@ export const DAASTAssetSchema = DAASTAsset1Schema.and(DAASTAsset2Schema);
 
 export const URLAssetSchema = z.object({
     url: z.string(),
+    url_type: z.union([z.literal("clickthrough"), z.literal("tracker")]).optional(),
     description: z.string().optional()
 });
 
@@ -175,10 +177,6 @@ export const PromotedProductsSchema = z.object({
     manifest_category: z.string().optional(),
     manifest_query: z.string().optional()
 });
-
-export const Product2Schema = z.record(z.string(), z.unknown());
-
-export const PropertyIdentifierTypesSchema = z.union([z.literal("domain"), z.literal("subdomain"), z.literal("network_id"), z.literal("ios_bundle"), z.literal("android_package"), z.literal("apple_app_store_id"), z.literal("google_play_id"), z.literal("roku_store_id"), z.literal("fire_tv_asin"), z.literal("samsung_app_id"), z.literal("apple_tv_bundle"), z.literal("bundle_id"), z.literal("venue_id"), z.literal("screen_id"), z.literal("openooh_venue_type"), z.literal("rss_url"), z.literal("apple_podcast_id"), z.literal("spotify_show_id"), z.literal("podcast_guid")]);
 
 export const DeliveryTypeSchema = z.union([z.literal("guaranteed"), z.literal("non_guaranteed")]);
 
@@ -285,18 +283,11 @@ export const FlatRatePricingOptionSchema = z.object({
     min_spend_per_package: z.number().optional()
 });
 
-export const PropertySchema = z.object({
-    property_type: z.union([z.literal("website"), z.literal("mobile_app"), z.literal("ctv_app"), z.literal("dooh"), z.literal("podcast"), z.literal("radio"), z.literal("streaming_audio")]),
+export const PlacementSchema = z.object({
+    placement_id: z.string(),
     name: z.string(),
-    identifiers: z.tuple([z.object({
-            type: PropertyIdentifierTypesSchema,
-            value: z.string()
-        })]).rest(z.object({
-        type: PropertyIdentifierTypesSchema,
-        value: z.string()
-    })),
-    tags: z.array(z.string()).optional(),
-    publisher_domain: z.string()
+    description: z.string().optional(),
+    format_ids: z.tuple([FormatIDSchema]).rest(FormatIDSchema).optional()
 });
 
 export const PricingOptionSchema = z.union([CPMFixedRatePricingOptionSchema, CPMAuctionPricingOptionSchema, VCPMFixedRatePricingOptionSchema, VCPMAuctionPricingOptionSchema, CPCPricingOptionSchema, CPCVPricingOptionSchema, CPVPricingOptionSchema, CPPPricingOptionSchema, FlatRatePricingOptionSchema]);
@@ -349,13 +340,21 @@ export const BrandManifestSchema = BrandManifest1Schema.and(BrandManifest2Schema
 
 export const BrandManifestReferenceSchema = z.union([BrandManifestSchema, z.string()]);
 
-export const Product1Schema = z.object({
+export const ProductSchema = z.object({
     product_id: z.string(),
     name: z.string(),
     description: z.string(),
-    properties: z.tuple([PropertySchema]).rest(PropertySchema).optional(),
-    property_tags: z.tuple([z.string()]).rest(z.string()).optional(),
+    publisher_properties: z.tuple([z.object({
+            publisher_domain: z.string(),
+            property_ids: z.tuple([z.string()]).rest(z.string()).optional(),
+            property_tags: z.tuple([z.string()]).rest(z.string()).optional()
+        })]).rest(z.object({
+        publisher_domain: z.string(),
+        property_ids: z.tuple([z.string()]).rest(z.string()).optional(),
+        property_tags: z.tuple([z.string()]).rest(z.string()).optional()
+    })),
     format_ids: z.array(FormatIDSchema),
+    placements: z.tuple([PlacementSchema]).rest(PlacementSchema).optional(),
     delivery_type: DeliveryTypeSchema,
     pricing_options: z.tuple([PricingOptionSchema]).rest(PricingOptionSchema),
     estimated_exposures: z.number().optional(),
@@ -397,8 +396,6 @@ export const PromotedOfferingsSchema = z.object({
         exclude_tags: z.array(z.string()).optional()
     }).optional()
 });
-
-export const ProductSchema = Product1Schema.and(Product2Schema);
 
 export const CreativeAssetSchema = z.object({
     creative_id: z.string(),
@@ -550,7 +547,7 @@ export const DeliveryMetricsSchema = z.record(z.string(), z.unknown()).and(z.obj
 }));
 
 export const ListAuthorizedPropertiesRequestSchema = z.object({
-    tags: z.array(z.string()).optional()
+    publisher_domains: z.tuple([z.string()]).rest(z.string()).optional()
 });
 
 export const AdvertisingChannelsSchema = z.union([z.literal("display"), z.literal("video"), z.literal("audio"), z.literal("native"), z.literal("dooh"), z.literal("ctv"), z.literal("podcast"), z.literal("retail"), z.literal("social")]);
@@ -850,6 +847,16 @@ export const GetMediaBuyDeliveryResponseSchema = z.object({
             spend: z.number()
         })).optional()
     })),
+    errors: z.array(ErrorSchema).optional()
+});
+
+export const ListAuthorizedPropertiesResponseSchema = z.object({
+    publisher_domains: z.tuple([z.string()]).rest(z.string()),
+    primary_channels: z.tuple([AdvertisingChannelsSchema]).rest(AdvertisingChannelsSchema).optional(),
+    primary_countries: z.tuple([z.string()]).rest(z.string()).optional(),
+    portfolio_description: z.string().optional(),
+    advertising_policies: z.string().optional(),
+    last_updated: z.string().optional(),
     errors: z.array(ErrorSchema).optional()
 });
 
