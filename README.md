@@ -347,47 +347,6 @@ All AdCP tools with full type safety:
 - `activateSignal()` - Activate audience signals
 - `providePerformanceFeedback()` - Send performance feedback
 
-## Property Discovery
-
-Build agent registries by discovering what properties agents can sell. The library provides in-memory indexing and crawling logic - you add persistence.
-
-### Two Key Queries
-
-```typescript
-import { PropertyIndex, PropertyCrawler, getPropertyIndex } from '@adcp/client';
-
-// Query 1: Who can sell this property?
-const index = getPropertyIndex();
-const matches = index.findAgentsForProperty('domain', 'example.com');
-// Returns: [{ property, agent_url, publisher_domain }]
-
-// Query 2: What can this agent sell?
-const auth = index.getAgentAuthorizations('https://agent-x.com');
-// Returns: { agent_url, properties: [...] }
-```
-
-### Crawling Agents
-
-```typescript
-const crawler = new PropertyCrawler();
-
-// Discover properties from agents
-const result = await crawler.crawlAgents([
-  { agent_url: 'https://agent-x.com', protocol: 'a2a', publisher_domain: 'example.com' },
-  { agent_url: 'https://agent-y.com/mcp/', protocol: 'mcp', publisher_domain: 'other.com' }
-]);
-
-// PropertyIndex automatically populated
-console.log(`Discovered ${result.totalProperties} properties from ${result.successfulAgents} agents`);
-
-// Now query the index
-const matches = getPropertyIndex().findAgentsForProperty('ios_bundle', 'com.example.app');
-```
-
-**Property Types**: Supports 18 identifier types from AdCP spec (domain, subdomain, ios_bundle, android_package, apple_app_store_id, google_play_id, etc.)
-
-**Use Case**: Build a registry service that persists discovered properties to a database and exposes query APIs. This library provides the discovery and indexing logic.
-
 ## Database Schema
 
 Simple unified event log for all operations:
