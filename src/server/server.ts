@@ -927,6 +927,39 @@ app.post<{
   }
 });
 
+// List Authorized Properties
+app.post<{
+  Params: { agentId: string };
+  Body: { agentConfig?: AgentConfig; [key: string]: any };
+}>('/api/agents/:agentId/list-authorized-properties', async (request, reply) => {
+  try {
+    const { agentId } = request.params;
+    const body = request.body as any;
+
+    const agentConfig = body.agentConfig;
+    const params = { ...body };
+    delete params.agentConfig;
+
+    const client = getAgentClient(agentId, agentConfig);
+    const result = await client.listAuthorizedProperties(params, createDefaultInputHandler());
+
+    return reply.send({
+      success: result.success,
+      data: result.data,
+      error: result.error,
+      metadata: result.metadata,
+      debug_logs: result.debug_logs,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    app.log.error({ error }, 'List authorized properties error');
+    return reply.code(500).send({
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
 // Get Media Buy Delivery
 app.post<{
   Params: { agentId: string };
