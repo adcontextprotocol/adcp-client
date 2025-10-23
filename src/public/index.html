@@ -2416,6 +2416,15 @@
             </div>
         </div>
 
+        <!-- Authorized Properties Section -->
+        <div class="section">
+            <h3>🏢 Authorized Properties <span style="color: #666; font-size: 14px; font-weight: normal;">- Auto-loaded with agent data</span></h3>
+
+            <div id="properties-content" style="min-height: 100px; padding: 15px; background: #f9f9f9; border-radius: 8px;">
+                <p style="color: #666; text-align: center;">Select an agent and click "Load Agent Data" to see authorized properties</p>
+            </div>
+        </div>
+
         <!-- Creative Create Modal -->
         <div id="creative-create-modal" class="modal" style="display: none;">
             <div class="modal-content" style="max-width: 900px;">
@@ -3252,6 +3261,7 @@
             const loadStatus = {
                 products: false,
                 formats: false,
+                properties: false,
                 creatives: false
             };
             
@@ -3286,6 +3296,24 @@
                             logEvent('success', '✅ Creative formats loaded');
                         } catch (error) {
                             logEvent('error', `❌ Creative formats failed: ${error.message}`);
+                        }
+                        updateProgress();
+                    }
+                },
+                {
+                    name: 'properties',
+                    task: async () => {
+                        try {
+                            await loadAuthorizedProperties();
+                            loadStatus.properties = true;
+                            logEvent('success', '✅ Authorized properties loaded');
+                        } catch (error) {
+                            logEvent('error', `❌ Authorized properties failed: ${error.message}`);
+                            // Display error in the properties section
+                            const contentDiv = document.getElementById('properties-content');
+                            if (contentDiv) {
+                                contentDiv.innerHTML = `<p style="color: #d9534f; text-align: center;">Error loading properties: ${error.message}</p>`;
+                            }
                         }
                         updateProgress();
                     }
@@ -4277,7 +4305,8 @@
                 'update_media_buy': 'update-media-buy',
                 'sync_creatives': 'sync-creatives',
                 'list_creatives': 'list-creatives',
-                'get_media_buy_delivery': 'get-media-buy-delivery'
+                'get_media_buy_delivery': 'get-media-buy-delivery',
+                'list_authorized_properties': 'list-authorized-properties'
             };
 
             const endpoint = toolEndpoints[toolName];
@@ -8748,15 +8777,15 @@ ${JSON.stringify(result, null, 2)}
                 alert('Please select an agent first');
                 return;
             }
-            
+
             logEvent('info', '📋 Listing creatives...');
-            
+
             try {
                 const result = await callADCPTool(selectedAgent, 'list_creatives', {
                     include_assignments: true,
                     include_performance: true
                 });
-                
+
                 if (result) {
                     const creatives = result.creatives || result.data?.creatives || [];
                     logEvent('success', `✅ Found ${creatives.length} creative(s)`);
@@ -8767,6 +8796,131 @@ ${JSON.stringify(result, null, 2)}
             } catch (error) {
                 logEvent('error', `Error listing creatives: ${error.message}`);
             }
+        }
+
+        async function loadAuthorizedProperties() {
+            const selectedAgent = agents.find(a => a.id === document.getElementById('agent-selector').value);
+            if (!selectedAgent) {
+                throw new Error('No agent selected');
+            }
+
+            const result = await callADCPTool(selectedAgent, 'list_authorized_properties', {});
+
+            // callADCPTool returns the data portion (unwrapped), not the full API response
+            // Check for actual data fields instead of result.success
+            if (result && (result.properties || result.publisher_domains)) {
+                displayPropertiesResults(result);
+            } else {
+                throw new Error('No authorized properties returned');
+            }
+        }
+
+        function displayPropertiesResults(data) {
+            const contentDiv = document.getElementById('properties-content');
+            if (!contentDiv) {
+                return;
+            }
+
+            // callADCPTool returns the data portion directly (already unwrapped)
+            // Handle both response formats:
+            // 1. Property list: { properties: [...] }
+            // 2. Portfolio-level: { publisher_domains: [...], primary_channels: ..., etc. }
+            const properties = data.properties || [];
+            const publisherDomains = data.publisher_domains || [];
+
+            // Check if we have portfolio-level response
+            if (publisherDomains.length > 0 && properties.length === 0) {
+                let html = `
+                    <div style="padding: 20px;">
+                        <h4 style="margin-top: 0;">Portfolio-Level Response</h4>
+                        <table style="width: 100%; border-collapse: collapse;">
+                            <tr style="border-bottom: 1px solid #ddd;">
+                                <th style="padding: 10px; text-align: left; width: 200px;">Field</th>
+                                <th style="padding: 10px; text-align: left;">Value</th>
+                            </tr>
+                            <tr style="border-bottom: 1px solid #eee;">
+                                <td style="padding: 10px; font-weight: 600;">Publisher Domains</td>
+                                <td style="padding: 10px; font-family: monospace; font-size: 12px;">${escapeHtml(publisherDomains.join(', '))}</td>
+                            </tr>
+                `;
+
+                if (data.primary_channels) {
+                    html += `
+                            <tr style="border-bottom: 1px solid #eee;">
+                                <td style="padding: 10px; font-weight: 600;">Primary Channels</td>
+                                <td style="padding: 10px;">${escapeHtml(Array.isArray(data.primary_channels) ? data.primary_channels.join(', ') : data.primary_channels)}</td>
+                            </tr>
+                    `;
+                }
+
+                if (data.primary_countries) {
+                    html += `
+                            <tr style="border-bottom: 1px solid #eee;">
+                                <td style="padding: 10px; font-weight: 600;">Primary Countries</td>
+                                <td style="padding: 10px;">${escapeHtml(Array.isArray(data.primary_countries) ? data.primary_countries.join(', ') : data.primary_countries)}</td>
+                            </tr>
+                    `;
+                }
+
+                if (data.portfolio_description) {
+                    html += `
+                            <tr style="border-bottom: 1px solid #eee;">
+                                <td style="padding: 10px; font-weight: 600;">Description</td>
+                                <td style="padding: 10px;">${escapeHtml(data.portfolio_description)}</td>
+                            </tr>
+                    `;
+                }
+
+                html += `
+                        </table>
+                    </div>
+                `;
+                contentDiv.innerHTML = html;
+                return;
+            }
+
+            // Handle property list response
+            if (properties.length === 0) {
+                contentDiv.innerHTML = `
+                    <div style="padding: 20px; text-align: center;">
+                        <p style="color: #666;">No authorized properties found</p>
+                    </div>
+                `;
+                return;
+            }
+
+            let html = `
+                <div style="max-height: 400px; overflow-y: auto;">
+                    <table style="width: 100%; border-collapse: collapse;">
+                        <thead>
+                            <tr style="border-bottom: 2px solid #ddd;">
+                                <th style="padding: 10px; text-align: left;">Property ID</th>
+                                <th style="padding: 10px; text-align: left;">Property Name</th>
+                                <th style="padding: 10px; text-align: left;">Domain</th>
+                                <th style="padding: 10px; text-align: left;">Type</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+            `;
+
+            properties.forEach(prop => {
+                html += `
+                    <tr style="border-bottom: 1px solid #eee;">
+                        <td style="padding: 10px; font-family: monospace; font-size: 12px;">${escapeHtml(prop.property_id || prop.id || 'N/A')}</td>
+                        <td style="padding: 10px;">${escapeHtml(prop.property_name || prop.name || 'N/A')}</td>
+                        <td style="padding: 10px; font-family: monospace; font-size: 12px;">${escapeHtml(prop.domain || prop.publisher_domain || 'N/A')}</td>
+                        <td style="padding: 10px;">${escapeHtml(prop.type || prop.property_type || 'N/A')}</td>
+                    </tr>
+                `;
+            });
+
+            html += `
+                        </tbody>
+                    </table>
+                </div>
+            `;
+
+            contentDiv.innerHTML = html;
         }
         
         async function executeCreativeUpdate() {
