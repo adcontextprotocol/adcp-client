@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.3.2
+
+### Patch Changes
+
+- 3f8460b: Fix conditional fetch logic for auth headers to prevent sporadic authentication failures when making parallel requests
+
 ## 2.3.1
 
 ### Patch Changes
