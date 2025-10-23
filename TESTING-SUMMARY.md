@@ -47,6 +47,33 @@ curl -X POST 'http://127.0.0.1:3000/api/agents/principal_8ac9e391/list-authorize
 
 This is an implementation issue on the Wonderstruck agent side, not the client.
 
+### 3. Wonderstruck MCP Agent Test (Retry) ✅
+After initial testing, the Wonderstruck agent **now returns success**!
+
+**Results**:
+- ✅ Success: true
+- ✅ Response time: ~625-934ms
+- ✅ Returns portfolio-level format: `{ publisher_domains: ["example.com"], ... }`
+- ✅ No properties array (this is the expected portfolio-level response)
+
+**Response Structure**:
+```json
+{
+  "success": true,
+  "data": {
+    "publisher_domains": ["example.com"],
+    "primary_channels": null,
+    "primary_countries": null,
+    "portfolio_description": null,
+    "advertising_policies": null,
+    "last_updated": null,
+    "errors": []
+  }
+}
+```
+
+The agent returns portfolio-level information rather than individual property records.
+
 ### UI Implementation ✅
 Added a new section to the main testing UI page (`index.html`):
 
@@ -55,15 +82,16 @@ Added a new section to the main testing UI page (`index.html`):
 **Features**:
 - 🏢 Section title: "Authorized Properties"
 - 📋 Button: "List Properties"
-- Table display with columns:
-  - Property ID
-  - Property Name
-  - Domain
-  - Type
+- Supports two display formats:
+  1. **Property List**: Table with Property ID, Name, Domain, Type columns
+  2. **Portfolio-Level**: Key-value table showing publisher_domains, primary_channels, etc.
 
 **JavaScript Functions Added**:
 1. `listAuthorizedProperties()` - Calls the agent's `list_authorized_properties` tool
-2. `displayPropertiesResults()` - Renders the properties in a table format
+2. `displayPropertiesResults()` - Intelligently renders both response formats:
+   - Detects portfolio-level response (publisher_domains array)
+   - Falls back to property list format if available
+   - Displays "No properties" message if neither format present
 
 ## Running the Test
 
@@ -104,10 +132,25 @@ Body: {}  (or { publisher_domains: ["example.com"] })
 3. **test-list-properties.ts** (New file)
    - Standalone test script for MCP endpoint
 
-## Next Steps
-To test with actual data, you would need:
-1. An agent that supports `list_authorized_properties`
-2. Proper tenant context set on the agent
-3. Authorized properties configured for that tenant
+## Agent Test Summary
 
-The test agent at test-agent.adcontextprotocol.org/mcp requires tenant setup before it will return actual property data.
+| Agent | Protocol | Status | Response Format | Notes |
+|-------|----------|--------|-----------------|-------|
+| Wonderstruck | MCP | ✅ Success | Portfolio-level | Returns publisher_domains: ["example.com"] |
+| Test Agent | MCP (direct) | ⚠️ Tenant Error | N/A | Requires tenant context (expected behavior) |
+| Test Agent | A2A | ❌ Error | N/A | Implementation error: 'dict' has no 'model_dump' |
+
+## Key Findings
+
+1. **Multiple Response Formats**: The AdCP spec allows both property-level and portfolio-level responses
+2. **Client Compatibility**: Our client now handles both formats seamlessly
+3. **Wonderstruck Works**: Successfully returns portfolio information via MCP
+4. **Test Agent Issues**:
+   - MCP version properly enforces tenant isolation
+   - A2A version has implementation bug
+
+## Next Steps
+To get full property-level data:
+1. Configure proper tenant context on test agents
+2. Use an agent that returns individual property records (not portfolio-level)
+3. Fix A2A implementation bug in test agent
