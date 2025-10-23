@@ -1,12 +1,12 @@
 // Unified Protocol Interface for AdCP
-export { callMCPTool } from './mcp';
-export { callA2ATool } from './a2a';
+export { callMCPTool } from "./mcp";
+export { callA2ATool } from "./a2a";
 
-import { callMCPTool } from './mcp';
-import { callA2ATool } from './a2a';
-import type { AgentConfig } from '../types';
-import { getAuthToken } from '../auth';
-import { validateAgentUrl } from '../validation';
+import { callMCPTool } from "./mcp";
+import { callA2ATool } from "./a2a";
+import type { AgentConfig } from "../types";
+import { getAuthToken } from "../auth";
+import { validateAgentUrl } from "../validation";
 
 /**
  * Universal protocol client - automatically routes to the correct protocol implementation
@@ -35,14 +35,16 @@ export class ProtocolClient {
           push_notification_config: {
             url: webhookUrl,
             authentication: {
-              schemes: ['HMAC-SHA256'],
-              credentials: webhookSecret || 'placeholder_secret_min_32_characters_required'
-            }
-          }
+              schemes: ["HMAC-SHA256"],
+              credentials:
+                webhookSecret ||
+                "placeholder_secret_min_32_characters_required",
+            },
+          },
         }
       : args;
 
-    if (agent.protocol === 'mcp') {
+    if (agent.protocol === "mcp") {
       return callMCPTool(
         agent.agent_uri,
         toolName,
@@ -50,7 +52,7 @@ export class ProtocolClient {
         authToken,
         debugLogs
       );
-    } else if (agent.protocol === 'a2a') {
+    } else if (agent.protocol === "a2a") {
       return callA2ATool(
         agent.agent_uri,
         toolName,
@@ -69,10 +71,13 @@ export class ProtocolClient {
  */
 export const createMCPClient = (agentUrl: string, authToken?: string) => ({
   callTool: (toolName: string, args: Record<string, any>, debugLogs?: any[]) =>
-    callMCPTool(agentUrl, toolName, args, authToken, debugLogs)
+    callMCPTool(agentUrl, toolName, args, authToken, debugLogs),
 });
 
 export const createA2AClient = (agentUrl: string, authToken?: string) => ({
-  callTool: (toolName: string, parameters: Record<string, any>, debugLogs?: any[]) =>
-    callA2ATool(agentUrl, toolName, parameters, authToken, debugLogs)
+  callTool: (
+    toolName: string,
+    parameters: Record<string, any>,
+    debugLogs?: any[]
+  ) => callA2ATool(agentUrl, toolName, parameters, authToken, debugLogs),
 });

@@ -16,7 +16,7 @@ export type BrandManifest1 = {
 /**
  * Type of inventory delivery
  */
-export type DeliveryType = 'guaranteed' | 'non_guaranteed';
+export type DeliveryType = "guaranteed" | "non_guaranteed";
 
 /**
  * Request parameters for discovering available advertising products
@@ -39,7 +39,7 @@ export interface GetProductsRequest {
     /**
      * Filter by format types
      */
-    format_types?: ('video' | 'display' | 'audio')[];
+    format_types?: ("video" | "display" | "audio")[];
     /**
      * Filter by specific format IDs
      */
@@ -145,7 +145,7 @@ export interface BrandManifest2 {
     /**
      * Type of asset
      */
-    asset_type: 'image' | 'video' | 'audio' | 'text';
+    asset_type: "image" | "video" | "audio" | "text";
     /**
      * URL to CDN-hosted asset file
      */
@@ -200,7 +200,7 @@ export interface BrandManifest2 {
     /**
      * Format of the product feed
      */
-    feed_format?: 'google_merchant_center' | 'facebook_catalog' | 'custom';
+    feed_format?: "google_merchant_center" | "facebook_catalog" | "custom";
     /**
      * Product categories available in the catalog (for filtering)
      */
@@ -212,7 +212,7 @@ export interface BrandManifest2 {
     /**
      * How frequently the product catalog is updated
      */
-    update_frequency?: 'realtime' | 'hourly' | 'daily' | 'weekly';
+    update_frequency?: "realtime" | "hourly" | "daily" | "weekly";
   };
   /**
    * Legal disclaimers or required text that must appear in creatives
@@ -283,7 +283,6 @@ export interface FormatID {
    */
   id: string;
 }
-
 
 // get_products response
 /**
@@ -456,7 +455,7 @@ export interface CPMFixedRatePricingOption {
   /**
    * Cost per 1,000 impressions
    */
-  pricing_model: 'cpm';
+  pricing_model: "cpm";
   /**
    * Fixed CPM rate (cost per 1,000 impressions)
    */
@@ -481,7 +480,7 @@ export interface CPMAuctionPricingOption {
   /**
    * Cost per 1,000 impressions
    */
-  pricing_model: 'cpm';
+  pricing_model: "cpm";
   /**
    * ISO 4217 currency code
    */
@@ -527,7 +526,7 @@ export interface VCPMFixedRatePricingOption {
   /**
    * Cost per 1,000 viewable impressions (MRC standard)
    */
-  pricing_model: 'vcpm';
+  pricing_model: "vcpm";
   /**
    * Fixed vCPM rate (cost per 1,000 viewable impressions)
    */
@@ -552,7 +551,7 @@ export interface VCPMAuctionPricingOption {
   /**
    * Cost per 1,000 viewable impressions (MRC standard)
    */
-  pricing_model: 'vcpm';
+  pricing_model: "vcpm";
   /**
    * ISO 4217 currency code
    */
@@ -598,7 +597,7 @@ export interface CPCPricingOption {
   /**
    * Cost per click
    */
-  pricing_model: 'cpc';
+  pricing_model: "cpc";
   /**
    * Fixed CPC rate (cost per click)
    */
@@ -623,7 +622,7 @@ export interface CPCVPricingOption {
   /**
    * Cost per completed view (100% completion)
    */
-  pricing_model: 'cpcv';
+  pricing_model: "cpcv";
   /**
    * Fixed CPCV rate (cost per 100% completion)
    */
@@ -648,7 +647,7 @@ export interface CPVPricingOption {
   /**
    * Cost per view at threshold
    */
-  pricing_model: 'cpv';
+  pricing_model: "cpv";
   /**
    * Fixed CPV rate (cost per view)
    */
@@ -686,7 +685,7 @@ export interface CPPPricingOption {
   /**
    * Cost per Gross Rating Point
    */
-  pricing_model: 'cpp';
+  pricing_model: "cpp";
   /**
    * Fixed CPP rate (cost per rating point)
    */
@@ -724,7 +723,7 @@ export interface FlatRatePricingOption {
   /**
    * Fixed cost regardless of delivery volume
    */
-  pricing_model: 'flat_rate';
+  pricing_model: "flat_rate";
   /**
    * Flat rate cost
    */
@@ -805,7 +804,10 @@ export interface ReportingCapabilities {
    *
    * @minItems 1
    */
-  available_reporting_frequencies: ['hourly' | 'daily' | 'monthly', ...('hourly' | 'daily' | 'monthly')[]];
+  available_reporting_frequencies: [
+    "hourly" | "daily" | "monthly",
+    ...("hourly" | "daily" | "monthly")[]
+  ];
   /**
    * Expected delay in minutes before reporting data becomes available (e.g., 240 for 4-hour delay)
    */
@@ -822,15 +824,15 @@ export interface ReportingCapabilities {
    * Metrics available in reporting. Impressions and spend are always implicitly included.
    */
   available_metrics: (
-    | 'impressions'
-    | 'spend'
-    | 'clicks'
-    | 'ctr'
-    | 'video_completions'
-    | 'completion_rate'
-    | 'conversions'
-    | 'viewability'
-    | 'engagement_rate'
+    | "impressions"
+    | "spend"
+    | "clicks"
+    | "ctr"
+    | "video_completions"
+    | "completion_rate"
+    | "conversions"
+    | "viewability"
+    | "engagement_rate"
   )[];
 }
 /**
@@ -840,11 +842,11 @@ export interface CreativePolicy {
   /**
    * Co-branding requirement
    */
-  co_branding: 'required' | 'optional' | 'none';
+  co_branding: "required" | "optional" | "none";
   /**
    * Landing page requirements
    */
-  landing_page: 'any' | 'retailer_site_only' | 'must_include_retailer';
+  landing_page: "any" | "retailer_site_only" | "must_include_retailer";
   /**
    * Whether creative templates are provided
    */
@@ -882,7 +884,6 @@ export interface Error {
   };
 }
 
-
 // list_creative_formats parameters
 /**
  * Request parameters for discovering supported creative formats
@@ -895,11 +896,19 @@ export interface ListCreativeFormatsRequest {
   /**
    * Filter by format type (technical categories with distinct requirements)
    */
-  type?: 'audio' | 'video' | 'display' | 'dooh';
+  type?: "audio" | "video" | "display" | "dooh";
   /**
    * Filter to formats that include these asset types. For third-party tags, search for 'html' or 'javascript'. E.g., ['image', 'text'] returns formats with images and text, ['javascript'] returns formats accepting JavaScript tags.
    */
-  asset_types?: ('image' | 'video' | 'audio' | 'text' | 'html' | 'javascript' | 'url')[];
+  asset_types?: (
+    | "image"
+    | "video"
+    | "audio"
+    | "text"
+    | "html"
+    | "javascript"
+    | "url"
+  )[];
   /**
    * Maximum width in pixels (inclusive). Returns formats where ANY render has width <= this value. For multi-render formats, matches if at least one render fits.
    */
@@ -953,7 +962,7 @@ export interface ListCreativeFormatsResponse {
     /**
      * Capabilities this creative agent provides
      */
-    capabilities?: ('validation' | 'assembly' | 'generation' | 'preview')[];
+    capabilities?: ("validation" | "assembly" | "generation" | "preview")[];
   }[];
   /**
    * Task-specific errors and warnings (e.g., format availability issues)
@@ -984,7 +993,14 @@ export interface Format {
   /**
    * Media type of this format - determines rendering method and asset requirements
    */
-  type: 'audio' | 'video' | 'display' | 'native' | 'dooh' | 'rich_media' | 'universal';
+  type:
+    | "audio"
+    | "video"
+    | "display"
+    | "native"
+    | "dooh"
+    | "rich_media"
+    | "universal";
   /**
    * Specification of rendered pieces for this format. Most formats produce a single render. Companion ad formats (video + banner), adaptive formats, and multi-placement formats produce multiple renders. Each render specifies its role and dimensions.
    *
@@ -1038,7 +1054,7 @@ export interface Format {
         /**
          * Unit of measurement for dimensions
          */
-        unit: 'px' | 'dp' | 'inches' | 'cm';
+        unit: "px" | "dp" | "inches" | "cm";
       };
     },
     ...{
@@ -1088,7 +1104,7 @@ export interface Format {
         /**
          * Unit of measurement for dimensions
          */
-        unit: 'px' | 'dp' | 'inches' | 'cm';
+        unit: "px" | "dp" | "inches" | "cm";
       };
     }[]
   ];
@@ -1105,18 +1121,18 @@ export interface Format {
          * Type of asset
          */
         asset_type:
-          | 'image'
-          | 'video'
-          | 'audio'
-          | 'vast'
-          | 'daast'
-          | 'text'
-          | 'html'
-          | 'css'
-          | 'javascript'
-          | 'url'
-          | 'webhook'
-          | 'promoted_offerings';
+          | "image"
+          | "video"
+          | "audio"
+          | "vast"
+          | "daast"
+          | "text"
+          | "html"
+          | "css"
+          | "javascript"
+          | "url"
+          | "webhook"
+          | "promoted_offerings";
         /**
          * Optional descriptive label for this asset's purpose (e.g., 'hero_image', 'logo'). Not used for referencing assets in manifests—use asset_id instead. This field is for human-readable documentation and UI display only.
          */
@@ -1161,18 +1177,18 @@ export interface Format {
            * Type of asset
            */
           asset_type:
-            | 'image'
-            | 'video'
-            | 'audio'
-            | 'vast'
-            | 'daast'
-            | 'text'
-            | 'html'
-            | 'css'
-            | 'javascript'
-            | 'url'
-            | 'webhook'
-            | 'promoted_offerings';
+            | "image"
+            | "video"
+            | "audio"
+            | "vast"
+            | "daast"
+            | "text"
+            | "html"
+            | "css"
+            | "javascript"
+            | "url"
+            | "webhook"
+            | "promoted_offerings";
           /**
            * Optional descriptive label for this asset's purpose (e.g., 'hero_image', 'logo'). Not used for referencing assets in manifests—use asset_id instead. This field is for human-readable documentation and UI display only.
            */
@@ -1226,7 +1242,7 @@ export interface FormatID1 {
 /**
  * Budget pacing strategy
  */
-export type Pacing = 'even' | 'asap' | 'front_loaded';
+export type Pacing = "even" | "asap" | "front_loaded";
 /**
  * VAST (Video Ad Serving Template) tag for third-party video ad serving
  */
@@ -1256,7 +1272,7 @@ export type BrandManifestReference1 = BrandManifest1 | string;
 /**
  * Campaign start timing: 'asap' or ISO 8601 date-time
  */
-export type StartTiming = 'asap' | string;
+export type StartTiming = "asap" | string;
 
 /**
  * Request parameters for creating a media buy
@@ -1284,24 +1300,28 @@ export interface CreateMediaBuyRequest {
    * Total budget for this media buy. Currency is determined by the pricing_option_id selected in each package.
    */
   budget: number;
+  /**
+   * Optional webhook configuration for async creation notifications. Publisher will send webhook when creation completes if operation takes longer than immediate response time.
+   */
+  push_notification_config?: PushNotificationConfig;
   reporting_webhook?: PushNotificationConfig & {
     /**
      * Frequency for automated reporting delivery. Must be supported by all products in the media buy.
      */
-    reporting_frequency: 'hourly' | 'daily' | 'monthly';
+    reporting_frequency: "hourly" | "daily" | "monthly";
     /**
      * Optional list of metrics to include in webhook notifications. If omitted, all available metrics are included. Must be subset of product's available_metrics.
      */
     requested_metrics?: (
-      | 'impressions'
-      | 'spend'
-      | 'clicks'
-      | 'ctr'
-      | 'video_completions'
-      | 'completion_rate'
-      | 'conversions'
-      | 'viewability'
-      | 'engagement_rate'
+      | "impressions"
+      | "spend"
+      | "clicks"
+      | "ctr"
+      | "video_completions"
+      | "completion_rate"
+      | "conversions"
+      | "viewability"
+      | "engagement_rate"
     )[];
   };
 }
@@ -1566,7 +1586,7 @@ export interface JavaScriptAsset {
   /**
    * JavaScript module type
    */
-  module_type?: 'esm' | 'commonjs' | 'script';
+  module_type?: "esm" | "commonjs" | "script";
 }
 export interface VASTAsset1 {
   /**
@@ -1580,7 +1600,7 @@ export interface VASTAsset1 {
   /**
    * VAST specification version
    */
-  vast_version?: '2.0' | '3.0' | '4.0' | '4.1' | '4.2';
+  vast_version?: "2.0" | "3.0" | "4.0" | "4.1" | "4.2";
   /**
    * Whether VPAID (Video Player-Ad Interface Definition) is supported
    */
@@ -1593,22 +1613,22 @@ export interface VASTAsset1 {
    * Tracking events supported by this VAST tag
    */
   tracking_events?: (
-    | 'start'
-    | 'firstQuartile'
-    | 'midpoint'
-    | 'thirdQuartile'
-    | 'complete'
-    | 'impression'
-    | 'click'
-    | 'pause'
-    | 'resume'
-    | 'skip'
-    | 'mute'
-    | 'unmute'
-    | 'fullscreen'
-    | 'exitFullscreen'
-    | 'playerExpand'
-    | 'playerCollapse'
+    | "start"
+    | "firstQuartile"
+    | "midpoint"
+    | "thirdQuartile"
+    | "complete"
+    | "impression"
+    | "click"
+    | "pause"
+    | "resume"
+    | "skip"
+    | "mute"
+    | "unmute"
+    | "fullscreen"
+    | "exitFullscreen"
+    | "playerExpand"
+    | "playerCollapse"
   )[];
 }
 export interface DAASTAsset1 {
@@ -1623,7 +1643,7 @@ export interface DAASTAsset1 {
   /**
    * DAAST specification version
    */
-  daast_version?: '1.0' | '1.1';
+  daast_version?: "1.0" | "1.1";
   /**
    * Expected audio duration in milliseconds (if known)
    */
@@ -1632,17 +1652,17 @@ export interface DAASTAsset1 {
    * Tracking events supported by this DAAST tag
    */
   tracking_events?: (
-    | 'start'
-    | 'firstQuartile'
-    | 'midpoint'
-    | 'thirdQuartile'
-    | 'complete'
-    | 'impression'
-    | 'pause'
-    | 'resume'
-    | 'skip'
-    | 'mute'
-    | 'unmute'
+    | "start"
+    | "firstQuartile"
+    | "midpoint"
+    | "thirdQuartile"
+    | "complete"
+    | "impression"
+    | "pause"
+    | "resume"
+    | "skip"
+    | "mute"
+    | "unmute"
   )[];
   /**
    * Whether companion display ads are included
@@ -1686,17 +1706,17 @@ export interface PromotedOfferings {
      * Filter by asset type (e.g., ['image', 'video'])
      */
     asset_types?: (
-      | 'image'
-      | 'video'
-      | 'audio'
-      | 'vast'
-      | 'daast'
-      | 'text'
-      | 'url'
-      | 'html'
-      | 'css'
-      | 'javascript'
-      | 'webhook'
+      | "image"
+      | "video"
+      | "audio"
+      | "vast"
+      | "daast"
+      | "text"
+      | "url"
+      | "html"
+      | "css"
+      | "javascript"
+      | "webhook"
     )[];
     /**
      * Exclude assets with these tags
@@ -1761,14 +1781,13 @@ export interface PushNotificationConfig {
      * @minItems 1
      * @maxItems 1
      */
-    schemes: ['Bearer' | 'HMAC-SHA256'];
+    schemes: ["Bearer" | "HMAC-SHA256"];
     /**
      * Credentials for authentication. For Bearer: token sent in Authorization header. For HMAC-SHA256: shared secret used to generate signature. Minimum 32 characters. Exchanged out-of-band during onboarding.
      */
     credentials: string;
   };
 }
-
 
 // create_media_buy response
 /**
@@ -1847,7 +1866,7 @@ export interface SyncCreativesRequest {
   /**
    * Validation strictness. 'strict' fails entire sync on any validation error. 'lenient' processes valid creatives and reports errors.
    */
-  validation_mode?: 'strict' | 'lenient';
+  validation_mode?: "strict" | "lenient";
   push_notification_config?: PushNotificationConfig;
 }
 /**
@@ -1874,7 +1893,7 @@ export interface SyncCreativesResponse {
     /**
      * Action taken for this creative
      */
-    action: 'created' | 'updated' | 'unchanged' | 'failed' | 'deleted';
+    action: "created" | "updated" | "unchanged" | "failed" | "deleted";
     /**
      * Platform-specific ID assigned to the creative
      */
@@ -1918,16 +1937,23 @@ export interface SyncCreativesResponse {
   }[];
 }
 
-
 // list_creatives parameters
 /**
  * Filter by creative approval status
  */
-export type CreativeStatus = 'processing' | 'approved' | 'rejected' | 'pending_review';
+export type CreativeStatus =
+  | "processing"
+  | "approved"
+  | "rejected"
+  | "pending_review";
 /**
  * Status of a creative asset
  */
-export type CreativeStatus1 = 'processing' | 'approved' | 'rejected' | 'pending_review';
+export type CreativeStatus1 =
+  | "processing"
+  | "approved"
+  | "rejected"
+  | "pending_review";
 
 /**
  * Request parameters for querying creative assets from the centralized library with filtering, sorting, and pagination
@@ -2008,11 +2034,17 @@ export interface ListCreativesRequest {
     /**
      * Field to sort by
      */
-    field?: 'created_date' | 'updated_date' | 'name' | 'status' | 'assignment_count' | 'performance_score';
+    field?:
+      | "created_date"
+      | "updated_date"
+      | "name"
+      | "status"
+      | "assignment_count"
+      | "performance_score";
     /**
      * Sort direction
      */
-    direction?: 'asc' | 'desc';
+    direction?: "asc" | "desc";
   };
   /**
    * Pagination parameters
@@ -2043,19 +2075,18 @@ export interface ListCreativesRequest {
    * Specific fields to include in response (omit for all fields)
    */
   fields?: (
-    | 'creative_id'
-    | 'name'
-    | 'format'
-    | 'status'
-    | 'created_date'
-    | 'updated_date'
-    | 'tags'
-    | 'assignments'
-    | 'performance'
-    | 'sub_assets'
+    | "creative_id"
+    | "name"
+    | "format"
+    | "status"
+    | "created_date"
+    | "updated_date"
+    | "tags"
+    | "assignments"
+    | "performance"
+    | "sub_assets"
   )[];
 }
-
 
 // list_creatives response
 /**
@@ -2095,7 +2126,7 @@ export interface ListCreativesResponse {
      */
     sort_applied?: {
       field?: string;
-      direction?: 'asc' | 'desc';
+      direction?: "asc" | "desc";
     };
   };
   /**
@@ -2217,7 +2248,7 @@ export interface ListCreativesResponse {
         /**
          * Status of this specific assignment
          */
-        status: 'active' | 'paused' | 'ended';
+        status: "active" | "paused" | "ended";
       }[];
     };
     /**
@@ -2310,12 +2341,12 @@ export interface SubAsset1 {
   content?: string | string[];
 }
 
-
 // update_media_buy parameters
 /**
  * Request parameters for updating campaign and package settings
  */
-export type UpdateMediaBuyRequest = UpdateMediaBuyRequest1 & UpdateMediaBuyRequest2;
+export type UpdateMediaBuyRequest = UpdateMediaBuyRequest1 &
+  UpdateMediaBuyRequest2;
 /**
  * Campaign start timing: 'asap' or ISO 8601 date-time
  */
@@ -2356,7 +2387,6 @@ export interface UpdateMediaBuyRequest1 {
         [k: string]: unknown;
       }
   )[];
-  push_notification_config?: PushNotificationConfig;
 }
 /**
  * Optional webhook configuration for async update notifications. Publisher will send webhook when update completes if operation takes longer than immediate response time.
@@ -2418,8 +2448,8 @@ export interface GetMediaBuyDeliveryRequest {
    * Filter by status. Can be a single status or array of statuses
    */
   status_filter?:
-    | ('active' | 'pending' | 'paused' | 'completed' | 'failed' | 'all')
-    | ('active' | 'pending' | 'paused' | 'completed' | 'failed')[];
+    | ("active" | "pending" | "paused" | "completed" | "failed" | "all")
+    | ("active" | "pending" | "paused" | "completed" | "failed")[];
   /**
    * Start date for reporting period (YYYY-MM-DD)
    */
@@ -2430,12 +2460,18 @@ export interface GetMediaBuyDeliveryRequest {
   end_date?: string;
 }
 
-
 // get_media_buy_delivery response
 /**
  * Pricing model used for this media buy
  */
-export type PricingModel = 'cpm' | 'vcpm' | 'cpc' | 'cpcv' | 'cpv' | 'cpp' | 'flat_rate';
+export type PricingModel =
+  | "cpm"
+  | "vcpm"
+  | "cpc"
+  | "cpcv"
+  | "cpv"
+  | "cpp"
+  | "flat_rate";
 
 /**
  * Response payload for get_media_buy_delivery task
@@ -2444,7 +2480,7 @@ export interface GetMediaBuyDeliveryResponse {
   /**
    * Type of webhook notification (only present in webhook deliveries): scheduled = regular periodic update, final = campaign completed, delayed = data not yet available, adjusted = resending period with updated data
    */
-  notification_type?: 'scheduled' | 'final' | 'delayed' | 'adjusted';
+  notification_type?: "scheduled" | "final" | "delayed" | "adjusted";
   /**
    * Indicates if any media buys in this webhook have missing/delayed data (only present in webhook deliveries)
    */
@@ -2518,7 +2554,13 @@ export interface GetMediaBuyDeliveryResponse {
     /**
      * Current media buy status. In webhook context, reporting_delayed indicates data temporarily unavailable.
      */
-    status: 'pending' | 'active' | 'paused' | 'completed' | 'failed' | 'reporting_delayed';
+    status:
+      | "pending"
+      | "active"
+      | "paused"
+      | "completed"
+      | "failed"
+      | "reporting_delayed";
     /**
      * When delayed data is expected to be available (only present when status is reporting_delayed)
      */
@@ -2720,21 +2762,20 @@ export interface ListAuthorizedPropertiesRequest {
   publisher_domains?: [string, ...string[]];
 }
 
-
 // list_authorized_properties response
 /**
  * Standard advertising channels supported by AdCP
  */
 export type AdvertisingChannels =
-  | 'display'
-  | 'video'
-  | 'audio'
-  | 'native'
-  | 'dooh'
-  | 'ctv'
-  | 'podcast'
-  | 'retail'
-  | 'social';
+  | "display"
+  | "video"
+  | "audio"
+  | "native"
+  | "dooh"
+  | "ctv"
+  | "podcast"
+  | "retail"
+  | "social";
 
 /**
  * Response payload for list_authorized_properties task. Lists publisher domains and authorization scope (property_ids or property_tags). Buyers fetch actual property definitions from each publisher's canonical adagents.json file.
@@ -2817,20 +2858,23 @@ export interface ProvidePerformanceFeedbackRequest {
    * The business metric being measured
    */
   metric_type?:
-    | 'overall_performance'
-    | 'conversion_rate'
-    | 'brand_lift'
-    | 'click_through_rate'
-    | 'completion_rate'
-    | 'viewability'
-    | 'brand_safety'
-    | 'cost_efficiency';
+    | "overall_performance"
+    | "conversion_rate"
+    | "brand_lift"
+    | "click_through_rate"
+    | "completion_rate"
+    | "viewability"
+    | "brand_safety"
+    | "cost_efficiency";
   /**
    * Source of the performance data
    */
-  feedback_source?: 'buyer_attribution' | 'third_party_measurement' | 'platform_analytics' | 'verification_partner';
+  feedback_source?:
+    | "buyer_attribution"
+    | "third_party_measurement"
+    | "platform_analytics"
+    | "verification_partner";
 }
-
 
 // provide_performance_feedback response
 /**
@@ -2907,7 +2951,7 @@ export interface WebhookAsset {
   /**
    * HTTP method
    */
-  method?: 'GET' | 'POST';
+  method?: "GET" | "POST";
   /**
    * Maximum time to wait for response in milliseconds
    */
@@ -2923,7 +2967,7 @@ export interface WebhookAsset {
   /**
    * Expected content type of webhook response
    */
-  response_type: 'html' | 'json' | 'xml' | 'javascript';
+  response_type: "html" | "json" | "xml" | "javascript";
   /**
    * Security configuration for webhook calls
    */
@@ -2931,7 +2975,7 @@ export interface WebhookAsset {
     /**
      * Authentication method
      */
-    method: 'hmac_sha256' | 'api_key' | 'none';
+    method: "hmac_sha256" | "api_key" | "none";
     /**
      * Header name for HMAC signature (e.g., 'X-Signature')
      */
@@ -3250,7 +3294,6 @@ export interface PreviewCreativeResponse {
   expires_at: string;
 }
 
-
 // get_signals parameters
 /**
  * Request parameters for discovering signals based on description
@@ -3267,7 +3310,7 @@ export interface GetSignalsRequest {
     /**
      * Target platforms for signal deployment
      */
-    platforms: 'all' | string[];
+    platforms: "all" | string[];
     /**
      * Specific platform-account combinations
      */
@@ -3293,7 +3336,7 @@ export interface GetSignalsRequest {
     /**
      * Filter by catalog type
      */
-    catalog_types?: ('marketplace' | 'custom' | 'owned')[];
+    catalog_types?: ("marketplace" | "custom" | "owned")[];
     /**
      * Filter by specific data providers
      */
@@ -3312,7 +3355,6 @@ export interface GetSignalsRequest {
    */
   max_results?: number;
 }
-
 
 // get_signals response
 /**
@@ -3338,7 +3380,7 @@ export interface GetSignalsResponse {
     /**
      * Type of signal
      */
-    signal_type: 'marketplace' | 'custom' | 'owned';
+    signal_type: "marketplace" | "custom" | "owned";
     /**
      * Name of the data provider
      */
@@ -3366,7 +3408,7 @@ export interface GetSignalsResponse {
       /**
        * Deployment scope
        */
-      scope: 'platform-wide' | 'account-specific';
+      scope: "platform-wide" | "account-specific";
       /**
        * Platform-specific segment ID
        */
@@ -3417,7 +3459,6 @@ export interface ActivateSignalRequest {
    */
   account?: string;
 }
-
 
 // activate_signal response
 /**

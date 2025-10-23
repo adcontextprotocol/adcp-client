@@ -1,0 +1,22 @@
+# Build outputs
+/dist
+
+# Docs build output
+/docs/**/site
+/docs/**/.jekyll-cache
+/docs/**/_site
+
+# Generated types and agents
+/src/lib/types/*.generated.ts
+/src/lib/agents/index.generated.ts
+
+# Node modules
+/node_modules
+
+# Changelogs and lockfiles (keep stable formatting)
+CHANGELOG.md
+package-lock.json
+
+# Misc
+coverage
+schemas

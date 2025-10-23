@@ -1,14 +1,14 @@
 // Per-agent client wrapper with conversation context preservation
 
-import type { AgentConfig } from '../types';
-import { ADCPClient, type ADCPClientConfig } from './ADCPClient';
+import type { AgentConfig } from "../types";
+import { ADCPClient, type ADCPClientConfig } from "./ADCPClient";
 import type {
   InputHandler,
   TaskOptions,
   TaskResult,
   TaskInfo,
-  Message
-} from './ConversationTypes';
+  Message,
+} from "./ConversationTypes";
 import type {
   GetProductsRequest,
   GetProductsResponse,
@@ -31,8 +31,8 @@ import type {
   GetSignalsRequest,
   GetSignalsResponse,
   ActivateSignalRequest,
-  ActivateSignalResponse
-} from '../types/tools.generated';
+  ActivateSignalResponse,
+} from "../types/tools.generated";
 
 /**
  * Type mapping for task names to their response types
@@ -59,7 +59,7 @@ export type AdcpTaskName = keyof TaskResponseTypeMap;
 
 /**
  * Per-agent client that maintains conversation context across calls
- * 
+ *
  * This wrapper provides a persistent conversation context for a single agent,
  * making it easy to have multi-turn conversations and maintain state.
  */
@@ -79,10 +79,15 @@ export class AgentClient {
    *
    * @param payload - Webhook payload from agent
    * @param signature - Optional signature for verification
+   * @param timestamp - Optional Unix timestamp for signature freshness verification
    * @returns Whether webhook was handled successfully
    */
-  async handleWebhook(payload: any, signature?: string): Promise<boolean> {
-    return this.client.handleWebhook(payload, signature);
+  async handleWebhook(
+    payload: any,
+    signature?: string,
+    timestamp?: string | number
+  ): Promise<boolean> {
+    return this.client.handleWebhook(payload, signature, timestamp);
   }
 
   /**
@@ -106,16 +111,15 @@ export class AgentClient {
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<GetProductsResponse>> {
-    const result = await this.client.getProducts(
-      params,
-      inputHandler,
-      { ...options, contextId: this.currentContextId }
-    );
-    
+    const result = await this.client.getProducts(params, inputHandler, {
+      ...options,
+      contextId: this.currentContextId,
+    });
+
     if (result.success) {
       this.currentContextId = result.metadata.taskId;
     }
-    
+
     return result;
   }
 
@@ -127,16 +131,15 @@ export class AgentClient {
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<ListCreativeFormatsResponse>> {
-    const result = await this.client.listCreativeFormats(
-      params,
-      inputHandler,
-      { ...options, contextId: this.currentContextId }
-    );
-    
+    const result = await this.client.listCreativeFormats(params, inputHandler, {
+      ...options,
+      contextId: this.currentContextId,
+    });
+
     if (result.success) {
       this.currentContextId = result.metadata.taskId;
     }
-    
+
     return result;
   }
 
@@ -148,16 +151,15 @@ export class AgentClient {
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<CreateMediaBuyResponse>> {
-    const result = await this.client.createMediaBuy(
-      params,
-      inputHandler,
-      { ...options, contextId: this.currentContextId }
-    );
-    
+    const result = await this.client.createMediaBuy(params, inputHandler, {
+      ...options,
+      contextId: this.currentContextId,
+    });
+
     if (result.success) {
       this.currentContextId = result.metadata.taskId;
     }
-    
+
     return result;
   }
 
@@ -169,16 +171,15 @@ export class AgentClient {
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<UpdateMediaBuyResponse>> {
-    const result = await this.client.updateMediaBuy(
-      params,
-      inputHandler,
-      { ...options, contextId: this.currentContextId }
-    );
-    
+    const result = await this.client.updateMediaBuy(params, inputHandler, {
+      ...options,
+      contextId: this.currentContextId,
+    });
+
     if (result.success) {
       this.currentContextId = result.metadata.taskId;
     }
-    
+
     return result;
   }
 
@@ -190,16 +191,15 @@ export class AgentClient {
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<SyncCreativesResponse>> {
-    const result = await this.client.syncCreatives(
-      params,
-      inputHandler,
-      { ...options, contextId: this.currentContextId }
-    );
-    
+    const result = await this.client.syncCreatives(params, inputHandler, {
+      ...options,
+      contextId: this.currentContextId,
+    });
+
     if (result.success) {
       this.currentContextId = result.metadata.taskId;
     }
-    
+
     return result;
   }
 
@@ -211,16 +211,15 @@ export class AgentClient {
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<ListCreativesResponse>> {
-    const result = await this.client.listCreatives(
-      params,
-      inputHandler,
-      { ...options, contextId: this.currentContextId }
-    );
-    
+    const result = await this.client.listCreatives(params, inputHandler, {
+      ...options,
+      contextId: this.currentContextId,
+    });
+
     if (result.success) {
       this.currentContextId = result.metadata.taskId;
     }
-    
+
     return result;
   }
 
@@ -232,16 +231,15 @@ export class AgentClient {
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<GetMediaBuyDeliveryResponse>> {
-    const result = await this.client.getMediaBuyDelivery(
-      params,
-      inputHandler,
-      { ...options, contextId: this.currentContextId }
-    );
-    
+    const result = await this.client.getMediaBuyDelivery(params, inputHandler, {
+      ...options,
+      contextId: this.currentContextId,
+    });
+
     if (result.success) {
       this.currentContextId = result.metadata.taskId;
     }
-    
+
     return result;
   }
 
@@ -258,11 +256,11 @@ export class AgentClient {
       inputHandler,
       { ...options, contextId: this.currentContextId }
     );
-    
+
     if (result.success) {
       this.currentContextId = result.metadata.taskId;
     }
-    
+
     return result;
   }
 
@@ -279,11 +277,11 @@ export class AgentClient {
       inputHandler,
       { ...options, contextId: this.currentContextId }
     );
-    
+
     if (result.success) {
       this.currentContextId = result.metadata.taskId;
     }
-    
+
     return result;
   }
 
@@ -297,16 +295,15 @@ export class AgentClient {
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<GetSignalsResponse>> {
-    const result = await this.client.getSignals(
-      params,
-      inputHandler,
-      { ...options, contextId: this.currentContextId }
-    );
-    
+    const result = await this.client.getSignals(params, inputHandler, {
+      ...options,
+      contextId: this.currentContextId,
+    });
+
     if (result.success) {
       this.currentContextId = result.metadata.taskId;
     }
-    
+
     return result;
   }
 
@@ -318,16 +315,15 @@ export class AgentClient {
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<ActivateSignalResponse>> {
-    const result = await this.client.activateSignal(
-      params,
-      inputHandler,
-      { ...options, contextId: this.currentContextId }
-    );
-    
+    const result = await this.client.activateSignal(params, inputHandler, {
+      ...options,
+      contextId: this.currentContextId,
+    });
+
     if (result.success) {
       this.currentContextId = result.metadata.taskId;
     }
-    
+
     return result;
   }
 
@@ -335,15 +331,15 @@ export class AgentClient {
 
   /**
    * Continue the conversation with a natural language message
-   * 
+   *
    * @param message - Natural language message to send to the agent
    * @param inputHandler - Handler for any clarification requests
-   * 
+   *
    * @example
    * ```typescript
    * const agent = multiClient.agent('my-agent');
    * await agent.getProducts({ brief: 'Tech products' });
-   * 
+   *
    * // Continue the conversation
    * const refined = await agent.continueConversation(
    *   'Focus only on laptops under $1000'
@@ -356,7 +352,9 @@ export class AgentClient {
     options?: TaskOptions
   ): Promise<TaskResult<T>> {
     if (!this.currentContextId) {
-      throw new Error('No active conversation to continue. Start with a task method first.');
+      throw new Error(
+        "No active conversation to continue. Start with a task method first."
+      );
     }
 
     const result = await this.client.continueConversation<T>(
@@ -432,7 +430,7 @@ export class AgentClient {
   /**
    * Get the agent protocol
    */
-  getProtocol(): 'mcp' | 'a2a' {
+  getProtocol(): "mcp" | "a2a" {
     return this.client.getProtocol();
   }
 
@@ -454,13 +452,13 @@ export class AgentClient {
 
   /**
    * Execute any ADCP task by name with full type safety
-   * 
+   *
    * @example
    * ```typescript
    * // ✅ TYPE-SAFE: Automatic response type inference
    * const result = await agent.executeTask('get_products', params);
    * // result is TaskResult<GetProductsResponse> - no casting needed!
-   * 
+   *
    * // ✅ CUSTOM TYPES: For non-standard tasks
    * const customResult = await agent.executeTask<MyCustomResponse>('custom_task', params);
    * ```
@@ -471,7 +469,7 @@ export class AgentClient {
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<TaskResponseTypeMap[K]>>;
-  
+
   /**
    * Execute any task by name with custom response type
    */
@@ -481,7 +479,7 @@ export class AgentClient {
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<T>>;
-  
+
   async executeTask<T = any>(
     taskName: string,
     params: any,
@@ -540,7 +538,10 @@ export class AgentClient {
   /**
    * Register webhook for task notifications
    */
-  async registerWebhook(webhookUrl: string, taskTypes?: string[]): Promise<void> {
+  async registerWebhook(
+    webhookUrl: string,
+    taskTypes?: string[]
+  ): Promise<void> {
     return this.client.registerWebhook(webhookUrl, taskTypes);
   }
 

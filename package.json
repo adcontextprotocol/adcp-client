@@ -47,6 +47,8 @@
     "sync-version": "tsx scripts/sync-version.ts",
     "validate-schemas": "tsx scripts/validate-schemas.ts",
     "lint": "echo 'Linting not yet configured'",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist/",
     "prepublishOnly": "npm run clean && (test -f src/lib/types/tools.generated.ts || npm run sync-schemas) && (test -f src/lib/types/tools.generated.ts || npm run generate-types) && npm run build:lib && node --test test/lib/adcp-client.test.js test/lib/validation.test.js test/lib/zod-schemas.test.js",
@@ -126,7 +128,8 @@
     "typedoc": "^0.28.13",
     "typedoc-plugin-markdown": "^4.9.0",
     "typescript": "^5.3.0",
-    "zod": "^4.1.12"
+    "zod": "^4.1.12",
+    "prettier": "^3.3.3"
   },
   "engines": {
     "node": ">=18.0.0"

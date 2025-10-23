@@ -4,7 +4,11 @@
 
 ### Patch Changes
 
-- 3f8460b: Fix conditional fetch logic for auth headers to prevent sporadic authentication failures when making parallel requests
+- 3f8460b: Fix conditional fetch logic for auth headers to prevent sporadic authentication failures when making 
+- Align update_media_buy with automatic webhook handling. Removed explicit push_notification_config from request types (update and create).
+  - Protocol client continues to auto-inject push_notification_config for all requests.
+  - Version bump: package 2.3.2, library 2.3.2.
+  - Fix: propagate X-ADCP-Timestamp through `AgentClient.handleWebhook` and server webhook route to enable HMAC verification per spec. Existing `handleWebhook` now accepts `(payload, signature, timestamp)` and the server reads `X-ADCP-Timestamp` and forwards it.
 
 ## 2.3.1
 
