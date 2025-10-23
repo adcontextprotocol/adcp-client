@@ -1,8 +1,8 @@
-import "dotenv/config";
-import Fastify, { FastifyInstance } from "fastify";
-import fastifyStatic from "@fastify/static";
-import fastifyCors from "@fastify/cors";
-import path from "path";
+import 'dotenv/config';
+import Fastify, { FastifyInstance } from 'fastify';
+import fastifyStatic from '@fastify/static';
+import fastifyCors from '@fastify/cors';
+import path from 'path';
 import {
   ADCPMultiAgentClient,
   ConfigurationManager,
@@ -14,7 +14,7 @@ import {
   type FormatID,
   ADCP_STATUS,
   InputRequiredError,
-} from "../lib";
+} from '../lib';
 import type {
   TestRequest,
   ApiResponse,
@@ -26,18 +26,15 @@ import type {
   CreateAdAgentsResponse,
   AgentConfig,
   TestResult,
-} from "../lib/types";
-import { AdAgentsManager } from "./adagents-manager";
+} from '../lib/types';
+import { AdAgentsManager } from './adagents-manager';
 
 // __dirname is available in CommonJS mode
 
 const app: FastifyInstance = Fastify({
   logger: {
-    level: process.env.LOG_LEVEL || "info",
-    transport:
-      process.env.NODE_ENV === "development"
-        ? { target: "pino-pretty" }
-        : undefined,
+    level: process.env.LOG_LEVEL || 'info',
+    transport: process.env.NODE_ENV === 'development' ? { target: 'pino-pretty' } : undefined,
   },
 });
 
@@ -49,12 +46,12 @@ const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET;
 const WEBHOOK_URL_TEMPLATE = process.env.WEBHOOK_URL_TEMPLATE;
 
 if (!WEBHOOK_URL_TEMPLATE) {
-  console.warn("⚠️  WEBHOOK_URL_TEMPLATE not set - async operations will fail");
-  console.log("💡 Set WEBHOOK_URL_TEMPLATE for distributed async operations:");
+  console.warn('⚠️  WEBHOOK_URL_TEMPLATE not set - async operations will fail');
+  console.log('💡 Set WEBHOOK_URL_TEMPLATE for distributed async operations:');
   console.log(
-    "   WEBHOOK_URL_TEMPLATE=https://myapp.com/webhook/{task_type}/{agent_id}/{operation_id}"
+    '   WEBHOOK_URL_TEMPLATE=https://myapp.com/webhook/{task_type}/{agent_id}/{operation_id}'
   );
-  console.log("   Available macros: {agent_id}, {task_type}, {operation_id}");
+  console.log('   Available macros: {agent_id}, {task_type}, {operation_id}');
 }
 
 // In-memory event storage
@@ -79,7 +76,7 @@ interface CompletedTask {
   taskId: string;
   agentId: string;
   toolName: string;
-  status: "completed" | "failed" | "rejected" | "canceled";
+  status: 'completed' | 'failed' | 'rejected' | 'canceled';
   startTime: string;
   endTime: string;
   duration_ms: number;
@@ -92,7 +89,7 @@ const MAX_COMPLETED_TASKS = 1000;
 
 function archiveCompletedTask(
   task: any,
-  finalStatus: "completed" | "failed" | "rejected" | "canceled"
+  finalStatus: 'completed' | 'failed' | 'rejected' | 'canceled'
 ) {
   const completedTask: CompletedTask = {
     taskId: task.taskId,
@@ -114,7 +111,7 @@ function archiveCompletedTask(
   return completedTask;
 }
 
-function storeEvent(event: Omit<StoredEvent, "id" | "timestamp">) {
+function storeEvent(event: Omit<StoredEvent, 'id' | 'timestamp'>) {
   const storedEvent: StoredEvent = {
     id: `evt_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
     timestamp: new Date().toISOString(),
@@ -151,37 +148,35 @@ const clientConfig: ADCPClientConfig = {
         operation_id: activity.operation_id,
         agent_id: activity.agent_id,
       },
-      "ADCP Activity"
+      'ADCP Activity'
     );
   },
 
   // Status change handlers - called for ALL status changes (completed, failed, needs_input, working, etc)
   handlers: {
     onGetProductsStatusChange: (response, metadata) => {
-      const status = metadata.status || "completed"; // Get actual status from webhook
+      const status = metadata.status || 'completed'; // Get actual status from webhook
       storeEvent({
-        type: "handler_called",
+        type: 'handler_called',
         operation_id: metadata.operation_id,
         agent_id: metadata.agent_id,
-        task_type: "get_products",
+        task_type: 'get_products',
         status,
         payload: response,
         metadata,
       });
       app.log.info(
-        `[${status}] Products: ${response.products?.length || 0} for ${
-          metadata.operation_id
-        }`
+        `[${status}] Products: ${response.products?.length || 0} for ${metadata.operation_id}`
       );
     },
 
     onSyncCreativesStatusChange: (response, metadata) => {
-      const status = metadata.status || "completed";
+      const status = metadata.status || 'completed';
       storeEvent({
-        type: "handler_called",
+        type: 'handler_called',
         operation_id: metadata.operation_id,
         agent_id: metadata.agent_id,
-        task_type: "sync_creatives",
+        task_type: 'sync_creatives',
         status,
         payload: response,
         metadata,
@@ -194,12 +189,12 @@ const clientConfig: ADCPClientConfig = {
     },
 
     onCreateMediaBuyStatusChange: (response, metadata) => {
-      const status = metadata.status || "completed";
+      const status = metadata.status || 'completed';
       storeEvent({
-        type: "handler_called",
+        type: 'handler_called',
         operation_id: metadata.operation_id,
         agent_id: metadata.agent_id,
-        task_type: "create_media_buy",
+        task_type: 'create_media_buy',
         status,
         payload: response,
         metadata,
@@ -211,10 +206,10 @@ const clientConfig: ADCPClientConfig = {
 
     onMediaBuyDeliveryNotification: (notification, metadata) => {
       storeEvent({
-        type: "notification_received",
+        type: 'notification_received',
         operation_id: metadata.operation_id,
         agent_id: metadata.agent_id,
-        task_type: "media_buy_delivery",
+        task_type: 'media_buy_delivery',
         status: metadata.notification_type,
         payload: notification,
         metadata,
@@ -255,18 +250,18 @@ function buildToolArgs(
 
   // Tools that accept brief parameter
   const briefAcceptingTools = [
-    "get_products",
-    "create_media_buy",
-    "update_media_buy",
-    "sync_creatives",
-    "get_media_buy_delivery",
-    "provide_performance_feedback",
-    "get_signals",
-    "activate_signal",
+    'get_products',
+    'create_media_buy',
+    'update_media_buy',
+    'sync_creatives',
+    'get_media_buy_delivery',
+    'provide_performance_feedback',
+    'get_signals',
+    'activate_signal',
   ];
 
   // Tools that accept brand_manifest parameter
-  const brandManifestAcceptingTools = ["get_products", "create_media_buy"];
+  const brandManifestAcceptingTools = ['get_products', 'create_media_buy'];
 
   // Only add parameters that the tool accepts
   if (briefAcceptingTools.includes(toolName) && brief) {
@@ -315,8 +310,7 @@ function adaptTaskResultToLegacyFormat(
     debug_logs: taskResult.debug_logs || [],
     // New async fields
     status: taskResult.status,
-    inputRequest:
-      taskResult.status === "deferred" ? taskResult.deferred : undefined,
+    inputRequest: taskResult.status === 'deferred' ? taskResult.deferred : undefined,
     continuation: taskResult.deferred || taskResult.submitted,
     taskId: taskResult.submitted?.taskId,
     webhookUrl: taskResult.submitted?.webhookUrl,
@@ -353,37 +347,37 @@ async function executeTaskOnAgent(
     let result: TaskResult<any>;
 
     switch (toolName) {
-      case "get_products":
+      case 'get_products':
         result = await client.getProducts(args, handler);
         break;
-      case "list_creative_formats":
+      case 'list_creative_formats':
         result = await client.listCreativeFormats(args, handler);
         break;
-      case "create_media_buy":
+      case 'create_media_buy':
         result = await client.createMediaBuy(args, handler);
         break;
-      case "update_media_buy":
+      case 'update_media_buy':
         result = await client.updateMediaBuy(args, handler);
         break;
-      case "sync_creatives":
+      case 'sync_creatives':
         result = await client.syncCreatives(args, handler);
         break;
-      case "list_creatives":
+      case 'list_creatives':
         result = await client.listCreatives(args, handler);
         break;
-      case "get_media_buy_delivery":
+      case 'get_media_buy_delivery':
         result = await client.getMediaBuyDelivery(args, handler);
         break;
-      case "list_authorized_properties":
+      case 'list_authorized_properties':
         result = await client.listAuthorizedProperties(args, handler);
         break;
-      case "provide_performance_feedback":
+      case 'provide_performance_feedback':
         result = await client.providePerformanceFeedback(args, handler);
         break;
-      case "get_signals":
+      case 'get_signals':
         result = await client.getSignals(args, handler);
         break;
-      case "activate_signal":
+      case 'activate_signal':
         result = await client.activateSignal(args, handler);
         break;
       default:
@@ -391,7 +385,7 @@ async function executeTaskOnAgent(
     }
 
     // Store active task if it's deferred or submitted
-    if (result.status === "deferred" || result.status === "submitted") {
+    if (result.status === 'deferred' || result.status === 'submitted') {
       const taskId = result.submitted?.taskId || `deferred-${Date.now()}`;
       activeTasks.set(taskId, {
         taskId,
@@ -405,21 +399,21 @@ async function executeTaskOnAgent(
 
     return adaptTaskResultToLegacyFormat(result as TaskResult<any>, agentId);
   } catch (error) {
-    app.log.error({ error }, "Error executing task");
+    app.log.error({ error }, 'Error executing task');
 
     // Handle InputRequiredError specifically
     if (error instanceof InputRequiredError) {
       return adaptTaskResultToLegacyFormat(
         {
           success: false,
-          status: "input-required",
-          error: "Input required but no handler provided",
+          status: 'input-required',
+          error: 'Input required but no handler provided',
           metadata: {
             responseTimeMs: 0,
-            taskId: "",
-            taskName: "",
-            agent: { id: agentId, name: "", protocol: "mcp" as const },
-            timestamp: "",
+            taskId: '',
+            taskName: '',
+            agent: { id: agentId, name: '', protocol: 'mcp' as const },
+            timestamp: '',
             clarificationRounds: 0,
           },
           debugLogs: [],
@@ -430,9 +424,7 @@ async function executeTaskOnAgent(
 
     return {
       agent_id: agentId,
-      agent_name:
-        adcpClient.getAgentConfigs().find((a) => a.id === agentId)?.name ||
-        agentId,
+      agent_name: adcpClient.getAgentConfigs().find((a) => a.id === agentId)?.name || agentId,
       success: false,
       response_time_ms: 0,
       data: undefined,
@@ -460,83 +452,75 @@ async function executeTaskOnMultipleAgents(
 // Register plugins
 app.register(fastifyCors, {
   origin:
-    process.env.NODE_ENV === "development"
+    process.env.NODE_ENV === 'development'
       ? true
-      : [
-          "https://testing.adcontextprotocol.org",
-          "https://adcp-testing.fly.dev",
-        ],
-  methods: ["GET", "POST", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization"],
+      : ['https://testing.adcontextprotocol.org', 'https://adcp-testing.fly.dev'],
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: false,
 });
 
 // Configure static file serving - different paths for dev vs production
 const publicPath =
-  process.env.NODE_ENV === "development"
-    ? path.join(__dirname, "../../src/public") // from src/server/ to src/public/
-    : path.join(__dirname, "../public"); // dist/public for production (go up from dist/server to dist/public)
+  process.env.NODE_ENV === 'development'
+    ? path.join(__dirname, '../../src/public') // from src/server/ to src/public/
+    : path.join(__dirname, '../public'); // dist/public for production (go up from dist/server to dist/public)
 
 console.log(`📁 Static files path: ${publicPath}`);
 
 app.register(fastifyStatic, {
   root: publicPath,
-  prefix: "/",
+  prefix: '/',
 });
 
 // Health check endpoint
-app.get("/health", async () => {
+app.get('/health', async () => {
   return {
-    status: "ok",
+    status: 'ok',
     timestamp: new Date().toISOString(),
-    version: process.env.npm_package_version || "1.0.0",
-    node_env: process.env.NODE_ENV || "development",
+    version: process.env.npm_package_version || '1.0.0',
+    node_env: process.env.NODE_ENV || 'development',
   };
 });
 
 // API Routes
 
 // Get list of available agents
-app.get<{ Reply: ApiResponse<AgentListResponse> }>(
-  "/api/agents",
-  async (request, reply) => {
-    try {
-      const agents = adcpClient.getAgentConfigs();
-      return reply.send({
-        success: true,
-        data: {
-          agents,
-          total: agents.length,
-        },
-        timestamp: new Date().toISOString(),
-      });
-    } catch (error) {
-      app.log.error(
-        "Failed to get agent list: " +
-          (error instanceof Error ? error.message : String(error))
-      );
-      return reply.code(500).send({
-        success: false,
-        error: error instanceof Error ? error.message : "Unknown error",
-        timestamp: new Date().toISOString(),
-      });
-    }
+app.get<{ Reply: ApiResponse<AgentListResponse> }>('/api/agents', async (request, reply) => {
+  try {
+    const agents = adcpClient.getAgentConfigs();
+    return reply.send({
+      success: true,
+      data: {
+        agents,
+        total: agents.length,
+      },
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    app.log.error(
+      'Failed to get agent list: ' + (error instanceof Error ? error.message : String(error))
+    );
+    return reply.code(500).send({
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error',
+      timestamp: new Date().toISOString(),
+    });
   }
-);
+});
 
 // Test multiple agents in parallel
 app.post<{
   Body: TestRequest;
   Reply: ApiResponse<TestResponse>;
-}>("/api/test", async (request, reply) => {
+}>('/api/test', async (request, reply) => {
   try {
-    const { agents, brief, brand_manifest, tool_name } =
-      request.body as TestRequest;
+    const { agents, brief, brand_manifest, tool_name } = request.body as TestRequest;
 
     if (!agents || agents.length === 0) {
       return reply.code(400).send({
         success: false,
-        error: "At least one agent must be provided",
+        error: 'At least one agent must be provided',
         timestamp: new Date().toISOString(),
       });
     }
@@ -544,29 +528,24 @@ app.post<{
     if (!brief || brief.trim().length === 0) {
       return reply.code(400).send({
         success: false,
-        error: "Brief is required",
+        error: 'Brief is required',
         timestamp: new Date().toISOString(),
       });
     }
 
-    app.log.info(
-      `Testing ${agents.length} agents with brief: "${brief.substring(
-        0,
-        100
-      )}..."`
-    );
+    app.log.info(`Testing ${agents.length} agents with brief: "${brief.substring(0, 100)}..."`);
 
     const startTime = Date.now();
     const agentIds = agents.map((a: AgentConfig) => a.id);
     const args = buildToolArgs(
-      tool_name || "get_products",
+      tool_name || 'get_products',
       brief,
       brand_manifest,
       tool_name ? { tool_name } : {}
     );
     const results = await Promise.all(
       agentIds.map((agentId: string) =>
-        executeTaskOnAgent(agentId, tool_name || "get_products", args)
+        executeTaskOnAgent(agentId, tool_name || 'get_products', args)
       )
     );
     const totalTime = Date.now() - startTime;
@@ -575,8 +554,7 @@ app.post<{
     const failed = results.length - successful;
     const avgResponseTime =
       results.length > 0
-        ? results.reduce((sum: number, r: any) => sum + r.response_time_ms, 0) /
-          results.length
+        ? results.reduce((sum: number, r: any) => sum + r.response_time_ms, 0) / results.length
         : 0;
 
     return reply.send({
@@ -595,12 +573,11 @@ app.post<{
     });
   } catch (error) {
     app.log.error(
-      "Failed to test agents: " +
-        (error instanceof Error ? error.message : String(error))
+      'Failed to test agents: ' + (error instanceof Error ? error.message : String(error))
     );
     return reply.code(500).send({
       success: false,
-      error: error instanceof Error ? error.message : "Unknown error",
+      error: error instanceof Error ? error.message : 'Unknown error',
       timestamp: new Date().toISOString(),
     });
   }
@@ -611,7 +588,7 @@ app.post<{
   Params: { agentId: string };
   Body: { brief: string; brand_manifest?: string; tool_name?: string };
   Reply: ApiResponse<TestResponse>;
-}>("/api/agent/:agentId/test", async (request, reply) => {
+}>('/api/agent/:agentId/test', async (request, reply) => {
   try {
     const { agentId } = request.params;
     const { brief, brand_manifest, tool_name } = request.body;
@@ -619,28 +596,15 @@ app.post<{
     if (!brief || brief.trim().length === 0) {
       return reply.code(400).send({
         success: false,
-        error: "Brief is required",
+        error: 'Brief is required',
         timestamp: new Date().toISOString(),
       });
     }
 
-    app.log.info(
-      `Testing single agent ${agentId} with brief: "${brief.substring(
-        0,
-        100
-      )}..."`
-    );
+    app.log.info(`Testing single agent ${agentId} with brief: "${brief.substring(0, 100)}..."`);
 
-    const args = buildToolArgs(
-      tool_name || "get_products",
-      brief,
-      brand_manifest
-    );
-    const result = await executeTaskOnAgent(
-      agentId,
-      tool_name || "get_products",
-      args
-    );
+    const args = buildToolArgs(tool_name || 'get_products', brief, brand_manifest);
+    const result = await executeTaskOnAgent(agentId, tool_name || 'get_products', args);
 
     return reply.send({
       success: true,
@@ -658,19 +622,18 @@ app.post<{
     });
   } catch (error) {
     app.log.error(
-      "Failed to test single agent: " +
-        (error instanceof Error ? error.message : String(error))
+      'Failed to test single agent: ' + (error instanceof Error ? error.message : String(error))
     );
     return reply.code(500).send({
       success: false,
-      error: error instanceof Error ? error.message : "Unknown error",
+      error: error instanceof Error ? error.message : 'Unknown error',
       timestamp: new Date().toISOString(),
     });
   }
 });
 
 // Additional endpoints for main page (index.html)
-app.get("/api/sales/agents", async (request, reply) => {
+app.get('/api/sales/agents', async (request, reply) => {
   // Same as /api/agents but with different path for main page
   try {
     const agents = adcpClient.getAgentConfigs();
@@ -684,12 +647,11 @@ app.get("/api/sales/agents", async (request, reply) => {
     });
   } catch (error) {
     app.log.error(
-      "Failed to get sales agents: " +
-        (error instanceof Error ? error.message : String(error))
+      'Failed to get sales agents: ' + (error instanceof Error ? error.message : String(error))
     );
     return reply.code(500).send({
       success: false,
-      error: error instanceof Error ? error.message : "Unknown error",
+      error: error instanceof Error ? error.message : 'Unknown error',
       timestamp: new Date().toISOString(),
     });
   }
@@ -702,16 +664,12 @@ function extractResponseData(result: any): any {
   // 1. Check if this is an A2A response with result.artifacts
   if (result?.artifacts && Array.isArray(result.artifacts)) {
     const artifacts = result.artifacts;
-    if (
-      artifacts.length > 0 &&
-      artifacts[0].parts &&
-      artifacts[0].parts.length > 0
-    ) {
+    if (artifacts.length > 0 && artifacts[0].parts && artifacts[0].parts.length > 0) {
       const data = artifacts[0].parts[0].data;
       return Object.assign({}, result, {
         products: data?.products || [],
         formats: data?.formats || [],
-        message: data?.message || "Response processed",
+        message: data?.message || 'Response processed',
       });
     }
   }
@@ -719,36 +677,25 @@ function extractResponseData(result: any): any {
   // 2. Check if this is nested under result.result.artifacts (double nesting)
   if (result?.result?.artifacts && Array.isArray(result.result.artifacts)) {
     const artifacts = result.result.artifacts;
-    if (
-      artifacts.length > 0 &&
-      artifacts[0].parts &&
-      artifacts[0].parts.length > 0
-    ) {
+    if (artifacts.length > 0 && artifacts[0].parts && artifacts[0].parts.length > 0) {
       const data = artifacts[0].parts[0].data;
       return Object.assign({}, result, {
         products: data?.products || [],
         formats: data?.formats || [],
-        message: data?.message || "Response processed",
+        message: data?.message || 'Response processed',
       });
     }
   }
 
   // 3. Check if this is nested under result.data.result.artifacts
-  if (
-    result?.data?.result?.artifacts &&
-    Array.isArray(result.data.result.artifacts)
-  ) {
+  if (result?.data?.result?.artifacts && Array.isArray(result.data.result.artifacts)) {
     const artifacts = result.data.result.artifacts;
-    if (
-      artifacts.length > 0 &&
-      artifacts[0].parts &&
-      artifacts[0].parts.length > 0
-    ) {
+    if (artifacts.length > 0 && artifacts[0].parts && artifacts[0].parts.length > 0) {
       const data = artifacts[0].parts[0].data;
       return Object.assign({}, result, {
         products: data?.products || [],
         formats: data?.formats || [],
-        message: data?.message || "Response processed",
+        message: data?.message || 'Response processed',
       });
     }
   }
@@ -763,7 +710,7 @@ function extractResponseData(result: any): any {
     return Object.assign({}, result, {
       products: result.data.products || [],
       formats: result.data.formats || [],
-      message: result.data.message || "Response processed",
+      message: result.data.message || 'Response processed',
     });
   }
 
@@ -772,7 +719,7 @@ function extractResponseData(result: any): any {
     // MCP responses may have the data directly in toolResponse
     if (result.toolResponse?.products || result.toolResponse?.formats) {
       return Object.assign({}, result.toolResponse, {
-        message: result.toolResponse.message || "MCP response processed",
+        message: result.toolResponse.message || 'MCP response processed',
       });
     }
     // Or nested under toolResponse.result
@@ -780,7 +727,7 @@ function extractResponseData(result: any): any {
       return Object.assign({}, result.toolResponse.result, {
         products: result.toolResponse.result.products || [],
         formats: result.toolResponse.result.formats || [],
-        message: result.toolResponse.result.message || "MCP response processed",
+        message: result.toolResponse.result.message || 'MCP response processed',
       });
     }
     // Or the toolResponse itself might be the data
@@ -792,14 +739,10 @@ function extractResponseData(result: any): any {
     if (result.structuredContent.products || result.structuredContent.formats) {
       // Extract text content as informational message for user
       let textMessage = `Found ${
-        result.structuredContent.formats?.length ||
-        result.structuredContent.products?.length ||
-        0
+        result.structuredContent.formats?.length || result.structuredContent.products?.length || 0
       } items from agent`;
       if (result.content && Array.isArray(result.content)) {
-        const textContent = result.content.find(
-          (item: any) => item.type === "text"
-        );
+        const textContent = result.content.find((item: any) => item.type === 'text');
         if (textContent?.text) {
           // Use text as message only if it's not a JSON dump
           try {
@@ -809,7 +752,7 @@ function extractResponseData(result: any): any {
             // Not JSON, use as user message
             textMessage =
               textContent.text.length > 200
-                ? textContent.text.substring(0, 200) + "..."
+                ? textContent.text.substring(0, 200) + '...'
                 : textContent.text;
           }
         }
@@ -828,7 +771,7 @@ function extractResponseData(result: any): any {
     const response = {
       products: [],
       formats: [],
-      message: result.note || result.error || "MCP response received",
+      message: result.note || result.error || 'MCP response received',
       error: result.error,
     };
     return response;
@@ -861,7 +804,7 @@ function getAgentClient(agentId: string, agentConfig?: AgentConfig) {
 app.post<{
   Params: { agentId: string };
   Body: { agentConfig?: AgentConfig; [key: string]: any };
-}>("/api/agents/:agentId/get-products", async (request, reply) => {
+}>('/api/agents/:agentId/get-products', async (request, reply) => {
   try {
     const { agentId } = request.params;
     const body = request.body as any;
@@ -872,10 +815,7 @@ app.post<{
     delete params.agentConfig;
 
     const client = getAgentClient(agentId, agentConfig);
-    const result = await client.getProducts(
-      params,
-      createDefaultInputHandler()
-    );
+    const result = await client.getProducts(params, createDefaultInputHandler());
 
     return reply.send({
       success: result.success,
@@ -888,10 +828,7 @@ app.post<{
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     const errorStack = error instanceof Error ? error.stack : undefined;
-    app.log.error(
-      { error: errorMessage, stack: errorStack },
-      "Get products error"
-    );
+    app.log.error({ error: errorMessage, stack: errorStack }, 'Get products error');
     return reply.code(500).send({
       success: false,
       error: errorMessage,
@@ -904,7 +841,7 @@ app.post<{
 app.post<{
   Params: { agentId: string };
   Body: { agentConfig?: AgentConfig; [key: string]: any };
-}>("/api/agents/:agentId/list-creative-formats", async (request, reply) => {
+}>('/api/agents/:agentId/list-creative-formats', async (request, reply) => {
   try {
     const { agentId } = request.params;
     const body = request.body as any;
@@ -915,10 +852,7 @@ app.post<{
     delete params.agentConfig;
 
     const client = getAgentClient(agentId, agentConfig);
-    const result = await client.listCreativeFormats(
-      params,
-      createDefaultInputHandler()
-    );
+    const result = await client.listCreativeFormats(params, createDefaultInputHandler());
 
     return reply.send({
       success: result.success,
@@ -929,10 +863,10 @@ app.post<{
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
-    app.log.error({ error }, "List creative formats error");
+    app.log.error({ error }, 'List creative formats error');
     return reply.code(500).send({
       success: false,
-      error: error instanceof Error ? error.message : "Unknown error",
+      error: error instanceof Error ? error.message : 'Unknown error',
     });
   }
 });
@@ -941,7 +875,7 @@ app.post<{
 app.post<{
   Params: { agentId: string };
   Body: { agentConfig?: AgentConfig; [key: string]: any };
-}>("/api/agents/:agentId/create-media-buy", async (request, reply) => {
+}>('/api/agents/:agentId/create-media-buy', async (request, reply) => {
   try {
     const { agentId } = request.params;
     const body = request.body as any;
@@ -951,10 +885,7 @@ app.post<{
     delete params.agentConfig;
 
     const client = getAgentClient(agentId, agentConfig);
-    const result = await client.createMediaBuy(
-      params,
-      createDefaultInputHandler()
-    );
+    const result = await client.createMediaBuy(params, createDefaultInputHandler());
 
     return reply.send({
       success: result.success,
@@ -965,10 +896,10 @@ app.post<{
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
-    app.log.error({ error }, "Create media buy error");
+    app.log.error({ error }, 'Create media buy error');
     return reply.code(500).send({
       success: false,
-      error: error instanceof Error ? error.message : "Unknown error",
+      error: error instanceof Error ? error.message : 'Unknown error',
     });
   }
 });
@@ -977,7 +908,7 @@ app.post<{
 app.post<{
   Params: { agentId: string };
   Body: { agentConfig?: AgentConfig; [key: string]: any };
-}>("/api/agents/:agentId/update-media-buy", async (request, reply) => {
+}>('/api/agents/:agentId/update-media-buy', async (request, reply) => {
   try {
     const { agentId } = request.params;
     const body = request.body as any;
@@ -987,10 +918,7 @@ app.post<{
     delete params.agentConfig;
 
     const client = getAgentClient(agentId, agentConfig);
-    const result = await client.updateMediaBuy(
-      params,
-      createDefaultInputHandler()
-    );
+    const result = await client.updateMediaBuy(params, createDefaultInputHandler());
 
     return reply.send({
       success: result.success,
@@ -1001,10 +929,10 @@ app.post<{
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
-    app.log.error({ error }, "Update media buy error");
+    app.log.error({ error }, 'Update media buy error');
     return reply.code(500).send({
       success: false,
-      error: error instanceof Error ? error.message : "Unknown error",
+      error: error instanceof Error ? error.message : 'Unknown error',
     });
   }
 });
@@ -1013,7 +941,7 @@ app.post<{
 app.post<{
   Params: { agentId: string };
   Body: { agentConfig?: AgentConfig; [key: string]: any };
-}>("/api/agents/:agentId/sync-creatives", async (request, reply) => {
+}>('/api/agents/:agentId/sync-creatives', async (request, reply) => {
   try {
     const { agentId } = request.params;
     const body = request.body as any;
@@ -1023,10 +951,7 @@ app.post<{
     delete params.agentConfig;
 
     const client = getAgentClient(agentId, agentConfig);
-    const result = await client.syncCreatives(
-      params,
-      createDefaultInputHandler()
-    );
+    const result = await client.syncCreatives(params, createDefaultInputHandler());
 
     return reply.send({
       success: result.success,
@@ -1037,10 +962,10 @@ app.post<{
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
-    app.log.error({ error }, "Sync creatives error");
+    app.log.error({ error }, 'Sync creatives error');
     return reply.code(500).send({
       success: false,
-      error: error instanceof Error ? error.message : "Unknown error",
+      error: error instanceof Error ? error.message : 'Unknown error',
     });
   }
 });
@@ -1049,7 +974,7 @@ app.post<{
 app.post<{
   Params: { agentId: string };
   Body: { agentConfig?: AgentConfig; [key: string]: any };
-}>("/api/agents/:agentId/list-creatives", async (request, reply) => {
+}>('/api/agents/:agentId/list-creatives', async (request, reply) => {
   try {
     const { agentId } = request.params;
     const body = request.body as any;
@@ -1059,10 +984,7 @@ app.post<{
     delete params.agentConfig;
 
     const client = getAgentClient(agentId, agentConfig);
-    const result = await client.listCreatives(
-      params,
-      createDefaultInputHandler()
-    );
+    const result = await client.listCreatives(params, createDefaultInputHandler());
 
     return reply.send({
       success: result.success,
@@ -1073,10 +995,10 @@ app.post<{
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
-    app.log.error({ error }, "List creatives error");
+    app.log.error({ error }, 'List creatives error');
     return reply.code(500).send({
       success: false,
-      error: error instanceof Error ? error.message : "Unknown error",
+      error: error instanceof Error ? error.message : 'Unknown error',
     });
   }
 });
@@ -1085,7 +1007,7 @@ app.post<{
 app.post<{
   Params: { agentId: string };
   Body: { agentConfig?: AgentConfig; [key: string]: any };
-}>("/api/agents/:agentId/get-media-buy-delivery", async (request, reply) => {
+}>('/api/agents/:agentId/get-media-buy-delivery', async (request, reply) => {
   try {
     const { agentId } = request.params;
     const body = request.body as any;
@@ -1095,10 +1017,7 @@ app.post<{
     delete params.agentConfig;
 
     const client = getAgentClient(agentId, agentConfig);
-    const result = await client.getMediaBuyDelivery(
-      params,
-      createDefaultInputHandler()
-    );
+    const result = await client.getMediaBuyDelivery(params, createDefaultInputHandler());
 
     return reply.send({
       success: result.success,
@@ -1109,10 +1028,10 @@ app.post<{
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
-    app.log.error({ error }, "Get media buy delivery error");
+    app.log.error({ error }, 'Get media buy delivery error');
     return reply.code(500).send({
       success: false,
-      error: error instanceof Error ? error.message : "Unknown error",
+      error: error instanceof Error ? error.message : 'Unknown error',
     });
   }
 });
@@ -1125,9 +1044,9 @@ app.post<{
   Body: {
     tool: string;
     params: any;
-    inputHandler?: "defer" | "approve" | "custom";
+    inputHandler?: 'defer' | 'approve' | 'custom';
   };
-}>("/api/agents/:agentId/execute", async (request, reply) => {
+}>('/api/agents/:agentId/execute', async (request, reply) => {
   try {
     const { agentId } = request.params;
     const { tool, params, inputHandler } = request.body;
@@ -1146,24 +1065,19 @@ app.post<{
     if (!tool) {
       return reply.code(400).send({
         success: false,
-        error: "Missing required parameter: tool",
+        error: 'Missing required parameter: tool',
       });
     }
 
     // Create input handler based on request
     let handler: InputHandler | undefined;
-    if (inputHandler === "approve") {
+    if (inputHandler === 'approve') {
       handler = async () => ({ approve: true });
-    } else if (inputHandler === "defer") {
+    } else if (inputHandler === 'defer') {
       handler = async () => ({ defer: true });
     } // else use default defer handler
 
-    const result = await executeTaskOnAgent(
-      agentId,
-      tool,
-      params || {},
-      handler
-    );
+    const result = await executeTaskOnAgent(agentId, tool, params || {}, handler);
 
     return reply.send({
       success: result.success,
@@ -1177,16 +1091,16 @@ app.post<{
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
-    app.log.error({ error }, "Execute task error");
+    app.log.error({ error }, 'Execute task error');
     return reply.code(500).send({
       success: false,
-      error: error instanceof Error ? error.message : "Unknown error",
+      error: error instanceof Error ? error.message : 'Unknown error',
     });
   }
 });
 
 // Get task status
-app.get("/api/tasks/:taskId", async (request, reply) => {
+app.get('/api/tasks/:taskId', async (request, reply) => {
   try {
     const { taskId } = request.params as { taskId: string };
 
@@ -1201,12 +1115,12 @@ app.get("/api/tasks/:taskId", async (request, reply) => {
     // For submitted tasks, we'd normally poll the actual task status
     // For this demo, we'll simulate some task progression
     let status = task.status;
-    if (task.status === "submitted") {
+    if (task.status === 'submitted') {
       const elapsedMs = Date.now() - task.startTime.getTime();
       if (elapsedMs > 10000) {
         // After 10 seconds, mark as completed
-        status = "completed";
-        archiveCompletedTask(task, "completed"); // Archive before deleting
+        status = 'completed';
+        archiveCompletedTask(task, 'completed'); // Archive before deleting
         activeTasks.delete(taskId); // Clean up completed task
       }
     }
@@ -1221,22 +1135,22 @@ app.get("/api/tasks/:taskId", async (request, reply) => {
       continuation: task.continuation,
     });
   } catch (error) {
-    app.log.error({ error }, "Get task status error");
+    app.log.error({ error }, 'Get task status error');
     return reply.code(500).send({
       success: false,
-      error: error instanceof Error ? error.message : "Unknown error",
+      error: error instanceof Error ? error.message : 'Unknown error',
     });
   }
 });
 
 // Continue deferred task with input
-app.post("/api/tasks/:taskId/continue", async (request, reply) => {
+app.post('/api/tasks/:taskId/continue', async (request, reply) => {
   try {
     const { taskId } = request.params as { taskId: string };
     const { input } = request.body as { input: any };
 
     const task = activeTasks.get(taskId);
-    if (!task || task.status !== "deferred" || !task.continuation) {
+    if (!task || task.status !== 'deferred' || !task.continuation) {
       return reply.code(404).send({
         success: false,
         error: `Deferred task with ID ${taskId} not found`,
@@ -1252,21 +1166,21 @@ app.post("/api/tasks/:taskId/continue", async (request, reply) => {
     });
 
     // Archive and clean up the task
-    archiveCompletedTask(task, result.success ? "completed" : "failed");
+    archiveCompletedTask(task, result.success ? 'completed' : 'failed');
     activeTasks.delete(taskId);
 
     return result; // executeTaskOnAgent already returns the adapted format
   } catch (error) {
-    app.log.error({ error }, "Continue task error");
+    app.log.error({ error }, 'Continue task error');
     return reply.code(500).send({
       success: false,
-      error: error instanceof Error ? error.message : "Unknown error",
+      error: error instanceof Error ? error.message : 'Unknown error',
     });
   }
 });
 
 // Get conversation history
-app.get("/api/agents/:agentId/conversation", async (request, reply) => {
+app.get('/api/agents/:agentId/conversation', async (request, reply) => {
   try {
     const { agentId } = request.params as { agentId: string };
 
@@ -1281,16 +1195,16 @@ app.get("/api/agents/:agentId/conversation", async (request, reply) => {
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
-    app.log.error({ error }, "Get conversation error");
+    app.log.error({ error }, 'Get conversation error');
     return reply.code(500).send({
       success: false,
-      error: error instanceof Error ? error.message : "Unknown error",
+      error: error instanceof Error ? error.message : 'Unknown error',
     });
   }
 });
 
 // List active tasks
-app.get("/api/tasks", async (request, reply) => {
+app.get('/api/tasks', async (request, reply) => {
   try {
     const tasks = Array.from(activeTasks.values()).map((task) => ({
       taskId: task.taskId,
@@ -1307,10 +1221,10 @@ app.get("/api/tasks", async (request, reply) => {
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
-    app.log.error({ error }, "List tasks error");
+    app.log.error({ error }, 'List tasks error');
     return reply.code(500).send({
       success: false,
-      error: error instanceof Error ? error.message : "Unknown error",
+      error: error instanceof Error ? error.message : 'Unknown error',
     });
   }
 });
@@ -1339,17 +1253,17 @@ const taskNotificationCallbacks = new Map<string, (task: any) => void>();
 app.post<{
   Body: {
     agentUrl: string;
-    protocol?: "mcp" | "a2a";
+    protocol?: 'mcp' | 'a2a';
     params?: Record<string, any>;
   };
-}>("/api/creative/list-formats", async (request, reply) => {
+}>('/api/creative/list-formats', async (request, reply) => {
   try {
-    const { agentUrl, protocol = "mcp", params = {} } = request.body;
+    const { agentUrl, protocol = 'mcp', params = {} } = request.body;
 
     if (!agentUrl) {
       return reply.code(400).send({
         success: false,
-        error: "agentUrl is required",
+        error: 'agentUrl is required',
       });
     }
 
@@ -1373,13 +1287,9 @@ app.post<{
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
-    const errorMessage =
-      error instanceof Error ? error.message : "Unknown error";
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     const errorStack = error instanceof Error ? error.stack : undefined;
-    app.log.error(
-      { error: errorMessage, stack: errorStack },
-      "List creative formats error"
-    );
+    app.log.error({ error: errorMessage, stack: errorStack }, 'List creative formats error');
     return reply.code(500).send({
       success: false,
       error: errorMessage,
@@ -1393,18 +1303,18 @@ app.post<{
 app.post<{
   Body: {
     agentUrl: string;
-    protocol?: "mcp" | "a2a";
+    protocol?: 'mcp' | 'a2a';
     format_id: FormatID;
     assets: Record<string, any>;
   };
-}>("/api/creative/build-creative", async (request, reply) => {
+}>('/api/creative/build-creative', async (request, reply) => {
   try {
-    const { agentUrl, protocol = "mcp", format_id, assets } = request.body;
+    const { agentUrl, protocol = 'mcp', format_id, assets } = request.body;
 
     if (!agentUrl || !format_id) {
       return reply.code(400).send({
         success: false,
-        error: "agentUrl and format_id are required",
+        error: 'agentUrl and format_id are required',
       });
     }
 
@@ -1419,7 +1329,7 @@ app.post<{
     // Per AdCP v2.1.0 schema: target_format_id at top level, format_id in creative_manifest
     const adcpClient = creativeClient.getClient();
     const result = await adcpClient.executeTask(
-      "build_creative",
+      'build_creative',
       {
         target_format_id: format_id,
         creative_manifest: {
@@ -1439,13 +1349,9 @@ app.post<{
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
-    const errorMessage =
-      error instanceof Error ? error.message : "Unknown error";
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     const errorStack = error instanceof Error ? error.stack : undefined;
-    app.log.error(
-      { error: errorMessage, stack: errorStack },
-      "Build creative error"
-    );
+    app.log.error({ error: errorMessage, stack: errorStack }, 'Build creative error');
     return reply.code(500).send({
       success: false,
       error: errorMessage,
@@ -1459,18 +1365,18 @@ app.post<{
 app.post<{
   Body: {
     agentUrl: string;
-    protocol?: "mcp" | "a2a";
+    protocol?: 'mcp' | 'a2a';
     format_id: FormatID;
     assets: Record<string, any>;
   };
-}>("/api/creative/preview-creative", async (request, reply) => {
+}>('/api/creative/preview-creative', async (request, reply) => {
   try {
-    const { agentUrl, protocol = "mcp", format_id, assets } = request.body;
+    const { agentUrl, protocol = 'mcp', format_id, assets } = request.body;
 
     if (!agentUrl || !format_id) {
       return reply.code(400).send({
         success: false,
-        error: "agentUrl and format_id are required",
+        error: 'agentUrl and format_id are required',
       });
     }
 
@@ -1485,7 +1391,7 @@ app.post<{
     // Per AdCP v2.1.0 schema: format_id at top level and in creative_manifest
     const adcpClient = creativeClient.getClient();
     const result = await adcpClient.executeTask(
-      "preview_creative",
+      'preview_creative',
       {
         format_id,
         creative_manifest: {
@@ -1505,13 +1411,9 @@ app.post<{
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
-    const errorMessage =
-      error instanceof Error ? error.message : "Unknown error";
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     const errorStack = error instanceof Error ? error.stack : undefined;
-    app.log.error(
-      { error: errorMessage, stack: errorStack },
-      "Preview creative error"
-    );
+    app.log.error({ error: errorMessage, stack: errorStack }, 'Preview creative error');
     return reply.code(500).send({
       success: false,
       error: errorMessage,
@@ -1530,14 +1432,14 @@ app.post<{
     webhookUrl: string;
     taskTypes?: string[];
   };
-}>("/api/webhooks/register", async (request, reply) => {
+}>('/api/webhooks/register', async (request, reply) => {
   try {
     const { agentId, webhookUrl, taskTypes } = request.body;
 
     if (!agentId || !webhookUrl) {
       return reply.code(400).send({
         success: false,
-        error: "agentId and webhookUrl are required",
+        error: 'agentId and webhookUrl are required',
       });
     }
 
@@ -1554,13 +1456,13 @@ app.post<{
     return reply.send({
       success: true,
       registrationId,
-      message: "Webhook registered successfully",
+      message: 'Webhook registered successfully',
     });
   } catch (error) {
-    app.log.error({ error }, "Register webhook error");
+    app.log.error({ error }, 'Register webhook error');
     return reply.code(500).send({
       success: false,
-      error: error instanceof Error ? error.message : "Unknown error",
+      error: error instanceof Error ? error.message : 'Unknown error',
     });
   }
 });
@@ -1571,24 +1473,24 @@ app.post<{
 app.post<{
   Params: { token: string };
   Body: any;
-}>("/api/webhooks/callback/:token", async (request, reply) => {
+}>('/api/webhooks/callback/:token', async (request, reply) => {
   try {
     const { token } = request.params;
     const payload = request.body as any;
 
-    app.log.info({ token, payload }, "Webhook callback received");
+    app.log.info({ token, payload }, 'Webhook callback received');
 
     // Find the task that this webhook refers to
     const task = activeTasks.get(token) || activeTasks.get(payload.taskId);
 
     if (task) {
       // Update task status
-      task.status = payload.status || "completed";
+      task.status = payload.status || 'completed';
       if (payload.result) {
         task.continuation = { result: payload.result };
       }
       if (payload.error) {
-        task.status = "failed";
+        task.status = 'failed';
         task.continuation = { error: payload.error };
       }
 
@@ -1605,7 +1507,7 @@ app.post<{
             updatedAt: new Date().toISOString(),
           });
         } catch (err) {
-          app.log.error({ err }, "Task notification callback error");
+          app.log.error({ err }, 'Task notification callback error');
         }
       });
 
@@ -1614,13 +1516,13 @@ app.post<{
 
     return reply.send({
       success: true,
-      message: "Webhook processed successfully",
+      message: 'Webhook processed successfully',
     });
   } catch (error) {
-    app.log.error({ error }, "Webhook callback error");
+    app.log.error({ error }, 'Webhook callback error');
     return reply.code(500).send({
       success: false,
-      error: error instanceof Error ? error.message : "Unknown error",
+      error: error instanceof Error ? error.message : 'Unknown error',
     });
   }
 });
@@ -1630,7 +1532,7 @@ app.post<{
  */
 app.delete<{
   Params: { registrationId: string };
-}>("/api/webhooks/:registrationId", async (request, reply) => {
+}>('/api/webhooks/:registrationId', async (request, reply) => {
   try {
     const { registrationId } = request.params;
 
@@ -1640,19 +1542,19 @@ app.delete<{
       app.log.info(`Webhook unregistered: ${registrationId}`);
       return reply.send({
         success: true,
-        message: "Webhook unregistered successfully",
+        message: 'Webhook unregistered successfully',
       });
     } else {
       return reply.code(404).send({
         success: false,
-        error: "Webhook registration not found",
+        error: 'Webhook registration not found',
       });
     }
   } catch (error) {
-    app.log.error({ error }, "Unregister webhook error");
+    app.log.error({ error }, 'Unregister webhook error');
     return reply.code(500).send({
       success: false,
-      error: error instanceof Error ? error.message : "Unknown error",
+      error: error instanceof Error ? error.message : 'Unknown error',
     });
   }
 });
@@ -1660,15 +1562,13 @@ app.delete<{
 /**
  * List webhook registrations
  */
-app.get("/api/webhooks", async (request, reply) => {
+app.get('/api/webhooks', async (request, reply) => {
   try {
-    const registrations = Array.from(webhookRegistrations.entries()).map(
-      ([id, reg]) => ({
-        id,
-        ...reg,
-        createdAt: reg.createdAt.toISOString(),
-      })
-    );
+    const registrations = Array.from(webhookRegistrations.entries()).map(([id, reg]) => ({
+      id,
+      ...reg,
+      createdAt: reg.createdAt.toISOString(),
+    }));
 
     return reply.send({
       success: true,
@@ -1676,10 +1576,10 @@ app.get("/api/webhooks", async (request, reply) => {
       total: registrations.length,
     });
   } catch (error) {
-    app.log.error({ error }, "List webhooks error");
+    app.log.error({ error }, 'List webhooks error');
     return reply.code(500).send({
       success: false,
-      error: error instanceof Error ? error.message : "Unknown error",
+      error: error instanceof Error ? error.message : 'Unknown error',
     });
   }
 });
@@ -1693,7 +1593,7 @@ app.get("/api/webhooks", async (request, reply) => {
  *
  * Security: Requires either prefix (>=16 chars) or exact operation_id to prevent enumeration
  */
-app.get("/api/events", async (request, reply) => {
+app.get('/api/events', async (request, reply) => {
   try {
     const { prefix, operation_id, limit } = request.query as {
       prefix?: string;
@@ -1705,21 +1605,17 @@ app.get("/api/events", async (request, reply) => {
 
     if (operation_id) {
       // Exact match
-      filteredEvents = eventStore.filter(
-        (e) => e.operation_id === operation_id
-      );
+      filteredEvents = eventStore.filter((e) => e.operation_id === operation_id);
     } else if (prefix) {
       // Enforce minimum prefix length for security (prevent enumeration)
       if (prefix.length < 16) {
         return reply.code(400).send({
           success: false,
-          error: "Prefix must be at least 16 characters long",
+          error: 'Prefix must be at least 16 characters long',
         });
       }
       // Prefix match (for session filtering)
-      filteredEvents = eventStore.filter((e) =>
-        e.operation_id?.startsWith(prefix)
-      );
+      filteredEvents = eventStore.filter((e) => e.operation_id?.startsWith(prefix));
     } else {
       // No filter - return recent events (limit to 100 by default)
       const maxLimit = limit ? Math.min(parseInt(limit), 500) : 100;
@@ -1730,18 +1626,14 @@ app.get("/api/events", async (request, reply) => {
       success: true,
       events: filteredEvents,
       total: filteredEvents.length,
-      filtered_by: operation_id
-        ? { operation_id }
-        : prefix
-        ? { prefix }
-        : { recent: true },
+      filtered_by: operation_id ? { operation_id } : prefix ? { prefix } : { recent: true },
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
-    app.log.error({ error }, "Get events error");
+    app.log.error({ error }, 'Get events error');
     return reply.code(500).send({
       success: false,
-      error: error instanceof Error ? error.message : "Unknown error",
+      error: error instanceof Error ? error.message : 'Unknown error',
     });
   }
 });
@@ -1750,12 +1642,12 @@ app.get("/api/events", async (request, reply) => {
  * Enhanced task list endpoint with more details
  * Includes both active and completed tasks
  */
-app.get("/api/tasks/detailed", async (request, reply) => {
+app.get('/api/tasks/detailed', async (request, reply) => {
   try {
     const { include_completed } = request.query as {
       include_completed?: string;
     };
-    const includeCompleted = include_completed === "true";
+    const includeCompleted = include_completed === 'true';
 
     // Get active tasks
     const activeTasks_list = Array.from(activeTasks.values()).map((task) => ({
@@ -1832,10 +1724,10 @@ app.get("/api/tasks/detailed", async (request, reply) => {
       },
     });
   } catch (error) {
-    app.log.error({ error }, "List detailed tasks error");
+    app.log.error({ error }, 'List detailed tasks error');
     return reply.code(500).send({
       success: false,
-      error: error instanceof Error ? error.message : "Unknown error",
+      error: error instanceof Error ? error.message : 'Unknown error',
     });
   }
 });
@@ -1843,29 +1735,29 @@ app.get("/api/tasks/detailed", async (request, reply) => {
 // ==== END NEW ASYNC API ENDPOINTS ====
 
 // Serve the main UI at root
-app.get("/", async (request, reply) => {
-  return reply.sendFile("index.html");
+app.get('/', async (request, reply) => {
+  return reply.sendFile('index.html');
 });
 
 // Add some fallback routes for missing endpoints that might be expected
-app.get("/agents", async (request, reply) => {
+app.get('/agents', async (request, reply) => {
   // Redirect to proper API endpoint
-  reply.redirect("/api/agents");
+  reply.redirect('/api/agents');
 });
 
-app.get("/standard", async (request, reply) => {
+app.get('/standard', async (request, reply) => {
   // Formats are now retrieved from agents, not a separate endpoint
-  reply.redirect("/");
+  reply.redirect('/');
 });
 
 // Removed unused /query endpoint that was causing 404 errors
 
 // Error handler
 app.setErrorHandler((error, request, reply) => {
-  app.log.error("Unhandled error: " + error.message);
+  app.log.error('Unhandled error: ' + error.message);
   reply.status(500).send({
     success: false,
-    error: "Internal server error",
+    error: 'Internal server error',
     timestamp: new Date().toISOString(),
   });
 });
@@ -1877,14 +1769,14 @@ const adagentsManager = new AdAgentsManager();
 app.post<{
   Body: ValidateAdAgentsRequest;
   Reply: ApiResponse<ValidateAdAgentsResponse>;
-}>("/api/adagents/validate", async (request, reply) => {
+}>('/api/adagents/validate', async (request, reply) => {
   try {
     const { domain } = request.body as ValidateAdAgentsRequest;
 
     if (!domain || domain.trim().length === 0) {
       return reply.code(400).send({
         success: false,
-        error: "Domain is required",
+        error: 'Domain is required',
         timestamp: new Date().toISOString(),
       });
     }
@@ -1897,16 +1789,9 @@ app.post<{
     let agentCards = undefined;
 
     // If adagents.json is found and has agents, validate their cards
-    if (
-      validation.valid &&
-      validation.raw_data?.authorized_agents?.length > 0
-    ) {
-      app.log.info(
-        `Validating ${validation.raw_data.authorized_agents.length} agent cards`
-      );
-      agentCards = await adagentsManager.validateAgentCards(
-        validation.raw_data.authorized_agents
-      );
+    if (validation.valid && validation.raw_data?.authorized_agents?.length > 0) {
+      app.log.info(`Validating ${validation.raw_data.authorized_agents.length} agent cards`);
+      agentCards = await adagentsManager.validateAgentCards(validation.raw_data.authorized_agents);
     }
 
     return reply.send({
@@ -1921,12 +1806,11 @@ app.post<{
     });
   } catch (error) {
     app.log.error(
-      "Failed to validate domain: " +
-        (error instanceof Error ? error.message : String(error))
+      'Failed to validate domain: ' + (error instanceof Error ? error.message : String(error))
     );
     return reply.code(500).send({
       success: false,
-      error: error instanceof Error ? error.message : "Unknown error",
+      error: error instanceof Error ? error.message : 'Unknown error',
       timestamp: new Date().toISOString(),
     });
   }
@@ -1936,7 +1820,7 @@ app.post<{
 app.post<{
   Body: CreateAdAgentsRequest;
   Reply: ApiResponse<CreateAdAgentsResponse>;
-}>("/api/adagents/create", async (request, reply) => {
+}>('/api/adagents/create', async (request, reply) => {
   try {
     const {
       authorized_agents,
@@ -1947,7 +1831,7 @@ app.post<{
     if (!authorized_agents || !Array.isArray(authorized_agents)) {
       return reply.code(400).send({
         success: false,
-        error: "authorized_agents array is required",
+        error: 'authorized_agents array is required',
         timestamp: new Date().toISOString(),
       });
     }
@@ -1955,14 +1839,12 @@ app.post<{
     if (authorized_agents.length === 0) {
       return reply.code(400).send({
         success: false,
-        error: "At least one authorized agent is required",
+        error: 'At least one authorized agent is required',
         timestamp: new Date().toISOString(),
       });
     }
 
-    app.log.info(
-      `Creating adagents.json with ${authorized_agents.length} agents`
-    );
+    app.log.info(`Creating adagents.json with ${authorized_agents.length} agents`);
 
     // Validate the proposed structure
     const validation = adagentsManager.validateProposed(authorized_agents);
@@ -1970,9 +1852,7 @@ app.post<{
     if (!validation.valid) {
       return reply.code(400).send({
         success: false,
-        error: `Validation failed: ${validation.errors
-          .map((e: any) => e.message)
-          .join(", ")}`,
+        error: `Validation failed: ${validation.errors.map((e: any) => e.message).join(', ')}`,
         timestamp: new Date().toISOString(),
       });
     }
@@ -1995,12 +1875,11 @@ app.post<{
     });
   } catch (error) {
     app.log.error(
-      "Failed to create adagents.json: " +
-        (error instanceof Error ? error.message : String(error))
+      'Failed to create adagents.json: ' + (error instanceof Error ? error.message : String(error))
     );
     return reply.code(500).send({
       success: false,
-      error: error instanceof Error ? error.message : "Unknown error",
+      error: error instanceof Error ? error.message : 'Unknown error',
       timestamp: new Date().toISOString(),
     });
   }
@@ -2010,14 +1889,14 @@ app.post<{
 app.post<{
   Body: { agent_urls: string[] };
   Reply: ApiResponse<{ agent_cards: any[] }>;
-}>("/api/adagents/validate-cards", async (request, reply) => {
+}>('/api/adagents/validate-cards', async (request, reply) => {
   try {
     const { agent_urls } = request.body;
 
     if (!agent_urls || !Array.isArray(agent_urls) || agent_urls.length === 0) {
       return reply.code(400).send({
         success: false,
-        error: "agent_urls array with at least one URL is required",
+        error: 'agent_urls array with at least one URL is required',
         timestamp: new Date().toISOString(),
       });
     }
@@ -2026,7 +1905,7 @@ app.post<{
 
     const agents = agent_urls.map((url) => ({
       url,
-      authorized_for: "validation",
+      authorized_for: 'validation',
     }));
     const agentCards = await adagentsManager.validateAgentCards(agents);
 
@@ -2039,12 +1918,11 @@ app.post<{
     });
   } catch (error) {
     app.log.error(
-      "Failed to validate agent cards: " +
-        (error instanceof Error ? error.message : String(error))
+      'Failed to validate agent cards: ' + (error instanceof Error ? error.message : String(error))
     );
     return reply.code(500).send({
       success: false,
-      error: error instanceof Error ? error.message : "Unknown error",
+      error: error instanceof Error ? error.message : 'Unknown error',
       timestamp: new Date().toISOString(),
     });
   }
@@ -2053,10 +1931,9 @@ app.post<{
 // Start server
 const start = async () => {
   try {
-    const port = parseInt(process.env.PORT || "8080");
+    const port = parseInt(process.env.PORT || '8080');
     const host =
-      process.env.HOST ||
-      (process.env.NODE_ENV === "production" ? "0.0.0.0" : "127.0.0.1");
+      process.env.HOST || (process.env.NODE_ENV === 'production' ? '0.0.0.0' : '127.0.0.1');
 
     await app.listen({
       port,
@@ -2067,10 +1944,7 @@ const start = async () => {
     app.log.info(`📋 API available at http://${host}:${port}/api`);
     app.log.info(`🌐 UI available at http://${host}:${port}`);
   } catch (err) {
-    app.log.error(
-      "Failed to start server: " +
-        (err instanceof Error ? err.message : String(err))
-    );
+    app.log.error('Failed to start server: ' + (err instanceof Error ? err.message : String(err)));
     process.exit(1);
   }
 };
@@ -2102,16 +1976,12 @@ const start = async () => {
 app.post<{
   Params: { task_type: string; agent_id: string; operation_id: string };
   Body: any;
-}>("/webhook/:task_type/:agent_id/:operation_id", async (request, reply) => {
+}>('/webhook/:task_type/:agent_id/:operation_id', async (request, reply) => {
   try {
-    const {
-      task_type: taskType,
-      agent_id: agentId,
-      operation_id: operationId,
-    } = request.params;
+    const { task_type: taskType, agent_id: agentId, operation_id: operationId } = request.params;
     const payload = request.body;
-    const signature = request.headers["x-adcp-signature"] as string | undefined;
-    const timestamp = request.headers["x-adcp-timestamp"] as string | undefined;
+    const signature = request.headers['x-adcp-signature'] as string | undefined;
+    const timestamp = request.headers['x-adcp-timestamp'] as string | undefined;
 
     app.log.info(`Webhook received: ${taskType} for operation ${operationId}`);
 
@@ -2120,10 +1990,10 @@ app.post<{
     // based on task_type value
 
     // Validate payload has required fields
-    if (!payload || typeof payload !== "object") {
+    if (!payload || typeof payload !== 'object') {
       return reply.code(400).send({
         success: false,
-        error: "Invalid payload: must be an object",
+        error: 'Invalid payload: must be an object',
         timestamp: new Date().toISOString(),
       });
     }
@@ -2131,9 +2001,7 @@ app.post<{
     // Validate payload task_type matches URL
     const payloadTaskType = (payload as any).task_type;
     if (payloadTaskType && payloadTaskType !== taskType) {
-      app.log.error(
-        `Task type mismatch: URL says ${taskType}, payload says ${payloadTaskType}`
-      );
+      app.log.error(`Task type mismatch: URL says ${taskType}, payload says ${payloadTaskType}`);
       return reply.code(400).send({
         success: false,
         error: `Task type mismatch: expected ${taskType}, got ${payloadTaskType}`,
@@ -2152,11 +2020,7 @@ app.post<{
     // The webhook URL was generated with this agent_id during operation setup
     // We use it to look up the correct agent configuration (auth, protocol, etc)
     const agent = adcpClient.agent(agentId);
-    const handled = await agent.handleWebhook(
-      enrichedPayload,
-      signature,
-      timestamp
-    );
+    const handled = await agent.handleWebhook(enrichedPayload, signature, timestamp);
 
     if (!handled) {
       app.log.warn(`Webhook not handled - no handlers configured`);
@@ -2169,15 +2033,14 @@ app.post<{
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
-    app.log.error("Webhook handling error");
+    app.log.error('Webhook handling error');
 
     // Return 401 for signature verification failures
-    const statusCode =
-      error instanceof Error && error.message.includes("signature") ? 401 : 500;
+    const statusCode = error instanceof Error && error.message.includes('signature') ? 401 : 500;
 
     return reply.code(statusCode).send({
       success: false,
-      error: error instanceof Error ? error.message : "Unknown error",
+      error: error instanceof Error ? error.message : 'Unknown error',
       timestamp: new Date().toISOString(),
     });
   }
@@ -2188,9 +2051,7 @@ let shutdownInProgress = false;
 
 async function gracefulShutdown(signal: string) {
   if (shutdownInProgress) {
-    app.log.warn(
-      `Received ${signal} but shutdown already in progress, forcing exit...`
-    );
+    app.log.warn(`Received ${signal} but shutdown already in progress, forcing exit...`);
     process.exit(1);
   }
 
@@ -2200,13 +2061,13 @@ async function gracefulShutdown(signal: string) {
   try {
     // Set a timeout for forceful shutdown
     const forceShutdownTimer = setTimeout(() => {
-      app.log.error("Graceful shutdown timed out, forcing exit...");
+      app.log.error('Graceful shutdown timed out, forcing exit...');
       process.exit(1);
     }, 10000); // 10 second timeout
 
     await app.close();
     clearTimeout(forceShutdownTimer);
-    app.log.info("Server closed successfully");
+    app.log.info('Server closed successfully');
     process.exit(0);
   } catch (error) {
     app.log.error(`Error during graceful shutdown: ${error}`);
@@ -2214,8 +2075,8 @@ async function gracefulShutdown(signal: string) {
   }
 }
 
-process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
-process.on("SIGINT", () => gracefulShutdown("SIGINT"));
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
 if (require.main === module) {
   start();
