@@ -2418,15 +2418,10 @@
 
         <!-- Authorized Properties Section -->
         <div class="section">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
-                <h3>🏢 Authorized Properties</h3>
-                <div style="display: flex; gap: 10px;">
-                    <button class="btn" onclick="listAuthorizedProperties()">📋 List Properties</button>
-                </div>
-            </div>
+            <h3>🏢 Authorized Properties <span style="color: #666; font-size: 14px; font-weight: normal;">- Auto-loaded with agent data</span></h3>
 
             <div id="properties-content" style="min-height: 100px; padding: 15px; background: #f9f9f9; border-radius: 8px;">
-                <p style="color: #666; text-align: center;">Click "List Properties" to see available publisher properties</p>
+                <p style="color: #666; text-align: center;">Select an agent and click "Load Agent Data" to see authorized properties</p>
             </div>
         </div>
 
@@ -3266,6 +3261,7 @@
             const loadStatus = {
                 products: false,
                 formats: false,
+                properties: false,
                 creatives: false
             };
             
@@ -3300,6 +3296,19 @@
                             logEvent('success', '✅ Creative formats loaded');
                         } catch (error) {
                             logEvent('error', `❌ Creative formats failed: ${error.message}`);
+                        }
+                        updateProgress();
+                    }
+                },
+                {
+                    name: 'properties',
+                    task: async () => {
+                        try {
+                            await loadAuthorizedProperties();
+                            loadStatus.properties = true;
+                            logEvent('success', '✅ Authorized properties loaded');
+                        } catch (error) {
+                            logEvent('error', `❌ Authorized properties failed: ${error.message}`);
                         }
                         updateProgress();
                     }
@@ -8784,34 +8793,24 @@ ${JSON.stringify(result, null, 2)}
             }
         }
 
-        async function listAuthorizedProperties() {
+        async function loadAuthorizedProperties() {
             const selectedAgent = agents.find(a => a.id === document.getElementById('agent-selector').value);
             if (!selectedAgent) {
-                alert('Please select an agent first');
-                return;
+                throw new Error('No agent selected');
             }
 
-            logEvent('info', '🏢 Listing authorized properties...');
+            const result = await callADCPTool(selectedAgent, 'list_authorized_properties', {});
 
-            try {
-                const result = await callADCPTool(selectedAgent, 'list_authorized_properties', {});
-
-                if (result && result.success) {
-                    const properties = result.properties || result.data?.properties || [];
-                    logEvent('success', `✅ Found ${properties.length} authorized propert${properties.length === 1 ? 'y' : 'ies'}`);
-                    displayPropertiesResults(result);
-                } else {
-                    logEvent('error', `Failed to list properties: ${result?.error || 'Unknown error'}`);
-                    displayPropertiesResults({ properties: [] });
-                }
-            } catch (error) {
-                logEvent('error', `Error listing properties: ${error.message}`);
-                displayPropertiesResults({ properties: [] });
+            if (result && result.success) {
+                displayPropertiesResults(result);
+            } else {
+                throw new Error(result?.error || 'Unknown error');
             }
         }
 
         function displayPropertiesResults(result) {
             const contentDiv = document.getElementById('properties-content');
+            if (!contentDiv) return;
 
             // Handle both response formats:
             // 1. Property list: { properties: [...] }
