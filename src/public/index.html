@@ -2416,6 +2416,20 @@
             </div>
         </div>
 
+        <!-- Authorized Properties Section -->
+        <div class="section">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                <h3>🏢 Authorized Properties</h3>
+                <div style="display: flex; gap: 10px;">
+                    <button class="btn" onclick="listAuthorizedProperties()">📋 List Properties</button>
+                </div>
+            </div>
+
+            <div id="properties-content" style="min-height: 100px; padding: 15px; background: #f9f9f9; border-radius: 8px;">
+                <p style="color: #666; text-align: center;">Click "List Properties" to see available publisher properties</p>
+            </div>
+        </div>
+
         <!-- Creative Create Modal -->
         <div id="creative-create-modal" class="modal" style="display: none;">
             <div class="modal-content" style="max-width: 900px;">
@@ -8748,15 +8762,15 @@ ${JSON.stringify(result, null, 2)}
                 alert('Please select an agent first');
                 return;
             }
-            
+
             logEvent('info', '📋 Listing creatives...');
-            
+
             try {
                 const result = await callADCPTool(selectedAgent, 'list_creatives', {
                     include_assignments: true,
                     include_performance: true
                 });
-                
+
                 if (result) {
                     const creatives = result.creatives || result.data?.creatives || [];
                     logEvent('success', `✅ Found ${creatives.length} creative(s)`);
@@ -8767,6 +8781,80 @@ ${JSON.stringify(result, null, 2)}
             } catch (error) {
                 logEvent('error', `Error listing creatives: ${error.message}`);
             }
+        }
+
+        async function listAuthorizedProperties() {
+            const selectedAgent = agents.find(a => a.id === document.getElementById('agent-selector').value);
+            if (!selectedAgent) {
+                alert('Please select an agent first');
+                return;
+            }
+
+            logEvent('info', '🏢 Listing authorized properties...');
+
+            try {
+                const result = await callADCPTool(selectedAgent, 'list_authorized_properties', {});
+
+                if (result && result.success) {
+                    const properties = result.properties || result.data?.properties || [];
+                    logEvent('success', `✅ Found ${properties.length} authorized propert${properties.length === 1 ? 'y' : 'ies'}`);
+                    displayPropertiesResults(result);
+                } else {
+                    logEvent('error', `Failed to list properties: ${result?.error || 'Unknown error'}`);
+                    displayPropertiesResults({ properties: [] });
+                }
+            } catch (error) {
+                logEvent('error', `Error listing properties: ${error.message}`);
+                displayPropertiesResults({ properties: [] });
+            }
+        }
+
+        function displayPropertiesResults(result) {
+            const contentDiv = document.getElementById('properties-content');
+
+            const properties = result.properties || result.data?.properties || [];
+
+            if (properties.length === 0) {
+                contentDiv.innerHTML = `
+                    <div style="padding: 20px; text-align: center;">
+                        <p style="color: #666;">No authorized properties found</p>
+                    </div>
+                `;
+                return;
+            }
+
+            let html = `
+                <div style="max-height: 400px; overflow-y: auto;">
+                    <table style="width: 100%; border-collapse: collapse;">
+                        <thead>
+                            <tr style="border-bottom: 2px solid #ddd;">
+                                <th style="padding: 10px; text-align: left;">Property ID</th>
+                                <th style="padding: 10px; text-align: left;">Property Name</th>
+                                <th style="padding: 10px; text-align: left;">Domain</th>
+                                <th style="padding: 10px; text-align: left;">Type</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+            `;
+
+            properties.forEach(prop => {
+                html += `
+                    <tr style="border-bottom: 1px solid #eee;">
+                        <td style="padding: 10px; font-family: monospace; font-size: 12px;">${escapeHtml(prop.property_id || prop.id || 'N/A')}</td>
+                        <td style="padding: 10px;">${escapeHtml(prop.property_name || prop.name || 'N/A')}</td>
+                        <td style="padding: 10px; font-family: monospace; font-size: 12px;">${escapeHtml(prop.domain || prop.publisher_domain || 'N/A')}</td>
+                        <td style="padding: 10px;">${escapeHtml(prop.type || prop.property_type || 'N/A')}</td>
+                    </tr>
+                `;
+            });
+
+            html += `
+                        </tbody>
+                    </table>
+                </div>
+            `;
+
+            contentDiv.innerHTML = html;
         }
         
         async function executeCreativeUpdate() {
