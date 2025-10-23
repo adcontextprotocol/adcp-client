@@ -8813,8 +8813,65 @@ ${JSON.stringify(result, null, 2)}
         function displayPropertiesResults(result) {
             const contentDiv = document.getElementById('properties-content');
 
-            const properties = result.properties || result.data?.properties || [];
+            // Handle both response formats:
+            // 1. Property list: { properties: [...] }
+            // 2. Portfolio-level: { publisher_domains: [...], primary_channels: ..., etc. }
+            const data = result.data || result;
+            const properties = data.properties || [];
+            const publisherDomains = data.publisher_domains || [];
 
+            // Check if we have portfolio-level response
+            if (publisherDomains.length > 0 && properties.length === 0) {
+                let html = `
+                    <div style="padding: 20px;">
+                        <h4 style="margin-top: 0;">Portfolio-Level Response</h4>
+                        <table style="width: 100%; border-collapse: collapse;">
+                            <tr style="border-bottom: 1px solid #ddd;">
+                                <th style="padding: 10px; text-align: left; width: 200px;">Field</th>
+                                <th style="padding: 10px; text-align: left;">Value</th>
+                            </tr>
+                            <tr style="border-bottom: 1px solid #eee;">
+                                <td style="padding: 10px; font-weight: 600;">Publisher Domains</td>
+                                <td style="padding: 10px; font-family: monospace; font-size: 12px;">${escapeHtml(publisherDomains.join(', '))}</td>
+                            </tr>
+                `;
+
+                if (data.primary_channels) {
+                    html += `
+                            <tr style="border-bottom: 1px solid #eee;">
+                                <td style="padding: 10px; font-weight: 600;">Primary Channels</td>
+                                <td style="padding: 10px;">${escapeHtml(Array.isArray(data.primary_channels) ? data.primary_channels.join(', ') : data.primary_channels)}</td>
+                            </tr>
+                    `;
+                }
+
+                if (data.primary_countries) {
+                    html += `
+                            <tr style="border-bottom: 1px solid #eee;">
+                                <td style="padding: 10px; font-weight: 600;">Primary Countries</td>
+                                <td style="padding: 10px;">${escapeHtml(Array.isArray(data.primary_countries) ? data.primary_countries.join(', ') : data.primary_countries)}</td>
+                            </tr>
+                    `;
+                }
+
+                if (data.portfolio_description) {
+                    html += `
+                            <tr style="border-bottom: 1px solid #eee;">
+                                <td style="padding: 10px; font-weight: 600;">Description</td>
+                                <td style="padding: 10px;">${escapeHtml(data.portfolio_description)}</td>
+                            </tr>
+                    `;
+                }
+
+                html += `
+                        </table>
+                    </div>
+                `;
+                contentDiv.innerHTML = html;
+                return;
+            }
+
+            // Handle property list response
             if (properties.length === 0) {
                 contentDiv.innerHTML = `
                     <div style="padding: 20px; text-align: center;">
