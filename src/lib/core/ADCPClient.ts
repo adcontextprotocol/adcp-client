@@ -527,6 +527,28 @@ export class ADCPClient {
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<CreateMediaBuyResponse>> {
+    // Auto-inject reporting_webhook if supported and not provided by caller
+    // Generates a media_buy_delivery webhook URL using operation_id pattern: delivery_report_{agent_id}_{YYYY-MM}
+    if (!params?.reporting_webhook && this.config.webhookUrlTemplate) {
+      const now = new Date();
+      const year = now.getUTCFullYear();
+      const month = String(now.getUTCMonth() + 1).padStart(2, '0');
+      const operationId = `delivery_report_${this.agent.id}_${year}-${month}`;
+      const deliveryWebhookUrl = this.getWebhookUrl('media_buy_delivery', operationId);
+
+      params = {
+        ...params,
+        reporting_webhook: {
+          url: deliveryWebhookUrl,
+          authentication: {
+            schemes: ['HMAC-SHA256'],
+            credentials: this.config.webhookSecret || 'placeholder_secret_min_32_characters_required'
+          },
+          reporting_frequency: 'monthly'
+        }
+      } as CreateMediaBuyRequest;
+    }
+
     return this.executeAndHandle<CreateMediaBuyResponse>(
       'create_media_buy',
       'onCreateMediaBuyStatusChange',
