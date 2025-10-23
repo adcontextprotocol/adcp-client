@@ -5,8 +5,11 @@
  */
 export abstract class ADCPError extends Error {
   abstract readonly code: string;
-  
-  constructor(message: string, public details?: any) {
+
+  constructor(
+    message: string,
+    public details?: any
+  ) {
     super(message);
     this.name = this.constructor.name;
   }
@@ -17,7 +20,7 @@ export abstract class ADCPError extends Error {
  */
 export class TaskTimeoutError extends ADCPError {
   readonly code = 'TASK_TIMEOUT';
-  
+
   constructor(
     public readonly taskId: string,
     public readonly timeout: number
@@ -31,7 +34,7 @@ export class TaskTimeoutError extends ADCPError {
  */
 export class MaxClarificationError extends ADCPError {
   readonly code = 'MAX_CLARIFICATIONS';
-  
+
   constructor(
     public readonly taskId: string,
     public readonly maxAttempts: number
@@ -46,7 +49,7 @@ export class MaxClarificationError extends ADCPError {
  */
 export class DeferredTaskError extends ADCPError {
   readonly code = 'TASK_DEFERRED';
-  
+
   constructor(public readonly token: string) {
     super(`Task deferred with token: ${token}`);
   }
@@ -57,7 +60,7 @@ export class DeferredTaskError extends ADCPError {
  */
 export class TaskAbortedError extends ADCPError {
   readonly code = 'TASK_ABORTED';
-  
+
   constructor(
     public readonly taskId: string,
     public readonly reason?: string
@@ -71,7 +74,7 @@ export class TaskAbortedError extends ADCPError {
  */
 export class AgentNotFoundError extends ADCPError {
   readonly code = 'AGENT_NOT_FOUND';
-  
+
   constructor(
     public readonly agentId: string,
     public readonly availableAgents: string[]
@@ -85,7 +88,7 @@ export class AgentNotFoundError extends ADCPError {
  */
 export class UnsupportedTaskError extends ADCPError {
   readonly code = 'UNSUPPORTED_TASK';
-  
+
   constructor(
     public readonly agentId: string,
     public readonly taskName: string,
@@ -101,7 +104,7 @@ export class UnsupportedTaskError extends ADCPError {
  */
 export class ProtocolError extends ADCPError {
   readonly code = 'PROTOCOL_ERROR';
-  
+
   constructor(
     public readonly protocol: 'mcp' | 'a2a',
     message: string,
@@ -117,7 +120,7 @@ export class ProtocolError extends ADCPError {
  */
 export class ValidationError extends ADCPError {
   readonly code = 'VALIDATION_ERROR';
-  
+
   constructor(
     public readonly field: string,
     public readonly value: any,
@@ -133,7 +136,7 @@ export class ValidationError extends ADCPError {
  */
 export class MissingInputHandlerError extends ADCPError {
   readonly code = 'MISSING_INPUT_HANDLER';
-  
+
   constructor(
     public readonly taskId: string,
     public readonly question: string
@@ -147,7 +150,7 @@ export class MissingInputHandlerError extends ADCPError {
  */
 export class InvalidContextError extends ADCPError {
   readonly code = 'INVALID_CONTEXT';
-  
+
   constructor(
     public readonly contextId: string,
     reason: string
@@ -161,8 +164,11 @@ export class InvalidContextError extends ADCPError {
  */
 export class ConfigurationError extends ADCPError {
   readonly code = 'CONFIGURATION_ERROR';
-  
-  constructor(message: string, public readonly configField?: string) {
+
+  constructor(
+    message: string,
+    public readonly configField?: string
+  ) {
     super(`Configuration error: ${message}`);
     this.details = { configField };
   }
@@ -178,10 +184,7 @@ export function isADCPError(error: unknown): error is ADCPError {
 /**
  * Type guard to check if an error is a specific ADCP error type
  */
-export function isErrorOfType<T extends ADCPError>(
-  error: unknown,
-  ErrorClass: new (...args: any[]) => T
-): error is T {
+export function isErrorOfType<T extends ADCPError>(error: unknown, ErrorClass: new (...args: any[]) => T): error is T {
   return error instanceof ErrorClass;
 }
 
@@ -202,14 +205,14 @@ export function extractErrorInfo(error: unknown): {
       stack: error.stack
     };
   }
-  
+
   if (error instanceof Error) {
     return {
       message: error.message,
       stack: error.stack
     };
   }
-  
+
   return {
     message: String(error)
   };

@@ -4,13 +4,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { createMCPAuthHeaders } from '../auth';
 
-export async function callMCPTool(
-  agentUrl: string,
-  toolName: string,
-  args: any,
-  authToken?: string,
-  debugLogs: any[] = []
-): Promise<any> {
+export async function callMCPTool(agentUrl: string, toolName: string, args: any, authToken?: string, debugLogs: any[] = []): Promise<any> {
   let mcpClient: MCPClient | undefined = undefined;
   const baseUrl = new URL(agentUrl);
 
@@ -69,9 +63,7 @@ export async function callMCPTool(
       message: `MCP: Fetch to ${typeof input === 'string' ? input : input.toString()}`,
       timestamp: new Date().toISOString(),
       hasAuth: !!authToken,
-      headers: authToken
-        ? { ...mergedHeaders, 'x-adcp-auth': '***' }
-        : mergedHeaders
+      headers: authToken ? { ...mergedHeaders, 'x-adcp-auth': '***' } : mergedHeaders
     });
 
     return fetch(input, mergedInit);
@@ -95,7 +87,7 @@ export async function callMCPTool(
       fetch: customFetch
     });
     await mcpClient.connect(transport);
-    
+
     debugLogs.push({
       type: 'success',
       message: `MCP: Connected using StreamableHTTP transport for ${toolName}`,
@@ -110,34 +102,34 @@ export async function callMCPTool(
       timestamp: new Date().toISOString(),
       error: error
     });
-    
+
     // If StreamableHTTP fails, fall back to SSE transport
     debugLogs.push({
       type: 'info',
       message: `MCP: Falling back to SSE transport for ${toolName}`,
       timestamp: new Date().toISOString()
     });
-    
+
     mcpClient = new MCPClient({
       name: 'AdCP-Testing-Framework',
       version: '1.0.0'
     });
-    
+
     // For SSE fallback, add auth to URL (if SSE transport supports it)
     if (authToken) {
       baseUrl.searchParams.set('auth', authToken);
     }
-    
+
     const sseTransport = new SSEClientTransport(baseUrl);
     await mcpClient.connect(sseTransport);
-    
+
     debugLogs.push({
       type: 'success',
       message: `MCP: Connected using SSE transport for ${toolName}`,
       timestamp: new Date().toISOString()
     });
   }
-  
+
   try {
     // Call the tool using official MCP client
     debugLogs.push({
@@ -145,7 +137,7 @@ export async function callMCPTool(
       message: `MCP: Calling tool ${toolName} with args: ${JSON.stringify(args)}`,
       timestamp: new Date().toISOString()
     });
-    
+
     // For debugging: log the transport headers being used
     if (authToken) {
       debugLogs.push({
@@ -154,19 +146,19 @@ export async function callMCPTool(
         timestamp: new Date().toISOString()
       });
     }
-    
+
     const response = await mcpClient.callTool({
       name: toolName,
       arguments: args
     });
-    
+
     debugLogs.push({
       type: response?.isError ? 'error' : 'success',
       message: `MCP: Tool ${toolName} response received (${response?.isError ? 'error' : 'success'})`,
       timestamp: new Date().toISOString(),
       response: response
     });
-    
+
     return response;
   } catch (error) {
     // Capture tool call errors (including timeouts)
@@ -177,7 +169,7 @@ export async function callMCPTool(
       timestamp: new Date().toISOString(),
       error: error
     });
-    
+
     // If this is an auth error, log additional debugging info
     if (errorMessage.toLowerCase().includes('auth') || errorMessage.toLowerCase().includes('unauthorized')) {
       debugLogs.push({
@@ -186,7 +178,7 @@ export async function callMCPTool(
         timestamp: new Date().toISOString()
       });
     }
-    
+
     throw error; // Re-throw to maintain error handling
   } finally {
     // Always close the client properly

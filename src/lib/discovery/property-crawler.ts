@@ -48,7 +48,7 @@ export class PropertyCrawler {
         const domains = await this.crawlAgent(agentInfo);
         if (domains.length > 0) {
           result.successfulAgents++;
-          domains.forEach(d => allPublisherDomains.add(d));
+          domains.forEach((d) => allPublisherDomains.add(d));
 
           // Store agent → publisher_domains mapping
           index.addAgentAuthorization(agentInfo.agent_url, domains);
@@ -74,8 +74,8 @@ export class PropertyCrawler {
       for (const property of properties) {
         // Find which agents are authorized for this publisher domain
         const authorizedAgents = agents
-          .map(a => a.agent_url)
-          .filter(agentUrl => {
+          .map((a) => a.agent_url)
+          .filter((agentUrl) => {
             const auth = index.getAgentAuthorizations(agentUrl);
             return auth?.publisher_domains.includes(domain);
           });
@@ -151,14 +151,14 @@ export class PropertyCrawler {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
 
-      const data = await response.json() as AdAgentsJson;
+      const data = (await response.json()) as AdAgentsJson;
 
       if (!data.properties || !Array.isArray(data.properties)) {
         return [];
       }
 
       // Add publisher_domain to each property if not present
-      return data.properties.map(prop => ({
+      return data.properties.map((prop) => ({
         ...prop,
         publisher_domain: prop.publisher_domain || domain
       }));

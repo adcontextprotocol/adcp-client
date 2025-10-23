@@ -175,10 +175,7 @@ export class AsyncHandler {
     // Check if this is a notification (media_buy_delivery with notification_type)
     // Notifications are treated like status updates for an ongoing "get delivery report" operation
     // The operation_id (from URL) groups all reports for the same agent + month
-    if (payload.task_type === 'media_buy_delivery' &&
-        payload.result &&
-        typeof payload.result === 'object' &&
-        'notification_type' in payload.result) {
+    if (payload.task_type === 'media_buy_delivery' && payload.result && typeof payload.result === 'object' && 'notification_type' in payload.result) {
       const notificationPayload = payload.result as MediaBuyDeliveryNotification;
 
       // Build notification metadata
@@ -264,7 +261,6 @@ export class AsyncHandler {
       }
     }
   }
-
 
   /**
    * Emit activity event

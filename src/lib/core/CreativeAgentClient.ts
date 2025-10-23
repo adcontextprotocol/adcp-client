@@ -4,11 +4,7 @@ import { ADCPClient } from './ADCPClient';
 import type { ADCPClientConfig } from './ADCPClient';
 import type { AgentConfig } from '../types';
 import type { FormatID } from '../types/core.generated';
-import type {
-  ListCreativeFormatsRequest,
-  ListCreativeFormatsResponse,
-  Format
-} from '../types/tools.generated';
+import type { ListCreativeFormatsRequest, ListCreativeFormatsResponse, Format } from '../types/tools.generated';
 
 /**
  * Configuration for CreativeAgentClient
@@ -79,9 +75,7 @@ export class CreativeAgentClient {
    * );
    * ```
    */
-  async listFormats(
-    params: ListCreativeFormatsRequest = {}
-  ): Promise<CreativeFormat[]> {
+  async listFormats(params: ListCreativeFormatsRequest = {}): Promise<CreativeFormat[]> {
     const result = await this.client.listCreativeFormats(params);
 
     if (!result.success || !result.data) {
@@ -89,7 +83,7 @@ export class CreativeAgentClient {
     }
 
     // Enrich formats with agent_url for convenience
-    return (result.data.formats || []).map(format => ({
+    return (result.data.formats || []).map((format) => ({
       ...format,
       agent_url: this.agentUrl
     }));
@@ -109,7 +103,7 @@ export class CreativeAgentClient {
    */
   async findByType(type: CreativeFormatType): Promise<CreativeFormat[]> {
     const allFormats = await this.listFormats();
-    return allFormats.filter(f => f.type === type);
+    return allFormats.filter((f) => f.type === type);
   }
 
   /**
@@ -127,11 +121,7 @@ export class CreativeAgentClient {
    */
   async findByDimensions(width: number, height: number): Promise<CreativeFormat[]> {
     const allFormats = await this.listFormats();
-    return allFormats.filter(f =>
-      f.renders?.some(r =>
-        r.dimensions?.width === width && r.dimensions?.height === height
-      )
-    );
+    return allFormats.filter((f) => f.renders?.some((r) => r.dimensions?.width === width && r.dimensions?.height === height));
   }
 
   /**
@@ -150,7 +140,7 @@ export class CreativeAgentClient {
    */
   async findById(formatId: string): Promise<CreativeFormat | undefined> {
     const allFormats = await this.listFormats();
-    return allFormats.find(f => f.format_id.id === formatId);
+    return allFormats.find((f) => f.format_id.id === formatId);
   }
 
   /**
@@ -197,9 +187,7 @@ export interface CreativeFormat extends Format {
  * });
  * ```
  */
-export function createCreativeAgentClient(
-  config: CreativeAgentClientConfig
-): CreativeAgentClient {
+export function createCreativeAgentClient(config: CreativeAgentClientConfig): CreativeAgentClient {
   return new CreativeAgentClient(config);
 }
 

@@ -6,12 +6,7 @@ import type { ADCPClientConfig } from './ADCPClient';
 import { ConfigurationManager } from './ConfigurationManager';
 import { CreativeAgentClient, STANDARD_CREATIVE_AGENTS } from './CreativeAgentClient';
 import type { CreativeFormat } from './CreativeAgentClient';
-import type {
-  InputHandler,
-  TaskOptions,
-  TaskResult,
-  TaskInfo
-} from './ConversationTypes';
+import type { InputHandler, TaskOptions, TaskResult, TaskInfo } from './ConversationTypes';
 import type {
   GetProductsRequest,
   GetProductsResponse,
@@ -57,28 +52,16 @@ export class AgentCollection {
   /**
    * Execute getProducts on all agents in parallel
    */
-  async getProducts(
-    params: GetProductsRequest,
-    inputHandler?: InputHandler,
-    options?: TaskOptions
-  ): Promise<TaskResult<GetProductsResponse>[]> {
-    const promises = Array.from(this.clients.values()).map(client =>
-      client.getProducts(params, inputHandler, options)
-    );
+  async getProducts(params: GetProductsRequest, inputHandler?: InputHandler, options?: TaskOptions): Promise<TaskResult<GetProductsResponse>[]> {
+    const promises = Array.from(this.clients.values()).map((client) => client.getProducts(params, inputHandler, options));
     return Promise.all(promises);
   }
 
   /**
    * Execute listCreativeFormats on all agents in parallel
    */
-  async listCreativeFormats(
-    params: ListCreativeFormatsRequest,
-    inputHandler?: InputHandler,
-    options?: TaskOptions
-  ): Promise<TaskResult<ListCreativeFormatsResponse>[]> {
-    const promises = Array.from(this.clients.values()).map(client =>
-      client.listCreativeFormats(params, inputHandler, options)
-    );
+  async listCreativeFormats(params: ListCreativeFormatsRequest, inputHandler?: InputHandler, options?: TaskOptions): Promise<TaskResult<ListCreativeFormatsResponse>[]> {
+    const promises = Array.from(this.clients.values()).map((client) => client.listCreativeFormats(params, inputHandler, options));
     return Promise.all(promises);
   }
 
@@ -86,126 +69,72 @@ export class AgentCollection {
    * Execute createMediaBuy on all agents in parallel
    * Note: This might not make sense for all use cases, but provided for completeness
    */
-  async createMediaBuy(
-    params: CreateMediaBuyRequest,
-    inputHandler?: InputHandler,
-    options?: TaskOptions
-  ): Promise<TaskResult<CreateMediaBuyResponse>[]> {
-    const promises = Array.from(this.clients.values()).map(client =>
-      client.createMediaBuy(params, inputHandler, options)
-    );
+  async createMediaBuy(params: CreateMediaBuyRequest, inputHandler?: InputHandler, options?: TaskOptions): Promise<TaskResult<CreateMediaBuyResponse>[]> {
+    const promises = Array.from(this.clients.values()).map((client) => client.createMediaBuy(params, inputHandler, options));
     return Promise.all(promises);
   }
 
   /**
    * Execute updateMediaBuy on all agents in parallel
    */
-  async updateMediaBuy(
-    params: UpdateMediaBuyRequest,
-    inputHandler?: InputHandler,
-    options?: TaskOptions
-  ): Promise<TaskResult<UpdateMediaBuyResponse>[]> {
-    const promises = Array.from(this.clients.values()).map(client =>
-      client.updateMediaBuy(params, inputHandler, options)
-    );
+  async updateMediaBuy(params: UpdateMediaBuyRequest, inputHandler?: InputHandler, options?: TaskOptions): Promise<TaskResult<UpdateMediaBuyResponse>[]> {
+    const promises = Array.from(this.clients.values()).map((client) => client.updateMediaBuy(params, inputHandler, options));
     return Promise.all(promises);
   }
 
   /**
    * Execute syncCreatives on all agents in parallel
    */
-  async syncCreatives(
-    params: SyncCreativesRequest,
-    inputHandler?: InputHandler,
-    options?: TaskOptions
-  ): Promise<TaskResult<SyncCreativesResponse>[]> {
-    const promises = Array.from(this.clients.values()).map(client =>
-      client.syncCreatives(params, inputHandler, options)
-    );
+  async syncCreatives(params: SyncCreativesRequest, inputHandler?: InputHandler, options?: TaskOptions): Promise<TaskResult<SyncCreativesResponse>[]> {
+    const promises = Array.from(this.clients.values()).map((client) => client.syncCreatives(params, inputHandler, options));
     return Promise.all(promises);
   }
 
   /**
    * Execute listCreatives on all agents in parallel
    */
-  async listCreatives(
-    params: ListCreativesRequest,
-    inputHandler?: InputHandler,
-    options?: TaskOptions
-  ): Promise<TaskResult<ListCreativesResponse>[]> {
-    const promises = Array.from(this.clients.values()).map(client =>
-      client.listCreatives(params, inputHandler, options)
-    );
+  async listCreatives(params: ListCreativesRequest, inputHandler?: InputHandler, options?: TaskOptions): Promise<TaskResult<ListCreativesResponse>[]> {
+    const promises = Array.from(this.clients.values()).map((client) => client.listCreatives(params, inputHandler, options));
     return Promise.all(promises);
   }
 
   /**
    * Execute getMediaBuyDelivery on all agents in parallel
    */
-  async getMediaBuyDelivery(
-    params: GetMediaBuyDeliveryRequest,
-    inputHandler?: InputHandler,
-    options?: TaskOptions
-  ): Promise<TaskResult<GetMediaBuyDeliveryResponse>[]> {
-    const promises = Array.from(this.clients.values()).map(client =>
-      client.getMediaBuyDelivery(params, inputHandler, options)
-    );
+  async getMediaBuyDelivery(params: GetMediaBuyDeliveryRequest, inputHandler?: InputHandler, options?: TaskOptions): Promise<TaskResult<GetMediaBuyDeliveryResponse>[]> {
+    const promises = Array.from(this.clients.values()).map((client) => client.getMediaBuyDelivery(params, inputHandler, options));
     return Promise.all(promises);
   }
 
   /**
    * Execute listAuthorizedProperties on all agents in parallel
    */
-  async listAuthorizedProperties(
-    params: ListAuthorizedPropertiesRequest,
-    inputHandler?: InputHandler,
-    options?: TaskOptions
-  ): Promise<TaskResult<ListAuthorizedPropertiesResponse>[]> {
-    const promises = Array.from(this.clients.values()).map(client =>
-      client.listAuthorizedProperties(params, inputHandler, options)
-    );
+  async listAuthorizedProperties(params: ListAuthorizedPropertiesRequest, inputHandler?: InputHandler, options?: TaskOptions): Promise<TaskResult<ListAuthorizedPropertiesResponse>[]> {
+    const promises = Array.from(this.clients.values()).map((client) => client.listAuthorizedProperties(params, inputHandler, options));
     return Promise.all(promises);
   }
 
   /**
    * Execute providePerformanceFeedback on all agents in parallel
    */
-  async providePerformanceFeedback(
-    params: ProvidePerformanceFeedbackRequest,
-    inputHandler?: InputHandler,
-    options?: TaskOptions
-  ): Promise<TaskResult<ProvidePerformanceFeedbackResponse>[]> {
-    const promises = Array.from(this.clients.values()).map(client =>
-      client.providePerformanceFeedback(params, inputHandler, options)
-    );
+  async providePerformanceFeedback(params: ProvidePerformanceFeedbackRequest, inputHandler?: InputHandler, options?: TaskOptions): Promise<TaskResult<ProvidePerformanceFeedbackResponse>[]> {
+    const promises = Array.from(this.clients.values()).map((client) => client.providePerformanceFeedback(params, inputHandler, options));
     return Promise.all(promises);
   }
 
   /**
    * Execute getSignals on all agents in parallel
    */
-  async getSignals(
-    params: GetSignalsRequest,
-    inputHandler?: InputHandler,
-    options?: TaskOptions
-  ): Promise<TaskResult<GetSignalsResponse>[]> {
-    const promises = Array.from(this.clients.values()).map(client =>
-      client.getSignals(params, inputHandler, options)
-    );
+  async getSignals(params: GetSignalsRequest, inputHandler?: InputHandler, options?: TaskOptions): Promise<TaskResult<GetSignalsResponse>[]> {
+    const promises = Array.from(this.clients.values()).map((client) => client.getSignals(params, inputHandler, options));
     return Promise.all(promises);
   }
 
   /**
    * Execute activateSignal on all agents in parallel
    */
-  async activateSignal(
-    params: ActivateSignalRequest,
-    inputHandler?: InputHandler,
-    options?: TaskOptions
-  ): Promise<TaskResult<ActivateSignalResponse>[]> {
-    const promises = Array.from(this.clients.values()).map(client =>
-      client.activateSignal(params, inputHandler, options)
-    );
+  async activateSignal(params: ActivateSignalRequest, inputHandler?: InputHandler, options?: TaskOptions): Promise<TaskResult<ActivateSignalResponse>[]> {
+    const promises = Array.from(this.clients.values()).map((client) => client.activateSignal(params, inputHandler, options));
     return Promise.all(promises);
   }
 
@@ -260,9 +189,7 @@ export class AgentCollection {
   /**
    * Execute a custom function on all agents in parallel
    */
-  async execute<T>(
-    executor: (agent: AgentClient) => Promise<T>
-  ): Promise<T[]> {
+  async execute<T>(executor: (agent: AgentClient) => Promise<T>): Promise<T[]> {
     const promises = Array.from(this.clients.values()).map(executor);
     return Promise.all(promises);
   }
@@ -270,26 +197,26 @@ export class AgentCollection {
 
 /**
  * Main multi-agent ADCP client providing simple, intuitive API
- * 
+ *
  * This is the primary entry point for most users. It provides:
  * - Single agent access via agent(id)
- * - Multi-agent access via agents([ids])  
+ * - Multi-agent access via agents([ids])
  * - Broadcast access via allAgents()
  * - Simple parallel execution using Promise.all()
- * 
+ *
  * @example Basic usage
  * ```typescript
  * const client = new ADCPMultiAgentClient([
  *   { id: 'agent1', name: 'Agent 1', agent_uri: 'https://agent1.com', protocol: 'mcp' },
  *   { id: 'agent2', name: 'Agent 2', agent_uri: 'https://agent2.com', protocol: 'a2a' }
  * ]);
- * 
+ *
  * // Single agent
  * const result = await client.agent('agent1').getProducts(params, handler);
- * 
- * // Multiple specific agents  
+ *
+ * // Multiple specific agents
  * const results = await client.agents(['agent1', 'agent2']).getProducts(params, handler);
- * 
+ *
  * // All agents
  * const allResults = await client.allAgents().getProducts(params, handler);
  * ```
@@ -310,19 +237,19 @@ export class ADCPMultiAgentClient {
 
   /**
    * Create client by auto-discovering agent configuration
-   * 
+   *
    * Automatically loads agents from:
    * 1. Environment variables (SALES_AGENTS_CONFIG, ADCP_AGENTS_CONFIG, etc.)
    * 2. Config files (adcp.config.json, adcp.json, .adcp.json, agents.json)
-   * 
+   *
    * @param config - Optional client configuration
    * @returns ADCPMultiAgentClient instance with discovered agents
-   * 
+   *
    * @example
    * ```typescript
    * // Simplest possible setup - auto-discovers configuration
    * const client = ADCPMultiAgentClient.fromConfig();
-   * 
+   *
    * // Use with options
    * const client = ADCPMultiAgentClient.fromConfig({
    *   debug: true,
@@ -332,7 +259,7 @@ export class ADCPMultiAgentClient {
    */
   static fromConfig(config?: ADCPClientConfig): ADCPMultiAgentClient {
     const agents = ConfigurationManager.loadAgents();
-    
+
     if (agents.length === 0) {
       console.log('\n' + ConfigurationManager.getConfigurationHelp());
       throw new Error('No ADCP agents configured. See configuration help above.');
@@ -346,10 +273,10 @@ export class ADCPMultiAgentClient {
 
   /**
    * Create client from environment variables only
-   * 
+   *
    * @param config - Optional client configuration
    * @returns ADCPMultiAgentClient instance with environment-loaded agents
-   * 
+   *
    * @example
    * ```typescript
    * // Load agents from SALES_AGENTS_CONFIG environment variable
@@ -358,13 +285,10 @@ export class ADCPMultiAgentClient {
    */
   static fromEnv(config?: ADCPClientConfig): ADCPMultiAgentClient {
     const agents = ConfigurationManager.loadAgentsFromEnv();
-    
+
     if (agents.length === 0) {
       const envVars = ConfigurationManager.getEnvVars();
-      throw new Error(
-        `No agents found in environment variables. ` +
-        `Please set one of: ${envVars.join(', ')}`
-      );
+      throw new Error(`No agents found in environment variables. ` + `Please set one of: ${envVars.join(', ')}`);
     }
 
     ConfigurationManager.validateAgentsConfig(agents);
@@ -373,28 +297,26 @@ export class ADCPMultiAgentClient {
 
   /**
    * Create client from a specific config file
-   * 
+   *
    * @param configPath - Path to configuration file
    * @param config - Optional client configuration
    * @returns ADCPMultiAgentClient instance with file-loaded agents
-   * 
+   *
    * @example
    * ```typescript
    * // Load from specific file
    * const client = ADCPMultiAgentClient.fromFile('./my-agents.json');
-   * 
+   *
    * // Load from default locations
    * const client = ADCPMultiAgentClient.fromFile();
    * ```
    */
   static fromFile(configPath?: string, config?: ADCPClientConfig): ADCPMultiAgentClient {
     const agents = ConfigurationManager.loadAgentsFromConfig(configPath);
-    
+
     if (agents.length === 0) {
       const searchPaths = configPath ? [configPath] : ConfigurationManager.getConfigPaths();
-      throw new Error(
-        `No agents found in config file(s). Searched: ${searchPaths.join(', ')}`
-      );
+      throw new Error(`No agents found in config file(s). Searched: ${searchPaths.join(', ')}`);
     }
 
     ConfigurationManager.validateAgentsConfig(agents);
@@ -403,16 +325,16 @@ export class ADCPMultiAgentClient {
 
   /**
    * Create a simple client with minimal configuration
-   * 
+   *
    * @param agentUrl - Single agent URL
    * @param options - Optional agent and client configuration
    * @returns ADCPMultiAgentClient instance with single agent
-   * 
+   *
    * @example
    * ```typescript
    * // Simplest possible setup for single agent
    * const client = ADCPMultiAgentClient.simple('https://my-agent.example.com');
-   * 
+   *
    * // With options
    * const client = ADCPMultiAgentClient.simple('https://my-agent.example.com', {
    *   agentName: 'My Agent',
@@ -423,7 +345,7 @@ export class ADCPMultiAgentClient {
    * ```
    */
   static simple(
-    agentUrl: string, 
+    agentUrl: string,
     options: {
       agentId?: string;
       agentName?: string;
@@ -434,15 +356,7 @@ export class ADCPMultiAgentClient {
       timeout?: number;
     } = {}
   ): ADCPMultiAgentClient {
-    const {
-      agentId = 'default-agent',
-      agentName = 'Default Agent',
-      protocol = 'mcp',
-      requiresAuth = false,
-      authTokenEnv,
-      debug = false,
-      timeout
-    } = options;
+    const { agentId = 'default-agent', agentName = 'Default Agent', protocol = 'mcp', requiresAuth = false, authTokenEnv, debug = false, timeout } = options;
 
     const agent: AgentConfig = {
       id: agentId,
@@ -465,11 +379,11 @@ export class ADCPMultiAgentClient {
 
   /**
    * Get a single agent for operations
-   * 
+   *
    * @param agentId - ID of the agent to get
    * @returns AgentClient for the specified agent
    * @throws Error if agent not found
-   * 
+   *
    * @example
    * ```typescript
    * const agent = client.agent('premium-agent');
@@ -489,16 +403,16 @@ export class ADCPMultiAgentClient {
 
   /**
    * Get multiple specific agents for parallel operations
-   * 
+   *
    * @param agentIds - Array of agent IDs
    * @returns AgentCollection for parallel operations
    * @throws Error if any agent not found
-   * 
+   *
    * @example
    * ```typescript
    * const agents = client.agents(['agent1', 'agent2']);
    * const results = await agents.getProducts({ brief: 'Coffee brands' }, handler);
-   * 
+   *
    * // Process results
    * results.forEach(result => {
    *   if (result.success) {
@@ -509,7 +423,7 @@ export class ADCPMultiAgentClient {
    */
   agents(agentIds: string[]): AgentCollection {
     const agentConfigs: AgentConfig[] = [];
-    
+
     for (const agentId of agentIds) {
       const agent = this.agentClients.get(agentId);
       if (!agent) {
@@ -517,24 +431,24 @@ export class ADCPMultiAgentClient {
       }
       agentConfigs.push(agent.getAgent());
     }
-    
+
     return new AgentCollection(agentConfigs, this.config);
   }
 
   /**
    * Get all configured agents for broadcast operations
-   * 
+   *
    * @returns AgentCollection containing all agents
-   * 
+   *
    * @example
    * ```typescript
    * const allResults = await client.allAgents().getProducts({
    *   brief: 'Premium coffee brands'
    * }, handler);
-   * 
+   *
    * // Find best result
    * const successful = allResults.filter(r => r.success);
-   * const bestResult = successful.sort((a, b) => 
+   * const bestResult = successful.sort((a, b) =>
    *   b.data.products.length - a.data.products.length
    * )[0];
    * ```
@@ -543,8 +457,8 @@ export class ADCPMultiAgentClient {
     if (this.agentClients.size === 0) {
       throw new Error('No agents configured. Add agents to the client first.');
     }
-    
-    const agentConfigs = Array.from(this.agentClients.values()).map(agent => agent.getAgent());
+
+    const agentConfigs = Array.from(this.agentClients.values()).map((agent) => agent.getAgent());
     return new AgentCollection(agentConfigs, this.config);
   }
 
@@ -552,7 +466,7 @@ export class ADCPMultiAgentClient {
 
   /**
    * Add an agent to the client
-   * 
+   *
    * @param agentConfig - Agent configuration to add
    * @throws Error if agent ID already exists
    */
@@ -560,13 +474,13 @@ export class ADCPMultiAgentClient {
     if (this.agentClients.has(agentConfig.id)) {
       throw new Error(`Agent with ID '${agentConfig.id}' already exists`);
     }
-    
+
     this.agentClients.set(agentConfig.id, new AgentClient(agentConfig, this.config));
   }
 
   /**
    * Remove an agent from the client
-   * 
+   *
    * @param agentId - ID of agent to remove
    * @returns True if agent was removed, false if not found
    */
@@ -592,7 +506,7 @@ export class ADCPMultiAgentClient {
    * Get all agent configurations
    */
   getAgentConfigs(): AgentConfig[] {
-    return Array.from(this.agentClients.values()).map(agent => agent.getAgent());
+    return Array.from(this.agentClients.values()).map((agent) => agent.getAgent());
   }
 
   /**
@@ -609,9 +523,9 @@ export class ADCPMultiAgentClient {
    */
   getAgentsByProtocol(protocol: 'mcp' | 'a2a'): AgentCollection {
     const filteredConfigs = Array.from(this.agentClients.values())
-      .filter(agent => agent.getProtocol() === protocol)
-      .map(agent => agent.getAgent());
-    
+      .filter((agent) => agent.getProtocol() === protocol)
+      .map((agent) => agent.getAgent());
+
     return new AgentCollection(filteredConfigs, this.config);
   }
 
@@ -639,9 +553,9 @@ export class ADCPMultiAgentClient {
 
   /**
    * Get all tasks from all agents with detailed information
-   * 
+   *
    * @returns Promise resolving to array of all tasks across agents
-   * 
+   *
    * @example
    * ```typescript
    * const allTasks = await client.listAllTasks();
@@ -649,21 +563,19 @@ export class ADCPMultiAgentClient {
    * ```
    */
   async listAllTasks(): Promise<TaskInfo[]> {
-    const taskPromises = Array.from(this.agentClients.values()).map(agent => 
-      agent.listTasks()
-    );
+    const taskPromises = Array.from(this.agentClients.values()).map((agent) => agent.listTasks());
     const taskArrays = await Promise.all(taskPromises);
     return taskArrays.flat();
   }
 
   /**
    * Get tasks for specific agents
-   * 
+   *
    * @param agentIds - Array of agent IDs to get tasks for
    * @returns Promise resolving to array of tasks from specified agents
    */
   async listTasksForAgents(agentIds: string[]): Promise<TaskInfo[]> {
-    const taskPromises = agentIds.map(agentId => {
+    const taskPromises = agentIds.map((agentId) => {
       const agent = this.agentClients.get(agentId);
       return agent ? agent.listTasks() : Promise.resolve([]);
     });
@@ -673,7 +585,7 @@ export class ADCPMultiAgentClient {
 
   /**
    * Get task information by ID from any agent
-   * 
+   *
    * @param taskId - ID of the task to find
    * @returns Promise resolving to task information or null if not found
    */
@@ -689,10 +601,10 @@ export class ADCPMultiAgentClient {
 
   /**
    * Subscribe to task events from all agents
-   * 
+   *
    * @param callbacks - Event callbacks for different task events
    * @returns Unsubscribe function that removes all subscriptions
-   * 
+   *
    * @example
    * ```typescript
    * const unsubscribe = client.onTaskEvents({
@@ -712,46 +624,44 @@ export class ADCPMultiAgentClient {
     onTaskFailed?: (task: TaskInfo, error: string) => void;
   }): () => void {
     const unsubscribers: (() => void)[] = [];
-    
+
     for (const agent of this.agentClients.values()) {
       const unsubscribe = agent.onTaskEvents(callbacks);
       unsubscribers.push(unsubscribe);
     }
-    
+
     return () => {
-      unsubscribers.forEach(unsub => unsub());
+      unsubscribers.forEach((unsub) => unsub());
     };
   }
 
   /**
    * Subscribe to task updates from all agents
-   * 
+   *
    * @param callback - Function to call when any task status changes
    * @returns Unsubscribe function
    */
   onAnyTaskUpdate(callback: (task: TaskInfo) => void): () => void {
     const unsubscribers: (() => void)[] = [];
-    
+
     for (const agent of this.agentClients.values()) {
       const unsubscribe = agent.onTaskUpdate(callback);
       unsubscribers.push(unsubscribe);
     }
-    
+
     return () => {
-      unsubscribers.forEach(unsub => unsub());
+      unsubscribers.forEach((unsub) => unsub());
     };
   }
 
   /**
    * Register webhooks for all agents
-   * 
+   *
    * @param webhookUrl - Base webhook URL (will append agent ID)
    * @param taskTypes - Optional array of task types to watch
    */
   async registerWebhooksForAll(webhookUrl: string, taskTypes?: string[]): Promise<void> {
-    const promises = Array.from(this.agentClients.values()).map(agent => 
-      agent.registerWebhook(`${webhookUrl}?agentId=${agent.getAgentId()}`, taskTypes)
-    );
+    const promises = Array.from(this.agentClients.values()).map((agent) => agent.registerWebhook(`${webhookUrl}?agentId=${agent.getAgentId()}`, taskTypes));
     await Promise.all(promises);
   }
 
@@ -759,17 +669,15 @@ export class ADCPMultiAgentClient {
    * Unregister webhooks for all agents
    */
   async unregisterAllWebhooks(): Promise<void> {
-    const promises = Array.from(this.agentClients.values()).map(agent => 
-      agent.unregisterWebhook()
-    );
+    const promises = Array.from(this.agentClients.values()).map((agent) => agent.unregisterWebhook());
     await Promise.all(promises);
   }
 
   /**
    * Get count of active tasks by status
-   * 
+   *
    * @returns Promise resolving to object with counts by status
-   * 
+   *
    * @example
    * ```typescript
    * const counts = await client.getTaskCountsByStatus();
@@ -808,11 +716,7 @@ export class ADCPMultiAgentClient {
    * const formats = await creativeAgent.listFormats();
    * ```
    */
-  createCreativeAgent(
-    agentUrl: string,
-    protocol: 'mcp' | 'a2a' = 'mcp',
-    authToken?: string
-  ): CreativeAgentClient {
+  createCreativeAgent(agentUrl: string, protocol: 'mcp' | 'a2a' = 'mcp', authToken?: string): CreativeAgentClient {
     return new CreativeAgentClient({
       agentUrl,
       protocol,
@@ -834,9 +738,7 @@ export class ADCPMultiAgentClient {
    * ```
    */
   getStandardCreativeAgent(protocol: 'mcp' | 'a2a' = 'mcp'): CreativeAgentClient {
-    const agentUrl = protocol === 'mcp'
-      ? STANDARD_CREATIVE_AGENTS.ADCP_REFERENCE
-      : STANDARD_CREATIVE_AGENTS.ADCP_REFERENCE_A2A;
+    const agentUrl = protocol === 'mcp' ? STANDARD_CREATIVE_AGENTS.ADCP_REFERENCE : STANDARD_CREATIVE_AGENTS.ADCP_REFERENCE_A2A;
 
     return this.createCreativeAgent(agentUrl, protocol);
   }
@@ -899,14 +801,11 @@ export class ADCPMultiAgentClient {
 
 /**
  * Factory function to create a multi-agent ADCP client
- * 
+ *
  * @param agents - Array of agent configurations
  * @param config - Client configuration
  * @returns Configured ADCPMultiAgentClient instance
  */
-export function createADCPMultiAgentClient(
-  agents: AgentConfig[],
-  config?: ADCPClientConfig
-): ADCPMultiAgentClient {
+export function createADCPMultiAgentClient(agents: AgentConfig[], config?: ADCPClientConfig): ADCPMultiAgentClient {
   return new ADCPMultiAgentClient(agents, config);
 }

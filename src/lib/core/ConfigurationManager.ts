@@ -32,18 +32,9 @@ export interface ADCPConfig {
  * Enhanced configuration manager with multiple loading strategies
  */
 export class ConfigurationManager {
-  private static readonly CONFIG_FILES = [
-    'adcp.config.json',
-    'adcp.json',
-    '.adcp.json',
-    'agents.json'
-  ];
+  private static readonly CONFIG_FILES = ['adcp.config.json', 'adcp.json', '.adcp.json', 'agents.json'];
 
-  private static readonly ENV_VARS = [
-    'SALES_AGENTS_CONFIG',
-    'ADCP_AGENTS_CONFIG',
-    'ADCP_CONFIG'
-  ];
+  private static readonly ENV_VARS = ['SALES_AGENTS_CONFIG', 'ADCP_AGENTS_CONFIG', 'ADCP_CONFIG'];
 
   /**
    * Load agent configurations using auto-discovery
@@ -86,7 +77,7 @@ export class ConfigurationManager {
         try {
           const config = JSON.parse(configEnv);
           const agents = this.extractAgents(config);
-          
+
           if (agents.length > 0) {
             console.log(`📡 Loaded ${agents.length} agents from ${envVar}`);
             this.logAgents(agents);
@@ -95,10 +86,7 @@ export class ConfigurationManager {
         } catch (error) {
           const errorMessage = error instanceof Error ? error.message : String(error);
           console.error(`❌ Failed to parse ${envVar}:`, errorMessage);
-          throw new ConfigurationError(
-            `Invalid JSON in ${envVar}: ${errorMessage}`,
-            envVar
-          );
+          throw new ConfigurationError(`Invalid JSON in ${envVar}: ${errorMessage}`, envVar);
         }
       }
     }
@@ -111,16 +99,16 @@ export class ConfigurationManager {
    */
   static loadAgentsFromConfig(configPath?: string): AgentConfig[] {
     const filesToTry = configPath ? [configPath] : this.CONFIG_FILES;
-    
+
     for (const file of filesToTry) {
       const fullPath = resolve(file);
-      
+
       if (existsSync(fullPath)) {
         try {
           const content = readFileSync(fullPath, 'utf8');
           const config = JSON.parse(content);
           const agents = this.extractAgents(config);
-          
+
           if (agents.length > 0) {
             console.log(`📁 Loaded ${agents.length} agents from ${file}`);
             this.logAgents(agents);
@@ -129,10 +117,7 @@ export class ConfigurationManager {
         } catch (error) {
           const errorMessage = error instanceof Error ? error.message : String(error);
           console.error(`❌ Failed to load config from ${file}:`, errorMessage);
-          throw new ConfigurationError(
-            `Invalid config file ${file}: ${errorMessage}`,
-            'configFile'
-          );
+          throw new ConfigurationError(`Invalid config file ${file}: ${errorMessage}`, 'configFile');
         }
       }
     }
@@ -148,11 +133,11 @@ export class ConfigurationManager {
     if (Array.isArray(config)) {
       return config; // Direct agent array
     }
-    
+
     if (config.agents && Array.isArray(config.agents)) {
       return config.agents; // Standard format: { agents: [...] }
     }
-    
+
     if (config.data?.agents && Array.isArray(config.data.agents)) {
       return config.data.agents; // Nested format: { data: { agents: [...] } }
     }
@@ -169,7 +154,7 @@ export class ConfigurationManager {
       const authIcon = agent.requiresAuth ? '🔐' : '🌐';
       console.log(`  ${protocolIcon}${authIcon} ${agent.name} (${agent.protocol.toUpperCase()}) at ${agent.agent_uri}`);
     });
-    
+
     const useRealAgents = process.env.USE_REAL_AGENTS === 'true';
     console.log(`🔧 Real agents mode: ${useRealAgents ? 'ENABLED' : 'DISABLED'}`);
   }
@@ -179,31 +164,22 @@ export class ConfigurationManager {
    */
   static validateAgentConfig(agent: AgentConfig): void {
     const required = ['id', 'name', 'agent_uri', 'protocol'];
-    
+
     for (const field of required) {
       if (!agent[field as keyof AgentConfig]) {
-        throw new ConfigurationError(
-          `Agent configuration missing required field: ${field}`,
-          field
-        );
+        throw new ConfigurationError(`Agent configuration missing required field: ${field}`, field);
       }
     }
 
     if (!['mcp', 'a2a'].includes(agent.protocol)) {
-      throw new ConfigurationError(
-        `Invalid protocol "${agent.protocol}". Must be "mcp" or "a2a"`,
-        'protocol'
-      );
+      throw new ConfigurationError(`Invalid protocol "${agent.protocol}". Must be "mcp" or "a2a"`, 'protocol');
     }
 
     // Basic URL validation
     try {
       new URL(agent.agent_uri);
     } catch {
-      throw new ConfigurationError(
-        `Invalid agent_uri "${agent.agent_uri}". Must be a valid URL`,
-        'agent_uri'
-      );
+      throw new ConfigurationError(`Invalid agent_uri "${agent.agent_uri}". Must be a valid URL`, 'agent_uri');
     }
   }
 
@@ -220,17 +196,14 @@ export class ConfigurationManager {
     }
 
     // Check for duplicate IDs
-    const ids = agents.map(a => a.id);
+    const ids = agents.map((a) => a.id);
     const duplicates = ids.filter((id, index) => ids.indexOf(id) !== index);
     if (duplicates.length > 0) {
-      throw new ConfigurationError(
-        `Duplicate agent IDs found: ${duplicates.join(', ')}`,
-        'duplicateIds'
-      );
+      throw new ConfigurationError(`Duplicate agent IDs found: ${duplicates.join(', ')}`, 'duplicateIds');
     }
 
     // Validate each agent
-    agents.forEach(agent => this.validateAgentConfig(agent));
+    agents.forEach((agent) => this.validateAgentConfig(agent));
   }
 
   /**
@@ -268,7 +241,7 @@ export class ConfigurationManager {
    * Get configuration file paths that would be checked
    */
   static getConfigPaths(): string[] {
-    return this.CONFIG_FILES.map(file => resolve(file));
+    return this.CONFIG_FILES.map((file) => resolve(file));
   }
 
   /**

@@ -62,9 +62,9 @@ export class CircuitBreaker {
   private state: 'closed' | 'open' | 'half-open' = 'closed';
   private readonly failureThreshold = 5;
   private readonly resetTimeout = 60000; // 1 minute
-  
+
   constructor(private agentId: string) {}
-  
+
   async call<T>(fn: () => Promise<T>): Promise<T> {
     if (this.state === 'open') {
       if (Date.now() - this.lastFailTime > this.resetTimeout) {
@@ -74,7 +74,7 @@ export class CircuitBreaker {
         throw new Error(`Circuit breaker is open for agent ${this.agentId}`);
       }
     }
-    
+
     try {
       const result = await fn();
       this.onSuccess();
@@ -84,7 +84,7 @@ export class CircuitBreaker {
       throw error;
     }
   }
-  
+
   private onSuccess(): void {
     this.failures = 0;
     if (this.state === 'half-open') {
@@ -92,11 +92,11 @@ export class CircuitBreaker {
       console.log(`✅ Circuit breaker for ${this.agentId} closed successfully`);
     }
   }
-  
+
   private onFailure(): void {
     this.failures++;
     this.lastFailTime = Date.now();
-    
+
     if (this.failures >= this.failureThreshold) {
       this.state = 'open';
       console.log(`🚨 Circuit breaker opened for agent ${this.agentId} after ${this.failures} failures`);

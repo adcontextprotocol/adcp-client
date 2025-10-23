@@ -172,13 +172,7 @@ export class ResponseValidator {
   /**
    * Validate expected fields are present in the response
    */
-  private validateExpectedFields(
-    response: any,
-    expectedFields: string[],
-    protocol: string,
-    errors: string[],
-    warnings: string[]
-  ): void {
+  private validateExpectedFields(response: any, expectedFields: string[], protocol: string, errors: string[], warnings: string[]): void {
     let data: any;
 
     // Extract data based on protocol
@@ -196,7 +190,7 @@ export class ResponseValidator {
     }
 
     // Check each expected field
-    expectedFields.forEach(field => {
+    expectedFields.forEach((field) => {
       if (!(field in data)) {
         errors.push(`Missing expected field: ${field}`);
       } else if (Array.isArray(data[field]) && data[field].length === 0) {
@@ -228,13 +222,7 @@ export class ResponseValidator {
   /**
    * Tool-specific validation rules
    */
-  private validateToolResponse(
-    response: any,
-    toolName: string,
-    protocol: string,
-    errors: string[],
-    warnings: string[]
-  ): void {
+  private validateToolResponse(response: any, toolName: string, protocol: string, errors: string[], warnings: string[]): void {
     const expectedFields = this.getExpectedFieldsForTool(toolName);
     if (expectedFields.length > 0) {
       this.validateExpectedFields(response, expectedFields, protocol, errors, warnings);

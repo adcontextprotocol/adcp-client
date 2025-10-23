@@ -1,14 +1,8 @@
 // Per-agent client wrapper with conversation context preservation
 
-import type { AgentConfig } from "../types";
-import { ADCPClient, type ADCPClientConfig } from "./ADCPClient";
-import type {
-  InputHandler,
-  TaskOptions,
-  TaskResult,
-  TaskInfo,
-  Message,
-} from "./ConversationTypes";
+import type { AgentConfig } from '../types';
+import { ADCPClient, type ADCPClientConfig } from './ADCPClient';
+import type { InputHandler, TaskOptions, TaskResult, TaskInfo, Message } from './ConversationTypes';
 import type {
   GetProductsRequest,
   GetProductsResponse,
@@ -31,8 +25,8 @@ import type {
   GetSignalsRequest,
   GetSignalsResponse,
   ActivateSignalRequest,
-  ActivateSignalResponse,
-} from "../types/tools.generated";
+  ActivateSignalResponse
+} from '../types/tools.generated';
 
 /**
  * Type mapping for task names to their response types
@@ -82,11 +76,7 @@ export class AgentClient {
    * @param timestamp - Optional Unix timestamp for signature freshness verification
    * @returns Whether webhook was handled successfully
    */
-  async handleWebhook(
-    payload: any,
-    signature?: string,
-    timestamp?: string | number
-  ): Promise<boolean> {
+  async handleWebhook(payload: any, signature?: string, timestamp?: string | number): Promise<boolean> {
     return this.client.handleWebhook(payload, signature, timestamp);
   }
 
@@ -106,14 +96,10 @@ export class AgentClient {
   /**
    * Discover available advertising products
    */
-  async getProducts(
-    params: GetProductsRequest,
-    inputHandler?: InputHandler,
-    options?: TaskOptions
-  ): Promise<TaskResult<GetProductsResponse>> {
+  async getProducts(params: GetProductsRequest, inputHandler?: InputHandler, options?: TaskOptions): Promise<TaskResult<GetProductsResponse>> {
     const result = await this.client.getProducts(params, inputHandler, {
       ...options,
-      contextId: this.currentContextId,
+      contextId: this.currentContextId
     });
 
     if (result.success) {
@@ -126,14 +112,10 @@ export class AgentClient {
   /**
    * List available creative formats
    */
-  async listCreativeFormats(
-    params: ListCreativeFormatsRequest,
-    inputHandler?: InputHandler,
-    options?: TaskOptions
-  ): Promise<TaskResult<ListCreativeFormatsResponse>> {
+  async listCreativeFormats(params: ListCreativeFormatsRequest, inputHandler?: InputHandler, options?: TaskOptions): Promise<TaskResult<ListCreativeFormatsResponse>> {
     const result = await this.client.listCreativeFormats(params, inputHandler, {
       ...options,
-      contextId: this.currentContextId,
+      contextId: this.currentContextId
     });
 
     if (result.success) {
@@ -146,14 +128,10 @@ export class AgentClient {
   /**
    * Create a new media buy
    */
-  async createMediaBuy(
-    params: CreateMediaBuyRequest,
-    inputHandler?: InputHandler,
-    options?: TaskOptions
-  ): Promise<TaskResult<CreateMediaBuyResponse>> {
+  async createMediaBuy(params: CreateMediaBuyRequest, inputHandler?: InputHandler, options?: TaskOptions): Promise<TaskResult<CreateMediaBuyResponse>> {
     const result = await this.client.createMediaBuy(params, inputHandler, {
       ...options,
-      contextId: this.currentContextId,
+      contextId: this.currentContextId
     });
 
     if (result.success) {
@@ -166,14 +144,10 @@ export class AgentClient {
   /**
    * Update an existing media buy
    */
-  async updateMediaBuy(
-    params: UpdateMediaBuyRequest,
-    inputHandler?: InputHandler,
-    options?: TaskOptions
-  ): Promise<TaskResult<UpdateMediaBuyResponse>> {
+  async updateMediaBuy(params: UpdateMediaBuyRequest, inputHandler?: InputHandler, options?: TaskOptions): Promise<TaskResult<UpdateMediaBuyResponse>> {
     const result = await this.client.updateMediaBuy(params, inputHandler, {
       ...options,
-      contextId: this.currentContextId,
+      contextId: this.currentContextId
     });
 
     if (result.success) {
@@ -186,14 +160,10 @@ export class AgentClient {
   /**
    * Sync creative assets
    */
-  async syncCreatives(
-    params: SyncCreativesRequest,
-    inputHandler?: InputHandler,
-    options?: TaskOptions
-  ): Promise<TaskResult<SyncCreativesResponse>> {
+  async syncCreatives(params: SyncCreativesRequest, inputHandler?: InputHandler, options?: TaskOptions): Promise<TaskResult<SyncCreativesResponse>> {
     const result = await this.client.syncCreatives(params, inputHandler, {
       ...options,
-      contextId: this.currentContextId,
+      contextId: this.currentContextId
     });
 
     if (result.success) {
@@ -206,14 +176,10 @@ export class AgentClient {
   /**
    * List creative assets
    */
-  async listCreatives(
-    params: ListCreativesRequest,
-    inputHandler?: InputHandler,
-    options?: TaskOptions
-  ): Promise<TaskResult<ListCreativesResponse>> {
+  async listCreatives(params: ListCreativesRequest, inputHandler?: InputHandler, options?: TaskOptions): Promise<TaskResult<ListCreativesResponse>> {
     const result = await this.client.listCreatives(params, inputHandler, {
       ...options,
-      contextId: this.currentContextId,
+      contextId: this.currentContextId
     });
 
     if (result.success) {
@@ -226,14 +192,10 @@ export class AgentClient {
   /**
    * Get media buy delivery information
    */
-  async getMediaBuyDelivery(
-    params: GetMediaBuyDeliveryRequest,
-    inputHandler?: InputHandler,
-    options?: TaskOptions
-  ): Promise<TaskResult<GetMediaBuyDeliveryResponse>> {
+  async getMediaBuyDelivery(params: GetMediaBuyDeliveryRequest, inputHandler?: InputHandler, options?: TaskOptions): Promise<TaskResult<GetMediaBuyDeliveryResponse>> {
     const result = await this.client.getMediaBuyDelivery(params, inputHandler, {
       ...options,
-      contextId: this.currentContextId,
+      contextId: this.currentContextId
     });
 
     if (result.success) {
@@ -246,16 +208,8 @@ export class AgentClient {
   /**
    * List authorized properties
    */
-  async listAuthorizedProperties(
-    params: ListAuthorizedPropertiesRequest,
-    inputHandler?: InputHandler,
-    options?: TaskOptions
-  ): Promise<TaskResult<ListAuthorizedPropertiesResponse>> {
-    const result = await this.client.listAuthorizedProperties(
-      params,
-      inputHandler,
-      { ...options, contextId: this.currentContextId }
-    );
+  async listAuthorizedProperties(params: ListAuthorizedPropertiesRequest, inputHandler?: InputHandler, options?: TaskOptions): Promise<TaskResult<ListAuthorizedPropertiesResponse>> {
+    const result = await this.client.listAuthorizedProperties(params, inputHandler, { ...options, contextId: this.currentContextId });
 
     if (result.success) {
       this.currentContextId = result.metadata.taskId;
@@ -267,16 +221,8 @@ export class AgentClient {
   /**
    * Provide performance feedback
    */
-  async providePerformanceFeedback(
-    params: ProvidePerformanceFeedbackRequest,
-    inputHandler?: InputHandler,
-    options?: TaskOptions
-  ): Promise<TaskResult<ProvidePerformanceFeedbackResponse>> {
-    const result = await this.client.providePerformanceFeedback(
-      params,
-      inputHandler,
-      { ...options, contextId: this.currentContextId }
-    );
+  async providePerformanceFeedback(params: ProvidePerformanceFeedbackRequest, inputHandler?: InputHandler, options?: TaskOptions): Promise<TaskResult<ProvidePerformanceFeedbackResponse>> {
+    const result = await this.client.providePerformanceFeedback(params, inputHandler, { ...options, contextId: this.currentContextId });
 
     if (result.success) {
       this.currentContextId = result.metadata.taskId;
@@ -290,14 +236,10 @@ export class AgentClient {
   /**
    * Get audience signals
    */
-  async getSignals(
-    params: GetSignalsRequest,
-    inputHandler?: InputHandler,
-    options?: TaskOptions
-  ): Promise<TaskResult<GetSignalsResponse>> {
+  async getSignals(params: GetSignalsRequest, inputHandler?: InputHandler, options?: TaskOptions): Promise<TaskResult<GetSignalsResponse>> {
     const result = await this.client.getSignals(params, inputHandler, {
       ...options,
-      contextId: this.currentContextId,
+      contextId: this.currentContextId
     });
 
     if (result.success) {
@@ -310,14 +252,10 @@ export class AgentClient {
   /**
    * Activate audience signals
    */
-  async activateSignal(
-    params: ActivateSignalRequest,
-    inputHandler?: InputHandler,
-    options?: TaskOptions
-  ): Promise<TaskResult<ActivateSignalResponse>> {
+  async activateSignal(params: ActivateSignalRequest, inputHandler?: InputHandler, options?: TaskOptions): Promise<TaskResult<ActivateSignalResponse>> {
     const result = await this.client.activateSignal(params, inputHandler, {
       ...options,
-      contextId: this.currentContextId,
+      contextId: this.currentContextId
     });
 
     if (result.success) {
@@ -346,22 +284,12 @@ export class AgentClient {
    * );
    * ```
    */
-  async continueConversation<T = any>(
-    message: string,
-    inputHandler?: InputHandler,
-    options?: TaskOptions
-  ): Promise<TaskResult<T>> {
+  async continueConversation<T = any>(message: string, inputHandler?: InputHandler, options?: TaskOptions): Promise<TaskResult<T>> {
     if (!this.currentContextId) {
-      throw new Error(
-        "No active conversation to continue. Start with a task method first."
-      );
+      throw new Error('No active conversation to continue. Start with a task method first.');
     }
 
-    const result = await this.client.continueConversation<T>(
-      message,
-      this.currentContextId,
-      inputHandler
-    );
+    const result = await this.client.continueConversation<T>(message, this.currentContextId, inputHandler);
 
     if (result.success) {
       this.currentContextId = result.metadata.taskId;
@@ -430,7 +358,7 @@ export class AgentClient {
   /**
    * Get the agent protocol
    */
-  getProtocol(): "mcp" | "a2a" {
+  getProtocol(): 'mcp' | 'a2a' {
     return this.client.getProtocol();
   }
 
@@ -463,35 +391,15 @@ export class AgentClient {
    * const customResult = await agent.executeTask<MyCustomResponse>('custom_task', params);
    * ```
    */
-  async executeTask<K extends AdcpTaskName>(
-    taskName: K,
-    params: any,
-    inputHandler?: InputHandler,
-    options?: TaskOptions
-  ): Promise<TaskResult<TaskResponseTypeMap[K]>>;
+  async executeTask<K extends AdcpTaskName>(taskName: K, params: any, inputHandler?: InputHandler, options?: TaskOptions): Promise<TaskResult<TaskResponseTypeMap[K]>>;
 
   /**
    * Execute any task by name with custom response type
    */
-  async executeTask<T = any>(
-    taskName: string,
-    params: any,
-    inputHandler?: InputHandler,
-    options?: TaskOptions
-  ): Promise<TaskResult<T>>;
+  async executeTask<T = any>(taskName: string, params: any, inputHandler?: InputHandler, options?: TaskOptions): Promise<TaskResult<T>>;
 
-  async executeTask<T = any>(
-    taskName: string,
-    params: any,
-    inputHandler?: InputHandler,
-    options?: TaskOptions
-  ): Promise<TaskResult<T>> {
-    const result = await this.client.executeTask<T>(
-      taskName,
-      params,
-      inputHandler,
-      { ...options, contextId: this.currentContextId }
-    );
+  async executeTask<T = any>(taskName: string, params: any, inputHandler?: InputHandler, options?: TaskOptions): Promise<TaskResult<T>> {
+    const result = await this.client.executeTask<T>(taskName, params, inputHandler, { ...options, contextId: this.currentContextId });
 
     if (result.success) {
       this.currentContextId = result.metadata.taskId;
@@ -538,10 +446,7 @@ export class AgentClient {
   /**
    * Register webhook for task notifications
    */
-  async registerWebhook(
-    webhookUrl: string,
-    taskTypes?: string[]
-  ): Promise<void> {
+  async registerWebhook(webhookUrl: string, taskTypes?: string[]): Promise<void> {
     return this.client.registerWebhook(webhookUrl, taskTypes);
   }
 

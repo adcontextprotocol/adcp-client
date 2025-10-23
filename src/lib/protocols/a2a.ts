@@ -6,13 +6,7 @@ if (!A2AClient) {
   throw new Error('A2A SDK client is required. Please install @a2a-js/sdk');
 }
 
-export async function callA2ATool(
-  agentUrl: string,
-  toolName: string,
-  parameters: Record<string, any>,
-  authToken?: string,
-  debugLogs: any[] = []
-): Promise<any> {
+export async function callA2ATool(agentUrl: string, toolName: string, parameters: Record<string, any>, authToken?: string, debugLogs: any[] = []): Promise<any> {
   // Create authenticated fetch that wraps native fetch
   // This ensures ALL requests (including agent card fetching) include auth headers
   const fetchImpl = async (url: string | URL | Request, options?: RequestInit) => {
@@ -36,7 +30,7 @@ export async function callA2ATool(
     const headers: Record<string, string> = {
       ...existingHeaders,
       ...(authToken && {
-        'Authorization': `Bearer ${authToken}`,
+        Authorization: `Bearer ${authToken}`,
         'x-adcp-auth': authToken
       })
     };
@@ -46,9 +40,7 @@ export async function callA2ATool(
       message: `A2A: Fetch to ${typeof url === 'string' ? url : url.toString()}`,
       timestamp: new Date().toISOString(),
       hasAuth: !!authToken,
-      headers: authToken
-        ? { ...headers, 'Authorization': 'Bearer ***', 'x-adcp-auth': '***' }
-        : headers
+      headers: authToken ? { ...headers, Authorization: 'Bearer ***', 'x-adcp-auth': '***' } : headers
     });
 
     return fetch(url, {
@@ -59,9 +51,7 @@ export async function callA2ATool(
 
   // Create A2A client using the recommended fromCardUrl method
   // Ensure the URL points to the agent card endpoint
-  const cardUrl = agentUrl.endsWith('/.well-known/agent-card.json')
-    ? agentUrl
-    : agentUrl.replace(/\/$/, '') + '/.well-known/agent-card.json';
+  const cardUrl = agentUrl.endsWith('/.well-known/agent-card.json') ? agentUrl : agentUrl.replace(/\/$/, '') + '/.well-known/agent-card.json';
 
   debugLogs.push({
     type: 'info',
@@ -72,23 +62,25 @@ export async function callA2ATool(
   const a2aClient = await A2AClient.fromCardUrl(cardUrl, {
     fetchImpl
   });
-  
+
   // Build request payload following AdCP A2A spec
   const requestPayload = {
     message: {
       messageId: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-      role: "user",
-      kind: "message",  // Required by A2A spec
-      parts: [{
-        kind: "data",  // A2A spec uses "kind", not "type"
-        data: {
-          skill: toolName,
-          input: parameters  // A2A spec uses "input", not "parameters"
+      role: 'user',
+      kind: 'message', // Required by A2A spec
+      parts: [
+        {
+          kind: 'data', // A2A spec uses "kind", not "type"
+          data: {
+            skill: toolName,
+            input: parameters // A2A spec uses "input", not "parameters"
+          }
         }
-      }]
+      ]
     }
   };
-  
+
   // Add debug log for A2A call
   const payloadSize = JSON.stringify(requestPayload).length;
   debugLogs.push({
@@ -98,7 +90,7 @@ export async function callA2ATool(
     payloadSize,
     actualPayload: requestPayload
   });
-  
+
   // Send message using A2A protocol
   debugLogs.push({
     type: 'info',
@@ -117,13 +109,13 @@ export async function callA2ATool(
     response: messageResponse,
     skill: toolName
   });
-  
+
   // Check for JSON-RPC error in response
   if (messageResponse?.error || messageResponse?.result?.error) {
     const errorObj = messageResponse.error || messageResponse.result?.error;
     const errorMessage = errorObj.message || JSON.stringify(errorObj);
     throw new Error(`A2A agent returned error: ${errorMessage}`);
   }
-  
+
   return messageResponse;
 }

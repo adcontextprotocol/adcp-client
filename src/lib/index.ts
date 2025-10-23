@@ -13,69 +13,26 @@ export type { ADCPClientConfig } from './core/ADCPClient';
 export { AgentClient, type TaskResponseTypeMap, type AdcpTaskName } from './core/AgentClient';
 export { ADCPMultiAgentClient, AgentCollection as NewAgentCollection, createADCPMultiAgentClient } from './core/ADCPMultiAgentClient';
 export { ConfigurationManager } from './core/ConfigurationManager';
-export {
-  CreativeAgentClient,
-  createCreativeAgentClient,
-  STANDARD_CREATIVE_AGENTS,
-  type CreativeFormat,
-  type CreativeFormatType,
-  type CreativeAgentClientConfig
-} from './core/CreativeAgentClient';
+export { CreativeAgentClient, createCreativeAgentClient, STANDARD_CREATIVE_AGENTS, type CreativeFormat, type CreativeFormatType, type CreativeAgentClientConfig } from './core/CreativeAgentClient';
 export { TaskExecutor } from './core/TaskExecutor';
 export { ProtocolResponseParser, responseParser, ADCP_STATUS, type ADCPStatus } from './core/ProtocolResponseParser';
 export { ResponseValidator, responseValidator, type ValidationResult, type ValidationOptions } from './core/ResponseValidator';
 // ====== CONVERSATION TYPES ======
-export type {
-  Message,
-  InputRequest,
-  InputHandler,
-  InputHandlerResponse,
-  ConversationContext,
-  TaskOptions,
-  TaskResult,
-  TaskState,
-  TaskStatus,
-  ConversationConfig
-} from './core/ConversationTypes';
+export type { Message, InputRequest, InputHandler, InputHandlerResponse, ConversationContext, TaskOptions, TaskResult, TaskState, TaskStatus, ConversationConfig } from './core/ConversationTypes';
 
 // ====== TASK EVENT TYPES ======
-export type {
-  BaseTaskEvent,
-  ProtocolRequestEvent,
-  ProtocolResponseEvent,
-  TaskStatusEvent,
-  ObjectEvent,
-  TaskEvent,
-  TaskEventCallbacks
-} from './core/TaskEventTypes';
+export type { BaseTaskEvent, ProtocolRequestEvent, ProtocolResponseEvent, TaskStatusEvent, ObjectEvent, TaskEvent, TaskEventCallbacks } from './core/TaskEventTypes';
 export { createOperationId } from './core/TaskEventTypes';
 
 // ====== ASYNC HANDLER ======
-export type {
-  AsyncHandlerConfig,
-  WebhookMetadata,
-  WebhookPayload,
-  Activity,
-  NotificationMetadata,
-  MediaBuyDeliveryNotification
-} from './core/AsyncHandler';
+export type { AsyncHandlerConfig, WebhookMetadata, WebhookPayload, Activity, NotificationMetadata, MediaBuyDeliveryNotification } from './core/AsyncHandler';
 export { AsyncHandler, createAsyncHandler } from './core/AsyncHandler';
 
 // ====== INPUT HANDLERS ======
 export * from './handlers/types';
 
 // ====== STORAGE INTERFACES ======
-export type {
-  Storage,
-  BatchStorage,
-  PatternStorage,
-  AgentCapabilities,
-  ConversationState,
-  DeferredTaskState,
-  StorageConfig,
-  StorageFactory,
-  StorageMiddleware
-} from './storage/interfaces';
+export type { Storage, BatchStorage, PatternStorage, AgentCapabilities, ConversationState, DeferredTaskState, StorageConfig, StorageFactory, StorageMiddleware } from './storage/interfaces';
 export { MemoryStorage, createMemoryStorage, createMemoryStorageConfig } from './storage/MemoryStorage';
 
 // ====== ERROR CLASSES ======
@@ -104,17 +61,28 @@ export * from './types';
 // ====== TOOL TYPES ======
 // All ADCP task request/response types
 export type {
-  GetProductsRequest, GetProductsResponse,
-  ListCreativeFormatsRequest, ListCreativeFormatsResponse,
-  CreateMediaBuyRequest, CreateMediaBuyResponse,
-  UpdateMediaBuyRequest, UpdateMediaBuyResponse,
-  SyncCreativesRequest, SyncCreativesResponse,
-  ListCreativesRequest, ListCreativesResponse,
-  GetMediaBuyDeliveryRequest, GetMediaBuyDeliveryResponse,
-  ListAuthorizedPropertiesRequest, ListAuthorizedPropertiesResponse,
-  ProvidePerformanceFeedbackRequest, ProvidePerformanceFeedbackResponse,
-  GetSignalsRequest, GetSignalsResponse,
-  ActivateSignalRequest, ActivateSignalResponse,
+  GetProductsRequest,
+  GetProductsResponse,
+  ListCreativeFormatsRequest,
+  ListCreativeFormatsResponse,
+  CreateMediaBuyRequest,
+  CreateMediaBuyResponse,
+  UpdateMediaBuyRequest,
+  UpdateMediaBuyResponse,
+  SyncCreativesRequest,
+  SyncCreativesResponse,
+  ListCreativesRequest,
+  ListCreativesResponse,
+  GetMediaBuyDeliveryRequest,
+  GetMediaBuyDeliveryResponse,
+  ListAuthorizedPropertiesRequest,
+  ListAuthorizedPropertiesResponse,
+  ProvidePerformanceFeedbackRequest,
+  ProvidePerformanceFeedbackResponse,
+  GetSignalsRequest,
+  GetSignalsResponse,
+  ActivateSignalRequest,
+  ActivateSignalResponse,
   // Core data structures
   Format,
   Product,
@@ -156,14 +124,28 @@ export class AdCPClient {
     this.multiClient = new ADCPMultiAgentClient(agents || []);
   }
 
-  agent(id: string) { return this.multiClient.agent(id); }
-  agents(ids: string[]) { return this.multiClient.agents(ids); }
-  allAgents() { return this.multiClient.allAgents(); }
-  addAgent(agent: AgentConfig) { this.multiClient.addAgent(agent); }
-  getAgents() { return this.multiClient.getAgentConfigs(); }
-  get agentCount() { return this.multiClient.agentCount; }
-  get agentIds() { return this.multiClient.getAgentIds(); }
-  
+  agent(id: string) {
+    return this.multiClient.agent(id);
+  }
+  agents(ids: string[]) {
+    return this.multiClient.agents(ids);
+  }
+  allAgents() {
+    return this.multiClient.allAgents();
+  }
+  addAgent(agent: AgentConfig) {
+    this.multiClient.addAgent(agent);
+  }
+  getAgents() {
+    return this.multiClient.getAgentConfigs();
+  }
+  get agentCount() {
+    return this.multiClient.agentCount;
+  }
+  get agentIds() {
+    return this.multiClient.getAgentIds();
+  }
+
   getStandardFormats() {
     const { getStandardFormats } = require('./utils');
     return getStandardFormats();

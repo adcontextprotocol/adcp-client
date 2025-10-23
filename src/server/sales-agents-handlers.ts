@@ -3,14 +3,7 @@
  * This replaces the manual protocol implementation with proper library usage
  */
 
-import {
-  ADCPMultiAgentClient,
-  type AgentConfig,
-  type GetProductsRequest,
-  type ListCreativeFormatsRequest,
-  type CreateMediaBuyRequest,
-  type TaskResult
-} from '../lib';
+import { ADCPMultiAgentClient, type AgentConfig, type GetProductsRequest, type ListCreativeFormatsRequest, type CreateMediaBuyRequest, type TaskResult } from '../lib';
 import { ADCP_VERSION } from '../lib/version';
 
 /**
@@ -91,7 +84,7 @@ export class SalesAgentsHandlers {
     // Log agent configuration
     if (agents.length > 0) {
       console.log('📡 Configured agents:');
-      agents.forEach(agent => {
+      agents.forEach((agent) => {
         console.log(`  - ${agent.name} (${agent.protocol.toUpperCase()}) at ${agent.agent_uri}`);
       });
       console.log(`🔧 AdCP version: ${ADCP_VERSION}`);
@@ -143,7 +136,7 @@ export class SalesAgentsHandlers {
         throw new Error(`Agent ${targetAgentId} not found`);
       }
 
-      const agentConfig = client.getAgentConfigs().find(a => a.id === targetAgentId);
+      const agentConfig = client.getAgentConfigs().find((a) => a.id === targetAgentId);
       if (!agentConfig) {
         throw new Error(`Agent config for ${targetAgentId} not found`);
       }
@@ -177,10 +170,15 @@ export class SalesAgentsHandlers {
         };
 
         // Add filters if provided
-        if (additionalParams.filters || additionalParams.delivery_type ||
-            additionalParams.format_types || additionalParams.is_fixed_price ||
-            additionalParams.min_exposures || additionalParams.format_ids ||
-            additionalParams.standard_formats_only) {
+        if (
+          additionalParams.filters ||
+          additionalParams.delivery_type ||
+          additionalParams.format_types ||
+          additionalParams.is_fixed_price ||
+          additionalParams.min_exposures ||
+          additionalParams.format_ids ||
+          additionalParams.standard_formats_only
+        ) {
           params.filters = {};
 
           if (additionalParams.filters) {
@@ -208,7 +206,6 @@ export class SalesAgentsHandlers {
 
         actualParams = params;
         result = await agent.getProducts(params);
-
       } else if (toolName === 'list_creative_formats') {
         const params: ListCreativeFormatsRequest = {};
 
@@ -230,7 +227,6 @@ export class SalesAgentsHandlers {
 
         actualParams = params;
         result = await agent.listCreativeFormats(params);
-
       } else if (toolName === 'create_media_buy') {
         // brand_manifest must be either a valid URL or a BrandManifest object
         let brandManifestForBuy: string | { name?: string; url?: string };
@@ -265,7 +261,6 @@ export class SalesAgentsHandlers {
 
         actualParams = params;
         result = await agent.createMediaBuy(params);
-
       } else {
         throw new Error(`Unsupported tool: ${toolName}`);
       }
@@ -326,7 +321,6 @@ export class SalesAgentsHandlers {
           adcp_version: ADCP_VERSION
         };
       }
-
     } catch (error) {
       const duration = Date.now() - startTime;
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
@@ -358,7 +352,7 @@ export class SalesAgentsHandlers {
         throw new Error(`Agent ${agentId} not found`);
       }
 
-      const agentConfig = this.client.getAgentConfigs().find(a => a.id === agentId);
+      const agentConfig = this.client.getAgentConfigs().find((a) => a.id === agentId);
       if (!agentConfig) {
         throw new Error(`Agent config for ${agentId} not found`);
       }
@@ -369,17 +363,9 @@ export class SalesAgentsHandlers {
         agent_id: agentId,
         agent_name: agentConfig.name,
         protocol: agentConfig.protocol,
-        supported_tasks: [
-          'get_products',
-          'list_creative_formats',
-          'create_media_buy',
-          'update_media_buy',
-          'sync_creatives',
-          'list_creatives'
-        ],
+        supported_tasks: ['get_products', 'list_creative_formats', 'create_media_buy', 'update_media_buy', 'sync_creatives', 'list_creatives'],
         adcp_version: ADCP_VERSION
       };
-
     } catch (error) {
       return {
         agent_id: agentId,
@@ -393,7 +379,7 @@ export class SalesAgentsHandlers {
    * List all configured agents
    */
   listAgents(): { id: string; name: string; protocol: string; agent_uri: string }[] {
-    return this.getConfiguredAgents().map(agent => ({
+    return this.getConfiguredAgents().map((agent) => ({
       id: agent.id,
       name: agent.name,
       protocol: agent.protocol,

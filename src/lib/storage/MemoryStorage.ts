@@ -14,14 +14,14 @@ interface StoredItem<T> {
 
 /**
  * In-memory storage implementation with TTL support
- * 
+ *
  * This is the default storage used when no external storage is configured.
  * Features:
  * - TTL support with automatic cleanup
  * - Pattern matching
  * - Batch operations
  * - Memory-efficient (garbage collection of expired items)
- * 
+ *
  * @example
  * ```typescript
  * const storage = new MemoryStorage<string>();
@@ -33,7 +33,7 @@ export class MemoryStorage<T> implements Storage<T>, BatchStorage<T>, PatternSto
   private store = new Map<string, StoredItem<T>>();
   private cleanupInterval?: NodeJS.Timeout;
   private lastCleanup = 0;
-  
+
   constructor(
     private options: {
       /** How often to clean up expired items (ms), default 5 minutes */
@@ -48,7 +48,7 @@ export class MemoryStorage<T> implements Storage<T>, BatchStorage<T>, PatternSto
       cleanupIntervalMs = 5 * 60 * 1000, // 5 minutes
       autoCleanup = true
     } = options;
-    
+
     if (autoCleanup) {
       this.cleanupInterval = setInterval(() => {
         this.cleanupExpired();
@@ -58,30 +58,30 @@ export class MemoryStorage<T> implements Storage<T>, BatchStorage<T>, PatternSto
 
   async get(key: string): Promise<T | undefined> {
     const item = this.store.get(key);
-    
+
     if (!item) {
       return undefined;
     }
-    
+
     // Check if expired
     if (item.expiresAt && Date.now() > item.expiresAt) {
       this.store.delete(key);
       return undefined;
     }
-    
+
     return item.value;
   }
 
   async set(key: string, value: T, ttl?: number): Promise<void> {
     const now = Date.now();
     const expiresAt = ttl ? now + ttl * 1000 : undefined;
-    
+
     this.store.set(key, {
       value,
       expiresAt,
       createdAt: now
     });
-    
+
     // Force cleanup if we're approaching max items
     const maxItems = this.options.maxItems || 10000;
     if (this.store.size > maxItems) {
@@ -106,13 +106,13 @@ export class MemoryStorage<T> implements Storage<T>, BatchStorage<T>, PatternSto
     // Return only non-expired keys
     const keys: string[] = [];
     const now = Date.now();
-    
+
     for (const [key, item] of this.store) {
       if (!item.expiresAt || now <= item.expiresAt) {
         keys.push(key);
       }
     }
-    
+
     return keys;
   }
 
@@ -125,7 +125,7 @@ export class MemoryStorage<T> implements Storage<T>, BatchStorage<T>, PatternSto
   // ====== BATCH OPERATIONS ======
 
   async mget(keys: string[]): Promise<(T | undefined)[]> {
-    const promises = keys.map(key => this.get(key));
+    const promises = keys.map((key) => this.get(key));
     return Promise.all(promises);
   }
 
@@ -150,7 +150,7 @@ export class MemoryStorage<T> implements Storage<T>, BatchStorage<T>, PatternSto
   async scan(pattern: string): Promise<string[]> {
     const regex = this.patternToRegex(pattern);
     const allKeys = await this.keys();
-    return allKeys.filter(key => regex.test(key));
+    return allKeys.filter((key) => regex.test(key));
   }
 
   async deletePattern(pattern: string): Promise<number> {
@@ -166,14 +166,14 @@ export class MemoryStorage<T> implements Storage<T>, BatchStorage<T>, PatternSto
   cleanupExpired(): number {
     const now = Date.now();
     let cleaned = 0;
-    
+
     for (const [key, item] of this.store) {
       if (item.expiresAt && now > item.expiresAt) {
         this.store.delete(key);
         cleaned++;
       }
     }
-    
+
     this.lastCleanup = now;
     return cleaned;
   }
@@ -193,21 +193,21 @@ export class MemoryStorage<T> implements Storage<T>, BatchStorage<T>, PatternSto
     let expiredItems = 0;
     let oldestItem: number | undefined;
     let newestItem: number | undefined;
-    
+
     for (const [, item] of this.store) {
       if (item.expiresAt && now > item.expiresAt) {
         expiredItems++;
       }
-      
+
       if (!oldestItem || item.createdAt < oldestItem) {
         oldestItem = item.createdAt;
       }
-      
+
       if (!newestItem || item.createdAt > newestItem) {
         newestItem = item.createdAt;
       }
     }
-    
+
     return {
       totalItems: this.store.size,
       expiredItems,
@@ -223,14 +223,14 @@ export class MemoryStorage<T> implements Storage<T>, BatchStorage<T>, PatternSto
    */
   private estimateMemoryUsage(): number {
     let bytes = 0;
-    
+
     for (const [key, item] of this.store) {
       // Rough estimate: string length * 2 (UTF-16) + object overhead
       bytes += key.length * 2;
       bytes += JSON.stringify(item.value).length * 2;
       bytes += 64; // Overhead for object and metadata
     }
-    
+
     return bytes;
   }
 
@@ -240,12 +240,12 @@ export class MemoryStorage<T> implements Storage<T>, BatchStorage<T>, PatternSto
   private patternToRegex(pattern: string): RegExp {
     // Escape special regex characters except * and ?
     const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&');
-    
+
     // Convert glob wildcards to regex
     const regexPattern = escaped
-      .replace(/\*/g, '.*')  // * matches any sequence
-      .replace(/\?/g, '.');  // ? matches any single character
-    
+      .replace(/\*/g, '.*') // * matches any sequence
+      .replace(/\?/g, '.'); // ? matches any single character
+
     return new RegExp(`^${regexPattern}$`);
   }
 
@@ -264,13 +264,7 @@ export class MemoryStorage<T> implements Storage<T>, BatchStorage<T>, PatternSto
 /**
  * Factory function to create a memory storage instance
  */
-export function createMemoryStorage<T>(
-  options?: {
-    cleanupIntervalMs?: number;
-    maxItems?: number;
-    autoCleanup?: boolean;
-  }
-): MemoryStorage<T> {
+export function createMemoryStorage<T>(options?: { cleanupIntervalMs?: number; maxItems?: number; autoCleanup?: boolean }): MemoryStorage<T> {
   return new MemoryStorage<T>(options);
 }
 

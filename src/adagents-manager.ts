@@ -1,15 +1,7 @@
 import axios from 'axios';
-import {
-  AdAgentsJson,
-  AuthorizedAgent,
-  AdAgentsValidationResult,
-  ValidationError,
-  ValidationWarning,
-  AgentCardValidationResult
-} from './lib/types/adcp';
+import { AdAgentsJson, AuthorizedAgent, AdAgentsValidationResult, ValidationError, ValidationWarning, AgentCardValidationResult } from './lib/types/adcp';
 
 export class AdAgentsManager {
-  
   /**
    * Validates a domain's adagents.json file
    */
@@ -17,7 +9,7 @@ export class AdAgentsManager {
     // Normalize domain - remove protocol and trailing slash
     const normalizedDomain = domain.replace(/^https?:\/\//, '').replace(/\/$/, '');
     const url = `https://${normalizedDomain}/.well-known/adagents.json`;
-    
+
     const result: AdAgentsValidationResult = {
       valid: false,
       errors: [],
@@ -31,7 +23,7 @@ export class AdAgentsManager {
       const response = await axios.get(url, {
         timeout: 10000,
         headers: {
-          'Accept': 'application/json',
+          Accept: 'application/json',
           'User-Agent': 'AdCP-Testing-Framework/1.0'
         },
         validateStatus: () => true // Don't throw on non-2xx status codes
@@ -60,7 +52,6 @@ export class AdAgentsManager {
 
       // If no errors, mark as valid
       result.valid = result.errors.length === 0;
-
     } catch (error) {
       if (axios.isAxiosError(error)) {
         if (error.code === 'ENOTFOUND' || error.code === 'ECONNREFUSED') {
@@ -210,7 +201,7 @@ export class AdAgentsManager {
       // Validate URL format
       try {
         new URL(agent.url);
-        
+
         // Check HTTPS requirement
         if (!agent.url.startsWith('https://')) {
           result.errors.push({
@@ -296,11 +287,11 @@ export class AdAgentsManager {
    */
   async validateAgentCards(agents: AuthorizedAgent[]): Promise<AgentCardValidationResult[]> {
     const results: AgentCardValidationResult[] = [];
-    
+
     // Validate each agent in parallel
-    const validationPromises = agents.map(agent => this.validateSingleAgentCard(agent.url));
+    const validationPromises = agents.map((agent) => this.validateSingleAgentCard(agent.url));
     const validationResults = await Promise.allSettled(validationPromises);
-    
+
     validationResults.forEach((result, index) => {
       if (result.status === 'fulfilled') {
         results.push(result.value);
@@ -328,7 +319,7 @@ export class AdAgentsManager {
 
     try {
       const startTime = Date.now();
-      
+
       // Try to fetch agent card (A2A standard and root fallback)
       const cardEndpoints = [
         `${agentUrl}/.well-known/agent-card.json`, // A2A protocol standard
@@ -336,13 +327,13 @@ export class AdAgentsManager {
       ];
 
       let cardFound = false;
-      
+
       for (const endpoint of cardEndpoints) {
         try {
           const response = await axios.get(endpoint, {
             timeout: 5000,
             headers: {
-              'Accept': 'application/json',
+              Accept: 'application/json',
               'User-Agent': 'AdCP-Testing-Framework/1.0'
             },
             validateStatus: () => true
@@ -355,11 +346,11 @@ export class AdAgentsManager {
             result.card_data = response.data;
             result.card_endpoint = endpoint;
             cardFound = true;
-            
+
             // Check content-type header
             const contentType = response.headers['content-type'] || '';
             const isJsonContentType = contentType.includes('application/json');
-            
+
             // Basic validation of card structure
             if (typeof response.data === 'object' && response.data !== null) {
               if (!isJsonContentType) {
@@ -386,7 +377,6 @@ export class AdAgentsManager {
       if (!cardFound) {
         result.errors.push('No agent card found at /.well-known/agent-card.json or root URL');
       }
-
     } catch (error) {
       if (axios.isAxiosError(error)) {
         result.errors.push(`Network error: ${error.message}`);
@@ -401,11 +391,7 @@ export class AdAgentsManager {
   /**
    * Creates a properly formatted adagents.json file
    */
-  createAdAgentsJson(
-    agents: AuthorizedAgent[], 
-    includeSchema: boolean = true, 
-    includeTimestamp: boolean = true
-  ): string {
+  createAdAgentsJson(agents: AuthorizedAgent[], includeSchema: boolean = true, includeTimestamp: boolean = true): string {
     const adagents: AdAgentsJson = {
       authorized_agents: agents
     };

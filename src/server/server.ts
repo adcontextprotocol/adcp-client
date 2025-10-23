@@ -13,7 +13,7 @@ import {
   type ADCPClientConfig,
   type FormatID,
   ADCP_STATUS,
-  InputRequiredError,
+  InputRequiredError
 } from '../lib';
 import type {
   TestRequest,
@@ -25,7 +25,7 @@ import type {
   CreateAdAgentsRequest,
   CreateAdAgentsResponse,
   AgentConfig,
-  TestResult,
+  TestResult
 } from '../lib/types';
 import { AdAgentsManager } from './adagents-manager';
 
@@ -34,8 +34,8 @@ import { AdAgentsManager } from './adagents-manager';
 const app: FastifyInstance = Fastify({
   logger: {
     level: process.env.LOG_LEVEL || 'info',
-    transport: process.env.NODE_ENV === 'development' ? { target: 'pino-pretty' } : undefined,
-  },
+    transport: process.env.NODE_ENV === 'development' ? { target: 'pino-pretty' } : undefined
+  }
 });
 
 // Initialize ADCP client with configured agents
@@ -48,9 +48,7 @@ const WEBHOOK_URL_TEMPLATE = process.env.WEBHOOK_URL_TEMPLATE;
 if (!WEBHOOK_URL_TEMPLATE) {
   console.warn('⚠️  WEBHOOK_URL_TEMPLATE not set - async operations will fail');
   console.log('💡 Set WEBHOOK_URL_TEMPLATE for distributed async operations:');
-  console.log(
-    '   WEBHOOK_URL_TEMPLATE=https://myapp.com/webhook/{task_type}/{agent_id}/{operation_id}'
-  );
+  console.log('   WEBHOOK_URL_TEMPLATE=https://myapp.com/webhook/{task_type}/{agent_id}/{operation_id}');
   console.log('   Available macros: {agent_id}, {task_type}, {operation_id}');
 }
 
@@ -87,10 +85,7 @@ interface CompletedTask {
 const completedTasks: CompletedTask[] = [];
 const MAX_COMPLETED_TASKS = 1000;
 
-function archiveCompletedTask(
-  task: any,
-  finalStatus: 'completed' | 'failed' | 'rejected' | 'canceled'
-) {
+function archiveCompletedTask(task: any, finalStatus: 'completed' | 'failed' | 'rejected' | 'canceled') {
   const completedTask: CompletedTask = {
     taskId: task.taskId,
     agentId: task.agentId,
@@ -100,7 +95,7 @@ function archiveCompletedTask(
     endTime: new Date().toISOString(),
     duration_ms: Date.now() - task.startTime.getTime(),
     result: task.continuation?.result,
-    error: task.continuation?.error,
+    error: task.continuation?.error
   };
 
   completedTasks.unshift(completedTask); // Add to front
@@ -115,7 +110,7 @@ function storeEvent(event: Omit<StoredEvent, 'id' | 'timestamp'>) {
   const storedEvent: StoredEvent = {
     id: `evt_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
     timestamp: new Date().toISOString(),
-    ...event,
+    ...event
   };
 
   eventStore.unshift(storedEvent); // Add to front
@@ -139,14 +134,14 @@ const clientConfig: ADCPClientConfig = {
       agent_id: activity.agent_id,
       task_type: activity.task_type,
       status: activity.status,
-      payload: activity.payload,
+      payload: activity.payload
     });
 
     app.log.debug(
       {
         activity_type: activity.type,
         operation_id: activity.operation_id,
-        agent_id: activity.agent_id,
+        agent_id: activity.agent_id
       },
       'ADCP Activity'
     );
@@ -163,11 +158,9 @@ const clientConfig: ADCPClientConfig = {
         task_type: 'get_products',
         status,
         payload: response,
-        metadata,
+        metadata
       });
-      app.log.info(
-        `[${status}] Products: ${response.products?.length || 0} for ${metadata.operation_id}`
-      );
+      app.log.info(`[${status}] Products: ${response.products?.length || 0} for ${metadata.operation_id}`);
     },
 
     onSyncCreativesStatusChange: (response, metadata) => {
@@ -179,13 +172,9 @@ const clientConfig: ADCPClientConfig = {
         task_type: 'sync_creatives',
         status,
         payload: response,
-        metadata,
+        metadata
       });
-      app.log.info(
-        `[${status}] Creatives synced: ${response.creatives?.length || 0} for ${
-          metadata.operation_id
-        }`
-      );
+      app.log.info(`[${status}] Creatives synced: ${response.creatives?.length || 0} for ${metadata.operation_id}`);
     },
 
     onCreateMediaBuyStatusChange: (response, metadata) => {
@@ -197,11 +186,9 @@ const clientConfig: ADCPClientConfig = {
         task_type: 'create_media_buy',
         status,
         payload: response,
-        metadata,
+        metadata
       });
-      app.log.info(
-        `[${status}] Media buy created: ${response.media_buy_id} for ${metadata.operation_id}`
-      );
+      app.log.info(`[${status}] Media buy created: ${response.media_buy_id} for ${metadata.operation_id}`);
     },
 
     onMediaBuyDeliveryNotification: (notification, metadata) => {
@@ -212,15 +199,11 @@ const clientConfig: ADCPClientConfig = {
         task_type: 'media_buy_delivery',
         status: metadata.notification_type,
         payload: notification,
-        metadata,
+        metadata
       });
-      app.log.info(
-        `📊 Delivery notification (${metadata.notification_type}): ${
-          notification.media_buy_deliveries?.length || 0
-        } deliveries`
-      );
-    },
-  },
+      app.log.info(`📊 Delivery notification (${metadata.notification_type}): ${notification.media_buy_deliveries?.length || 0} deliveries`);
+    }
+  }
 };
 
 const adcpClient = new ADCPMultiAgentClient(configuredAgents, clientConfig);
@@ -240,25 +223,11 @@ const activeTasks = new Map<
 const conversations = new Map<string, any[]>();
 
 // Helper function to build tool-appropriate parameters
-function buildToolArgs(
-  toolName: string,
-  brief?: string,
-  promotedOffering?: string,
-  additionalParams: any = {}
-): any {
+function buildToolArgs(toolName: string, brief?: string, promotedOffering?: string, additionalParams: any = {}): any {
   const args: any = {};
 
   // Tools that accept brief parameter
-  const briefAcceptingTools = [
-    'get_products',
-    'create_media_buy',
-    'update_media_buy',
-    'sync_creatives',
-    'get_media_buy_delivery',
-    'provide_performance_feedback',
-    'get_signals',
-    'activate_signal',
-  ];
+  const briefAcceptingTools = ['get_products', 'create_media_buy', 'update_media_buy', 'sync_creatives', 'get_media_buy_delivery', 'provide_performance_feedback', 'get_signals', 'activate_signal'];
 
   // Tools that accept brand_manifest parameter
   const brandManifestAcceptingTools = ['get_products', 'create_media_buy'];
@@ -276,7 +245,7 @@ function buildToolArgs(
     } catch {
       // Not a URL, create a BrandManifest object
       args.brand_manifest = {
-        name: promotedOffering,
+        name: promotedOffering
       };
     }
   }
@@ -313,7 +282,7 @@ function adaptTaskResultToLegacyFormat(
     inputRequest: taskResult.status === 'deferred' ? taskResult.deferred : undefined,
     continuation: taskResult.deferred || taskResult.submitted,
     taskId: taskResult.submitted?.taskId,
-    webhookUrl: taskResult.submitted?.webhookUrl,
+    webhookUrl: taskResult.submitted?.webhookUrl
   };
 }
 
@@ -393,7 +362,7 @@ async function executeTaskOnAgent(
         toolName,
         continuation: result.deferred || result.submitted,
         status: result.status,
-        startTime: new Date(),
+        startTime: new Date()
       });
     }
 
@@ -414,9 +383,9 @@ async function executeTaskOnAgent(
             taskName: '',
             agent: { id: agentId, name: '', protocol: 'mcp' as const },
             timestamp: '',
-            clarificationRounds: 0,
+            clarificationRounds: 0
           },
-          debugLogs: [],
+          debugLogs: []
         } as any as TaskResult<any>,
         agentId
       );
@@ -430,34 +399,24 @@ async function executeTaskOnAgent(
       data: undefined,
       error: error instanceof Error ? error.message : String(error),
       timestamp: new Date().toISOString(),
-      debug_logs: [],
+      debug_logs: []
     };
   }
 }
 
-async function executeTaskOnMultipleAgents(
-  agentIds: string[],
-  toolName: string,
-  args: any,
-  inputHandler?: InputHandler
-): Promise<TestResult[]> {
+async function executeTaskOnMultipleAgents(agentIds: string[], toolName: string, args: any, inputHandler?: InputHandler): Promise<TestResult[]> {
   // Execute on each agent individually to get proper async support
-  const promises = agentIds.map((agentId) =>
-    executeTaskOnAgent(agentId, toolName, args, inputHandler)
-  );
+  const promises = agentIds.map((agentId) => executeTaskOnAgent(agentId, toolName, args, inputHandler));
 
   return Promise.all(promises);
 }
 
 // Register plugins
 app.register(fastifyCors, {
-  origin:
-    process.env.NODE_ENV === 'development'
-      ? true
-      : ['https://testing.adcontextprotocol.org', 'https://adcp-testing.fly.dev'],
+  origin: process.env.NODE_ENV === 'development' ? true : ['https://testing.adcontextprotocol.org', 'https://adcp-testing.fly.dev'],
   methods: ['GET', 'POST', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
-  credentials: false,
+  credentials: false
 });
 
 // Configure static file serving - different paths for dev vs production
@@ -470,7 +429,7 @@ console.log(`📁 Static files path: ${publicPath}`);
 
 app.register(fastifyStatic, {
   root: publicPath,
-  prefix: '/',
+  prefix: '/'
 });
 
 // Health check endpoint
@@ -479,7 +438,7 @@ app.get('/health', async () => {
     status: 'ok',
     timestamp: new Date().toISOString(),
     version: process.env.npm_package_version || '1.0.0',
-    node_env: process.env.NODE_ENV || 'development',
+    node_env: process.env.NODE_ENV || 'development'
   };
 });
 
@@ -493,18 +452,16 @@ app.get<{ Reply: ApiResponse<AgentListResponse> }>('/api/agents', async (request
       success: true,
       data: {
         agents,
-        total: agents.length,
+        total: agents.length
       },
-      timestamp: new Date().toISOString(),
+      timestamp: new Date().toISOString()
     });
   } catch (error) {
-    app.log.error(
-      'Failed to get agent list: ' + (error instanceof Error ? error.message : String(error))
-    );
+    app.log.error('Failed to get agent list: ' + (error instanceof Error ? error.message : String(error)));
     return reply.code(500).send({
       success: false,
       error: error instanceof Error ? error.message : 'Unknown error',
-      timestamp: new Date().toISOString(),
+      timestamp: new Date().toISOString()
     });
   }
 });
@@ -521,7 +478,7 @@ app.post<{
       return reply.code(400).send({
         success: false,
         error: 'At least one agent must be provided',
-        timestamp: new Date().toISOString(),
+        timestamp: new Date().toISOString()
       });
     }
 
@@ -529,7 +486,7 @@ app.post<{
       return reply.code(400).send({
         success: false,
         error: 'Brief is required',
-        timestamp: new Date().toISOString(),
+        timestamp: new Date().toISOString()
       });
     }
 
@@ -537,25 +494,13 @@ app.post<{
 
     const startTime = Date.now();
     const agentIds = agents.map((a: AgentConfig) => a.id);
-    const args = buildToolArgs(
-      tool_name || 'get_products',
-      brief,
-      brand_manifest,
-      tool_name ? { tool_name } : {}
-    );
-    const results = await Promise.all(
-      agentIds.map((agentId: string) =>
-        executeTaskOnAgent(agentId, tool_name || 'get_products', args)
-      )
-    );
+    const args = buildToolArgs(tool_name || 'get_products', brief, brand_manifest, tool_name ? { tool_name } : {});
+    const results = await Promise.all(agentIds.map((agentId: string) => executeTaskOnAgent(agentId, tool_name || 'get_products', args)));
     const totalTime = Date.now() - startTime;
 
     const successful = results.filter((r) => r.success).length;
     const failed = results.length - successful;
-    const avgResponseTime =
-      results.length > 0
-        ? results.reduce((sum: number, r: any) => sum + r.response_time_ms, 0) / results.length
-        : 0;
+    const avgResponseTime = results.length > 0 ? results.reduce((sum: number, r: any) => sum + r.response_time_ms, 0) / results.length : 0;
 
     return reply.send({
       success: true,
@@ -566,19 +511,17 @@ app.post<{
           total_agents: results.length,
           successful,
           failed,
-          average_response_time_ms: Math.round(avgResponseTime),
-        },
+          average_response_time_ms: Math.round(avgResponseTime)
+        }
       },
-      timestamp: new Date().toISOString(),
+      timestamp: new Date().toISOString()
     });
   } catch (error) {
-    app.log.error(
-      'Failed to test agents: ' + (error instanceof Error ? error.message : String(error))
-    );
+    app.log.error('Failed to test agents: ' + (error instanceof Error ? error.message : String(error)));
     return reply.code(500).send({
       success: false,
       error: error instanceof Error ? error.message : 'Unknown error',
-      timestamp: new Date().toISOString(),
+      timestamp: new Date().toISOString()
     });
   }
 });
@@ -597,7 +540,7 @@ app.post<{
       return reply.code(400).send({
         success: false,
         error: 'Brief is required',
-        timestamp: new Date().toISOString(),
+        timestamp: new Date().toISOString()
       });
     }
 
@@ -615,19 +558,17 @@ app.post<{
           total_agents: 1,
           successful: result.success ? 1 : 0,
           failed: result.success ? 0 : 1,
-          average_response_time_ms: result.response_time_ms,
-        },
+          average_response_time_ms: result.response_time_ms
+        }
       },
-      timestamp: new Date().toISOString(),
+      timestamp: new Date().toISOString()
     });
   } catch (error) {
-    app.log.error(
-      'Failed to test single agent: ' + (error instanceof Error ? error.message : String(error))
-    );
+    app.log.error('Failed to test single agent: ' + (error instanceof Error ? error.message : String(error)));
     return reply.code(500).send({
       success: false,
       error: error instanceof Error ? error.message : 'Unknown error',
-      timestamp: new Date().toISOString(),
+      timestamp: new Date().toISOString()
     });
   }
 });
@@ -641,18 +582,16 @@ app.get('/api/sales/agents', async (request, reply) => {
       success: true,
       data: {
         agents,
-        total: agents.length,
+        total: agents.length
       },
-      timestamp: new Date().toISOString(),
+      timestamp: new Date().toISOString()
     });
   } catch (error) {
-    app.log.error(
-      'Failed to get sales agents: ' + (error instanceof Error ? error.message : String(error))
-    );
+    app.log.error('Failed to get sales agents: ' + (error instanceof Error ? error.message : String(error)));
     return reply.code(500).send({
       success: false,
       error: error instanceof Error ? error.message : 'Unknown error',
-      timestamp: new Date().toISOString(),
+      timestamp: new Date().toISOString()
     });
   }
 });
@@ -669,7 +608,7 @@ function extractResponseData(result: any): any {
       return Object.assign({}, result, {
         products: data?.products || [],
         formats: data?.formats || [],
-        message: data?.message || 'Response processed',
+        message: data?.message || 'Response processed'
       });
     }
   }
@@ -682,7 +621,7 @@ function extractResponseData(result: any): any {
       return Object.assign({}, result, {
         products: data?.products || [],
         formats: data?.formats || [],
-        message: data?.message || 'Response processed',
+        message: data?.message || 'Response processed'
       });
     }
   }
@@ -695,7 +634,7 @@ function extractResponseData(result: any): any {
       return Object.assign({}, result, {
         products: data?.products || [],
         formats: data?.formats || [],
-        message: data?.message || 'Response processed',
+        message: data?.message || 'Response processed'
       });
     }
   }
@@ -710,7 +649,7 @@ function extractResponseData(result: any): any {
     return Object.assign({}, result, {
       products: result.data.products || [],
       formats: result.data.formats || [],
-      message: result.data.message || 'Response processed',
+      message: result.data.message || 'Response processed'
     });
   }
 
@@ -719,7 +658,7 @@ function extractResponseData(result: any): any {
     // MCP responses may have the data directly in toolResponse
     if (result.toolResponse?.products || result.toolResponse?.formats) {
       return Object.assign({}, result.toolResponse, {
-        message: result.toolResponse.message || 'MCP response processed',
+        message: result.toolResponse.message || 'MCP response processed'
       });
     }
     // Or nested under toolResponse.result
@@ -727,7 +666,7 @@ function extractResponseData(result: any): any {
       return Object.assign({}, result.toolResponse.result, {
         products: result.toolResponse.result.products || [],
         formats: result.toolResponse.result.formats || [],
-        message: result.toolResponse.result.message || 'MCP response processed',
+        message: result.toolResponse.result.message || 'MCP response processed'
       });
     }
     // Or the toolResponse itself might be the data
@@ -738,9 +677,7 @@ function extractResponseData(result: any): any {
   if (result?.structuredContent) {
     if (result.structuredContent.products || result.structuredContent.formats) {
       // Extract text content as informational message for user
-      let textMessage = `Found ${
-        result.structuredContent.formats?.length || result.structuredContent.products?.length || 0
-      } items from agent`;
+      let textMessage = `Found ${result.structuredContent.formats?.length || result.structuredContent.products?.length || 0} items from agent`;
       if (result.content && Array.isArray(result.content)) {
         const textContent = result.content.find((item: any) => item.type === 'text');
         if (textContent?.text) {
@@ -750,10 +687,7 @@ function extractResponseData(result: any): any {
             // It's JSON, keep the count message
           } catch (e) {
             // Not JSON, use as user message
-            textMessage =
-              textContent.text.length > 200
-                ? textContent.text.substring(0, 200) + '...'
-                : textContent.text;
+            textMessage = textContent.text.length > 200 ? textContent.text.substring(0, 200) + '...' : textContent.text;
           }
         }
       }
@@ -761,7 +695,7 @@ function extractResponseData(result: any): any {
       return {
         products: result.structuredContent.products || [],
         formats: result.structuredContent.formats || [],
-        message: textMessage,
+        message: textMessage
       };
     }
   }
@@ -772,7 +706,7 @@ function extractResponseData(result: any): any {
       products: [],
       formats: [],
       message: result.note || result.error || 'MCP response received',
-      error: result.error,
+      error: result.error
     };
     return response;
   }
@@ -823,7 +757,7 @@ app.post<{
       error: result.error,
       metadata: result.metadata,
       debug_logs: result.debug_logs,
-      timestamp: new Date().toISOString(),
+      timestamp: new Date().toISOString()
     });
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
@@ -832,7 +766,7 @@ app.post<{
     return reply.code(500).send({
       success: false,
       error: errorMessage,
-      timestamp: new Date().toISOString(),
+      timestamp: new Date().toISOString()
     });
   }
 });
@@ -860,13 +794,13 @@ app.post<{
       error: result.error,
       metadata: result.metadata,
       debug_logs: result.debug_logs,
-      timestamp: new Date().toISOString(),
+      timestamp: new Date().toISOString()
     });
   } catch (error) {
     app.log.error({ error }, 'List creative formats error');
     return reply.code(500).send({
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown error',
+      error: error instanceof Error ? error.message : 'Unknown error'
     });
   }
 });
@@ -893,13 +827,13 @@ app.post<{
       error: result.error,
       metadata: result.metadata,
       debug_logs: result.debug_logs,
-      timestamp: new Date().toISOString(),
+      timestamp: new Date().toISOString()
     });
   } catch (error) {
     app.log.error({ error }, 'Create media buy error');
     return reply.code(500).send({
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown error',
+      error: error instanceof Error ? error.message : 'Unknown error'
     });
   }
 });
@@ -926,13 +860,13 @@ app.post<{
       error: result.error,
       metadata: result.metadata,
       debug_logs: result.debug_logs,
-      timestamp: new Date().toISOString(),
+      timestamp: new Date().toISOString()
     });
   } catch (error) {
     app.log.error({ error }, 'Update media buy error');
     return reply.code(500).send({
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown error',
+      error: error instanceof Error ? error.message : 'Unknown error'
     });
   }
 });
@@ -959,13 +893,13 @@ app.post<{
       error: result.error,
       metadata: result.metadata,
       debug_logs: result.debug_logs,
-      timestamp: new Date().toISOString(),
+      timestamp: new Date().toISOString()
     });
   } catch (error) {
     app.log.error({ error }, 'Sync creatives error');
     return reply.code(500).send({
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown error',
+      error: error instanceof Error ? error.message : 'Unknown error'
     });
   }
 });
@@ -992,13 +926,13 @@ app.post<{
       error: result.error,
       metadata: result.metadata,
       debug_logs: result.debug_logs,
-      timestamp: new Date().toISOString(),
+      timestamp: new Date().toISOString()
     });
   } catch (error) {
     app.log.error({ error }, 'List creatives error');
     return reply.code(500).send({
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown error',
+      error: error instanceof Error ? error.message : 'Unknown error'
     });
   }
 });
@@ -1025,13 +959,13 @@ app.post<{
       error: result.error,
       metadata: result.metadata,
       debug_logs: result.debug_logs,
-      timestamp: new Date().toISOString(),
+      timestamp: new Date().toISOString()
     });
   } catch (error) {
     app.log.error({ error }, 'Get media buy delivery error');
     return reply.code(500).send({
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown error',
+      error: error instanceof Error ? error.message : 'Unknown error'
     });
   }
 });
@@ -1058,14 +992,14 @@ app.post<{
     if (!agent) {
       return reply.code(404).send({
         success: false,
-        error: `Agent with ID ${agentId} not found`,
+        error: `Agent with ID ${agentId} not found`
       });
     }
 
     if (!tool) {
       return reply.code(400).send({
         success: false,
-        error: 'Missing required parameter: tool',
+        error: 'Missing required parameter: tool'
       });
     }
 
@@ -1088,13 +1022,13 @@ app.post<{
       webhookUrl: result.webhookUrl,
       inputRequest: result.inputRequest,
       continuation: result.continuation,
-      timestamp: new Date().toISOString(),
+      timestamp: new Date().toISOString()
     });
   } catch (error) {
     app.log.error({ error }, 'Execute task error');
     return reply.code(500).send({
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown error',
+      error: error instanceof Error ? error.message : 'Unknown error'
     });
   }
 });
@@ -1108,7 +1042,7 @@ app.get('/api/tasks/:taskId', async (request, reply) => {
     if (!task) {
       return reply.code(404).send({
         success: false,
-        error: `Task with ID ${taskId} not found`,
+        error: `Task with ID ${taskId} not found`
       });
     }
 
@@ -1132,13 +1066,13 @@ app.get('/api/tasks/:taskId', async (request, reply) => {
       toolName: task.toolName,
       status: status,
       startTime: task.startTime.toISOString(),
-      continuation: task.continuation,
+      continuation: task.continuation
     });
   } catch (error) {
     app.log.error({ error }, 'Get task status error');
     return reply.code(500).send({
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown error',
+      error: error instanceof Error ? error.message : 'Unknown error'
     });
   }
 });
@@ -1153,7 +1087,7 @@ app.post('/api/tasks/:taskId/continue', async (request, reply) => {
     if (!task || task.status !== 'deferred' || !task.continuation) {
       return reply.code(404).send({
         success: false,
-        error: `Deferred task with ID ${taskId} not found`,
+        error: `Deferred task with ID ${taskId} not found`
       });
     }
 
@@ -1162,7 +1096,7 @@ app.post('/api/tasks/:taskId/continue', async (request, reply) => {
     // For now, simulate resuming by re-executing the task with the input
     const result = await executeTaskOnAgent(task.agentId, task.toolName, {
       ...input,
-      continued: true,
+      continued: true
     });
 
     // Archive and clean up the task
@@ -1174,7 +1108,7 @@ app.post('/api/tasks/:taskId/continue', async (request, reply) => {
     app.log.error({ error }, 'Continue task error');
     return reply.code(500).send({
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown error',
+      error: error instanceof Error ? error.message : 'Unknown error'
     });
   }
 });
@@ -1192,13 +1126,13 @@ app.get('/api/agents/:agentId/conversation', async (request, reply) => {
       success: true,
       agentId,
       conversation: history,
-      timestamp: new Date().toISOString(),
+      timestamp: new Date().toISOString()
     });
   } catch (error) {
     app.log.error({ error }, 'Get conversation error');
     return reply.code(500).send({
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown error',
+      error: error instanceof Error ? error.message : 'Unknown error'
     });
   }
 });
@@ -1211,20 +1145,20 @@ app.get('/api/tasks', async (request, reply) => {
       agentId: task.agentId,
       toolName: task.toolName,
       status: task.status,
-      startTime: task.startTime.toISOString(),
+      startTime: task.startTime.toISOString()
     }));
 
     return reply.send({
       success: true,
       tasks,
       total: tasks.length,
-      timestamp: new Date().toISOString(),
+      timestamp: new Date().toISOString()
     });
   } catch (error) {
     app.log.error({ error }, 'List tasks error');
     return reply.code(500).send({
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown error',
+      error: error instanceof Error ? error.message : 'Unknown error'
     });
   }
 });
@@ -1263,7 +1197,7 @@ app.post<{
     if (!agentUrl) {
       return reply.code(400).send({
         success: false,
-        error: 'agentUrl is required',
+        error: 'agentUrl is required'
       });
     }
 
@@ -1271,7 +1205,7 @@ app.post<{
     const creativeClient = new CreativeAgentClient({
       agentUrl,
       protocol,
-      ...clientConfig,
+      ...clientConfig
     });
 
     // Access the underlying ADCPClient to get debug logs
@@ -1284,7 +1218,7 @@ app.post<{
       error: result.error,
       metadata: result.metadata || {},
       debug_logs: result.debug_logs || [],
-      timestamp: new Date().toISOString(),
+      timestamp: new Date().toISOString()
     });
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
@@ -1294,7 +1228,7 @@ app.post<{
       success: false,
       error: errorMessage,
       debug_logs: [],
-      timestamp: new Date().toISOString(),
+      timestamp: new Date().toISOString()
     });
   }
 });
@@ -1314,7 +1248,7 @@ app.post<{
     if (!agentUrl || !format_id) {
       return reply.code(400).send({
         success: false,
-        error: 'agentUrl and format_id are required',
+        error: 'agentUrl and format_id are required'
       });
     }
 
@@ -1322,7 +1256,7 @@ app.post<{
     const creativeClient = new CreativeAgentClient({
       agentUrl,
       protocol,
-      ...clientConfig,
+      ...clientConfig
     });
 
     // Access the underlying ADCPClient to call build_creative
@@ -1334,8 +1268,8 @@ app.post<{
         target_format_id: format_id,
         creative_manifest: {
           format_id,
-          assets,
-        },
+          assets
+        }
       },
       createDefaultInputHandler()
     );
@@ -1346,7 +1280,7 @@ app.post<{
       error: result.error,
       metadata: result.metadata,
       debug_logs: result.debug_logs,
-      timestamp: new Date().toISOString(),
+      timestamp: new Date().toISOString()
     });
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
@@ -1356,7 +1290,7 @@ app.post<{
       success: false,
       error: errorMessage,
       debug_logs: [],
-      timestamp: new Date().toISOString(),
+      timestamp: new Date().toISOString()
     });
   }
 });
@@ -1376,7 +1310,7 @@ app.post<{
     if (!agentUrl || !format_id) {
       return reply.code(400).send({
         success: false,
-        error: 'agentUrl and format_id are required',
+        error: 'agentUrl and format_id are required'
       });
     }
 
@@ -1384,7 +1318,7 @@ app.post<{
     const creativeClient = new CreativeAgentClient({
       agentUrl,
       protocol,
-      ...clientConfig,
+      ...clientConfig
     });
 
     // Access the underlying ADCPClient to call preview_creative
@@ -1396,8 +1330,8 @@ app.post<{
         format_id,
         creative_manifest: {
           format_id,
-          assets,
-        },
+          assets
+        }
       },
       createDefaultInputHandler()
     );
@@ -1408,7 +1342,7 @@ app.post<{
       error: result.error,
       metadata: result.metadata,
       debug_logs: result.debug_logs,
-      timestamp: new Date().toISOString(),
+      timestamp: new Date().toISOString()
     });
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
@@ -1418,7 +1352,7 @@ app.post<{
       success: false,
       error: errorMessage,
       debug_logs: [],
-      timestamp: new Date().toISOString(),
+      timestamp: new Date().toISOString()
     });
   }
 });
@@ -1439,7 +1373,7 @@ app.post<{
     if (!agentId || !webhookUrl) {
       return reply.code(400).send({
         success: false,
-        error: 'agentId and webhookUrl are required',
+        error: 'agentId and webhookUrl are required'
       });
     }
 
@@ -1448,7 +1382,7 @@ app.post<{
       agentId,
       webhookUrl,
       taskTypes,
-      createdAt: new Date(),
+      createdAt: new Date()
     });
 
     app.log.info(`Webhook registered for agent ${agentId}: ${webhookUrl}`);
@@ -1456,13 +1390,13 @@ app.post<{
     return reply.send({
       success: true,
       registrationId,
-      message: 'Webhook registered successfully',
+      message: 'Webhook registered successfully'
     });
   } catch (error) {
     app.log.error({ error }, 'Register webhook error');
     return reply.code(500).send({
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown error',
+      error: error instanceof Error ? error.message : 'Unknown error'
     });
   }
 });
@@ -1504,7 +1438,7 @@ app.post<{
             status: task.status,
             result: task.continuation?.result,
             error: task.continuation?.error,
-            updatedAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
           });
         } catch (err) {
           app.log.error({ err }, 'Task notification callback error');
@@ -1516,13 +1450,13 @@ app.post<{
 
     return reply.send({
       success: true,
-      message: 'Webhook processed successfully',
+      message: 'Webhook processed successfully'
     });
   } catch (error) {
     app.log.error({ error }, 'Webhook callback error');
     return reply.code(500).send({
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown error',
+      error: error instanceof Error ? error.message : 'Unknown error'
     });
   }
 });
@@ -1542,19 +1476,19 @@ app.delete<{
       app.log.info(`Webhook unregistered: ${registrationId}`);
       return reply.send({
         success: true,
-        message: 'Webhook unregistered successfully',
+        message: 'Webhook unregistered successfully'
       });
     } else {
       return reply.code(404).send({
         success: false,
-        error: 'Webhook registration not found',
+        error: 'Webhook registration not found'
       });
     }
   } catch (error) {
     app.log.error({ error }, 'Unregister webhook error');
     return reply.code(500).send({
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown error',
+      error: error instanceof Error ? error.message : 'Unknown error'
     });
   }
 });
@@ -1567,19 +1501,19 @@ app.get('/api/webhooks', async (request, reply) => {
     const registrations = Array.from(webhookRegistrations.entries()).map(([id, reg]) => ({
       id,
       ...reg,
-      createdAt: reg.createdAt.toISOString(),
+      createdAt: reg.createdAt.toISOString()
     }));
 
     return reply.send({
       success: true,
       webhooks: registrations,
-      total: registrations.length,
+      total: registrations.length
     });
   } catch (error) {
     app.log.error({ error }, 'List webhooks error');
     return reply.code(500).send({
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown error',
+      error: error instanceof Error ? error.message : 'Unknown error'
     });
   }
 });
@@ -1611,7 +1545,7 @@ app.get('/api/events', async (request, reply) => {
       if (prefix.length < 16) {
         return reply.code(400).send({
           success: false,
-          error: 'Prefix must be at least 16 characters long',
+          error: 'Prefix must be at least 16 characters long'
         });
       }
       // Prefix match (for session filtering)
@@ -1627,13 +1561,13 @@ app.get('/api/events', async (request, reply) => {
       events: filteredEvents,
       total: filteredEvents.length,
       filtered_by: operation_id ? { operation_id } : prefix ? { prefix } : { recent: true },
-      timestamp: new Date().toISOString(),
+      timestamp: new Date().toISOString()
     });
   } catch (error) {
     app.log.error({ error }, 'Get events error');
     return reply.code(500).send({
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown error',
+      error: error instanceof Error ? error.message : 'Unknown error'
     });
   }
 });
@@ -1656,14 +1590,12 @@ app.get('/api/tasks/detailed', async (request, reply) => {
       toolName: task.toolName,
       status: task.status,
       startTime: task.startTime.toISOString(),
-      hasWebhook: Array.from(webhookRegistrations.values()).some(
-        (reg) => reg.agentId === task.agentId
-      ),
+      hasWebhook: Array.from(webhookRegistrations.values()).some((reg) => reg.agentId === task.agentId),
       result: task.continuation?.result || undefined,
       error: task.continuation?.error || undefined,
       isActive: true,
       duration_ms: undefined as number | undefined,
-      endTime: undefined as string | undefined,
+      endTime: undefined as string | undefined
     }));
 
     // Combine with completed tasks if requested (or always include last 50)
@@ -1682,8 +1614,8 @@ app.get('/api/tasks/detailed', async (request, reply) => {
           hasWebhook: false,
           result: ct.result || undefined,
           error: ct.error || undefined,
-          isActive: false,
-        })),
+          isActive: false
+        }))
       ];
     } else {
       // Always include last 50 completed tasks for history
@@ -1700,8 +1632,8 @@ app.get('/api/tasks/detailed', async (request, reply) => {
           hasWebhook: false,
           result: ct.result || undefined,
           error: ct.error || undefined,
-          isActive: false,
-        })),
+          isActive: false
+        }))
       ];
     }
 
@@ -1720,14 +1652,14 @@ app.get('/api/tasks/detailed', async (request, reply) => {
         byAgent: allTasks.reduce((acc: any, task) => {
           acc[task.agentId] = (acc[task.agentId] || 0) + 1;
           return acc;
-        }, {}),
-      },
+        }, {})
+      }
     });
   } catch (error) {
     app.log.error({ error }, 'List detailed tasks error');
     return reply.code(500).send({
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown error',
+      error: error instanceof Error ? error.message : 'Unknown error'
     });
   }
 });
@@ -1758,7 +1690,7 @@ app.setErrorHandler((error, request, reply) => {
   reply.status(500).send({
     success: false,
     error: 'Internal server error',
-    timestamp: new Date().toISOString(),
+    timestamp: new Date().toISOString()
   });
 });
 
@@ -1777,7 +1709,7 @@ app.post<{
       return reply.code(400).send({
         success: false,
         error: 'Domain is required',
-        timestamp: new Date().toISOString(),
+        timestamp: new Date().toISOString()
       });
     }
 
@@ -1800,18 +1732,16 @@ app.post<{
         domain: validation.domain,
         found: validation.status_code === 200,
         validation,
-        agent_cards: agentCards,
+        agent_cards: agentCards
       },
-      timestamp: new Date().toISOString(),
+      timestamp: new Date().toISOString()
     });
   } catch (error) {
-    app.log.error(
-      'Failed to validate domain: ' + (error instanceof Error ? error.message : String(error))
-    );
+    app.log.error('Failed to validate domain: ' + (error instanceof Error ? error.message : String(error)));
     return reply.code(500).send({
       success: false,
       error: error instanceof Error ? error.message : 'Unknown error',
-      timestamp: new Date().toISOString(),
+      timestamp: new Date().toISOString()
     });
   }
 });
@@ -1822,17 +1752,13 @@ app.post<{
   Reply: ApiResponse<CreateAdAgentsResponse>;
 }>('/api/adagents/create', async (request, reply) => {
   try {
-    const {
-      authorized_agents,
-      include_schema = true,
-      include_timestamp = true,
-    } = request.body as CreateAdAgentsRequest;
+    const { authorized_agents, include_schema = true, include_timestamp = true } = request.body as CreateAdAgentsRequest;
 
     if (!authorized_agents || !Array.isArray(authorized_agents)) {
       return reply.code(400).send({
         success: false,
         error: 'authorized_agents array is required',
-        timestamp: new Date().toISOString(),
+        timestamp: new Date().toISOString()
       });
     }
 
@@ -1840,7 +1766,7 @@ app.post<{
       return reply.code(400).send({
         success: false,
         error: 'At least one authorized agent is required',
-        timestamp: new Date().toISOString(),
+        timestamp: new Date().toISOString()
       });
     }
 
@@ -1853,34 +1779,28 @@ app.post<{
       return reply.code(400).send({
         success: false,
         error: `Validation failed: ${validation.errors.map((e: any) => e.message).join(', ')}`,
-        timestamp: new Date().toISOString(),
+        timestamp: new Date().toISOString()
       });
     }
 
     // Create the adagents.json content
-    const adagentsJson = adagentsManager.createAdAgentsJson(
-      authorized_agents,
-      include_schema,
-      include_timestamp
-    );
+    const adagentsJson = adagentsManager.createAdAgentsJson(authorized_agents, include_schema, include_timestamp);
 
     return reply.send({
       success: true,
       data: {
         success: true,
         adagents_json: adagentsJson,
-        validation,
+        validation
       },
-      timestamp: new Date().toISOString(),
+      timestamp: new Date().toISOString()
     });
   } catch (error) {
-    app.log.error(
-      'Failed to create adagents.json: ' + (error instanceof Error ? error.message : String(error))
-    );
+    app.log.error('Failed to create adagents.json: ' + (error instanceof Error ? error.message : String(error)));
     return reply.code(500).send({
       success: false,
       error: error instanceof Error ? error.message : 'Unknown error',
-      timestamp: new Date().toISOString(),
+      timestamp: new Date().toISOString()
     });
   }
 });
@@ -1897,7 +1817,7 @@ app.post<{
       return reply.code(400).send({
         success: false,
         error: 'agent_urls array with at least one URL is required',
-        timestamp: new Date().toISOString(),
+        timestamp: new Date().toISOString()
       });
     }
 
@@ -1905,25 +1825,23 @@ app.post<{
 
     const agents = agent_urls.map((url) => ({
       url,
-      authorized_for: 'validation',
+      authorized_for: 'validation'
     }));
     const agentCards = await adagentsManager.validateAgentCards(agents);
 
     return reply.send({
       success: true,
       data: {
-        agent_cards: agentCards,
+        agent_cards: agentCards
       },
-      timestamp: new Date().toISOString(),
+      timestamp: new Date().toISOString()
     });
   } catch (error) {
-    app.log.error(
-      'Failed to validate agent cards: ' + (error instanceof Error ? error.message : String(error))
-    );
+    app.log.error('Failed to validate agent cards: ' + (error instanceof Error ? error.message : String(error)));
     return reply.code(500).send({
       success: false,
       error: error instanceof Error ? error.message : 'Unknown error',
-      timestamp: new Date().toISOString(),
+      timestamp: new Date().toISOString()
     });
   }
 });
@@ -1932,12 +1850,11 @@ app.post<{
 const start = async () => {
   try {
     const port = parseInt(process.env.PORT || '8080');
-    const host =
-      process.env.HOST || (process.env.NODE_ENV === 'production' ? '0.0.0.0' : '127.0.0.1');
+    const host = process.env.HOST || (process.env.NODE_ENV === 'production' ? '0.0.0.0' : '127.0.0.1');
 
     await app.listen({
       port,
-      host,
+      host
     });
 
     app.log.info(`🚀 AdCP Testing Framework running on http://${host}:${port}`);
@@ -1994,7 +1911,7 @@ app.post<{
       return reply.code(400).send({
         success: false,
         error: 'Invalid payload: must be an object',
-        timestamp: new Date().toISOString(),
+        timestamp: new Date().toISOString()
       });
     }
 
@@ -2005,7 +1922,7 @@ app.post<{
       return reply.code(400).send({
         success: false,
         error: `Task type mismatch: expected ${taskType}, got ${payloadTaskType}`,
-        timestamp: new Date().toISOString(),
+        timestamp: new Date().toISOString()
       });
     }
 
@@ -2013,7 +1930,7 @@ app.post<{
     const enrichedPayload = {
       ...payload,
       operation_id: operationId,
-      task_type: taskType,
+      task_type: taskType
     };
 
     // Handle webhook - agents are NOT stateful, but URL contains agent_id for routing
@@ -2030,7 +1947,7 @@ app.post<{
       success: true,
       received: true,
       handled,
-      timestamp: new Date().toISOString(),
+      timestamp: new Date().toISOString()
     });
   } catch (error) {
     app.log.error('Webhook handling error');
@@ -2041,7 +1958,7 @@ app.post<{
     return reply.code(statusCode).send({
       success: false,
       error: error instanceof Error ? error.message : 'Unknown error',
-      timestamp: new Date().toISOString(),
+      timestamp: new Date().toISOString()
     });
   }
 });

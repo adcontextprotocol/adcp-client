@@ -34,10 +34,7 @@ export class PropertyIndex {
   /**
    * Query 1: Find agents that can sell a specific property
    */
-  findAgentsForProperty(
-    identifierType: PropertyIdentifierType,
-    identifierValue: string
-  ): PropertyMatch[] {
+  findAgentsForProperty(identifierType: PropertyIdentifierType, identifierValue: string): PropertyMatch[] {
     const key = this.makeIdentifierKey(identifierType, identifierValue);
     return this.identifierIndex.get(key) || [];
   }
@@ -61,7 +58,7 @@ export class PropertyIndex {
         if (!property.tags) continue;
 
         // Check if property has any of the requested tags
-        const hasTag = tags.some(tag => property.tags?.includes(tag));
+        const hasTag = tags.some((tag) => property.tags?.includes(tag));
         if (hasTag) {
           const key = `${auth.agent_url}:${property.property_id || property.name}`;
           if (!seen.has(key)) {
@@ -151,10 +148,7 @@ export class PropertyIndex {
     return {
       totalIdentifiers: this.identifierIndex.size,
       totalAgents: this.agentIndex.size,
-      totalProperties: Array.from(this.agentIndex.values()).reduce(
-        (sum, auth) => sum + auth.properties.length,
-        0
-      )
+      totalProperties: Array.from(this.agentIndex.values()).reduce((sum, auth) => sum + auth.properties.length, 0)
     };
   }
 
