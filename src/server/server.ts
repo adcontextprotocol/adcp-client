@@ -1909,6 +1909,7 @@ app.post<{
     const { task_type: taskType, agent_id: agentId, operation_id: operationId } = request.params;
     const payload = request.body;
     const signature = request.headers['x-adcp-signature'] as string | undefined;
+    const timestamp = request.headers['x-adcp-timestamp'] as string | undefined;
 
     app.log.info(`Webhook received: ${taskType} for operation ${operationId}`);
 
@@ -1947,7 +1948,7 @@ app.post<{
     // The webhook URL was generated with this agent_id during operation setup
     // We use it to look up the correct agent configuration (auth, protocol, etc)
     const agent = adcpClient.agent(agentId);
-    const handled = await agent.handleWebhook(enrichedPayload, signature);
+    const handled = await agent.handleWebhook(enrichedPayload, signature, timestamp);
 
     if (!handled) {
       app.log.warn(`Webhook not handled - no handlers configured`);

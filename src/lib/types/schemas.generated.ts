@@ -484,7 +484,6 @@ export const UpdateMediaBuyRequest1Schema = z.object({
     end_time: z.string().optional(),
     budget: z.number().optional(),
     packages: z.array(z.union([z.record(z.string(), z.unknown()), z.record(z.string(), z.unknown())])).optional(),
-    push_notification_config: PushNotificationConfigSchema.optional()
 });
 
 export const UpdateMediaBuyRequest2Schema = z.record(z.string(), z.unknown());
