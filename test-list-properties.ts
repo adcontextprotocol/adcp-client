@@ -6,7 +6,7 @@ async function testListAuthorizedProperties() {
   const agentConfig = {
     id: 'test-agent',
     name: 'AdCP Test Agent',
-    agent_uri: 'https://test-agent.adcontextprotocol.org/mcp/',
+    agent_uri: 'https://test-agent.adcontextprotocol.org/mcp',
     protocol: 'mcp' as const,
     auth_token_env: process.env.ADCP_AUTH_TOKEN || 'test-token',
     requiresAuth: true
