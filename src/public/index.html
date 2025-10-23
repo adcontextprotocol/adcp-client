@@ -3309,6 +3309,11 @@
                             logEvent('success', '✅ Authorized properties loaded');
                         } catch (error) {
                             logEvent('error', `❌ Authorized properties failed: ${error.message}`);
+                            // Display error in the properties section
+                            const contentDiv = document.getElementById('properties-content');
+                            if (contentDiv) {
+                                contentDiv.innerHTML = `<p style="color: #d9534f; text-align: center;">Error loading properties: ${error.message}</p>`;
+                            }
                         }
                         updateProgress();
                     }
@@ -8801,21 +8806,25 @@ ${JSON.stringify(result, null, 2)}
 
             const result = await callADCPTool(selectedAgent, 'list_authorized_properties', {});
 
-            if (result && result.success) {
+            // callADCPTool returns the data portion (unwrapped), not the full API response
+            // Check for actual data fields instead of result.success
+            if (result && (result.properties || result.publisher_domains)) {
                 displayPropertiesResults(result);
             } else {
-                throw new Error(result?.error || 'Unknown error');
+                throw new Error('No authorized properties returned');
             }
         }
 
-        function displayPropertiesResults(result) {
+        function displayPropertiesResults(data) {
             const contentDiv = document.getElementById('properties-content');
-            if (!contentDiv) return;
+            if (!contentDiv) {
+                return;
+            }
 
+            // callADCPTool returns the data portion directly (already unwrapped)
             // Handle both response formats:
             // 1. Property list: { properties: [...] }
             // 2. Portfolio-level: { publisher_domains: [...], primary_channels: ..., etc. }
-            const data = result.data || result;
             const properties = data.properties || [];
             const publisherDomains = data.publisher_domains || [];
 
