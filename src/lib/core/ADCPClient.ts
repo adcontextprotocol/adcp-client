@@ -88,11 +88,16 @@ export interface ADCPClientConfig extends ConversationConfig {
 export class ADCPClient {
   private executor: TaskExecutor;
   private asyncHandler?: AsyncHandler;
+  private normalizedAgent: AgentConfig;
+  private discoveredEndpoint?: string; // Cache discovered endpoint
 
   constructor(
     private agent: AgentConfig,
     private config: ADCPClientConfig = {}
   ) {
+    // Normalize agent URL for MCP protocol
+    this.normalizedAgent = this.normalizeAgentConfig(agent);
+
     this.executor = new TaskExecutor({
       workingTimeout: config.workingTimeout || 120000, // Max 120s for working status
       defaultMaxClarifications: config.defaultMaxClarifications || 3,
@@ -109,6 +114,117 @@ export class ADCPClient {
   }
 
   /**
+   * Ensure MCP endpoint is discovered (lazy initialization)
+   *
+   * If the agent needs discovery, perform it now and cache the result.
+   * Returns the agent config with the discovered endpoint.
+   */
+  private async ensureEndpointDiscovered(): Promise<AgentConfig> {
+    const needsDiscovery = (this.normalizedAgent as any)._needsDiscovery;
+
+    if (!needsDiscovery) {
+      return this.normalizedAgent;
+    }
+
+    // Already discovered? Use cached value
+    if (this.discoveredEndpoint) {
+      return {
+        ...this.normalizedAgent,
+        agent_uri: this.discoveredEndpoint
+      };
+    }
+
+    // Perform discovery
+    this.discoveredEndpoint = await this.discoverMCPEndpoint(this.normalizedAgent.agent_uri);
+
+    return {
+      ...this.normalizedAgent,
+      agent_uri: this.discoveredEndpoint
+    };
+  }
+
+  /**
+   * Discover MCP endpoint by testing the provided path, then trying /mcp
+   *
+   * Strategy: Test what the user gave us first. If no MCP server responds,
+   * try adding /mcp to the path. That's it.
+   *
+   * Note: This is async and called lazily on first agent interaction
+   */
+  private async discoverMCPEndpoint(providedUri: string): Promise<string> {
+    const { Client: MCPClient } = await import('@modelcontextprotocol/sdk/client/index.js');
+    const { StreamableHTTPClientTransport } = await import('@modelcontextprotocol/sdk/client/streamableHttp.js');
+
+    const authToken = this.agent.auth_token_env;
+    const customFetch = authToken ? async (input: any, init?: any) => {
+      const headers = {
+        ...init?.headers,
+        'Authorization': `Bearer ${authToken}`,
+        'x-adcp-auth': authToken
+      };
+      return fetch(input, { ...init, headers });
+    } : undefined;
+
+    const testEndpoint = async (url: string): Promise<boolean> => {
+      try {
+        const mcpClient = new MCPClient({
+          name: 'AdCP-Client',
+          version: '1.0.0'
+        });
+
+        const transport = new StreamableHTTPClientTransport(
+          new URL(url),
+          customFetch ? { fetch: customFetch } : {}
+        );
+
+        await mcpClient.connect(transport);
+        await mcpClient.close();
+        return true;
+      } catch {
+        return false;
+      }
+    };
+
+    // Test what they gave us first
+    const providedUrl = providedUri.replace(/\/$/, ''); // Clean trailing slash
+    if (await testEndpoint(providedUrl)) {
+      return providedUrl;
+    }
+
+    // No MCP server there, try adding /mcp
+    const withMcp = providedUrl + '/mcp';
+    if (await testEndpoint(withMcp)) {
+      return withMcp;
+    }
+
+    // Neither worked
+    throw new Error(
+      `Failed to discover MCP endpoint. Tried:\n` +
+      `  1. ${providedUrl}\n` +
+      `  2. ${withMcp}\n` +
+      `Neither responded to MCP protocol.`
+    );
+  }
+
+  /**
+   * Normalize agent config - mark all MCP agents for discovery
+   *
+   * We always test the endpoint they give us, and if it doesn't work,
+   * we try adding /mcp. Simple.
+   */
+  private normalizeAgentConfig(agent: AgentConfig): AgentConfig {
+    if (agent.protocol !== 'mcp') {
+      return agent;
+    }
+
+    // Mark for discovery - we'll test their path, then try adding /mcp
+    return {
+      ...agent,
+      _needsDiscovery: true
+    } as any;
+  }
+
+  /**
    * Handle webhook from agent (async task completion)
    *
    * @param payload - Webhook payload from agent
@@ -122,8 +238,7 @@ export class ADCPClient {
    *   const signature = req.headers['x-adcp-signature'];
    *   const timestamp = req.headers['x-adcp-timestamp'];
    *
-   *   try {
-   *     const handled = await client.handleWebhook(req.body, signature, timestamp);
+   *   try *     const handled = await client.handleWebhook(req.body, signature, timestamp);
    *     res.status(200).json({ received: handled });
    *   } catch (error) {
    *     res.status(401).json({ error: error.message });
@@ -314,8 +429,9 @@ export class ADCPClient {
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<T>> {
+    const agent = await this.ensureEndpointDiscovered();
     const result = await this.executor.executeTask<T>(
-      this.agent,
+      agent,
       taskType,
       params,
       inputHandler,
@@ -615,8 +731,9 @@ export class ADCPClient {
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<T>> {
+    const agent = await this.ensureEndpointDiscovered();
     return this.executor.executeTask<T>(
-      this.agent,
+      agent,
       taskName,
       params,
       inputHandler,
@@ -683,8 +800,9 @@ export class ADCPClient {
     contextId: string,
     inputHandler?: InputHandler
   ): Promise<TaskResult<T>> {
+    const agent = await this.ensureEndpointDiscovered();
     return this.executor.executeTask<T>(
-      this.agent,
+      agent,
       'continue_conversation',
       { message },
       inputHandler,
@@ -814,24 +932,148 @@ export class ADCPClient {
 
   /**
    * Register webhook URL for receiving task notifications
-   * 
+   *
    * @param webhookUrl - URL to receive webhook notifications
    * @param taskTypes - Optional array of task types to watch (defaults to all)
-   * 
+   *
    * @example
    * ```typescript
    * await client.registerWebhook('https://myapp.com/webhook', ['create_media_buy']);
    * ```
    */
   async registerWebhook(webhookUrl: string, taskTypes?: string[]): Promise<void> {
-    return this.executor.registerWebhook(this.agent, webhookUrl, taskTypes);
+    const agent = await this.ensureEndpointDiscovered();
+    return this.executor.registerWebhook(agent, webhookUrl, taskTypes);
   }
 
   /**
    * Unregister webhook notifications
    */
   async unregisterWebhook(): Promise<void> {
-    return this.executor.unregisterWebhook(this.agent);
+    const agent = await this.ensureEndpointDiscovered();
+    return this.executor.unregisterWebhook(agent);
+  }
+
+  // ====== AGENT DISCOVERY METHODS ======
+
+  /**
+   * Get comprehensive agent information including name, description, and available tools/skills
+   *
+   * Works with both MCP (tools) and A2A (skills) protocols to discover what the agent can do.
+   *
+   * @returns Promise resolving to agent information including tools
+   *
+   * @example
+   * ```typescript
+   * const client = new ADCPClient(agentConfig);
+   * const info = await client.getAgentInfo();
+   *
+   * console.log(`${info.name}: ${info.description}`);
+   * console.log(`Supports ${info.tools.length} tools`);
+   *
+   * info.tools.forEach(tool => {
+   *   console.log(`  - ${tool.name}: ${tool.description}`);
+   * });
+   * ```
+   */
+  async getAgentInfo(): Promise<{
+    name: string;
+    description?: string;
+    protocol: 'mcp' | 'a2a';
+    url: string;
+    tools: Array<{
+      name: string;
+      description?: string;
+      inputSchema?: any;
+      parameters?: string[];
+    }>;
+  }> {
+    if (this.agent.protocol === 'mcp') {
+      // Discover endpoint if needed
+      const agent = await this.ensureEndpointDiscovered();
+
+      // Use MCP SDK to list tools
+      const { Client: MCPClient } = await import('@modelcontextprotocol/sdk/client/index.js');
+      const { StreamableHTTPClientTransport } = await import('@modelcontextprotocol/sdk/client/streamableHttp.js');
+
+      const mcpClient = new MCPClient({
+        name: 'AdCP-Client',
+        version: '1.0.0'
+      });
+
+      const authToken = this.agent.auth_token_env;
+      const customFetch = authToken ? async (input: any, init?: any) => {
+        const headers = {
+          ...init?.headers,
+          'Authorization': `Bearer ${authToken}`,
+          'x-adcp-auth': authToken
+        };
+        return fetch(input, { ...init, headers });
+      } : undefined;
+
+      const transport = new StreamableHTTPClientTransport(
+        new URL(agent.agent_uri),
+        customFetch ? { fetch: customFetch } : {}
+      );
+
+      await mcpClient.connect(transport);
+      const toolsList = await mcpClient.listTools();
+      await mcpClient.close();
+
+      const tools = toolsList.tools.map(tool => ({
+        name: tool.name,
+        description: tool.description,
+        inputSchema: tool.inputSchema,
+        parameters: tool.inputSchema?.properties ? Object.keys(tool.inputSchema.properties) : []
+      }));
+
+      return {
+        name: this.agent.name,
+        description: undefined,
+        protocol: this.agent.protocol,
+        url: agent.agent_uri,
+        tools
+      };
+
+    } else if (this.agent.protocol === 'a2a') {
+      // Use A2A SDK to get agent card
+      const clientModule = require('@a2a-js/sdk/client');
+      const A2AClient = clientModule.A2AClient;
+
+      const authToken = this.agent.auth_token_env;
+      const fetchImpl = authToken ? async (url: any, options?: any) => {
+        const headers = {
+          ...options?.headers,
+          'Authorization': `Bearer ${authToken}`,
+          'x-adcp-auth': authToken
+        };
+        return fetch(url, { ...options, headers });
+      } : undefined;
+
+      const cardUrl = this.normalizedAgent.agent_uri.endsWith('/.well-known/agent-card.json')
+        ? this.normalizedAgent.agent_uri
+        : this.normalizedAgent.agent_uri.replace(/\/$/, '') + '/.well-known/agent-card.json';
+
+      const client = await A2AClient.fromCardUrl(cardUrl, fetchImpl ? { fetchImpl } : {});
+      const agentCard = client.agentCardPromise ? await client.agentCardPromise : client.agentCard;
+
+      const tools = agentCard?.skills ? agentCard.skills.map((skill: any) => ({
+        name: skill.name,
+        description: skill.description,
+        inputSchema: skill.inputSchema,
+        parameters: skill.inputFormats || []
+      })) : [];
+
+      return {
+        name: agentCard?.displayName || agentCard?.name || this.agent.name,
+        description: agentCard?.description,
+        protocol: this.agent.protocol,
+        url: this.normalizedAgent.agent_uri,
+        tools
+      };
+    }
+
+    throw new Error(`Unsupported protocol: ${this.agent.protocol}`);
   }
 
   // ====== STATIC HELPER METHODS ======
