@@ -2005,6 +2005,21 @@
             </div>
         </div>
 
+        <!-- Agent Info Display -->
+        <div id="agent-info-display" style="display: none; margin-bottom: 20px; padding: 15px; border: 1px solid #dee2e6; border-radius: 4px; background: #f8f9fa;">
+            <div style="display: flex; justify-content: space-between; align-items: start;">
+                <div style="flex: 1;">
+                    <h3 style="margin: 0 0 10px 0; font-size: 16px;">Agent Information</h3>
+                    <div id="agent-info-content" style="font-size: 14px; line-height: 1.6;">
+                        <div style="margin-bottom: 8px;"><strong>Name:</strong> <span id="info-name"></span></div>
+                        <div style="margin-bottom: 8px;"><strong>Protocol:</strong> <span id="info-protocol"></span></div>
+                        <div style="margin-bottom: 8px;"><strong>Description:</strong> <span id="info-description"></span></div>
+                        <div style="margin-bottom: 8px;"><strong>Capabilities:</strong> <span id="info-capabilities"></span></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- Add New Agent Form (collapsible) -->
         <div id="add-agent-form" style="display: none; margin: 15px 0; padding: 15px; border: 1px solid #dee2e6; border-radius: 4px; background: white;">
             <!-- Input Method Toggle -->
@@ -3217,6 +3232,43 @@
         // Agent Data Management
         // ============================================================================
         
+        async function loadAgentInfo(agentId) {
+            try {
+                const response = await fetch(`/api/sales/agents/${agentId}/info`);
+                const result = await response.json();
+
+                if (result.success && result.data) {
+                    const agentInfo = result.data;
+                    const display = document.getElementById('agent-info-display');
+
+                    // Update display fields
+                    document.getElementById('info-name').textContent = agentInfo.name || 'N/A';
+                    document.getElementById('info-protocol').textContent = (agentInfo.protocol || 'N/A').toUpperCase();
+                    document.getElementById('info-description').textContent = agentInfo.description || 'No description available';
+
+                    // Format capabilities (tools)
+                    const tools = agentInfo.tools || agentInfo.capabilities || [];
+                    if (tools.length > 0) {
+                        const toolNames = tools.map(t => typeof t === 'string' ? t : t.name);
+                        document.getElementById('info-capabilities').textContent = toolNames.join(', ');
+                    } else {
+                        document.getElementById('info-capabilities').textContent = 'No tools available';
+                    }
+
+                    // Show the display
+                    display.style.display = 'block';
+                    logEvent('success', `Loaded agent info for ${agentInfo.name}`);
+                } else {
+                    document.getElementById('agent-info-display').style.display = 'none';
+                    logEvent('warning', 'Could not load agent info');
+                }
+            } catch (error) {
+                console.error('Error loading agent info:', error);
+                document.getElementById('agent-info-display').style.display = 'none';
+                logEvent('error', `Failed to load agent info: ${error.message}`);
+            }
+        }
+
         async function onAgentSelected() {
             const selectedAgentId = document.getElementById('agent-selector').value;
             const refreshBtn = document.getElementById('refresh-agent-btn');
@@ -3233,9 +3285,13 @@
             if (!selectedAgentId) {
                 refreshBtn.disabled = true;
                 refreshBtn.innerHTML = '🔄 Load Agent Data';
+                document.getElementById('agent-info-display').style.display = 'none';
                 logEvent('info', 'Agent cleared - data reset');
                 return;
             }
+
+            // Load and display agent info
+            await loadAgentInfo(selectedAgentId);
 
             // Enable the load button but don't auto-load
             refreshBtn.disabled = false;

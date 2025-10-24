@@ -27,6 +27,48 @@ const {
 } = require('./adcp-config.js');
 
 /**
+ * Extract human-readable protocol message from conversation
+ */
+function extractProtocolMessage(conversation, protocol) {
+  if (!conversation || conversation.length === 0) return null;
+
+  // Find the last agent response (don't mutate original array)
+  const agentResponse = [...conversation].reverse().find(msg => msg.role === 'agent');
+  if (!agentResponse || !agentResponse.content) return null;
+
+  if (protocol === 'mcp') {
+    // MCP: The content[].text contains the tool response (JSON stringified)
+    // This IS the protocol message in MCP
+    if (agentResponse.content.content && Array.isArray(agentResponse.content.content)) {
+      const textContent = agentResponse.content.content.find(c => c.type === 'text');
+      return textContent?.text || null;
+    }
+    if (agentResponse.content.text) {
+      return agentResponse.content.text;
+    }
+  } else if (protocol === 'a2a') {
+    // A2A: Extract human-readable message from task result
+    // The message is nested in result.artifacts[0].parts[0].data.message
+    const result = agentResponse.content.result;
+    if (result && result.artifacts && result.artifacts.length > 0) {
+      const artifact = result.artifacts[0];
+      if (artifact.parts && artifact.parts.length > 0) {
+        const data = artifact.parts[0].data;
+        if (data && data.message) {
+          return data.message;
+        }
+      }
+    }
+    // Fallback: check top-level status message
+    if (result && result.status && result.status.message) {
+      return result.status.message;
+    }
+  }
+
+  return null;
+}
+
+/**
  * Display agent info - just calls library method
  */
 async function displayAgentInfo(agentConfig, jsonOutput) {
@@ -474,16 +516,42 @@ async function main() {
     // Handle result
     if (result.success) {
       if (jsonOutput) {
-        // Raw JSON output
-        console.log(JSON.stringify(result.data, null, 2));
+        // Raw JSON output - include protocol metadata
+        console.log(JSON.stringify({
+          data: result.data,
+          metadata: {
+            taskId: result.metadata.taskId,
+            protocol: result.metadata.agent.protocol,
+            responseTimeMs: result.metadata.responseTimeMs,
+            ...(result.conversation && result.conversation.length > 0 && {
+              protocolMessage: extractProtocolMessage(result.conversation, result.metadata.agent.protocol),
+              contextId: result.metadata.taskId  // Using taskId as context identifier
+            })
+          }
+        }, null, 2));
       } else {
         // Pretty output
         console.log('\n✅ SUCCESS\n');
+
+        // Show protocol message if available
+        if (result.conversation && result.conversation.length > 0) {
+          const message = extractProtocolMessage(result.conversation, result.metadata.agent.protocol);
+          if (message) {
+            console.log('Protocol Message:');
+            console.log(message);
+            console.log('');
+          }
+        }
+
         console.log('Response:');
         console.log(JSON.stringify(result.data, null, 2));
         console.log('');
+        console.log(`Protocol: ${result.metadata.agent.protocol.toUpperCase()}`);
         console.log(`Response Time: ${result.metadata.responseTimeMs}ms`);
         console.log(`Task ID: ${result.metadata.taskId}`);
+        if (result.conversation && result.conversation.length > 0) {
+          console.log(`Context ID: ${result.metadata.taskId}`);
+        }
       }
       process.exit(0);
     } else {
