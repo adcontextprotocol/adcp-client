@@ -2356,6 +2356,7 @@ export interface UpdateMediaBuyRequest1 {
         [k: string]: unknown;
       }
   )[];
+  push_notification_config?: PushNotificationConfig;
 }
 /**
  * Optional webhook configuration for async update notifications. Publisher will send webhook when update completes if operation takes longer than immediate response time.
