@@ -583,6 +583,28 @@ app.get('/api/sales/agents', async (request, reply) => {
   }
 });
 
+// Get agent info endpoint
+app.get('/api/sales/agents/:agentId/info', async (request, reply) => {
+  const { agentId } = request.params as { agentId: string };
+
+  try {
+    const agent = adcpClient.getAgent(agentId);
+    const agentInfo = await agent.getAgentInfo();
+    return reply.send({
+      success: true,
+      data: agentInfo,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    app.log.error(`Failed to get agent info for ${agentId}: ${error instanceof Error ? error.message : String(error)}`);
+    return reply.code(500).send({
+      success: false,
+      error: error instanceof Error ? error.message : 'Failed to get agent info',
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
 
 // Helper function to extract data from nested A2A/MCP responses
 function extractResponseData(result: any): any {

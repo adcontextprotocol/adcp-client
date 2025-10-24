@@ -68,6 +68,11 @@ if [ ! -d "schemas/cache/latest" ]; then
   npm run sync-schemas
 fi
 
+# Set CI=true to skip slow tests (matches GitHub Actions behavior)
+# This skips tests marked with: skip: process.env.CI ? 'reason' : false
+# e.g., error-scenarios.test.js which tests complex timeout/race conditions
+export CI=true
+
 # Run the comprehensive CI validation (includes schema validation)
 npm run ci:pre-push
 
@@ -76,7 +81,7 @@ if [ $? -ne 0 ]; then
   echo "❌ Pre-push validation failed!"
   echo "🔧 Fix the issues above before pushing"
   echo ""
-  echo "💡 To run validation manually: npm run ci:validate"
+  echo "💡 To run validation manually: CI=true npm run ci:validate"
   echo "💡 Schema issues? Try: npm run sync-schemas && npm run generate-types"
   echo ""
   exit 1

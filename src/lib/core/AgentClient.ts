@@ -437,6 +437,13 @@ export class AgentClient {
   }
 
   /**
+   * Get agent information including capabilities
+   */
+  async getAgentInfo() {
+    return this.client.getAgentInfo();
+  }
+
+  /**
    * Check if there's an active conversation
    */
   hasActiveConversation(): boolean {

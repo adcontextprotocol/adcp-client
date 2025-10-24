@@ -575,6 +575,21 @@ export class ADCPMultiAgentClient {
   }
 
   /**
+   * Get individual agent client by ID
+   *
+   * @param agentId - ID of agent to retrieve
+   * @returns AgentClient instance
+   * @throws Error if agent not found
+   */
+  getAgent(agentId: string): AgentClient {
+    const agent = this.agentClients.get(agentId);
+    if (!agent) {
+      throw new Error(`Agent '${agentId}' not found. Available agents: ${this.getAgentIds().join(', ')}`);
+    }
+    return agent;
+  }
+
+  /**
    * Check if an agent exists
    */
   hasAgent(agentId: string): boolean {

@@ -14,9 +14,59 @@
  *   adcp mcp https://agent.example.com/mcp create_media_buy @payload.json --auth $AGENT_TOKEN
  */
 
-const { ADCPClient } = require('../dist/lib/index.js');
+const { ADCPClient, detectProtocol } = require('../dist/lib/index.js');
 const { readFileSync } = require('fs');
 const { AsyncWebhookHandler } = require('./adcp-async-handler.js');
+const {
+  getAgent,
+  listAgents,
+  isAlias,
+  interactiveSetup,
+  removeAgent,
+  getConfigPath
+} = require('./adcp-config.js');
+
+/**
+ * Extract human-readable protocol message from conversation
+ */
+function extractProtocolMessage(conversation, protocol) {
+  if (!conversation || conversation.length === 0) return null;
+
+  // Find the last agent response (don't mutate original array)
+  const agentResponse = [...conversation].reverse().find(msg => msg.role === 'agent');
+  if (!agentResponse || !agentResponse.content) return null;
+
+  if (protocol === 'mcp') {
+    // MCP: The content[].text contains the tool response (JSON stringified)
+    // This IS the protocol message in MCP
+    if (agentResponse.content.content && Array.isArray(agentResponse.content.content)) {
+      const textContent = agentResponse.content.content.find(c => c.type === 'text');
+      return textContent?.text || null;
+    }
+    if (agentResponse.content.text) {
+      return agentResponse.content.text;
+    }
+  } else if (protocol === 'a2a') {
+    // A2A: Extract human-readable message from task result
+    // The message is nested in result.artifacts[0].parts[0].data.message
+    const result = agentResponse.content.result;
+    if (result && result.artifacts && result.artifacts.length > 0) {
+      const artifact = result.artifacts[0];
+      if (artifact.parts && artifact.parts.length > 0) {
+        const data = artifact.parts[0].data;
+        if (data && data.message) {
+          return data.message;
+        }
+      }
+    }
+    // Fallback: check top-level status message
+    if (result && result.status && result.status.message) {
+      return result.status.message;
+    }
+  }
+
+  return null;
+}
 
 /**
  * Display agent info - just calls library method
@@ -59,52 +109,69 @@ function printUsage() {
 AdCP CLI Tool - Direct Agent Communication
 
 USAGE:
-  adcp <protocol> <agent-url> [tool-name] [payload] [options]
+  adcp <agent-alias|url> [tool-name] [payload] [options]
 
 ARGUMENTS:
-  protocol      Protocol to use: 'mcp' or 'a2a'
-  agent-url     Full URL to the agent endpoint
-  tool-name     Name of the tool to call (optional - omit to list available tools)
-  payload       JSON payload for the tool (default: {})
-                - Can be inline JSON: '{"brief":"text"}'
-                - Can be file path: @payload.json
-                - Can be stdin: -
+  agent-alias|url   Saved agent alias (e.g., 'test') or full URL to agent endpoint
+  tool-name         Name of the tool to call (optional - omit to list available tools)
+  payload           JSON payload for the tool (default: {})
+                    - Can be inline JSON: '{"brief":"text"}'
+                    - Can be file path: @payload.json
+                    - Can be stdin: -
 
 OPTIONS:
-  --auth TOKEN    Authentication token for the agent
-  --wait          Wait for async/webhook responses (requires ngrok or --local)
-  --local         Use local webhook without ngrok (for local agents only)
-  --timeout MS    Webhook timeout in milliseconds (default: 300000 = 5min)
-  --help, -h      Show this help message
-  --json          Output raw JSON response (default: pretty print)
-  --debug         Show debug information
+  --protocol PROTO  Force protocol: 'mcp' or 'a2a' (default: auto-detect)
+  --auth TOKEN      Authentication token for the agent
+  --wait            Wait for async/webhook responses (requires ngrok or --local)
+  --local           Use local webhook without ngrok (for local agents only)
+  --timeout MS      Webhook timeout in milliseconds (default: 300000 = 5min)
+  --help, -h        Show this help message
+  --json            Output raw JSON response (default: pretty print)
+  --debug           Show debug information
+
+AGENT MANAGEMENT:
+  --save-auth <alias> [url]   Save agent configuration interactively
+  --list-agents               List all saved agents
+  --remove-agent <alias>      Remove saved agent configuration
+  --show-config               Show config file location
 
 EXAMPLES:
-  # List available tools
-  adcp mcp https://agent.example.com/mcp
-  adcp a2a https://creative.adcontextprotocol.org
+  # Save an agent for easy access
+  adcp --save-auth test https://test-agent.adcontextprotocol.org
 
-  # Simple product discovery
-  adcp mcp https://agent.example.com/mcp get_products '{"brief":"coffee brands"}'
+  # Use saved agent alias (auto-detect protocol)
+  adcp test
+  adcp test get_products '{"brief":"travel"}'
 
-  # With authentication
-  adcp a2a https://agent.example.com list_creative_formats '{}' --auth your_token
+  # List saved agents
+  adcp --list-agents
+
+  # Auto-detect protocol with URL
+  adcp https://test-agent.adcontextprotocol.org get_products '{"brief":"coffee"}'
+
+  # Force specific protocol
+  adcp https://agent.example.com get_products '{"brief":"coffee"}' --protocol mcp
+  adcp test list_authorized_properties --protocol a2a
+
+  # Override saved auth token
+  adcp test get_products '{"brief":"..."}' --auth different-token
 
   # Wait for async response (requires ngrok)
-  adcp mcp https://agent.example.com/mcp create_media_buy @payload.json --auth $TOKEN --wait
+  adcp test create_media_buy @payload.json --wait
 
-  # Wait for async response from local agent (no ngrok needed)
-  adcp mcp http://localhost:3000/mcp create_media_buy @payload.json --wait --local
+  # From file or stdin
+  adcp test create_media_buy @payload.json
+  echo '{"brief":"travel"}' | adcp test get_products -
 
-  # From file
-  adcp mcp https://agent.example.com/mcp create_media_buy @payload.json --auth $TOKEN
-
-  # From stdin
-  echo '{"brief":"travel"}' | adcp mcp https://agent.example.com/mcp get_products -
+  # JSON output for scripting
+  adcp test get_products '{"brief":"travel"}' --json | jq '.products[0]'
 
 ENVIRONMENT VARIABLES:
   ADCP_AUTH_TOKEN    Default authentication token (overridden by --auth)
   ADCP_DEBUG         Enable debug mode (set to 'true')
+
+CONFIG FILE:
+  Agents are saved to ~/.adcp/config.json
 
 EXIT CODES:
   0   Success
@@ -123,8 +190,75 @@ async function main() {
     process.exit(0);
   }
 
+  // Handle agent management commands
+  if (args[0] === '--save-auth') {
+    const alias = args[1];
+    const url = args[2] || null;
+    const protocol = args[3] || null;
+
+    if (!alias) {
+      console.error('ERROR: --save-auth requires an alias\n');
+      console.error('Usage: adcp --save-auth <alias> [url] [protocol]\n');
+      process.exit(2);
+    }
+
+    // Non-interactive if URL is provided
+    const nonInteractive = !!url;
+    await interactiveSetup(alias, url, protocol, null, nonInteractive);
+    process.exit(0);
+  }
+
+  if (args[0] === '--list-agents') {
+    const agents = listAgents();
+    const aliases = Object.keys(agents);
+
+    if (aliases.length === 0) {
+      console.log('\nNo saved agents found.');
+      console.log('Use: adcp --save-auth <alias> <url>\n');
+      process.exit(0);
+    }
+
+    console.log('\n📋 Saved Agents:\n');
+    aliases.forEach(alias => {
+      const agent = agents[alias];
+      console.log(`  ${alias}`);
+      console.log(`    URL: ${agent.url}`);
+      if (agent.protocol) {
+        console.log(`    Protocol: ${agent.protocol}`);
+      }
+      if (agent.auth_token) {
+        console.log(`    Auth: configured`);
+      }
+      console.log('');
+    });
+    console.log(`Config: ${getConfigPath()}\n`);
+    process.exit(0);
+  }
+
+  if (args[0] === '--remove-agent') {
+    const alias = args[1];
+
+    if (!alias) {
+      console.error('ERROR: --remove-agent requires an alias\n');
+      process.exit(2);
+    }
+
+    if (removeAgent(alias)) {
+      console.log(`\n✅ Removed agent '${alias}'\n`);
+    } else {
+      console.error(`\nERROR: Agent '${alias}' not found\n`);
+      process.exit(2);
+    }
+    process.exit(0);
+  }
+
+  if (args[0] === '--show-config') {
+    console.log(`\nConfig file: ${getConfigPath()}\n`);
+    process.exit(0);
+  }
+
   // Parse arguments
-  if (args.length < 2) {
+  if (args.length < 1) {
     console.error('ERROR: Missing required arguments\n');
     printUsage();
     process.exit(2);
@@ -133,6 +267,8 @@ async function main() {
   // Parse options first
   const authIndex = args.indexOf('--auth');
   const authToken = authIndex !== -1 ? args[authIndex + 1] : process.env.ADCP_AUTH_TOKEN;
+  const protocolIndex = args.indexOf('--protocol');
+  const protocolFlag = protocolIndex !== -1 ? args[protocolIndex + 1] : null;
   const jsonOutput = args.includes('--json');
   const debug = args.includes('--debug') || process.env.ADCP_DEBUG === 'true';
   const waitForAsync = args.includes('--wait');
@@ -140,21 +276,66 @@ async function main() {
   const timeoutIndex = args.indexOf('--timeout');
   const timeout = timeoutIndex !== -1 ? parseInt(args[timeoutIndex + 1]) : 300000;
 
+  // Validate protocol flag if provided
+  if (protocolFlag && protocolFlag !== 'mcp' && protocolFlag !== 'a2a') {
+    console.error(`ERROR: Invalid protocol '${protocolFlag}'. Must be 'mcp' or 'a2a'\n`);
+    printUsage();
+    process.exit(2);
+  }
+
   // Filter out flag arguments to find positional arguments
   const positionalArgs = args.filter(arg =>
     !arg.startsWith('--') &&
     arg !== authToken && // Don't include the auth token value
+    arg !== protocolFlag && // Don't include the protocol value
     arg !== (timeoutIndex !== -1 ? args[timeoutIndex + 1] : null) // Don't include timeout value
   );
 
-  const protocol = positionalArgs[0];
-  const agentUrl = positionalArgs[1];
-  const toolName = positionalArgs[2]; // Optional - if not provided, list tools
-  let payloadArg = positionalArgs[3] || '{}';
+  // Determine if first arg is alias or URL
+  let protocol = protocolFlag; // Start with flag if provided
+  let agentUrl;
+  let toolName;
+  let payloadArg;
+  let savedAgent = null;
 
-  // Validate protocol
-  if (protocol !== 'mcp' && protocol !== 'a2a') {
-    console.error(`ERROR: Invalid protocol '${protocol}'. Must be 'mcp' or 'a2a'\n`);
+  const firstArg = positionalArgs[0];
+
+  // Check if first arg is a saved alias
+  if (isAlias(firstArg)) {
+    // Alias mode - load saved agent config
+    savedAgent = getAgent(firstArg);
+    agentUrl = savedAgent.url;
+
+    // Protocol priority: --protocol flag > saved config > auto-detect
+    if (!protocol) {
+      protocol = savedAgent.protocol || null;
+    }
+
+    toolName = positionalArgs[1];
+    payloadArg = positionalArgs[2] || '{}';
+
+    // Use saved auth token if not overridden
+    if (!authToken && savedAgent.auth_token) {
+      authToken = savedAgent.auth_token;
+    }
+
+    if (debug) {
+      console.error(`DEBUG: Using saved agent '${firstArg}'`);
+      console.error(`  URL: ${agentUrl}`);
+      if (protocol) {
+        console.error(`  Protocol: ${protocol}`);
+      }
+      console.error('');
+    }
+  } else if (firstArg && (firstArg.startsWith('http://') || firstArg.startsWith('https://'))) {
+    // URL mode
+    agentUrl = firstArg;
+    toolName = positionalArgs[1];
+    payloadArg = positionalArgs[2] || '{}';
+    // protocol already set from flag, or null for auto-detect
+  } else {
+    console.error(`ERROR: First argument must be an alias or URL\n`);
+    console.error(`Available aliases: ${Object.keys(listAgents()).join(', ') || 'none'}\n`);
     printUsage();
     process.exit(2);
   }
@@ -180,11 +361,29 @@ async function main() {
     process.exit(2);
   }
 
+  // Auto-detect protocol if not specified
+  if (!protocol) {
+    if (debug || !jsonOutput) {
+      console.error('🔍 Auto-detecting protocol...');
+    }
+
+    try {
+      protocol = await detectProtocol(agentUrl);
+      if (debug || !jsonOutput) {
+        console.error(`✓ Detected protocol: ${protocol.toUpperCase()}\n`);
+      }
+    } catch (error) {
+      console.error(`ERROR: Failed to detect protocol: ${error.message}\n`);
+      console.error('Please specify protocol explicitly: adcp mcp <url> or adcp a2a <url>\n');
+      process.exit(2);
+    }
+  }
+
   if (debug) {
     console.error('DEBUG: Configuration');
     console.error(`  Protocol: ${protocol}`);
     console.error(`  Agent URL: ${agentUrl}`);
-    console.error(`  Tool: ${toolName}`);
+    console.error(`  Tool: ${toolName || '(list tools)'}`);
     console.error(`  Auth: ${authToken ? 'provided' : 'none'}`);
     console.error(`  Payload: ${JSON.stringify(payload, null, 2)}`);
     console.error('');
@@ -317,16 +516,42 @@ async function main() {
     // Handle result
     if (result.success) {
       if (jsonOutput) {
-        // Raw JSON output
-        console.log(JSON.stringify(result.data, null, 2));
+        // Raw JSON output - include protocol metadata
+        console.log(JSON.stringify({
+          data: result.data,
+          metadata: {
+            taskId: result.metadata.taskId,
+            protocol: result.metadata.agent.protocol,
+            responseTimeMs: result.metadata.responseTimeMs,
+            ...(result.conversation && result.conversation.length > 0 && {
+              protocolMessage: extractProtocolMessage(result.conversation, result.metadata.agent.protocol),
+              contextId: result.metadata.taskId  // Using taskId as context identifier
+            })
+          }
+        }, null, 2));
       } else {
         // Pretty output
         console.log('\n✅ SUCCESS\n');
+
+        // Show protocol message if available
+        if (result.conversation && result.conversation.length > 0) {
+          const message = extractProtocolMessage(result.conversation, result.metadata.agent.protocol);
+          if (message) {
+            console.log('Protocol Message:');
+            console.log(message);
+            console.log('');
+          }
+        }
+
         console.log('Response:');
         console.log(JSON.stringify(result.data, null, 2));
         console.log('');
+        console.log(`Protocol: ${result.metadata.agent.protocol.toUpperCase()}`);
         console.log(`Response Time: ${result.metadata.responseTimeMs}ms`);
         console.log(`Task ID: ${result.metadata.taskId}`);
+        if (result.conversation && result.conversation.length > 0) {
+          console.log(`Context ID: ${result.metadata.taskId}`);
+        }
       }
       process.exit(0);
     } else {
