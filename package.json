@@ -15,8 +15,12 @@
       "types": "./dist/lib/types/index.d.ts"
     }
   },
+  "bin": {
+    "adcp": "./bin/adcp.js"
+  },
   "files": [
     "dist/lib/**/*",
+    "bin/adcp.js",
     "README.md",
     "LICENSE"
   ],
