@@ -51,29 +51,13 @@ adcp https://agent.example.com get_products '{"brief":"coffee brands"}'
 
 ## Usage
 
-### With Agent Alias
-
 ```
-adcp <alias> [tool-name] [payload] [options]
-```
-
-### With Direct URL (Auto-detect Protocol)
-
-```
-adcp <agent-url> [tool-name] [payload] [options]
-```
-
-### With Explicit Protocol
-
-```
-adcp <protocol> <agent-url> [tool-name] [payload] [options]
+adcp <alias|url> [tool-name] [payload] [options]
 ```
 
 ### Arguments
 
-- **alias**: Saved agent alias (e.g., `test`, `prod`)
-- **agent-url**: Full URL to the agent endpoint
-- **protocol**: Protocol to use (`mcp` or `a2a`) - optional, auto-detected if omitted
+- **alias|url**: Saved agent alias (e.g., `test`) or full URL to agent endpoint
 - **tool-name**: Name of the AdCP tool/task to call (omit to list available tools)
 - **payload**: JSON payload for the tool (default: `{}`)
   - Inline JSON: `'{"brief":"text"}'`
@@ -82,6 +66,7 @@ adcp <protocol> <agent-url> [tool-name] [payload] [options]
 
 ### Options
 
+- `--protocol PROTO`: Force protocol: `mcp` or `a2a` (default: auto-detect)
 - `--auth TOKEN`: Authentication token for the agent
 - `--wait`: Wait for async/webhook responses (requires ngrok or --local)
 - `--local`: Use local webhook without ngrok (for local agents only)
@@ -156,14 +141,15 @@ Available Tools (14):
 ### Basic Product Discovery
 
 ```bash
-# With alias
+# With alias (auto-detect)
 adcp test get_products '{"brief":"coffee subscription service"}'
 
-# With auto-detect
+# With URL (auto-detect)
 adcp https://agent.example.com get_products '{"brief":"coffee brands"}'
 
-# With explicit protocol
-adcp mcp https://agent.example.com/mcp get_products '{"brief":"coffee brands"}'
+# Force specific protocol
+adcp https://agent.example.com get_products '{"brief":"coffee brands"}' --protocol mcp
+adcp test list_authorized_properties --protocol a2a
 ```
 
 ### Authentication Methods

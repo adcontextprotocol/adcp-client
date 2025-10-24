@@ -68,19 +68,17 @@ AdCP CLI Tool - Direct Agent Communication
 
 USAGE:
   adcp <agent-alias|url> [tool-name] [payload] [options]
-  adcp [protocol] <agent-url> [tool-name] [payload] [options]
 
 ARGUMENTS:
-  agent-alias   Saved agent alias (e.g., 'test', 'prod')
-  agent-url     Full URL to the agent endpoint
-  protocol      Protocol to use: 'mcp' or 'a2a' (optional - auto-detected if omitted)
-  tool-name     Name of the tool to call (optional - omit to list available tools)
-  payload       JSON payload for the tool (default: {})
-                - Can be inline JSON: '{"brief":"text"}'
-                - Can be file path: @payload.json
-                - Can be stdin: -
+  agent-alias|url   Saved agent alias (e.g., 'test') or full URL to agent endpoint
+  tool-name         Name of the tool to call (optional - omit to list available tools)
+  payload           JSON payload for the tool (default: {})
+                    - Can be inline JSON: '{"brief":"text"}'
+                    - Can be file path: @payload.json
+                    - Can be stdin: -
 
 OPTIONS:
+  --protocol PROTO  Force protocol: 'mcp' or 'a2a' (default: auto-detect)
   --auth TOKEN      Authentication token for the agent
   --wait            Wait for async/webhook responses (requires ngrok or --local)
   --local           Use local webhook without ngrok (for local agents only)
@@ -99,7 +97,7 @@ EXAMPLES:
   # Save an agent for easy access
   adcp --save-auth test https://test-agent.adcontextprotocol.org
 
-  # Use saved agent alias
+  # Use saved agent alias (auto-detect protocol)
   adcp test
   adcp test get_products '{"brief":"travel"}'
 
@@ -109,8 +107,9 @@ EXAMPLES:
   # Auto-detect protocol with URL
   adcp https://test-agent.adcontextprotocol.org get_products '{"brief":"coffee"}'
 
-  # Explicit protocol
-  adcp mcp https://agent.example.com/mcp get_products '{"brief":"coffee brands"}'
+  # Force specific protocol
+  adcp https://agent.example.com get_products '{"brief":"coffee"}' --protocol mcp
+  adcp test list_authorized_properties --protocol a2a
 
   # Override saved auth token
   adcp test get_products '{"brief":"..."}' --auth different-token
@@ -226,6 +225,8 @@ async function main() {
   // Parse options first
   const authIndex = args.indexOf('--auth');
   const authToken = authIndex !== -1 ? args[authIndex + 1] : process.env.ADCP_AUTH_TOKEN;
+  const protocolIndex = args.indexOf('--protocol');
+  const protocolFlag = protocolIndex !== -1 ? args[protocolIndex + 1] : null;
   const jsonOutput = args.includes('--json');
   const debug = args.includes('--debug') || process.env.ADCP_DEBUG === 'true';
   const waitForAsync = args.includes('--wait');
@@ -233,15 +234,23 @@ async function main() {
   const timeoutIndex = args.indexOf('--timeout');
   const timeout = timeoutIndex !== -1 ? parseInt(args[timeoutIndex + 1]) : 300000;
 
+  // Validate protocol flag if provided
+  if (protocolFlag && protocolFlag !== 'mcp' && protocolFlag !== 'a2a') {
+    console.error(`ERROR: Invalid protocol '${protocolFlag}'. Must be 'mcp' or 'a2a'\n`);
+    printUsage();
+    process.exit(2);
+  }
+
   // Filter out flag arguments to find positional arguments
   const positionalArgs = args.filter(arg =>
     !arg.startsWith('--') &&
     arg !== authToken && // Don't include the auth token value
+    arg !== protocolFlag && // Don't include the protocol value
     arg !== (timeoutIndex !== -1 ? args[timeoutIndex + 1] : null) // Don't include timeout value
   );
 
-  // Determine if first arg is alias, protocol, or URL
-  let protocol;
+  // Determine if first arg is alias or URL
+  let protocol = protocolFlag; // Start with flag if provided
   let agentUrl;
   let toolName;
   let payloadArg;
@@ -254,7 +263,12 @@ async function main() {
     // Alias mode - load saved agent config
     savedAgent = getAgent(firstArg);
     agentUrl = savedAgent.url;
-    protocol = savedAgent.protocol || null; // May still auto-detect
+
+    // Protocol priority: --protocol flag > saved config > auto-detect
+    if (!protocol) {
+      protocol = savedAgent.protocol || null;
+    }
+
     toolName = positionalArgs[1];
     payloadArg = positionalArgs[2] || '{}';
 
@@ -271,26 +285,14 @@ async function main() {
       }
       console.error('');
     }
-  } else if (firstArg === 'mcp' || firstArg === 'a2a') {
-    // Explicit protocol mode
-    protocol = firstArg;
-    agentUrl = positionalArgs[1];
-    toolName = positionalArgs[2];
-    payloadArg = positionalArgs[3] || '{}';
-
-    if (!agentUrl) {
-      console.error('ERROR: Missing agent URL\n');
-      printUsage();
-      process.exit(2);
-    }
   } else if (firstArg && (firstArg.startsWith('http://') || firstArg.startsWith('https://'))) {
-    // Auto-detect protocol mode
+    // URL mode
     agentUrl = firstArg;
     toolName = positionalArgs[1];
     payloadArg = positionalArgs[2] || '{}';
-    protocol = null; // Will be detected later
+    // protocol already set from flag, or null for auto-detect
   } else {
-    console.error(`ERROR: First argument must be an alias, protocol ('mcp' or 'a2a'), or URL\n`);
+    console.error(`ERROR: First argument must be an alias or URL\n`);
     console.error(`Available aliases: ${Object.keys(listAgents()).join(', ') || 'none'}\n`);
     printUsage();
     process.exit(2);

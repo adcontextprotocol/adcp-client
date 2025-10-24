@@ -479,8 +479,12 @@ npx @adcp/client --list-agents
 Auto-detect protocol and call directly:
 
 ```bash
-# Protocol auto-detection (no need to specify mcp/a2a)
+# Protocol auto-detection (default)
 npx @adcp/client https://test-agent.adcontextprotocol.org get_products '{"brief":"Coffee"}'
+
+# Force specific protocol with --protocol flag
+npx @adcp/client https://agent.example.com get_products '{"brief":"Coffee"}' --protocol mcp
+npx @adcp/client https://agent.example.com list_authorized_properties --protocol a2a
 
 # List available tools
 npx @adcp/client https://agent.example.com
@@ -525,7 +529,7 @@ npx @adcp/client --remove-agent test
 npx @adcp/client --show-config
 ```
 
-**Protocol Auto-Detection**: The CLI automatically detects whether an endpoint uses MCP or A2A by checking URL patterns and discovery endpoints. You can still specify the protocol explicitly if needed: `npx @adcp/client mcp <url>` or `npx @adcp/client a2a <url>`.
+**Protocol Auto-Detection**: The CLI automatically detects whether an endpoint uses MCP or A2A by checking URL patterns and discovery endpoints. Override with `--protocol mcp` or `--protocol a2a` if needed.
 
 **Config File**: Agent configurations are saved to `~/.adcp/config.json` with secure file permissions (0600).
 
