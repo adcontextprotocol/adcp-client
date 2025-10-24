@@ -17,6 +17,14 @@
 const { ADCPClient, detectProtocol } = require('../dist/lib/index.js');
 const { readFileSync } = require('fs');
 const { AsyncWebhookHandler } = require('./adcp-async-handler.js');
+const {
+  getAgent,
+  listAgents,
+  isAlias,
+  interactiveSetup,
+  removeAgent,
+  getConfigPath
+} = require('./adcp-config.js');
 
 /**
  * Display agent info - just calls library method
@@ -59,11 +67,13 @@ function printUsage() {
 AdCP CLI Tool - Direct Agent Communication
 
 USAGE:
+  adcp <agent-alias|url> [tool-name] [payload] [options]
   adcp [protocol] <agent-url> [tool-name] [payload] [options]
 
 ARGUMENTS:
-  protocol      Protocol to use: 'mcp' or 'a2a' (optional - auto-detected if omitted)
+  agent-alias   Saved agent alias (e.g., 'test', 'prod')
   agent-url     Full URL to the agent endpoint
+  protocol      Protocol to use: 'mcp' or 'a2a' (optional - auto-detected if omitted)
   tool-name     Name of the tool to call (optional - omit to list available tools)
   payload       JSON payload for the tool (default: {})
                 - Can be inline JSON: '{"brief":"text"}'
@@ -71,44 +81,56 @@ ARGUMENTS:
                 - Can be stdin: -
 
 OPTIONS:
-  --auth TOKEN    Authentication token for the agent
-  --wait          Wait for async/webhook responses (requires ngrok or --local)
-  --local         Use local webhook without ngrok (for local agents only)
-  --timeout MS    Webhook timeout in milliseconds (default: 300000 = 5min)
-  --help, -h      Show this help message
-  --json          Output raw JSON response (default: pretty print)
-  --debug         Show debug information
+  --auth TOKEN      Authentication token for the agent
+  --wait            Wait for async/webhook responses (requires ngrok or --local)
+  --local           Use local webhook without ngrok (for local agents only)
+  --timeout MS      Webhook timeout in milliseconds (default: 300000 = 5min)
+  --help, -h        Show this help message
+  --json            Output raw JSON response (default: pretty print)
+  --debug           Show debug information
+
+AGENT MANAGEMENT:
+  --save-auth <alias> [url]   Save agent configuration interactively
+  --list-agents               List all saved agents
+  --remove-agent <alias>      Remove saved agent configuration
+  --show-config               Show config file location
 
 EXAMPLES:
-  # Auto-detect protocol and list available tools
-  adcp https://test-agent.adcontextprotocol.org
-  adcp https://test-agent.adcontextprotocol.org/mcp/
+  # Save an agent for easy access
+  adcp --save-auth test https://test-agent.adcontextprotocol.org
+
+  # Use saved agent alias
+  adcp test
+  adcp test get_products '{"brief":"travel"}'
+
+  # List saved agents
+  adcp --list-agents
+
+  # Auto-detect protocol with URL
+  adcp https://test-agent.adcontextprotocol.org get_products '{"brief":"coffee"}'
 
   # Explicit protocol
   adcp mcp https://agent.example.com/mcp get_products '{"brief":"coffee brands"}'
-  adcp a2a https://creative.adcontextprotocol.org list_creative_formats
 
-  # Auto-detect with tool call
-  adcp https://agent.example.com get_products '{"brief":"coffee brands"}'
-
-  # With authentication
-  adcp https://agent.example.com list_creative_formats '{}' --auth your_token
+  # Override saved auth token
+  adcp test get_products '{"brief":"..."}' --auth different-token
 
   # Wait for async response (requires ngrok)
-  adcp https://agent.example.com create_media_buy @payload.json --auth $TOKEN --wait
+  adcp test create_media_buy @payload.json --wait
 
-  # Wait for async response from local agent (no ngrok needed)
-  adcp http://localhost:3000/mcp create_media_buy @payload.json --wait --local
+  # From file or stdin
+  adcp test create_media_buy @payload.json
+  echo '{"brief":"travel"}' | adcp test get_products -
 
-  # From file
-  adcp https://agent.example.com create_media_buy @payload.json --auth $TOKEN
-
-  # From stdin
-  echo '{"brief":"travel"}' | adcp https://agent.example.com get_products -
+  # JSON output for scripting
+  adcp test get_products '{"brief":"travel"}' --json | jq '.products[0]'
 
 ENVIRONMENT VARIABLES:
   ADCP_AUTH_TOKEN    Default authentication token (overridden by --auth)
   ADCP_DEBUG         Enable debug mode (set to 'true')
+
+CONFIG FILE:
+  Agents are saved to ~/.adcp/config.json
 
 EXIT CODES:
   0   Success
@@ -124,6 +146,73 @@ async function main() {
   // Handle help
   if (args.includes('--help') || args.includes('-h') || args.length === 0) {
     printUsage();
+    process.exit(0);
+  }
+
+  // Handle agent management commands
+  if (args[0] === '--save-auth') {
+    const alias = args[1];
+    const url = args[2] || null;
+    const protocol = args[3] || null;
+
+    if (!alias) {
+      console.error('ERROR: --save-auth requires an alias\n');
+      console.error('Usage: adcp --save-auth <alias> [url] [protocol]\n');
+      process.exit(2);
+    }
+
+    // Non-interactive if URL is provided
+    const nonInteractive = !!url;
+    await interactiveSetup(alias, url, protocol, null, nonInteractive);
+    process.exit(0);
+  }
+
+  if (args[0] === '--list-agents') {
+    const agents = listAgents();
+    const aliases = Object.keys(agents);
+
+    if (aliases.length === 0) {
+      console.log('\nNo saved agents found.');
+      console.log('Use: adcp --save-auth <alias> <url>\n');
+      process.exit(0);
+    }
+
+    console.log('\n📋 Saved Agents:\n');
+    aliases.forEach(alias => {
+      const agent = agents[alias];
+      console.log(`  ${alias}`);
+      console.log(`    URL: ${agent.url}`);
+      if (agent.protocol) {
+        console.log(`    Protocol: ${agent.protocol}`);
+      }
+      if (agent.auth_token) {
+        console.log(`    Auth: configured`);
+      }
+      console.log('');
+    });
+    console.log(`Config: ${getConfigPath()}\n`);
+    process.exit(0);
+  }
+
+  if (args[0] === '--remove-agent') {
+    const alias = args[1];
+
+    if (!alias) {
+      console.error('ERROR: --remove-agent requires an alias\n');
+      process.exit(2);
+    }
+
+    if (removeAgent(alias)) {
+      console.log(`\n✅ Removed agent '${alias}'\n`);
+    } else {
+      console.error(`\nERROR: Agent '${alias}' not found\n`);
+      process.exit(2);
+    }
+    process.exit(0);
+  }
+
+  if (args[0] === '--show-config') {
+    console.log(`\nConfig file: ${getConfigPath()}\n`);
     process.exit(0);
   }
 
@@ -151,16 +240,38 @@ async function main() {
     arg !== (timeoutIndex !== -1 ? args[timeoutIndex + 1] : null) // Don't include timeout value
   );
 
-  // Determine if first arg is protocol or URL
+  // Determine if first arg is alias, protocol, or URL
   let protocol;
   let agentUrl;
   let toolName;
   let payloadArg;
+  let savedAgent = null;
 
   const firstArg = positionalArgs[0];
 
-  // Check if first arg is a protocol specifier
-  if (firstArg === 'mcp' || firstArg === 'a2a') {
+  // Check if first arg is a saved alias
+  if (isAlias(firstArg)) {
+    // Alias mode - load saved agent config
+    savedAgent = getAgent(firstArg);
+    agentUrl = savedAgent.url;
+    protocol = savedAgent.protocol || null; // May still auto-detect
+    toolName = positionalArgs[1];
+    payloadArg = positionalArgs[2] || '{}';
+
+    // Use saved auth token if not overridden
+    if (!authToken && savedAgent.auth_token) {
+      authToken = savedAgent.auth_token;
+    }
+
+    if (debug) {
+      console.error(`DEBUG: Using saved agent '${firstArg}'`);
+      console.error(`  URL: ${agentUrl}`);
+      if (protocol) {
+        console.error(`  Protocol: ${protocol}`);
+      }
+      console.error('');
+    }
+  } else if (firstArg === 'mcp' || firstArg === 'a2a') {
     // Explicit protocol mode
     protocol = firstArg;
     agentUrl = positionalArgs[1];
@@ -179,7 +290,8 @@ async function main() {
     payloadArg = positionalArgs[2] || '{}';
     protocol = null; // Will be detected later
   } else {
-    console.error(`ERROR: First argument must be a protocol ('mcp' or 'a2a') or a URL\n`);
+    console.error(`ERROR: First argument must be an alias, protocol ('mcp' or 'a2a'), or URL\n`);
+    console.error(`Available aliases: ${Object.keys(listAgents()).join(', ') || 'none'}\n`);
     printUsage();
     process.exit(2);
   }
