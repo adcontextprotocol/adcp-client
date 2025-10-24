@@ -1,5 +1,15 @@
 # Changelog
 
+# 2.4.2
+
+- Update `update_media_buy` tool signature to match `create_media_buy` - remove `push_notification_config` from request
+- Fix webhook HMAC verification by propagating `X-ADCP-Timestamp` through `AgentClient.handleWebhook` and server route
+
+  Previously, the server only forwarded `X-ADCP-Signature` to the client verifier. The timestamp required by the HMAC scheme (message = `{timestamp}.{json_payload}`) was not passed through, causing verification to fail when `webhookSecret` was enabled. This change:
+  - Updates `AgentClient.handleWebhook(payload, signature, timestamp)` to accept and forward the timestamp.
+  - Updates the webhook route to extract `X-ADCP-Timestamp` and pass it into `handleWebhook`.
+  - Allows `ADCPClient.handleWebhook` to successfully validate signatures using both headers.
+
 ## 2.4.1
 
 ### Patch Changes
@@ -11,7 +21,6 @@
 ### Minor Changes
 
 - 5030c85: Add CLI tool and MCP endpoint auto-discovery
-
   - Add command-line tool (`bin/adcp.js`) for testing AdCP agents
   - Add automatic MCP endpoint discovery (tests provided path, then tries adding /mcp)
   - Add `getAgentInfo()` method for discovering agent capabilities
@@ -33,7 +42,6 @@
   Multiple locations in the codebase were incorrectly using `format` instead of `format_id` when creating creative assets for sync_creatives calls. This caused the AdCP agent to reject creatives with validation errors: "Input should be a valid dictionary or instance of FormatId".
 
   **Fixed locations:**
-
   - `src/public/index.html:8611` - Creative upload form
   - `src/public/index.html:5137` - Sample creative generation
   - `scripts/manual-testing/full-wonderstruck-test.ts:284` - Test script (also fixed to use proper FormatID object structure)
@@ -49,13 +57,11 @@
   This release adds Zod schema exports alongside existing TypeScript types, enabling runtime validation of AdCP data structures. All core schemas, request schemas, and response schemas are now available as Zod schemas.
 
   **New exports:**
-
   - Core schemas: `MediaBuySchema`, `ProductSchema`, `CreativeAssetSchema`, `TargetingSchema`
   - Request schemas: `GetProductsRequestSchema`, `CreateMediaBuyRequestSchema`, `SyncCreativesRequestSchema`, etc.
   - Response schemas: `GetProductsResponseSchema`, `CreateMediaBuyResponseSchema`, `SyncCreativesResponseSchema`, etc.
 
   **Features:**
-
   - Runtime validation with detailed error messages
   - Type inference from schemas
   - Integration with React Hook Form, Formik, etc.
@@ -82,7 +88,6 @@
   ```
 
   **Documentation:**
-
   - `docs/ZOD-SCHEMAS.md` - Complete usage guide with NPM distribution details
   - `docs/VALIDATION_WORKFLOW.md` - CI integration (existing)
   - `examples/zod-validation-example.ts` - Working examples
@@ -90,7 +95,6 @@
 ### Patch Changes
 
 - 244f639: Sync with AdCP v2.1.0 schema updates for build_creative and preview_creative
-
   - Add support for creative namespace in schema sync script
   - Generate TypeScript types for build_creative and preview_creative tools
   - Update creative testing UI to handle new schema structure:
@@ -99,7 +103,6 @@
     - Display multiple renders with dimensions and roles for companion ads
 
   Schema changes from v2.0.0:
-
   - Formats now have renders array with role and structured dimensions
   - Preview responses: outputs → renders, output_id → render_id, output_role → role
   - Removed format_id and hints fields from preview renders
@@ -109,7 +112,6 @@
 ### Minor Changes
 
 - 1b28db9: Add creative agent testing UI and improve error detection
-
   - Add creative testing UI with full lifecycle workflow (list formats → select → build/preview)
   - Fix FormatID structure to send full {agent_url, id} object per AdCP spec
   - Improve error detection to check for data.error field in agent responses
@@ -122,7 +124,6 @@
 ### Patch Changes
 
 - cf846da: Improve type safety and use structured data from schemas
-
   - Replace custom types with generated schema types (Format, Product, etc)
   - Remove all 'as any' type casts for better type safety
   - Remove 30+ lines of workaround code for non-standard responses
