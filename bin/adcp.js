@@ -14,7 +14,7 @@
  *   adcp mcp https://agent.example.com/mcp create_media_buy @payload.json --auth $AGENT_TOKEN
  */
 
-const { ADCPClient } = require('../dist/lib/index.js');
+const { ADCPClient, detectProtocol } = require('../dist/lib/index.js');
 const { readFileSync } = require('fs');
 const { AsyncWebhookHandler } = require('./adcp-async-handler.js');
 
@@ -59,10 +59,10 @@ function printUsage() {
 AdCP CLI Tool - Direct Agent Communication
 
 USAGE:
-  adcp <protocol> <agent-url> [tool-name] [payload] [options]
+  adcp [protocol] <agent-url> [tool-name] [payload] [options]
 
 ARGUMENTS:
-  protocol      Protocol to use: 'mcp' or 'a2a'
+  protocol      Protocol to use: 'mcp' or 'a2a' (optional - auto-detected if omitted)
   agent-url     Full URL to the agent endpoint
   tool-name     Name of the tool to call (optional - omit to list available tools)
   payload       JSON payload for the tool (default: {})
@@ -80,27 +80,31 @@ OPTIONS:
   --debug         Show debug information
 
 EXAMPLES:
-  # List available tools
-  adcp mcp https://agent.example.com/mcp
-  adcp a2a https://creative.adcontextprotocol.org
+  # Auto-detect protocol and list available tools
+  adcp https://test-agent.adcontextprotocol.org
+  adcp https://test-agent.adcontextprotocol.org/mcp/
 
-  # Simple product discovery
+  # Explicit protocol
   adcp mcp https://agent.example.com/mcp get_products '{"brief":"coffee brands"}'
+  adcp a2a https://creative.adcontextprotocol.org list_creative_formats
+
+  # Auto-detect with tool call
+  adcp https://agent.example.com get_products '{"brief":"coffee brands"}'
 
   # With authentication
-  adcp a2a https://agent.example.com list_creative_formats '{}' --auth your_token
+  adcp https://agent.example.com list_creative_formats '{}' --auth your_token
 
   # Wait for async response (requires ngrok)
-  adcp mcp https://agent.example.com/mcp create_media_buy @payload.json --auth $TOKEN --wait
+  adcp https://agent.example.com create_media_buy @payload.json --auth $TOKEN --wait
 
   # Wait for async response from local agent (no ngrok needed)
-  adcp mcp http://localhost:3000/mcp create_media_buy @payload.json --wait --local
+  adcp http://localhost:3000/mcp create_media_buy @payload.json --wait --local
 
   # From file
-  adcp mcp https://agent.example.com/mcp create_media_buy @payload.json --auth $TOKEN
+  adcp https://agent.example.com create_media_buy @payload.json --auth $TOKEN
 
   # From stdin
-  echo '{"brief":"travel"}' | adcp mcp https://agent.example.com/mcp get_products -
+  echo '{"brief":"travel"}' | adcp https://agent.example.com get_products -
 
 ENVIRONMENT VARIABLES:
   ADCP_AUTH_TOKEN    Default authentication token (overridden by --auth)
@@ -124,7 +128,7 @@ async function main() {
   }
 
   // Parse arguments
-  if (args.length < 2) {
+  if (args.length < 1) {
     console.error('ERROR: Missing required arguments\n');
     printUsage();
     process.exit(2);
@@ -147,14 +151,35 @@ async function main() {
     arg !== (timeoutIndex !== -1 ? args[timeoutIndex + 1] : null) // Don't include timeout value
   );
 
-  const protocol = positionalArgs[0];
-  const agentUrl = positionalArgs[1];
-  const toolName = positionalArgs[2]; // Optional - if not provided, list tools
-  let payloadArg = positionalArgs[3] || '{}';
+  // Determine if first arg is protocol or URL
+  let protocol;
+  let agentUrl;
+  let toolName;
+  let payloadArg;
 
-  // Validate protocol
-  if (protocol !== 'mcp' && protocol !== 'a2a') {
-    console.error(`ERROR: Invalid protocol '${protocol}'. Must be 'mcp' or 'a2a'\n`);
+  const firstArg = positionalArgs[0];
+
+  // Check if first arg is a protocol specifier
+  if (firstArg === 'mcp' || firstArg === 'a2a') {
+    // Explicit protocol mode
+    protocol = firstArg;
+    agentUrl = positionalArgs[1];
+    toolName = positionalArgs[2];
+    payloadArg = positionalArgs[3] || '{}';
+
+    if (!agentUrl) {
+      console.error('ERROR: Missing agent URL\n');
+      printUsage();
+      process.exit(2);
+    }
+  } else if (firstArg && (firstArg.startsWith('http://') || firstArg.startsWith('https://'))) {
+    // Auto-detect protocol mode
+    agentUrl = firstArg;
+    toolName = positionalArgs[1];
+    payloadArg = positionalArgs[2] || '{}';
+    protocol = null; // Will be detected later
+  } else {
+    console.error(`ERROR: First argument must be a protocol ('mcp' or 'a2a') or a URL\n`);
     printUsage();
     process.exit(2);
   }
@@ -180,11 +205,29 @@ async function main() {
     process.exit(2);
   }
 
+  // Auto-detect protocol if not specified
+  if (!protocol) {
+    if (debug || !jsonOutput) {
+      console.error('🔍 Auto-detecting protocol...');
+    }
+
+    try {
+      protocol = await detectProtocol(agentUrl);
+      if (debug || !jsonOutput) {
+        console.error(`✓ Detected protocol: ${protocol.toUpperCase()}\n`);
+      }
+    } catch (error) {
+      console.error(`ERROR: Failed to detect protocol: ${error.message}\n`);
+      console.error('Please specify protocol explicitly: adcp mcp <url> or adcp a2a <url>\n');
+      process.exit(2);
+    }
+  }
+
   if (debug) {
     console.error('DEBUG: Configuration');
     console.error(`  Protocol: ${protocol}`);
     console.error(`  Agent URL: ${agentUrl}`);
-    console.error(`  Tool: ${toolName}`);
+    console.error(`  Tool: ${toolName || '(list tools)'}`);
     console.error(`  Auth: ${authToken ? 'provided' : 'none'}`);
     console.error(`  Payload: ${JSON.stringify(payload, null, 2)}`);
     console.error('');

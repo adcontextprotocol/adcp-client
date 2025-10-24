@@ -135,6 +135,7 @@ export * from './validation';
 // ====== UTILITIES ======
 export * from './utils';
 export { getStandardFormats } from './utils';
+export { detectProtocol, detectProtocolWithTimeout } from './utils/protocol-detection';
 
 // ====== LEGACY AGENT CLASSES ======
 // Keep existing generated agent classes for backward compatibility
