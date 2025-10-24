@@ -27,6 +27,28 @@ jobs:
     - name: Sync schemas from AdCP
       run: npm run sync-schemas
 
+    - name: Validate generated files are in sync
+      run: |
+        # Regenerate types from schemas
+        npm run generate-types
+
+        # Check if any generated files changed
+        if ! git diff --exit-code src/lib/types/*.generated.ts src/lib/agents/index.generated.ts 2>/dev/null; then
+          echo ""
+          echo "❌ Generated TypeScript files are out of sync with AdCP schemas!"
+          echo ""
+          echo "📋 Changes detected in:"
+          git diff --name-only src/lib/types/*.generated.ts src/lib/agents/index.generated.ts 2>/dev/null || true
+          echo ""
+          echo "🔧 To fix, run locally:"
+          echo "  npm run sync-schemas"
+          echo "  npm run generate-types"
+          echo ""
+          echo "Then commit the updated generated files."
+          exit 1
+        fi
+
+        echo "✅ Generated files are in sync with schemas"
     - name: Run TypeScript type checking
       run: npm run typecheck
 
