@@ -455,6 +455,31 @@ WHERE operation_id = 'delivery_report_agent_x_2025-10'
 ORDER BY sequence_number;
 ```
 
+## CLI Tool
+
+For development and testing, use the included CLI tool to interact with AdCP agents:
+
+```bash
+# List available tools from an agent
+npx @adcp/client mcp https://test-agent.adcontextprotocol.org
+
+# Call a tool with inline JSON payload
+npx @adcp/client a2a https://agent.example.com get_products '{"brief":"Coffee brands"}'
+
+# Use a file for payload
+npx @adcp/client mcp https://agent.example.com create_media_buy @payload.json
+
+# With authentication
+npx @adcp/client mcp https://agent.example.com get_products '{"brief":"..."}' --auth your-token
+
+# JSON output for scripting
+npx @adcp/client mcp https://agent.example.com get_products '{"brief":"..."}' --json
+```
+
+**MCP Endpoint Discovery**: The client automatically discovers MCP endpoints. Just provide any URL - it tests your path first, and if no MCP server responds, it tries adding `/mcp`. Works with root domains, custom paths, anything.
+
+See [docs/CLI.md](docs/CLI.md) for complete CLI documentation including webhook support for async operations.
+
 ## Testing
 
 Try the live testing UI at `http://localhost:8080` when running the server:
