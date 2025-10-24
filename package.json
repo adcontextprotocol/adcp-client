@@ -20,7 +20,7 @@
   },
   "files": [
     "dist/lib/**/*",
-    "bin/adcp.js",
+    "bin/**/*.js",
     "README.md",
     "LICENSE"
   ],
