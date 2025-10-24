@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2025-10-22T20:58:36.644Z
+// Generated at: 2025-10-24T11:16:32.384Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -167,7 +167,7 @@ export const DAASTAssetSchema = DAASTAsset1Schema.and(DAASTAsset2Schema);
 
 export const URLAssetSchema = z.object({
     url: z.string(),
-    url_type: z.union([z.literal("clickthrough"), z.literal("tracker")]).optional(),
+    url_type: z.union([z.literal("clickthrough"), z.literal("tracker_pixel"), z.literal("tracker_script")]).optional(),
     description: z.string().optional()
 });
 

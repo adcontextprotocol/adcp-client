@@ -1731,9 +1731,9 @@ export interface URLAsset {
    */
   url: string;
   /**
-   * Whether the URL is for human interaction: clickthrough (user clicks, may redirect through ad tech) or tracker (fires in background, returns pixel/204)
+   * Type of URL asset: 'clickthrough' for user click destination (landing page), 'tracker_pixel' for impression/event tracking via HTTP request (fires GET, expects pixel/204 response), 'tracker_script' for measurement SDKs that must load as <script> tag (OMID verification, native event trackers using method:2)
    */
-  url_type?: 'clickthrough' | 'tracker';
+  url_type?: 'clickthrough' | 'tracker_pixel' | 'tracker_script';
   /**
    * Description of what this URL points to
    */
