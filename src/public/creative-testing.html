@@ -409,6 +409,28 @@
             justify-content: center;
             position: relative;
             overflow: hidden;
+            transition: transform 0.2s ease;
+        }
+
+        a:hover .format-card-preview {
+            transform: scale(1.05);
+        }
+
+        a .format-card-preview::after {
+            content: '🔗';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 48px;
+            opacity: 0;
+            transition: opacity 0.2s ease;
+            pointer-events: none;
+            text-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+        }
+
+        a:hover .format-card-preview::after {
+            opacity: 0.9;
         }
 
         .format-card-preview img {
@@ -797,13 +819,24 @@
 
                 return `
                     <div class="format-card" onclick="selectFormat(${index})">
-                        <div class="format-card-preview">
-                            ${hasPreview
-                                ? `<img src="${format.preview_image}" alt="${format.name}" onerror="this.parentElement.innerHTML='<div class=\\'placeholder\\'>${typeEmoji}</div>'">`
-                                : `<div class="placeholder">${typeEmoji}</div>`
-                            }
-                            <div class="format-card-type-badge">${format.type || 'Unknown'}</div>
-                        </div>
+                        ${hasExample
+                            ? `<a href="${format.example_url}" target="_blank" style="text-decoration: none; color: inherit;" onclick="event.stopPropagation()">
+                                <div class="format-card-preview">
+                                    ${hasPreview
+                                        ? `<img src="${format.preview_image}" alt="${format.name}" onerror="this.parentElement.innerHTML='<div class=\\'placeholder\\'>${typeEmoji}</div>'">`
+                                        : `<div class="placeholder">${typeEmoji}</div>`
+                                    }
+                                    <div class="format-card-type-badge">${format.type || 'Unknown'}</div>
+                                </div>
+                            </a>`
+                            : `<div class="format-card-preview">
+                                ${hasPreview
+                                    ? `<img src="${format.preview_image}" alt="${format.name}" onerror="this.parentElement.innerHTML='<div class=\\'placeholder\\'>${typeEmoji}</div>'">`
+                                    : `<div class="placeholder">${typeEmoji}</div>`
+                                }
+                                <div class="format-card-type-badge">${format.type || 'Unknown'}</div>
+                            </div>`
+                        }
                         <div class="format-card-content">
                             <div class="format-card-title">${format.name || 'Unnamed Format'}</div>
                             <div class="format-card-format-id">${formatId}</div>
@@ -831,8 +864,8 @@
                                 : '<div></div>'
                             }
                             ${hasExample
-                                ? `<a href="${format.example_url}" target="_blank" class="format-card-link" onclick="event.stopPropagation()">View Example →</a>`
-                                : '<button class="format-card-select-btn" onclick="event.stopPropagation(); selectFormat(${index})">Select Format</button>'
+                                ? `<div style="color: #007bff; font-size: 12px;">🔗 Click image for example</div>`
+                                : '<div></div>'
                             }
                         </div>
                     </div>
