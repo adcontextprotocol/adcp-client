@@ -374,6 +374,196 @@
             word-break: break-word;
             color: #d1d5db;
         }
+
+        /* Format Card Styles */
+        #formatsCards {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 20px;
+            padding: 10px;
+        }
+
+        .format-card {
+            background: white;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+            transition: all 0.3s ease;
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+            cursor: pointer;
+        }
+
+        .format-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+        }
+
+        .format-card-preview {
+            width: 100%;
+            height: 200px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+            overflow: hidden;
+            transition: transform 0.2s ease;
+        }
+
+        a:hover .format-card-preview {
+            transform: scale(1.05);
+        }
+
+        a .format-card-preview::after {
+            content: '🔗';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 48px;
+            opacity: 0;
+            transition: opacity 0.2s ease;
+            pointer-events: none;
+            text-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+        }
+
+        a:hover .format-card-preview::after {
+            opacity: 0.9;
+        }
+
+        .format-card-preview img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .format-card-preview .placeholder {
+            font-size: 48px;
+            color: rgba(255, 255, 255, 0.8);
+        }
+
+        .format-card-type-badge {
+            position: absolute;
+            top: 12px;
+            right: 12px;
+            background: rgba(255, 255, 255, 0.95);
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+        }
+
+        .format-card-content {
+            padding: 20px;
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .format-card-title {
+            font-size: 18px;
+            font-weight: 700;
+            color: #1a202c;
+            margin-bottom: 8px;
+            line-height: 1.3;
+        }
+
+        .format-card-format-id {
+            font-family: monospace;
+            font-size: 11px;
+            color: #718096;
+            margin-bottom: 12px;
+            word-break: break-all;
+        }
+
+        .format-card-description {
+            font-size: 14px;
+            color: #4a5568;
+            line-height: 1.5;
+            margin-bottom: 16px;
+            flex: 1;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            display: -webkit-box;
+            -webkit-line-clamp: 3;
+            -webkit-box-orient: vertical;
+        }
+
+        .format-card-details {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            padding-top: 16px;
+            border-top: 1px solid #e2e8f0;
+        }
+
+        .format-card-detail-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 13px;
+        }
+
+        .format-card-detail-label {
+            color: #718096;
+            font-weight: 500;
+        }
+
+        .format-card-detail-value {
+            color: #1a202c;
+            font-weight: 600;
+        }
+
+        .format-card-footer {
+            padding: 12px 20px;
+            background: #f8f9fa;
+            border-top: 1px solid #e2e8f0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .format-card-generative-badge {
+            background: #4caf50;
+            color: white;
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .format-card-select-btn {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 6px 16px;
+            border-radius: 6px;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .format-card-select-btn:hover {
+            background: #0056b3;
+        }
+
+        .format-card-link {
+            color: #007bff;
+            text-decoration: none;
+            font-size: 13px;
+            font-weight: 500;
+            transition: color 0.2s;
+        }
+
+        .format-card-link:hover {
+            color: #0056b3;
+            text-decoration: underline;
+        }
     </style>
 </head>
 <body>
@@ -416,8 +606,27 @@
 
         <!-- Step 2: Format Selection -->
         <div class="section hidden" id="formatsSection">
-            <h3>Step 2: Select Creative Format</h3>
-            <div id="formatsTable"></div>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+                <h3 style="margin: 0;">Step 2: Select Creative Format</h3>
+                <div style="display: flex; gap: 5px; border: 1px solid #ddd; border-radius: 6px; overflow: hidden;">
+                    <button id="view-list-btn"
+                            onclick="setFormatsView('list')"
+                            style="padding: 8px 16px; border: none; background: #f8f9fa; color: #333; cursor: pointer; font-size: 14px; font-weight: 500;">
+                        📋 List
+                    </button>
+                    <button id="view-cards-btn"
+                            onclick="setFormatsView('cards')"
+                            style="padding: 8px 16px; border: none; background: #007bff; color: white; cursor: pointer; font-size: 14px; font-weight: 500;">
+                        🎴 Cards
+                    </button>
+                </div>
+            </div>
+            <div id="formatsTableView" style="display: none;">
+                <div id="formatsTable"></div>
+            </div>
+            <div id="formatsCardsView">
+                <div id="formatsCards"></div>
+            </div>
         </div>
 
         <!-- Step 3: Asset Upload -->
@@ -475,7 +684,8 @@
             protocol: 'mcp',
             formats: [],
             selectedFormat: null,
-            assets: {}
+            assets: {},
+            formatsViewMode: 'cards' // 'list' or 'cards'
         };
 
         // Load creative formats from agent
@@ -537,8 +747,17 @@
             }
         }
 
-        // Display formats in a table
+        // Display formats (supports both list and cards view)
         function displayFormatsTable(formats) {
+            if (state.formatsViewMode === 'cards') {
+                displayFormatsCards(formats);
+            } else {
+                displayFormatsList(formats);
+            }
+        }
+
+        // Display formats as a list/table
+        function displayFormatsList(formats) {
             const container = document.getElementById('formatsTable');
 
             const html = `
@@ -577,6 +796,127 @@
             `;
 
             container.innerHTML = html;
+        }
+
+        // Display formats as cards
+        function displayFormatsCards(formats) {
+            const container = document.getElementById('formatsCards');
+
+            if (formats.length === 0) {
+                container.innerHTML = '<p style="text-align: center; color: #9ca3af; padding: 2rem;">No formats available</p>';
+                return;
+            }
+
+            const html = formats.map((format, index) => {
+                const formatId = typeof format.format_id === 'object' ? format.format_id.id : String(format.format_id || 'N/A');
+                const hasPreview = format.preview_image;
+                const hasExample = format.example_url;
+                const isGenerative = format.output_format_ids && format.output_format_ids.length > 0;
+                const dimensions = format.renders && format.renders[0]?.dimensions
+                    ? `${format.renders[0].dimensions.width}×${format.renders[0].dimensions.height}`
+                    : 'Variable';
+                const typeEmoji = getTypeEmoji(format.type);
+
+                return `
+                    <div class="format-card" onclick="selectFormat(${index})">
+                        ${hasExample
+                            ? `<a href="${format.example_url}" target="_blank" style="text-decoration: none; color: inherit;" onclick="event.stopPropagation()">
+                                <div class="format-card-preview">
+                                    ${hasPreview
+                                        ? `<img src="${format.preview_image}" alt="${format.name}" onerror="this.parentElement.innerHTML='<div class=\\'placeholder\\'>${typeEmoji}</div>'">`
+                                        : `<div class="placeholder">${typeEmoji}</div>`
+                                    }
+                                    <div class="format-card-type-badge">${format.type || 'Unknown'}</div>
+                                </div>
+                            </a>`
+                            : `<div class="format-card-preview">
+                                ${hasPreview
+                                    ? `<img src="${format.preview_image}" alt="${format.name}" onerror="this.parentElement.innerHTML='<div class=\\'placeholder\\'>${typeEmoji}</div>'">`
+                                    : `<div class="placeholder">${typeEmoji}</div>`
+                                }
+                                <div class="format-card-type-badge">${format.type || 'Unknown'}</div>
+                            </div>`
+                        }
+                        <div class="format-card-content">
+                            <div class="format-card-title">${format.name || 'Unnamed Format'}</div>
+                            <div class="format-card-format-id">${formatId}</div>
+                            ${format.description
+                                ? `<div class="format-card-description">${format.description}</div>`
+                                : ''
+                            }
+                            <div class="format-card-details">
+                                <div class="format-card-detail-row">
+                                    <span class="format-card-detail-label">Dimensions</span>
+                                    <span class="format-card-detail-value">${dimensions}</span>
+                                </div>
+                                ${format.assets_required
+                                    ? `<div class="format-card-detail-row">
+                                        <span class="format-card-detail-label">Assets</span>
+                                        <span class="format-card-detail-value">${Array.isArray(format.assets_required) ? format.assets_required.length : 'Custom'}</span>
+                                    </div>`
+                                    : ''
+                                }
+                            </div>
+                        </div>
+                        <div class="format-card-footer">
+                            ${isGenerative
+                                ? '<div class="format-card-generative-badge">✨ Generative</div>'
+                                : '<div></div>'
+                            }
+                            ${hasExample
+                                ? `<div style="color: #007bff; font-size: 12px;">🔗 Click image for example</div>`
+                                : '<div></div>'
+                            }
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            container.innerHTML = html;
+        }
+
+        function getTypeEmoji(type) {
+            const emojiMap = {
+                'display': '🖼️',
+                'video': '🎬',
+                'audio': '🎵',
+                'native': '📱',
+                'dooh': '📺',
+                'rich_media': '✨',
+                'universal': '🌐'
+            };
+            return emojiMap[type] || '🎨';
+        }
+
+        // Switch between list and cards view
+        function setFormatsView(mode) {
+            state.formatsViewMode = mode;
+
+            const tableView = document.getElementById('formatsTableView');
+            const cardsView = document.getElementById('formatsCardsView');
+            const listBtn = document.getElementById('view-list-btn');
+            const cardsBtn = document.getElementById('view-cards-btn');
+
+            if (mode === 'cards') {
+                tableView.style.display = 'none';
+                cardsView.style.display = 'block';
+                listBtn.style.background = '#f8f9fa';
+                listBtn.style.color = '#333';
+                cardsBtn.style.background = '#007bff';
+                cardsBtn.style.color = 'white';
+            } else {
+                tableView.style.display = 'block';
+                cardsView.style.display = 'none';
+                listBtn.style.background = '#007bff';
+                listBtn.style.color = 'white';
+                cardsBtn.style.background = '#f8f9fa';
+                cardsBtn.style.color = '#333';
+            }
+
+            // Re-render formats with new view
+            if (state.formats.length > 0) {
+                displayFormatsTable(state.formats);
+            }
         }
 
         // Select a format and show asset inputs
