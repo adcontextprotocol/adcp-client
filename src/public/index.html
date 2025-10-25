@@ -2328,12 +2328,12 @@
                          title="Switch between list and card view">
                         <button id="view-list-btn"
                                 onclick="setFormatsView('list')"
-                                style="padding: 8px 12px; border: none; background: #007bff; color: white; cursor: pointer; font-size: 14px;">
+                                style="padding: 8px 12px; border: none; background: #f8f9fa; color: #333; cursor: pointer; font-size: 14px;">
                             📋 List
                         </button>
                         <button id="view-cards-btn"
                                 onclick="setFormatsView('cards')"
-                                style="padding: 8px 12px; border: none; background: #f8f9fa; color: #333; cursor: pointer; font-size: 14px;">
+                                style="padding: 8px 12px; border: none; background: #007bff; color: white; cursor: pointer; font-size: 14px;">
                             🎴 Cards
                         </button>
                     </div>
@@ -2342,8 +2342,8 @@
                 </div>
             </div>
             
-            <!-- Table View (default) -->
-            <div id="formats-table-view" style="overflow-x: auto;">
+            <!-- Table View -->
+            <div id="formats-table-view" style="overflow-x: auto; display: none;">
                 <table id="creative-formats-table" style="width: 100%; border-collapse: collapse; background: white;">
                     <thead style="background: #f8f9fa; border-bottom: 2px solid #dee2e6;">
                         <tr>
@@ -2367,8 +2367,8 @@
                 </table>
             </div>
 
-            <!-- Card View (hidden by default) -->
-            <div id="formats-cards-view" style="display: none;">
+            <!-- Card View (default) -->
+            <div id="formats-cards-view">
                 <div id="creative-formats-cards" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 20px; padding: 10px;">
                     <div style="padding: 40px; text-align: center; color: #666; grid-column: 1 / -1;">
                         No creative formats loaded. Click "Refresh Creative Formats" to discover available formats.
@@ -3328,7 +3328,7 @@
         let creativeFormats = [];
         let mediaBuys = [];
         let selectedProducts = new Set();
-        let formatsViewMode = 'list'; // 'list' or 'cards'
+        let formatsViewMode = 'cards'; // 'list' or 'cards'
         let agentCardCache = new Map(); // Cache agent card/capabilities to avoid repeated discovery calls
         let eventLogCount = 0;
         let lastEventCheck = 0; // Track last event fetch time

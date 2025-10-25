@@ -589,20 +589,20 @@
                 <div style="display: flex; gap: 5px; border: 1px solid #ddd; border-radius: 6px; overflow: hidden;">
                     <button id="view-list-btn"
                             onclick="setFormatsView('list')"
-                            style="padding: 8px 16px; border: none; background: #007bff; color: white; cursor: pointer; font-size: 14px; font-weight: 500;">
+                            style="padding: 8px 16px; border: none; background: #f8f9fa; color: #333; cursor: pointer; font-size: 14px; font-weight: 500;">
                         📋 List
                     </button>
                     <button id="view-cards-btn"
                             onclick="setFormatsView('cards')"
-                            style="padding: 8px 16px; border: none; background: #f8f9fa; color: #333; cursor: pointer; font-size: 14px; font-weight: 500;">
+                            style="padding: 8px 16px; border: none; background: #007bff; color: white; cursor: pointer; font-size: 14px; font-weight: 500;">
                         🎴 Cards
                     </button>
                 </div>
             </div>
-            <div id="formatsTableView">
+            <div id="formatsTableView" style="display: none;">
                 <div id="formatsTable"></div>
             </div>
-            <div id="formatsCardsView" style="display: none;">
+            <div id="formatsCardsView">
                 <div id="formatsCards"></div>
             </div>
         </div>
@@ -663,7 +663,7 @@
             formats: [],
             selectedFormat: null,
             assets: {},
-            formatsViewMode: 'list' // 'list' or 'cards'
+            formatsViewMode: 'cards' // 'list' or 'cards'
         };
 
         // Load creative formats from agent
