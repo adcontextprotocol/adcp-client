@@ -130,18 +130,26 @@ OPTIONS:
   --debug           Show debug information
 
 AGENT MANAGEMENT:
-  --save-auth <alias> [url]   Save agent configuration interactively
+  --save-auth <alias> [url] [protocol] [--auth token | --no-auth]
+                              Save agent configuration with an alias name
+                              Requires --auth or --no-auth for non-interactive mode
   --list-agents               List all saved agents
   --remove-agent <alias>      Remove saved agent configuration
   --show-config               Show config file location
 
 EXAMPLES:
-  # Save an agent for easy access
-  adcp --save-auth test https://test-agent.adcontextprotocol.org
+  # Non-interactive: save with auth token
+  adcp --save-auth myagent https://test-agent.adcontextprotocol.org --auth your_token
+
+  # Non-interactive: save without auth
+  adcp --save-auth myagent https://test-agent.adcontextprotocol.org --no-auth
+
+  # Interactive setup (prompts for URL, protocol, and auth)
+  adcp --save-auth myagent
 
   # Use saved agent alias (auto-detect protocol)
-  adcp test
-  adcp test get_products '{"brief":"travel"}'
+  adcp myagent
+  adcp myagent get_products '{"brief":"travel"}'
 
   # List saved agents
   adcp --list-agents
@@ -151,20 +159,20 @@ EXAMPLES:
 
   # Force specific protocol
   adcp https://agent.example.com get_products '{"brief":"coffee"}' --protocol mcp
-  adcp test list_authorized_properties --protocol a2a
+  adcp myagent list_authorized_properties --protocol a2a
 
   # Override saved auth token
-  adcp test get_products '{"brief":"..."}' --auth different-token
+  adcp myagent get_products '{"brief":"..."}' --auth different-token
 
   # Wait for async response (requires ngrok)
-  adcp test create_media_buy @payload.json --wait
+  adcp myagent create_media_buy @payload.json --wait
 
   # From file or stdin
-  adcp test create_media_buy @payload.json
-  echo '{"brief":"travel"}' | adcp test get_products -
+  adcp myagent create_media_buy @payload.json
+  echo '{"brief":"travel"}' | adcp myagent get_products -
 
   # JSON output for scripting
-  adcp test get_products '{"brief":"travel"}' --json | jq '.products[0]'
+  adcp myagent get_products '{"brief":"travel"}' --json | jq '.products[0]'
 
 ENVIRONMENT VARIABLES:
   ADCP_AUTH_TOKEN    Default authentication token (overridden by --auth)
@@ -192,19 +200,52 @@ async function main() {
 
   // Handle agent management commands
   if (args[0] === '--save-auth') {
-    const alias = args[1];
-    const url = args[2] || null;
-    const protocol = args[3] || null;
+    // Parse flags first
+    const authFlagIndex = args.indexOf('--auth');
+    const noAuthFlag = args.includes('--no-auth');
+    const providedAuthToken = authFlagIndex !== -1 ? args[authFlagIndex + 1] : null;
+
+    // Filter out flags to get positional args
+    const saveAuthPositional = args.slice(1).filter(arg =>
+      arg !== '--auth' &&
+      arg !== '--no-auth' &&
+      arg !== providedAuthToken
+    );
+
+    let alias = saveAuthPositional[0];
+    let url = saveAuthPositional[1] || null;
+    const protocol = saveAuthPositional[2] || null;
 
     if (!alias) {
       console.error('ERROR: --save-auth requires an alias\n');
-      console.error('Usage: adcp --save-auth <alias> [url] [protocol]\n');
+      console.error('Usage: adcp --save-auth <alias> [url] [protocol] [--auth token | --no-auth]\n');
+      console.error('Example: adcp --save-auth myagent https://agent.example.com --auth your_token\n');
       process.exit(2);
     }
 
-    // Non-interactive if URL is provided
-    const nonInteractive = !!url;
-    await interactiveSetup(alias, url, protocol, null, nonInteractive);
+    // Check if first arg looks like a URL (common mistake)
+    if (alias.startsWith('http://') || alias.startsWith('https://')) {
+      console.error('\n⚠️  It looks like you provided a URL without an alias.\n');
+      console.error('The --save-auth command requires an alias name first:\n');
+      console.error(`  adcp --save-auth <alias> <url>\n`);
+      console.error('Example:\n');
+      console.error(`  adcp --save-auth myagent ${alias}\n`);
+      process.exit(2);
+    }
+
+    // Validate flags
+    if (providedAuthToken && noAuthFlag) {
+      console.error('ERROR: Cannot use both --auth and --no-auth\n');
+      process.exit(2);
+    }
+
+    // Determine mode:
+    // - If URL provided AND (--auth or --no-auth): fully non-interactive
+    // - Otherwise: interactive (prompts for missing values)
+    const hasAuthDecision = providedAuthToken !== null || noAuthFlag;
+    const nonInteractive = url && hasAuthDecision;
+
+    await interactiveSetup(alias, url, protocol, providedAuthToken, nonInteractive, noAuthFlag);
     process.exit(0);
   }
 

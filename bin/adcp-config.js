@@ -163,13 +163,15 @@ async function promptSecure(prompt, hidden = true) {
  * @param {string} protocol Protocol (optional)
  * @param {string} authToken Auth token (optional)
  * @param {boolean} nonInteractive Skip prompts if all required args provided
+ * @param {boolean} noAuth Explicitly skip auth (--no-auth flag)
  */
-async function interactiveSetup(alias, url = null, protocol = null, authToken = null, nonInteractive = false) {
-  // Non-interactive mode: if URL is provided, just save it
+async function interactiveSetup(alias, url = null, protocol = null, authToken = null, nonInteractive = false, noAuth = false) {
+  // Non-interactive mode: save immediately without prompts
   if (nonInteractive && url) {
     const agentConfig = { url };
     if (protocol) agentConfig.protocol = protocol;
     if (authToken) agentConfig.auth_token = authToken;
+    // noAuth flag means explicitly don't save auth
 
     saveAgent(alias, agentConfig);
     console.log(`\n✅ Agent '${alias}' saved to ${CONFIG_FILE}`);
@@ -190,9 +192,10 @@ async function interactiveSetup(alias, url = null, protocol = null, authToken = 
     protocol = protocolInput || null;
   }
 
-  // Get auth token if not provided
-  if (!authToken) {
-    authToken = await promptSecure('Auth token (leave blank if not needed): ', true);
+  // Get auth token if not provided and not explicitly disabled
+  if (!authToken && !noAuth) {
+    process.stdout.write('Auth token (leave blank if not needed): ');
+    authToken = await promptSecure('', true);
     authToken = authToken || null;
   }
 
