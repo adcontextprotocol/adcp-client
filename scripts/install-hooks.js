@@ -57,37 +57,39 @@ fi
 const prePushHook = `#!/bin/bash
 
 # Pre-push hook to validate code before pushing
-# This mirrors GitHub Actions CI checks locally
+# Goal: Fast validation (<10s) - CI will run comprehensive checks
 
 echo "🔍 Running pre-push validation..."
 
-# Check if schema cache exists
-if [ ! -d "schemas/cache/latest" ]; then
-  echo "⚠️  Schema cache not found - this is your first push"
-  echo "📥 Downloading schemas from AdCP specification..."
-  npm run sync-schemas
-fi
+# Only run essential fast checks locally:
+# 1. TypeScript compilation (catches syntax/type errors)
+# 2. Build (ensures code compiles)
+# 3. Skip schema sync (too slow, CI will catch issues)
+# 4. Skip tests (too slow, CI will catch issues)
 
-# Set CI=true to skip slow tests (matches GitHub Actions behavior)
-# This skips tests marked with: skip: process.env.CI ? 'reason' : false
-# e.g., error-scenarios.test.js which tests complex timeout/race conditions
-export CI=true
-
-# Run the comprehensive CI validation (includes schema validation)
-npm run ci:pre-push
-
+echo "📝 Checking TypeScript types..."
+npm run typecheck
 if [ $? -ne 0 ]; then
   echo ""
-  echo "❌ Pre-push validation failed!"
-  echo "🔧 Fix the issues above before pushing"
-  echo ""
-  echo "💡 To run validation manually: CI=true npm run ci:validate"
-  echo "💡 Schema issues? Try: npm run sync-schemas && npm run generate-types"
+  echo "❌ TypeScript errors found!"
+  echo "🔧 Fix type errors before pushing"
   echo ""
   exit 1
 fi
 
-echo "✅ Pre-push validation passed! Proceeding with push..."
+echo "🔨 Building library..."
+npm run build:lib > /dev/null 2>&1
+if [ $? -ne 0 ]; then
+  echo ""
+  echo "❌ Build failed!"
+  echo "🔧 Fix build errors before pushing"
+  echo ""
+  npm run build:lib
+  exit 1
+fi
+
+echo "✅ Pre-push validation passed! (~5s)"
+echo "💡 Full validation (tests, schemas) will run in GitHub Actions CI"
 `;
 
 function installHooks() {
@@ -139,10 +141,12 @@ function installHooks() {
   // Install pre-push hook
   if (fs.existsSync(prePushPath)) {
     const existingContent = fs.readFileSync(prePushPath, 'utf8');
-    if (!existingContent.includes('npm run ci:pre-push')) {
+    // Update if it's the old slow version or doesn't have our fast hook
+    if (existingContent.includes('npm run ci:pre-push') || !existingContent.includes('Fast validation')) {
       fs.writeFileSync(prePushPath, prePushHook);
       fs.chmodSync(prePushPath, 0o755);
       installed++;
+      log('  ✨ Updated pre-push hook to fast version', 'green');
     }
   } else {
     fs.writeFileSync(prePushPath, prePushHook);
@@ -159,15 +163,15 @@ function installHooks() {
   log('', 'reset');
   log('🪝 Installed hooks:', 'blue');
   log('  • commit-msg - Validates commit message format (conventional commits)', 'reset');
-  log('  • pre-push   - Runs schema checks, typecheck, build, and tests', 'reset');
+  log('  • pre-push   - Fast validation: typecheck + build (~5s)', 'reset');
   log('', 'reset');
-  log('⚠️  Note: Git hooks may not work in all environments (worktrees, some git clients)', 'yellow');
-  log('   CI on GitHub is the source of truth for validation', 'yellow');
+  log('⚡ What changed: Pre-push now runs FAST checks only (~5s)', 'green');
+  log('   Full tests, schema validation run in GitHub Actions CI', 'reset');
   log('', 'reset');
   log('💡 What this prevents:', 'blue');
   log('  • Commit messages that fail CI commitlint checks', 'reset');
-  log('  • Pushing code that doesn\'t build or pass tests', 'reset');
-  log('  • Schema synchronization issues', 'reset');
+  log('  • Pushing code with TypeScript errors or build failures', 'reset');
+  log('  • Note: Tests/schemas validated in CI (too slow for local)', 'reset');
 }
 
 // CLI execution
