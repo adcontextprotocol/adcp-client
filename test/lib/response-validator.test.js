@@ -246,7 +246,22 @@ describe('ResponseValidator Tests', () => {
     it('should validate list_creative_formats response', () => {
       const response = {
         structuredContent: {
-          formats: [{ format_id: 'f1' }]
+          formats: [{
+            format_id: {
+              agent_url: 'https://creatives.adcontextprotocol.org',
+              id: 'display_300x250'
+            },
+            name: 'IAB Medium Rectangle',
+            type: 'display',
+            renders: [{
+              role: 'primary',
+              dimensions: {
+                width: 300,
+                height: 250,
+                unit: 'px'
+              }
+            }]
+          }]
         }
       };
 
