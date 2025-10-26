@@ -2,14 +2,18 @@
  * Response validator for agent responses
  *
  * Validates that agent responses match expected structures for both
- * MCP and A2A protocols, helping catch issues early in development.
+ * MCP and A2A protocols, and validates data against AdCP schemas.
  */
+
+import { z } from 'zod';
+import * as schemas from '../types/schemas.generated';
 
 export interface ValidationResult {
   valid: boolean;
   errors: string[];
   warnings: string[];
   protocol?: 'mcp' | 'a2a' | 'unknown';
+  schemaErrors?: z.ZodIssue[];
 }
 
 export interface ValidationOptions {
@@ -19,6 +23,8 @@ export interface ValidationOptions {
   expectedFields?: string[];
   /** Allow empty responses */
   allowEmpty?: boolean;
+  /** Validate against AdCP Zod schemas */
+  validateSchema?: boolean;
 }
 
 export class ResponseValidator {
@@ -64,8 +70,21 @@ export class ResponseValidator {
       this.validateToolResponse(response, toolName, protocol, errors, warnings);
     }
 
+    // Schema validation if enabled
+    let schemaErrors: z.ZodIssue[] | undefined;
+    if (options.validateSchema !== false && toolName) {
+      const schemaResult = this.validateWithSchema(response, toolName, protocol);
+      if (schemaResult) {
+        schemaErrors = schemaResult.issues;
+        schemaResult.issues.forEach(issue => {
+          const path = issue.path.join('.');
+          errors.push(`Schema validation: ${path}: ${issue.message}`);
+        });
+      }
+    }
+
     const valid = errors.length === 0 && (!options.strict || warnings.length === 0);
-    return { valid, errors, warnings, protocol };
+    return { valid, errors, warnings, protocol, schemaErrors };
   }
 
   /**
@@ -297,6 +316,57 @@ export class ResponseValidator {
     }
 
     return false;
+  }
+
+  /**
+   * Validate response data against AdCP Zod schema
+   */
+  private validateWithSchema(response: any, toolName: string, protocol: string): z.ZodError | null {
+    // Extract data based on protocol
+    let data: any;
+    if (protocol === 'mcp') {
+      data = response.structuredContent;
+    } else if (protocol === 'a2a') {
+      data = response.result?.artifacts?.[0]?.parts?.[0]?.data;
+    } else {
+      data = response.data || response;
+    }
+
+    if (!data) {
+      return null; // No data to validate
+    }
+
+    // Get schema for tool
+    const schema = this.getSchemaForTool(toolName);
+    if (!schema) {
+      return null; // No schema available for this tool
+    }
+
+    // Validate
+    const result = schema.safeParse(data);
+    return result.success ? null : result.error;
+  }
+
+  /**
+   * Get Zod schema for a given tool
+   */
+  private getSchemaForTool(toolName: string): z.ZodSchema | null {
+    const schemaMap: Record<string, z.ZodSchema> = {
+      get_products: schemas.GetProductsResponseSchema,
+      list_creative_formats: schemas.ListCreativeFormatsResponseSchema,
+      list_creatives: schemas.ListCreativesResponseSchema,
+      create_media_buy: schemas.CreateMediaBuyResponseSchema,
+      update_media_buy: schemas.UpdateMediaBuyResponseSchema,
+      sync_creatives: schemas.SyncCreativesResponseSchema,
+      get_media_buy_delivery: schemas.GetMediaBuyDeliveryResponseSchema,
+      list_authorized_properties: schemas.ListAuthorizedPropertiesResponseSchema,
+      provide_performance_feedback: schemas.ProvidePerformanceFeedbackResponseSchema,
+      get_signals: schemas.GetSignalsResponseSchema,
+      activate_signal: schemas.ActivateSignalResponseSchema,
+      preview_creative: schemas.PreviewCreativeResponseSchema
+    };
+
+    return schemaMap[toolName] || null;
   }
 }
 

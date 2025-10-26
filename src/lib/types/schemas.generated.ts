@@ -869,3 +869,13 @@ export const ListCreativeFormatsResponseSchema = z.object({
     })).optional(),
     errors: z.array(ErrorSchema).optional()
 });
+
+export const GetProductsResponseSchema = z.object({
+    products: z.array(ProductSchema),
+    errors: z.array(ErrorSchema).optional()
+});
+
+export const ListCreativesResponseSchema = z.object({
+    creatives: z.array(CreativeAssetSchema),
+    errors: z.array(ErrorSchema).optional()
+});

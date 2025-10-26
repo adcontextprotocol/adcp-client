@@ -5,6 +5,7 @@ import { randomUUID } from 'crypto';
 import type { AgentConfig } from '../types';
 import { ProtocolClient } from '../protocols';
 import type { Storage } from '../storage/interfaces';
+import { responseValidator } from './ResponseValidator';
 import type {
   Message,
   InputRequest,
@@ -240,6 +241,9 @@ export class TaskExecutor {
         // Some agents return { error: "..." } without success field
         const operationSuccess = completedData?.success !== false && !completedData?.error;
 
+        // Validate response against AdCP schema
+        this.validateResponseSchema(response, taskName, debugLogs);
+
         return {
           success: operationSuccess,
           status: 'completed',
@@ -290,6 +294,9 @@ export class TaskExecutor {
         if (defaultData && (defaultData !== response || response.structuredContent || response.result || response.data)) {
           // Check if the actual operation succeeded
           const defaultSuccess = defaultData?.success !== false && !defaultData?.error;
+
+          // Validate response against AdCP schema
+          this.validateResponseSchema(response, taskName, debugLogs);
 
           return {
             success: defaultSuccess,
@@ -920,6 +927,42 @@ export class TaskExecutor {
         }
       });
     });
+  }
+
+  /**
+   * Validate response against AdCP schema and log any violations
+   */
+  private validateResponseSchema(
+    response: any,
+    taskName: string,
+    debugLogs: any[]
+  ): { valid: boolean; errors: string[] } {
+    try {
+      const validationResult = responseValidator.validate(
+        response,
+        taskName,
+        { validateSchema: true, strict: false }
+      );
+
+      if (!validationResult.valid) {
+        debugLogs.push({
+          timestamp: new Date().toISOString(),
+          type: 'validation_error',
+          errors: validationResult.errors,
+          schemaErrors: validationResult.schemaErrors
+        });
+
+        console.warn(`Schema validation failed for ${taskName}:`, validationResult.errors);
+      }
+
+      return {
+        valid: validationResult.valid,
+        errors: validationResult.errors
+      };
+    } catch (error) {
+      console.error(`Error during schema validation:`, error);
+      return { valid: true, errors: [] }; // Don't fail on validation errors
+    }
   }
 
   /**
