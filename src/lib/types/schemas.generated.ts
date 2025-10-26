@@ -870,9 +870,58 @@ export const ListCreativeFormatsResponseSchema = z.object({
     errors: z.array(ErrorSchema).optional()
 });
 
+export const GetProductsRequestSchema = z.object({
+    brief: z.string().optional(),
+    brand_manifest: z.union([z.string(), BrandManifestSchema]).optional(),
+    filters: z.object({
+        delivery_types: z.array(DeliveryTypeSchema).optional(),
+        format_types: z.array(z.union([z.literal("audio"), z.literal("video"), z.literal("display"), z.literal("native"), z.literal("dooh"), z.literal("rich_media"), z.literal("universal")])).optional(),
+        pricing_models: z.array(PricingModelSchema).optional(),
+        min_budget: z.number().optional(),
+        max_budget: z.number().optional()
+    }).optional()
+});
+
 export const GetProductsResponseSchema = z.object({
     products: z.array(ProductSchema),
     errors: z.array(ErrorSchema).optional()
+});
+
+export const CreateMediaBuyRequestSchema = z.object({
+    brief: z.string(),
+    brand_manifest: z.union([z.string(), BrandManifestSchema]).optional(),
+    po_number: z.string(),
+    packages: z.array(z.object({
+        product_id: z.string(),
+        format_ids: z.array(FormatIDSchema).optional(),
+        targeting_overlay: z.record(z.string(), z.any()).optional(), // TODO: Add TargetingSchema
+        pacing: PacingSchema.optional()
+    })),
+    reporting_webhook: z.object({
+        url: z.string(),
+        headers: z.record(z.string(), z.string()).optional()
+    }).optional()
+});
+
+export const SyncCreativesRequestSchema = z.object({
+    media_buy_id: z.string(),
+    brief: z.string().optional()
+});
+
+export const BuildCreativeRequestSchema = z.object({
+    format_id: FormatIDSchema,
+    brief: z.string(),
+    brand_manifest: z.union([z.string(), BrandManifestSchema]).optional(),
+    media_buy_id: z.string().optional()
+});
+
+export const PreviewCreativeRequestSchema = z.object({
+    creative_id: z.string(),
+    format_id: FormatIDSchema.optional(),
+    dimensions: z.object({
+        width: z.number(),
+        height: z.number()
+    }).optional()
 });
 
 export const ListCreativesResponseSchema = z.object({

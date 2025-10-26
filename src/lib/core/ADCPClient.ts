@@ -1,5 +1,7 @@
 // Main ADCP Client - Type-safe conversation-aware client for AdCP agents
 
+import { z } from 'zod';
+import * as schemas from '../types/schemas.generated';
 import type { AgentConfig } from '../types';
 import type {
   GetProductsRequest,
@@ -429,6 +431,9 @@ export class ADCPClient {
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<T>> {
+    // Validate request params against schema
+    this.validateRequest(taskType, params);
+
     const agent = await this.ensureEndpointDiscovered();
     const result = await this.executor.executeTask<T>(
       agent,
@@ -1153,6 +1158,49 @@ export class ADCPClient {
     }
 
     return result.data.formats || [];
+  }
+
+  /**
+   * Validate request parameters against AdCP schema
+   */
+  private validateRequest(taskType: string, params: any): void {
+    const schema = this.getRequestSchema(taskType);
+    if (!schema) {
+      return; // No schema available for this task type
+    }
+
+    try {
+      schema.parse(params);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        const issues = error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('; ');
+        throw new Error(`Request validation failed for ${taskType}: ${issues}`);
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Get request schema for a given task type
+   */
+  private getRequestSchema(taskType: string): z.ZodSchema | null {
+    const schemaMap: Record<string, z.ZodSchema> = {
+      get_products: schemas.GetProductsRequestSchema,
+      list_creative_formats: schemas.ListCreativeFormatsRequestSchema,
+      list_creatives: schemas.ListCreativesRequestSchema,
+      create_media_buy: schemas.CreateMediaBuyRequestSchema,
+      update_media_buy: schemas.UpdateMediaBuyRequestSchema,
+      sync_creatives: schemas.SyncCreativesRequestSchema,
+      get_media_buy_delivery: schemas.GetMediaBuyDeliveryRequestSchema,
+      list_authorized_properties: schemas.ListAuthorizedPropertiesRequestSchema,
+      provide_performance_feedback: schemas.ProvidePerformanceFeedbackRequestSchema,
+      get_signals: schemas.GetSignalsRequestSchema,
+      activate_signal: schemas.ActivateSignalRequestSchema,
+      build_creative: schemas.BuildCreativeRequestSchema,
+      preview_creative: schemas.PreviewCreativeRequestSchema
+    };
+
+    return schemaMap[taskType] || null;
   }
 }
 
