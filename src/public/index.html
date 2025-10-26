@@ -4032,7 +4032,18 @@
             if (!formats || !Array.isArray(formats)) {
                 return '<span style="color: #888;">N/A</span>';
             }
-            return formats.slice(0, 2).join(', ') + (formats.length > 2 ? `... (+${formats.length - 2})` : '');
+
+            // Convert formats to strings (handle both format_id strings and format objects)
+            const formatStrings = formats.map(f => {
+                if (typeof f === 'string') {
+                    return f;
+                } else if (f && typeof f === 'object') {
+                    return f.format_id || f.name || JSON.stringify(f).substring(0, 20);
+                }
+                return String(f);
+            });
+
+            return formatStrings.slice(0, 2).join(', ') + (formatStrings.length > 2 ? `... (+${formatStrings.length - 2})` : '');
         }
         
         function getValidationStatusIcon(product) {
