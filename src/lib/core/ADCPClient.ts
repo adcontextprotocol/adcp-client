@@ -168,10 +168,12 @@ export class ADCPClient {
   }
 
   /**
-   * Discover MCP endpoint by testing the provided path, then trying /mcp
+   * Discover MCP endpoint by testing the provided path, then trying variants
    *
-   * Strategy: Test what the user gave us first. If no MCP server responds,
-   * try adding /mcp to the path. That's it.
+   * Strategy:
+   * 1. Test the exact URL provided (preserving trailing slashes)
+   * 2. If that fails, try with/without trailing slash
+   * 3. If still fails and doesn't end with /mcp, try adding /mcp
    *
    * Note: This is async and called lazily on first agent interaction
    */
@@ -209,24 +211,40 @@ export class ADCPClient {
       }
     };
 
-    // Test what they gave us first
-    const providedUrl = providedUri.replace(/\/$/, ''); // Clean trailing slash
-    if (await testEndpoint(providedUrl)) {
-      return providedUrl;
+    const urlsToTry: string[] = [];
+
+    // 1. Always try the exact URL provided first
+    urlsToTry.push(providedUri);
+
+    // 2. Try the opposite trailing slash variant
+    const hasTrailingSlash = providedUri.endsWith('/');
+    const alternateSlash = hasTrailingSlash
+      ? providedUri.slice(0, -1)  // Remove trailing slash
+      : providedUri + '/';         // Add trailing slash
+    urlsToTry.push(alternateSlash);
+
+    // 3. If URL doesn't end with /mcp or /mcp/, try adding /mcp
+    const normalizedUri = providedUri.replace(/\/$/, '');
+    if (!normalizedUri.endsWith('/mcp')) {
+      urlsToTry.push(normalizedUri + '/mcp');
+      urlsToTry.push(normalizedUri + '/mcp/');
     }
 
-    // No MCP server there, try adding /mcp
-    const withMcp = providedUrl + '/mcp';
-    if (await testEndpoint(withMcp)) {
-      return withMcp;
+    // Remove duplicates while preserving order
+    const uniqueUrls = [...new Set(urlsToTry)];
+
+    // Test each URL
+    for (const url of uniqueUrls) {
+      if (await testEndpoint(url)) {
+        return url;
+      }
     }
 
-    // Neither worked
+    // None worked
     throw new Error(
       `Failed to discover MCP endpoint. Tried:\n` +
-      `  1. ${providedUrl}\n` +
-      `  2. ${withMcp}\n` +
-      `Neither responded to MCP protocol.`
+      uniqueUrls.map((url, i) => `  ${i + 1}. ${url}`).join('\n') + '\n' +
+      `None responded to MCP protocol.`
     );
   }
 
