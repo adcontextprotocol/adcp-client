@@ -3730,7 +3730,10 @@
             logEvent('info', `🔧 DEBUG: loadCreativeFormats calling callADCPTool with 'list_creative_formats'`);
             logEvent('info', `🔧 DEBUG: Parameters: ${JSON.stringify(params, null, 2)}`);
             const result = await callADCPTool(selectedAgent, 'list_creative_formats', params);
-            
+
+            logEvent('info', `🔧 DEBUG: Result keys: ${Object.keys(result || {}).join(', ')}`);
+            logEvent('info', `🔧 DEBUG: result.formats = ${result?.formats ? result.formats.length : 'undefined'}`);
+
             if (result && result.formats) {
                 creativeFormats = result.formats;
                 updateCreativeFormatsTable();
@@ -3739,6 +3742,7 @@
             } else {
                 setFormatsLoadingState(false, 'warning');
                 logEvent('warning', 'No creative formats returned from agent');
+                logEvent('info', `🔧 DEBUG: Full result: ${JSON.stringify(result, null, 2)}`);
             }
         }
         

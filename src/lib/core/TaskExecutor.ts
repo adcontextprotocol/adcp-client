@@ -974,9 +974,15 @@ export class TaskExecutor {
       if (!validationResult.valid) {
         // Log to debug logs if enabled
         if (logViolations) {
+          const errorSummary = validationResult.errors.slice(0, 3).join('; ');
+          const moreErrors = validationResult.errors.length > 3
+            ? ` (and ${validationResult.errors.length - 3} more)`
+            : '';
+
           debugLogs.push({
             timestamp: new Date().toISOString(),
-            type: 'validation_error',
+            type: strictMode ? 'error' : 'warning',
+            message: `Schema validation ${strictMode ? 'failed' : 'warning'} for ${taskName}: ${errorSummary}${moreErrors}`,
             errors: validationResult.errors,
             schemaErrors: validationResult.schemaErrors,
             strictMode
