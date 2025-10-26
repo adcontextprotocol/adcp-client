@@ -5030,10 +5030,19 @@
                 }
                 
                 // Build packages array from selected products
-                const packages = selectedProductsData.map(product => ({
-                    product_id: product.product_id,
-                    targeting_overlay: Object.keys(targetingOverlay).length > 0 ? targetingOverlay : undefined
-                }));
+                const packages = selectedProductsData.map(product => {
+                    const pkg = {
+                        product_id: product.product_id,
+                        targeting_overlay: Object.keys(targetingOverlay).length > 0 ? targetingOverlay : undefined
+                    };
+
+                    // Include format_ids if present in the product (required by AdCP spec)
+                    if (product.format_ids) {
+                        pkg.format_ids = product.format_ids;
+                    }
+
+                    return pkg;
+                });
 
                 // brand_manifest must be either a valid URL or a BrandManifest object
                 let brandManifestParam = brandManifest;
