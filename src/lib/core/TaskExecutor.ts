@@ -102,6 +102,10 @@ export class TaskExecutor {
       agentId?: string;
       /** Webhook secret for HMAC authentication (min 32 chars) */
       webhookSecret?: string;
+      /** Fail tasks when response schema validation fails (default: true) */
+      strictSchemaValidation?: boolean;
+      /** Log all schema validation violations to debug logs (default: true) */
+      logSchemaViolations?: boolean;
     } = {}
   ) {
     this.responseParser = new ProtocolResponseParser();
@@ -242,13 +246,21 @@ export class TaskExecutor {
         const operationSuccess = completedData?.success !== false && !completedData?.error;
 
         // Validate response against AdCP schema
-        this.validateResponseSchema(response, taskName, debugLogs);
+        const validationResult = this.validateResponseSchema(response, taskName, debugLogs);
+
+        // In strict mode, schema validation failures cause task to fail
+        const finalSuccess = operationSuccess && validationResult.valid;
+        const finalError = !finalSuccess
+          ? (validationResult.errors.length > 0
+              ? `Schema validation failed: ${validationResult.errors.join('; ')}`
+              : (completedData?.error || completedData?.message || 'Operation failed'))
+          : undefined;
 
         return {
-          success: operationSuccess,
+          success: finalSuccess,
           status: 'completed',
           data: completedData,
-          error: operationSuccess ? undefined : (completedData?.error || completedData?.message || 'Operation failed'),
+          error: finalError,
           metadata: {
             taskId,
             taskName,
@@ -296,13 +308,21 @@ export class TaskExecutor {
           const defaultSuccess = defaultData?.success !== false && !defaultData?.error;
 
           // Validate response against AdCP schema
-          this.validateResponseSchema(response, taskName, debugLogs);
+          const defaultValidation = this.validateResponseSchema(response, taskName, debugLogs);
+
+          // In strict mode, schema validation failures cause task to fail
+          const defaultFinalSuccess = defaultSuccess && defaultValidation.valid;
+          const defaultFinalError = !defaultFinalSuccess
+            ? (defaultValidation.errors.length > 0
+                ? `Schema validation failed: ${defaultValidation.errors.join('; ')}`
+                : (defaultData?.error || defaultData?.message || 'Operation failed'))
+            : undefined;
 
           return {
-            success: defaultSuccess,
+            success: defaultFinalSuccess,
             status: 'completed',
             data: defaultData,
-            error: defaultSuccess ? undefined : (defaultData?.error || defaultData?.message || 'Operation failed'),
+            error: defaultFinalError,
             metadata: {
               taskId,
               taskName,
@@ -931,12 +951,19 @@ export class TaskExecutor {
 
   /**
    * Validate response against AdCP schema and log any violations
+   *
+   * Respects config.strictSchemaValidation (default: true):
+   * - true: Validation failures cause task to fail
+   * - false: Validation failures are logged only
    */
   private validateResponseSchema(
     response: any,
     taskName: string,
     debugLogs: any[]
   ): { valid: boolean; errors: string[] } {
+    const strictMode = this.config.strictSchemaValidation !== false; // Default: true
+    const logViolations = this.config.logSchemaViolations !== false; // Default: true
+
     try {
       const validationResult = responseValidator.validate(
         response,
@@ -945,23 +972,45 @@ export class TaskExecutor {
       );
 
       if (!validationResult.valid) {
-        debugLogs.push({
-          timestamp: new Date().toISOString(),
-          type: 'validation_error',
-          errors: validationResult.errors,
-          schemaErrors: validationResult.schemaErrors
-        });
+        // Log to debug logs if enabled
+        if (logViolations) {
+          debugLogs.push({
+            timestamp: new Date().toISOString(),
+            type: 'validation_error',
+            errors: validationResult.errors,
+            schemaErrors: validationResult.schemaErrors,
+            strictMode
+          });
+        }
 
-        console.warn(`Schema validation failed for ${taskName}:`, validationResult.errors);
+        // Console output based on strict mode
+        if (strictMode) {
+          console.error(`Schema validation failed for ${taskName}:`, validationResult.errors);
+        } else {
+          console.warn(`Schema validation failed for ${taskName} (non-blocking):`, validationResult.errors);
+        }
+
+        // In strict mode, validation failures are treated as invalid
+        if (strictMode) {
+          return {
+            valid: false,
+            errors: validationResult.errors
+          };
+        }
       }
 
+      // Non-strict mode or validation passed
       return {
-        valid: validationResult.valid,
-        errors: validationResult.errors
+        valid: true,
+        errors: []
       };
     } catch (error) {
       console.error(`Error during schema validation:`, error);
-      return { valid: true, errors: [] }; // Don't fail on validation errors
+      // On validation error, fail safe based on strict mode
+      return {
+        valid: !strictMode, // In strict mode, treat validation errors as failures
+        errors: strictMode ? [`Validation error: ${error}`] : []
+      };
     }
   }
 

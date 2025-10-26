@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2025-10-24T15:02:04.582Z
+// Generated at: 2025-10-26T17:53:13.884Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -870,35 +870,116 @@ export const ListCreativeFormatsResponseSchema = z.object({
     errors: z.array(ErrorSchema).optional()
 });
 
+// === MANUALLY ADDED SCHEMAS FOR VALIDATION ===
+// These schemas could not be auto-generated from TypeScript due to complex types
+// They are simplified but cover the essential validation requirements
+
+// Brand manifest can be inline object or URL string
+const BrandManifestRefSchema = z.union([
+    z.string().url(), // URL reference
+    z.object({       // Inline manifest
+        url: z.string().url().optional(),
+        name: z.string().optional(),
+        logos: z.array(z.object({
+            url: z.string().url(),
+            tags: z.array(z.string()).optional(),
+            width: z.number().optional(),
+            height: z.number().optional()
+        })).optional(),
+        colors: z.object({
+            primary: z.string().optional(),
+            secondary: z.string().optional(),
+            accent: z.string().optional(),
+            background: z.string().optional(),
+            text: z.string().optional()
+        }).optional(),
+        fonts: z.object({
+            primary: z.string().optional(),
+            secondary: z.string().optional(),
+            font_urls: z.array(z.string().url()).optional()
+        }).optional(),
+        tone: z.string().optional(),
+        tagline: z.string().optional(),
+        assets: z.array(z.object({
+            asset_id: z.string(),
+            asset_type: z.enum(['image', 'video', 'audio', 'text']),
+            url: z.string().url(),
+            tags: z.array(z.string()).optional()
+        })).optional(),
+        products: z.array(z.object({
+            product_id: z.string(),
+            name: z.string(),
+            description: z.string().optional(),
+            category: z.string().optional(),
+            price: z.number().optional(),
+            currency: z.string().optional(),
+            url: z.string().url().optional(),
+            image_url: z.string().url().optional(),
+            tags: z.array(z.string()).optional()
+        })).optional()
+    }).passthrough() // Allow additional properties for flexibility
+]);
+
 export const GetProductsRequestSchema = z.object({
     brief: z.string().optional(),
-    brand_manifest: z.union([z.string(), BrandManifestSchema]).optional(),
+    brand_manifest: BrandManifestRefSchema.optional(),
     filters: z.object({
         delivery_types: z.array(DeliveryTypeSchema).optional(),
-        format_types: z.array(z.union([z.literal("audio"), z.literal("video"), z.literal("display"), z.literal("native"), z.literal("dooh"), z.literal("rich_media"), z.literal("universal")])).optional(),
+        format_types: z.array(z.enum(['video', 'display', 'audio', 'native', 'dooh', 'rich_media', 'universal'])).optional(),
+        format_ids: z.array(FormatIDSchema).optional(),
         pricing_models: z.array(PricingModelSchema).optional(),
         min_budget: z.number().optional(),
-        max_budget: z.number().optional()
+        max_budget: z.number().optional(),
+        standard_formats_only: z.boolean().optional(),
+        min_exposures: z.number().optional()
     }).optional()
 });
 
 export const GetProductsResponseSchema = z.object({
-    products: z.array(ProductSchema),
+    products: z.array(z.object({
+        product_id: z.string(),
+        name: z.string(),
+        description: z.string(),
+        delivery_type: DeliveryTypeSchema,
+        delivery_measurement: z.enum(['impressions', 'views', 'clicks', 'conversions']),
+        publisher_properties: z.array(z.string()).min(1),
+        format_ids: z.array(FormatIDSchema).min(1),
+        pricing_options: z.array(z.union([
+            CPMFixedRatePricingOptionSchema,
+            CPMAuctionPricingOptionSchema,
+            VCPMFixedRatePricingOptionSchema,
+            VCPMAuctionPricingOptionSchema,
+            CPCPricingOptionSchema,
+            CPCVPricingOptionSchema,
+            CPVPricingOptionSchema,
+            CPPPricingOptionSchema,
+            FlatRatePricingOptionSchema
+        ])).min(1),
+        targeting_capabilities: z.record(z.string(), z.any()).optional(),
+        pacing_options: z.array(PacingSchema).optional(),
+        frequency_cap: FrequencyCapSchema.optional(),
+        format_constraints: z.record(z.string(), z.any()).optional(),
+        measurement_capabilities: z.array(z.string()).optional(),
+        brand_safety: z.object({
+            content_categories: z.array(z.string()).optional(),
+            verification_providers: z.array(z.string()).optional()
+        }).optional()
+    })),
     errors: z.array(ErrorSchema).optional()
 });
 
 export const CreateMediaBuyRequestSchema = z.object({
     brief: z.string(),
-    brand_manifest: z.union([z.string(), BrandManifestSchema]).optional(),
+    brand_manifest: BrandManifestRefSchema.optional(),
     po_number: z.string(),
     packages: z.array(z.object({
         product_id: z.string(),
         format_ids: z.array(FormatIDSchema).optional(),
-        targeting_overlay: z.record(z.string(), z.any()).optional(), // TODO: Add TargetingSchema
+        targeting_overlay: z.record(z.string(), z.any()).optional(),
         pacing: PacingSchema.optional()
     })),
     reporting_webhook: z.object({
-        url: z.string(),
+        url: z.string().url(),
         headers: z.record(z.string(), z.string()).optional()
     }).optional()
 });
@@ -908,10 +989,25 @@ export const SyncCreativesRequestSchema = z.object({
     brief: z.string().optional()
 });
 
+export const ListCreativesResponseSchema = z.object({
+    creatives: z.array(z.object({
+        creative_id: z.string(),
+        name: z.string(),
+        format: FormatIDSchema,
+        status: CreativeStatusSchema,
+        created_date: z.string(),
+        updated_date: z.string().optional(),
+        tags: z.array(z.string()).optional(),
+        assignments: z.array(CreativeAssignmentSchema).optional(),
+        sub_assets: z.array(z.any()).optional() // SubAssetSchema is complex
+    })),
+    errors: z.array(ErrorSchema).optional()
+});
+
 export const BuildCreativeRequestSchema = z.object({
     format_id: FormatIDSchema,
     brief: z.string(),
-    brand_manifest: z.union([z.string(), BrandManifestSchema]).optional(),
+    brand_manifest: BrandManifestRefSchema.optional(),
     media_buy_id: z.string().optional()
 });
 
@@ -922,9 +1018,4 @@ export const PreviewCreativeRequestSchema = z.object({
         width: z.number(),
         height: z.number()
     }).optional()
-});
-
-export const ListCreativesResponseSchema = z.object({
-    creatives: z.array(CreativeAssetSchema),
-    errors: z.array(ErrorSchema).optional()
 });

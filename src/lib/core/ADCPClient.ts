@@ -71,6 +71,26 @@ export interface ADCPClientConfig extends ConversationConfig {
    * Custom: "https://myapp.com/api/v1/adcp/{agent_id}?operation={operation_id}"
    */
   webhookUrlTemplate?: string;
+  /**
+   * Runtime schema validation options
+   */
+  validation?: {
+    /**
+     * Fail tasks when response schema validation fails (default: true)
+     *
+     * When true: Invalid responses cause task to fail with error
+     * When false: Schema violations are logged but task continues
+     *
+     * @default true
+     */
+    strictSchemaValidation?: boolean;
+    /**
+     * Log all schema validation violations to debug logs (default: true)
+     *
+     * @default true
+     */
+    logSchemaViolations?: boolean;
+  };
 }
 
 /**
@@ -106,7 +126,9 @@ export class ADCPClient {
       enableConversationStorage: config.persistConversations !== false,
       webhookUrlTemplate: config.webhookUrlTemplate,
       agentId: agent.id,
-      webhookSecret: config.webhookSecret
+      webhookSecret: config.webhookSecret,
+      strictSchemaValidation: config.validation?.strictSchemaValidation !== false, // Default: true
+      logSchemaViolations: config.validation?.logSchemaViolations !== false // Default: true
     });
 
     // Create async handler if handlers are provided
