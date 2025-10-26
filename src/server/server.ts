@@ -833,6 +833,15 @@ app.post<{
     const client = getAgentClient(agentId, agentConfig);
     const result = await client.createMediaBuy(params, createDefaultInputHandler());
 
+    // Log failures at error level so they appear in monitoring
+    if (!result.success) {
+      app.log.error({
+        agentId,
+        error: result.error,
+        metadata: result.metadata
+      }, 'Create media buy failed');
+    }
+
     return reply.send({
       success: result.success,
       data: result.data,
@@ -865,6 +874,15 @@ app.post<{
 
     const client = getAgentClient(agentId, agentConfig);
     const result = await client.updateMediaBuy(params, createDefaultInputHandler());
+
+    // Log failures at error level so they appear in monitoring
+    if (!result.success) {
+      app.log.error({
+        agentId,
+        error: result.error,
+        metadata: result.metadata
+      }, 'Update media buy failed');
+    }
 
     return reply.send({
       success: result.success,
@@ -997,6 +1015,15 @@ app.post<{
 
     const client = getAgentClient(agentId, agentConfig);
     const result = await client.getMediaBuyDelivery(params, createDefaultInputHandler());
+
+    // Log failures at error level so they appear in monitoring
+    if (!result.success) {
+      app.log.error({
+        agentId,
+        error: result.error,
+        metadata: result.metadata
+      }, 'Get media buy delivery failed');
+    }
 
     return reply.send({
       success: result.success,
