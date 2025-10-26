@@ -166,7 +166,18 @@ export async function callMCPTool(
       timestamp: new Date().toISOString(),
       response: response
     });
-    
+
+    // If MCP returns an error response, throw an error with the extracted message
+    // This ensures the error is properly caught and handled by the executor
+    if (response?.isError && response?.content && Array.isArray(response.content)) {
+      const errorText = response.content
+        .filter((item: any) => item.type === 'text' && item.text)
+        .map((item: any) => item.text)
+        .join('\n');
+
+      throw new Error(errorText || `MCP tool '${toolName}' execution failed (no error details provided)`);
+    }
+
     return response;
   } catch (error) {
     // Capture tool call errors (including timeouts)
