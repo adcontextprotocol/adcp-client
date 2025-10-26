@@ -1,31 +1,84 @@
-# TODO: Add Runtime Schema Validation
+# Runtime Schema Validation Status
 
-## Current State
-- ✅ Zod schemas exist in `src/lib/types/schemas.generated.ts`
-- ✅ Schemas are correct per AdCP 2.2.0 spec
-- ❌ Schemas are never used for validation
-- ❌ Not all response types have schemas (e.g., GetProductsResponseSchema)
+## ✅ Implemented (2025-10-26)
 
-## Problem
-Agent responses are not validated against AdCP schemas at runtime:
-- Invalid products pass through silently  
-- UI has to implement its own validation (which was incorrect)
-- No enforcement of spec compliance
+Runtime schema validation has been successfully implemented for both requests and responses.
 
-## Solution Needed
-1. Generate missing response schemas (GetProductsResponse, etc.)
-2. Use schemas in ResponseValidator or TaskExecutor
-3. Validate responses before returning to caller
-4. Log schema violations for observability
+### Request Validation
+- **Location**: `src/lib/core/ADCPClient.ts`
+- **Behavior**: Validates request parameters before sending to agents
+- **Mode**: Fail-fast - throws immediately on invalid requests
+- **Schemas**: All major request types covered (get_products, create_media_buy, etc.)
 
-## Files to Update
-- `src/lib/core/ResponseValidator.ts` - Add schema validation
-- `src/lib/core/TaskExecutor.ts` - Call validator with schemas  
-- `scripts/generate-types.ts` - Ensure all response types have schemas
-- `src/lib/types/schemas.generated.ts` - Verify completeness
+### Response Validation
+- **Location**: `src/lib/core/TaskExecutor.ts` + `src/lib/core/ResponseValidator.ts`
+- **Behavior**: Validates agent responses against AdCP schemas
+- **Mode**: Soft-fail - logs violations but doesn't block responses
+- **Schemas**: All major response types covered (products, formats, creatives, etc.)
 
-## Benefits
-- Catch invalid agent responses early
-- Remove need for UI-side validation
-- Better error messages for spec violations
-- Type safety at runtime, not just compile time
+## ⚠️ Known Limitations
+
+### 1. Schema Generation Needs Update
+The generated schemas may be out of sync with the latest AdCP 2.2.0 spec:
+- `pricing_options` field structure may have changed
+- Need to regenerate from canonical AdCP schema files
+
+**Action**: Run schema generation script with latest AdCP spec:
+```bash
+npm run generate:types
+```
+
+### 2. Response Validation is Non-Blocking
+Currently, invalid responses are logged but don't fail tasks.
+
+**Current behavior**:
+- Schema violations logged to debug logs
+- Task returns `success: true` even with violations
+- Client receives potentially invalid data
+
+**Rationale**: Prevents breaking existing integrations while we verify schema accuracy
+
+**Future consideration**: Add `strictSchemaValidation` config option to make violations fail tasks
+
+### 3. Missing Schemas
+Some less-common tools may not have schemas defined:
+- Check `getRequestSchema()` and `getSchemaForTool()` mappings
+- Add missing schemas as needed
+
+## 📝 Future Improvements
+
+1. **Make validation configurable**:
+   ```typescript
+   new ADCPClient({
+     validation: {
+       strictSchemaValidation: true,  // Fail on violations
+       logSchemaViolations: true,     // Log all violations
+     }
+   })
+   ```
+
+2. **Add validation metrics**: Track validation failure rates
+
+3. **Performance optimization**: Cache compiled Zod schemas
+
+4. **Better error messages**: Include actual vs expected values in errors
+
+## Testing
+
+**Manual testing completed**:
+- ✅ Request validation throws on invalid params
+- ✅ Response validation logs violations
+- ✅ UI validation fixed to match AdCP 2.2.0 spec
+- ✅ No [object Object] display issues
+- ✅ Debug logs show proper method names
+
+**Test coverage needed**:
+- Unit tests for validation logic
+- Integration tests with real agent responses
+- Performance tests for validation overhead
+
+## References
+
+- **AdCP Spec**: AdCP 2.2.0 specification
+- **Implementation PR**: [Add PR number]
+- **Related Issues**: Schema sync, UI validation bugs
