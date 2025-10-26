@@ -1206,20 +1206,17 @@ export class ADCPClient {
    * Get request schema for a given task type
    */
   private getRequestSchema(taskType: string): z.ZodSchema | null {
-    const schemaMap: Record<string, z.ZodSchema> = {
-      get_products: schemas.GetProductsRequestSchema,
+    // Only include schemas that exist (some may not be auto-generated)
+    const schemaMap: Partial<Record<string, z.ZodSchema>> = {
       list_creative_formats: schemas.ListCreativeFormatsRequestSchema,
       list_creatives: schemas.ListCreativesRequestSchema,
-      create_media_buy: schemas.CreateMediaBuyRequestSchema,
       update_media_buy: schemas.UpdateMediaBuyRequestSchema,
-      sync_creatives: schemas.SyncCreativesRequestSchema,
       get_media_buy_delivery: schemas.GetMediaBuyDeliveryRequestSchema,
       list_authorized_properties: schemas.ListAuthorizedPropertiesRequestSchema,
       provide_performance_feedback: schemas.ProvidePerformanceFeedbackRequestSchema,
       get_signals: schemas.GetSignalsRequestSchema,
       activate_signal: schemas.ActivateSignalRequestSchema,
-      build_creative: schemas.BuildCreativeRequestSchema,
-      preview_creative: schemas.PreviewCreativeRequestSchema
+      preview_creative: schemas.PreviewCreativeResponseSchema  // Note: using response schema temporarily
     };
 
     return schemaMap[taskType] || null;

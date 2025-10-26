@@ -351,10 +351,9 @@ export class ResponseValidator {
    * Get Zod schema for a given tool
    */
   private getSchemaForTool(toolName: string): z.ZodSchema | null {
-    const schemaMap: Record<string, z.ZodSchema> = {
-      get_products: schemas.GetProductsResponseSchema,
+    // Only include schemas that exist (some may not be auto-generated)
+    const schemaMap: Partial<Record<string, z.ZodSchema>> = {
       list_creative_formats: schemas.ListCreativeFormatsResponseSchema,
-      list_creatives: schemas.ListCreativesResponseSchema,
       create_media_buy: schemas.CreateMediaBuyResponseSchema,
       update_media_buy: schemas.UpdateMediaBuyResponseSchema,
       sync_creatives: schemas.SyncCreativesResponseSchema,
