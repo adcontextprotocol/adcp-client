@@ -117,6 +117,12 @@ const clientConfig: ADCPClientConfig = {
   webhookUrlTemplate: WEBHOOK_URL_TEMPLATE,
   webhookSecret: WEBHOOK_SECRET,
 
+  // Schema validation configuration (can be controlled via env vars)
+  validation: {
+    strictSchemaValidation: process.env.ADCP_STRICT_VALIDATION !== 'false', // Default: true
+    logSchemaViolations: process.env.ADCP_LOG_SCHEMA_VIOLATIONS !== 'false' // Default: true
+  },
+
   // Activity logging - store ALL events
   onActivity: (activity) => {
     storeEvent({
@@ -1920,6 +1926,14 @@ const start = async () => {
     app.log.info(`🚀 AdCP Testing Framework running on http://${host}:${port}`);
     app.log.info(`📋 API available at http://${host}:${port}/api`);
     app.log.info(`🌐 UI available at http://${host}:${port}`);
+
+    // Log validation configuration
+    const strictMode = clientConfig.validation?.strictSchemaValidation !== false;
+    const logViolations = clientConfig.validation?.logSchemaViolations !== false;
+    app.log.info(`✅ Schema validation: ${strictMode ? 'STRICT' : 'NON-STRICT'} (${logViolations ? 'logging enabled' : 'logging disabled'})`);
+    if (!strictMode) {
+      app.log.warn(`⚠️  Non-strict validation mode - schema violations will not fail tasks`);
+    }
   } catch (err) {
     app.log.error('Failed to start server: ' + (err instanceof Error ? err.message : String(err)));
     process.exit(1);
