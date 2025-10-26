@@ -365,12 +365,15 @@ export class TaskExecutor {
         if (artifacts.length > 0 && artifacts[0].parts && Array.isArray(artifacts[0].parts)) {
           const firstPart = artifacts[0].parts[0];
           if (firstPart?.data) {
+            const extractedData = firstPart.data;
             this.logDebug(debugLogs, 'info', 'Extracting data from A2A artifact structure', {
               artifactCount: artifacts.length,
               partCount: artifacts[0].parts.length,
-              dataKeys: Object.keys(firstPart.data || {})
+              dataKeys: Object.keys(extractedData || {}),
+              hasFormats: !!extractedData?.formats,
+              formatsCount: extractedData?.formats?.length
             });
-            return firstPart.data;
+            return extractedData;
           }
         }
         this.logDebug(debugLogs, 'warning', 'A2A artifacts found but no data extracted', {
