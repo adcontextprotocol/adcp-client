@@ -601,9 +601,19 @@ async function main() {
       if (result.metadata?.clarificationRounds) {
         console.error(`Clarifications: ${result.metadata.clarificationRounds}`);
       }
-      if (debug && result.metadata) {
-        console.error('\nMetadata:');
-        console.error(JSON.stringify(result.metadata, null, 2));
+      if (debug) {
+        if (result.metadata) {
+          console.error('\nMetadata:');
+          console.error(JSON.stringify(result.metadata, null, 2));
+        }
+        if (result.debug_logs && result.debug_logs.length > 0) {
+          console.error('\nDebug Logs:');
+          console.error(JSON.stringify(result.debug_logs, null, 2));
+        }
+        if (result.conversation && result.conversation.length > 0) {
+          console.error('\nConversation:');
+          console.error(JSON.stringify(result.conversation, null, 2));
+        }
       }
       process.exit(3);
     }

@@ -658,6 +658,74 @@ describe('TaskExecutor Error Scenarios', { skip: process.env.CI ? 'Slow tests - 
     });
   });
 
+  describe('MCP Error Response Handling', () => {
+    test('should extract error message from MCP isError response', async () => {
+      ProtocolClient.callTool = mock.fn(async () => {
+        throw new Error("Error calling tool 'list_authorized_properties': name 'get_testing_context' is not defined");
+      });
+
+      const executor = new TaskExecutor();
+      const result = await executor.executeTask(mockAgent, 'errorTask', {});
+
+      assert.strictEqual(result.success, false);
+      assert(result.error.includes("Error calling tool 'list_authorized_properties'"));
+      assert(result.error.includes("name 'get_testing_context' is not defined"));
+    });
+
+    test('should handle MCP error with multiple text content items', async () => {
+      ProtocolClient.callTool = mock.fn(async () => {
+        throw new Error('Primary error message\nAdditional context');
+      });
+
+      const executor = new TaskExecutor();
+      const result = await executor.executeTask(mockAgent, 'multiTextErrorTask', {});
+
+      assert.strictEqual(result.success, false);
+      assert(result.error.includes('Primary error message'));
+      assert(result.error.includes('Additional context'));
+    });
+
+    test('should handle MCP error with empty content array', async () => {
+      ProtocolClient.callTool = mock.fn(async () => {
+        throw new Error("MCP tool 'test_tool' execution failed (no error details provided)");
+      });
+
+      const executor = new TaskExecutor();
+      const result = await executor.executeTask(mockAgent, 'emptyContentErrorTask', {});
+
+      assert.strictEqual(result.success, false);
+      assert(result.error.includes('MCP tool'));
+      assert(result.error.includes('execution failed'));
+    });
+
+    test('should handle MCP error with non-text content items', async () => {
+      ProtocolClient.callTool = mock.fn(async () => {
+        throw new Error("MCP tool 'image_error_tool' execution failed (no error details provided)");
+      });
+
+      const executor = new TaskExecutor();
+      const result = await executor.executeTask(mockAgent, 'nonTextContentErrorTask', {});
+
+      assert.strictEqual(result.success, false);
+      assert(result.error.includes('MCP tool'));
+      assert(result.error.includes('execution failed'));
+    });
+
+    test('should include tool name in fallback error message', async () => {
+      const toolName = 'list_products';
+      ProtocolClient.callTool = mock.fn(async () => {
+        throw new Error(`MCP tool '${toolName}' execution failed (no error details provided)`);
+      });
+
+      const executor = new TaskExecutor();
+      const result = await executor.executeTask(mockAgent, toolName, {});
+
+      assert.strictEqual(result.success, false);
+      assert(result.error.includes(toolName), 'Error message should include tool name');
+      assert(result.error.includes('execution failed'), 'Error message should indicate execution failed');
+    });
+  });
+
   describe('Edge Cases and Boundary Conditions', () => {
     test('should handle extremely long task names and parameters', async () => {
       const longTaskName = 'a'.repeat(1000);

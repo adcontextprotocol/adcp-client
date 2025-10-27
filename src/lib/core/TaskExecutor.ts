@@ -347,6 +347,9 @@ export class TaskExecutor {
    * @internal Exposed for testing purposes
    */
   public extractResponseData(response: any, debugLogs?: any[]): any {
+    // Note: MCP error responses (isError: true) are handled in mcp.ts and thrown as exceptions
+    // They never reach this function - they're caught by the try/catch in executeTask
+
     // MCP responses have structuredContent
     if (response?.structuredContent) {
       this.logDebug(debugLogs, 'info', 'Extracting data from MCP structuredContent', {
