@@ -1,5 +1,9 @@
 import type { CreativeFormat } from '../types';
 
+// Re-export logger utilities
+export { logger, createLogger, type LogLevel, type LoggerConfig } from './logger';
+import { logger } from './logger';
+
 // Configuration constants
 export const REQUEST_TIMEOUT = parseInt(process.env.REQUEST_TIMEOUT || '30000'); // 30 seconds
 export const MAX_CONCURRENT = parseInt(process.env.MAX_CONCURRENT || '5');
@@ -69,12 +73,12 @@ export class CircuitBreaker {
     if (this.state === 'open') {
       if (Date.now() - this.lastFailTime > this.resetTimeout) {
         this.state = 'half-open';
-        console.log(`🔄 Circuit breaker for ${this.agentId} attempting to close...`);
+        logger.info(`🔄 Circuit breaker for ${this.agentId} attempting to close...`);
       } else {
         throw new Error(`Circuit breaker is open for agent ${this.agentId}`);
       }
     }
-    
+
     try {
       const result = await fn();
       this.onSuccess();
@@ -84,22 +88,22 @@ export class CircuitBreaker {
       throw error;
     }
   }
-  
+
   private onSuccess(): void {
     this.failures = 0;
     if (this.state === 'half-open') {
       this.state = 'closed';
-      console.log(`✅ Circuit breaker for ${this.agentId} closed successfully`);
+      logger.info(`✅ Circuit breaker for ${this.agentId} closed successfully`);
     }
   }
-  
+
   private onFailure(): void {
     this.failures++;
     this.lastFailTime = Date.now();
-    
+
     if (this.failures >= this.failureThreshold) {
       this.state = 'open';
-      console.log(`🚨 Circuit breaker opened for agent ${this.agentId} after ${this.failures} failures`);
+      logger.warn(`🚨 Circuit breaker opened for agent ${this.agentId} after ${this.failures} failures`);
     }
   }
 }
