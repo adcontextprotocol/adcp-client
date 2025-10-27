@@ -3892,7 +3892,7 @@
         function setProductsLoadingState(loading, status = null) {
             const header = document.querySelector('#products-section h3, .section h3');
             if (!header || !header.textContent.includes('Products')) return;
-            
+
             if (loading) {
                 header.innerHTML = '📦 Available Products <span style="color: #007bff;">⏳ Loading...</span>';
             } else {
@@ -3901,7 +3901,12 @@
                     'warning': '<span style="color: #ffc107;">⚠️</span>',
                     'error': '<span style="color: #dc3545;">❌</span>'
                 }[status] || '';
-                header.innerHTML = `📦 Available Products ${statusIcon} <span style="color: #666; font-size: 14px; font-weight: normal;">- Auto-loaded with agent data</span>`;
+                const statusMessage = {
+                    'success': '- Auto-loaded with agent data',
+                    'warning': '- Some products loaded',
+                    'error': '- Failed to load'
+                }[status] || '- Auto-loaded with agent data';
+                header.innerHTML = `📦 Available Products ${statusIcon} <span style="color: #666; font-size: 14px; font-weight: normal;">${statusMessage}</span>`;
             }
         }
         
@@ -3909,7 +3914,7 @@
             const header = document.querySelector('h3').parentNode.querySelector('h3');
             const formatsHeader = Array.from(document.querySelectorAll('h3')).find(h => h.textContent.includes('Creative Formats'));
             if (!formatsHeader) return;
-            
+
             if (loading) {
                 formatsHeader.innerHTML = '🎨 Creative Formats <span style="color: #007bff;">⏳ Loading...</span>';
             } else {
@@ -3918,9 +3923,17 @@
                     'warning': '<span style="color: #ffc107;">⚠️</span>',
                     'error': '<span style="color: #dc3545;">❌</span>'
                 }[status] || '';
+                const statusMessage = {
+                    'success': 'Auto-loaded with agent data',
+                    'warning': 'Some formats loaded',
+                    'error': 'Failed to load'
+                }[status] || 'Auto-loaded with agent data';
                 formatsHeader.innerHTML = `🎨 Creative Formats ${statusIcon}`;
-                // Re-add the auto-loaded text
-                formatsHeader.parentNode.querySelector('span').textContent = 'Auto-loaded with agent data';
+                // Re-add the status text
+                const statusSpan = formatsHeader.parentNode.querySelector('span');
+                if (statusSpan) {
+                    statusSpan.textContent = statusMessage;
+                }
             }
         }
         
