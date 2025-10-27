@@ -4,6 +4,9 @@ import { readFileSync, existsSync } from 'fs';
 import { resolve, join } from 'path';
 import type { AgentConfig } from '../types';
 import { ConfigurationError } from '../errors';
+import { logger } from '../utils/logger';
+
+const configLogger = logger.child('ConfigurationManager');
 
 /**
  * Configuration structure for ADCP agents
@@ -66,12 +69,12 @@ export class ConfigurationManager {
     }
 
     // No configuration found
-    console.warn('⚠️  No ADCP agent configuration found');
-    console.log('💡 To configure agents, you can:');
-    console.log('   1. Set SALES_AGENTS_CONFIG environment variable');
-    console.log('   2. Create an adcp.config.json file');
-    console.log('   3. Pass agents directly to the constructor');
-    console.log('\n📖 See documentation for configuration examples');
+    configLogger.warn('No ADCP agent configuration found');
+    configLogger.info('To configure agents:\n' +
+      '   1. Set SALES_AGENTS_CONFIG environment variable\n' +
+      '   2. Create an adcp.config.json file\n' +
+      '   3. Pass agents directly to the constructor\n' +
+      '\n📖 See documentation for configuration examples');
 
     return [];
   }
@@ -86,15 +89,15 @@ export class ConfigurationManager {
         try {
           const config = JSON.parse(configEnv);
           const agents = this.extractAgents(config);
-          
+
           if (agents.length > 0) {
-            console.log(`📡 Loaded ${agents.length} agents from ${envVar}`);
+            configLogger.info(`Loaded ${agents.length} agents from ${envVar}`);
             this.logAgents(agents);
             return agents;
           }
         } catch (error) {
           const errorMessage = error instanceof Error ? error.message : String(error);
-          console.error(`❌ Failed to parse ${envVar}:`, errorMessage);
+          configLogger.error(`Failed to parse ${envVar}`, { error: errorMessage });
           throw new ConfigurationError(
             `Invalid JSON in ${envVar}: ${errorMessage}`,
             envVar
@@ -120,15 +123,15 @@ export class ConfigurationManager {
           const content = readFileSync(fullPath, 'utf8');
           const config = JSON.parse(content);
           const agents = this.extractAgents(config);
-          
+
           if (agents.length > 0) {
-            console.log(`📁 Loaded ${agents.length} agents from ${file}`);
+            configLogger.info(`Loaded ${agents.length} agents from ${file}`);
             this.logAgents(agents);
             return agents;
           }
         } catch (error) {
           const errorMessage = error instanceof Error ? error.message : String(error);
-          console.error(`❌ Failed to load config from ${file}:`, errorMessage);
+          configLogger.error(`Failed to load config from ${file}`, { error: errorMessage });
           throw new ConfigurationError(
             `Invalid config file ${file}: ${errorMessage}`,
             'configFile'
@@ -167,11 +170,11 @@ export class ConfigurationManager {
     agents.forEach((agent) => {
       const protocolIcon = agent.protocol === 'mcp' ? '🔗' : '⚡';
       const authIcon = agent.requiresAuth ? '🔐' : '🌐';
-      console.log(`  ${protocolIcon}${authIcon} ${agent.name} (${agent.protocol.toUpperCase()}) at ${agent.agent_uri}`);
+      configLogger.info(`  ${protocolIcon}${authIcon} ${agent.name} (${agent.protocol.toUpperCase()}) at ${agent.agent_uri}`);
     });
-    
+
     const useRealAgents = process.env.USE_REAL_AGENTS === 'true';
-    console.log(`🔧 Real agents mode: ${useRealAgents ? 'ENABLED' : 'DISABLED'}`);
+    configLogger.info(`Real agents mode: ${useRealAgents ? 'ENABLED' : 'DISABLED'}`);
   }
 
   /**

@@ -3,6 +3,7 @@
  * Provides type-safe callbacks for each AdCP tool completion
  */
 
+import { logger } from '../utils/logger';
 import type {
   GetProductsResponse,
   ListCreativeFormatsResponse,
@@ -260,7 +261,12 @@ export class AsyncHandler {
         await handlerToCall(result, metadata);
       } catch (error) {
         // Log error but don't crash webhook processing
-        console.error(`Error in handler for task ${taskType}:`, error);
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        logger.error(`Error in handler for task ${taskType}`, {
+          taskType,
+          error: errorMessage,
+          metadata
+        });
       }
     }
   }

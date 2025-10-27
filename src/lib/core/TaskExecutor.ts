@@ -6,6 +6,7 @@ import type { AgentConfig } from '../types';
 import { ProtocolClient } from '../protocols';
 import type { Storage } from '../storage/interfaces';
 import { responseValidator } from './ResponseValidator';
+import { logger } from '../utils/logger';
 import type {
   Message,
   InputRequest,
@@ -479,7 +480,8 @@ export class TaskExecutor {
         
       } catch (error) {
         // Network error during polling - continue trying
-        console.warn(`Polling error for task ${taskId}:`, error);
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        logger.warn(`Polling error for task ${taskId}`, { taskId, error: errorMessage });
       }
     }
     
@@ -637,7 +639,8 @@ export class TaskExecutor {
       const response = await ProtocolClient.callTool(agent, 'tasks/list', {});
       return response.tasks || [];
     } catch (error) {
-      console.warn('Failed to list tasks:', error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.warn('Failed to list tasks', { error: errorMessage });
       return [];
     }
   }
@@ -823,7 +826,8 @@ export class TaskExecutor {
         const response = await ProtocolClient.callTool(agent, 'tasks/list', {});
         return response.tasks || [];
       } catch (error) {
-        console.warn('Failed to get remote task list:', error);
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        logger.warn('Failed to get remote task list', { agentId, error: errorMessage });
       }
     }
 
@@ -924,7 +928,7 @@ export class TaskExecutor {
     });
 
     // TODO: Register with remote agent if it supports webhooks
-    console.log(`Webhook registered for agent ${agent.id}: ${webhookUrl}`);
+    logger.info(`Webhook registered for agent ${agent.id}`, { agentId: agent.id, webhookUrl });
   }
 
   /**
@@ -932,7 +936,7 @@ export class TaskExecutor {
    */
   async unregisterWebhook(agent: AgentConfig): Promise<void> {
     this.webhookRegistrations.delete(agent.id);
-    console.log(`Webhook unregistered for agent ${agent.id}`);
+    logger.info(`Webhook unregistered for agent ${agent.id}`, { agentId: agent.id });
   }
 
   /**
@@ -945,7 +949,12 @@ export class TaskExecutor {
           try {
             callback(task);
           } catch (error) {
-            console.error('Error in task event callback:', error);
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            logger.error('Error in task event callback', {
+              taskId: task.taskId,
+              agentId,
+              error: errorMessage
+            });
           }
         }
       });
@@ -992,11 +1001,12 @@ export class TaskExecutor {
           });
         }
 
-        // Console output based on strict mode
+        // Log based on strict mode
+        const logMeta = { taskName, errors: validationResult.errors, strictMode };
         if (strictMode) {
-          console.error(`Schema validation failed for ${taskName}:`, validationResult.errors);
+          logger.error(`Schema validation failed for ${taskName}`, logMeta);
         } else {
-          console.warn(`Schema validation failed for ${taskName} (non-blocking):`, validationResult.errors);
+          logger.warn(`Schema validation failed for ${taskName} (non-blocking)`, logMeta);
         }
 
         // In strict mode, validation failures are treated as invalid
@@ -1014,7 +1024,8 @@ export class TaskExecutor {
         errors: []
       };
     } catch (error) {
-      console.error(`Error during schema validation:`, error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error('Error during schema validation', { taskName, error: errorMessage, strictMode });
       // On validation error, fail safe based on strict mode
       return {
         valid: !strictMode, // In strict mode, treat validation errors as failures

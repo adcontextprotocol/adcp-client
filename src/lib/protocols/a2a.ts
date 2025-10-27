@@ -1,10 +1,14 @@
 // Official A2A client implementation - NO FALLBACKS
+import { logger } from '../utils/logger';
+
 const clientModule = require('@a2a-js/sdk/client');
 const A2AClient = clientModule.A2AClient;
 
 if (!A2AClient) {
   throw new Error('A2A SDK client is required. Please install @a2a-js/sdk');
 }
+
+const a2aLogger = logger.child('A2A');
 
 export async function callA2ATool(
   agentUrl: string,
@@ -41,15 +45,21 @@ export async function callA2ATool(
       })
     };
 
-    debugLogs.push({
-      type: 'info',
-      message: `A2A: Fetch to ${typeof url === 'string' ? url : url.toString()}`,
-      timestamp: new Date().toISOString(),
+    const logMeta = {
       hasAuth: !!authToken,
       headers: authToken
         ? { ...headers, 'Authorization': 'Bearer ***', 'x-adcp-auth': '***' }
         : headers
+    };
+
+    debugLogs.push({
+      type: 'info',
+      message: `A2A: Fetch to ${typeof url === 'string' ? url : url.toString()}`,
+      timestamp: new Date().toISOString(),
+      ...logMeta
     });
+
+    a2aLogger.debug(`Fetch to ${typeof url === 'string' ? url : url.toString()}`, logMeta);
 
     return fetch(url, {
       ...options,
@@ -68,6 +78,8 @@ export async function callA2ATool(
     message: `A2A: Creating client for ${cardUrl}`,
     timestamp: new Date().toISOString()
   });
+
+  a2aLogger.debug(`Creating client for ${cardUrl}`);
 
   const a2aClient = await A2AClient.fromCardUrl(cardUrl, {
     fetchImpl
@@ -91,6 +103,8 @@ export async function callA2ATool(
   
   // Add debug log for A2A call
   const payloadSize = JSON.stringify(requestPayload).length;
+  const callMeta = { payloadSize, skill: toolName, parameters };
+
   debugLogs.push({
     type: 'info',
     message: `A2A: Calling skill ${toolName} with input: ${JSON.stringify(parameters)}. Payload size: ${payloadSize} bytes`,
@@ -98,7 +112,9 @@ export async function callA2ATool(
     payloadSize,
     actualPayload: requestPayload
   });
-  
+
+  a2aLogger.debug(`Calling skill ${toolName}`, callMeta);
+
   // Send message using A2A protocol
   debugLogs.push({
     type: 'info',
@@ -107,19 +123,30 @@ export async function callA2ATool(
     skill: toolName
   });
 
+  a2aLogger.debug('Sending message via sendMessage()', { skill: toolName });
+
   const messageResponse = await a2aClient.sendMessage(requestPayload);
 
   // Add debug log for A2A response
+  const isError = messageResponse?.error || messageResponse?.result?.error;
+  const responseMeta = { skill: toolName, hasError: !!isError };
+
   debugLogs.push({
-    type: messageResponse?.error ? 'error' : 'success',
-    message: `A2A: Response received (${messageResponse?.error ? 'error' : 'success'})`,
+    type: isError ? 'error' : 'success',
+    message: `A2A: Response received (${isError ? 'error' : 'success'})`,
     timestamp: new Date().toISOString(),
     response: messageResponse,
     skill: toolName
   });
-  
+
+  if (isError) {
+    a2aLogger.error('Response received with error', responseMeta);
+  } else {
+    a2aLogger.debug('Response received successfully', responseMeta);
+  }
+
   // Check for JSON-RPC error in response
-  if (messageResponse?.error || messageResponse?.result?.error) {
+  if (isError) {
     const errorObj = messageResponse.error || messageResponse.result?.error;
     const errorMessage = errorObj.message || JSON.stringify(errorObj);
     throw new Error(`A2A agent returned error: ${errorMessage}`);

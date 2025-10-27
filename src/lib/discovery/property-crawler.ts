@@ -11,6 +11,9 @@
 import { ADCPClient } from '../core/ADCPClient';
 import { getPropertyIndex } from './property-index';
 import type { Property, AdAgentsJson } from './types';
+import { logger } from '../utils/logger';
+
+const crawlerLogger = logger.child('PropertyCrawler');
 
 export interface AgentInfo {
   agent_url: string;
@@ -131,7 +134,8 @@ export class PropertyCrawler {
           }
         } catch (error) {
           // Silently skip domains that don't have adagents.json
-          console.warn(`Failed to fetch adagents.json from ${domain}:`, error);
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          crawlerLogger.warn(`Failed to fetch adagents.json from ${domain}`, { domain, error: errorMessage });
         }
       })
     );
