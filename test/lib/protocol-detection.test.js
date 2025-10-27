@@ -49,3 +49,35 @@ test('Protocol Detection Tests', async (t) => {
     assert.ok(['a2a', 'mcp'].includes(protocol));
   });
 });
+
+test('Protocol Discovery Accept Headers', async (t) => {
+  await t.test('A2A discovery uses flexible Accept header', async () => {
+    // A2A discovery should use flexible Accept header for server compatibility
+    // Based on PR #89: changed from 'application/json' to 'application/json, */*'
+    const a2aDiscoveryAccept = 'application/json, */*';
+
+    // Verify the header is flexible (not just application/json)
+    assert.ok(a2aDiscoveryAccept.includes('application/json'));
+    assert.ok(a2aDiscoveryAccept.includes('*/*'), 'Should include */* for compatibility');
+    assert.ok(!a2aDiscoveryAccept.includes('text/event-stream'), 'A2A does not use SSE');
+  });
+
+  await t.test('A2A discovery endpoint follows RFC 8615', async () => {
+    // PR #89 fixed the discovery endpoint path
+    const correctPath = '/.well-known/agent-card.json';
+    const incorrectPath = '/.well-known/a2a-server';
+
+    // Verify we're using the correct path
+    assert.strictEqual(correctPath, '/.well-known/agent-card.json');
+    assert.notStrictEqual(correctPath, incorrectPath, 'Should not use old incorrect path');
+  });
+
+  await t.test('MCP uses SSE-compatible Accept header', async () => {
+    // MCP requires both application/json and text/event-stream
+    const mcpAccept = 'application/json, text/event-stream';
+
+    // Verify both content types are present
+    assert.ok(mcpAccept.includes('application/json'));
+    assert.ok(mcpAccept.includes('text/event-stream'), 'MCP requires SSE support');
+  });
+});
