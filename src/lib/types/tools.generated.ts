@@ -1280,10 +1280,6 @@ export interface CreateMediaBuyRequest {
    * Campaign end date/time in ISO 8601 format
    */
   end_time: string;
-  /**
-   * Total budget for this media buy. Currency is determined by the pricing_option_id selected in each package.
-   */
-  budget: number;
   reporting_webhook?: PushNotificationConfig & {
     /**
      * Frequency for automated reporting delivery. Must be supported by all products in the media buy.
@@ -2341,10 +2337,6 @@ export interface UpdateMediaBuyRequest1 {
    * New end date/time in ISO 8601 format
    */
   end_time?: string;
-  /**
-   * Updated total budget for this media buy. Currency is determined by the pricing_option_id selected in each package.
-   */
-  budget?: number;
   /**
    * Package-specific updates
    */

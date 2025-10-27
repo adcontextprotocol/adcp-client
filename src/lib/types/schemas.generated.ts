@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2025-10-26T19:05:23.349Z
+// Generated at: 2025-10-27T11:18:18.444Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -482,7 +482,6 @@ export const UpdateMediaBuyRequest1Schema = z.object({
     active: z.boolean().optional(),
     start_time: StartTimingSchema.optional(),
     end_time: z.string().optional(),
-    budget: z.number().optional(),
     packages: z.array(z.union([z.record(z.string(), z.unknown()), z.record(z.string(), z.unknown())])).optional(),
     push_notification_config: PushNotificationConfigSchema.optional()
 });
