@@ -1,5 +1,38 @@
 # Changelog
 
+## 2.5.1
+
+### Patch Changes
+
+- 799dc4a: Optimize pre-push git hook for faster development workflow
+
+  - Reduced pre-push hook execution time from 5+ minutes to ~2-5 seconds
+  - Now only runs essential fast checks: TypeScript typecheck + library build
+  - Removed slow operations: schema sync, full test suite
+  - Full validation (tests, schemas) still runs in GitHub Actions CI
+  - Makes git push much faster while catching TypeScript and build errors early
+
+- b257d06: Improved debug logging and error messages for MCP protocol errors
+
+  - CLI now displays debug logs, conversation history, and full metadata when --debug flag is used
+  - MCP error responses (`isError: true`) now extract and display the actual error message from `content[].text`
+  - Previously showed "Unknown error", now shows detailed error like "Error calling tool 'list_authorized_properties': name 'get_testing_context' is not defined"
+  - Makes troubleshooting agent-side errors much easier for developers
+
+- 24a5ed7: UI formatting and error logging improvements
+
+  - Fixed media buy packages to include format_ids array (was causing Pydantic validation errors)
+  - Added error-level logging for failed media buy operations (create, update, get_delivery)
+  - Fixed format objects display in products table (was showing [object Object])
+  - Added runtime schema validation infrastructure with Zod
+  - Added request validation to ADCPClient (fail fast on invalid requests)
+  - Added configurable validation modes (strict/non-strict) via environment variables
+  - Preserved trailing slashes in MCP endpoint discovery
+  - Improved error display in UI debug panel with proper formatting
+  - Added structured logger utility to replace console statements
+  - **BREAKING**: Aligned budget handling with AdCP spec - MediaBuy.budget (object) is now MediaBuy.total_budget (number)
+  - **BREAKING**: Removed budget field from CreateMediaBuyRequest (calculated from packages per spec)
+
 ## 2.5.0
 
 ### Minor Changes
