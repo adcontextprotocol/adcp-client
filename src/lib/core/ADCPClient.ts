@@ -183,8 +183,34 @@ export class ADCPClient {
 
     const authToken = this.agent.auth_token_env;
     const customFetch = authToken ? async (input: any, init?: any) => {
+      // IMPORTANT: Must preserve SDK's default headers (especially Accept header)
+      // Convert existing headers to plain object for merging
+      let existingHeaders: Record<string, string> = {};
+      if (init?.headers) {
+        if (init.headers instanceof Headers) {
+          // Headers object - use forEach to extract all headers
+          init.headers.forEach((value: string, key: string) => {
+            existingHeaders[key] = value;
+          });
+        } else if (Array.isArray(init.headers)) {
+          // Array of [key, value] tuples
+          for (const [key, value] of init.headers) {
+            existingHeaders[key] = value;
+          }
+        } else {
+          // Plain object - copy all properties
+          for (const key in init.headers) {
+            if (Object.prototype.hasOwnProperty.call(init.headers, key)) {
+              existingHeaders[key] = init.headers[key] as string;
+            }
+          }
+        }
+      }
+
+      // Merge auth headers with existing headers
+      // Keep existing headers (including Accept) and only add/override with auth headers
       const headers = {
-        ...init?.headers,
+        ...existingHeaders,
         'Authorization': `Bearer ${authToken}`,
         'x-adcp-auth': authToken
       };
@@ -1070,8 +1096,34 @@ export class ADCPClient {
 
       const authToken = this.agent.auth_token_env;
       const customFetch = authToken ? async (input: any, init?: any) => {
+        // IMPORTANT: Must preserve SDK's default headers (especially Accept header)
+        // Convert existing headers to plain object for merging
+        let existingHeaders: Record<string, string> = {};
+        if (init?.headers) {
+          if (init.headers instanceof Headers) {
+            // Headers object - use forEach to extract all headers
+            init.headers.forEach((value: string, key: string) => {
+              existingHeaders[key] = value;
+            });
+          } else if (Array.isArray(init.headers)) {
+            // Array of [key, value] tuples
+            for (const [key, value] of init.headers) {
+              existingHeaders[key] = value;
+            }
+          } else {
+            // Plain object - copy all properties
+            for (const key in init.headers) {
+              if (Object.prototype.hasOwnProperty.call(init.headers, key)) {
+                existingHeaders[key] = init.headers[key] as string;
+              }
+            }
+          }
+        }
+
+        // Merge auth headers with existing headers
+        // Keep existing headers (including Accept) and only add/override with auth headers
         const headers = {
-          ...init?.headers,
+          ...existingHeaders,
           'Authorization': `Bearer ${authToken}`,
           'x-adcp-auth': authToken
         };
