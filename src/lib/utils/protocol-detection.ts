@@ -23,7 +23,7 @@ export async function detectProtocol(url: string): Promise<'a2a' | 'mcp'> {
 
   // Step 2: Try A2A discovery
   try {
-    const discoveryUrl = new URL('/.well-known/a2a-server', url);
+    const discoveryUrl = new URL('/.well-known/agent-card.json', url);
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 5000); // 5s timeout
 
@@ -31,7 +31,7 @@ export async function detectProtocol(url: string): Promise<'a2a' | 'mcp'> {
       method: 'GET',
       signal: controller.signal,
       headers: {
-        'Accept': 'application/json'
+        'Accept': 'application/json, */*'
       }
     });
 
@@ -66,7 +66,7 @@ export async function detectProtocolWithTimeout(
 
   // Try A2A discovery with custom timeout
   try {
-    const discoveryUrl = new URL('/.well-known/a2a-server', url);
+    const discoveryUrl = new URL('/.well-known/agent-card.json', url);
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -74,7 +74,7 @@ export async function detectProtocolWithTimeout(
       method: 'GET',
       signal: controller.signal,
       headers: {
-        'Accept': 'application/json'
+        'Accept': 'application/json, */*'
       }
     });
 
