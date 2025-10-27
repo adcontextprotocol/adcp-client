@@ -65,11 +65,6 @@ export class ResponseValidator {
       this.validateNotEmpty(response, protocol, warnings);
     }
 
-    // Tool-specific validation
-    if (toolName) {
-      this.validateToolResponse(response, toolName, protocol, errors, warnings);
-    }
-
     // Schema validation if enabled
     let schemaErrors: z.ZodIssue[] | undefined;
     if (options.validateSchema !== false && toolName) {
@@ -244,42 +239,6 @@ export class ResponseValidator {
     }
   }
 
-  /**
-   * Tool-specific validation rules
-   */
-  private validateToolResponse(
-    response: any,
-    toolName: string,
-    protocol: string,
-    errors: string[],
-    warnings: string[]
-  ): void {
-    const expectedFields = this.getExpectedFieldsForTool(toolName);
-    if (expectedFields.length > 0) {
-      this.validateExpectedFields(response, expectedFields, protocol, errors, warnings);
-    }
-  }
-
-  /**
-   * Get expected fields for a given tool
-   */
-  private getExpectedFieldsForTool(toolName: string): string[] {
-    const fieldMap: Record<string, string[]> = {
-      get_products: ['products'],
-      list_creative_formats: ['formats'],
-      list_creatives: ['creatives'],
-      create_media_buy: ['media_buy_id'],
-      update_media_buy: ['success'],
-      sync_creatives: ['synced_creatives'],
-      get_media_buy_delivery: ['delivery'],
-      list_authorized_properties: ['properties'],
-      provide_performance_feedback: ['success'],
-      get_signals: ['signals'],
-      activate_signal: ['success']
-    };
-
-    return fieldMap[toolName] || [];
-  }
 
   /**
    * Quick validation helper - returns true if valid, throws if invalid
