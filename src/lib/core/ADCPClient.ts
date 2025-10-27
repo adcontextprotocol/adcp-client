@@ -1,5 +1,7 @@
 // Main ADCP Client - Type-safe conversation-aware client for AdCP agents
 
+import { z } from 'zod';
+import * as schemas from '../types/schemas.generated';
 import type { AgentConfig } from '../types';
 import type {
   GetProductsRequest,
@@ -69,6 +71,26 @@ export interface ADCPClientConfig extends ConversationConfig {
    * Custom: "https://myapp.com/api/v1/adcp/{agent_id}?operation={operation_id}"
    */
   webhookUrlTemplate?: string;
+  /**
+   * Runtime schema validation options
+   */
+  validation?: {
+    /**
+     * Fail tasks when response schema validation fails (default: true)
+     *
+     * When true: Invalid responses cause task to fail with error
+     * When false: Schema violations are logged but task continues
+     *
+     * @default true
+     */
+    strictSchemaValidation?: boolean;
+    /**
+     * Log all schema validation violations to debug logs (default: true)
+     *
+     * @default true
+     */
+    logSchemaViolations?: boolean;
+  };
 }
 
 /**
@@ -104,7 +126,9 @@ export class ADCPClient {
       enableConversationStorage: config.persistConversations !== false,
       webhookUrlTemplate: config.webhookUrlTemplate,
       agentId: agent.id,
-      webhookSecret: config.webhookSecret
+      webhookSecret: config.webhookSecret,
+      strictSchemaValidation: config.validation?.strictSchemaValidation !== false, // Default: true
+      logSchemaViolations: config.validation?.logSchemaViolations !== false // Default: true
     });
 
     // Create async handler if handlers are provided
@@ -144,10 +168,12 @@ export class ADCPClient {
   }
 
   /**
-   * Discover MCP endpoint by testing the provided path, then trying /mcp
+   * Discover MCP endpoint by testing the provided path, then trying variants
    *
-   * Strategy: Test what the user gave us first. If no MCP server responds,
-   * try adding /mcp to the path. That's it.
+   * Strategy:
+   * 1. Test the exact URL provided (preserving trailing slashes)
+   * 2. If that fails, try with/without trailing slash
+   * 3. If still fails and doesn't end with /mcp, try adding /mcp
    *
    * Note: This is async and called lazily on first agent interaction
    */
@@ -185,24 +211,40 @@ export class ADCPClient {
       }
     };
 
-    // Test what they gave us first
-    const providedUrl = providedUri.replace(/\/$/, ''); // Clean trailing slash
-    if (await testEndpoint(providedUrl)) {
-      return providedUrl;
+    const urlsToTry: string[] = [];
+
+    // 1. Always try the exact URL provided first
+    urlsToTry.push(providedUri);
+
+    // 2. Try the opposite trailing slash variant
+    const hasTrailingSlash = providedUri.endsWith('/');
+    const alternateSlash = hasTrailingSlash
+      ? providedUri.slice(0, -1)  // Remove trailing slash
+      : providedUri + '/';         // Add trailing slash
+    urlsToTry.push(alternateSlash);
+
+    // 3. If URL doesn't end with /mcp or /mcp/, try adding /mcp
+    const normalizedUri = providedUri.replace(/\/$/, '');
+    if (!normalizedUri.endsWith('/mcp')) {
+      urlsToTry.push(normalizedUri + '/mcp');
+      urlsToTry.push(normalizedUri + '/mcp/');
     }
 
-    // No MCP server there, try adding /mcp
-    const withMcp = providedUrl + '/mcp';
-    if (await testEndpoint(withMcp)) {
-      return withMcp;
+    // Remove duplicates while preserving order
+    const uniqueUrls = [...new Set(urlsToTry)];
+
+    // Test each URL
+    for (const url of uniqueUrls) {
+      if (await testEndpoint(url)) {
+        return url;
+      }
     }
 
-    // Neither worked
+    // None worked
     throw new Error(
       `Failed to discover MCP endpoint. Tried:\n` +
-      `  1. ${providedUrl}\n` +
-      `  2. ${withMcp}\n` +
-      `Neither responded to MCP protocol.`
+      uniqueUrls.map((url, i) => `  ${i + 1}. ${url}`).join('\n') + '\n' +
+      `None responded to MCP protocol.`
     );
   }
 
@@ -429,6 +471,9 @@ export class ADCPClient {
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<T>> {
+    // Validate request params against schema
+    this.validateRequest(taskType, params);
+
     const agent = await this.ensureEndpointDiscovered();
     const result = await this.executor.executeTask<T>(
       agent,
@@ -1153,6 +1198,46 @@ export class ADCPClient {
     }
 
     return result.data.formats || [];
+  }
+
+  /**
+   * Validate request parameters against AdCP schema
+   */
+  private validateRequest(taskType: string, params: any): void {
+    const schema = this.getRequestSchema(taskType);
+    if (!schema) {
+      return; // No schema available for this task type
+    }
+
+    try {
+      schema.parse(params);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        const issues = error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('; ');
+        throw new Error(`Request validation failed for ${taskType}: ${issues}`);
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Get request schema for a given task type
+   */
+  private getRequestSchema(taskType: string): z.ZodSchema | null {
+    // Only include schemas that exist (some may not be auto-generated)
+    const schemaMap: Partial<Record<string, z.ZodSchema>> = {
+      list_creative_formats: schemas.ListCreativeFormatsRequestSchema,
+      list_creatives: schemas.ListCreativesRequestSchema,
+      update_media_buy: schemas.UpdateMediaBuyRequestSchema,
+      get_media_buy_delivery: schemas.GetMediaBuyDeliveryRequestSchema,
+      list_authorized_properties: schemas.ListAuthorizedPropertiesRequestSchema,
+      provide_performance_feedback: schemas.ProvidePerformanceFeedbackRequestSchema,
+      get_signals: schemas.GetSignalsRequestSchema,
+      activate_signal: schemas.ActivateSignalRequestSchema,
+      preview_creative: schemas.PreviewCreativeResponseSchema  // Note: using response schema temporarily
+    };
+
+    return schemaMap[taskType] || null;
   }
 }
 

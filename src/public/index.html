@@ -2499,6 +2499,9 @@
                             <option value="AUD">AUD</option>
                         </select>
                     </div>
+                    <small style="color: #666; display: block; margin-top: 5px;">
+                        💡 Currency must match the pricing options of selected products. Final currency is determined by the pricing_option_id in each package.
+                    </small>
                     <div style="margin-top: 10px;">
                         <label>Daily Cap (optional):</label>
                         <input type="number" id="daily-cap" placeholder="1000" min="0">
@@ -3617,81 +3620,87 @@
             const selectedAgent = agents.find(a => a.id === selectedAgentId);
             if (!selectedAgent) {
                 setProductsLoadingState(false, 'error');
-                throw new Error('Agent not found');
+                logEvent('error', 'Agent not found');
+                return;
             }
 
-            // Build AdCP-compliant parameters
-            // brand_manifest must be either a valid URL or a BrandManifest object
-            let brandManifestParam = brandManifest;
             try {
-                new URL(brandManifest);
-                // It's a valid URL, use as-is
-            } catch {
-                // Not a URL, wrap in BrandManifest object per AdCP spec
-                brandManifestParam = {
-                    name: brandManifest
+                // Build AdCP-compliant parameters
+                // brand_manifest must be either a valid URL or a BrandManifest object
+                let brandManifestParam = brandManifest;
+                try {
+                    new URL(brandManifest);
+                    // It's a valid URL, use as-is
+                } catch {
+                    // Not a URL, wrap in BrandManifest object per AdCP spec
+                    brandManifestParam = {
+                        name: brandManifest
+                    };
+                }
+
+                const params = {
+                    brief: 'Discover available advertising products for testing',
+                    brand_manifest: brandManifestParam
                 };
-            }
 
-            const params = {
-                brief: 'Discover available advertising products for testing',
-                brand_manifest: brandManifestParam
-            };
+                // Add filters if any are specified
+                if (deliveryType || formatTypes.length > 0 || isFixedPrice || minExposures) {
+                    params.filters = {};
 
-            // Add filters if any are specified
-            if (deliveryType || formatTypes.length > 0 || isFixedPrice || minExposures) {
-                params.filters = {};
+                    if (deliveryType) {
+                        params.filters.delivery_type = deliveryType;
+                    }
 
-                if (deliveryType) {
-                    params.filters.delivery_type = deliveryType;
+                    if (formatTypes.length > 0) {
+                        params.filters.format_types = formatTypes;
+                    }
+
+                    if (isFixedPrice) {
+                        params.filters.is_fixed_price = true;
+                    }
+
+                    if (minExposures) {
+                        params.filters.min_exposures = parseInt(minExposures, 10);
+                    }
                 }
 
-                if (formatTypes.length > 0) {
-                    params.filters.format_types = formatTypes;
-                }
+                logEvent('info', `🔧 DEBUG: loadProducts calling callADCPTool with 'get_products'`);
+                logEvent('info', `🔧 DEBUG: Parameters: ${JSON.stringify(params, null, 2)}`);
+                const result = await callADCPTool(selectedAgent, 'get_products', params);
 
-                if (isFixedPrice) {
-                    params.filters.is_fixed_price = true;
-                }
+                // Debug: Log the full result structure
+                logEvent('info', `🔧 DEBUG: loadProducts result structure: ${JSON.stringify(result, null, 2)}`);
+                logEvent('info', `🔧 DEBUG: result.products exists? ${!!result?.products}`);
+                logEvent('info', `🔧 DEBUG: result.products length: ${result?.products?.length || 'undefined'}`);
 
-                if (minExposures) {
-                    params.filters.min_exposures = parseInt(minExposures, 10);
-                }
-            }
-
-            logEvent('info', `🔧 DEBUG: loadProducts calling callADCPTool with 'get_products'`);
-            logEvent('info', `🔧 DEBUG: Parameters: ${JSON.stringify(params, null, 2)}`);
-            const result = await callADCPTool(selectedAgent, 'get_products', params);
-            
-            // Debug: Log the full result structure
-            logEvent('info', `🔧 DEBUG: loadProducts result structure: ${JSON.stringify(result, null, 2)}`);
-            logEvent('info', `🔧 DEBUG: result.products exists? ${!!result?.products}`);
-            logEvent('info', `🔧 DEBUG: result.products length: ${result?.products?.length || 'undefined'}`);
-            
-            if (result && result.products) {
-                products = result.products;
-                updateProductsTable();
-                setProductsLoadingState(false, 'success');
-                logEvent('success', `Loaded ${products.length} products`);
-            } else {
-                setProductsLoadingState(false, 'warning');
-                logEvent('warning', 'No products returned from agent - checking result keys...');
-                logEvent('warning', `🔧 DEBUG: Available result keys: ${Object.keys(result || {}).join(', ')}`);
-                
-                // Check other possible locations for products
-                if (result?.data?.products) {
-                    logEvent('info', '🔧 DEBUG: Found products in result.data.products, using those');
-                    products = result.data.products;
+                if (result && result.products) {
+                    products = result.products;
                     updateProductsTable();
                     setProductsLoadingState(false, 'success');
-                    logEvent('success', `Loaded ${products.length} products from result.data.products`);
-                } else if (result?.structuredContent?.products) {
-                    logEvent('info', '🔧 DEBUG: Found products in result.structuredContent.products, using those');
-                    products = result.structuredContent.products;
-                    updateProductsTable();
-                    setProductsLoadingState(false, 'success');
-                    logEvent('success', `Loaded ${products.length} products from result.structuredContent.products`);
+                    logEvent('success', `Loaded ${products.length} products`);
+                } else {
+                    setProductsLoadingState(false, 'warning');
+                    logEvent('warning', 'No products returned from agent - checking result keys...');
+                    logEvent('warning', `🔧 DEBUG: Available result keys: ${Object.keys(result || {}).join(', ')}`);
+
+                    // Check other possible locations for products
+                    if (result?.data?.products) {
+                        logEvent('info', '🔧 DEBUG: Found products in result.data.products, using those');
+                        products = result.data.products;
+                        updateProductsTable();
+                        setProductsLoadingState(false, 'success');
+                        logEvent('success', `Loaded ${products.length} products from result.data.products`);
+                    } else if (result?.structuredContent?.products) {
+                        logEvent('info', '🔧 DEBUG: Found products in result.structuredContent.products, using those');
+                        products = result.structuredContent.products;
+                        updateProductsTable();
+                        setProductsLoadingState(false, 'success');
+                        logEvent('success', `Loaded ${products.length} products from result.structuredContent.products`);
+                    }
                 }
+            } catch (error) {
+                setProductsLoadingState(false, 'error');
+                logEvent('error', `Failed to load products: ${error.message}`);
             }
         }
         
@@ -3709,36 +3718,46 @@
             const selectedAgent = agents.find(a => a.id === selectedAgentId);
             if (!selectedAgent) {
                 setFormatsLoadingState(false, 'error');
-                throw new Error('Agent not found');
+                logEvent('error', 'Agent not found');
+                return;
             }
 
-            // Build AdCP-compliant parameters
-            // Note: adcp_version is not supported by current agent implementations for list_creative_formats
-            const params = {};
+            try {
+                // Build AdCP-compliant parameters
+                // Note: adcp_version is not supported by current agent implementations for list_creative_formats
+                const params = {};
 
-            // Add filters if specified
-            if (formatType) {
-                params.type = formatType;
-            }
-            if (formatCategory) {
-                params.category = formatCategory;
-            }
-            if (standardOnly) {
-                params.standard_only = true;
-            }
+                // Add filters if specified
+                if (formatType) {
+                    params.type = formatType;
+                }
+                if (formatCategory) {
+                    params.category = formatCategory;
+                }
+                if (standardOnly) {
+                    params.standard_only = true;
+                }
 
-            logEvent('info', `🔧 DEBUG: loadCreativeFormats calling callADCPTool with 'list_creative_formats'`);
-            logEvent('info', `🔧 DEBUG: Parameters: ${JSON.stringify(params, null, 2)}`);
-            const result = await callADCPTool(selectedAgent, 'list_creative_formats', params);
-            
-            if (result && result.formats) {
-                creativeFormats = result.formats;
-                updateCreativeFormatsTable();
-                setFormatsLoadingState(false, 'success');
-                logEvent('success', `Loaded ${creativeFormats.length} creative formats`);
-            } else {
-                setFormatsLoadingState(false, 'warning');
-                logEvent('warning', 'No creative formats returned from agent');
+                logEvent('info', `🔧 DEBUG: loadCreativeFormats calling callADCPTool with 'list_creative_formats'`);
+                logEvent('info', `🔧 DEBUG: Parameters: ${JSON.stringify(params, null, 2)}`);
+                const result = await callADCPTool(selectedAgent, 'list_creative_formats', params);
+
+                logEvent('info', `🔧 DEBUG: Result keys: ${Object.keys(result || {}).join(', ')}`);
+                logEvent('info', `🔧 DEBUG: result.formats = ${result?.formats ? result.formats.length : 'undefined'}`);
+
+                if (result && result.formats) {
+                    creativeFormats = result.formats;
+                    updateCreativeFormatsTable();
+                    setFormatsLoadingState(false, 'success');
+                    logEvent('success', `Loaded ${creativeFormats.length} creative formats`);
+                } else {
+                    setFormatsLoadingState(false, 'warning');
+                    logEvent('warning', 'No creative formats returned from agent');
+                    logEvent('info', `🔧 DEBUG: Full result: ${JSON.stringify(result, null, 2)}`);
+                }
+            } catch (error) {
+                setFormatsLoadingState(false, 'error');
+                logEvent('error', `Failed to load creative formats: ${error.message}`);
             }
         }
         
@@ -3876,7 +3895,7 @@
         function setProductsLoadingState(loading, status = null) {
             const header = document.querySelector('#products-section h3, .section h3');
             if (!header || !header.textContent.includes('Products')) return;
-            
+
             if (loading) {
                 header.innerHTML = '📦 Available Products <span style="color: #007bff;">⏳ Loading...</span>';
             } else {
@@ -3885,7 +3904,12 @@
                     'warning': '<span style="color: #ffc107;">⚠️</span>',
                     'error': '<span style="color: #dc3545;">❌</span>'
                 }[status] || '';
-                header.innerHTML = `📦 Available Products ${statusIcon} <span style="color: #666; font-size: 14px; font-weight: normal;">- Auto-loaded with agent data</span>`;
+                const statusMessage = {
+                    'success': '- Auto-loaded with agent data',
+                    'warning': '- Some products loaded',
+                    'error': '- Failed to load'
+                }[status] || '- Auto-loaded with agent data';
+                header.innerHTML = `📦 Available Products ${statusIcon} <span style="color: #666; font-size: 14px; font-weight: normal;">${statusMessage}</span>`;
             }
         }
         
@@ -3893,7 +3917,7 @@
             const header = document.querySelector('h3').parentNode.querySelector('h3');
             const formatsHeader = Array.from(document.querySelectorAll('h3')).find(h => h.textContent.includes('Creative Formats'));
             if (!formatsHeader) return;
-            
+
             if (loading) {
                 formatsHeader.innerHTML = '🎨 Creative Formats <span style="color: #007bff;">⏳ Loading...</span>';
             } else {
@@ -3902,9 +3926,17 @@
                     'warning': '<span style="color: #ffc107;">⚠️</span>',
                     'error': '<span style="color: #dc3545;">❌</span>'
                 }[status] || '';
+                const statusMessage = {
+                    'success': 'Auto-loaded with agent data',
+                    'warning': 'Some formats loaded',
+                    'error': 'Failed to load'
+                }[status] || 'Auto-loaded with agent data';
                 formatsHeader.innerHTML = `🎨 Creative Formats ${statusIcon}`;
-                // Re-add the auto-loaded text
-                formatsHeader.parentNode.querySelector('span').textContent = 'Auto-loaded with agent data';
+                // Re-add the status text
+                const statusSpan = formatsHeader.parentNode.querySelector('span');
+                if (statusSpan) {
+                    statusSpan.textContent = statusMessage;
+                }
             }
         }
         
@@ -4032,7 +4064,18 @@
             if (!formats || !Array.isArray(formats)) {
                 return '<span style="color: #888;">N/A</span>';
             }
-            return formats.slice(0, 2).join(', ') + (formats.length > 2 ? `... (+${formats.length - 2})` : '');
+
+            // Convert formats to strings (handle both format_id strings and format objects)
+            const formatStrings = formats.map(f => {
+                if (typeof f === 'string') {
+                    return f;
+                } else if (f && typeof f === 'object') {
+                    return f.format_id || f.name || JSON.stringify(f).substring(0, 20);
+                }
+                return String(f);
+            });
+
+            return formatStrings.slice(0, 2).join(', ') + (formatStrings.length > 2 ? `... (+${formatStrings.length - 2})` : '');
         }
         
         function getValidationStatusIcon(product) {
@@ -4046,42 +4089,57 @@
                     return '<span title="Validation Error">⚠️</span>';
                 }
             }
-            
-            // AdCP spec compliance check
+
+            // AdCP 2.2.0 spec compliance check
             const adcpViolations = [];
-            
-            // Required fields per AdCP spec
+
+            // Required fields per AdCP 2.2.0 spec
             if (!product.product_id) adcpViolations.push('Missing product_id');
             if (!product.name) adcpViolations.push('Missing name');
             if (!product.description) adcpViolations.push('Missing description');
-            if (product.delivery_type === undefined) adcpViolations.push('Missing delivery_type');
-            if (product.is_fixed_price === undefined) adcpViolations.push('Missing is_fixed_price');
-            
-            // Format fields - spec requires format_ids, but many agents return formats
-            const hasFormats = product.format_ids || product.formats;
-            if (!hasFormats || !Array.isArray(hasFormats)) {
-                adcpViolations.push('Missing format_ids/formats');
+            if (!product.delivery_type) adcpViolations.push('Missing delivery_type');
+            if (!product.delivery_measurement) adcpViolations.push('Missing delivery_measurement');
+
+            // publisher_properties is required (array with at least 1 item)
+            if (!product.publisher_properties || !Array.isArray(product.publisher_properties) || product.publisher_properties.length === 0) {
+                adcpViolations.push('Missing or empty publisher_properties');
             }
-            
-            // Type checking for numeric fields (should be number or null, not string)
-            if (product.cpm !== null && typeof product.cpm !== 'number') {
-                adcpViolations.push('cpm should be number or null');
-            }
-            if (product.min_spend !== null && typeof product.min_spend !== 'number') {
-                adcpViolations.push('min_spend should be number or null');
-            }
-            
-            // Field naming violations
-            if (product.formats && !product.format_ids) {
-                adcpViolations.push('Uses formats instead of format_ids');
-            }
-            
-            if (adcpViolations.length === 0) {
-                return '<span title="AdCP Spec Compliant">✅</span>';
-            } else if (adcpViolations.length <= 2) {
-                return `<span title="Minor AdCP violations: ${adcpViolations.join(', ')}" style="color: orange;">⚠️</span>`;
+
+            // format_ids is required (array of FormatID objects with agent_url and id)
+            if (!product.format_ids || !Array.isArray(product.format_ids) || product.format_ids.length === 0) {
+                adcpViolations.push('Missing or empty format_ids');
             } else {
-                return `<span title="Major AdCP violations: ${adcpViolations.join(', ')}" style="color: red;">❌</span>`;
+                // Validate format_ids structure
+                const invalidFormats = product.format_ids.filter(f =>
+                    !f || typeof f !== 'object' || !f.agent_url || !f.id
+                );
+                if (invalidFormats.length > 0) {
+                    adcpViolations.push('format_ids must be objects with agent_url and id');
+                }
+            }
+
+            // pricing_options is required (array with at least 1 item)
+            if (!product.pricing_options || !Array.isArray(product.pricing_options) || product.pricing_options.length === 0) {
+                adcpViolations.push('Missing or empty pricing_options');
+            }
+
+            // Warn about deprecated fields (for backwards compatibility)
+            if (product.formats && !product.format_ids) {
+                adcpViolations.push('Deprecated: uses formats instead of format_ids');
+            }
+            if (product.cpm !== undefined) {
+                adcpViolations.push('Deprecated: cpm should be in pricing_options');
+            }
+            if (product.min_spend !== undefined) {
+                adcpViolations.push('Deprecated: min_spend should be in pricing_options');
+            }
+
+            if (adcpViolations.length === 0) {
+                return '<span title="AdCP 2.2.0 Spec Compliant">✅</span>';
+            } else if (adcpViolations.length <= 2) {
+                return `<span title="Minor violations: ${adcpViolations.join(', ')}" style="color: orange;">⚠️</span>`;
+            } else {
+                return `<span title="Major violations: ${adcpViolations.join(', ')}" style="color: red;">❌</span>`;
             }
         }
         
@@ -5008,13 +5066,9 @@
                     testingHeaders['X-Jump-To-Event'] = jumpToState;
                 }
                 
-                // Build ADCP-compliant budget structure
-                const budgetConfig = {
-                    total: budget,
-                    currency: currency
-                };
-                if (dailyCap) budgetConfig.daily_cap = parseFloat(dailyCap);
-                if (pacing) budgetConfig.pacing = pacing;
+                // Per AdCP spec: budget is a simple number, currency comes from pricing options
+                // Note: We keep currency in UI state for display/validation purposes
+                const totalBudget = budget;
                 
                 // Build targeting overlay
                 const targetingOverlay = {};
@@ -5030,10 +5084,33 @@
                 }
                 
                 // Build packages array from selected products
-                const packages = selectedProductsData.map(product => ({
-                    product_id: product.product_id,
-                    targeting_overlay: Object.keys(targetingOverlay).length > 0 ? targetingOverlay : undefined
-                }));
+                const packages = selectedProductsData.map(product => {
+                    const pkg = {
+                        product_id: product.product_id,
+                        targeting_overlay: Object.keys(targetingOverlay).length > 0 ? targetingOverlay : undefined,
+                        pacing: pacing
+                    };
+
+                    // Select first pricing option (in real implementation, this should be user-selectable)
+                    if (product.pricing_options && product.pricing_options.length > 0) {
+                        // Find pricing option matching the UI-selected currency, or default to first
+                        const matchingOption = product.pricing_options.find(opt => opt.currency === currency);
+                        const selectedOption = matchingOption || product.pricing_options[0];
+                        pkg.pricing_option_id = selectedOption.pricing_option_id;
+
+                        // Note: Currency validation - warn if mismatch
+                        if (selectedOption.currency !== currency) {
+                            console.warn(`Currency mismatch: UI selected ${currency} but using pricing option with ${selectedOption.currency}`);
+                        }
+                    }
+
+                    // Include format_ids if present in the product (required by AdCP spec)
+                    if (product.format_ids) {
+                        pkg.format_ids = product.format_ids;
+                    }
+
+                    return pkg;
+                });
 
                 // brand_manifest must be either a valid URL or a BrandManifest object
                 let brandManifestParam = brandManifest;
@@ -5055,7 +5132,7 @@
                     po_number: poNumber,
                     start_time: startAsap ? 'asap' : (startDate ? new Date(startDate).toISOString() : new Date().toISOString()),
                     end_time: endDate ? new Date(endDate).toISOString() : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
-                    budget: budgetConfig
+                    budget: totalBudget  // Per AdCP spec: simple number, currency from pricing_option_id
                 };
                 
                 console.log('🚀 ADCP create_media_buy request:', createMediaBuyParams);
