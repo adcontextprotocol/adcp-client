@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.5.2
+
+### Patch Changes
+
+- cc82c4d: Fixed A2A protocol discovery endpoint and Accept headers
+
+  - Changed discovery endpoint from incorrect `/.well-known/a2a-server` to correct `/.well-known/agent-card.json` per A2A spec
+  - Updated Accept header from `application/json` to `application/json, */*` for better compatibility with various server implementations
+  - Updated protocol detection test to correctly expect A2A detection for test-agent.adcontextprotocol.org
+
 ## 2.5.1
 
 ### Patch Changes
