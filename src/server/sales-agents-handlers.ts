@@ -253,7 +253,6 @@ export class SalesAgentsHandlers {
           buyer_ref: additionalParams.buyer_ref || `test-${Date.now()}`,
           brand_manifest: brandManifestForBuy,
           packages: additionalParams.packages || [],
-          budget: additionalParams.budget || 10000, // Default test budget
           start_time: additionalParams.start_time || 'asap',
           end_time: additionalParams.end_time || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString()
         };
