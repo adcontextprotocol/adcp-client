@@ -213,6 +213,25 @@ const activeTasks = new Map<string, {
 }>();
 const conversations = new Map<string, any[]>();
 
+/**
+ * Create a debug log entry for server-side errors
+ */
+function createErrorDebugLog(error: unknown, context?: string): any[] {
+  const errorMessage = error instanceof Error ? error.message : String(error);
+  const errorStack = error instanceof Error ? error.stack : undefined;
+
+  return [{
+    type: 'error',
+    message: context ? `${context}: ${errorMessage}` : errorMessage,
+    timestamp: new Date().toISOString(),
+    error: {
+      message: errorMessage,
+      stack: errorStack,
+      name: error instanceof Error ? error.name : 'Error'
+    }
+  }];
+}
+
 // Helper function to build tool-appropriate parameters
 function buildToolArgs(toolName: string, brief?: string, promotedOffering?: string, additionalParams: any = {}): any {
   const args: any = {};
@@ -778,12 +797,11 @@ app.post<{
       timestamp: new Date().toISOString()
     });
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    const errorStack = error instanceof Error ? error.stack : undefined;
-    app.log.error({ error: errorMessage, stack: errorStack }, 'Get products error');
+    app.log.error({ error }, 'Get products error');
     return reply.code(500).send({
       success: false,
-      error: errorMessage,
+      error: error instanceof Error ? error.message : String(error),
+      debug_logs: createErrorDebugLog(error, 'Server error in get_products'),
       timestamp: new Date().toISOString()
     });
   }
@@ -818,7 +836,9 @@ app.post<{
     app.log.error({ error }, 'List creative formats error');
     return reply.code(500).send({
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown error'
+      error: error instanceof Error ? error.message : 'Unknown error',
+      debug_logs: createErrorDebugLog(error, 'Server error in list_creative_formats'),
+      timestamp: new Date().toISOString()
     });
   }
 });
@@ -860,7 +880,9 @@ app.post<{
     app.log.error({ error }, 'Create media buy error');
     return reply.code(500).send({
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown error'
+      error: error instanceof Error ? error.message : 'Unknown error',
+      debug_logs: createErrorDebugLog(error, 'Server error in create_media_buy'),
+      timestamp: new Date().toISOString()
     });
   }
 });
@@ -902,7 +924,9 @@ app.post<{
     app.log.error({ error }, 'Update media buy error');
     return reply.code(500).send({
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown error'
+      error: error instanceof Error ? error.message : 'Unknown error',
+      debug_logs: createErrorDebugLog(error, 'Server error in update_media_buy'),
+      timestamp: new Date().toISOString()
     });
   }
 });
@@ -935,7 +959,9 @@ app.post<{
     app.log.error({ error }, 'Sync creatives error');
     return reply.code(500).send({
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown error'
+      error: error instanceof Error ? error.message : 'Unknown error',
+      debug_logs: createErrorDebugLog(error),
+      timestamp: new Date().toISOString()
     });
   }
 });
@@ -968,7 +994,9 @@ app.post<{
     app.log.error({ error }, 'List creatives error');
     return reply.code(500).send({
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown error'
+      error: error instanceof Error ? error.message : 'Unknown error',
+      debug_logs: createErrorDebugLog(error),
+      timestamp: new Date().toISOString()
     });
   }
 });
@@ -1001,7 +1029,9 @@ app.post<{
     app.log.error({ error }, 'List authorized properties error');
     return reply.code(500).send({
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown error'
+      error: error instanceof Error ? error.message : 'Unknown error',
+      debug_logs: createErrorDebugLog(error),
+      timestamp: new Date().toISOString()
     });
   }
 });
@@ -1043,7 +1073,9 @@ app.post<{
     app.log.error({ error }, 'Get media buy delivery error');
     return reply.code(500).send({
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown error'
+      error: error instanceof Error ? error.message : 'Unknown error',
+      debug_logs: createErrorDebugLog(error),
+      timestamp: new Date().toISOString()
     });
   }
 });
@@ -1103,7 +1135,9 @@ app.post<{
     app.log.error({ error }, 'Execute task error');
     return reply.code(500).send({
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown error'
+      error: error instanceof Error ? error.message : 'Unknown error',
+      debug_logs: createErrorDebugLog(error),
+      timestamp: new Date().toISOString()
     });
   }
 });
@@ -1147,7 +1181,9 @@ app.get('/api/tasks/:taskId', async (request, reply) => {
     app.log.error({ error }, 'Get task status error');
     return reply.code(500).send({
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown error'
+      error: error instanceof Error ? error.message : 'Unknown error',
+      debug_logs: createErrorDebugLog(error),
+      timestamp: new Date().toISOString()
     });
   }
 });
@@ -1185,7 +1221,9 @@ app.post('/api/tasks/:taskId/continue', async (request, reply) => {
     app.log.error({ error }, 'Continue task error');
     return reply.code(500).send({
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown error'
+      error: error instanceof Error ? error.message : 'Unknown error',
+      debug_logs: createErrorDebugLog(error),
+      timestamp: new Date().toISOString()
     });
   }
 });
@@ -1210,7 +1248,9 @@ app.get('/api/agents/:agentId/conversation', async (request, reply) => {
     app.log.error({ error }, 'Get conversation error');
     return reply.code(500).send({
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown error'
+      error: error instanceof Error ? error.message : 'Unknown error',
+      debug_logs: createErrorDebugLog(error),
+      timestamp: new Date().toISOString()
     });
   }
 });
@@ -1237,7 +1277,9 @@ app.get('/api/tasks', async (request, reply) => {
     app.log.error({ error }, 'List tasks error');
     return reply.code(500).send({
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown error'
+      error: error instanceof Error ? error.message : 'Unknown error',
+      debug_logs: createErrorDebugLog(error),
+      timestamp: new Date().toISOString()
     });
   }
 });
@@ -1465,7 +1507,9 @@ app.post<{
     app.log.error({ error }, 'Register webhook error');
     return reply.code(500).send({
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown error'
+      error: error instanceof Error ? error.message : 'Unknown error',
+      debug_logs: createErrorDebugLog(error),
+      timestamp: new Date().toISOString()
     });
   }
 });
@@ -1526,7 +1570,9 @@ app.post<{
     app.log.error({ error }, 'Webhook callback error');
     return reply.code(500).send({
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown error'
+      error: error instanceof Error ? error.message : 'Unknown error',
+      debug_logs: createErrorDebugLog(error),
+      timestamp: new Date().toISOString()
     });
   }
 });
@@ -1559,7 +1605,9 @@ app.delete<{
     app.log.error({ error }, 'Unregister webhook error');
     return reply.code(500).send({
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown error'
+      error: error instanceof Error ? error.message : 'Unknown error',
+      debug_logs: createErrorDebugLog(error),
+      timestamp: new Date().toISOString()
     });
   }
 });
@@ -1585,7 +1633,9 @@ app.get('/api/webhooks', async (request, reply) => {
     app.log.error({ error }, 'List webhooks error');
     return reply.code(500).send({
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown error'
+      error: error instanceof Error ? error.message : 'Unknown error',
+      debug_logs: createErrorDebugLog(error),
+      timestamp: new Date().toISOString()
     });
   }
 });
@@ -1635,7 +1685,9 @@ app.get('/api/events', async (request, reply) => {
     app.log.error({ error }, 'Get events error');
     return reply.code(500).send({
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown error'
+      error: error instanceof Error ? error.message : 'Unknown error',
+      debug_logs: createErrorDebugLog(error),
+      timestamp: new Date().toISOString()
     });
   }
 });
@@ -1721,7 +1773,9 @@ app.get('/api/tasks/detailed', async (request, reply) => {
     app.log.error({ error }, 'List detailed tasks error');
     return reply.code(500).send({
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown error'
+      error: error instanceof Error ? error.message : 'Unknown error',
+      debug_logs: createErrorDebugLog(error),
+      timestamp: new Date().toISOString()
     });
   }
 });
