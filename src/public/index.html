@@ -3617,81 +3617,87 @@
             const selectedAgent = agents.find(a => a.id === selectedAgentId);
             if (!selectedAgent) {
                 setProductsLoadingState(false, 'error');
-                throw new Error('Agent not found');
+                logEvent('error', 'Agent not found');
+                return;
             }
 
-            // Build AdCP-compliant parameters
-            // brand_manifest must be either a valid URL or a BrandManifest object
-            let brandManifestParam = brandManifest;
             try {
-                new URL(brandManifest);
-                // It's a valid URL, use as-is
-            } catch {
-                // Not a URL, wrap in BrandManifest object per AdCP spec
-                brandManifestParam = {
-                    name: brandManifest
+                // Build AdCP-compliant parameters
+                // brand_manifest must be either a valid URL or a BrandManifest object
+                let brandManifestParam = brandManifest;
+                try {
+                    new URL(brandManifest);
+                    // It's a valid URL, use as-is
+                } catch {
+                    // Not a URL, wrap in BrandManifest object per AdCP spec
+                    brandManifestParam = {
+                        name: brandManifest
+                    };
+                }
+
+                const params = {
+                    brief: 'Discover available advertising products for testing',
+                    brand_manifest: brandManifestParam
                 };
-            }
 
-            const params = {
-                brief: 'Discover available advertising products for testing',
-                brand_manifest: brandManifestParam
-            };
+                // Add filters if any are specified
+                if (deliveryType || formatTypes.length > 0 || isFixedPrice || minExposures) {
+                    params.filters = {};
 
-            // Add filters if any are specified
-            if (deliveryType || formatTypes.length > 0 || isFixedPrice || minExposures) {
-                params.filters = {};
+                    if (deliveryType) {
+                        params.filters.delivery_type = deliveryType;
+                    }
 
-                if (deliveryType) {
-                    params.filters.delivery_type = deliveryType;
+                    if (formatTypes.length > 0) {
+                        params.filters.format_types = formatTypes;
+                    }
+
+                    if (isFixedPrice) {
+                        params.filters.is_fixed_price = true;
+                    }
+
+                    if (minExposures) {
+                        params.filters.min_exposures = parseInt(minExposures, 10);
+                    }
                 }
 
-                if (formatTypes.length > 0) {
-                    params.filters.format_types = formatTypes;
-                }
+                logEvent('info', `🔧 DEBUG: loadProducts calling callADCPTool with 'get_products'`);
+                logEvent('info', `🔧 DEBUG: Parameters: ${JSON.stringify(params, null, 2)}`);
+                const result = await callADCPTool(selectedAgent, 'get_products', params);
 
-                if (isFixedPrice) {
-                    params.filters.is_fixed_price = true;
-                }
+                // Debug: Log the full result structure
+                logEvent('info', `🔧 DEBUG: loadProducts result structure: ${JSON.stringify(result, null, 2)}`);
+                logEvent('info', `🔧 DEBUG: result.products exists? ${!!result?.products}`);
+                logEvent('info', `🔧 DEBUG: result.products length: ${result?.products?.length || 'undefined'}`);
 
-                if (minExposures) {
-                    params.filters.min_exposures = parseInt(minExposures, 10);
-                }
-            }
-
-            logEvent('info', `🔧 DEBUG: loadProducts calling callADCPTool with 'get_products'`);
-            logEvent('info', `🔧 DEBUG: Parameters: ${JSON.stringify(params, null, 2)}`);
-            const result = await callADCPTool(selectedAgent, 'get_products', params);
-            
-            // Debug: Log the full result structure
-            logEvent('info', `🔧 DEBUG: loadProducts result structure: ${JSON.stringify(result, null, 2)}`);
-            logEvent('info', `🔧 DEBUG: result.products exists? ${!!result?.products}`);
-            logEvent('info', `🔧 DEBUG: result.products length: ${result?.products?.length || 'undefined'}`);
-            
-            if (result && result.products) {
-                products = result.products;
-                updateProductsTable();
-                setProductsLoadingState(false, 'success');
-                logEvent('success', `Loaded ${products.length} products`);
-            } else {
-                setProductsLoadingState(false, 'warning');
-                logEvent('warning', 'No products returned from agent - checking result keys...');
-                logEvent('warning', `🔧 DEBUG: Available result keys: ${Object.keys(result || {}).join(', ')}`);
-                
-                // Check other possible locations for products
-                if (result?.data?.products) {
-                    logEvent('info', '🔧 DEBUG: Found products in result.data.products, using those');
-                    products = result.data.products;
+                if (result && result.products) {
+                    products = result.products;
                     updateProductsTable();
                     setProductsLoadingState(false, 'success');
-                    logEvent('success', `Loaded ${products.length} products from result.data.products`);
-                } else if (result?.structuredContent?.products) {
-                    logEvent('info', '🔧 DEBUG: Found products in result.structuredContent.products, using those');
-                    products = result.structuredContent.products;
-                    updateProductsTable();
-                    setProductsLoadingState(false, 'success');
-                    logEvent('success', `Loaded ${products.length} products from result.structuredContent.products`);
+                    logEvent('success', `Loaded ${products.length} products`);
+                } else {
+                    setProductsLoadingState(false, 'warning');
+                    logEvent('warning', 'No products returned from agent - checking result keys...');
+                    logEvent('warning', `🔧 DEBUG: Available result keys: ${Object.keys(result || {}).join(', ')}`);
+
+                    // Check other possible locations for products
+                    if (result?.data?.products) {
+                        logEvent('info', '🔧 DEBUG: Found products in result.data.products, using those');
+                        products = result.data.products;
+                        updateProductsTable();
+                        setProductsLoadingState(false, 'success');
+                        logEvent('success', `Loaded ${products.length} products from result.data.products`);
+                    } else if (result?.structuredContent?.products) {
+                        logEvent('info', '🔧 DEBUG: Found products in result.structuredContent.products, using those');
+                        products = result.structuredContent.products;
+                        updateProductsTable();
+                        setProductsLoadingState(false, 'success');
+                        logEvent('success', `Loaded ${products.length} products from result.structuredContent.products`);
+                    }
                 }
+            } catch (error) {
+                setProductsLoadingState(false, 'error');
+                logEvent('error', `Failed to load products: ${error.message}`);
             }
         }
         
@@ -3709,40 +3715,46 @@
             const selectedAgent = agents.find(a => a.id === selectedAgentId);
             if (!selectedAgent) {
                 setFormatsLoadingState(false, 'error');
-                throw new Error('Agent not found');
+                logEvent('error', 'Agent not found');
+                return;
             }
 
-            // Build AdCP-compliant parameters
-            // Note: adcp_version is not supported by current agent implementations for list_creative_formats
-            const params = {};
+            try {
+                // Build AdCP-compliant parameters
+                // Note: adcp_version is not supported by current agent implementations for list_creative_formats
+                const params = {};
 
-            // Add filters if specified
-            if (formatType) {
-                params.type = formatType;
-            }
-            if (formatCategory) {
-                params.category = formatCategory;
-            }
-            if (standardOnly) {
-                params.standard_only = true;
-            }
+                // Add filters if specified
+                if (formatType) {
+                    params.type = formatType;
+                }
+                if (formatCategory) {
+                    params.category = formatCategory;
+                }
+                if (standardOnly) {
+                    params.standard_only = true;
+                }
 
-            logEvent('info', `🔧 DEBUG: loadCreativeFormats calling callADCPTool with 'list_creative_formats'`);
-            logEvent('info', `🔧 DEBUG: Parameters: ${JSON.stringify(params, null, 2)}`);
-            const result = await callADCPTool(selectedAgent, 'list_creative_formats', params);
+                logEvent('info', `🔧 DEBUG: loadCreativeFormats calling callADCPTool with 'list_creative_formats'`);
+                logEvent('info', `🔧 DEBUG: Parameters: ${JSON.stringify(params, null, 2)}`);
+                const result = await callADCPTool(selectedAgent, 'list_creative_formats', params);
 
-            logEvent('info', `🔧 DEBUG: Result keys: ${Object.keys(result || {}).join(', ')}`);
-            logEvent('info', `🔧 DEBUG: result.formats = ${result?.formats ? result.formats.length : 'undefined'}`);
+                logEvent('info', `🔧 DEBUG: Result keys: ${Object.keys(result || {}).join(', ')}`);
+                logEvent('info', `🔧 DEBUG: result.formats = ${result?.formats ? result.formats.length : 'undefined'}`);
 
-            if (result && result.formats) {
-                creativeFormats = result.formats;
-                updateCreativeFormatsTable();
-                setFormatsLoadingState(false, 'success');
-                logEvent('success', `Loaded ${creativeFormats.length} creative formats`);
-            } else {
-                setFormatsLoadingState(false, 'warning');
-                logEvent('warning', 'No creative formats returned from agent');
-                logEvent('info', `🔧 DEBUG: Full result: ${JSON.stringify(result, null, 2)}`);
+                if (result && result.formats) {
+                    creativeFormats = result.formats;
+                    updateCreativeFormatsTable();
+                    setFormatsLoadingState(false, 'success');
+                    logEvent('success', `Loaded ${creativeFormats.length} creative formats`);
+                } else {
+                    setFormatsLoadingState(false, 'warning');
+                    logEvent('warning', 'No creative formats returned from agent');
+                    logEvent('info', `🔧 DEBUG: Full result: ${JSON.stringify(result, null, 2)}`);
+                }
+            } catch (error) {
+                setFormatsLoadingState(false, 'error');
+                logEvent('error', `Failed to load creative formats: ${error.message}`);
             }
         }
         
