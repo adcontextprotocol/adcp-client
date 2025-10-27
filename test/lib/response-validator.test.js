@@ -237,7 +237,9 @@ describe('ResponseValidator Tests', () => {
         }
       };
 
-      const result = validator.validate(response, 'get_products');
+      const result = validator.validate(response, 'get_products', {
+        expectedFields: ['products']
+      });
 
       assert.strictEqual(result.valid, false);
       assert.ok(result.errors.some(e => e.includes('Missing expected field: products')));
