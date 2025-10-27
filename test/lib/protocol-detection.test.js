@@ -19,9 +19,15 @@ test('Protocol Detection Tests', async (t) => {
     assert.strictEqual(protocol, 'mcp');
   });
 
-  await t.test('detects protocol for real test agent', async () => {
+  await t.test('detects A2A for real test agent (root URL)', async () => {
     const protocol = await detectProtocol('https://test-agent.adcontextprotocol.org');
-    // Should detect MCP (either via heuristic or discovery)
+    // Should detect A2A since the agent has /.well-known/agent-card.json endpoint
+    assert.strictEqual(protocol, 'a2a');
+  });
+
+  await t.test('detects MCP for real test agent (MCP endpoint)', async () => {
+    const protocol = await detectProtocol('https://test-agent.adcontextprotocol.org/mcp/');
+    // Should detect MCP from URL pattern
     assert.strictEqual(protocol, 'mcp');
   });
 
