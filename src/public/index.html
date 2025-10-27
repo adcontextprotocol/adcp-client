@@ -2499,6 +2499,9 @@
                             <option value="AUD">AUD</option>
                         </select>
                     </div>
+                    <small style="color: #666; display: block; margin-top: 5px;">
+                        💡 Currency must match the pricing options of selected products. Final currency is determined by the pricing_option_id in each package.
+                    </small>
                     <div style="margin-top: 10px;">
                         <label>Daily Cap (optional):</label>
                         <input type="number" id="daily-cap" placeholder="1000" min="0">
@@ -5063,13 +5066,9 @@
                     testingHeaders['X-Jump-To-Event'] = jumpToState;
                 }
                 
-                // Build ADCP-compliant budget structure
-                const budgetConfig = {
-                    total: budget,
-                    currency: currency
-                };
-                if (dailyCap) budgetConfig.daily_cap = parseFloat(dailyCap);
-                if (pacing) budgetConfig.pacing = pacing;
+                // Per AdCP spec: budget is a simple number, currency comes from pricing options
+                // Note: We keep currency in UI state for display/validation purposes
+                const totalBudget = budget;
                 
                 // Build targeting overlay
                 const targetingOverlay = {};
@@ -5088,8 +5087,22 @@
                 const packages = selectedProductsData.map(product => {
                     const pkg = {
                         product_id: product.product_id,
-                        targeting_overlay: Object.keys(targetingOverlay).length > 0 ? targetingOverlay : undefined
+                        targeting_overlay: Object.keys(targetingOverlay).length > 0 ? targetingOverlay : undefined,
+                        pacing: pacing
                     };
+
+                    // Select first pricing option (in real implementation, this should be user-selectable)
+                    if (product.pricing_options && product.pricing_options.length > 0) {
+                        // Find pricing option matching the UI-selected currency, or default to first
+                        const matchingOption = product.pricing_options.find(opt => opt.currency === currency);
+                        const selectedOption = matchingOption || product.pricing_options[0];
+                        pkg.pricing_option_id = selectedOption.pricing_option_id;
+
+                        // Note: Currency validation - warn if mismatch
+                        if (selectedOption.currency !== currency) {
+                            console.warn(`Currency mismatch: UI selected ${currency} but using pricing option with ${selectedOption.currency}`);
+                        }
+                    }
 
                     // Include format_ids if present in the product (required by AdCP spec)
                     if (product.format_ids) {
@@ -5119,7 +5132,7 @@
                     po_number: poNumber,
                     start_time: startAsap ? 'asap' : (startDate ? new Date(startDate).toISOString() : new Date().toISOString()),
                     end_time: endDate ? new Date(endDate).toISOString() : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
-                    budget: budgetConfig
+                    budget: totalBudget  // Per AdCP spec: simple number, currency from pricing_option_id
                 };
                 
                 console.log('🚀 ADCP create_media_buy request:', createMediaBuyParams);
