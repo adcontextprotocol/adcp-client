@@ -80,19 +80,22 @@ describe('TaskExecutor Error Scenarios', { skip: process.env.CI ? 'Slow tests - 
       });
 
       const startTime = Date.now();
-      await assert.rejects(
-        executor.executeTask(mockAgent, 'timeoutTask', {}),
-        (error) => {
-          assert(error instanceof TaskTimeoutError);
-          assert(error.message.includes('timed out after 200ms'));
-          
-          const elapsed = Date.now() - startTime;
-          assert(elapsed >= 200, 'Should wait at least timeout duration');
-          assert(elapsed < 500, 'Should not wait much longer than timeout');
-          
-          return true;
-        }
-      );
+
+      // TaskExecutor returns error results instead of throwing
+      const result = await executor.executeTask(mockAgent, 'timeoutTask', {});
+
+      const elapsed = Date.now() - startTime;
+
+      // Verify timeout error was returned as an error result
+      assert.strictEqual(result.success, false);
+      assert.strictEqual(result.status, 'completed');
+      assert(result.error.includes('timed out after 200ms'),
+        `Expected timeout error but got: ${result.error}`);
+      assert.strictEqual(result.metadata.status, 'failed');
+
+      // Verify timing
+      assert(elapsed >= 200, 'Should wait at least timeout duration');
+      assert(elapsed < 500, 'Should not wait much longer than timeout');
     });
 
     test('should handle polling timeout during working status', async () => {
@@ -117,10 +120,15 @@ describe('TaskExecutor Error Scenarios', { skip: process.env.CI ? 'Slow tests - 
         pollingInterval: 10 // Fast polling for tests
       });
 
-      await assert.rejects(
-        executor.executeTask(mockAgent, 'pollingTimeoutTask', {}),
-        TaskTimeoutError
-      );
+      // TaskExecutor returns error results instead of throwing
+      const result = await executor.executeTask(mockAgent, 'pollingTimeoutTask', {});
+
+      // Verify timeout error was returned as an error result
+      assert.strictEqual(result.success, false);
+      assert.strictEqual(result.status, 'completed');
+      assert(result.error.includes('timed out after 300ms'),
+        `Expected timeout error but got: ${result.error}`);
+      assert.strictEqual(result.metadata.status, 'failed');
 
       assert(pollCount >= maxPolls, `Should have polled at least ${maxPolls} times`);
     });
@@ -134,9 +142,15 @@ describe('TaskExecutor Error Scenarios', { skip: process.env.CI ? 'Slow tests - 
         processWebhook: mock.fn()
       };
 
+      let pollCount = 0;
       ProtocolClient.callTool = mock.fn(async (agent, taskName) => {
         if (taskName === 'tasks/get') {
-          // Task remains in working/submitted state indefinitely
+          pollCount++;
+          // After a few polls, complete to avoid infinite polling
+          if (pollCount > 3) {
+            return { task: { status: ADCP_STATUS.COMPLETED, result: { webhook_test: 'done' } } };
+          }
+          // Task remains in working/submitted state for first few polls
           return { task: { status: ADCP_STATUS.WORKING } };
         } else {
           return { status: ADCP_STATUS.SUBMITTED };
@@ -154,16 +168,15 @@ describe('TaskExecutor Error Scenarios', { skip: process.env.CI ? 'Slow tests - 
       );
 
       assert.strictEqual(result.status, 'submitted');
-      
+
       // Test that waitForCompletion can handle timeout scenarios
-      const pollPromise = result.submitted.waitForCompletion(50); // Fast polling
-      
-      // Give it a short time to poll a few times, then verify it's still working
-      await new Promise(resolve => setTimeout(resolve, 20));
-      
-      // In a real implementation, you might want to implement a max poll duration
-      // For now, just verify the polling mechanism is working
+      // Wait for completion with fast polling
+      const finalResult = await result.submitted.waitForCompletion(50);
+
+      // Verify the polling mechanism worked
       assert.strictEqual(mockWebhookManager.generateUrl.mock.callCount(), 1);
+      assert(pollCount > 3, 'Should have polled multiple times');
+      assert.strictEqual(finalResult.success, true);
     });
 
     test('should handle handler execution timeout', async () => {
@@ -766,13 +779,13 @@ describe('TaskExecutor Error Scenarios', { skip: process.env.CI ? 'Slow tests - 
           pollingInterval: 10 // Fast polling for tests
         });
 
-        try {
-          await executor.executeTask(mockAgent, 'invalidTimeoutTask', {});
-          // If no immediate error, the implementation handles invalid timeouts gracefully
-        } catch (error) {
-          // Expected behavior for invalid timeouts
-          assert(error instanceof TaskTimeoutError || error.message.includes('timeout'));
-        }
+        // TaskExecutor returns error results instead of throwing
+        const result = await executor.executeTask(mockAgent, 'invalidTimeoutTask', {});
+
+        // With invalid timeouts (0 or negative), should timeout immediately or handle gracefully
+        // Either way, a WORKING status without completion should result in an error
+        assert.strictEqual(result.success, false);
+        assert(result.error, 'Should have an error message');
       }
     });
 
