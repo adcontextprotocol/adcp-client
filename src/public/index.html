@@ -5137,9 +5137,13 @@
                 if (startAsap) {
                     calculatedStartTime = 'asap';
                 } else if (startDate) {
-                    // Parse the date string and check if it's today
-                    const selectedDate = new Date(startDate);
+                    // Parse the date string in local time (YYYY-MM-DD format)
+                    // Split the date parts to avoid UTC interpretation
+                    const [year, month, day] = startDate.split('-').map(Number);
+                    const selectedDate = new Date(year, month - 1, day); // month is 0-indexed
                     const today = new Date();
+
+                    // Set both to local midnight for comparison
                     today.setHours(0, 0, 0, 0);
                     selectedDate.setHours(0, 0, 0, 0);
 
@@ -5147,9 +5151,8 @@
                         // If start date is today, use current time + 5 minutes to ensure it's in the future
                         calculatedStartTime = new Date(Date.now() + 5 * 60 * 1000).toISOString();
                     } else {
-                        // For future dates, use noon of that day to ensure it's clearly in the future
-                        const futureDate = new Date(startDate);
-                        futureDate.setHours(12, 0, 0, 0);
+                        // For future dates, use noon of that day in local time
+                        const futureDate = new Date(year, month - 1, day, 12, 0, 0, 0);
                         calculatedStartTime = futureDate.toISOString();
                     }
                 } else {
