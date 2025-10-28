@@ -283,8 +283,8 @@ export class TaskExecutor {
         // Some agents return { error: "..." } without success field
         const operationSuccess = completedData?.success !== false && !completedData?.error;
 
-        // Validate response against AdCP schema
-        const validationResult = this.validateResponseSchema(response, taskName, debugLogs);
+        // Validate response against AdCP schema - validate extracted data, not protocol wrapper
+        const validationResult = this.validateResponseSchema(completedData, taskName, debugLogs);
 
         // In strict mode, schema validation failures cause task to fail
         const finalSuccess = operationSuccess && validationResult.valid;
@@ -361,8 +361,8 @@ export class TaskExecutor {
           // Check if the actual operation succeeded
           const defaultSuccess = defaultData?.success !== false && !defaultData?.error;
 
-          // Validate response against AdCP schema
-          const defaultValidation = this.validateResponseSchema(response, taskName, debugLogs);
+          // Validate response against AdCP schema - validate extracted data, not protocol wrapper
+          const defaultValidation = this.validateResponseSchema(defaultData, taskName, debugLogs);
 
           // In strict mode, schema validation failures cause task to fail
           const defaultFinalSuccess = defaultSuccess && defaultValidation.valid;
@@ -423,6 +423,24 @@ export class TaskExecutor {
           const firstPart = artifacts[0].parts[0];
           if (firstPart?.data) {
             const extractedData = firstPart.data;
+
+            // Check if this is a framework-wrapped response (e.g., ADK FunctionResponse)
+            // Framework wrappers typically have: { id, name, response: { actual data } }
+            // This is protocol-agnostic - works for any framework that uses this pattern
+            if (extractedData.response && typeof extractedData.response === 'object') {
+              this.logDebug(debugLogs, 'info', 'Extracting data from framework wrapper', {
+                artifactCount: artifacts.length,
+                partCount: artifacts[0].parts.length,
+                wrapperId: extractedData.id,
+                wrapperName: extractedData.name,
+                responseKeys: Object.keys(extractedData.response || {}),
+                hasFormats: !!extractedData.response?.formats,
+                formatsCount: extractedData.response?.formats?.length
+              });
+              return extractedData.response;
+            }
+
+            // Otherwise return data as-is (direct response, no wrapper)
             this.logDebug(debugLogs, 'info', 'Extracting data from A2A artifact structure', {
               artifactCount: artifacts.length,
               partCount: artifacts[0].parts.length,
