@@ -40,22 +40,16 @@ describe('Zod Schema Validation', () => {
       schemas = await import('../../dist/lib/types/schemas.generated.js');
     }
 
-    // Skip if schema not available (complex circular dependencies)
-    if (!schemas.GetProductsRequestSchema) {
-      console.log('   ⚠️  GetProductsRequestSchema not available (complex dependencies)');
-      return;
-    }
-
     const validRequest = {
       brief: 'Looking for premium display inventory in US',
       brand_manifest: {
-        brand_name: 'Nike',
-        product_catalog: []
+        name: 'Nike',
+        url: 'https://nike.com'
       }
     };
 
     const result = schemas.GetProductsRequestSchema.safeParse(validRequest);
-    assert.ok(result.success, `GetProductsRequest validation should succeed: ${result.error?.message}`);
+    assert.ok(result.success, `GetProductsRequest validation should succeed: ${JSON.stringify(result.error?.issues || result.error)}`);
   });
 
   test('ProductSchema rejects invalid product', async () => {
@@ -77,18 +71,12 @@ describe('Zod Schema Validation', () => {
       schemas = await import('../../dist/lib/types/schemas.generated.js');
     }
 
-    // Skip if schema not available (complex circular dependencies)
-    if (!schemas.GetProductsResponseSchema) {
-      console.log('   ⚠️  GetProductsResponseSchema not available (complex dependencies)');
-      return;
-    }
-
     const validResponse = {
       products: []
     };
 
     const result = schemas.GetProductsResponseSchema.safeParse(validResponse);
-    assert.ok(result.success, `GetProductsResponse validation should succeed: ${result.error?.message}`);
+    assert.ok(result.success, `GetProductsResponse validation should succeed: ${JSON.stringify(result.error?.issues || result.error)}`);
   });
 
   test('CreativeAssetSchema is importable and has parse method', async () => {
