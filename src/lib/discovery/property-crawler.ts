@@ -10,6 +10,7 @@
 
 import { ADCPClient } from '../core/ADCPClient';
 import { getPropertyIndex } from './property-index';
+import { createLogger, type LogLevel } from '../utils/logger';
 import type { Property, AdAgentsJson } from './types';
 
 export interface AgentInfo {
@@ -26,7 +27,18 @@ export interface CrawlResult {
   errors: Array<{ agent_url: string; error: string }>;
 }
 
+export interface PropertyCrawlerConfig {
+  logLevel?: LogLevel;
+}
+
 export class PropertyCrawler {
+  private logger: ReturnType<typeof createLogger>;
+
+  constructor(config?: PropertyCrawlerConfig) {
+    this.logger = createLogger({
+      level: config?.logLevel || 'warn'
+    }).child('PropertyCrawler');
+  }
   /**
    * Crawl multiple agents to discover their publisher domains and properties
    */
@@ -52,15 +64,19 @@ export class PropertyCrawler {
 
           // Store agent → publisher_domains mapping
           index.addAgentAuthorization(agentInfo.agent_url, domains);
+          this.logger.info(`Crawled agent ${agentInfo.agent_url}: found ${domains.length} domains`);
         } else {
           result.failedAgents++;
+          this.logger.debug(`Agent ${agentInfo.agent_url} returned no domains`);
         }
       } catch (error) {
         result.failedAgents++;
+        const errorMessage = error instanceof Error ? error.message : String(error);
         result.errors.push({
           agent_url: agentInfo.agent_url,
-          error: error instanceof Error ? error.message : String(error)
+          error: errorMessage
         });
+        this.logger.error(`Failed to crawl agent ${agentInfo.agent_url}: ${errorMessage}`);
       }
     }
 
@@ -130,13 +146,46 @@ export class PropertyCrawler {
             result[domain] = properties;
           }
         } catch (error) {
-          // Silently skip domains that don't have adagents.json
-          console.warn(`Failed to fetch adagents.json from ${domain}:`, error);
+          // Expected failures (404, HTML responses) are logged at debug level
+          // Unexpected failures (network errors, timeouts) are logged at error level
+          const errorMessage = error instanceof Error ? error.message : String(error);
+
+          if (this.isExpectedFailure(errorMessage)) {
+            this.logger.debug(`Skipping ${domain}: ${errorMessage}`);
+          } else {
+            this.logger.error(`Failed to fetch adagents.json from ${domain}: ${errorMessage}`);
+          }
         }
       })
     );
 
     return result;
+  }
+
+  /**
+   * Expected failure patterns for .well-known/adagents.json fetches.
+   * These are common scenarios where domains don't have adagents.json files.
+   */
+  private static readonly EXPECTED_FAILURE_PATTERNS = [
+    /HTTP 404/i,                                    // Not Found
+    /HTTP 410/i,                                    // Gone
+    /\.well-known\/adagents\.json.*not found/i,    // Specific file not found
+    /is not valid JSON/i,                           // JSON parse errors
+    /Unexpected token.*<[^>]+>/i,                   // HTML tags in JSON response
+    /<!doctype/i                                    // HTML document instead of JSON
+  ];
+
+  /**
+   * Determine if a fetch failure is expected (404, missing file, HTML response).
+   * Expected failures are logged at debug level; unexpected failures at error level.
+   *
+   * @param errorMessage - The error message to check
+   * @returns true if the error is expected and can be safely ignored
+   */
+  private isExpectedFailure(errorMessage: string): boolean {
+    return PropertyCrawler.EXPECTED_FAILURE_PATTERNS.some(
+      pattern => pattern.test(errorMessage)
+    );
   }
 
   /**
