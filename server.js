@@ -12,7 +12,7 @@ const cors = require('cors');
 const { SalesAgentsHandlers } = require('./dist/server/sales-agents-handlers');
 
 const app = express();
-const port = process.env.PORT || 8080;
+const port = process.env.PORT || process.env.CONDUCTOR_PORT || 8080;
 
 // Middleware
 app.use(cors({

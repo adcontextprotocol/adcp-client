@@ -5112,8 +5112,12 @@
                     }
 
                     // Include format_ids if present in the product (required by AdCP spec)
-                    if (product.format_ids) {
-                        pkg.format_ids = product.format_ids;
+                    // Ensure format_ids are plain objects for proper JSON serialization
+                    if (product.format_ids && Array.isArray(product.format_ids)) {
+                        pkg.format_ids = product.format_ids.map(formatId => ({
+                            agent_url: formatId.agent_url,
+                            id: formatId.id
+                        }));
                     }
 
                     return pkg;

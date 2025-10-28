@@ -1969,7 +1969,7 @@ app.post<{
 // Start server
 const start = async () => {
   try {
-    const port = parseInt(process.env.PORT || '8080');
+    const port = parseInt(process.env.PORT || process.env.CONDUCTOR_PORT || '8080');
     const host = process.env.HOST || (process.env.NODE_ENV === 'production' ? '0.0.0.0' : '127.0.0.1');
     
     await app.listen({ 
