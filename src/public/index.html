@@ -4770,11 +4770,18 @@
                 displayDebugLogs(result.debug_logs, agent);
             }
 
-            // Handle errors
-            if (!response.ok || !result.success) {
+            // Handle HTTP errors (network issues, server errors)
+            if (!response.ok) {
                 const errorMsg = result.error || `HTTP ${response.status}`;
                 logEvent('error', `❌ Error: ${errorMsg}`);
                 throw new Error(errorMsg);
+            }
+
+            // For validation errors (success: false but HTTP 200), return the result
+            // so the caller can handle the validation errors appropriately
+            if (!result.success) {
+                logEvent('warning', `⚠️ ${toolName} returned validation errors`);
+                return result.data || result;
             }
 
             logEvent('success', `✅ ${toolName} completed successfully`);
@@ -5125,12 +5132,40 @@
                 }
 
                 // Build ADCP create_media_buy parameters
+                // Calculate start_time ensuring it's always in the future
+                let calculatedStartTime;
+                if (startAsap) {
+                    calculatedStartTime = 'asap';
+                } else if (startDate) {
+                    // Parse the date string in local time (YYYY-MM-DD format)
+                    // Split the date parts to avoid UTC interpretation
+                    const [year, month, day] = startDate.split('-').map(Number);
+                    const selectedDate = new Date(year, month - 1, day); // month is 0-indexed
+                    const today = new Date();
+
+                    // Set both to local midnight for comparison
+                    today.setHours(0, 0, 0, 0);
+                    selectedDate.setHours(0, 0, 0, 0);
+
+                    if (selectedDate.getTime() === today.getTime()) {
+                        // If start date is today, use current time + 5 minutes to ensure it's in the future
+                        calculatedStartTime = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+                    } else {
+                        // For future dates, use noon of that day in local time
+                        const futureDate = new Date(year, month - 1, day, 12, 0, 0, 0);
+                        calculatedStartTime = futureDate.toISOString();
+                    }
+                } else {
+                    // No date provided, use current time + 5 minutes
+                    calculatedStartTime = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+                }
+
                 const createMediaBuyParams = {
                     buyer_ref: buyerRef,
                     packages: packages,
                     brand_manifest: brandManifestParam,
                     po_number: poNumber,
-                    start_time: startAsap ? 'asap' : (startDate ? new Date(startDate).toISOString() : new Date().toISOString()),
+                    start_time: calculatedStartTime,
                     end_time: endDate ? new Date(endDate).toISOString() : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
                     budget: totalBudget  // Per AdCP spec: simple number, currency from pricing_option_id
                 };
@@ -5238,6 +5273,7 @@
                 
             } catch (error) {
                 logEvent('error', `Failed to create media buy: ${error.message}`);
+                alert(`Failed to create media buy:\n\n${error.message}\n\nPlease check the debug logs for more details.`);
             }
         }
 
