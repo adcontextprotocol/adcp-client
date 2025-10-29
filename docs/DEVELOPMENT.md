@@ -108,7 +108,7 @@ Documentation is automatically deployed via GitHub Actions:
    - Generate TypeDoc API docs
    - Build Jekyll site
    - Deploy to GitHub Pages
-3. **URL:** `https://adcontextprotocol.github.io/adcp-client/`
+3. **URL:** `https://docs.adcontextprotocol.org`
 
 ## 📝 Writing Documentation
 

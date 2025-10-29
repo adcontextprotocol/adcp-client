@@ -4,8 +4,8 @@
   "out": "docs/api",
   "name": "@adcp/client API Reference",
   "navigationLinks": {
-    "Documentation": "https://your-org.github.io/adcp-client",
-    "GitHub": "https://github.com/your-org/adcp-client",
+    "Documentation": "https://docs.adcontextprotocol.org",
+    "GitHub": "https://github.com/adcontextprotocol/adcp-client",
     "npm": "https://www.npmjs.com/package/@adcp/client"
   },
   "includeVersion": true,

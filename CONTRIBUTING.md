@@ -210,7 +210,7 @@ Great bug reports tend to have:
 - What actually happens
 - Notes (possibly including why you think this might be happening, or stuff you tried that didn't work)
 
-Use our [bug report template](https://github.com/your-org/adcp-client/issues/new?template=bug_report.md).
+Use our [bug report template](https://github.com/adcontextprotocol/adcp-client/issues/new?template=bug_report.md).
 
 ## Feature Requests
 
@@ -221,7 +221,7 @@ We love feature requests! Please:
 - Provide use cases and examples
 - Consider if this belongs in the core library or as a plugin
 
-Use our [feature request template](https://github.com/your-org/adcp-client/issues/new?template=feature_request.md).
+Use our [feature request template](https://github.com/adcontextprotocol/adcp-client/issues/new?template=feature_request.md).
 
 ## API Design Principles
 
