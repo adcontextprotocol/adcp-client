@@ -598,6 +598,6 @@ Apache 2.0 License - see [LICENSE](LICENSE) file for details.
 
 ## Support
 
-- **Documentation**: [GitHub Pages](https://your-org.github.io/adcp-client/)
-- **Issues**: [GitHub Issues](https://github.com/your-org/adcp-client/issues)
+- **Documentation**: [GitHub Pages](https://adcontextprotocol.github.io/adcp-client/)
+- **Issues**: [GitHub Issues](https://github.com/adcontextprotocol/adcp-client/issues)
 - **Protocol Spec**: [AdCP Specification](https://github.com/adcontextprotocol/adcp)
