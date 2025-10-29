@@ -117,6 +117,12 @@ const clientConfig: ADCPClientConfig = {
   webhookUrlTemplate: WEBHOOK_URL_TEMPLATE,
   webhookSecret: WEBHOOK_SECRET,
 
+  // Schema validation configuration (can be controlled via env vars)
+  validation: {
+    strictSchemaValidation: process.env.ADCP_STRICT_VALIDATION !== 'false', // Default: true
+    logSchemaViolations: process.env.ADCP_LOG_SCHEMA_VIOLATIONS !== 'false' // Default: true
+  },
+
   // Activity logging - store ALL events
   onActivity: (activity) => {
     storeEvent({
@@ -206,6 +212,25 @@ const activeTasks = new Map<string, {
   startTime: Date;
 }>();
 const conversations = new Map<string, any[]>();
+
+/**
+ * Create a debug log entry for server-side errors
+ */
+function createErrorDebugLog(error: unknown, context?: string): any[] {
+  const errorMessage = error instanceof Error ? error.message : String(error);
+  const errorStack = error instanceof Error ? error.stack : undefined;
+
+  return [{
+    type: 'error',
+    message: context ? `${context}: ${errorMessage}` : errorMessage,
+    timestamp: new Date().toISOString(),
+    error: {
+      message: errorMessage,
+      stack: errorStack,
+      name: error instanceof Error ? error.name : 'Error'
+    }
+  }];
+}
 
 // Helper function to build tool-appropriate parameters
 function buildToolArgs(toolName: string, brief?: string, promotedOffering?: string, additionalParams: any = {}): any {
@@ -583,6 +608,28 @@ app.get('/api/sales/agents', async (request, reply) => {
   }
 });
 
+// Get agent info endpoint
+app.get('/api/sales/agents/:agentId/info', async (request, reply) => {
+  const { agentId } = request.params as { agentId: string };
+
+  try {
+    const agent = adcpClient.getAgent(agentId);
+    const agentInfo = await agent.getAgentInfo();
+    return reply.send({
+      success: true,
+      data: agentInfo,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    app.log.error(`Failed to get agent info for ${agentId}: ${error instanceof Error ? error.message : String(error)}`);
+    return reply.code(500).send({
+      success: false,
+      error: error instanceof Error ? error.message : 'Failed to get agent info',
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
 
 // Helper function to extract data from nested A2A/MCP responses
 function extractResponseData(result: any): any {
@@ -750,12 +797,11 @@ app.post<{
       timestamp: new Date().toISOString()
     });
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    const errorStack = error instanceof Error ? error.stack : undefined;
-    app.log.error({ error: errorMessage, stack: errorStack }, 'Get products error');
+    app.log.error({ error }, 'Get products error');
     return reply.code(500).send({
       success: false,
-      error: errorMessage,
+      error: error instanceof Error ? error.message : String(error),
+      debug_logs: createErrorDebugLog(error, 'Server error in get_products'),
       timestamp: new Date().toISOString()
     });
   }
@@ -790,7 +836,9 @@ app.post<{
     app.log.error({ error }, 'List creative formats error');
     return reply.code(500).send({
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown error'
+      error: error instanceof Error ? error.message : 'Unknown error',
+      debug_logs: createErrorDebugLog(error, 'Server error in list_creative_formats'),
+      timestamp: new Date().toISOString()
     });
   }
 });
@@ -811,6 +859,15 @@ app.post<{
     const client = getAgentClient(agentId, agentConfig);
     const result = await client.createMediaBuy(params, createDefaultInputHandler());
 
+    // Log failures at error level so they appear in monitoring
+    if (!result.success) {
+      app.log.error({
+        agentId,
+        error: result.error,
+        metadata: result.metadata
+      }, 'Create media buy failed');
+    }
+
     return reply.send({
       success: result.success,
       data: result.data,
@@ -823,7 +880,9 @@ app.post<{
     app.log.error({ error }, 'Create media buy error');
     return reply.code(500).send({
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown error'
+      error: error instanceof Error ? error.message : 'Unknown error',
+      debug_logs: createErrorDebugLog(error, 'Server error in create_media_buy'),
+      timestamp: new Date().toISOString()
     });
   }
 });
@@ -844,6 +903,15 @@ app.post<{
     const client = getAgentClient(agentId, agentConfig);
     const result = await client.updateMediaBuy(params, createDefaultInputHandler());
 
+    // Log failures at error level so they appear in monitoring
+    if (!result.success) {
+      app.log.error({
+        agentId,
+        error: result.error,
+        metadata: result.metadata
+      }, 'Update media buy failed');
+    }
+
     return reply.send({
       success: result.success,
       data: result.data,
@@ -856,7 +924,9 @@ app.post<{
     app.log.error({ error }, 'Update media buy error');
     return reply.code(500).send({
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown error'
+      error: error instanceof Error ? error.message : 'Unknown error',
+      debug_logs: createErrorDebugLog(error, 'Server error in update_media_buy'),
+      timestamp: new Date().toISOString()
     });
   }
 });
@@ -889,7 +959,9 @@ app.post<{
     app.log.error({ error }, 'Sync creatives error');
     return reply.code(500).send({
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown error'
+      error: error instanceof Error ? error.message : 'Unknown error',
+      debug_logs: createErrorDebugLog(error),
+      timestamp: new Date().toISOString()
     });
   }
 });
@@ -922,7 +994,9 @@ app.post<{
     app.log.error({ error }, 'List creatives error');
     return reply.code(500).send({
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown error'
+      error: error instanceof Error ? error.message : 'Unknown error',
+      debug_logs: createErrorDebugLog(error),
+      timestamp: new Date().toISOString()
     });
   }
 });
@@ -955,7 +1029,9 @@ app.post<{
     app.log.error({ error }, 'List authorized properties error');
     return reply.code(500).send({
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown error'
+      error: error instanceof Error ? error.message : 'Unknown error',
+      debug_logs: createErrorDebugLog(error),
+      timestamp: new Date().toISOString()
     });
   }
 });
@@ -976,6 +1052,15 @@ app.post<{
     const client = getAgentClient(agentId, agentConfig);
     const result = await client.getMediaBuyDelivery(params, createDefaultInputHandler());
 
+    // Log failures at error level so they appear in monitoring
+    if (!result.success) {
+      app.log.error({
+        agentId,
+        error: result.error,
+        metadata: result.metadata
+      }, 'Get media buy delivery failed');
+    }
+
     return reply.send({
       success: result.success,
       data: result.data,
@@ -988,7 +1073,9 @@ app.post<{
     app.log.error({ error }, 'Get media buy delivery error');
     return reply.code(500).send({
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown error'
+      error: error instanceof Error ? error.message : 'Unknown error',
+      debug_logs: createErrorDebugLog(error),
+      timestamp: new Date().toISOString()
     });
   }
 });
@@ -1048,7 +1135,9 @@ app.post<{
     app.log.error({ error }, 'Execute task error');
     return reply.code(500).send({
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown error'
+      error: error instanceof Error ? error.message : 'Unknown error',
+      debug_logs: createErrorDebugLog(error),
+      timestamp: new Date().toISOString()
     });
   }
 });
@@ -1092,7 +1181,9 @@ app.get('/api/tasks/:taskId', async (request, reply) => {
     app.log.error({ error }, 'Get task status error');
     return reply.code(500).send({
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown error'
+      error: error instanceof Error ? error.message : 'Unknown error',
+      debug_logs: createErrorDebugLog(error),
+      timestamp: new Date().toISOString()
     });
   }
 });
@@ -1130,7 +1221,9 @@ app.post('/api/tasks/:taskId/continue', async (request, reply) => {
     app.log.error({ error }, 'Continue task error');
     return reply.code(500).send({
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown error'
+      error: error instanceof Error ? error.message : 'Unknown error',
+      debug_logs: createErrorDebugLog(error),
+      timestamp: new Date().toISOString()
     });
   }
 });
@@ -1155,7 +1248,9 @@ app.get('/api/agents/:agentId/conversation', async (request, reply) => {
     app.log.error({ error }, 'Get conversation error');
     return reply.code(500).send({
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown error'
+      error: error instanceof Error ? error.message : 'Unknown error',
+      debug_logs: createErrorDebugLog(error),
+      timestamp: new Date().toISOString()
     });
   }
 });
@@ -1182,7 +1277,9 @@ app.get('/api/tasks', async (request, reply) => {
     app.log.error({ error }, 'List tasks error');
     return reply.code(500).send({
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown error'
+      error: error instanceof Error ? error.message : 'Unknown error',
+      debug_logs: createErrorDebugLog(error),
+      timestamp: new Date().toISOString()
     });
   }
 });
@@ -1410,7 +1507,9 @@ app.post<{
     app.log.error({ error }, 'Register webhook error');
     return reply.code(500).send({
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown error'
+      error: error instanceof Error ? error.message : 'Unknown error',
+      debug_logs: createErrorDebugLog(error),
+      timestamp: new Date().toISOString()
     });
   }
 });
@@ -1471,7 +1570,9 @@ app.post<{
     app.log.error({ error }, 'Webhook callback error');
     return reply.code(500).send({
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown error'
+      error: error instanceof Error ? error.message : 'Unknown error',
+      debug_logs: createErrorDebugLog(error),
+      timestamp: new Date().toISOString()
     });
   }
 });
@@ -1504,7 +1605,9 @@ app.delete<{
     app.log.error({ error }, 'Unregister webhook error');
     return reply.code(500).send({
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown error'
+      error: error instanceof Error ? error.message : 'Unknown error',
+      debug_logs: createErrorDebugLog(error),
+      timestamp: new Date().toISOString()
     });
   }
 });
@@ -1530,7 +1633,9 @@ app.get('/api/webhooks', async (request, reply) => {
     app.log.error({ error }, 'List webhooks error');
     return reply.code(500).send({
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown error'
+      error: error instanceof Error ? error.message : 'Unknown error',
+      debug_logs: createErrorDebugLog(error),
+      timestamp: new Date().toISOString()
     });
   }
 });
@@ -1580,7 +1685,9 @@ app.get('/api/events', async (request, reply) => {
     app.log.error({ error }, 'Get events error');
     return reply.code(500).send({
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown error'
+      error: error instanceof Error ? error.message : 'Unknown error',
+      debug_logs: createErrorDebugLog(error),
+      timestamp: new Date().toISOString()
     });
   }
 });
@@ -1666,7 +1773,9 @@ app.get('/api/tasks/detailed', async (request, reply) => {
     app.log.error({ error }, 'List detailed tasks error');
     return reply.code(500).send({
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown error'
+      error: error instanceof Error ? error.message : 'Unknown error',
+      debug_logs: createErrorDebugLog(error),
+      timestamp: new Date().toISOString()
     });
   }
 });
@@ -1872,6 +1981,14 @@ const start = async () => {
     app.log.info(`🚀 AdCP Testing Framework running on http://${host}:${port}`);
     app.log.info(`📋 API available at http://${host}:${port}/api`);
     app.log.info(`🌐 UI available at http://${host}:${port}`);
+
+    // Log validation configuration
+    const strictMode = clientConfig.validation?.strictSchemaValidation !== false;
+    const logViolations = clientConfig.validation?.logSchemaViolations !== false;
+    app.log.info(`✅ Schema validation: ${strictMode ? 'STRICT' : 'NON-STRICT'} (${logViolations ? 'logging enabled' : 'logging disabled'})`);
+    if (!strictMode) {
+      app.log.warn(`⚠️  Non-strict validation mode - schema violations will not fail tasks`);
+    }
   } catch (err) {
     app.log.error('Failed to start server: ' + (err instanceof Error ? err.message : String(err)));
     process.exit(1);
@@ -1910,6 +2027,7 @@ app.post<{
     const { task_type: taskType, agent_id: agentId, operation_id: operationId } = request.params;
     const payload = request.body;
     const signature = request.headers['x-adcp-signature'] as string | undefined;
+    const timestamp = request.headers['x-adcp-timestamp'] as string | undefined;
 
     app.log.info(`Webhook received: ${taskType} for operation ${operationId}`);
 
@@ -1948,7 +2066,7 @@ app.post<{
     // The webhook URL was generated with this agent_id during operation setup
     // We use it to look up the correct agent configuration (auth, protocol, etc)
     const agent = adcpClient.agent(agentId);
-    const handled = await agent.handleWebhook(enrichedPayload, signature);
+    const handled = await agent.handleWebhook(enrichedPayload, signature, timestamp);
 
     if (!handled) {
       app.log.warn(`Webhook not handled - no handlers configured`);

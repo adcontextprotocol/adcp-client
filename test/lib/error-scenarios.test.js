@@ -80,19 +80,22 @@ describe('TaskExecutor Error Scenarios', { skip: process.env.CI ? 'Slow tests - 
       });
 
       const startTime = Date.now();
-      await assert.rejects(
-        executor.executeTask(mockAgent, 'timeoutTask', {}),
-        (error) => {
-          assert(error instanceof TaskTimeoutError);
-          assert(error.message.includes('timed out after 200ms'));
-          
-          const elapsed = Date.now() - startTime;
-          assert(elapsed >= 200, 'Should wait at least timeout duration');
-          assert(elapsed < 500, 'Should not wait much longer than timeout');
-          
-          return true;
-        }
-      );
+
+      // TaskExecutor returns error results instead of throwing
+      const result = await executor.executeTask(mockAgent, 'timeoutTask', {});
+
+      const elapsed = Date.now() - startTime;
+
+      // Verify timeout error was returned as an error result
+      assert.strictEqual(result.success, false);
+      assert.strictEqual(result.status, 'completed');
+      assert(result.error.includes('timed out after 200ms'),
+        `Expected timeout error but got: ${result.error}`);
+      assert.strictEqual(result.metadata.status, 'failed');
+
+      // Verify timing
+      assert(elapsed >= 200, 'Should wait at least timeout duration');
+      assert(elapsed < 500, 'Should not wait much longer than timeout');
     });
 
     test('should handle polling timeout during working status', async () => {
@@ -117,10 +120,15 @@ describe('TaskExecutor Error Scenarios', { skip: process.env.CI ? 'Slow tests - 
         pollingInterval: 10 // Fast polling for tests
       });
 
-      await assert.rejects(
-        executor.executeTask(mockAgent, 'pollingTimeoutTask', {}),
-        TaskTimeoutError
-      );
+      // TaskExecutor returns error results instead of throwing
+      const result = await executor.executeTask(mockAgent, 'pollingTimeoutTask', {});
+
+      // Verify timeout error was returned as an error result
+      assert.strictEqual(result.success, false);
+      assert.strictEqual(result.status, 'completed');
+      assert(result.error.includes('timed out after 300ms'),
+        `Expected timeout error but got: ${result.error}`);
+      assert.strictEqual(result.metadata.status, 'failed');
 
       assert(pollCount >= maxPolls, `Should have polled at least ${maxPolls} times`);
     });
@@ -134,9 +142,15 @@ describe('TaskExecutor Error Scenarios', { skip: process.env.CI ? 'Slow tests - 
         processWebhook: mock.fn()
       };
 
+      let pollCount = 0;
       ProtocolClient.callTool = mock.fn(async (agent, taskName) => {
         if (taskName === 'tasks/get') {
-          // Task remains in working/submitted state indefinitely
+          pollCount++;
+          // After a few polls, complete to avoid infinite polling
+          if (pollCount > 3) {
+            return { task: { status: ADCP_STATUS.COMPLETED, result: { webhook_test: 'done' } } };
+          }
+          // Task remains in working/submitted state for first few polls
           return { task: { status: ADCP_STATUS.WORKING } };
         } else {
           return { status: ADCP_STATUS.SUBMITTED };
@@ -154,16 +168,15 @@ describe('TaskExecutor Error Scenarios', { skip: process.env.CI ? 'Slow tests - 
       );
 
       assert.strictEqual(result.status, 'submitted');
-      
+
       // Test that waitForCompletion can handle timeout scenarios
-      const pollPromise = result.submitted.waitForCompletion(50); // Fast polling
-      
-      // Give it a short time to poll a few times, then verify it's still working
-      await new Promise(resolve => setTimeout(resolve, 20));
-      
-      // In a real implementation, you might want to implement a max poll duration
-      // For now, just verify the polling mechanism is working
+      // Wait for completion with fast polling
+      const finalResult = await result.submitted.waitForCompletion(50);
+
+      // Verify the polling mechanism worked
       assert.strictEqual(mockWebhookManager.generateUrl.mock.callCount(), 1);
+      assert(pollCount > 3, 'Should have polled multiple times');
+      assert.strictEqual(finalResult.success, true);
     });
 
     test('should handle handler execution timeout', async () => {
@@ -408,9 +421,12 @@ describe('TaskExecutor Error Scenarios', { skip: process.env.CI ? 'Slow tests - 
         {}
       );
 
-      // Should treat malformed response as completed if it has any data
-      assert.strictEqual(result.success, true);
-      assert.strictEqual(result.data, 'invalid json response');
+      // TaskExecutor should catch the error and return an error result
+      // A plain string without status is not a valid ADCP response
+      assert.strictEqual(result.success, false);
+      assert.strictEqual(result.status, 'completed');
+      assert(result.error.includes('Unknown status'));
+      assert.strictEqual(result.metadata.status, 'failed');
     });
 
     test('should handle responses with invalid status codes', async () => {
@@ -445,25 +461,34 @@ describe('TaskExecutor Error Scenarios', { skip: process.env.CI ? 'Slow tests - 
         undefined // Undefined response
       ];
 
+      let handledGracefully = 0;
+      let threwError = 0;
+
       for (const [index, response] of incompleteResponses.entries()) {
         ProtocolClient.callTool = mock.fn(async () => response);
 
         const executor = new TaskExecutor();
-        
+
         try {
           const result = await executor.executeTask(
             mockAgent,
             `incompleteResponse_${index}`,
             {}
           );
-          
+
           // Some incomplete responses might be handled gracefully
+          handledGracefully++;
           console.log(`Incomplete response ${index} handled gracefully:`, result.success);
         } catch (error) {
           // Others might throw errors
+          threwError++;
           console.log(`Incomplete response ${index} threw error:`, error.message);
         }
       }
+
+      // Verify that the test ran for all responses
+      assert.strictEqual(handledGracefully + threwError, incompleteResponses.length,
+        'All incomplete responses should be handled or throw errors');
     });
 
     test('should handle circular reference in responses', async () => {
@@ -512,18 +537,19 @@ describe('TaskExecutor Error Scenarios', { skip: process.env.CI ? 'Slow tests - 
         deferredStorage: failingStorage
       });
 
-      await assert.rejects(
-        executor.executeTask(
-          mockAgent,
-          'storageFailureTask',
-          {},
-          deferHandler
-        ),
-        (error) => {
-          assert(error.message.includes('Storage quota exceeded'));
-          return true;
-        }
+      // TaskExecutor catches all errors and returns error results instead of throwing
+      const result = await executor.executeTask(
+        mockAgent,
+        'storageFailureTask',
+        {},
+        deferHandler
       );
+
+      // Verify the storage error was caught and returned as an error result
+      assert.strictEqual(result.success, false);
+      assert.strictEqual(result.status, 'completed');
+      assert(result.error.includes('Storage quota exceeded'));
+      assert.strictEqual(result.metadata.status, 'failed');
     });
 
     test('should handle memory pressure during large conversations', async () => {
@@ -605,16 +631,23 @@ describe('TaskExecutor Error Scenarios', { skip: process.env.CI ? 'Slow tests - 
     });
 
     test('should handle task state corruption during interruption', async () => {
-      let interruptCalled = false;
+      let callCount = 0;
 
       ProtocolClient.callTool = mock.fn(async (agent, taskName) => {
-        if (taskName === 'tasks/get' && !interruptCalled) {
-          interruptCalled = true;
-          // Simulate external interruption by throwing unexpected error
+        callCount++;
+
+        // First call is the initial task execution - return WORKING to trigger polling
+        if (callCount === 1) {
+          return { status: ADCP_STATUS.WORKING };
+        }
+
+        // Second call (first poll via tasks/get) - throw error to simulate corruption
+        if (callCount === 2) {
           throw new Error('Task state corrupted');
         }
-        
-        return { status: ADCP_STATUS.WORKING };
+
+        // Subsequent polls - continue returning WORKING to force timeout
+        return { task: { status: ADCP_STATUS.WORKING } };
       });
 
       const executor = new TaskExecutor({
@@ -623,10 +656,86 @@ describe('TaskExecutor Error Scenarios', { skip: process.env.CI ? 'Slow tests - 
       });
 
       // The error during polling is caught and logged, but polling continues until timeout
-      await assert.rejects(
-        executor.executeTask(mockAgent, 'corruptionTask', {}),
-        TaskTimeoutError
-      );
+      // TaskExecutor returns error results instead of throwing
+      const result = await executor.executeTask(mockAgent, 'corruptionTask', {});
+
+      // Verify the timeout error was returned as an error result
+      assert.strictEqual(result.success, false);
+      assert.strictEqual(result.status, 'completed');
+      assert(result.error.includes('timed out after 100ms'),
+        `Expected timeout error but got: ${result.error}`);
+      assert.strictEqual(result.metadata.status, 'failed');
+
+      // Verify that polling continued after the error
+      assert(callCount > 2, 'Should have made multiple polling attempts after error');
+    });
+  });
+
+  describe('MCP Error Response Handling', () => {
+    test('should extract error message from MCP isError response', async () => {
+      ProtocolClient.callTool = mock.fn(async () => {
+        throw new Error("Error calling tool 'list_authorized_properties': name 'get_testing_context' is not defined");
+      });
+
+      const executor = new TaskExecutor();
+      const result = await executor.executeTask(mockAgent, 'errorTask', {});
+
+      assert.strictEqual(result.success, false);
+      assert(result.error.includes("Error calling tool 'list_authorized_properties'"));
+      assert(result.error.includes("name 'get_testing_context' is not defined"));
+    });
+
+    test('should handle MCP error with multiple text content items', async () => {
+      ProtocolClient.callTool = mock.fn(async () => {
+        throw new Error('Primary error message\nAdditional context');
+      });
+
+      const executor = new TaskExecutor();
+      const result = await executor.executeTask(mockAgent, 'multiTextErrorTask', {});
+
+      assert.strictEqual(result.success, false);
+      assert(result.error.includes('Primary error message'));
+      assert(result.error.includes('Additional context'));
+    });
+
+    test('should handle MCP error with empty content array', async () => {
+      ProtocolClient.callTool = mock.fn(async () => {
+        throw new Error("MCP tool 'test_tool' execution failed (no error details provided)");
+      });
+
+      const executor = new TaskExecutor();
+      const result = await executor.executeTask(mockAgent, 'emptyContentErrorTask', {});
+
+      assert.strictEqual(result.success, false);
+      assert(result.error.includes('MCP tool'));
+      assert(result.error.includes('execution failed'));
+    });
+
+    test('should handle MCP error with non-text content items', async () => {
+      ProtocolClient.callTool = mock.fn(async () => {
+        throw new Error("MCP tool 'image_error_tool' execution failed (no error details provided)");
+      });
+
+      const executor = new TaskExecutor();
+      const result = await executor.executeTask(mockAgent, 'nonTextContentErrorTask', {});
+
+      assert.strictEqual(result.success, false);
+      assert(result.error.includes('MCP tool'));
+      assert(result.error.includes('execution failed'));
+    });
+
+    test('should include tool name in fallback error message', async () => {
+      const toolName = 'list_products';
+      ProtocolClient.callTool = mock.fn(async () => {
+        throw new Error(`MCP tool '${toolName}' execution failed (no error details provided)`);
+      });
+
+      const executor = new TaskExecutor();
+      const result = await executor.executeTask(mockAgent, toolName, {});
+
+      assert.strictEqual(result.success, false);
+      assert(result.error.includes(toolName), 'Error message should include tool name');
+      assert(result.error.includes('execution failed'), 'Error message should indicate execution failed');
     });
   });
 
@@ -670,13 +779,13 @@ describe('TaskExecutor Error Scenarios', { skip: process.env.CI ? 'Slow tests - 
           pollingInterval: 10 // Fast polling for tests
         });
 
-        try {
-          await executor.executeTask(mockAgent, 'invalidTimeoutTask', {});
-          // If no immediate error, the implementation handles invalid timeouts gracefully
-        } catch (error) {
-          // Expected behavior for invalid timeouts
-          assert(error instanceof TaskTimeoutError || error.message.includes('timeout'));
-        }
+        // TaskExecutor returns error results instead of throwing
+        const result = await executor.executeTask(mockAgent, 'invalidTimeoutTask', {});
+
+        // With invalid timeouts (0 or negative), should timeout immediately or handle gracefully
+        // Either way, a WORKING status without completion should result in an error
+        assert.strictEqual(result.success, false);
+        assert(result.error, 'Should have an error message');
       }
     });
 

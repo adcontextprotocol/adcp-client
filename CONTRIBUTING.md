@@ -8,6 +8,9 @@ We love your input! We want to make contributing to the AdCP client library as e
 - Proposing new features
 - Becoming a maintainer
 
+## Intellectual Property Rights
+Before contributing to the AdCP project, ensure that you have read and agree with our [Intellectual Property Rights Policy](https://github.com/adcontextprotocol/adcp/blob/main/IPR_POLICY.md).
+
 ## Development Process
 
 We use GitHub to host code, to track issues and feature requests, as well as accept pull requests.
@@ -318,7 +321,7 @@ This project follows the [Contributor Covenant Code of Conduct](https://www.cont
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the same [MIT License](./LICENSE) that covers the project.
+By contributing, you agree that your contributions will be licensed under the same [Apache 2.0 License](./LICENSE) that covers the project.
 
 ## Recognition
 

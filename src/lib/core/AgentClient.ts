@@ -78,11 +78,12 @@ export class AgentClient {
    * Handle webhook from agent (async task completion or notifications)
    *
    * @param payload - Webhook payload from agent
-   * @param signature - Optional signature for verification
+   * @param signature - Optional signature for verification (X-ADCP-Signature)
+   * @param timestamp - Optional timestamp for verification (X-ADCP-Timestamp)
    * @returns Whether webhook was handled successfully
    */
-  async handleWebhook(payload: any, signature?: string): Promise<boolean> {
-    return this.client.handleWebhook(payload, signature);
+  async handleWebhook(payload: any, signature?: string, timestamp?: string | number): Promise<boolean> {
+    return this.client.handleWebhook(payload, signature, timestamp);
   }
 
   /**
@@ -434,6 +435,13 @@ export class AgentClient {
    */
   getProtocol(): 'mcp' | 'a2a' {
     return this.client.getProtocol();
+  }
+
+  /**
+   * Get agent information including capabilities
+   */
+  async getAgentInfo() {
+    return this.client.getAgentInfo();
   }
 
   /**

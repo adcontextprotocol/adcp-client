@@ -138,4 +138,72 @@ describe('MCP Custom Fetch - Unit Test', () => {
 
     console.log('✅ No custom fetch when no auth token');
   });
+
+  test('spreading Headers object returns empty object', () => {
+    // Headers objects are not enumerable, so spreading them returns empty object
+    const sdkHeaders = new Headers();
+    sdkHeaders.set('Accept', 'application/json, text/event-stream');
+    sdkHeaders.set('Content-Type', 'application/json');
+
+    // Spreading Headers object returns empty object
+    const spread = { ...sdkHeaders };
+    assert.deepStrictEqual(spread, {}, 'Spreading Headers returns empty object');
+
+    // Must use forEach to extract headers
+    let extractedHeaders = {};
+    sdkHeaders.forEach((value, key) => {
+      extractedHeaders[key] = value;
+    });
+
+    // Verify extraction works
+    assert.strictEqual(extractedHeaders['accept'], 'application/json, text/event-stream');
+    assert.strictEqual(extractedHeaders['content-type'], 'application/json');
+
+    console.log('✅ Spreading Headers loses all headers, forEach preserves them');
+  });
+
+  test('plain object header extraction with for...in loop', () => {
+    const plainObjectHeaders = {
+      'Accept': 'application/json, text/event-stream',
+      'Content-Type': 'application/json',
+      'Custom-Header': 'test-value'
+    };
+
+    // Use for...in loop with hasOwnProperty check for plain objects
+    let extractedHeaders = {};
+    for (const key in plainObjectHeaders) {
+      if (Object.prototype.hasOwnProperty.call(plainObjectHeaders, key)) {
+        extractedHeaders[key] = plainObjectHeaders[key];
+      }
+    }
+
+    // Verify all headers were copied
+    assert.strictEqual(extractedHeaders['Accept'], 'application/json, text/event-stream');
+    assert.strictEqual(extractedHeaders['Content-Type'], 'application/json');
+    assert.strictEqual(extractedHeaders['Custom-Header'], 'test-value');
+
+    console.log('✅ Plain object extraction works correctly');
+  });
+
+  test('MCP SDK requires Accept header with application/json and text/event-stream', () => {
+    // The MCP protocol specification requires both content types in Accept header
+    const requiredAccept = 'application/json, text/event-stream';
+
+    // Simulate SDK setting the Accept header
+    const sdkHeaders = new Headers();
+    sdkHeaders.set('Accept', requiredAccept);
+
+    // Extract headers using forEach (our fix)
+    let extractedHeaders = {};
+    sdkHeaders.forEach((value, key) => {
+      extractedHeaders[key] = value;
+    });
+
+    // Verify the Accept header is preserved with both content types
+    assert.strictEqual(extractedHeaders['accept'], requiredAccept);
+    assert.ok(extractedHeaders['accept'].includes('application/json'));
+    assert.ok(extractedHeaders['accept'].includes('text/event-stream'));
+
+    console.log('✅ MCP Accept header preserved correctly');
+  });
 });

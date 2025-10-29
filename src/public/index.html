@@ -1960,6 +1960,172 @@
         .modal .close:focus {
             color: #333;
         }
+
+        /* Format Card Styles */
+        .format-card {
+            background: white;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+            transition: all 0.3s ease;
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+        }
+
+        .format-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+        }
+
+        .format-card-preview {
+            width: 100%;
+            height: 200px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+            overflow: hidden;
+            transition: transform 0.2s ease;
+        }
+
+        a:hover .format-card-preview {
+            transform: scale(1.05);
+        }
+
+        a .format-card-preview::after {
+            content: '🔗';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 48px;
+            opacity: 0;
+            transition: opacity 0.2s ease;
+            pointer-events: none;
+            text-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+        }
+
+        a:hover .format-card-preview::after {
+            opacity: 0.9;
+        }
+
+        .format-card-preview img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .format-card-preview .placeholder {
+            font-size: 48px;
+            color: rgba(255, 255, 255, 0.8);
+        }
+
+        .format-card-type-badge {
+            position: absolute;
+            top: 12px;
+            right: 12px;
+            background: rgba(255, 255, 255, 0.95);
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+        }
+
+        .format-card-content {
+            padding: 20px;
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .format-card-title {
+            font-size: 18px;
+            font-weight: 700;
+            color: #1a202c;
+            margin-bottom: 8px;
+            line-height: 1.3;
+        }
+
+        .format-card-format-id {
+            font-family: monospace;
+            font-size: 11px;
+            color: #718096;
+            margin-bottom: 12px;
+            word-break: break-all;
+        }
+
+        .format-card-description {
+            font-size: 14px;
+            color: #4a5568;
+            line-height: 1.5;
+            margin-bottom: 16px;
+            flex: 1;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            display: -webkit-box;
+            -webkit-line-clamp: 3;
+            -webkit-box-orient: vertical;
+        }
+
+        .format-card-details {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            padding-top: 16px;
+            border-top: 1px solid #e2e8f0;
+        }
+
+        .format-card-detail-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 13px;
+        }
+
+        .format-card-detail-label {
+            color: #718096;
+            font-weight: 500;
+        }
+
+        .format-card-detail-value {
+            color: #1a202c;
+            font-weight: 600;
+        }
+
+        .format-card-footer {
+            padding: 12px 20px;
+            background: #f8f9fa;
+            border-top: 1px solid #e2e8f0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .format-card-generative-badge {
+            background: #4caf50;
+            color: white;
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .format-card-link {
+            color: #007bff;
+            text-decoration: none;
+            font-size: 13px;
+            font-weight: 500;
+            transition: color 0.2s;
+        }
+
+        .format-card-link:hover {
+            color: #0056b3;
+            text-decoration: underline;
+        }
     </style>
 </head>
 <body>
@@ -2001,6 +2167,21 @@
                     <button id="refresh-agent-btn" class="btn btn-small" onclick="refreshAgentData()" disabled>🔄 Load Agent Data</button>
                     <button class="btn btn-secondary btn-small" onclick="toggleAddAgent()" id="add-toggle-btn">➕ Add Agent</button>
                     <button class="btn btn-small" onclick="viewAllAgents()" style="background-color: #28a745; color: white; margin-left: 5px;">📋 View All</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Agent Info Display -->
+        <div id="agent-info-display" style="display: none; margin-bottom: 20px; padding: 15px; border: 1px solid #dee2e6; border-radius: 4px; background: #f8f9fa;">
+            <div style="display: flex; justify-content: space-between; align-items: start;">
+                <div style="flex: 1;">
+                    <h3 style="margin: 0 0 10px 0; font-size: 16px;">Agent Information</h3>
+                    <div id="agent-info-content" style="font-size: 14px; line-height: 1.6;">
+                        <div style="margin-bottom: 8px;"><strong>Name:</strong> <span id="info-name"></span></div>
+                        <div style="margin-bottom: 8px;"><strong>Protocol:</strong> <span id="info-protocol"></span></div>
+                        <div style="margin-bottom: 8px;"><strong>Description:</strong> <span id="info-description"></span></div>
+                        <div style="margin-bottom: 8px;"><strong>Capabilities:</strong> <span id="info-capabilities"></span></div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -2165,11 +2346,26 @@
                         IAB Standard Only
                     </label>
 
+                    <div style="display: flex; gap: 5px; border: 1px solid #ddd; border-radius: 6px; overflow: hidden;"
+                         title="Switch between list and card view">
+                        <button id="view-list-btn"
+                                onclick="setFormatsView('list')"
+                                style="padding: 8px 12px; border: none; background: #f8f9fa; color: #333; cursor: pointer; font-size: 14px;">
+                            📋 List
+                        </button>
+                        <button id="view-cards-btn"
+                                onclick="setFormatsView('cards')"
+                                style="padding: 8px 12px; border: none; background: #007bff; color: white; cursor: pointer; font-size: 14px;">
+                            🎴 Cards
+                        </button>
+                    </div>
+
                     <span style="color: #666; font-size: 14px;">Auto-loaded with agent data</span>
                 </div>
             </div>
             
-            <div style="overflow-x: auto;">
+            <!-- Table View -->
+            <div id="formats-table-view" style="overflow-x: auto; display: none;">
                 <table id="creative-formats-table" style="width: 100%; border-collapse: collapse; background: white;">
                     <thead style="background: #f8f9fa; border-bottom: 2px solid #dee2e6;">
                         <tr>
@@ -2191,6 +2387,15 @@
                         </tr>
                     </tbody>
                 </table>
+            </div>
+
+            <!-- Card View (default) -->
+            <div id="formats-cards-view">
+                <div id="creative-formats-cards" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 20px; padding: 10px;">
+                    <div style="padding: 40px; text-align: center; color: #666; grid-column: 1 / -1;">
+                        No creative formats loaded. Click "Refresh Creative Formats" to discover available formats.
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -2294,6 +2499,9 @@
                             <option value="AUD">AUD</option>
                         </select>
                     </div>
+                    <small style="color: #666; display: block; margin-top: 5px;">
+                        💡 Currency must match the pricing options of selected products. Final currency is determined by the pricing_option_id in each package.
+                    </small>
                     <div style="margin-top: 10px;">
                         <label>Daily Cap (optional):</label>
                         <input type="number" id="daily-cap" placeholder="1000" min="0">
@@ -3145,6 +3353,7 @@
         let creativeFormats = [];
         let mediaBuys = [];
         let selectedProducts = new Set();
+        let formatsViewMode = 'cards'; // 'list' or 'cards'
         let agentCardCache = new Map(); // Cache agent card/capabilities to avoid repeated discovery calls
         let eventLogCount = 0;
         let lastEventCheck = 0; // Track last event fetch time
@@ -3217,6 +3426,43 @@
         // Agent Data Management
         // ============================================================================
         
+        async function loadAgentInfo(agentId) {
+            try {
+                const response = await fetch(`/api/sales/agents/${agentId}/info`);
+                const result = await response.json();
+
+                if (result.success && result.data) {
+                    const agentInfo = result.data;
+                    const display = document.getElementById('agent-info-display');
+
+                    // Update display fields
+                    document.getElementById('info-name').textContent = agentInfo.name || 'N/A';
+                    document.getElementById('info-protocol').textContent = (agentInfo.protocol || 'N/A').toUpperCase();
+                    document.getElementById('info-description').textContent = agentInfo.description || 'No description available';
+
+                    // Format capabilities (tools)
+                    const tools = agentInfo.tools || agentInfo.capabilities || [];
+                    if (tools.length > 0) {
+                        const toolNames = tools.map(t => typeof t === 'string' ? t : t.name);
+                        document.getElementById('info-capabilities').textContent = toolNames.join(', ');
+                    } else {
+                        document.getElementById('info-capabilities').textContent = 'No tools available';
+                    }
+
+                    // Show the display
+                    display.style.display = 'block';
+                    logEvent('success', `Loaded agent info for ${agentInfo.name}`);
+                } else {
+                    document.getElementById('agent-info-display').style.display = 'none';
+                    logEvent('warning', 'Could not load agent info');
+                }
+            } catch (error) {
+                console.error('Error loading agent info:', error);
+                document.getElementById('agent-info-display').style.display = 'none';
+                logEvent('error', `Failed to load agent info: ${error.message}`);
+            }
+        }
+
         async function onAgentSelected() {
             const selectedAgentId = document.getElementById('agent-selector').value;
             const refreshBtn = document.getElementById('refresh-agent-btn');
@@ -3233,9 +3479,13 @@
             if (!selectedAgentId) {
                 refreshBtn.disabled = true;
                 refreshBtn.innerHTML = '🔄 Load Agent Data';
+                document.getElementById('agent-info-display').style.display = 'none';
                 logEvent('info', 'Agent cleared - data reset');
                 return;
             }
+
+            // Load and display agent info
+            await loadAgentInfo(selectedAgentId);
 
             // Enable the load button but don't auto-load
             refreshBtn.disabled = false;
@@ -3370,81 +3620,87 @@
             const selectedAgent = agents.find(a => a.id === selectedAgentId);
             if (!selectedAgent) {
                 setProductsLoadingState(false, 'error');
-                throw new Error('Agent not found');
+                logEvent('error', 'Agent not found');
+                return;
             }
 
-            // Build AdCP-compliant parameters
-            // brand_manifest must be either a valid URL or a BrandManifest object
-            let brandManifestParam = brandManifest;
             try {
-                new URL(brandManifest);
-                // It's a valid URL, use as-is
-            } catch {
-                // Not a URL, wrap in BrandManifest object per AdCP spec
-                brandManifestParam = {
-                    name: brandManifest
+                // Build AdCP-compliant parameters
+                // brand_manifest must be either a valid URL or a BrandManifest object
+                let brandManifestParam = brandManifest;
+                try {
+                    new URL(brandManifest);
+                    // It's a valid URL, use as-is
+                } catch {
+                    // Not a URL, wrap in BrandManifest object per AdCP spec
+                    brandManifestParam = {
+                        name: brandManifest
+                    };
+                }
+
+                const params = {
+                    brief: 'Discover available advertising products for testing',
+                    brand_manifest: brandManifestParam
                 };
-            }
 
-            const params = {
-                brief: 'Discover available advertising products for testing',
-                brand_manifest: brandManifestParam
-            };
+                // Add filters if any are specified
+                if (deliveryType || formatTypes.length > 0 || isFixedPrice || minExposures) {
+                    params.filters = {};
 
-            // Add filters if any are specified
-            if (deliveryType || formatTypes.length > 0 || isFixedPrice || minExposures) {
-                params.filters = {};
+                    if (deliveryType) {
+                        params.filters.delivery_type = deliveryType;
+                    }
 
-                if (deliveryType) {
-                    params.filters.delivery_type = deliveryType;
+                    if (formatTypes.length > 0) {
+                        params.filters.format_types = formatTypes;
+                    }
+
+                    if (isFixedPrice) {
+                        params.filters.is_fixed_price = true;
+                    }
+
+                    if (minExposures) {
+                        params.filters.min_exposures = parseInt(minExposures, 10);
+                    }
                 }
 
-                if (formatTypes.length > 0) {
-                    params.filters.format_types = formatTypes;
-                }
+                logEvent('info', `🔧 DEBUG: loadProducts calling callADCPTool with 'get_products'`);
+                logEvent('info', `🔧 DEBUG: Parameters: ${JSON.stringify(params, null, 2)}`);
+                const result = await callADCPTool(selectedAgent, 'get_products', params);
 
-                if (isFixedPrice) {
-                    params.filters.is_fixed_price = true;
-                }
+                // Debug: Log the full result structure
+                logEvent('info', `🔧 DEBUG: loadProducts result structure: ${JSON.stringify(result, null, 2)}`);
+                logEvent('info', `🔧 DEBUG: result.products exists? ${!!result?.products}`);
+                logEvent('info', `🔧 DEBUG: result.products length: ${result?.products?.length || 'undefined'}`);
 
-                if (minExposures) {
-                    params.filters.min_exposures = parseInt(minExposures, 10);
-                }
-            }
-
-            logEvent('info', `🔧 DEBUG: loadProducts calling callADCPTool with 'get_products'`);
-            logEvent('info', `🔧 DEBUG: Parameters: ${JSON.stringify(params, null, 2)}`);
-            const result = await callADCPTool(selectedAgent, 'get_products', params);
-            
-            // Debug: Log the full result structure
-            logEvent('info', `🔧 DEBUG: loadProducts result structure: ${JSON.stringify(result, null, 2)}`);
-            logEvent('info', `🔧 DEBUG: result.products exists? ${!!result?.products}`);
-            logEvent('info', `🔧 DEBUG: result.products length: ${result?.products?.length || 'undefined'}`);
-            
-            if (result && result.products) {
-                products = result.products;
-                updateProductsTable();
-                setProductsLoadingState(false, 'success');
-                logEvent('success', `Loaded ${products.length} products`);
-            } else {
-                setProductsLoadingState(false, 'warning');
-                logEvent('warning', 'No products returned from agent - checking result keys...');
-                logEvent('warning', `🔧 DEBUG: Available result keys: ${Object.keys(result || {}).join(', ')}`);
-                
-                // Check other possible locations for products
-                if (result?.data?.products) {
-                    logEvent('info', '🔧 DEBUG: Found products in result.data.products, using those');
-                    products = result.data.products;
+                if (result && result.products) {
+                    products = result.products;
                     updateProductsTable();
                     setProductsLoadingState(false, 'success');
-                    logEvent('success', `Loaded ${products.length} products from result.data.products`);
-                } else if (result?.structuredContent?.products) {
-                    logEvent('info', '🔧 DEBUG: Found products in result.structuredContent.products, using those');
-                    products = result.structuredContent.products;
-                    updateProductsTable();
-                    setProductsLoadingState(false, 'success');
-                    logEvent('success', `Loaded ${products.length} products from result.structuredContent.products`);
+                    logEvent('success', `Loaded ${products.length} products`);
+                } else {
+                    setProductsLoadingState(false, 'warning');
+                    logEvent('warning', 'No products returned from agent - checking result keys...');
+                    logEvent('warning', `🔧 DEBUG: Available result keys: ${Object.keys(result || {}).join(', ')}`);
+
+                    // Check other possible locations for products
+                    if (result?.data?.products) {
+                        logEvent('info', '🔧 DEBUG: Found products in result.data.products, using those');
+                        products = result.data.products;
+                        updateProductsTable();
+                        setProductsLoadingState(false, 'success');
+                        logEvent('success', `Loaded ${products.length} products from result.data.products`);
+                    } else if (result?.structuredContent?.products) {
+                        logEvent('info', '🔧 DEBUG: Found products in result.structuredContent.products, using those');
+                        products = result.structuredContent.products;
+                        updateProductsTable();
+                        setProductsLoadingState(false, 'success');
+                        logEvent('success', `Loaded ${products.length} products from result.structuredContent.products`);
+                    }
                 }
+            } catch (error) {
+                setProductsLoadingState(false, 'error');
+                logEvent('error', `Failed to load products: ${error.message}`);
             }
         }
         
@@ -3462,36 +3718,46 @@
             const selectedAgent = agents.find(a => a.id === selectedAgentId);
             if (!selectedAgent) {
                 setFormatsLoadingState(false, 'error');
-                throw new Error('Agent not found');
+                logEvent('error', 'Agent not found');
+                return;
             }
 
-            // Build AdCP-compliant parameters
-            // Note: adcp_version is not supported by current agent implementations for list_creative_formats
-            const params = {};
+            try {
+                // Build AdCP-compliant parameters
+                // Note: adcp_version is not supported by current agent implementations for list_creative_formats
+                const params = {};
 
-            // Add filters if specified
-            if (formatType) {
-                params.type = formatType;
-            }
-            if (formatCategory) {
-                params.category = formatCategory;
-            }
-            if (standardOnly) {
-                params.standard_only = true;
-            }
+                // Add filters if specified
+                if (formatType) {
+                    params.type = formatType;
+                }
+                if (formatCategory) {
+                    params.category = formatCategory;
+                }
+                if (standardOnly) {
+                    params.standard_only = true;
+                }
 
-            logEvent('info', `🔧 DEBUG: loadCreativeFormats calling callADCPTool with 'list_creative_formats'`);
-            logEvent('info', `🔧 DEBUG: Parameters: ${JSON.stringify(params, null, 2)}`);
-            const result = await callADCPTool(selectedAgent, 'list_creative_formats', params);
-            
-            if (result && result.formats) {
-                creativeFormats = result.formats;
-                updateCreativeFormatsTable();
-                setFormatsLoadingState(false, 'success');
-                logEvent('success', `Loaded ${creativeFormats.length} creative formats`);
-            } else {
-                setFormatsLoadingState(false, 'warning');
-                logEvent('warning', 'No creative formats returned from agent');
+                logEvent('info', `🔧 DEBUG: loadCreativeFormats calling callADCPTool with 'list_creative_formats'`);
+                logEvent('info', `🔧 DEBUG: Parameters: ${JSON.stringify(params, null, 2)}`);
+                const result = await callADCPTool(selectedAgent, 'list_creative_formats', params);
+
+                logEvent('info', `🔧 DEBUG: Result keys: ${Object.keys(result || {}).join(', ')}`);
+                logEvent('info', `🔧 DEBUG: result.formats = ${result?.formats ? result.formats.length : 'undefined'}`);
+
+                if (result && result.formats) {
+                    creativeFormats = result.formats;
+                    updateCreativeFormatsTable();
+                    setFormatsLoadingState(false, 'success');
+                    logEvent('success', `Loaded ${creativeFormats.length} creative formats`);
+                } else {
+                    setFormatsLoadingState(false, 'warning');
+                    logEvent('warning', 'No creative formats returned from agent');
+                    logEvent('info', `🔧 DEBUG: Full result: ${JSON.stringify(result, null, 2)}`);
+                }
+            } catch (error) {
+                setFormatsLoadingState(false, 'error');
+                logEvent('error', `Failed to load creative formats: ${error.message}`);
             }
         }
         
@@ -3629,7 +3895,7 @@
         function setProductsLoadingState(loading, status = null) {
             const header = document.querySelector('#products-section h3, .section h3');
             if (!header || !header.textContent.includes('Products')) return;
-            
+
             if (loading) {
                 header.innerHTML = '📦 Available Products <span style="color: #007bff;">⏳ Loading...</span>';
             } else {
@@ -3638,7 +3904,12 @@
                     'warning': '<span style="color: #ffc107;">⚠️</span>',
                     'error': '<span style="color: #dc3545;">❌</span>'
                 }[status] || '';
-                header.innerHTML = `📦 Available Products ${statusIcon} <span style="color: #666; font-size: 14px; font-weight: normal;">- Auto-loaded with agent data</span>`;
+                const statusMessage = {
+                    'success': '- Auto-loaded with agent data',
+                    'warning': '- Some products loaded',
+                    'error': '- Failed to load'
+                }[status] || '- Auto-loaded with agent data';
+                header.innerHTML = `📦 Available Products ${statusIcon} <span style="color: #666; font-size: 14px; font-weight: normal;">${statusMessage}</span>`;
             }
         }
         
@@ -3646,7 +3917,7 @@
             const header = document.querySelector('h3').parentNode.querySelector('h3');
             const formatsHeader = Array.from(document.querySelectorAll('h3')).find(h => h.textContent.includes('Creative Formats'));
             if (!formatsHeader) return;
-            
+
             if (loading) {
                 formatsHeader.innerHTML = '🎨 Creative Formats <span style="color: #007bff;">⏳ Loading...</span>';
             } else {
@@ -3655,9 +3926,17 @@
                     'warning': '<span style="color: #ffc107;">⚠️</span>',
                     'error': '<span style="color: #dc3545;">❌</span>'
                 }[status] || '';
+                const statusMessage = {
+                    'success': 'Auto-loaded with agent data',
+                    'warning': 'Some formats loaded',
+                    'error': 'Failed to load'
+                }[status] || 'Auto-loaded with agent data';
                 formatsHeader.innerHTML = `🎨 Creative Formats ${statusIcon}`;
-                // Re-add the auto-loaded text
-                formatsHeader.parentNode.querySelector('span').textContent = 'Auto-loaded with agent data';
+                // Re-add the status text
+                const statusSpan = formatsHeader.parentNode.querySelector('span');
+                if (statusSpan) {
+                    statusSpan.textContent = statusMessage;
+                }
             }
         }
         
@@ -3785,7 +4064,18 @@
             if (!formats || !Array.isArray(formats)) {
                 return '<span style="color: #888;">N/A</span>';
             }
-            return formats.slice(0, 2).join(', ') + (formats.length > 2 ? `... (+${formats.length - 2})` : '');
+
+            // Convert formats to strings (handle both format_id strings and format objects)
+            const formatStrings = formats.map(f => {
+                if (typeof f === 'string') {
+                    return f;
+                } else if (f && typeof f === 'object') {
+                    return f.format_id || f.name || JSON.stringify(f).substring(0, 20);
+                }
+                return String(f);
+            });
+
+            return formatStrings.slice(0, 2).join(', ') + (formatStrings.length > 2 ? `... (+${formatStrings.length - 2})` : '');
         }
         
         function getValidationStatusIcon(product) {
@@ -3799,42 +4089,57 @@
                     return '<span title="Validation Error">⚠️</span>';
                 }
             }
-            
-            // AdCP spec compliance check
+
+            // AdCP 2.2.0 spec compliance check
             const adcpViolations = [];
-            
-            // Required fields per AdCP spec
+
+            // Required fields per AdCP 2.2.0 spec
             if (!product.product_id) adcpViolations.push('Missing product_id');
             if (!product.name) adcpViolations.push('Missing name');
             if (!product.description) adcpViolations.push('Missing description');
-            if (product.delivery_type === undefined) adcpViolations.push('Missing delivery_type');
-            if (product.is_fixed_price === undefined) adcpViolations.push('Missing is_fixed_price');
-            
-            // Format fields - spec requires format_ids, but many agents return formats
-            const hasFormats = product.format_ids || product.formats;
-            if (!hasFormats || !Array.isArray(hasFormats)) {
-                adcpViolations.push('Missing format_ids/formats');
+            if (!product.delivery_type) adcpViolations.push('Missing delivery_type');
+            if (!product.delivery_measurement) adcpViolations.push('Missing delivery_measurement');
+
+            // publisher_properties is required (array with at least 1 item)
+            if (!product.publisher_properties || !Array.isArray(product.publisher_properties) || product.publisher_properties.length === 0) {
+                adcpViolations.push('Missing or empty publisher_properties');
             }
-            
-            // Type checking for numeric fields (should be number or null, not string)
-            if (product.cpm !== null && typeof product.cpm !== 'number') {
-                adcpViolations.push('cpm should be number or null');
-            }
-            if (product.min_spend !== null && typeof product.min_spend !== 'number') {
-                adcpViolations.push('min_spend should be number or null');
-            }
-            
-            // Field naming violations
-            if (product.formats && !product.format_ids) {
-                adcpViolations.push('Uses formats instead of format_ids');
-            }
-            
-            if (adcpViolations.length === 0) {
-                return '<span title="AdCP Spec Compliant">✅</span>';
-            } else if (adcpViolations.length <= 2) {
-                return `<span title="Minor AdCP violations: ${adcpViolations.join(', ')}" style="color: orange;">⚠️</span>`;
+
+            // format_ids is required (array of FormatID objects with agent_url and id)
+            if (!product.format_ids || !Array.isArray(product.format_ids) || product.format_ids.length === 0) {
+                adcpViolations.push('Missing or empty format_ids');
             } else {
-                return `<span title="Major AdCP violations: ${adcpViolations.join(', ')}" style="color: red;">❌</span>`;
+                // Validate format_ids structure
+                const invalidFormats = product.format_ids.filter(f =>
+                    !f || typeof f !== 'object' || !f.agent_url || !f.id
+                );
+                if (invalidFormats.length > 0) {
+                    adcpViolations.push('format_ids must be objects with agent_url and id');
+                }
+            }
+
+            // pricing_options is required (array with at least 1 item)
+            if (!product.pricing_options || !Array.isArray(product.pricing_options) || product.pricing_options.length === 0) {
+                adcpViolations.push('Missing or empty pricing_options');
+            }
+
+            // Warn about deprecated fields (for backwards compatibility)
+            if (product.formats && !product.format_ids) {
+                adcpViolations.push('Deprecated: uses formats instead of format_ids');
+            }
+            if (product.cpm !== undefined) {
+                adcpViolations.push('Deprecated: cpm should be in pricing_options');
+            }
+            if (product.min_spend !== undefined) {
+                adcpViolations.push('Deprecated: min_spend should be in pricing_options');
+            }
+
+            if (adcpViolations.length === 0) {
+                return '<span title="AdCP 2.2.0 Spec Compliant">✅</span>';
+            } else if (adcpViolations.length <= 2) {
+                return `<span title="Minor violations: ${adcpViolations.join(', ')}" style="color: orange;">⚠️</span>`;
+            } else {
+                return `<span title="Major violations: ${adcpViolations.join(', ')}" style="color: red;">❌</span>`;
             }
         }
         
@@ -3947,8 +4252,16 @@
         
         
         function updateCreativeFormatsTable() {
+            if (formatsViewMode === 'cards') {
+                updateCreativeFormatsCards();
+            } else {
+                updateCreativeFormatsList();
+            }
+        }
+
+        function updateCreativeFormatsList() {
             const tbody = document.getElementById('creative-formats-tbody');
-            
+
             if (creativeFormats.length === 0) {
                 tbody.innerHTML = `
                     <tr>
@@ -3959,7 +4272,7 @@
                 `;
                 return;
             }
-            
+
             tbody.innerHTML = creativeFormats.map(format => `
                 <tr>
                     <td style="padding: 12px; border: 1px solid #dee2e6; font-family: monospace; font-size: 0.9em;">${formatFormatId(format.format_id)}</td>
@@ -3978,6 +4291,122 @@
                     <td style="padding: 12px; border: 1px solid #dee2e6; text-align: center;">${getFormatValidationStatusIcon(format)}</td>
                 </tr>
             `).join('');
+        }
+
+        function updateCreativeFormatsCards() {
+            const cardsContainer = document.getElementById('creative-formats-cards');
+
+            if (creativeFormats.length === 0) {
+                cardsContainer.innerHTML = `
+                    <div style="padding: 40px; text-align: center; color: #666; grid-column: 1 / -1;">
+                        No creative formats loaded. Click "Refresh Creative Formats" to discover available formats.
+                    </div>
+                `;
+                return;
+            }
+
+            cardsContainer.innerHTML = creativeFormats.map(format => {
+                const formatId = typeof format.format_id === 'object' ? format.format_id.id : String(format.format_id || 'N/A');
+                const hasPreview = format.preview_image;
+                const hasExample = format.example_url;
+                const isGenerative = format.output_format_ids && format.output_format_ids.length > 0;
+                const dimensions = formatDimensions(format.renders);
+                const typeEmoji = getTypeEmoji(format.type);
+
+                return `
+                    <div class="format-card">
+                        ${hasExample
+                            ? `<a href="${format.example_url}" target="_blank" style="text-decoration: none; color: inherit;">
+                                <div class="format-card-preview">
+                                    ${hasPreview
+                                        ? `<img src="${format.preview_image}" alt="${format.name}" onerror="this.parentElement.innerHTML='<div class=\\'placeholder\\'>${typeEmoji}</div>'">`
+                                        : `<div class="placeholder">${typeEmoji}</div>`
+                                    }
+                                    <div class="format-card-type-badge">${format.type || 'Unknown'}</div>
+                                </div>
+                            </a>`
+                            : `<div class="format-card-preview">
+                                ${hasPreview
+                                    ? `<img src="${format.preview_image}" alt="${format.name}" onerror="this.parentElement.innerHTML='<div class=\\'placeholder\\'>${typeEmoji}</div>'">`
+                                    : `<div class="placeholder">${typeEmoji}</div>`
+                                }
+                                <div class="format-card-type-badge">${format.type || 'Unknown'}</div>
+                            </div>`
+                        }
+                        <div class="format-card-content">
+                            <div class="format-card-title">${format.name || 'Unnamed Format'}</div>
+                            <div class="format-card-format-id">${formatId}</div>
+                            ${format.description
+                                ? `<div class="format-card-description">${format.description}</div>`
+                                : ''
+                            }
+                            <div class="format-card-details">
+                                <div class="format-card-detail-row">
+                                    <span class="format-card-detail-label">Dimensions</span>
+                                    <span class="format-card-detail-value">${dimensions}</span>
+                                </div>
+                                ${format.assets_required
+                                    ? `<div class="format-card-detail-row">
+                                        <span class="format-card-detail-label">Assets</span>
+                                        <span class="format-card-detail-value">${Array.isArray(format.assets_required) ? format.assets_required.length : 'Custom'}</span>
+                                    </div>`
+                                    : ''
+                                }
+                            </div>
+                        </div>
+                        <div class="format-card-footer">
+                            ${isGenerative
+                                ? '<div class="format-card-generative-badge">✨ Generative</div>'
+                                : '<div></div>'
+                            }
+                            ${hasExample
+                                ? `<div class="format-card-link" style="color: #007bff; font-size: 12px;">🔗 Click image to view example</div>`
+                                : '<div></div>'
+                            }
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function getTypeEmoji(type) {
+            const emojiMap = {
+                'display': '🖼️',
+                'video': '🎬',
+                'audio': '🎵',
+                'native': '📱',
+                'dooh': '📺',
+                'rich_media': '✨',
+                'universal': '🌐'
+            };
+            return emojiMap[type] || '🎨';
+        }
+
+        function setFormatsView(mode) {
+            formatsViewMode = mode;
+
+            const tableView = document.getElementById('formats-table-view');
+            const cardsView = document.getElementById('formats-cards-view');
+            const listBtn = document.getElementById('view-list-btn');
+            const cardsBtn = document.getElementById('view-cards-btn');
+
+            if (mode === 'cards') {
+                tableView.style.display = 'none';
+                cardsView.style.display = 'block';
+                listBtn.style.background = '#f8f9fa';
+                listBtn.style.color = '#333';
+                cardsBtn.style.background = '#007bff';
+                cardsBtn.style.color = 'white';
+            } else {
+                tableView.style.display = 'block';
+                cardsView.style.display = 'none';
+                listBtn.style.background = '#007bff';
+                listBtn.style.color = 'white';
+                cardsBtn.style.background = '#f8f9fa';
+                cardsBtn.style.color = '#333';
+            }
+
+            updateCreativeFormatsTable();
         }
 
         function formatFormatId(formatId) {
@@ -4341,11 +4770,18 @@
                 displayDebugLogs(result.debug_logs, agent);
             }
 
-            // Handle errors
-            if (!response.ok || !result.success) {
+            // Handle HTTP errors (network issues, server errors)
+            if (!response.ok) {
                 const errorMsg = result.error || `HTTP ${response.status}`;
                 logEvent('error', `❌ Error: ${errorMsg}`);
                 throw new Error(errorMsg);
+            }
+
+            // For validation errors (success: false but HTTP 200), return the result
+            // so the caller can handle the validation errors appropriately
+            if (!result.success) {
+                logEvent('warning', `⚠️ ${toolName} returned validation errors`);
+                return result.data || result;
             }
 
             logEvent('success', `✅ ${toolName} completed successfully`);
@@ -4637,13 +5073,9 @@
                     testingHeaders['X-Jump-To-Event'] = jumpToState;
                 }
                 
-                // Build ADCP-compliant budget structure
-                const budgetConfig = {
-                    total: budget,
-                    currency: currency
-                };
-                if (dailyCap) budgetConfig.daily_cap = parseFloat(dailyCap);
-                if (pacing) budgetConfig.pacing = pacing;
+                // Per AdCP spec: budget is a simple number, currency comes from pricing options
+                // Note: We keep currency in UI state for display/validation purposes
+                const totalBudget = budget;
                 
                 // Build targeting overlay
                 const targetingOverlay = {};
@@ -4659,10 +5091,37 @@
                 }
                 
                 // Build packages array from selected products
-                const packages = selectedProductsData.map(product => ({
-                    product_id: product.product_id,
-                    targeting_overlay: Object.keys(targetingOverlay).length > 0 ? targetingOverlay : undefined
-                }));
+                const packages = selectedProductsData.map(product => {
+                    const pkg = {
+                        product_id: product.product_id,
+                        targeting_overlay: Object.keys(targetingOverlay).length > 0 ? targetingOverlay : undefined,
+                        pacing: pacing
+                    };
+
+                    // Select first pricing option (in real implementation, this should be user-selectable)
+                    if (product.pricing_options && product.pricing_options.length > 0) {
+                        // Find pricing option matching the UI-selected currency, or default to first
+                        const matchingOption = product.pricing_options.find(opt => opt.currency === currency);
+                        const selectedOption = matchingOption || product.pricing_options[0];
+                        pkg.pricing_option_id = selectedOption.pricing_option_id;
+
+                        // Note: Currency validation - warn if mismatch
+                        if (selectedOption.currency !== currency) {
+                            console.warn(`Currency mismatch: UI selected ${currency} but using pricing option with ${selectedOption.currency}`);
+                        }
+                    }
+
+                    // Include format_ids if present in the product (required by AdCP spec)
+                    // Ensure format_ids are plain objects for proper JSON serialization
+                    if (product.format_ids && Array.isArray(product.format_ids)) {
+                        pkg.format_ids = product.format_ids.map(formatId => ({
+                            agent_url: formatId.agent_url,
+                            id: formatId.id
+                        }));
+                    }
+
+                    return pkg;
+                });
 
                 // brand_manifest must be either a valid URL or a BrandManifest object
                 let brandManifestParam = brandManifest;
@@ -4677,14 +5136,42 @@
                 }
 
                 // Build ADCP create_media_buy parameters
+                // Calculate start_time ensuring it's always in the future
+                let calculatedStartTime;
+                if (startAsap) {
+                    calculatedStartTime = 'asap';
+                } else if (startDate) {
+                    // Parse the date string in local time (YYYY-MM-DD format)
+                    // Split the date parts to avoid UTC interpretation
+                    const [year, month, day] = startDate.split('-').map(Number);
+                    const selectedDate = new Date(year, month - 1, day); // month is 0-indexed
+                    const today = new Date();
+
+                    // Set both to local midnight for comparison
+                    today.setHours(0, 0, 0, 0);
+                    selectedDate.setHours(0, 0, 0, 0);
+
+                    if (selectedDate.getTime() === today.getTime()) {
+                        // If start date is today, use current time + 5 minutes to ensure it's in the future
+                        calculatedStartTime = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+                    } else {
+                        // For future dates, use noon of that day in local time
+                        const futureDate = new Date(year, month - 1, day, 12, 0, 0, 0);
+                        calculatedStartTime = futureDate.toISOString();
+                    }
+                } else {
+                    // No date provided, use current time + 5 minutes
+                    calculatedStartTime = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+                }
+
                 const createMediaBuyParams = {
                     buyer_ref: buyerRef,
                     packages: packages,
                     brand_manifest: brandManifestParam,
                     po_number: poNumber,
-                    start_time: startAsap ? 'asap' : (startDate ? new Date(startDate).toISOString() : new Date().toISOString()),
+                    start_time: calculatedStartTime,
                     end_time: endDate ? new Date(endDate).toISOString() : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
-                    budget: budgetConfig
+                    budget: totalBudget  // Per AdCP spec: simple number, currency from pricing_option_id
                 };
                 
                 console.log('🚀 ADCP create_media_buy request:', createMediaBuyParams);
@@ -4790,6 +5277,7 @@
                 
             } catch (error) {
                 logEvent('error', `Failed to create media buy: ${error.message}`);
+                alert(`Failed to create media buy:\n\n${error.message}\n\nPlease check the debug logs for more details.`);
             }
         }
 

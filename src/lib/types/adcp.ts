@@ -9,18 +9,13 @@ export interface MediaBuy {
   campaign_name?: string;
   advertiser_name?: string;
   status: 'active' | 'paused' | 'completed' | 'cancelled';
-  budget: Budget;
+  /** Total budget amount (currency determined by pricing options) */
+  total_budget: number;
   targeting: Targeting;
   creative_assets: CreativeAsset[];
   delivery_schedule: DeliverySchedule;
   created_at: string;
   updated_at: string;
-}
-
-export interface Budget {
-  total_budget: number;
-  daily_budget?: number;
-  currency: string;
 }
 
 export interface CreativeAsset {
