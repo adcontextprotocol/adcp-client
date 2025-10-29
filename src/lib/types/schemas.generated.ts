@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2025-10-28T01:45:59.150Z
+// Generated at: 2025-10-29T00:00:56.481Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -740,7 +740,7 @@ export const PackageSchema = z.object({
 
 export const GetProductsRequestSchema = z.object({
     brief: z.string().optional(),
-    brand_manifest: BrandManifestReferenceSchema,
+    brand_manifest: BrandManifestReferenceSchema.optional(),
     filters: z.object({
         delivery_type: DeliveryTypeSchema.optional(),
         is_fixed_price: z.boolean().optional(),
