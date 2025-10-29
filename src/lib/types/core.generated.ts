@@ -1,5 +1,5 @@
-// Generated AdCP core types from official schemas v2.2.0
-// Generated at: 2025-10-24T11:16:31.795Z
+// Generated AdCP core types from official schemas v2.3.0
+// Generated at: 2025-10-29T10:14:14.698Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -1382,5 +1382,77 @@ export interface FrequencyCap {
    * Minutes to suppress after impression
    */
   suppress_minutes: number;
+}
+
+// PROPERTY SCHEMA
+/**
+ * Type of identifier for this property
+ */
+export type PropertyIdentifierTypes =
+  | 'domain'
+  | 'subdomain'
+  | 'network_id'
+  | 'ios_bundle'
+  | 'android_package'
+  | 'apple_app_store_id'
+  | 'google_play_id'
+  | 'roku_store_id'
+  | 'fire_tv_asin'
+  | 'samsung_app_id'
+  | 'apple_tv_bundle'
+  | 'bundle_id'
+  | 'venue_id'
+  | 'screen_id'
+  | 'openooh_venue_type'
+  | 'rss_url'
+  | 'apple_podcast_id'
+  | 'spotify_show_id'
+  | 'podcast_guid';
+
+/**
+ * An advertising property that can be validated via adagents.json
+ */
+export interface Property {
+  /**
+   * Unique identifier for this property (optional). Enables referencing properties by ID instead of repeating full objects. Recommended format: lowercase with underscores (e.g., 'cnn_ctv_app', 'instagram_mobile')
+   */
+  property_id?: string;
+  /**
+   * Type of advertising property
+   */
+  property_type: 'website' | 'mobile_app' | 'ctv_app' | 'dooh' | 'podcast' | 'radio' | 'streaming_audio';
+  /**
+   * Human-readable property name
+   */
+  name: string;
+  /**
+   * Array of identifiers for this property
+   *
+   * @minItems 1
+   */
+  identifiers: [
+    {
+      type: PropertyIdentifierTypes;
+      /**
+       * The identifier value. For domain type: 'example.com' matches base domain plus www and m subdomains; 'edition.example.com' matches that specific subdomain; '*.example.com' matches ALL subdomains but NOT base domain
+       */
+      value: string;
+    },
+    ...{
+      type: PropertyIdentifierTypes;
+      /**
+       * The identifier value. For domain type: 'example.com' matches base domain plus www and m subdomains; 'edition.example.com' matches that specific subdomain; '*.example.com' matches ALL subdomains but NOT base domain
+       */
+      value: string;
+    }[]
+  ];
+  /**
+   * Tags for categorization and grouping (e.g., network membership, content categories)
+   */
+  tags?: string[];
+  /**
+   * Domain where adagents.json should be checked for authorization validation. Required for list_authorized_properties response. Optional in adagents.json (file location implies domain).
+   */
+  publisher_domain?: string;
 }
 

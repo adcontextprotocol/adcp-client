@@ -1869,8 +1869,8 @@ app.post<{
   Reply: ApiResponse<CreateAdAgentsResponse>;
 }>('/api/adagents/create', async (request, reply) => {
   try {
-    const { authorized_agents, include_schema = true, include_timestamp = true } = request.body as CreateAdAgentsRequest;
-    
+    const { authorized_agents, include_schema = true, include_timestamp = true, properties } = request.body as CreateAdAgentsRequest & { properties?: any[] };
+
     if (!authorized_agents || !Array.isArray(authorized_agents)) {
       return reply.code(400).send({
         success: false,
@@ -1887,11 +1887,11 @@ app.post<{
       });
     }
 
-    app.log.info(`Creating adagents.json with ${authorized_agents.length} agents`);
-    
+    app.log.info(`Creating adagents.json with ${authorized_agents.length} agents and ${properties?.length || 0} properties`);
+
     // Validate the proposed structure
     const validation = adagentsManager.validateProposed(authorized_agents);
-    
+
     if (!validation.valid) {
       return reply.code(400).send({
         success: false,
@@ -1902,9 +1902,10 @@ app.post<{
 
     // Create the adagents.json content
     const adagentsJson = adagentsManager.createAdAgentsJson(
-      authorized_agents, 
-      include_schema, 
-      include_timestamp
+      authorized_agents,
+      include_schema,
+      include_timestamp,
+      properties
     );
 
     return reply.send({
@@ -1969,7 +1970,7 @@ app.post<{
 // Start server
 const start = async () => {
   try {
-    const port = parseInt(process.env.PORT || process.env.CONDUCTOR_PORT || '8080');
+    const port = parseInt(process.env.CONDUCTOR_PORT || process.env.PORT || '8080');
     const host = process.env.HOST || (process.env.NODE_ENV === 'production' ? '0.0.0.0' : '127.0.0.1');
     
     await app.listen({ 

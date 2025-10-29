@@ -34,7 +34,12 @@ const SCHEMA_CACHE_DIR = path.join(__dirname, '../schemas/cache');
 const LATEST_CACHE_DIR = path.join(SCHEMA_CACHE_DIR, 'latest');
 
 // Core AdCP schemas to generate
-const ADCP_CORE_SCHEMAS = ['media-buy', 'creative-asset', 'product', 'targeting'];
+const ADCP_CORE_SCHEMAS = ['media-buy', 'creative-asset', 'product', 'targeting', 'property'];
+
+// Additional standalone schemas (not in core/ directory)
+// NOTE: 'adagents' commented out due to duplicate PropertyIdentifierTypes causing TS errors
+// The adagents schema re-declares types that are already in property schema
+const STANDALONE_SCHEMAS: string[] = []; // ['adagents']
 
 // Load schema from cache
 function loadCachedSchema(schemaRef: string): any {
@@ -745,6 +750,41 @@ async function generateTypes() {
       }
     } catch (error) {
       console.error(`❌ Failed to generate core types for ${schemaName}:`, error.message);
+    }
+  }
+
+  // Generate types for standalone schemas (not in core/ directory)
+  for (const schemaName of STANDALONE_SCHEMAS) {
+    try {
+      console.log(`📥 Loading ${schemaName} schema from cache...`);
+      const schemaRef = `/schemas/v1/${schemaName}.json`;
+      const schema = loadCachedSchema(schemaRef);
+
+      if (schema) {
+        console.log(`🔧 Generating TypeScript types for ${schemaName}...`);
+        // Enforce strict schema (remove additionalProperties: true)
+        const strictSchema = enforceStrictSchema(schema);
+        const types = await compile(strictSchema, schemaName, {
+          bannerComment: '',
+          style: {
+            semi: true,
+            singleQuote: true
+          },
+          additionalProperties: false, // Disable [k: string]: unknown for type safety
+          $refOptions: {
+            resolve: {
+              cache: refResolver
+            }
+          }
+        });
+
+        coreTypes += `// ${schemaName.toUpperCase()} SCHEMA\n${types}\n`;
+        console.log(`✅ Generated standalone types for ${schemaName}`);
+      } else {
+        console.warn(`⚠️  Skipping ${schemaName} - schema not found in cache`);
+      }
+    } catch (error) {
+      console.error(`❌ Failed to generate standalone types for ${schemaName}:`, error.message);
     }
   }
 

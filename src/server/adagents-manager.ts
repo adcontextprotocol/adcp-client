@@ -402,13 +402,18 @@ export class AdAgentsManager {
    * Creates a properly formatted adagents.json file
    */
   createAdAgentsJson(
-    agents: AuthorizedAgent[], 
-    includeSchema: boolean = true, 
-    includeTimestamp: boolean = true
+    agents: AuthorizedAgent[],
+    includeSchema: boolean = true,
+    includeTimestamp: boolean = true,
+    properties?: any[]
   ): string {
     const adagents: AdAgentsJson = {
       authorized_agents: agents
     };
+
+    if (properties && properties.length > 0) {
+      adagents.properties = properties;
+    }
 
     if (includeSchema) {
       adagents.$schema = 'https://adcontextprotocol.org/schemas/v1/adagents.json';
