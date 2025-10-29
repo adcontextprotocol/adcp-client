@@ -26,7 +26,7 @@ export interface GetProductsRequest {
    * Natural language description of campaign requirements
    */
   brief?: string;
-  brand_manifest: BrandManifestReference;
+  brand_manifest?: BrandManifestReference;
   /**
    * Structured filters for product discovery
    */
