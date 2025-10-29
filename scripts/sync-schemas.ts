@@ -124,7 +124,10 @@ async function syncSchemas(version?: string): Promise<void> {
       if (task.response?.$ref) allRefs.add(task.response.$ref);
     }
   }
-  
+
+  // Add adagents.json schema (for publisher authorization)
+  allRefs.add('/schemas/v1/adagents.json');
+
   console.log(`📋 Found ${allRefs.size} schema references to download`);
   
   // Download all primary schemas

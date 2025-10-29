@@ -389,6 +389,10 @@ export interface ListCreativesResponse {
 }
 
 // AdAgents.json Types - Based on AdCP v2.2.0 specification
+// NOTE: Official schemas are now synced to schemas/cache/ and types generated to core.generated.ts
+// These simplified types are maintained for backwards compatibility with the testing UI.
+// TODO: Migrate to generated types from core.generated.ts (AuthorizedSalesAgents, Property, etc.)
+
 export interface AdAgentsJson {
   $schema?: string;
   authorized_agents: AuthorizedAgent[];
@@ -414,6 +418,7 @@ export interface Property {
 export interface PropertyIdentifier {
   type: PropertyIdentifierType;
   value: string;
+  include_subdomains?: boolean;
 }
 
 export type PropertyType =
