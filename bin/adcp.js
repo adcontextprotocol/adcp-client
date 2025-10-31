@@ -307,7 +307,7 @@ async function main() {
 
   // Parse options first
   const authIndex = args.indexOf('--auth');
-  const authToken = authIndex !== -1 ? args[authIndex + 1] : process.env.ADCP_AUTH_TOKEN;
+  let authToken = authIndex !== -1 ? args[authIndex + 1] : process.env.ADCP_AUTH_TOKEN;
   const protocolIndex = args.indexOf('--protocol');
   const protocolFlag = protocolIndex !== -1 ? args[protocolIndex + 1] : null;
   const jsonOutput = args.includes('--json');
