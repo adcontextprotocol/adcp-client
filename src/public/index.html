@@ -3230,8 +3230,19 @@
                 const result = await response.json();
                 
                 if (result.success && result.data && result.data.agents) {
+                    // Preserve existing custom agents before updating
+                    const existingCustomAgents = agents.filter(agent => agent.id.startsWith('custom-'));
+                    
+                    // Update agents list with API agents
                     agents = result.data.agents;
-                    logEvent('success', `Loaded ${agents.length} agents`);
+                    
+                    // Re-add custom agents if they exist
+                    if (existingCustomAgents.length > 0) {
+                        agents = [...agents, ...existingCustomAgents];
+                        logEvent('info', `Preserved ${existingCustomAgents.length} custom agents`);
+                    }
+                    
+                    logEvent('success', `Loaded ${result.data.agents.length} API agents`);
                     // Update the agent selector dropdown
                     updateAgentSelector();
                 } else {
@@ -3252,6 +3263,8 @@
         async function initializeApp() {
             try {
                 logEvent('info', 'AdCP Testing Framework initialized (public mode)');
+                // Load custom agents first to preserve them during API load
+                loadCustomAgentsFromStorage();
                 // Load initial data
                 await loadAgentsData();
             } catch (error) {
@@ -3428,6 +3441,14 @@
         
         async function loadAgentInfo(agentId) {
             try {
+                // Check if this is a custom agent (stored locally)
+                if (agentId.startsWith('custom-')) {
+                    const agent = agents.find(a => a.id === agentId);
+                    console.log('Loading custom agent info from local storage:', agentId);
+                    return;
+                }
+
+                // For regular agents, make server call
                 const response = await fetch(`/api/sales/agents/${agentId}/info`);
                 const result = await response.json();
 
