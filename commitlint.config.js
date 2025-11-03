@@ -21,5 +21,6 @@ module.exports = {
     ],
     'scope-empty': [0], // Allow empty scope
     'subject-case': [0], // Don't enforce subject case
+    'body-max-line-length': [0], // Disable body line length limit
   },
 };
