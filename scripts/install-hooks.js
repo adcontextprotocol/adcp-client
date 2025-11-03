@@ -12,7 +12,7 @@ const colors = {
   green: '\x1b[32m',
   yellow: '\x1b[33m',
   blue: '\x1b[34m',
-  reset: '\x1b[0m'
+  reset: '\x1b[0m',
 };
 
 function log(message, color = 'reset') {
@@ -33,10 +33,34 @@ if echo "$COMMIT_MSG" | grep -qE "^Merge (branch|pull request)"; then
   exit 0
 fi
 
-# Run commitlint
-echo "$COMMIT_MSG" | npx commitlint --config commitlint.config.js
+# Run commitlint - check if npx is available
+# First try to find Node.js in common locations
+if [ -f "$HOME/.nvm/versions/node/v20.19.1/bin/npx" ]; then
+  NPX_CMD="$HOME/.nvm/versions/node/v20.19.1/bin/npx"
+elif command -v npx >/dev/null 2>&1; then
+  NPX_CMD="npx"
+elif [ -f "/opt/homebrew/bin/npx" ]; then
+  NPX_CMD="/opt/homebrew/bin/npx"
+elif [ -f "/usr/local/bin/npx" ]; then
+  NPX_CMD="/usr/local/bin/npx"
+else
+  NPX_CMD=""
+fi
 
-if [ $? -ne 0 ]; then
+# Run commitlint using the project's local installation
+if [ -n "$NPX_CMD" ]; then
+  # Change to the project directory to ensure we use local node_modules
+  cd "$(dirname "$0")/../.." || exit 1
+
+  echo "$COMMIT_MSG" | $NPX_CMD commitlint --config commitlint.config.js
+  COMMITLINT_EXIT=$?
+else
+  echo "❌ npx not found - Node.js is required for commit message validation"
+  echo "   Install Node.js or ensure npx is in your PATH"
+  exit 1
+fi
+
+if [ $COMMITLINT_EXIT -ne 0 ]; then
   echo ""
   echo "❌ Commit message does not follow conventional commits format!"
   echo ""
@@ -95,13 +119,13 @@ echo "💡 Full validation (tests, schemas) will run in GitHub Actions CI"
 function installHooks() {
   // Handle both regular git repos and git worktrees
   let gitDir = path.join(process.cwd(), '.git');
-  
+
   // Check if .git exists
   if (!fs.existsSync(gitDir)) {
     log('❌ Not a git repository', 'red');
     process.exit(1);
   }
-  
+
   // If .git is a file (worktree), read the actual git directory
   if (fs.statSync(gitDir).isFile()) {
     const gitContent = fs.readFileSync(gitDir, 'utf8').trim();
@@ -112,7 +136,7 @@ function installHooks() {
       }
     }
   }
-  
+
   const hooksDir = path.join(gitDir, 'hooks');
   const prePushPath = path.join(hooksDir, 'pre-push');
   const commitMsgPath = path.join(hooksDir, 'commit-msg');
