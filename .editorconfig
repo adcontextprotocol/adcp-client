@@ -33,6 +33,22 @@ indent_style = space
 indent_size = 2
 max_line_length = 120
 
+# HTML files (conservative formatting to preserve embedded CSS/JS)
+[*.html]
+indent_style = space
+indent_size = 4
+max_line_length = off
+insert_final_newline = true
+trim_trailing_whitespace = false
+
+# Specific HTML files with embedded CSS/JS (minimal formatting)
+[src/public/*.html]
+indent_style = space
+indent_size = 4
+max_line_length = off
+insert_final_newline = false
+trim_trailing_whitespace = false
+
 # JSON files
 [*.json]
 indent_style = space
