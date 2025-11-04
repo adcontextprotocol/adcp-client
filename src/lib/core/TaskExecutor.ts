@@ -21,6 +21,7 @@ import type {
 } from './ConversationTypes';
 import { normalizeHandlerResponse, isDeferResponse, isAbortResponse } from '../handlers/types';
 import { ProtocolResponseParser, ADCP_STATUS, type ADCPStatus } from './ProtocolResponseParser';
+import type { Activity } from './AsyncHandler';
 /**
  * Custom errors for task execution
  */
@@ -106,6 +107,8 @@ export class TaskExecutor {
       strictSchemaValidation?: boolean;
       /** Log all schema validation violations to debug logs (default: true) */
       logSchemaViolations?: boolean;
+      /** Global activity callback for observability */
+      onActivity?: (activity: Activity) => void | Promise<void>;
     } = {}
   ) {
     this.responseParser = new ProtocolResponseParser();
@@ -183,9 +186,36 @@ export class TaskExecutor {
     const webhookUrl = this.generateWebhookUrl(taskName, taskId);
 
     try {
+      // Emit protocol_request activity
+      await this.config.onActivity?.({
+        type: 'protocol_request',
+        operation_id: taskId,
+        agent_id: agent.id,
+        context_id: undefined,
+        task_id: undefined,
+        task_type: taskName,
+        status: undefined,
+        payload: { params },
+        timestamp: new Date().toISOString()
+      });
+
       // Send initial request and get streaming response with webhook URL
       const response = await ProtocolClient.callTool(agent, taskName, params, debugLogs, webhookUrl, this.config.webhookSecret);
       
+      // Emit protocol_response activity
+      const respStatus = this.responseParser.getStatus(response) as string | undefined;
+      await this.config.onActivity?.({
+        type: 'protocol_response',
+        operation_id: taskId,
+        agent_id: agent.id,
+        context_id: undefined,
+        task_id: undefined,
+        task_type: taskName,
+        status: respStatus,
+        payload: response,
+        timestamp: new Date().toISOString()
+      });
+
       // Add initial response message
       const responseMessage: Message = {
         id: randomUUID(),
@@ -1032,6 +1062,7 @@ export class TaskExecutor {
   private updateTaskStatus(taskId: string, status: TaskStatus, result?: any, error?: string): void {
     const task = this.activeTasks.get(taskId);
     if (task) {
+      const previousStatus = task.status;
       task.status = status;
       
       const taskInfo: TaskInfo = {
@@ -1045,6 +1076,19 @@ export class TaskExecutor {
       };
 
       this.emitTaskEvent(taskInfo, task.agent.id);
+
+      // TODO: @yusuf - do we need this?
+      this.config.onActivity?.({
+        type: 'status_change',
+        operation_id: task.taskId,
+        agent_id: task.agent.id,
+        context_id: undefined,
+        task_id: task.taskId,
+        task_type: task.taskName,
+        status: status,
+        payload: result ?? (error ? { error } : undefined),
+        timestamp: new Date().toISOString()
+      });
 
       // If task is finished, remove from active tasks after a delay
       if (['completed', 'failed', 'rejected', 'canceled'].includes(status)) {
