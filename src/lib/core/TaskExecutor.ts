@@ -1077,7 +1077,6 @@ export class TaskExecutor {
 
       this.emitTaskEvent(taskInfo, task.agent.id);
 
-      // TODO: @yusuf - do we need this?
       this.config.onActivity?.({
         type: 'status_change',
         operation_id: task.taskId,
