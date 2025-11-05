@@ -58,8 +58,7 @@ await client.connect(transport); // This automatically calls initialize internal
 4. **Verification**: Check logs for `Server listening at http://0.0.0.0:8080` (not `127.0.0.1`)
 
 **Files to check when deploying**:
-- `src/server.ts` - Fastify server host/port configuration
-- `server.js` - Express server host/port configuration (if used)
+- `src/server/server.ts` - Fastify server host/port configuration
 - `fly.toml` - Should have `internal_port = 8080`
 
 ## Recent Changes
@@ -407,9 +406,8 @@ Should show:
 
 ### File Structure
 - `fly.toml` - Fly.io configuration
-- `server.js` - Main application entry point  
-- `src/server.ts` - TypeScript server source
-- `src/protocols.ts` - Protocol handling (A2A, MCP)
+- `src/server/server.ts` - Main application entry point (TypeScript/Fastify server)
+- `src/server/sales-agents-handlers.ts` - Sales agent operations handler
 - `src/public/` - Static web UI files
 - `scripts/deploy.sh` - Deployment helper script
 
