@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.7.1
+
+### Patch Changes
+
+- ea72f62: call onActivity function within all tool request/response
+
 ## 2.6.1
 
 ### Patch Changes
