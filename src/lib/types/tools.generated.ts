@@ -284,6 +284,7 @@ export interface FormatID {
   id: string;
 }
 
+
 // get_products response
 /**
  * Type of inventory delivery
@@ -369,7 +370,7 @@ export interface Product {
        * @minItems 1
        */
       property_tags?: [string, ...string[]];
-    }[],
+    }[]
   ];
   /**
    * Array of supported creative format IDs - structured format_id objects with agent_url and id
@@ -881,6 +882,7 @@ export interface Error {
   };
 }
 
+
 // list_creative_formats parameters
 /**
  * Request parameters for discovering supported creative formats
@@ -1088,7 +1090,7 @@ export interface Format {
          */
         unit: 'px' | 'dp' | 'inches' | 'cm';
       };
-    }[],
+    }[]
   ];
   /**
    * Array of required assets or asset groups for this format. Each asset is identified by its asset_id, which must be used as the key in creative manifests. Can contain individual assets or repeatable asset sequences (e.g., carousel products, slideshow frames).
@@ -1763,6 +1765,7 @@ export interface PushNotificationConfig {
   };
 }
 
+
 // create_media_buy response
 /**
  * Response payload for create_media_buy task
@@ -1911,6 +1914,7 @@ export interface SyncCreativesResponse {
   }[];
 }
 
+
 // list_creatives parameters
 /**
  * Filter by creative approval status
@@ -2047,6 +2051,7 @@ export interface ListCreativesRequest {
     | 'sub_assets'
   )[];
 }
+
 
 // list_creatives response
 /**
@@ -2301,6 +2306,7 @@ export interface SubAsset1 {
   content?: string | string[];
 }
 
+
 // update_media_buy parameters
 /**
  * Request parameters for updating campaign and package settings
@@ -2415,6 +2421,7 @@ export interface GetMediaBuyDeliveryRequest {
    */
   end_date?: string;
 }
+
 
 // get_media_buy_delivery response
 /**
@@ -2705,6 +2712,7 @@ export interface ListAuthorizedPropertiesRequest {
   publisher_domains?: [string, ...string[]];
 }
 
+
 // list_authorized_properties response
 /**
  * Standard advertising channels supported by AdCP
@@ -2814,6 +2822,7 @@ export interface ProvidePerformanceFeedbackRequest {
    */
   feedback_source?: 'buyer_attribution' | 'third_party_measurement' | 'platform_analytics' | 'verification_partner';
 }
+
 
 // provide_performance_feedback response
 /**
@@ -3084,7 +3093,7 @@ export interface PreviewCreativeResponse {
              */
             csp_policy?: string;
           };
-        }[],
+        }[]
       ];
       /**
        * The input parameters that generated this preview variant. Echoes back the request input or shows defaults used.
@@ -3200,7 +3209,7 @@ export interface PreviewCreativeResponse {
              */
             csp_policy?: string;
           };
-        }[],
+        }[]
       ];
       /**
        * The input parameters that generated this preview variant. Echoes back the request input or shows defaults used.
@@ -3221,7 +3230,7 @@ export interface PreviewCreativeResponse {
          */
         context_description?: string;
       };
-    }[],
+    }[]
   ];
   /**
    * Optional URL to an interactive testing page that shows all preview variants with controls to switch between them, modify macro values, and test different scenarios.
@@ -3232,6 +3241,7 @@ export interface PreviewCreativeResponse {
    */
   expires_at: string;
 }
+
 
 // get_signals parameters
 /**
@@ -3294,6 +3304,7 @@ export interface GetSignalsRequest {
    */
   max_results?: number;
 }
+
 
 // get_signals response
 /**
@@ -3398,6 +3409,7 @@ export interface ActivateSignalRequest {
    */
   account?: string;
 }
+
 
 // activate_signal response
 /**

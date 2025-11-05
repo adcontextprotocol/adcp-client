@@ -31,9 +31,6 @@ jobs:
       run: |
         # Regenerate types from schemas
         npm run generate-types
-
-        # Format code
-        npm run format
         
         # Check if any generated files changed
         if ! git diff --exit-code src/lib/types/*.generated.ts src/lib/agents/index.generated.ts 2>/dev/null; then

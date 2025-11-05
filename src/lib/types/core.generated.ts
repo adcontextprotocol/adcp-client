@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas v2.4.0
-// Generated at: 2025-11-05T14:41:57.913Z
+// Generated at: 2025-11-05T16:13:09.080Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -857,7 +857,7 @@ export interface Product {
        * @minItems 1
        */
       property_tags?: [string, ...string[]];
-    }[],
+    }[]
   ];
   /**
    * Array of supported creative format IDs - structured format_id objects with agent_url and id
@@ -1444,7 +1444,7 @@ export interface Property {
        * The identifier value. For domain type: 'example.com' matches base domain plus www and m subdomains; 'edition.example.com' matches that specific subdomain; '*.example.com' matches ALL subdomains but NOT base domain
        */
       value: string;
-    }[],
+    }[]
   ];
   /**
    * Tags for categorization and grouping (e.g., network membership, content categories)
@@ -1455,3 +1455,4 @@ export interface Property {
    */
   publisher_domain?: string;
 }
+
