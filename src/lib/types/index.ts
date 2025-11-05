@@ -17,7 +17,7 @@ export type {
   SyncCreativesRequest,
   SyncCreativesResponse,
   ListCreativesRequest,
-  ListCreativesResponse
+  ListCreativesResponse,
 } from './adcp';
 
 // Re-export FormatID from generated core types

@@ -8,7 +8,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const { detectProtocol } = require('../../dist/lib/index.js');
 
-test('Protocol Detection Tests', async (t) => {
+test('Protocol Detection Tests', async t => {
   await t.test('detects MCP from URL pattern ending with /mcp/', async () => {
     const protocol = await detectProtocol('https://agent.example.com/mcp/');
     assert.strictEqual(protocol, 'mcp');
@@ -50,7 +50,7 @@ test('Protocol Detection Tests', async (t) => {
   });
 });
 
-test('Protocol Discovery Accept Headers', async (t) => {
+test('Protocol Discovery Accept Headers', async t => {
   await t.test('A2A discovery uses flexible Accept header', async () => {
     // A2A discovery should use flexible Accept header for server compatibility
     // Based on PR #89: changed from 'application/json' to 'application/json, */*'

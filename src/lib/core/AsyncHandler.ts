@@ -14,7 +14,7 @@ import type {
   ListAuthorizedPropertiesResponse,
   ProvidePerformanceFeedbackResponse,
   GetSignalsResponse,
-  ActivateSignalResponse
+  ActivateSignalResponse,
 } from '../types/tools.generated';
 
 /**
@@ -102,14 +102,26 @@ export interface Activity {
 export interface AsyncHandlerConfig {
   // AdCP tool status change handlers - called for ALL status changes (completed, failed, needs_input, working, etc)
   onGetProductsStatusChange?: (response: GetProductsResponse, metadata: WebhookMetadata) => void | Promise<void>;
-  onListCreativeFormatsStatusChange?: (response: ListCreativeFormatsResponse, metadata: WebhookMetadata) => void | Promise<void>;
+  onListCreativeFormatsStatusChange?: (
+    response: ListCreativeFormatsResponse,
+    metadata: WebhookMetadata
+  ) => void | Promise<void>;
   onCreateMediaBuyStatusChange?: (response: CreateMediaBuyResponse, metadata: WebhookMetadata) => void | Promise<void>;
   onUpdateMediaBuyStatusChange?: (response: UpdateMediaBuyResponse, metadata: WebhookMetadata) => void | Promise<void>;
   onSyncCreativesStatusChange?: (response: SyncCreativesResponse, metadata: WebhookMetadata) => void | Promise<void>;
   onListCreativesStatusChange?: (response: ListCreativesResponse, metadata: WebhookMetadata) => void | Promise<void>;
-  onGetMediaBuyDeliveryStatusChange?: (response: GetMediaBuyDeliveryResponse, metadata: WebhookMetadata) => void | Promise<void>;
-  onListAuthorizedPropertiesStatusChange?: (response: ListAuthorizedPropertiesResponse, metadata: WebhookMetadata) => void | Promise<void>;
-  onProvidePerformanceFeedbackStatusChange?: (response: ProvidePerformanceFeedbackResponse, metadata: WebhookMetadata) => void | Promise<void>;
+  onGetMediaBuyDeliveryStatusChange?: (
+    response: GetMediaBuyDeliveryResponse,
+    metadata: WebhookMetadata
+  ) => void | Promise<void>;
+  onListAuthorizedPropertiesStatusChange?: (
+    response: ListAuthorizedPropertiesResponse,
+    metadata: WebhookMetadata
+  ) => void | Promise<void>;
+  onProvidePerformanceFeedbackStatusChange?: (
+    response: ProvidePerformanceFeedbackResponse,
+    metadata: WebhookMetadata
+  ) => void | Promise<void>;
   onGetSignalsStatusChange?: (response: GetSignalsResponse, metadata: WebhookMetadata) => void | Promise<void>;
   onActivateSignalStatusChange?: (response: ActivateSignalResponse, metadata: WebhookMetadata) => void | Promise<void>;
 
@@ -120,7 +132,10 @@ export interface AsyncHandlerConfig {
   onActivity?: (activity: Activity) => void | Promise<void>;
 
   // Notification handlers (agent-initiated, no operation_id)
-  onMediaBuyDeliveryNotification?: (notification: MediaBuyDeliveryNotification, metadata: NotificationMetadata) => void | Promise<void>;
+  onMediaBuyDeliveryNotification?: (
+    notification: MediaBuyDeliveryNotification,
+    metadata: NotificationMetadata
+  ) => void | Promise<void>;
 }
 
 /**
@@ -156,7 +171,7 @@ export class AsyncHandler {
       task_type: payload.task_type,
       status: payload.status,
       error: payload.error,
-      timestamp: payload.timestamp || new Date().toISOString()
+      timestamp: payload.timestamp || new Date().toISOString(),
     };
 
     // Emit activity
@@ -169,16 +184,18 @@ export class AsyncHandler {
       task_type: metadata.task_type,
       status: payload.status,
       payload: payload.result,
-      timestamp: metadata.timestamp
+      timestamp: metadata.timestamp,
     });
 
     // Check if this is a notification (media_buy_delivery with notification_type)
     // Notifications are treated like status updates for an ongoing "get delivery report" operation
     // The operation_id (from URL) groups all reports for the same agent + month
-    if (payload.task_type === 'media_buy_delivery' &&
-        payload.result &&
-        typeof payload.result === 'object' &&
-        'notification_type' in payload.result) {
+    if (
+      payload.task_type === 'media_buy_delivery' &&
+      payload.result &&
+      typeof payload.result === 'object' &&
+      'notification_type' in payload.result
+    ) {
       const notificationPayload = payload.result as MediaBuyDeliveryNotification;
 
       // Build notification metadata
@@ -187,7 +204,7 @@ export class AsyncHandler {
         ...metadata,
         notification_type: notificationPayload.notification_type,
         sequence_number: notificationPayload.sequence_number,
-        next_expected_at: notificationPayload.next_expected_at
+        next_expected_at: notificationPayload.next_expected_at,
       };
 
       await this.config.onMediaBuyDeliveryNotification?.(notificationPayload, notificationMetadata);
@@ -264,7 +281,6 @@ export class AsyncHandler {
       }
     }
   }
-
 
   /**
    * Emit activity event

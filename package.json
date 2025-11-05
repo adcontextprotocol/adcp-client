@@ -69,7 +69,8 @@
     "registry:cron": "tsx src/registry/cron.ts",
     "registry:validate-all": "tsx src/registry/cron.ts --all",
     "registry:validate-pending": "tsx src/registry/cron.ts --pending",
-    "registry:mcp": "tsx src/registry/mcp-server.ts"
+    "registry:mcp": "tsx src/registry/mcp-server.ts",
+    "format": "prettier --write \"./**/*.{css,html,js,ts,tsx,json}\""
   },
   "keywords": [
     "adcp",
@@ -125,6 +126,7 @@
     "markdown-it": "^14.1.0",
     "node-fetch": "^3.3.2",
     "pino-pretty": "^13.1.1",
+    "prettier": "^3.6.2",
     "ts-to-zod": "^5.0.1",
     "tsx": "^4.6.0",
     "typedoc": "^0.28.13",

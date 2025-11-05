@@ -12,38 +12,34 @@ const { ADCPMultiAgentClient } = require('../../dist/lib');
 const HITL_CONFIG = {
   servers: {
     mcp: 'http://localhost:8176/mcp/',
-    a2a: 'http://localhost:8094'  // Agent card served from base HTTP, SDK uses URL from card for calls
+    a2a: 'http://localhost:8094', // Agent card served from base HTTP, SDK uses URL from card for calls
   },
   principals: {
     sync: process.env.HITL_SYNC_TOKEN || 'HITL_SYNC_TOKEN_NOT_SET',
-    async: process.env.HITL_ASYNC_TOKEN || 'HITL_ASYNC_TOKEN_NOT_SET'
-  }
+    async: process.env.HITL_ASYNC_TOKEN || 'HITL_ASYNC_TOKEN_NOT_SET',
+  },
 };
 
 // Working tools discovered from previous testing
-const WORKING_TOOLS = [
-  'get_products',
-  'list_creative_formats', 
-  'list_creatives'
-];
+const WORKING_TOOLS = ['get_products', 'list_creative_formats', 'list_creatives'];
 
 class ProtocolComparison {
   constructor() {
     this.results = {
       a2a: { successes: 0, failures: 0, tests: [], totalTime: 0 },
-      mcp: { successes: 0, failures: 0, tests: [], totalTime: 0 }
+      mcp: { successes: 0, failures: 0, tests: [], totalTime: 0 },
     };
   }
 
   async runComprehensiveTest() {
     console.log('🔄 Starting Comprehensive A2A vs MCP Protocol Comparison\n');
-    
+
     // Test both protocols with both principals
     await this.testProtocol('mcp', 'sync');
     await this.testProtocol('mcp', 'async');
     await this.testProtocol('a2a', 'sync');
     await this.testProtocol('a2a', 'async');
-    
+
     // Generate comparison report
     this.generateComparisonReport();
   }
@@ -53,11 +49,11 @@ class ProtocolComparison {
     const authToken = HITL_CONFIG.principals[principalType];
     const testId = `${protocol.toUpperCase()}-${principalType.toUpperCase()}`;
     const agentId = `${principalType}_principal_${protocol}`;
-    
+
     console.log(`\n🧪 Testing ${testId}`);
     console.log(`📡 Server: ${serverUrl}`);
     console.log(`🔐 Principal: ${authToken.substring(0, 20)}...`);
-    
+
     try {
       // Create agent configuration
       const agentConfig = {
@@ -66,23 +62,22 @@ class ProtocolComparison {
         agent_uri: serverUrl,
         protocol: protocol,
         auth_token_env: authToken,
-        requiresAuth: true
+        requiresAuth: true,
       };
-      
+
       // Create multi-agent client
       const multiClient = new ADCPMultiAgentClient([agentConfig]);
       const client = multiClient.agent(agentId);
-      
+
       console.log(`✅ ${testId}: Client created successfully`);
-      
+
       // Test each working tool
       for (const toolName of WORKING_TOOLS) {
         await this.testTool(client, protocol, principalType, toolName);
       }
-      
+
       // Test task management features
       await this.testTaskManagement(client, protocol, principalType);
-      
     } catch (error) {
       console.log(`❌ ${testId}: Client creation failed - ${error.message}`);
       this.recordFailure(protocol, `${testId}-connection`, error.message, 0);
@@ -92,35 +87,31 @@ class ProtocolComparison {
   async testTool(client, protocol, principalType, toolName) {
     const testName = `${protocol.toUpperCase()}-${principalType}-${toolName}`;
     const startTime = Date.now();
-    
+
     try {
       console.log(`  🔧 Testing tool: ${toolName}`);
-      
+
       // Use appropriate parameters based on tool (from working test)
       let params = {};
       if (toolName === 'get_products') {
         params = {
           brief: 'Test brief for protocol comparison',
-          promoted_offering: 'Test offering'
+          promoted_offering: 'Test offering',
         };
       }
       // Other tools work with empty parameters
-      
-      const result = await client.executeTask(
-        toolName,
-        params,
-        async () => ({ defer: true })
-      );
-      
+
+      const result = await client.executeTask(toolName, params, async () => ({ defer: true }));
+
       const duration = Date.now() - startTime;
-      
+
       if (result.success) {
         console.log(`    ✅ ${toolName}: Success (${duration}ms)`);
         console.log(`    📊 Status: ${result.status}`);
         if (result.data) {
           const dataKeys = Object.keys(result.data);
           console.log(`    📄 Data keys: ${dataKeys.join(', ')}`);
-          
+
           // Show specific data counts
           if (result.data.products) console.log(`    🛍️  Products: ${result.data.products.length}`);
           if (result.data.formats) console.log(`    📐 Formats: ${result.data.formats.length}`);
@@ -131,7 +122,6 @@ class ProtocolComparison {
         console.log(`    ❌ ${toolName}: Failed - ${result.error}`);
         this.recordFailure(protocol, testName, result.error, duration);
       }
-      
     } catch (error) {
       const duration = Date.now() - startTime;
       console.log(`    💥 ${toolName}: Exception - ${error.message}`);
@@ -142,18 +132,17 @@ class ProtocolComparison {
   async testTaskManagement(client, protocol, principalType) {
     const testName = `${protocol.toUpperCase()}-${principalType}-tasks`;
     const startTime = Date.now();
-    
+
     try {
       console.log(`  📋 Testing task management...`);
-      
+
       // Test basic client operations
       console.log(`    ℹ️  Client available: Yes`);
       console.log(`    ℹ️  Protocol: ${protocol}`);
-      
+
       const duration = Date.now() - startTime;
       console.log(`    ✅ Task management: Basic Success (${duration}ms)`);
       this.recordSuccess(protocol, testName, duration, { basicClientOps: true });
-      
     } catch (error) {
       const duration = Date.now() - startTime;
       console.log(`    ❌ Task management: Failed - ${error.message}`);
@@ -168,7 +157,7 @@ class ProtocolComparison {
       name: testName,
       success: true,
       duration,
-      result
+      result,
     });
   }
 
@@ -179,7 +168,7 @@ class ProtocolComparison {
       name: testName,
       success: false,
       duration,
-      error
+      error,
     });
   }
 
@@ -187,14 +176,14 @@ class ProtocolComparison {
     console.log('\n' + '='.repeat(80));
     console.log('📊 COMPREHENSIVE PROTOCOL COMPARISON REPORT');
     console.log('='.repeat(80));
-    
+
     // Overall Statistics
     console.log('\n🔢 OVERALL STATISTICS:');
     for (const [protocol, stats] of Object.entries(this.results)) {
       const total = stats.successes + stats.failures;
       const successRate = total > 0 ? ((stats.successes / total) * 100).toFixed(1) : '0.0';
       const avgTime = total > 0 ? (stats.totalTime / total).toFixed(0) : '0';
-      
+
       console.log(`  ${protocol.toUpperCase()}:`);
       console.log(`    ✅ Successes: ${stats.successes}`);
       console.log(`    ❌ Failures: ${stats.failures}`);
@@ -202,12 +191,14 @@ class ProtocolComparison {
       console.log(`    ⏱️  Average Response Time: ${avgTime}ms`);
       console.log(`    🕒 Total Test Time: ${stats.totalTime}ms`);
     }
-    
+
     // Winner Determination
     console.log('\n🏆 PROTOCOL WINNER:');
-    const mcpSuccessRate = this.results.mcp.successes / (this.results.mcp.successes + this.results.mcp.failures) * 100;
-    const a2aSuccessRate = this.results.a2a.successes / (this.results.a2a.successes + this.results.a2a.failures) * 100;
-    
+    const mcpSuccessRate =
+      (this.results.mcp.successes / (this.results.mcp.successes + this.results.mcp.failures)) * 100;
+    const a2aSuccessRate =
+      (this.results.a2a.successes / (this.results.a2a.successes + this.results.a2a.failures)) * 100;
+
     if (mcpSuccessRate > a2aSuccessRate) {
       console.log(`  🥇 MCP Protocol wins with ${mcpSuccessRate.toFixed(1)}% success rate`);
     } else if (a2aSuccessRate > mcpSuccessRate) {
@@ -215,7 +206,7 @@ class ProtocolComparison {
     } else {
       console.log(`  🤝 Tie! Both protocols achieved ${mcpSuccessRate.toFixed(1)}% success rate`);
     }
-    
+
     // Detailed Test Results
     console.log('\n📋 DETAILED TEST RESULTS:');
     for (const [protocol, stats] of Object.entries(this.results)) {
@@ -232,7 +223,7 @@ class ProtocolComparison {
         }
       });
     }
-    
+
     // Recommendations
     console.log('\n💡 RECOMMENDATIONS:');
     if (mcpSuccessRate > 50 && a2aSuccessRate < 50) {
@@ -248,7 +239,7 @@ class ProtocolComparison {
       console.log('  • Both protocols have significant issues - debugging required');
       console.log('  • Check server configuration and network connectivity');
     }
-    
+
     console.log('\n' + '='.repeat(80));
     console.log('🏁 Protocol comparison test completed!');
     console.log('='.repeat(80));
@@ -258,7 +249,8 @@ class ProtocolComparison {
 // Run the test
 if (require.main === module) {
   const comparison = new ProtocolComparison();
-  comparison.runComprehensiveTest()
+  comparison
+    .runComprehensiveTest()
     .then(() => {
       console.log('\n✨ All tests completed successfully!');
       process.exit(0);

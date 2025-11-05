@@ -239,7 +239,6 @@ export class ResponseValidator {
     }
   }
 
-
   /**
    * Quick validation helper - returns true if valid, throws if invalid
    */
@@ -321,7 +320,7 @@ export class ResponseValidator {
       provide_performance_feedback: schemas.ProvidePerformanceFeedbackResponseSchema,
       get_signals: schemas.GetSignalsResponseSchema,
       activate_signal: schemas.ActivateSignalResponseSchema,
-      preview_creative: schemas.PreviewCreativeResponseSchema
+      preview_creative: schemas.PreviewCreativeResponseSchema,
     };
 
     return schemaMap[toolName] || null;

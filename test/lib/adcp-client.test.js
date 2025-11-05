@@ -6,7 +6,6 @@ const assert = require('node:assert');
 const { AdCPClient, ConfigurationManager, createAdCPClient } = require('../../dist/lib/index.js');
 
 describe('AdCPClient', () => {
-  
   describe('constructor', () => {
     test('should create empty client when no agents provided', () => {
       const client = new AdCPClient();
@@ -20,10 +19,10 @@ describe('AdCPClient', () => {
           name: 'Test Agent',
           agent_uri: 'https://test.example.com',
           protocol: 'mcp',
-          requiresAuth: false
-        }
+          requiresAuth: false,
+        },
       ];
-      
+
       const client = new AdCPClient(agents);
       assert.strictEqual(client.getAgents().length, 1);
       assert.strictEqual(client.getAgents()[0].id, 'test-agent');
@@ -39,9 +38,9 @@ describe('AdCPClient', () => {
         agent_uri: 'https://new.example.com',
         protocol: 'a2a',
         requiresAuth: true,
-        auth_token_env: 'TEST_TOKEN'
+        auth_token_env: 'TEST_TOKEN',
       };
-      
+
       client.addAgent(agent);
       assert.strictEqual(client.getAgents().length, 1);
       assert.strictEqual(client.getAgents()[0].id, 'new-agent');
@@ -54,18 +53,18 @@ describe('AdCPClient', () => {
           name: 'Existing',
           agent_uri: 'https://existing.example.com',
           protocol: 'mcp',
-          requiresAuth: false
-        }
+          requiresAuth: false,
+        },
       ]);
-      
+
       client.addAgent({
         id: 'new',
         name: 'New',
         agent_uri: 'https://new.example.com',
         protocol: 'a2a',
-        requiresAuth: false
+        requiresAuth: false,
       });
-      
+
       assert.strictEqual(client.getAgents().length, 2);
       assert.strictEqual(client.getAgents()[1].id, 'new');
     });
@@ -78,21 +77,21 @@ describe('AdCPClient', () => {
         name: 'Test',
         agent_uri: 'https://test.example.com',
         protocol: 'mcp',
-        requiresAuth: false
+        requiresAuth: false,
       };
-      
+
       const client = new AdCPClient([originalAgent]);
       const agents = client.getAgents();
-      
+
       // Modify the returned array
       agents.push({
         id: 'hacker',
         name: 'Hacker',
         agent_uri: 'https://evil.example.com',
         protocol: 'mcp',
-        requiresAuth: false
+        requiresAuth: false,
       });
-      
+
       // Original client should be unchanged
       assert.strictEqual(client.getAgents().length, 1);
       assert.strictEqual(client.getAgents()[0].id, 'test');
@@ -102,12 +101,15 @@ describe('AdCPClient', () => {
   describe('fluent API', () => {
     test('should throw error for non-existent agent', () => {
       const client = new AdCPClient();
-      
-      assert.throws(() => {
-        client.agent('non-existent');
-      }, {
-        message: "Agent 'non-existent' not found. Available agents: "
-      });
+
+      assert.throws(
+        () => {
+          client.agent('non-existent');
+        },
+        {
+          message: "Agent 'non-existent' not found. Available agents: ",
+        }
+      );
     });
 
     test('should return Agent instance for valid agent', () => {
@@ -117,10 +119,10 @@ describe('AdCPClient', () => {
           name: 'Test Agent',
           agent_uri: 'https://test.example.com',
           protocol: 'mcp',
-          requiresAuth: false
-        }
+          requiresAuth: false,
+        },
       ]);
-      
+
       const agent = client.agent('test-agent');
       assert.ok(agent);
       // Verify agent has fluent API methods
@@ -136,17 +138,17 @@ describe('AdCPClient', () => {
           name: 'Agent 1',
           agent_uri: 'https://agent1.example.com',
           protocol: 'mcp',
-          requiresAuth: false
+          requiresAuth: false,
         },
         {
           id: 'agent2',
           name: 'Agent 2',
           agent_uri: 'https://agent2.example.com',
           protocol: 'a2a',
-          requiresAuth: false
-        }
+          requiresAuth: false,
+        },
       ]);
-      
+
       const agents = client.agents(['agent1', 'agent2']);
       assert.ok(agents);
       // Verify collection has fluent API methods
@@ -158,13 +160,13 @@ describe('AdCPClient', () => {
       const client = new AdCPClient([
         {
           id: 'agent1',
-          name: 'Agent 1', 
+          name: 'Agent 1',
           agent_uri: 'https://agent1.example.com',
           protocol: 'mcp',
-          requiresAuth: false
-        }
+          requiresAuth: false,
+        },
       ]);
-      
+
       const allAgents = client.allAgents();
       assert.ok(allAgents);
       assert.ok(typeof allAgents.getProducts === 'function');
@@ -172,12 +174,15 @@ describe('AdCPClient', () => {
 
     test('should throw error when calling allAgents on empty client', () => {
       const client = new AdCPClient();
-      
-      assert.throws(() => {
-        client.allAgents();
-      }, {
-        message: 'No agents configured. Add agents to the client first.'
-      });
+
+      assert.throws(
+        () => {
+          client.allAgents();
+        },
+        {
+          message: 'No agents configured. Add agents to the client first.',
+        }
+      );
     });
   });
 
@@ -185,10 +190,10 @@ describe('AdCPClient', () => {
     test('should return array of creative formats', () => {
       const client = new AdCPClient();
       const formats = client.getStandardFormats();
-      
+
       assert.ok(Array.isArray(formats));
       assert.ok(formats.length > 0);
-      
+
       // Check first format has required fields
       const firstFormat = formats[0];
       assert.ok(firstFormat.format_id);
@@ -203,18 +208,17 @@ describe('AdCPClient', () => {
 });
 
 describe('ConfigurationManager', () => {
-  
   describe('loadAgentsFromEnv', () => {
     test('should return empty array when no config env var', () => {
       // Save original env var
       const originalConfig = process.env.SALES_AGENTS_CONFIG;
       delete process.env.SALES_AGENTS_CONFIG;
-      
+
       const agents = ConfigurationManager.loadAgentsFromEnv();
-      
+
       assert.ok(Array.isArray(agents));
       assert.strictEqual(agents.length, 0);
-      
+
       // Restore original env var
       if (originalConfig) {
         process.env.SALES_AGENTS_CONFIG = originalConfig;
@@ -224,7 +228,7 @@ describe('ConfigurationManager', () => {
     test('should parse valid JSON config', () => {
       // Save original env var
       const originalConfig = process.env.SALES_AGENTS_CONFIG;
-      
+
       process.env.SALES_AGENTS_CONFIG = JSON.stringify({
         agents: [
           {
@@ -233,18 +237,18 @@ describe('ConfigurationManager', () => {
             agent_uri: 'https://env-test.example.com',
             protocol: 'mcp',
             requiresAuth: true,
-            auth_token_env: 'TEST_TOKEN'
-          }
-        ]
+            auth_token_env: 'TEST_TOKEN',
+          },
+        ],
       });
-      
+
       const agents = ConfigurationManager.loadAgentsFromEnv();
-      
+
       assert.strictEqual(agents.length, 1);
       assert.strictEqual(agents[0].id, 'env-test');
       assert.strictEqual(agents[0].protocol, 'mcp');
       assert.strictEqual(agents[0].requiresAuth, true);
-      
+
       // Restore original env var
       if (originalConfig) {
         process.env.SALES_AGENTS_CONFIG = originalConfig;
@@ -256,15 +260,18 @@ describe('ConfigurationManager', () => {
     test('should handle invalid JSON gracefully', () => {
       // Save original env var
       const originalConfig = process.env.SALES_AGENTS_CONFIG;
-      
+
       process.env.SALES_AGENTS_CONFIG = 'invalid json {';
-      
-      assert.throws(() => {
-        ConfigurationManager.loadAgentsFromEnv();
-      }, {
-        name: 'ConfigurationError'
-      });
-      
+
+      assert.throws(
+        () => {
+          ConfigurationManager.loadAgentsFromEnv();
+        },
+        {
+          name: 'ConfigurationError',
+        }
+      );
+
       // Restore original env var
       if (originalConfig) {
         process.env.SALES_AGENTS_CONFIG = originalConfig;
@@ -276,7 +283,6 @@ describe('ConfigurationManager', () => {
 });
 
 describe('convenience functions', () => {
-  
   test('createAdCPClient should create AdCPClient instance', () => {
     const client = createAdCPClient();
     assert.ok(client instanceof AdCPClient);
@@ -290,10 +296,10 @@ describe('convenience functions', () => {
         name: 'Convenience Test',
         agent_uri: 'https://convenience.example.com',
         protocol: 'mcp',
-        requiresAuth: false
-      }
+        requiresAuth: false,
+      },
     ];
-    
+
     const client = createAdCPClient(agents);
     assert.ok(client instanceof AdCPClient);
     assert.strictEqual(client.getAgents().length, 1);

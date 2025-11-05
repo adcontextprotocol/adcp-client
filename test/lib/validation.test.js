@@ -6,7 +6,6 @@ const assert = require('node:assert');
 const { validateAgentUrl, validateAdCPResponse, getExpectedSchema } = require('../../dist/lib/validation/index.js');
 
 describe('validation utilities', () => {
-
   describe('validateAgentUrl', () => {
     test('should accept valid HTTPS URLs', () => {
       assert.doesNotThrow(() => {
@@ -102,11 +101,11 @@ describe('validation utilities', () => {
           {
             id: 'product-1',
             name: 'Test Product',
-            pricing_model: 'cpm'
-          }
-        ]
+            pricing_model: 'cpm',
+          },
+        ],
       };
-      
+
       const result = validateAdCPResponse(validResponse, 'products');
       assert.strictEqual(result.valid, true);
       assert.strictEqual(result.errors.length, 0);
@@ -115,9 +114,9 @@ describe('validation utilities', () => {
     test('should reject invalid products schema', () => {
       // Missing products array
       const invalidResponse1 = {
-        items: []
+        items: [],
       };
-      
+
       const result1 = validateAdCPResponse(invalidResponse1, 'products');
       assert.strictEqual(result1.valid, false);
       assert.ok(result1.errors.includes('Missing or invalid products array'));
@@ -126,12 +125,12 @@ describe('validation utilities', () => {
       const invalidResponse2 = {
         products: [
           {
-            name: 'Test Product'
+            name: 'Test Product',
             // Missing id and pricing_model
-          }
-        ]
+          },
+        ],
       };
-      
+
       const result2 = validateAdCPResponse(invalidResponse2, 'products');
       assert.strictEqual(result2.valid, false);
       assert.ok(result2.errors.some(error => error.includes('Missing id field')));
@@ -144,11 +143,11 @@ describe('validation utilities', () => {
         formats: [
           {
             format_id: 'banner_300x250',
-            name: 'Medium Rectangle'
-          }
-        ]
+            name: 'Medium Rectangle',
+          },
+        ],
       };
-      
+
       const result1 = validateAdCPResponse(validResponse1, 'formats');
       assert.strictEqual(result1.valid, true);
 
@@ -157,20 +156,20 @@ describe('validation utilities', () => {
         creative_formats: [
           {
             format_id: 'banner_728x90',
-            name: 'Leaderboard'
-          }
-        ]
+            name: 'Leaderboard',
+          },
+        ],
       };
-      
+
       const result2 = validateAdCPResponse(validResponse2, 'formats');
       assert.strictEqual(result2.valid, true);
     });
 
     test('should reject invalid formats schema', () => {
       const invalidResponse = {
-        other_data: []
+        other_data: [],
       };
-      
+
       const result = validateAdCPResponse(invalidResponse, 'formats');
       assert.strictEqual(result.valid, false);
       assert.ok(result.errors.includes('Missing formats/creative_formats array'));
@@ -179,9 +178,9 @@ describe('validation utilities', () => {
     test('should accept generic schemas without specific validation', () => {
       const response = {
         any_field: 'any_value',
-        numbers: [1, 2, 3]
+        numbers: [1, 2, 3],
       };
-      
+
       const result = validateAdCPResponse(response, 'generic');
       assert.strictEqual(result.valid, true);
       assert.strictEqual(result.errors.length, 0);
@@ -189,9 +188,9 @@ describe('validation utilities', () => {
 
     test('should handle unknown schemas gracefully', () => {
       const response = {
-        data: 'some data'
+        data: 'some data',
       };
-      
+
       const result = validateAdCPResponse(response, 'unknown_schema');
       assert.strictEqual(result.valid, true); // No specific validation for unknown schemas
       assert.strictEqual(result.errors.length, 0);
@@ -199,9 +198,9 @@ describe('validation utilities', () => {
 
     test('should validate empty products array as valid', () => {
       const response = {
-        products: []
+        products: [],
       };
-      
+
       const result = validateAdCPResponse(response, 'products');
       assert.strictEqual(result.valid, true);
       assert.strictEqual(result.errors.length, 0);

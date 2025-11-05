@@ -6,17 +6,17 @@ module.exports = {
       2,
       'always',
       [
-        'feat',     // New feature
-        'fix',      // Bug fix
-        'docs',     // Documentation only
-        'style',    // Code style changes (formatting, missing semicolons, etc)
+        'feat', // New feature
+        'fix', // Bug fix
+        'docs', // Documentation only
+        'style', // Code style changes (formatting, missing semicolons, etc)
         'refactor', // Code refactoring
-        'perf',     // Performance improvements
-        'test',     // Adding or updating tests
-        'build',    // Changes to build system or dependencies
-        'ci',       // Changes to CI configuration
-        'chore',    // Other changes that don't modify src or test files
-        'revert',   // Reverts a previous commit
+        'perf', // Performance improvements
+        'test', // Adding or updating tests
+        'build', // Changes to build system or dependencies
+        'ci', // Changes to CI configuration
+        'chore', // Other changes that don't modify src or test files
+        'revert', // Reverts a previous commit
       ],
     ],
     'scope-empty': [0], // Allow empty scope

@@ -23,27 +23,31 @@ describe('Artifact Extraction Tests', () => {
         id: 'test-a2a',
         name: 'Test A2A Agent',
         protocol: 'a2a',
-        agent_uri: 'http://test.local'
+        agent_uri: 'http://test.local',
       };
 
       // Mock A2A response structure
       const mockResponse = {
         result: {
-          artifacts: [{
-            artifactId: 'skill_result_1',
-            name: 'get_products_result',
-            parts: [{
-              kind: 'data',
-              data: {
-                products: [
-                  { product_id: 'prod1', name: 'Product 1' },
-                  { product_id: 'prod2', name: 'Product 2' }
-                ],
-                message: 'Found 2 products'
-              }
-            }]
-          }]
-        }
+          artifacts: [
+            {
+              artifactId: 'skill_result_1',
+              name: 'get_products_result',
+              parts: [
+                {
+                  kind: 'data',
+                  data: {
+                    products: [
+                      { product_id: 'prod1', name: 'Product 1' },
+                      { product_id: 'prod2', name: 'Product 2' },
+                    ],
+                    message: 'Found 2 products',
+                  },
+                },
+              ],
+            },
+          ],
+        },
       };
 
       // Test the extraction logic directly
@@ -59,22 +63,26 @@ describe('Artifact Extraction Tests', () => {
     it('should extract creatives from A2A artifact structure', async () => {
       const mockResponse = {
         result: {
-          artifacts: [{
-            artifactId: 'skill_result_1',
-            name: 'list_creatives_result',
-            parts: [{
-              kind: 'data',
-              data: {
-                success: true,
-                creatives: [
-                  { creative_id: 'c1', name: 'Creative 1', format: 'video' },
-                  { creative_id: 'c2', name: 'Creative 2', format: 'display' }
-                ],
-                total_count: 2
-              }
-            }]
-          }]
-        }
+          artifacts: [
+            {
+              artifactId: 'skill_result_1',
+              name: 'list_creatives_result',
+              parts: [
+                {
+                  kind: 'data',
+                  data: {
+                    success: true,
+                    creatives: [
+                      { creative_id: 'c1', name: 'Creative 1', format: 'video' },
+                      { creative_id: 'c2', name: 'Creative 2', format: 'display' },
+                    ],
+                    total_count: 2,
+                  },
+                },
+              ],
+            },
+          ],
+        },
       };
 
       const debugLogs = [];
@@ -85,9 +93,7 @@ describe('Artifact Extraction Tests', () => {
       assert.strictEqual(extractedData.total_count, 2);
 
       // Check debug logs
-      const extractionLog = debugLogs.find(log =>
-        log.message.includes('Extracting data from A2A artifact')
-      );
+      const extractionLog = debugLogs.find(log => log.message.includes('Extracting data from A2A artifact'));
       assert.ok(extractionLog, 'Should log artifact extraction');
       assert.ok(extractionLog.details, 'Should have details');
       assert.strictEqual(extractionLog.details.artifactCount, 1);
@@ -97,21 +103,25 @@ describe('Artifact Extraction Tests', () => {
     it('should extract formats from A2A artifact structure', async () => {
       const mockResponse = {
         result: {
-          artifacts: [{
-            artifactId: 'skill_result_1',
-            name: 'list_creative_formats_result',
-            parts: [{
-              kind: 'data',
-              data: {
-                formats: [
-                  { format_id: 'video_1920x1080', name: 'HD Video' },
-                  { format_id: 'display_300x250', name: 'Medium Rectangle' }
-                ],
-                adcp_version: '1.6.0'
-              }
-            }]
-          }]
-        }
+          artifacts: [
+            {
+              artifactId: 'skill_result_1',
+              name: 'list_creative_formats_result',
+              parts: [
+                {
+                  kind: 'data',
+                  data: {
+                    formats: [
+                      { format_id: 'video_1920x1080', name: 'HD Video' },
+                      { format_id: 'display_300x250', name: 'Medium Rectangle' },
+                    ],
+                    adcp_version: '1.6.0',
+                  },
+                },
+              ],
+            },
+          ],
+        },
       };
 
       const extractedData = executor.extractResponseData(mockResponse, []);
@@ -124,21 +134,23 @@ describe('Artifact Extraction Tests', () => {
     it('should handle A2A artifacts with multiple parts', async () => {
       const mockResponse = {
         result: {
-          artifacts: [{
-            artifactId: 'multi_part_result',
-            name: 'complex_result',
-            parts: [
-              {
-                kind: 'data',
-                data: { products: [{ product_id: 'p1' }] }
-              },
-              {
-                kind: 'text',
-                text: 'Additional context'
-              }
-            ]
-          }]
-        }
+          artifacts: [
+            {
+              artifactId: 'multi_part_result',
+              name: 'complex_result',
+              parts: [
+                {
+                  kind: 'data',
+                  data: { products: [{ product_id: 'p1' }] },
+                },
+                {
+                  kind: 'text',
+                  text: 'Additional context',
+                },
+              ],
+            },
+          ],
+        },
       };
 
       // Should extract from first part only
@@ -151,8 +163,8 @@ describe('Artifact Extraction Tests', () => {
     it('should handle empty A2A artifacts gracefully', async () => {
       const mockResponse = {
         result: {
-          artifacts: []
-        }
+          artifacts: [],
+        },
       };
 
       const debugLogs = [];
@@ -163,9 +175,7 @@ describe('Artifact Extraction Tests', () => {
       assert.strictEqual(extractedData.artifacts.length, 0);
 
       // Should log the fallback
-      const fallbackLog = debugLogs.find(log =>
-        log.message.includes('Returning A2A result directly')
-      );
+      const fallbackLog = debugLogs.find(log => log.message.includes('Returning A2A result directly'));
       assert.ok(fallbackLog, 'Should log fallback to result');
     });
   });
@@ -173,16 +183,18 @@ describe('Artifact Extraction Tests', () => {
   describe('MCP Protocol Extraction', () => {
     it('should extract products from MCP structuredContent', async () => {
       const mockResponse = {
-        content: [{
-          type: 'text',
-          text: 'Here are the products'
-        }],
+        content: [
+          {
+            type: 'text',
+            text: 'Here are the products',
+          },
+        ],
         structuredContent: {
           products: [
             { product_id: 'prod1', name: 'Product 1' },
-            { product_id: 'prod2', name: 'Product 2' }
-          ]
-        }
+            { product_id: 'prod2', name: 'Product 2' },
+          ],
+        },
       };
 
       const debugLogs = [];
@@ -192,20 +204,16 @@ describe('Artifact Extraction Tests', () => {
       assert.strictEqual(extractedData.products.length, 2);
 
       // Check debug logs
-      const extractionLog = debugLogs.find(log =>
-        log.message.includes('Extracting data from MCP structuredContent')
-      );
+      const extractionLog = debugLogs.find(log => log.message.includes('Extracting data from MCP structuredContent'));
       assert.ok(extractionLog, 'Should log MCP extraction');
     });
 
     it('should extract creatives from MCP structuredContent', async () => {
       const mockResponse = {
         structuredContent: {
-          creatives: [
-            { creative_id: 'c1', name: 'Creative 1' }
-          ],
-          total_count: 1
-        }
+          creatives: [{ creative_id: 'c1', name: 'Creative 1' }],
+          total_count: 1,
+        },
       };
 
       const extractedData = executor.extractResponseData(mockResponse, []);
@@ -217,11 +225,9 @@ describe('Artifact Extraction Tests', () => {
     it('should extract formats from MCP structuredContent', async () => {
       const mockResponse = {
         structuredContent: {
-          formats: [
-            { format_id: 'f1', name: 'Format 1' }
-          ],
-          adcp_version: '1.6.0'
-        }
+          formats: [{ format_id: 'f1', name: 'Format 1' }],
+          adcp_version: '1.6.0',
+        },
       };
 
       const extractedData = executor.extractResponseData(mockResponse, []);
@@ -235,25 +241,29 @@ describe('Artifact Extraction Tests', () => {
     it('should extract the same data from both protocol formats', async () => {
       const expectedProducts = [
         { product_id: 'p1', name: 'Product 1' },
-        { product_id: 'p2', name: 'Product 2' }
+        { product_id: 'p2', name: 'Product 2' },
       ];
 
       // A2A format
       const a2aResponse = {
         result: {
-          artifacts: [{
-            parts: [{
-              data: { products: expectedProducts }
-            }]
-          }]
-        }
+          artifacts: [
+            {
+              parts: [
+                {
+                  data: { products: expectedProducts },
+                },
+              ],
+            },
+          ],
+        },
       };
 
       // MCP format
       const mcpResponse = {
         structuredContent: {
-          products: expectedProducts
-        }
+          products: expectedProducts,
+        },
       };
 
       const a2aData = executor.extractResponseData(a2aResponse, []);
@@ -268,8 +278,8 @@ describe('Artifact Extraction Tests', () => {
     it('should handle responses with only response.data field', async () => {
       const mockResponse = {
         data: {
-          products: [{ product_id: 'p1' }]
-        }
+          products: [{ product_id: 'p1' }],
+        },
       };
 
       const debugLogs = [];
@@ -277,16 +287,14 @@ describe('Artifact Extraction Tests', () => {
 
       assert.ok(extractedData.products);
 
-      const dataLog = debugLogs.find(log =>
-        log.message.includes('Extracting data from response.data field')
-      );
+      const dataLog = debugLogs.find(log => log.message.includes('Extracting data from response.data field'));
       assert.ok(dataLog, 'Should log data field extraction');
     });
 
     it('should fallback to full response when no standard structure found', async () => {
       const mockResponse = {
         custom_field: 'value',
-        other_data: 123
+        other_data: 123,
       };
 
       const debugLogs = [];
@@ -294,9 +302,7 @@ describe('Artifact Extraction Tests', () => {
 
       assert.deepStrictEqual(extractedData, mockResponse);
 
-      const fallbackLog = debugLogs.find(log =>
-        log.message.includes('No standard data structure found')
-      );
+      const fallbackLog = debugLogs.find(log => log.message.includes('No standard data structure found'));
       assert.ok(fallbackLog, 'Should log fallback');
       assert.ok(fallbackLog.details.responseKeys.includes('custom_field'));
     });
@@ -312,8 +318,8 @@ describe('Artifact Extraction Tests', () => {
     it('should work without debug logs array', async () => {
       const mockResponse = {
         structuredContent: {
-          products: [{ product_id: 'p1' }]
-        }
+          products: [{ product_id: 'p1' }],
+        },
       };
 
       // Should not throw when debugLogs is undefined
@@ -327,13 +333,12 @@ describe('Artifact Extraction Tests', () => {
     it('should include artifact details in debug logs', async () => {
       const mockResponse = {
         result: {
-          artifacts: [{
-            parts: [
-              { data: { key1: 'value1', key2: 'value2' } },
-              { data: { key3: 'value3' } }
-            ]
-          }]
-        }
+          artifacts: [
+            {
+              parts: [{ data: { key1: 'value1', key2: 'value2' } }, { data: { key3: 'value3' } }],
+            },
+          ],
+        },
       };
 
       const debugLogs = [];
@@ -350,7 +355,7 @@ describe('Artifact Extraction Tests', () => {
 
     it('should include timestamp in debug logs', async () => {
       const mockResponse = {
-        structuredContent: { data: 'test' }
+        structuredContent: { data: 'test' },
       };
 
       const debugLogs = [];

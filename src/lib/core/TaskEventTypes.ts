@@ -258,7 +258,7 @@ export class ServerIdentifierMapper {
   } {
     return {
       totalContexts: this.contextToKey.size,
-      totalTasks: this.taskToKey.size
+      totalTasks: this.taskToKey.size,
     };
   }
 }

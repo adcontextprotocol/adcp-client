@@ -31,7 +31,7 @@ import type {
   GetSignalsRequest,
   GetSignalsResponse,
   ActivateSignalRequest,
-  ActivateSignalResponse
+  ActivateSignalResponse,
 } from '../types/tools.generated';
 
 // Common response wrapper
@@ -78,7 +78,7 @@ export class Agent {
 
     try {
       validateAgentUrl(this.config.agent_uri);
-      
+
       const circuitBreaker = getCircuitBreaker(this.config.id);
       const result = await circuitBreaker.call(async () => {
         return await ProtocolClient.callTool(this.config, toolName, params, debugLogs);
@@ -90,11 +90,11 @@ export class Agent {
         agent: {
           id: this.config.id,
           name: this.config.name,
-          protocol: this.config.protocol
+          protocol: this.config.protocol,
         },
         responseTimeMs: Date.now() - startTime,
         timestamp: new Date().toISOString(),
-        debugLogs
+        debugLogs,
       };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
@@ -104,11 +104,11 @@ export class Agent {
         agent: {
           id: this.config.id,
           name: this.config.name,
-          protocol: this.config.protocol
+          protocol: this.config.protocol,
         },
         responseTimeMs: Date.now() - startTime,
         timestamp: new Date().toISOString(),
-        debugLogs
+        debugLogs,
       };
     }
   }
@@ -173,7 +173,9 @@ export class Agent {
    * Official AdCP list_authorized_properties tool schema
    * Official AdCP list_authorized_properties tool schema
    */
-  async listAuthorizedProperties(params: ListAuthorizedPropertiesRequest): Promise<ToolResult<ListAuthorizedPropertiesResponse>> {
+  async listAuthorizedProperties(
+    params: ListAuthorizedPropertiesRequest
+  ): Promise<ToolResult<ListAuthorizedPropertiesResponse>> {
     return this.callTool<ListAuthorizedPropertiesResponse>('list_authorized_properties', params);
   }
 
@@ -181,7 +183,9 @@ export class Agent {
    * Official AdCP provide_performance_feedback tool schema
    * Official AdCP provide_performance_feedback tool schema
    */
-  async providePerformanceFeedback(params: ProvidePerformanceFeedbackRequest): Promise<ToolResult<ProvidePerformanceFeedbackResponse>> {
+  async providePerformanceFeedback(
+    params: ProvidePerformanceFeedbackRequest
+  ): Promise<ToolResult<ProvidePerformanceFeedbackResponse>> {
     return this.callTool<ProvidePerformanceFeedbackResponse>('provide_performance_feedback', params);
   }
 
@@ -216,7 +220,6 @@ export class Agent {
   async activateSignal(params: ActivateSignalRequest): Promise<ToolResult<ActivateSignalResponse>> {
     return this.callTool<ActivateSignalResponse>('activate_signal', params);
   }
-
 }
 
 /**
@@ -278,7 +281,9 @@ export class AgentCollection {
    * Official AdCP list_authorized_properties tool schema (across multiple agents)
    * Official AdCP list_authorized_properties tool schema
    */
-  async listAuthorizedProperties(params: ListAuthorizedPropertiesRequest): Promise<ToolResult<ListAuthorizedPropertiesResponse>[]> {
+  async listAuthorizedProperties(
+    params: ListAuthorizedPropertiesRequest
+  ): Promise<ToolResult<ListAuthorizedPropertiesResponse>[]> {
     return this.callToolOnAll<ListAuthorizedPropertiesResponse>('list_authorized_properties', params);
   }
 
@@ -286,7 +291,9 @@ export class AgentCollection {
    * Official AdCP provide_performance_feedback tool schema (across multiple agents)
    * Official AdCP provide_performance_feedback tool schema
    */
-  async providePerformanceFeedback(params: ProvidePerformanceFeedbackRequest): Promise<ToolResult<ProvidePerformanceFeedbackResponse>[]> {
+  async providePerformanceFeedback(
+    params: ProvidePerformanceFeedbackRequest
+  ): Promise<ToolResult<ProvidePerformanceFeedbackResponse>[]> {
     return this.callToolOnAll<ProvidePerformanceFeedbackResponse>('provide_performance_feedback', params);
   }
 
@@ -321,5 +328,4 @@ export class AgentCollection {
   async activateSignal(params: ActivateSignalRequest): Promise<ToolResult<ActivateSignalResponse>[]> {
     return this.callToolOnAll<ActivateSignalResponse>('activate_signal', params);
   }
-
 }

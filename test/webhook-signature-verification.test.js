@@ -9,7 +9,7 @@ describe('Webhook Signature Verification (PR #86 Spec)', () => {
     name: 'Test Agent',
     agent_uri: 'https://test.example.com',
     protocol: 'mcp',
-    requiresAuth: false
+    requiresAuth: false,
   };
 
   const webhookSecret = 'test-secret-key-minimum-32-characters-long';
@@ -21,7 +21,7 @@ describe('Webhook Signature Verification (PR #86 Spec)', () => {
       event: 'creative.status_changed',
       creative_id: 'creative_123',
       status: 'approved',
-      timestamp: '2025-10-08T22:30:00Z'
+      timestamp: '2025-10-08T22:30:00Z',
     };
 
     const timestamp = Math.floor(Date.now() / 1000);
@@ -43,7 +43,7 @@ describe('Webhook Signature Verification (PR #86 Spec)', () => {
     const payload = {
       event: 'creative.status_changed',
       creative_id: 'creative_123',
-      status: 'approved'
+      status: 'approved',
     };
 
     const timestamp = Math.floor(Date.now() / 1000);
@@ -59,7 +59,7 @@ describe('Webhook Signature Verification (PR #86 Spec)', () => {
     const payload = {
       event: 'creative.status_changed',
       creative_id: 'creative_123',
-      status: 'approved'
+      status: 'approved',
     };
 
     // Timestamp from 10 minutes ago
@@ -82,7 +82,7 @@ describe('Webhook Signature Verification (PR #86 Spec)', () => {
     const payload = {
       event: 'creative.status_changed',
       creative_id: 'creative_123',
-      status: 'approved'
+      status: 'approved',
     };
 
     // Timestamp from 2 minutes ago (within 5 minute window)
@@ -105,7 +105,7 @@ describe('Webhook Signature Verification (PR #86 Spec)', () => {
     const payload = {
       event: 'creative.status_changed',
       creative_id: 'creative_123',
-      status: 'approved'
+      status: 'approved',
     };
 
     const timestamp = Math.floor(Date.now() / 1000);

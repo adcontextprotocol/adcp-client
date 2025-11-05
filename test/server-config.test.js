@@ -19,7 +19,7 @@ describe('Server Configuration Tests', () => {
 
       // Simulate the host binding logic from src/server.ts
       const host = process.env.HOST || (process.env.NODE_ENV === 'production' ? '0.0.0.0' : '127.0.0.1');
-      
+
       assert.strictEqual(host, '0.0.0.0', 'Production environment should bind to 0.0.0.0 for Fly.io compatibility');
     } finally {
       // Restore original env
@@ -42,7 +42,7 @@ describe('Server Configuration Tests', () => {
 
       // Simulate the host binding logic from src/server.ts
       const host = process.env.HOST || (process.env.NODE_ENV === 'production' ? '0.0.0.0' : '127.0.0.1');
-      
+
       assert.strictEqual(host, '127.0.0.1', 'Development environment should bind to 127.0.0.1 for local access');
     } finally {
       // Restore original env
@@ -63,7 +63,7 @@ describe('Server Configuration Tests', () => {
 
       // Simulate the host binding logic from src/server.ts
       const host = process.env.HOST || (process.env.NODE_ENV === 'production' ? '0.0.0.0' : '127.0.0.1');
-      
+
       assert.strictEqual(host, '192.168.1.100', 'Should respect explicit HOST environment variable');
     } finally {
       // Restore original env

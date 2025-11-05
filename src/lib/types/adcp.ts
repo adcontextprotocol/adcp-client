@@ -415,14 +415,7 @@ export interface PropertyIdentifier {
   include_subdomains?: boolean;
 }
 
-export type PropertyType =
-  | 'website'
-  | 'mobile_app'
-  | 'ctv_app'
-  | 'dooh'
-  | 'podcast'
-  | 'radio'
-  | 'streaming_audio';
+export type PropertyType = 'website' | 'mobile_app' | 'ctv_app' | 'dooh' | 'podcast' | 'radio' | 'streaming_audio';
 
 export type PropertyIdentifierType =
   | 'domain'

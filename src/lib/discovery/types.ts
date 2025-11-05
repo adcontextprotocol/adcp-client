@@ -31,14 +31,7 @@ export interface PropertyIdentifier {
 }
 
 /** Property types */
-export type PropertyType =
-  | 'website'
-  | 'mobile_app'
-  | 'ctv_app'
-  | 'dooh'
-  | 'podcast'
-  | 'radio'
-  | 'streaming_audio';
+export type PropertyType = 'website' | 'mobile_app' | 'ctv_app' | 'dooh' | 'podcast' | 'radio' | 'streaming_audio';
 
 /** Advertising property definition from adagents.json */
 export interface Property {

@@ -857,7 +857,7 @@ export interface Product {
        * @minItems 1
        */
       property_tags?: [string, ...string[]];
-    }[]
+    }[],
   ];
   /**
    * Array of supported creative format IDs - structured format_id objects with agent_url and id
@@ -1444,7 +1444,7 @@ export interface Property {
        * The identifier value. For domain type: 'example.com' matches base domain plus www and m subdomains; 'edition.example.com' matches that specific subdomain; '*.example.com' matches ALL subdomains but NOT base domain
        */
       value: string;
-    }[]
+    }[],
   ];
   /**
    * Tags for categorization and grouping (e.g., network membership, content categories)
@@ -1455,4 +1455,3 @@ export interface Property {
    */
   publisher_domain?: string;
 }
-

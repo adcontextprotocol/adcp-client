@@ -2,11 +2,7 @@
 // Simple Getting Started Example - Your First ADCP Client
 // This example shows the absolute simplest way to use the ADCP client library
 
-import {
-  ADCPMultiAgentClient,
-  createFieldHandler,
-  type AgentConfig
-} from '../src/lib';
+import { ADCPMultiAgentClient, createFieldHandler, type AgentConfig } from '../src/lib';
 
 /**
  * Example 1: Absolute Simplest Usage
@@ -18,14 +14,14 @@ async function gettingStarted() {
 
   // Step 1: Configure your ADCP agent
   console.log('Step 1: Setting up your ADCP agent...');
-  
+
   const agents: AgentConfig[] = [
     {
       id: 'demo-agent',
       name: 'Demo Advertising Agent',
       agent_uri: 'https://demo-agent.adcontextprotocol.org', // This would be your real agent URL
-      protocol: 'mcp'
-    }
+      protocol: 'mcp',
+    },
   ];
 
   const client = new ADCPMultiAgentClient(agents);
@@ -33,20 +29,20 @@ async function gettingStarted() {
 
   // Step 2: Make your first ADCP call
   console.log('Step 2: Asking for advertising products...');
-  
+
   try {
     const agent = client.agent('demo-agent');
-    
+
     // This is the simplest possible ADCP call
     const result = await agent.getProducts({
       brief: 'Coffee subscription service targeting busy professionals',
-      promoted_offering: 'Premium monthly coffee deliveries'
+      promoted_offering: 'Premium monthly coffee deliveries',
     });
 
     if (result.success) {
       console.log(`✅ Success! Found ${result.data.products?.length || 0} advertising products`);
       console.log(`   Response time: ${result.metadata.responseTimeMs}ms`);
-      
+
       // Show first few products
       result.data.products?.slice(0, 3).forEach((product, i) => {
         console.log(`   ${i + 1}. ${product.name} - ${product.publisher}`);
@@ -56,10 +52,10 @@ async function gettingStarted() {
     }
   } catch (error) {
     console.log(`❌ Network error: ${error.message}`);
-    console.log('\n💡 This is expected with demo URLs. In real usage, you\'d use actual agent endpoints.');
+    console.log("\n💡 This is expected with demo URLs. In real usage, you'd use actual agent endpoints.");
   }
 
-  console.log('\n🎉 That\'s it! You\'ve made your first ADCP call.\n');
+  console.log("\n🎉 That's it! You've made your first ADCP call.\n");
 }
 
 /**
@@ -75,16 +71,16 @@ async function withSmartHandler() {
       id: 'fashion-agent',
       name: 'Fashion Network Agent',
       agent_uri: 'https://fashion-network.example.com',
-      protocol: 'mcp'
-    }
+      protocol: 'mcp',
+    },
   ]);
 
   // Create a handler for common agent questions
   const smartHandler = createFieldHandler({
-    budget: 25000,                    // Auto-answer budget questions
-    targeting: ['US', 'CA', 'UK'],    // Auto-answer geographic targeting
-    approval: true,                   // Auto-approve when asked
-    timeframe: '30 days'              // Campaign duration
+    budget: 25000, // Auto-answer budget questions
+    targeting: ['US', 'CA', 'UK'], // Auto-answer geographic targeting
+    approval: true, // Auto-approve when asked
+    timeframe: '30 days', // Campaign duration
   });
 
   console.log('✨ Created smart handler for automatic responses');
@@ -95,15 +91,20 @@ async function withSmartHandler() {
 
   try {
     const agent = client.agent('fashion-agent');
-    
+
     console.log('🎯 Requesting products with smart handler...');
-    const result = await agent.getProducts({
-      brief: 'Sustainable fashion brands for environmentally conscious millennials',
-      promoted_offering: 'Eco-friendly clothing and accessories'
-    }, smartHandler); // <-- Handler will auto-respond to agent clarifications
+    const result = await agent.getProducts(
+      {
+        brief: 'Sustainable fashion brands for environmentally conscious millennials',
+        promoted_offering: 'Eco-friendly clothing and accessories',
+      },
+      smartHandler
+    ); // <-- Handler will auto-respond to agent clarifications
 
     if (result.success) {
-      console.log(`✅ Smart handler success! ${result.metadata.clarificationRounds} clarifications handled automatically`);
+      console.log(
+        `✅ Smart handler success! ${result.metadata.clarificationRounds} clarifications handled automatically`
+      );
       console.log(`   Found ${result.data.products?.length || 0} products`);
     }
   } catch (error) {
@@ -130,36 +131,42 @@ async function campaignWorkflow() {
       id: 'travel-agent',
       name: 'Travel Industry Agent',
       agent_uri: 'https://travel-ads.example.com',
-      protocol: 'mcp'
-    }
+      protocol: 'mcp',
+    },
   ]);
 
   const handler = createFieldHandler({
     budget: 75000,
     targeting: ['US', 'CA', 'UK', 'AU'],
     approval: true,
-    objectives: ['brand_awareness', 'conversions']
+    objectives: ['brand_awareness', 'conversions'],
   });
 
   console.log('🎯 Planning a travel campaign...');
-  
+
   try {
     const agent = client.agent('travel-agent');
 
     // Step 1: Discover available advertising products
     console.log('\n1️⃣  Discovering available advertising products...');
-    const products = await agent.getProducts({
-      brief: 'Luxury European vacation packages for affluent travelers',
-      promoted_offering: 'Premium guided tours and boutique accommodations'
-    }, handler);
+    const products = await agent.getProducts(
+      {
+        brief: 'Luxury European vacation packages for affluent travelers',
+        promoted_offering: 'Premium guided tours and boutique accommodations',
+      },
+      handler
+    );
 
     console.log(`   Found ${products.data?.products?.length || 0} advertising products`);
 
     // Step 2: Check available creative formats
     console.log('\n2️⃣  Checking creative format options...');
-    const formats = await agent.listCreativeFormats({
-      type: 'video'
-    }, handler);
+    const formats = await agent.listCreativeFormats(
+      {
+        type: 'video',
+      },
+      handler
+    );
 
     console.log(`   Found ${formats.data?.formats?.length || 0} video format options`);
 
@@ -178,7 +185,6 @@ async function campaignWorkflow() {
     console.log(`   Clarifications handled: ${products.metadata.clarificationRounds}`);
 
     console.log('\n✅ Campaign planning workflow completed!');
-
   } catch (error) {
     console.log(`❌ Expected error with demo URL: ${error.message}`);
   }

@@ -17,14 +17,7 @@
 const { ADCPClient, detectProtocol } = require('../dist/lib/index.js');
 const { readFileSync } = require('fs');
 const { AsyncWebhookHandler } = require('./adcp-async-handler.js');
-const {
-  getAgent,
-  listAgents,
-  isAlias,
-  interactiveSetup,
-  removeAgent,
-  getConfigPath
-} = require('./adcp-config.js');
+const { getAgent, listAgents, isAlias, interactiveSetup, removeAgent, getConfigPath } = require('./adcp-config.js');
 
 /**
  * Extract human-readable protocol message from conversation
@@ -206,11 +199,9 @@ async function main() {
     const providedAuthToken = authFlagIndex !== -1 ? args[authFlagIndex + 1] : null;
 
     // Filter out flags to get positional args
-    const saveAuthPositional = args.slice(1).filter(arg =>
-      arg !== '--auth' &&
-      arg !== '--no-auth' &&
-      arg !== providedAuthToken
-    );
+    const saveAuthPositional = args
+      .slice(1)
+      .filter(arg => arg !== '--auth' && arg !== '--no-auth' && arg !== providedAuthToken);
 
     let alias = saveAuthPositional[0];
     let url = saveAuthPositional[1] || null;
@@ -325,11 +316,12 @@ async function main() {
   }
 
   // Filter out flag arguments to find positional arguments
-  const positionalArgs = args.filter(arg =>
-    !arg.startsWith('--') &&
-    arg !== authToken && // Don't include the auth token value
-    arg !== protocolFlag && // Don't include the protocol value
-    arg !== (timeoutIndex !== -1 ? args[timeoutIndex + 1] : null) // Don't include timeout value
+  const positionalArgs = args.filter(
+    arg =>
+      !arg.startsWith('--') &&
+      arg !== authToken && // Don't include the auth token value
+      arg !== protocolFlag && // Don't include the protocol value
+      arg !== (timeoutIndex !== -1 ? args[timeoutIndex + 1] : null) // Don't include timeout value
   );
 
   // Determine if first arg is alias or URL
@@ -436,7 +428,7 @@ async function main() {
     name: 'CLI Agent',
     agent_uri: agentUrl,
     protocol: protocol,
-    ...(authToken && { auth_token_env: authToken })
+    ...(authToken && { auth_token_env: authToken }),
   };
 
   try {
@@ -477,7 +469,7 @@ async function main() {
 
       webhookHandler = new AsyncWebhookHandler({
         timeout: timeout,
-        debug: debug
+        debug: debug,
       });
 
       try {
@@ -508,8 +500,8 @@ async function main() {
       debug: debug,
       ...(webhookUrl && {
         webhookUrlTemplate: webhookUrl,
-        webhookSecret: 'cli-webhook-secret'
-      })
+        webhookSecret: 'cli-webhook-secret',
+      }),
     });
 
     if (debug) {
@@ -558,18 +550,25 @@ async function main() {
     if (result.success) {
       if (jsonOutput) {
         // Raw JSON output - include protocol metadata
-        console.log(JSON.stringify({
-          data: result.data,
-          metadata: {
-            taskId: result.metadata.taskId,
-            protocol: result.metadata.agent.protocol,
-            responseTimeMs: result.metadata.responseTimeMs,
-            ...(result.conversation && result.conversation.length > 0 && {
-              protocolMessage: extractProtocolMessage(result.conversation, result.metadata.agent.protocol),
-              contextId: result.metadata.taskId  // Using taskId as context identifier
-            })
-          }
-        }, null, 2));
+        console.log(
+          JSON.stringify(
+            {
+              data: result.data,
+              metadata: {
+                taskId: result.metadata.taskId,
+                protocol: result.metadata.agent.protocol,
+                responseTimeMs: result.metadata.responseTimeMs,
+                ...(result.conversation &&
+                  result.conversation.length > 0 && {
+                    protocolMessage: extractProtocolMessage(result.conversation, result.metadata.agent.protocol),
+                    contextId: result.metadata.taskId, // Using taskId as context identifier
+                  }),
+              },
+            },
+            null,
+            2
+          )
+        );
       } else {
         // Pretty output
         console.log('\n✅ SUCCESS\n');

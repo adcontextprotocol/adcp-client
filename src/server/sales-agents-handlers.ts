@@ -9,7 +9,7 @@ import {
   type GetProductsRequest,
   type ListCreativeFormatsRequest,
   type CreateMediaBuyRequest,
-  type TaskResult
+  type TaskResult,
 } from '../lib';
 import { ADCP_VERSION } from '../lib/version';
 
@@ -127,7 +127,7 @@ export class SalesAgentsHandlers {
           agent_uri: customAgentConfig.agent_uri || (customAgentConfig as any).server_url,
           protocol: customAgentConfig.protocol || 'mcp',
           auth_token_env: customAgentConfig.auth_token_env,
-          requiresAuth: customAgentConfig.requiresAuth !== false
+          requiresAuth: customAgentConfig.requiresAuth !== false,
         };
         client = new ADCPMultiAgentClient([customAgent]);
         console.log(`🔧 Created temporary client for custom agent: ${customAgent.name}`);
@@ -165,22 +165,29 @@ export class SalesAgentsHandlers {
           brandManifest = manifestInput; // It's a valid URL
         } catch {
           // Not a URL, create a BrandManifest object
-          console.warn(`[Sales Agents] Non-URL string provided for brand_manifest: "${manifestInput}". Coercing to {name: ...}`);
+          console.warn(
+            `[Sales Agents] Non-URL string provided for brand_manifest: "${manifestInput}". Coercing to {name: ...}`
+          );
           brandManifest = {
-            name: manifestInput
+            name: manifestInput,
           };
         }
 
         const params: GetProductsRequest = {
           brand_manifest: brandManifest,
-          ...(brandStory && { brief: brandStory })
+          ...(brandStory && { brief: brandStory }),
         };
 
         // Add filters if provided
-        if (additionalParams.filters || additionalParams.delivery_type ||
-            additionalParams.format_types || additionalParams.is_fixed_price ||
-            additionalParams.min_exposures || additionalParams.format_ids ||
-            additionalParams.standard_formats_only) {
+        if (
+          additionalParams.filters ||
+          additionalParams.delivery_type ||
+          additionalParams.format_types ||
+          additionalParams.is_fixed_price ||
+          additionalParams.min_exposures ||
+          additionalParams.format_ids ||
+          additionalParams.standard_formats_only
+        ) {
           params.filters = {};
 
           if (additionalParams.filters) {
@@ -208,7 +215,6 @@ export class SalesAgentsHandlers {
 
         actualParams = params;
         result = await agent.getProducts(params);
-
       } else if (toolName === 'list_creative_formats') {
         const params: ListCreativeFormatsRequest = {};
 
@@ -230,7 +236,6 @@ export class SalesAgentsHandlers {
 
         actualParams = params;
         result = await agent.listCreativeFormats(params);
-
       } else if (toolName === 'create_media_buy') {
         // brand_manifest must be either a valid URL or a BrandManifest object
         let brandManifestForBuy: string | { name?: string; url?: string };
@@ -243,9 +248,11 @@ export class SalesAgentsHandlers {
           brandManifestForBuy = manifestInputForBuy; // It's a valid URL
         } catch {
           // Not a URL, create a BrandManifest object
-          console.warn(`[Sales Agents] Non-URL string provided for brand_manifest: "${manifestInputForBuy}". Coercing to {name: ...}`);
+          console.warn(
+            `[Sales Agents] Non-URL string provided for brand_manifest: "${manifestInputForBuy}". Coercing to {name: ...}`
+          );
           brandManifestForBuy = {
-            name: manifestInputForBuy
+            name: manifestInputForBuy,
           };
         }
 
@@ -254,7 +261,7 @@ export class SalesAgentsHandlers {
           brand_manifest: brandManifestForBuy,
           packages: additionalParams.packages || [],
           start_time: additionalParams.start_time || 'asap',
-          end_time: additionalParams.end_time || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString()
+          end_time: additionalParams.end_time || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
         };
 
         // Add optional fields
@@ -264,7 +271,6 @@ export class SalesAgentsHandlers {
 
         actualParams = params;
         result = await agent.createMediaBuy(params);
-
       } else {
         throw new Error(`Unsupported tool: ${toolName}`);
       }
@@ -279,7 +285,7 @@ export class SalesAgentsHandlers {
         url: agentConfig.agent_uri,
         headers: agentConfig.requiresAuth ? { 'x-adcp-auth': '[REDACTED]' } : {},
         body: actualParams || additionalParams,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
       });
 
       if (result.success && result.data) {
@@ -288,7 +294,7 @@ export class SalesAgentsHandlers {
           status: 200,
           statusText: 'OK',
           body: result.data,
-          timestamp: new Date().toISOString()
+          timestamp: new Date().toISOString(),
         });
       } else if (result.error) {
         debugLogs.push({
@@ -296,7 +302,7 @@ export class SalesAgentsHandlers {
           status: 500,
           statusText: 'Error',
           body: { error: result.error },
-          timestamp: new Date().toISOString()
+          timestamp: new Date().toISOString(),
         });
       }
 
@@ -311,7 +317,7 @@ export class SalesAgentsHandlers {
           response: result.data,
           debugLogs,
           duration_ms: duration,
-          adcp_version: ADCP_VERSION
+          adcp_version: ADCP_VERSION,
         };
       } else {
         return {
@@ -322,10 +328,9 @@ export class SalesAgentsHandlers {
           error: result.error || 'Unknown error',
           debugLogs,
           duration_ms: duration,
-          adcp_version: ADCP_VERSION
+          adcp_version: ADCP_VERSION,
         };
       }
-
     } catch (error) {
       const duration = Date.now() - startTime;
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
@@ -338,7 +343,7 @@ export class SalesAgentsHandlers {
         error: errorMessage,
         debugLogs,
         duration_ms: duration,
-        adcp_version: ADCP_VERSION
+        adcp_version: ADCP_VERSION,
       };
     }
   }
@@ -374,16 +379,15 @@ export class SalesAgentsHandlers {
           'create_media_buy',
           'update_media_buy',
           'sync_creatives',
-          'list_creatives'
+          'list_creatives',
         ],
-        adcp_version: ADCP_VERSION
+        adcp_version: ADCP_VERSION,
       };
-
     } catch (error) {
       return {
         agent_id: agentId,
         error: error instanceof Error ? error.message : 'Unknown error',
-        adcp_version: ADCP_VERSION
+        adcp_version: ADCP_VERSION,
       };
     }
   }
@@ -396,7 +400,7 @@ export class SalesAgentsHandlers {
       id: agent.id,
       name: agent.name,
       protocol: agent.protocol,
-      agent_uri: agent.agent_uri
+      agent_uri: agent.agent_uri,
     }));
   }
 

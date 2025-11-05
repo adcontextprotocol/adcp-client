@@ -16,7 +16,7 @@ function writeFileIfChanged(filePath: string, newContent: string): boolean {
     const existingContent = readFileSync(filePath, 'utf8');
     const existingWithoutTimestamp = contentWithoutTimestamp(existingContent);
     const newWithoutTimestamp = contentWithoutTimestamp(newContent);
-    
+
     if (existingWithoutTimestamp === newWithoutTimestamp) {
       hasChanged = false;
     }
@@ -25,7 +25,7 @@ function writeFileIfChanged(filePath: string, newContent: string): boolean {
   if (hasChanged) {
     writeFileSync(filePath, newContent);
   }
-  
+
   return hasChanged;
 }
 
@@ -100,10 +100,7 @@ function enforceStrictSchema(schema: any): any {
   // Recursively process nested schemas
   if (strictSchema.properties) {
     strictSchema.properties = Object.fromEntries(
-      Object.entries(strictSchema.properties).map(([key, value]) => [
-        key,
-        enforceStrictSchema(value)
-      ])
+      Object.entries(strictSchema.properties).map(([key, value]) => [key, enforceStrictSchema(value)])
     );
   }
 
@@ -129,19 +126,13 @@ function enforceStrictSchema(schema: any): any {
 
   if (strictSchema.definitions) {
     strictSchema.definitions = Object.fromEntries(
-      Object.entries(strictSchema.definitions).map(([key, value]) => [
-        key,
-        enforceStrictSchema(value)
-      ])
+      Object.entries(strictSchema.definitions).map(([key, value]) => [key, enforceStrictSchema(value)])
     );
   }
 
   if (strictSchema.$defs) {
     strictSchema.$defs = Object.fromEntries(
-      Object.entries(strictSchema.$defs).map(([key, value]) => [
-        key,
-        enforceStrictSchema(value)
-      ])
+      Object.entries(strictSchema.$defs).map(([key, value]) => [key, enforceStrictSchema(value)])
     );
   }
 
@@ -179,8 +170,8 @@ function loadToolSchema(toolName: string, taskType: 'media-buy' | 'signals' | 'c
       type: 'object',
       properties: {
         request: requestSchema,
-        response: responseSchema
-      }
+        response: responseSchema,
+      },
     };
   } catch (error) {
     console.warn(`⚠️  Could not load schema for ${toolName}:`, error.message);
@@ -189,7 +180,11 @@ function loadToolSchema(toolName: string, taskType: 'media-buy' | 'signals' | 'c
 }
 
 // Load official AdCP tools from cached schema index
-function loadOfficialAdCPToolsWithTypes(): {mediaBuyTools: string[], creativeTools: string[], signalsTools: string[]} {
+function loadOfficialAdCPToolsWithTypes(): {
+  mediaBuyTools: string[];
+  creativeTools: string[];
+  signalsTools: string[];
+} {
   try {
     console.log('📥 Loading official AdCP tools from cached schema index...');
     const indexPath = path.join(LATEST_CACHE_DIR, 'index.json');
@@ -233,7 +228,9 @@ function loadOfficialAdCPToolsWithTypes(): {mediaBuyTools: string[], creativeToo
       }
     }
 
-    console.log(`✅ Discovered ${mediaBuyTools.length + creativeTools.length + signalsTools.length} official AdCP tools:`);
+    console.log(
+      `✅ Discovered ${mediaBuyTools.length + creativeTools.length + signalsTools.length} official AdCP tools:`
+    );
     console.log(`   📈 Media-buy tools: ${mediaBuyTools.join(', ')}`);
     console.log(`   🎨 Creative tools: ${creativeTools.join(', ')}`);
     console.log(`   🎯 Signals tools: ${signalsTools.join(', ')}`);
@@ -243,15 +240,9 @@ function loadOfficialAdCPToolsWithTypes(): {mediaBuyTools: string[], creativeToo
     console.warn(`⚠️  Failed to load cached tools, falling back to known tools:`, error.message);
     // Fallback to known tools if the cache fails
     return {
-      mediaBuyTools: [
-        'get_products',
-        'list_creative_formats',
-        'create_media_buy',
-        'sync_creatives',
-        'list_creatives'
-      ],
+      mediaBuyTools: ['get_products', 'list_creative_formats', 'create_media_buy', 'sync_creatives', 'list_creatives'],
       creativeTools: [],
-      signalsTools: []
+      signalsTools: [],
     };
   }
 }
@@ -285,7 +276,7 @@ function loadAdCPTools(): ToolDefinition[] {
         description: schema.description || `Execute ${toolName} operation`,
         paramsSchema: schema.properties?.request || {},
         responseSchema: schema.properties?.response || {},
-        singleAgentOnly
+        singleAgentOnly,
       });
 
       processedTools.add(toolName);
@@ -316,7 +307,7 @@ function loadAdCPTools(): ToolDefinition[] {
         description: schema.description || `Execute ${toolName} operation`,
         paramsSchema: schema.properties?.request || {},
         responseSchema: schema.properties?.response || {},
-        singleAgentOnly
+        singleAgentOnly,
       });
 
       processedTools.add(toolName);
@@ -347,7 +338,7 @@ function loadAdCPTools(): ToolDefinition[] {
         description: schema.description || `Execute ${toolName} operation`,
         paramsSchema: schema.properties?.request || {},
         responseSchema: schema.properties?.response || {},
-        singleAgentOnly
+        singleAgentOnly,
       });
 
       processedTools.add(toolName);
@@ -384,9 +375,8 @@ async function generateToolTypes(tools: ToolDefinition[]) {
         }
       }
       return Promise.reject(new Error(`Cannot resolve $ref: ${url}`));
-    }
+    },
   };
-
 
   // Track generated types to avoid duplicates
   const generatedTypes = new Set<string>();
@@ -405,11 +395,11 @@ async function generateToolTypes(tools: ToolDefinition[]) {
           additionalProperties: false, // Disable [k: string]: unknown for type safety
           $refOptions: {
             resolve: {
-              cache: refResolver
-            }
-          }
+              cache: refResolver,
+            },
+          },
         });
-        
+
         const filteredParamTypes = filterDuplicateTypeDefinitions(paramTypes, generatedTypes);
         if (filteredParamTypes.trim()) {
           allGeneratedCode.push(`// ${tool.name} parameters\n${filteredParamTypes}`);
@@ -427,17 +417,17 @@ async function generateToolTypes(tools: ToolDefinition[]) {
           additionalProperties: false, // Disable [k: string]: unknown for type safety
           $refOptions: {
             resolve: {
-              cache: refResolver
-            }
-          }
+              cache: refResolver,
+            },
+          },
         });
-        
+
         const filteredResponseTypes = filterDuplicateTypeDefinitions(responseTypes, generatedTypes);
         if (filteredResponseTypes.trim()) {
           allGeneratedCode.push(`// ${tool.name} response\n${filteredResponseTypes}`);
         }
       }
-      
+
       console.log(`✅ Generated types for ${tool.name}`);
     } catch (error) {
       console.error(`❌ Failed to generate types for ${tool.name}:`, error.message);
@@ -456,13 +446,13 @@ function filterDuplicateTypeDefinitions(typeDefinitions: string, generatedTypes:
   let currentTypeDefinition: string[] = [];
   let currentTypeName: string | null = null;
   let insideTypeDefinition = false;
-  
+
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    
+
     // Check if this line starts a type/interface definition
     const typeMatch = line.match(/^export (?:type|interface) (\w+)/);
-    
+
     if (typeMatch) {
       // If we were tracking a previous type, process it first
       if (currentTypeName && currentTypeDefinition.length > 0) {
@@ -472,14 +462,14 @@ function filterDuplicateTypeDefinitions(typeDefinitions: string, generatedTypes:
         }
         currentTypeDefinition = [];
       }
-      
+
       // Start tracking this new type
       currentTypeName = typeMatch[1];
       insideTypeDefinition = true;
       currentTypeDefinition = [line];
     } else if (insideTypeDefinition) {
       currentTypeDefinition.push(line);
-      
+
       // Check if we've reached the end of the type definition
       // Type definitions end when we hit a line that starts a new export or is completely empty
       const nextLine = i + 1 < lines.length ? lines[i + 1] : '';
@@ -498,7 +488,7 @@ function filterDuplicateTypeDefinitions(typeDefinitions: string, generatedTypes:
       outputLines.push(line);
     }
   }
-  
+
   // Handle the last type definition if we were tracking one
   if (currentTypeName && currentTypeDefinition.length > 0) {
     if (!generatedTypes.has(currentTypeName)) {
@@ -506,20 +496,21 @@ function filterDuplicateTypeDefinitions(typeDefinitions: string, generatedTypes:
       outputLines.push(...currentTypeDefinition);
     }
   }
-  
+
   return outputLines.join('\n');
 }
-
 
 function generateAgentClasses(tools: ToolDefinition[]) {
   console.log('🔧 Generating Agent and AgentCollection classes...');
 
   // Generate imports for tool types
-  const paramImports = tools.map(tool => {
-    const paramType = `${tool.methodName.charAt(0).toUpperCase() + tool.methodName.slice(1)}Request`;
-    const responseType = `${tool.methodName.charAt(0).toUpperCase() + tool.methodName.slice(1)}Response`;
-    return [paramType, responseType];
-  }).flat();
+  const paramImports = tools
+    .map(tool => {
+      const paramType = `${tool.methodName.charAt(0).toUpperCase() + tool.methodName.slice(1)}Request`;
+      const responseType = `${tool.methodName.charAt(0).toUpperCase() + tool.methodName.slice(1)}Response`;
+      return [paramType, responseType];
+    })
+    .flat();
 
   let agentClass = `// Generated Agent Classes
 // Auto-generated from AdCP tool definitions
@@ -615,13 +606,13 @@ export class Agent {
 
   // Generate typed methods for each tool
   for (const tool of tools) {
-    const paramType = tool.paramsSchema ? 
-      `${tool.methodName.charAt(0).toUpperCase() + tool.methodName.slice(1)}Request` : 
-      'void';
-    
-    const responseType = tool.responseSchema ? 
-      `${tool.methodName.charAt(0).toUpperCase() + tool.methodName.slice(1)}Response` : 
-      'any';
+    const paramType = tool.paramsSchema
+      ? `${tool.methodName.charAt(0).toUpperCase() + tool.methodName.slice(1)}Request`
+      : 'void';
+
+    const responseType = tool.responseSchema
+      ? `${tool.methodName.charAt(0).toUpperCase() + tool.methodName.slice(1)}Response`
+      : 'any';
 
     const paramDecl = paramType === 'void' ? '' : `params: ${paramType}`;
 
@@ -659,13 +650,13 @@ export class AgentCollection {
   for (const tool of tools) {
     if (tool.singleAgentOnly) continue;
 
-    const paramType = tool.paramsSchema ? 
-      `${tool.methodName.charAt(0).toUpperCase() + tool.methodName.slice(1)}Request` : 
-      'void';
-    
-    const responseType = tool.responseSchema ? 
-      `${tool.methodName.charAt(0).toUpperCase() + tool.methodName.slice(1)}Response` : 
-      'any';
+    const paramType = tool.paramsSchema
+      ? `${tool.methodName.charAt(0).toUpperCase() + tool.methodName.slice(1)}Request`
+      : 'void';
+
+    const responseType = tool.responseSchema
+      ? `${tool.methodName.charAt(0).toUpperCase() + tool.methodName.slice(1)}Response`
+      : 'any';
 
     const paramDecl = paramType === 'void' ? '' : `params: ${paramType}`;
 
@@ -687,16 +678,16 @@ export class AgentCollection {
 
 async function generateTypes() {
   console.log('🔄 Generating AdCP types and fluent API...');
-  
+
   // Check if schemas are cached
   if (!existsSync(LATEST_CACHE_DIR)) {
     console.error('❌ Schema cache not found. Please run "npm run sync-schemas" first.');
     process.exit(1);
   }
-  
+
   const adcpVersion = getCachedAdCPVersion();
   console.log(`📋 Using AdCP schemas version: ${adcpVersion}`);
-  
+
   const libOutputDir = path.join(__dirname, '../src/lib/types');
   const agentsOutputDir = path.join(__dirname, '../src/lib/agents');
   mkdirSync(libOutputDir, { recursive: true });
@@ -717,14 +708,14 @@ async function generateTypes() {
         }
       }
       return Promise.reject(new Error(`Cannot resolve $ref: ${url}`));
-    }
+    },
   };
 
   for (const schemaName of ADCP_CORE_SCHEMAS) {
     try {
       console.log(`📥 Loading ${schemaName} schema from cache...`);
       const schema = loadCoreSchema(schemaName);
-      
+
       if (schema) {
         console.log(`🔧 Generating TypeScript types for ${schemaName}...`);
         // Enforce strict schema (remove additionalProperties: true)
@@ -733,16 +724,16 @@ async function generateTypes() {
           bannerComment: '',
           style: {
             semi: true,
-            singleQuote: true
+            singleQuote: true,
           },
           additionalProperties: false, // Disable [k: string]: unknown for type safety
           $refOptions: {
             resolve: {
-              cache: refResolver
-            }
-          }
+              cache: refResolver,
+            },
+          },
         });
-        
+
         coreTypes += `// ${schemaName.toUpperCase()} SCHEMA\n${types}\n`;
         console.log(`✅ Generated core types for ${schemaName}`);
       } else {
@@ -768,14 +759,14 @@ async function generateTypes() {
           bannerComment: '',
           style: {
             semi: true,
-            singleQuote: true
+            singleQuote: true,
           },
           additionalProperties: false, // Disable [k: string]: unknown for type safety
           $refOptions: {
             resolve: {
-              cache: refResolver
-            }
-          }
+              cache: refResolver,
+            },
+          },
         });
 
         coreTypes += `// ${schemaName.toUpperCase()} SCHEMA\n${types}\n`;
@@ -800,25 +791,25 @@ async function generateTypes() {
   // Write files only if content changed
   const coreTypesPath = path.join(libOutputDir, 'core.generated.ts');
   const coreChanged = writeFileIfChanged(coreTypesPath, coreTypes);
-  
+
   const toolTypesPath = path.join(libOutputDir, 'tools.generated.ts');
   const toolsChanged = writeFileIfChanged(toolTypesPath, toolTypes);
 
   const agentClassesPath = path.join(agentsOutputDir, 'index.generated.ts');
   const agentsChanged = writeFileIfChanged(agentClassesPath, agentClasses);
-  
+
   const changedFiles = [
     coreChanged && 'core types',
-    toolsChanged && 'tool types', 
-    agentsChanged && 'agent classes'
+    toolsChanged && 'tool types',
+    agentsChanged && 'agent classes',
   ].filter(Boolean);
-  
+
   if (changedFiles.length > 0) {
     console.log(`✅ Updated ${changedFiles.join(', ')}`);
   } else {
     console.log(`✅ All generated files are up to date`);
   }
-  
+
   console.log(`✅ Generated files:`);
   console.log(`   📄 Core types: ${coreTypesPath}`);
   console.log(`   📄 Tool types: ${toolTypesPath}`);

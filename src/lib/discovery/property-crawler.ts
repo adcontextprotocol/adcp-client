@@ -38,7 +38,7 @@ export class PropertyCrawler {
 
   constructor(config?: PropertyCrawlerConfig) {
     this.logger = createLogger({
-      level: config?.logLevel || 'warn'
+      level: config?.logLevel || 'warn',
     }).child('PropertyCrawler');
   }
   /**
@@ -51,7 +51,7 @@ export class PropertyCrawler {
       totalPublisherDomains: 0,
       totalProperties: 0,
       errors: [],
-      warnings: []
+      warnings: [],
     };
 
     const index = getPropertyIndex();
@@ -77,7 +77,7 @@ export class PropertyCrawler {
         const errorMessage = error instanceof Error ? error.message : String(error);
         result.errors.push({
           agent_url: agentInfo.agent_url,
-          error: errorMessage
+          error: errorMessage,
         });
         this.logger.error(`Failed to crawl agent ${agentInfo.agent_url}: ${errorMessage}`);
       }
@@ -86,7 +86,9 @@ export class PropertyCrawler {
     result.totalPublisherDomains = allPublisherDomains.size;
 
     // Step 2: Fetch adagents.json from each unique publisher domain
-    const { properties: domainProperties, warnings } = await this.fetchPublisherProperties(Array.from(allPublisherDomains));
+    const { properties: domainProperties, warnings } = await this.fetchPublisherProperties(
+      Array.from(allPublisherDomains)
+    );
     result.warnings = warnings;
 
     // Step 3: Build property → agents index
@@ -120,7 +122,7 @@ export class PropertyCrawler {
       name: 'Property Crawler',
       agent_uri: agentInfo.agent_url,
       protocol: agentInfo.protocol || 'mcp',
-      ...(agentInfo.auth_token && { auth_token_env: agentInfo.auth_token })
+      ...(agentInfo.auth_token && { auth_token_env: agentInfo.auth_token }),
     });
 
     try {
@@ -141,13 +143,13 @@ export class PropertyCrawler {
    */
   async fetchPublisherProperties(domains: string[]): Promise<{
     properties: Record<string, Property[]>;
-    warnings: Array<{ domain: string; message: string }>
+    warnings: Array<{ domain: string; message: string }>;
   }> {
     const result: Record<string, Property[]> = {};
     const warnings: Array<{ domain: string; message: string }> = [];
 
     await Promise.all(
-      domains.map(async (domain) => {
+      domains.map(async domain => {
         try {
           const { properties, warning } = await this.fetchAdAgentsJson(domain);
           if (properties.length > 0) {
@@ -178,12 +180,12 @@ export class PropertyCrawler {
    * These are common scenarios where domains don't have adagents.json files.
    */
   private static readonly EXPECTED_FAILURE_PATTERNS = [
-    /HTTP 404/i,                                    // Not Found
-    /HTTP 410/i,                                    // Gone
-    /\.well-known\/adagents\.json.*not found/i,    // Specific file not found
-    /is not valid JSON/i,                           // JSON parse errors
-    /Unexpected token.*<[^>]+>/i,                   // HTML tags in JSON response
-    /<!doctype/i                                    // HTML document instead of JSON
+    /HTTP 404/i, // Not Found
+    /HTTP 410/i, // Gone
+    /\.well-known\/adagents\.json.*not found/i, // Specific file not found
+    /is not valid JSON/i, // JSON parse errors
+    /Unexpected token.*<[^>]+>/i, // HTML tags in JSON response
+    /<!doctype/i, // HTML document instead of JSON
   ];
 
   /**
@@ -194,9 +196,7 @@ export class PropertyCrawler {
    * @returns true if the error is expected and can be safely ignored
    */
   private isExpectedFailure(errorMessage: string): boolean {
-    return PropertyCrawler.EXPECTED_FAILURE_PATTERNS.some(
-      pattern => pattern.test(errorMessage)
-    );
+    return PropertyCrawler.EXPECTED_FAILURE_PATTERNS.some(pattern => pattern.test(errorMessage));
   }
 
   /**
@@ -214,40 +214,42 @@ export class PropertyCrawler {
           // Use standard browser headers to pass CDN bot detection (e.g., Akamai)
           // Some CDNs reject modified User-Agents, so we use a standard Chrome string
           // Note: PropertyCrawler identifies itself via From header (RFC 9110)
-          'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-          'Accept': 'application/json, text/plain, */*',
+          'User-Agent':
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          Accept: 'application/json, text/plain, */*',
           'Accept-Language': 'en-US,en;q=0.9',
           'Accept-Encoding': 'gzip, deflate, br',
-          'From': `adcp-property-crawler@adcontextprotocol.org (v${LIBRARY_VERSION})`
-        }
+          From: `adcp-property-crawler@adcontextprotocol.org (v${LIBRARY_VERSION})`,
+        },
       });
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
 
-      const data = await response.json() as AdAgentsJson;
+      const data = (await response.json()) as AdAgentsJson;
 
       // Graceful degradation: if properties array is missing but file is otherwise valid
       if (!data.properties || !Array.isArray(data.properties) || data.properties.length === 0) {
-        const hasAuthorizedAgents = data.authorized_agents && Array.isArray(data.authorized_agents) && data.authorized_agents.length > 0;
+        const hasAuthorizedAgents =
+          data.authorized_agents && Array.isArray(data.authorized_agents) && data.authorized_agents.length > 0;
 
         if (hasAuthorizedAgents) {
           // Valid adagents.json but missing properties - infer default property
-          this.logger.warn(
-            `Domain ${domain} has adagents.json but no properties array - inferring default property`,
-            { domain, has_authorized_agents: true }
-          );
+          this.logger.warn(`Domain ${domain} has adagents.json but no properties array - inferring default property`, {
+            domain,
+            has_authorized_agents: true,
+          });
 
           return {
-            properties: [{
-              property_type: 'website',
-              name: domain,
-              identifiers: [
-                { type: 'domain', value: domain }
-              ],
-              publisher_domain: domain
-            }],
-            warning: 'Inferred from domain - publisher should add explicit properties array'
+            properties: [
+              {
+                property_type: 'website',
+                name: domain,
+                identifiers: [{ type: 'domain', value: domain }],
+                publisher_domain: domain,
+              },
+            ],
+            warning: 'Inferred from domain - publisher should add explicit properties array',
           };
         }
 
@@ -259,8 +261,8 @@ export class PropertyCrawler {
       return {
         properties: data.properties.map(prop => ({
           ...prop,
-          publisher_domain: prop.publisher_domain || domain
-        }))
+          publisher_domain: prop.publisher_domain || domain,
+        })),
       };
     } catch (error) {
       throw new Error(`Failed to fetch adagents.json: ${error instanceof Error ? error.message : String(error)}`);

@@ -16,12 +16,12 @@ describe('Logger', () => {
       debug: vi.fn(),
       info: vi.fn(),
       warn: vi.fn(),
-      error: vi.fn()
+      error: vi.fn(),
     };
 
     const testLogger = createLogger({
       level: 'warn',
-      handler: mockHandler
+      handler: mockHandler,
     });
 
     testLogger.debug('debug message');
@@ -40,12 +40,12 @@ describe('Logger', () => {
       debug: vi.fn(),
       info: vi.fn(),
       warn: vi.fn(),
-      error: vi.fn()
+      error: vi.fn(),
     };
 
     const testLogger = createLogger({
       level: 'info',
-      handler: mockHandler
+      handler: mockHandler,
     });
 
     const meta = { userId: '123', action: 'test' };
@@ -59,12 +59,12 @@ describe('Logger', () => {
       debug: vi.fn(),
       info: vi.fn(),
       warn: vi.fn(),
-      error: vi.fn()
+      error: vi.fn(),
     };
 
     const parentLogger = createLogger({
       level: 'info',
-      handler: mockHandler
+      handler: mockHandler,
     });
 
     const childLogger = parentLogger.child('A2A');
@@ -78,12 +78,12 @@ describe('Logger', () => {
       debug: vi.fn(),
       info: vi.fn(),
       warn: vi.fn(),
-      error: vi.fn()
+      error: vi.fn(),
     };
 
     const testLogger = createLogger({
       enabled: false,
-      handler: mockHandler
+      handler: mockHandler,
     });
 
     testLogger.error('should not log');
@@ -96,12 +96,12 @@ describe('Logger', () => {
       debug: vi.fn(),
       info: vi.fn(),
       warn: vi.fn(),
-      error: vi.fn()
+      error: vi.fn(),
     };
 
     const testLogger = createLogger({
       level: 'info',
-      handler: mockHandler
+      handler: mockHandler,
     });
 
     testLogger.debug('should not log');
@@ -117,12 +117,12 @@ describe('Logger', () => {
       debug: vi.fn(),
       info: vi.fn(),
       warn: vi.fn(),
-      error: vi.fn()
+      error: vi.fn(),
     };
 
     const rootLogger = createLogger({
       level: 'info',
-      handler: mockHandler
+      handler: mockHandler,
     });
 
     const mcpLogger = rootLogger.child('MCP');
