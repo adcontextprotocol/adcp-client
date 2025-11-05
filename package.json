@@ -61,7 +61,7 @@
     "docs:build": "npm run docs && cd docs && make build",
     "docs:install": "cd docs && make install",
     "ci:validate": "node scripts/ci-validate.js",
-    "ci:quick": "npm run typecheck && npm run build:lib && npm test",
+    "ci:quick": "npm run format:check && npm run typecheck && npm run build:lib && npm test",
     "ci:schema-check": "npm run sync-schemas && npm run generate-types && git diff --exit-code src/lib/types/ src/lib/agents/ || (echo '⚠️  Generated files are out of sync. Run: npm run sync-schemas && npm run generate-types' && exit 1)",
     "ci:pre-push": "npm run ci:schema-check && npm run ci:quick",
     "hooks:install": "node scripts/install-hooks.js",
@@ -70,7 +70,8 @@
     "registry:validate-all": "tsx src/registry/cron.ts --all",
     "registry:validate-pending": "tsx src/registry/cron.ts --pending",
     "registry:mcp": "tsx src/registry/mcp-server.ts",
-    "format": "prettier --write \"./**/*.{css,html,js,ts,tsx,json}\""
+    "format": "prettier --write \"./**/*.{css,html,js,ts,tsx,json}\"",
+    "format:check": "prettier --check \"./**/*.{css,html,js,ts,tsx,json}\""
   },
   "keywords": [
     "adcp",

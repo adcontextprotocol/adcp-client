@@ -188,6 +188,18 @@ async function validateCI() {
   // 3. CODE QUALITY CHECKS
   section('🔍 Code Quality Checks');
 
+  subsection('Check code formatting');
+  totalTests++;
+  const formatResult = runCommand('npm run format:check');
+  if (formatResult.success) {
+    log('✅ Code formatting is correct', 'green');
+    passedTests++;
+  } else {
+    log('❌ Code formatting issues found', 'red');
+    log('   Run: npm run format to fix formatting', 'yellow');
+    failures.push('Code formatting check failed');
+  }
+
   subsection('Check package.json integrity');
   totalTests++;
   try {
