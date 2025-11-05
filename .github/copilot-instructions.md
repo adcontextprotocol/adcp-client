@@ -1,27 +1,23 @@
 # AdCP Client Developer Guide
 
-## Project Overview
+> **📖 This guide is for GitHub Copilot. For complete AI coding assistant instructions, see [../AGENTS.md](../AGENTS.md)**
 
-This is **@adcp/client** - the official TypeScript client library for the Ad Context Protocol (AdCP) with integrated testing framework, implementing the specification documented at [docs.adcontextprotocol.org](https://docs.adcontextprotocol.org/docs/).
+## Quick Reference
 
-Two main components:
+This is **@adcp/client** - the official TypeScript client library for the Ad Context Protocol (AdCP).
+
+**Critical rules** (see [AGENTS.md](../AGENTS.md) for details):
+- ✅ Always use official `@a2a-js/sdk` and `@modelcontextprotocol/sdk` clients
+- ❌ Never use mock data - return exactly what agents provide
+- ✅ Fly.io servers must bind to `0.0.0.0:8080` in production
+- ✅ Use changesets for version management (never edit package.json version manually)
+
+## Project Components
 
 1. **Library** (`src/lib/`) - NPM package for AdCP agents communication
 2. **Testing Framework** (`src/server/`, `server.js`) - Live testing UI deployed on Fly.io
 
-## Critical Architecture Patterns
-
-### Protocol Abstraction Layer
-
-The library supports both **A2A** and **MCP** protocols via unified interface:
-
-```typescript
-// Never implement protocol clients manually - always use official SDKs
-import { ProtocolClient } from "./src/lib/protocols";
-// Routes to: callA2ATool() or callMCPTool() based on agent.protocol
-```
-
-**🚨 NEVER USE MOCK DATA**: Always return exactly what agents provide, even empty arrays/errors.
+## Architecture Quick Reference
 
 ### Async Operation Patterns (AdCP PR 78)
 
