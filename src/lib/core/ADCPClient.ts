@@ -128,7 +128,8 @@ export class ADCPClient {
       agentId: agent.id,
       webhookSecret: config.webhookSecret,
       strictSchemaValidation: config.validation?.strictSchemaValidation !== false, // Default: true
-      logSchemaViolations: config.validation?.logSchemaViolations !== false // Default: true
+      logSchemaViolations: config.validation?.logSchemaViolations !== false, // Default: true
+      onActivity: config.onActivity
     });
 
     // Create async handler if handlers are provided
