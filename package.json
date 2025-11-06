@@ -61,7 +61,7 @@
     "docs:build": "npm run docs && cd docs && make build",
     "docs:install": "cd docs && make install",
     "ci:validate": "node scripts/ci-validate.js",
-    "ci:quick": "npm run typecheck && npm run build:lib && npm test",
+    "ci:quick": "npm run format:check && npm run typecheck && npm run build:lib && npm test",
     "ci:schema-check": "npm run sync-schemas && npm run generate-types && git diff --exit-code src/lib/types/ src/lib/agents/ || (echo '⚠️  Generated files are out of sync. Run: npm run sync-schemas && npm run generate-types' && exit 1)",
     "ci:pre-push": "npm run ci:schema-check && npm run ci:quick",
     "hooks:install": "node scripts/install-hooks.js",
@@ -69,7 +69,9 @@
     "registry:cron": "tsx src/registry/cron.ts",
     "registry:validate-all": "tsx src/registry/cron.ts --all",
     "registry:validate-pending": "tsx src/registry/cron.ts --pending",
-    "registry:mcp": "tsx src/registry/mcp-server.ts"
+    "registry:mcp": "tsx src/registry/mcp-server.ts",
+    "format": "prettier --write \"./**/*.{css,html,js,ts,tsx,json}\"",
+    "format:check": "prettier --check \"./**/*.{css,html,js,ts,tsx,json}\""
   },
   "keywords": [
     "adcp",
@@ -108,8 +110,8 @@
     "@a2a-js/sdk": "^0.3.4",
     "@apidevtools/json-schema-ref-parser": "^14.2.1",
     "@changesets/cli": "^2.29.7",
-    "@commitlint/cli": "^18.4.3",
-    "@commitlint/config-conventional": "^18.4.3",
+    "@commitlint/cli": "^19.6.0",
+    "@commitlint/config-conventional": "^19.6.0",
     "@fastify/cors": "^9.0.1",
     "@fastify/static": "^7.0.0",
     "@modelcontextprotocol/sdk": "^1.17.5",
@@ -125,6 +127,7 @@
     "markdown-it": "^14.1.0",
     "node-fetch": "^3.3.2",
     "pino-pretty": "^13.1.1",
+    "prettier": "^3.6.2",
     "ts-to-zod": "^5.0.1",
     "tsx": "^4.6.0",
     "typedoc": "^0.28.13",

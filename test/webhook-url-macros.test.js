@@ -8,12 +8,12 @@ const agentConfig = {
   id: 'test_agent',
   name: 'Test Agent',
   agent_uri: 'https://agent.example.com',
-  protocol: 'a2a'
+  protocol: 'a2a',
 };
 
 test('path-based template', () => {
   const client = new ADCPClient(agentConfig, {
-    webhookUrlTemplate: 'https://myapp.com/webhook/{task_type}/{agent_id}/{operation_id}'
+    webhookUrlTemplate: 'https://myapp.com/webhook/{task_type}/{agent_id}/{operation_id}',
   });
 
   const url = client.getWebhookUrl('sync_creatives', 'op_123');
@@ -22,7 +22,7 @@ test('path-based template', () => {
 
 test('query string template', () => {
   const client = new ADCPClient(agentConfig, {
-    webhookUrlTemplate: 'https://myapp.com/webhook?agent={agent_id}&op={operation_id}&type={task_type}'
+    webhookUrlTemplate: 'https://myapp.com/webhook?agent={agent_id}&op={operation_id}&type={task_type}',
   });
 
   const url = client.getWebhookUrl('sync_creatives', 'op_123');
@@ -31,7 +31,7 @@ test('query string template', () => {
 
 test('mixed path and query template', () => {
   const client = new ADCPClient(agentConfig, {
-    webhookUrlTemplate: 'https://myapp.com/api/v1/callbacks/{agent_id}?operation={operation_id}'
+    webhookUrlTemplate: 'https://myapp.com/api/v1/callbacks/{agent_id}?operation={operation_id}',
   });
 
   const url = client.getWebhookUrl('create_media_buy', 'op_456');
@@ -40,7 +40,7 @@ test('mixed path and query template', () => {
 
 test('notification webhook URL', () => {
   const client = new ADCPClient(agentConfig, {
-    webhookUrlTemplate: 'https://myapp.com/webhook/{task_type}/{agent_id}/{operation_id}'
+    webhookUrlTemplate: 'https://myapp.com/webhook/{task_type}/{agent_id}/{operation_id}',
   });
 
   const url = client.getWebhookUrl('media_buy_delivery', 'delivery_report_test_agent_2025-10');
@@ -50,8 +50,5 @@ test('notification webhook URL', () => {
 test('throws error if webhookUrlTemplate not configured', () => {
   const client = new ADCPClient(agentConfig, {});
 
-  assert.throws(
-    () => client.getWebhookUrl('sync_creatives', 'op_123'),
-    /webhookUrlTemplate not configured/
-  );
+  assert.throws(() => client.getWebhookUrl('sync_creatives', 'op_123'), /webhookUrlTemplate not configured/);
 });

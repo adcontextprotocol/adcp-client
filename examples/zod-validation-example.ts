@@ -17,7 +17,7 @@ import {
   GetProductsRequestSchema,
   GetProductsResponseSchema,
   CreateMediaBuyRequestSchema,
-  CreateMediaBuyResponseSchema
+  CreateMediaBuyResponseSchema,
 } from '../src/lib/types/schemas.generated';
 
 // Example 1: Validate a media buy structure
@@ -28,7 +28,7 @@ const mediaBuy = {
   status: 'active',
   promoted_offering: 'Nike Spring Collection 2024',
   total_budget: 50000,
-  packages: []
+  packages: [],
 };
 
 const mediaBuyResult = MediaBuySchema.safeParse(mediaBuy);
@@ -55,10 +55,13 @@ if (productResult.success) {
   console.log('✅ Product is valid!');
 } else {
   console.log('❌ Product validation failed (as expected):');
-  console.log('Issues found:', productResult.error.issues.map(issue => ({
-    path: issue.path.join('.'),
-    message: issue.message
-  })));
+  console.log(
+    'Issues found:',
+    productResult.error.issues.map(issue => ({
+      path: issue.path.join('.'),
+      message: issue.message,
+    }))
+  );
 }
 
 // Example 3: Validate request before sending to agent
@@ -68,8 +71,8 @@ const getProductsRequest = {
   brief: 'Looking for premium display inventory targeting tech professionals',
   brand_manifest: {
     brand_name: 'TechCorp',
-    product_catalog: []
-  }
+    product_catalog: [],
+  },
 };
 
 const requestResult = GetProductsRequestSchema.safeParse(getProductsRequest);
@@ -86,7 +89,7 @@ if (requestResult.success) {
 console.log('\n📦 Example 4: Validating a GetProducts Response\n');
 
 const getProductsResponse = {
-  products: []
+  products: [],
 };
 
 const responseResult = GetProductsResponseSchema.safeParse(getProductsResponse);

@@ -3,7 +3,7 @@
 
 /**
  * Generic storage interface for caching and persistence
- * 
+ *
  * Users can provide their own implementations (Redis, database, etc.)
  * The library provides a default in-memory implementation
  */
@@ -14,7 +14,7 @@ export interface Storage<T> {
    * @returns Value or undefined if not found
    */
   get(key: string): Promise<T | undefined>;
-  
+
   /**
    * Set a value with optional TTL
    * @param key - Storage key
@@ -22,29 +22,29 @@ export interface Storage<T> {
    * @param ttl - Time to live in seconds (optional)
    */
   set(key: string, value: T, ttl?: number): Promise<void>;
-  
+
   /**
    * Delete a value by key
    * @param key - Storage key
    */
   delete(key: string): Promise<void>;
-  
+
   /**
    * Check if a key exists
    * @param key - Storage key
    */
   has(key: string): Promise<boolean>;
-  
+
   /**
    * Clear all stored values (optional)
    */
   clear?(): Promise<void>;
-  
+
   /**
    * Get all keys (optional, for debugging)
    */
   keys?(): Promise<string[]>;
-  
+
   /**
    * Get storage size/count (optional, for monitoring)
    */
@@ -149,16 +149,16 @@ export interface DeferredTaskState {
 export interface StorageConfig {
   /** Storage for agent capabilities caching */
   capabilities?: Storage<AgentCapabilities>;
-  
+
   /** Storage for conversation state persistence */
   conversations?: Storage<ConversationState>;
-  
+
   /** Storage for deferred task tokens */
   tokens?: Storage<DeferredTaskState>;
-  
+
   /** Storage for debug logs (optional) */
   debugLogs?: Storage<any>;
-  
+
   /** Custom storage instances */
   custom?: Record<string, Storage<any>>;
 }
@@ -176,9 +176,7 @@ export interface StorageFactory {
 /**
  * Utility type for storage middleware/decorators
  */
-export type StorageMiddleware<T> = (
-  storage: Storage<T>
-) => Storage<T>;
+export type StorageMiddleware<T> = (storage: Storage<T>) => Storage<T>;
 
 /**
  * Helper interface for batch operations
@@ -188,12 +186,12 @@ export interface BatchStorage<T> extends Storage<T> {
    * Get multiple values at once
    */
   mget(keys: string[]): Promise<(T | undefined)[]>;
-  
+
   /**
    * Set multiple values at once
    */
   mset(entries: Array<{ key: string; value: T; ttl?: number }>): Promise<void>;
-  
+
   /**
    * Delete multiple keys at once
    */
@@ -208,7 +206,7 @@ export interface PatternStorage<T> extends Storage<T> {
    * Get keys matching a pattern
    */
   scan(pattern: string): Promise<string[]>;
-  
+
   /**
    * Delete keys matching a pattern
    */

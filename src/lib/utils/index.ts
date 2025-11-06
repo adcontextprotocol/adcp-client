@@ -13,48 +13,48 @@ export const STANDARD_FORMATS: CreativeFormat[] = [
   {
     format_id: {
       agent_url: 'https://creatives.adcontextprotocol.org',
-      id: 'banner_728x90'
+      id: 'banner_728x90',
     },
     name: 'Leaderboard',
     dimensions: { width: 728, height: 90 },
     aspect_ratio: '8:1',
     file_types: ['jpg', 'jpeg', 'png', 'gif'],
-    max_file_size: 150000
+    max_file_size: 150000,
   },
   {
     format_id: {
       agent_url: 'https://creatives.adcontextprotocol.org',
-      id: 'banner_300x250'
+      id: 'banner_300x250',
     },
     name: 'Medium Rectangle',
     dimensions: { width: 300, height: 250 },
     aspect_ratio: '6:5',
     file_types: ['jpg', 'jpeg', 'png', 'gif'],
-    max_file_size: 150000
+    max_file_size: 150000,
   },
   {
     format_id: {
       agent_url: 'https://creatives.adcontextprotocol.org',
-      id: 'banner_320x50'
+      id: 'banner_320x50',
     },
     name: 'Mobile Banner',
     dimensions: { width: 320, height: 50 },
     aspect_ratio: '32:5',
     file_types: ['jpg', 'jpeg', 'png', 'gif'],
-    max_file_size: 40000
+    max_file_size: 40000,
   },
   {
     format_id: {
       agent_url: 'https://creatives.adcontextprotocol.org',
-      id: 'video_1920x1080'
+      id: 'video_1920x1080',
     },
     name: 'Full HD Video',
     dimensions: { width: 1920, height: 1080 },
     aspect_ratio: '16:9',
     file_types: ['mp4', 'webm'],
     max_file_size: 10000000,
-    duration_range: { min: 6, max: 30 }
-  }
+    duration_range: { min: 6, max: 30 },
+  },
 ];
 
 /**
@@ -66,9 +66,9 @@ export class CircuitBreaker {
   private state: 'closed' | 'open' | 'half-open' = 'closed';
   private readonly failureThreshold = 5;
   private readonly resetTimeout = 60000; // 1 minute
-  
+
   constructor(private agentId: string) {}
-  
+
   async call<T>(fn: () => Promise<T>): Promise<T> {
     if (this.state === 'open') {
       if (Date.now() - this.lastFailTime > this.resetTimeout) {

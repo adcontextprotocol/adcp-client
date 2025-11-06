@@ -18,7 +18,7 @@ const colors = {
   magenta: '\x1b[35m',
   cyan: '\x1b[36m',
   reset: '\x1b[0m',
-  bold: '\x1b[1m'
+  bold: '\x1b[1m',
 };
 
 function log(message, color = 'reset') {
@@ -41,18 +41,18 @@ function subsection(title) {
 // Run command and return { success, output, error }
 function runCommand(command, cwd = process.cwd(), options = {}) {
   try {
-    const output = execSync(command, { 
-      cwd, 
-      encoding: 'utf8', 
+    const output = execSync(command, {
+      cwd,
+      encoding: 'utf8',
       stdio: options.silent ? 'pipe' : 'inherit',
-      ...options 
+      ...options,
     });
     return { success: true, output, error: null };
   } catch (error) {
-    return { 
-      success: false, 
-      output: error.stdout || '', 
-      error: error.stderr || error.message 
+    return {
+      success: false,
+      output: error.stdout || '',
+      error: error.stderr || error.message,
     };
   }
 }
@@ -74,12 +74,12 @@ async function validateCI() {
   const failures = [];
 
   section('🚀 Local CI Validation (Mirroring GitHub Actions)');
-  
+
   // Check Node.js version
   subsection('Environment Check');
   const nodeVersion = process.version;
   log(`Node.js version: ${nodeVersion}`, 'green');
-  
+
   // Check if this is a clean git state
   const isClean = checkGitStatus();
   if (!isClean) {
@@ -89,7 +89,7 @@ async function validateCI() {
 
   // 1. SCHEMA SYNCHRONIZATION CHECK (mirrors schema-sync.yml)
   section('🔄 Schema Synchronization Check');
-  
+
   subsection('Sync schemas from AdCP');
   totalTests++;
   const syncResult = runCommand('npm run sync-schemas');
@@ -126,7 +126,9 @@ async function validateCI() {
 
   subsection('Check version synchronization');
   totalTests++;
-  const versionResult = runCommand('npm run sync-version 2>&1 | grep -q "Already in sync"', process.cwd(), { silent: true });
+  const versionResult = runCommand('npm run sync-version 2>&1 | grep -q "Already in sync"', process.cwd(), {
+    silent: true,
+  });
   if (versionResult.success) {
     log('✅ Version is synchronized', 'green');
     passedTests++;
@@ -186,23 +188,35 @@ async function validateCI() {
   // 3. CODE QUALITY CHECKS
   section('🔍 Code Quality Checks');
 
+  subsection('Check code formatting');
+  totalTests++;
+  const formatResult = runCommand('npm run format:check');
+  if (formatResult.success) {
+    log('✅ Code formatting is correct', 'green');
+    passedTests++;
+  } else {
+    log('❌ Code formatting issues found', 'red');
+    log('   Run: npm run format to fix formatting', 'yellow');
+    failures.push('Code formatting check failed');
+  }
+
   subsection('Check package.json integrity');
   totalTests++;
   try {
     // Verify no missing dependencies
     const lsResult = runCommand('npm ls --depth=0', process.cwd(), { silent: true });
-    
+
     // Verify package exports are valid
     const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-    
+
     if (!fs.existsSync(pkg.main)) {
       throw new Error(`Main export file does not exist: ${pkg.main}`);
     }
-    
+
     if (!fs.existsSync(pkg.types)) {
       throw new Error(`Types export file does not exist: ${pkg.types}`);
     }
-    
+
     log('✅ Package exports are valid', 'green');
     passedTests++;
   } catch (error) {
@@ -228,7 +242,11 @@ async function validateCI() {
 
   subsection('Check for critical vulnerabilities');
   totalTests++;
-  const criticalAuditResult = runCommand('npm audit --audit-level=high --json 2>/dev/null | grep -q \'"level":"high"\\|"level":"critical"\'', process.cwd(), { silent: true });
+  const criticalAuditResult = runCommand(
+    'npm audit --audit-level=high --json 2>/dev/null | grep -q \'"level":"high"\\|"level":"critical"\'',
+    process.cwd(),
+    { silent: true }
+  );
   if (!criticalAuditResult.success) {
     log('✅ No high or critical vulnerabilities found', 'green');
     passedTests++;
@@ -259,10 +277,10 @@ async function validateCI() {
 
   // SUMMARY
   section('📊 Validation Summary');
-  
+
   const duration = ((Date.now() - startTime) / 1000).toFixed(1);
   const successRate = ((passedTests / totalTests) * 100).toFixed(1);
-  
+
   log(`Total checks: ${totalTests}`, 'blue');
   log(`Passed: ${passedTests}`, passedTests === totalTests ? 'green' : 'yellow');
   log(`Failed: ${totalTests - passedTests}`, totalTests === passedTests ? 'green' : 'red');

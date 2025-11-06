@@ -30,9 +30,9 @@ class AsyncWebhookHandler {
    * Check if ngrok is installed
    */
   static isNgrokAvailable() {
-    return new Promise((resolve) => {
+    return new Promise(resolve => {
       const check = spawn('which', ['ngrok']);
-      check.on('close', (code) => resolve(code === 0));
+      check.on('close', code => resolve(code === 0));
     });
   }
 
@@ -61,7 +61,9 @@ class AsyncWebhookHandler {
       if (ngrokAvailable) {
         await this.startNgrok();
       } else {
-        throw new Error('ngrok is not installed. Install it with: brew install ngrok (Mac) or download from https://ngrok.com');
+        throw new Error(
+          'ngrok is not installed. Install it with: brew install ngrok (Mac) or download from https://ngrok.com'
+        );
       }
     } else {
       // Use local URL (for local agents)
@@ -150,7 +152,7 @@ class AsyncWebhookHandler {
       let ngrokStarted = false;
       let buffer = '';
 
-      this.ngrokProcess.stdout.on('data', (data) => {
+      this.ngrokProcess.stdout.on('data', data => {
         buffer += data.toString();
         const lines = buffer.split('\n');
         buffer = lines.pop() || ''; // Keep incomplete line in buffer
@@ -190,17 +192,17 @@ class AsyncWebhookHandler {
         }
       });
 
-      this.ngrokProcess.stderr.on('data', (data) => {
+      this.ngrokProcess.stderr.on('data', data => {
         if (this.debug) {
           console.error('ngrok stderr:', data.toString());
         }
       });
 
-      this.ngrokProcess.on('error', (error) => {
+      this.ngrokProcess.on('error', error => {
         reject(new Error(`Failed to start ngrok: ${error.message}`));
       });
 
-      this.ngrokProcess.on('close', (code) => {
+      this.ngrokProcess.on('close', code => {
         if (!ngrokStarted && code !== 0) {
           reject(new Error(`ngrok exited with code ${code}`));
         }
@@ -244,7 +246,7 @@ class AsyncWebhookHandler {
 
     // Close HTTP server
     if (this.server) {
-      await new Promise((resolve) => {
+      await new Promise(resolve => {
         this.server.close(() => resolve());
       });
     }

@@ -16,8 +16,8 @@ describe('ResponseValidator Tests', () => {
     it('should validate valid MCP response with structuredContent', () => {
       const response = {
         structuredContent: {
-          products: [{ product_id: 'p1' }]
-        }
+          products: [{ product_id: 'p1' }],
+        },
       };
 
       const result = validator.validate(response);
@@ -29,9 +29,7 @@ describe('ResponseValidator Tests', () => {
 
     it('should validate MCP response with content array', () => {
       const response = {
-        content: [
-          { type: 'text', text: 'Hello' }
-        ]
+        content: [{ type: 'text', text: 'Hello' }],
       };
 
       const result = validator.validate(response);
@@ -43,7 +41,7 @@ describe('ResponseValidator Tests', () => {
     it('should detect MCP error responses', () => {
       const response = {
         isError: true,
-        content: [{ type: 'text', text: 'Error occurred' }]
+        content: [{ type: 'text', text: 'Error occurred' }],
       };
 
       const result = validator.validate(response);
@@ -55,7 +53,7 @@ describe('ResponseValidator Tests', () => {
 
     it('should warn on MCP response without content or structuredContent', () => {
       const response = {
-        someField: 'value'
+        someField: 'value',
       };
 
       const result = validator.validate(response);
@@ -68,14 +66,18 @@ describe('ResponseValidator Tests', () => {
     it('should validate valid A2A response', () => {
       const response = {
         result: {
-          artifacts: [{
-            artifactId: 'result_1',
-            parts: [{
-              kind: 'data',
-              data: { products: [{ product_id: 'p1' }] }
-            }]
-          }]
-        }
+          artifacts: [
+            {
+              artifactId: 'result_1',
+              parts: [
+                {
+                  kind: 'data',
+                  data: { products: [{ product_id: 'p1' }] },
+                },
+              ],
+            },
+          ],
+        },
       };
 
       const result = validator.validate(response);
@@ -89,10 +91,10 @@ describe('ResponseValidator Tests', () => {
       const response = {
         error: {
           code: -32603,
-          message: 'Internal error'
+          message: 'Internal error',
         },
         jsonrpc: '2.0',
-        id: 1
+        id: 1,
       };
 
       const result = validator.validate(response);
@@ -103,7 +105,7 @@ describe('ResponseValidator Tests', () => {
 
     it('should error on A2A response missing artifacts', () => {
       const response = {
-        result: {}
+        result: {},
       };
 
       const result = validator.validate(response);
@@ -115,8 +117,8 @@ describe('ResponseValidator Tests', () => {
     it('should error on A2A response with non-array artifacts', () => {
       const response = {
         result: {
-          artifacts: 'not an array'
-        }
+          artifacts: 'not an array',
+        },
       };
 
       const result = validator.validate(response);
@@ -128,8 +130,8 @@ describe('ResponseValidator Tests', () => {
     it('should warn on A2A response with empty artifacts', () => {
       const response = {
         result: {
-          artifacts: []
-        }
+          artifacts: [],
+        },
       };
 
       const result = validator.validate(response);
@@ -140,8 +142,8 @@ describe('ResponseValidator Tests', () => {
     it('should error on A2A artifact missing parts', () => {
       const response = {
         result: {
-          artifacts: [{}]
-        }
+          artifacts: [{}],
+        },
       };
 
       const result = validator.validate(response);
@@ -155,12 +157,12 @@ describe('ResponseValidator Tests', () => {
     it('should validate expected fields in MCP response', () => {
       const response = {
         structuredContent: {
-          products: [{ product_id: 'p1' }]
-        }
+          products: [{ product_id: 'p1' }],
+        },
       };
 
       const result = validator.validate(response, null, {
-        expectedFields: ['products']
+        expectedFields: ['products'],
       });
 
       assert.strictEqual(result.valid, true);
@@ -170,12 +172,12 @@ describe('ResponseValidator Tests', () => {
     it('should error on missing expected fields', () => {
       const response = {
         structuredContent: {
-          other_field: 'value'
-        }
+          other_field: 'value',
+        },
       };
 
       const result = validator.validate(response, null, {
-        expectedFields: ['products']
+        expectedFields: ['products'],
       });
 
       assert.strictEqual(result.valid, false);
@@ -185,12 +187,12 @@ describe('ResponseValidator Tests', () => {
     it('should warn on empty arrays for expected fields', () => {
       const response = {
         structuredContent: {
-          products: []
-        }
+          products: [],
+        },
       };
 
       const result = validator.validate(response, null, {
-        expectedFields: ['products']
+        expectedFields: ['products'],
       });
 
       assert.ok(result.warnings.some(w => w.includes('products is an empty array')));
@@ -199,18 +201,22 @@ describe('ResponseValidator Tests', () => {
     it('should validate expected fields in A2A response', () => {
       const response = {
         result: {
-          artifacts: [{
-            parts: [{
-              data: {
-                creatives: [{ creative_id: 'c1' }]
-              }
-            }]
-          }]
-        }
+          artifacts: [
+            {
+              parts: [
+                {
+                  data: {
+                    creatives: [{ creative_id: 'c1' }],
+                  },
+                },
+              ],
+            },
+          ],
+        },
       };
 
       const result = validator.validate(response, null, {
-        expectedFields: ['creatives']
+        expectedFields: ['creatives'],
       });
 
       assert.strictEqual(result.valid, true);
@@ -221,8 +227,8 @@ describe('ResponseValidator Tests', () => {
     it('should validate get_products response', () => {
       const response = {
         structuredContent: {
-          products: [{ product_id: 'p1' }]
-        }
+          products: [{ product_id: 'p1' }],
+        },
       };
 
       const result = validator.validate(response, 'get_products');
@@ -233,12 +239,12 @@ describe('ResponseValidator Tests', () => {
     it('should error on get_products without products field', () => {
       const response = {
         structuredContent: {
-          data: 'something'
-        }
+          data: 'something',
+        },
       };
 
       const result = validator.validate(response, 'get_products', {
-        expectedFields: ['products']
+        expectedFields: ['products'],
       });
 
       assert.strictEqual(result.valid, false);
@@ -248,23 +254,27 @@ describe('ResponseValidator Tests', () => {
     it('should validate list_creative_formats response', () => {
       const response = {
         structuredContent: {
-          formats: [{
-            format_id: {
-              agent_url: 'https://creatives.adcontextprotocol.org',
-              id: 'display_300x250'
+          formats: [
+            {
+              format_id: {
+                agent_url: 'https://creatives.adcontextprotocol.org',
+                id: 'display_300x250',
+              },
+              name: 'IAB Medium Rectangle',
+              type: 'display',
+              renders: [
+                {
+                  role: 'primary',
+                  dimensions: {
+                    width: 300,
+                    height: 250,
+                    unit: 'px',
+                  },
+                },
+              ],
             },
-            name: 'IAB Medium Rectangle',
-            type: 'display',
-            renders: [{
-              role: 'primary',
-              dimensions: {
-                width: 300,
-                height: 250,
-                unit: 'px'
-              }
-            }]
-          }]
-        }
+          ],
+        },
       };
 
       const result = validator.validate(response, 'list_creative_formats');
@@ -275,14 +285,18 @@ describe('ResponseValidator Tests', () => {
     it('should validate list_creatives response', () => {
       const response = {
         result: {
-          artifacts: [{
-            parts: [{
-              data: {
-                creatives: [{ creative_id: 'c1' }]
-              }
-            }]
-          }]
-        }
+          artifacts: [
+            {
+              parts: [
+                {
+                  data: {
+                    creatives: [{ creative_id: 'c1' }],
+                  },
+                },
+              ],
+            },
+          ],
+        },
       };
 
       const result = validator.validate(response, 'list_creatives');
@@ -296,13 +310,13 @@ describe('ResponseValidator Tests', () => {
     it('should fail in strict mode with warnings', () => {
       const response = {
         structuredContent: {
-          products: []  // Empty array triggers warning
-        }
+          products: [], // Empty array triggers warning
+        },
       };
 
       const result = validator.validate(response, 'get_products', {
         strict: true,
-        expectedFields: ['products']
+        expectedFields: ['products'],
       });
 
       assert.strictEqual(result.valid, false);
@@ -312,13 +326,13 @@ describe('ResponseValidator Tests', () => {
     it('should pass in non-strict mode with warnings', () => {
       const response = {
         structuredContent: {
-          products: []
-        }
+          products: [],
+        },
       };
 
       const result = validator.validate(response, 'get_products', {
         strict: false,
-        expectedFields: ['products']
+        expectedFields: ['products'],
       });
 
       assert.strictEqual(result.valid, true);
@@ -329,7 +343,7 @@ describe('ResponseValidator Tests', () => {
   describe('Helper Methods', () => {
     it('validateOrThrow should throw on invalid response', () => {
       const response = {
-        error: { message: 'Failed' }
+        error: { message: 'Failed' },
       };
 
       assert.throws(() => {
@@ -340,8 +354,8 @@ describe('ResponseValidator Tests', () => {
     it('validateOrThrow should not throw on valid response', () => {
       const response = {
         structuredContent: {
-          products: [{ product_id: 'p1' }]
-        }
+          products: [{ product_id: 'p1' }],
+        },
       };
 
       assert.doesNotThrow(() => {
@@ -350,20 +364,11 @@ describe('ResponseValidator Tests', () => {
     });
 
     it('isValidProtocolResponse should detect valid responses', () => {
-      assert.strictEqual(
-        validator.isValidProtocolResponse({ structuredContent: {} }),
-        true
-      );
+      assert.strictEqual(validator.isValidProtocolResponse({ structuredContent: {} }), true);
 
-      assert.strictEqual(
-        validator.isValidProtocolResponse({ result: { artifacts: [] } }),
-        true
-      );
+      assert.strictEqual(validator.isValidProtocolResponse({ result: { artifacts: [] } }), true);
 
-      assert.strictEqual(
-        validator.isValidProtocolResponse({ data: {} }),
-        true
-      );
+      assert.strictEqual(validator.isValidProtocolResponse({ data: {} }), true);
     });
 
     it('isValidProtocolResponse should reject invalid responses', () => {
@@ -390,7 +395,7 @@ describe('ResponseValidator Tests', () => {
 
     it('should handle response with unknown protocol', () => {
       const response = {
-        custom_field: 'value'
+        custom_field: 'value',
       };
 
       const result = validator.validate(response);

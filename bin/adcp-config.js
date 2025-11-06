@@ -126,10 +126,10 @@ function isAlias(str) {
 async function promptSecure(prompt, hidden = true) {
   const readline = require('readline');
 
-  return new Promise((resolve) => {
+  return new Promise(resolve => {
     const rl = readline.createInterface({
       input: process.stdin,
-      output: process.stdout
+      output: process.stdout,
     });
 
     if (hidden) {
@@ -146,7 +146,7 @@ async function promptSecure(prompt, hidden = true) {
       };
     }
 
-    rl.question(prompt, (answer) => {
+    rl.question(prompt, answer => {
       rl.close();
       if (hidden) {
         console.log(''); // New line after hidden input
@@ -165,7 +165,14 @@ async function promptSecure(prompt, hidden = true) {
  * @param {boolean} nonInteractive Skip prompts if all required args provided
  * @param {boolean} noAuth Explicitly skip auth (--no-auth flag)
  */
-async function interactiveSetup(alias, url = null, protocol = null, authToken = null, nonInteractive = false, noAuth = false) {
+async function interactiveSetup(
+  alias,
+  url = null,
+  protocol = null,
+  authToken = null,
+  nonInteractive = false,
+  noAuth = false
+) {
   // Non-interactive mode: save immediately without prompts
   if (nonInteractive && url) {
     const agentConfig = { url };
@@ -201,7 +208,7 @@ async function interactiveSetup(alias, url = null, protocol = null, authToken = 
 
   // Build config
   const agentConfig = {
-    url: url
+    url: url,
   };
 
   if (protocol) {
@@ -229,5 +236,5 @@ module.exports = {
   removeAgent,
   isAlias,
   promptSecure,
-  interactiveSetup
+  interactiveSetup,
 };

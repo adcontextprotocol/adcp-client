@@ -178,13 +178,15 @@ async function generateZodSchemas() {
     const combinedSource = `${coreContent}\n\n// ====== TOOL TYPES ======\n\n${toolsContent}`;
     const allTypes = [...TARGET_TYPES, ...TOOL_TYPES];
 
-    console.log(`📦 Generating ${allTypes.length} schemas from combined source (${TARGET_TYPES.length} core + ${TOOL_TYPES.length} tools)...`);
+    console.log(
+      `📦 Generating ${allTypes.length} schemas from combined source (${TARGET_TYPES.length} core + ${TOOL_TYPES.length} tools)...`
+    );
 
     const result = generate({
       sourceText: combinedSource,
-      nameFilter: (name) => allTypes.includes(name),
+      nameFilter: name => allTypes.includes(name),
       skipParseJSDoc: false,
-      getSchemaName: (name) => `${name}Schema`,
+      getSchemaName: name => `${name}Schema`,
     });
 
     // Check for generation errors and fail hard if any exist
@@ -227,7 +229,6 @@ async function generateZodSchemas() {
     const totalCount = allTypes.length;
     console.log(`📊 Generated ${totalCount} Zod v4 schemas`);
     console.log('✨ No errors!');
-
   } catch (error) {
     console.error('❌ Failed to generate Zod schemas:', error);
     process.exit(1);

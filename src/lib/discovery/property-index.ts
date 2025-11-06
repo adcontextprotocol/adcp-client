@@ -34,10 +34,7 @@ export class PropertyIndex {
   /**
    * Query 1: Find agents that can sell a specific property
    */
-  findAgentsForProperty(
-    identifierType: PropertyIdentifierType,
-    identifierValue: string
-  ): PropertyMatch[] {
+  findAgentsForProperty(identifierType: PropertyIdentifierType, identifierValue: string): PropertyMatch[] {
     const key = this.makeIdentifierKey(identifierType, identifierValue);
     return this.identifierIndex.get(key) || [];
   }
@@ -69,7 +66,7 @@ export class PropertyIndex {
             matches.push({
               property,
               agent_url: auth.agent_url,
-              publisher_domain: property.publisher_domain || ''
+              publisher_domain: property.publisher_domain || '',
             });
           }
         }
@@ -89,7 +86,7 @@ export class PropertyIndex {
       const match: PropertyMatch = {
         property: { ...property, publisher_domain: publisherDomain },
         agent_url: agentUrl,
-        publisher_domain: publisherDomain
+        publisher_domain: publisherDomain,
       };
 
       const existing = this.identifierIndex.get(key) || [];
@@ -103,7 +100,7 @@ export class PropertyIndex {
       agentAuth = {
         agent_url: agentUrl,
         publisher_domains: [],
-        properties: []
+        properties: [],
       };
       this.agentIndex.set(agentUrl, agentAuth);
     }
@@ -124,7 +121,7 @@ export class PropertyIndex {
       agentAuth = {
         agent_url: agentUrl,
         publisher_domains: [],
-        properties: []
+        properties: [],
       };
       this.agentIndex.set(agentUrl, agentAuth);
     }
@@ -151,10 +148,7 @@ export class PropertyIndex {
     return {
       totalIdentifiers: this.identifierIndex.size,
       totalAgents: this.agentIndex.size,
-      totalProperties: Array.from(this.agentIndex.values()).reduce(
-        (sum, auth) => sum + auth.properties.length,
-        0
-      )
+      totalProperties: Array.from(this.agentIndex.values()).reduce((sum, auth) => sum + auth.properties.length, 0),
     };
   }
 

@@ -31,8 +31,8 @@ export async function detectProtocol(url: string): Promise<'a2a' | 'mcp'> {
       method: 'GET',
       signal: controller.signal,
       headers: {
-        'Accept': 'application/json, */*'
-      }
+        Accept: 'application/json, */*',
+      },
     });
 
     clearTimeout(timeoutId);
@@ -55,10 +55,7 @@ export async function detectProtocol(url: string): Promise<'a2a' | 'mcp'> {
  * @param timeoutMs Timeout in milliseconds (default: 5000)
  * @returns Promise resolving to 'a2a' or 'mcp'
  */
-export async function detectProtocolWithTimeout(
-  url: string,
-  timeoutMs: number = 5000
-): Promise<'a2a' | 'mcp'> {
+export async function detectProtocolWithTimeout(url: string, timeoutMs: number = 5000): Promise<'a2a' | 'mcp'> {
   // Quick heuristic check
   if (url.endsWith('/mcp/') || url.endsWith('/mcp')) {
     return 'mcp';
@@ -74,8 +71,8 @@ export async function detectProtocolWithTimeout(
       method: 'GET',
       signal: controller.signal,
       headers: {
-        'Accept': 'application/json, */*'
-      }
+        Accept: 'application/json, */*',
+      },
     });
 
     clearTimeout(timeoutId);

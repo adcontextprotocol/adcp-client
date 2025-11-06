@@ -22,13 +22,13 @@ console.log('\n=== Logging with Metadata ===\n');
 logger.info('Task completed', {
   taskId: 'task_123',
   duration: 1250,
-  status: 'success'
+  status: 'success',
 });
 
 logger.error('Connection failed', {
   agentId: 'agent_xyz',
   error: 'ECONNREFUSED',
-  retryCount: 3
+  retryCount: 3,
 });
 
 // ====== CONTEXT-AWARE LOGGING ======
@@ -52,7 +52,7 @@ console.log('\n=== Custom Logger Instances ===\n');
 // Create a debug-level logger for development
 const devLogger = createLogger({
   level: 'debug',
-  enabled: true
+  enabled: true,
 });
 
 devLogger.debug('This message is visible with debug level');
@@ -61,7 +61,7 @@ devLogger.info('Standard info message');
 // Create a production logger (warn level only)
 const prodLogger = createLogger({
   level: 'warn',
-  enabled: true
+  enabled: true,
 });
 
 prodLogger.debug('This will NOT be logged');
@@ -80,8 +80,8 @@ const externalLogger = createLogger({
     debug: (msg, meta) => console.log(`[EXT-DEBUG] ${msg}`, meta || ''),
     info: (msg, meta) => console.log(`[EXT-INFO] ${msg}`, meta || ''),
     warn: (msg, meta) => console.log(`[EXT-WARN] ${msg}`, meta || ''),
-    error: (msg, meta) => console.log(`[EXT-ERROR] ${msg}`, meta || '')
-  }
+    error: (msg, meta) => console.log(`[EXT-ERROR] ${msg}`, meta || ''),
+  },
 });
 
 externalLogger.info('Using custom handler', { service: 'external' });
@@ -126,7 +126,7 @@ class MediaBuyService {
     } catch (error) {
       this.logger.error('Failed to create media buy', {
         error: error instanceof Error ? error.message : String(error),
-        params
+        params,
       });
       throw error;
     }
@@ -152,7 +152,7 @@ class ProtocolClient {
     } catch (error) {
       protocolLogger.error('Connection failed', {
         url,
-        error: error instanceof Error ? error.message : String(error)
+        error: error instanceof Error ? error.message : String(error),
       });
       throw error;
     }

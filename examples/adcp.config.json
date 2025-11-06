@@ -9,7 +9,7 @@
       "auth_token_env": "PREMIUM_AGENT_TOKEN"
     },
     {
-      "id": "budget-network", 
+      "id": "budget-network",
       "name": "Budget Ad Network",
       "agent_uri": "https://budget-ads.example.com/a2a/",
       "protocol": "a2a",

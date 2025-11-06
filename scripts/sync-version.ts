@@ -14,7 +14,7 @@ function writeFileIfChanged(filePath: string, newContent: string): boolean {
     const existingContent = readFileSync(filePath, 'utf8');
     const existingWithoutTimestamp = contentWithoutTimestamp(existingContent);
     const newWithoutTimestamp = contentWithoutTimestamp(newContent);
-    
+
     if (existingWithoutTimestamp === newWithoutTimestamp) {
       hasChanged = false;
     }
@@ -23,7 +23,7 @@ function writeFileIfChanged(filePath: string, newContent: string): boolean {
   if (hasChanged) {
     writeFileSync(filePath, newContent);
   }
-  
+
   return hasChanged;
 }
 
@@ -49,7 +49,7 @@ function getCurrentPackageVersion(): { version: string; adcpVersion?: string } {
     const packageJson = JSON.parse(readFileSync(packagePath, 'utf8'));
     return {
       version: packageJson.version,
-      adcpVersion: packageJson.adcp_version
+      adcpVersion: packageJson.adcp_version,
     };
   } catch (error) {
     console.error(`❌ Failed to read package.json:`, error.message);
@@ -105,51 +105,51 @@ export function isCompatibleWith(adcpVersion: string): boolean {
 function updatePackageJsonVersion(adcpVersion: string, autoUpdate: boolean = false): void {
   const packagePath = path.join(__dirname, '../package.json');
   const packageJson = JSON.parse(readFileSync(packagePath, 'utf8'));
-  
+
   const currentLibraryVersion = packageJson.version;
   const currentAdcpVersion = packageJson.adcp_version;
-  
+
   // Check if AdCP version has changed
   if (currentAdcpVersion === adcpVersion) {
     console.log(`✅ Package already aligned with AdCP v${adcpVersion}`);
     generateVersionFile(currentLibraryVersion, adcpVersion);
     return;
   }
-  
+
   // Update adcp_version field
   packageJson.adcp_version = adcpVersion;
-  
+
   if (autoUpdate) {
     // Auto-increment library version when AdCP version changes
     const [major, minor, patch] = currentLibraryVersion.split('.').map(Number);
-    
+
     // Determine version bump strategy based on AdCP version change
     const [currentMajor, currentMinor] = (currentAdcpVersion || '0.0.0').split('.').map(Number);
     const [newMajor, newMinor] = adcpVersion.split('.').map(Number);
-    
+
     let newLibraryVersion: string;
-    
+
     if (newMajor > currentMajor) {
       // Major AdCP version change -> bump major library version
       newLibraryVersion = `${major + 1}.0.0`;
     } else if (newMinor > currentMinor) {
-      // Minor AdCP version change -> bump minor library version  
+      // Minor AdCP version change -> bump minor library version
       newLibraryVersion = `${major}.${minor + 1}.0`;
     } else {
       // Patch AdCP version change -> bump patch library version
       newLibraryVersion = `${major}.${minor}.${patch + 1}`;
     }
-    
+
     packageJson.version = newLibraryVersion;
     console.log(`📈 Auto-updating library version: ${currentLibraryVersion} -> ${newLibraryVersion}`);
   }
-  
+
   // Write updated package.json
   writeFileSync(packagePath, JSON.stringify(packageJson, null, 2) + '\n');
   console.log(`✅ Updated package.json:`);
   console.log(`   📦 Library version: ${packageJson.version}`);
   console.log(`   🏷️  AdCP version: ${adcpVersion}`);
-  
+
   // Generate version file
   generateVersionFile(packageJson.version, adcpVersion);
 }
@@ -157,40 +157,40 @@ function updatePackageJsonVersion(adcpVersion: string, autoUpdate: boolean = fal
 // Main sync function
 async function syncVersion(): Promise<void> {
   console.log('🔄 Syncing version with AdCP specification...');
-  
+
   // Get current state
   const adcpVersion = getCachedAdCPVersion();
   const { version: currentLibraryVersion, adcpVersion: currentAdcpVersion } = getCurrentPackageVersion();
-  
+
   console.log(`📋 Current state:`);
   console.log(`   📦 Library version: ${currentLibraryVersion}`);
   console.log(`   🏷️  Current AdCP version: ${currentAdcpVersion || 'not set'}`);
   console.log(`   🎯 Target AdCP version: ${adcpVersion}`);
-  
+
   // Check command line arguments
   const args = process.argv.slice(2);
   const autoUpdate = args.includes('--auto-update') || args.includes('-u');
   const forceUpdate = args.includes('--force') || args.includes('-f');
-  
+
   if (currentAdcpVersion === adcpVersion && !forceUpdate) {
     console.log(`✅ Already in sync with AdCP v${adcpVersion}`);
     generateVersionFile(currentLibraryVersion, adcpVersion);
     return;
   }
-  
+
   if (currentAdcpVersion && currentAdcpVersion !== adcpVersion) {
     console.log(`🔄 AdCP version change detected: ${currentAdcpVersion} -> ${adcpVersion}`);
-    
+
     if (!autoUpdate && !forceUpdate) {
       console.log(`⚠️  Use --auto-update to automatically bump library version`);
       console.log(`⚠️  Use --force to update AdCP version without changing library version`);
       process.exit(1);
     }
   }
-  
+
   // Update versions
   updatePackageJsonVersion(adcpVersion, autoUpdate);
-  
+
   console.log(`✅ Version sync completed`);
 }
 

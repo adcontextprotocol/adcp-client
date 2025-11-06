@@ -24,7 +24,7 @@ const LOG_LEVELS: Record<LogLevel, number> = {
   debug: 0,
   info: 1,
   warn: 2,
-  error: 3
+  error: 3,
 };
 
 class Logger {
@@ -38,8 +38,8 @@ class Logger {
         debug: (msg, meta) => console.log(msg, meta ? meta : ''),
         info: (msg, meta) => console.log(msg, meta ? meta : ''),
         warn: (msg, meta) => console.warn(msg, meta ? meta : ''),
-        error: (msg, meta) => console.error(msg, meta ? meta : '')
-      }
+        error: (msg, meta) => console.error(msg, meta ? meta : ''),
+      },
     };
   }
 
@@ -95,8 +95,8 @@ class Logger {
         debug: (msg, meta) => parentHandler.debug(`[${context}] ${msg}`, meta),
         info: (msg, meta) => parentHandler.info(`[${context}] ${msg}`, meta),
         warn: (msg, meta) => parentHandler.warn(`[${context}] ${msg}`, meta),
-        error: (msg, meta) => parentHandler.error(`[${context}] ${msg}`, meta)
-      }
+        error: (msg, meta) => parentHandler.error(`[${context}] ${msg}`, meta),
+      },
     });
   }
 
@@ -111,7 +111,7 @@ class Logger {
 // Default global logger instance
 export const logger = new Logger({
   level: (process.env.LOG_LEVEL as LogLevel) || 'info',
-  enabled: process.env.LOG_ENABLED !== 'false'
+  enabled: process.env.LOG_ENABLED !== 'false',
 });
 
 /**

@@ -4,11 +4,7 @@ import { ADCPClient } from './ADCPClient';
 import type { ADCPClientConfig } from './ADCPClient';
 import type { AgentConfig } from '../types';
 import type { FormatID } from '../types/core.generated';
-import type {
-  ListCreativeFormatsRequest,
-  ListCreativeFormatsResponse,
-  Format
-} from '../types/tools.generated';
+import type { ListCreativeFormatsRequest, ListCreativeFormatsResponse, Format } from '../types/tools.generated';
 
 /**
  * Configuration for CreativeAgentClient
@@ -52,7 +48,7 @@ export class CreativeAgentClient {
       name: 'Creative Agent',
       agent_uri: config.agentUrl,
       protocol: config.protocol || 'mcp',
-      ...(config.authToken && { auth_token_env: config.authToken })
+      ...(config.authToken && { auth_token_env: config.authToken }),
     };
 
     this.client = new ADCPClient(agentConfig, config);
@@ -79,9 +75,7 @@ export class CreativeAgentClient {
    * );
    * ```
    */
-  async listFormats(
-    params: ListCreativeFormatsRequest = {}
-  ): Promise<CreativeFormat[]> {
+  async listFormats(params: ListCreativeFormatsRequest = {}): Promise<CreativeFormat[]> {
     const result = await this.client.listCreativeFormats(params);
 
     if (!result.success || !result.data) {
@@ -91,7 +85,7 @@ export class CreativeAgentClient {
     // Enrich formats with agent_url for convenience
     return (result.data.formats || []).map(format => ({
       ...format,
-      agent_url: this.agentUrl
+      agent_url: this.agentUrl,
     }));
   }
 
@@ -128,9 +122,7 @@ export class CreativeAgentClient {
   async findByDimensions(width: number, height: number): Promise<CreativeFormat[]> {
     const allFormats = await this.listFormats();
     return allFormats.filter(f =>
-      f.renders?.some(r =>
-        r.dimensions?.width === width && r.dimensions?.height === height
-      )
+      f.renders?.some(r => r.dimensions?.width === width && r.dimensions?.height === height)
     );
   }
 
@@ -197,9 +189,7 @@ export interface CreativeFormat extends Format {
  * });
  * ```
  */
-export function createCreativeAgentClient(
-  config: CreativeAgentClientConfig
-): CreativeAgentClient {
+export function createCreativeAgentClient(config: CreativeAgentClientConfig): CreativeAgentClient {
   return new CreativeAgentClient(config);
 }
 
@@ -210,5 +200,5 @@ export const STANDARD_CREATIVE_AGENTS = {
   /** Official AdCP reference creative agent */
   ADCP_REFERENCE: 'https://creative.adcontextprotocol.org/mcp',
   /** Official AdCP reference creative agent (A2A) */
-  ADCP_REFERENCE_A2A: 'https://creative.adcontextprotocol.org/a2a'
+  ADCP_REFERENCE_A2A: 'https://creative.adcontextprotocol.org/a2a',
 } as const;

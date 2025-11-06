@@ -26,17 +26,11 @@ import type {
   GetSignalsResponse,
   ActivateSignalRequest,
   ActivateSignalResponse,
-  Format
+  Format,
 } from '../types/tools.generated';
 
 import { TaskExecutor, DeferredTaskError } from './TaskExecutor';
-import type {
-  InputHandler,
-  TaskOptions,
-  TaskResult,
-  ConversationConfig,
-  TaskInfo
-} from './ConversationTypes';
+import type { InputHandler, TaskOptions, TaskResult, ConversationConfig, TaskInfo } from './ConversationTypes';
 import type { Activity, AsyncHandlerConfig, WebhookPayload } from './AsyncHandler';
 import { AsyncHandler } from './AsyncHandler';
 import * as crypto from 'crypto';
@@ -95,13 +89,13 @@ export interface ADCPClientConfig extends ConversationConfig {
 
 /**
  * Main ADCP Client providing strongly-typed conversation-aware interface
- * 
+ *
  * This client handles individual agent interactions with full conversation context.
  * For multi-agent operations, use ADCPMultiAgentClient or compose multiple instances.
- * 
+ *
  * Key features:
  * - 🔒 Full type safety for all ADCP tasks
- * - 💬 Conversation management with context preservation  
+ * - 💬 Conversation management with context preservation
  * - 🔄 Input handler pattern for clarifications
  * - ⏱️ Timeout and retry support
  * - 🐛 Debug logging and observability
@@ -129,7 +123,7 @@ export class ADCPClient {
       webhookSecret: config.webhookSecret,
       strictSchemaValidation: config.validation?.strictSchemaValidation !== false, // Default: true
       logSchemaViolations: config.validation?.logSchemaViolations !== false, // Default: true
-      onActivity: config.onActivity
+      onActivity: config.onActivity,
     });
 
     // Create async handler if handlers are provided
@@ -155,7 +149,7 @@ export class ADCPClient {
     if (this.discoveredEndpoint) {
       return {
         ...this.normalizedAgent,
-        agent_uri: this.discoveredEndpoint
+        agent_uri: this.discoveredEndpoint,
       };
     }
 
@@ -164,7 +158,7 @@ export class ADCPClient {
 
     return {
       ...this.normalizedAgent,
-      agent_uri: this.discoveredEndpoint
+      agent_uri: this.discoveredEndpoint,
     };
   }
 
@@ -183,52 +177,51 @@ export class ADCPClient {
     const { StreamableHTTPClientTransport } = await import('@modelcontextprotocol/sdk/client/streamableHttp.js');
 
     const authToken = this.agent.auth_token_env;
-    const customFetch = authToken ? async (input: any, init?: any) => {
-      // IMPORTANT: Must preserve SDK's default headers (especially Accept header)
-      // Convert existing headers to plain object for merging
-      let existingHeaders: Record<string, string> = {};
-      if (init?.headers) {
-        if (init.headers instanceof Headers) {
-          // Headers object - use forEach to extract all headers
-          init.headers.forEach((value: string, key: string) => {
-            existingHeaders[key] = value;
-          });
-        } else if (Array.isArray(init.headers)) {
-          // Array of [key, value] tuples
-          for (const [key, value] of init.headers) {
-            existingHeaders[key] = value;
-          }
-        } else {
-          // Plain object - copy all properties
-          for (const key in init.headers) {
-            if (Object.prototype.hasOwnProperty.call(init.headers, key)) {
-              existingHeaders[key] = init.headers[key] as string;
+    const customFetch = authToken
+      ? async (input: any, init?: any) => {
+          // IMPORTANT: Must preserve SDK's default headers (especially Accept header)
+          // Convert existing headers to plain object for merging
+          let existingHeaders: Record<string, string> = {};
+          if (init?.headers) {
+            if (init.headers instanceof Headers) {
+              // Headers object - use forEach to extract all headers
+              init.headers.forEach((value: string, key: string) => {
+                existingHeaders[key] = value;
+              });
+            } else if (Array.isArray(init.headers)) {
+              // Array of [key, value] tuples
+              for (const [key, value] of init.headers) {
+                existingHeaders[key] = value;
+              }
+            } else {
+              // Plain object - copy all properties
+              for (const key in init.headers) {
+                if (Object.prototype.hasOwnProperty.call(init.headers, key)) {
+                  existingHeaders[key] = init.headers[key] as string;
+                }
+              }
             }
           }
-        }
-      }
 
-      // Merge auth headers with existing headers
-      // Keep existing headers (including Accept) and only add/override with auth headers
-      const headers = {
-        ...existingHeaders,
-        'Authorization': `Bearer ${authToken}`,
-        'x-adcp-auth': authToken
-      };
-      return fetch(input, { ...init, headers });
-    } : undefined;
+          // Merge auth headers with existing headers
+          // Keep existing headers (including Accept) and only add/override with auth headers
+          const headers = {
+            ...existingHeaders,
+            Authorization: `Bearer ${authToken}`,
+            'x-adcp-auth': authToken,
+          };
+          return fetch(input, { ...init, headers });
+        }
+      : undefined;
 
     const testEndpoint = async (url: string): Promise<boolean> => {
       try {
         const mcpClient = new MCPClient({
           name: 'AdCP-Client',
-          version: '1.0.0'
+          version: '1.0.0',
         });
 
-        const transport = new StreamableHTTPClientTransport(
-          new URL(url),
-          customFetch ? { fetch: customFetch } : {}
-        );
+        const transport = new StreamableHTTPClientTransport(new URL(url), customFetch ? { fetch: customFetch } : {});
 
         await mcpClient.connect(transport);
         await mcpClient.close();
@@ -246,8 +239,8 @@ export class ADCPClient {
     // 2. Try the opposite trailing slash variant
     const hasTrailingSlash = providedUri.endsWith('/');
     const alternateSlash = hasTrailingSlash
-      ? providedUri.slice(0, -1)  // Remove trailing slash
-      : providedUri + '/';         // Add trailing slash
+      ? providedUri.slice(0, -1) // Remove trailing slash
+      : providedUri + '/'; // Add trailing slash
     urlsToTry.push(alternateSlash);
 
     // 3. If URL doesn't end with /mcp or /mcp/, try adding /mcp
@@ -270,8 +263,9 @@ export class ADCPClient {
     // None worked
     throw new Error(
       `Failed to discover MCP endpoint. Tried:\n` +
-      uniqueUrls.map((url, i) => `  ${i + 1}. ${url}`).join('\n') + '\n' +
-      `None responded to MCP protocol.`
+        uniqueUrls.map((url, i) => `  ${i + 1}. ${url}`).join('\n') +
+        '\n' +
+        `None responded to MCP protocol.`
     );
   }
 
@@ -289,7 +283,7 @@ export class ADCPClient {
     // Mark for discovery - we'll test their path, then try adding /mcp
     return {
       ...agent,
-      _needsDiscovery: true
+      _needsDiscovery: true,
     } as any;
   }
 
@@ -338,7 +332,7 @@ export class ADCPClient {
       task_type: payload.task_type,
       status: payload.status,
       payload: payload.result,
-      timestamp: payload.timestamp || new Date().toISOString()
+      timestamp: payload.timestamp || new Date().toISOString(),
     });
 
     // Handle through async handler if configured
@@ -482,10 +476,7 @@ export class ADCPClient {
       return false;
     }
 
-    return crypto.timingSafeEqual(
-      Buffer.from(signature),
-      Buffer.from(expectedSignature)
-    );
+    return crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSignature));
   }
 
   /**
@@ -502,13 +493,7 @@ export class ADCPClient {
     this.validateRequest(taskType, params);
 
     const agent = await this.ensureEndpointDiscovered();
-    const result = await this.executor.executeTask<T>(
-      agent,
-      taskType,
-      params,
-      inputHandler,
-      options
-    );
+    const result = await this.executor.executeTask<T>(agent, taskType, params, inputHandler, options);
 
     // Call handler if task completed successfully and handler is configured
     if (result.status === 'completed' && result.success && this.asyncHandler) {
@@ -520,7 +505,7 @@ export class ADCPClient {
           task_id: result.metadata.taskId,
           agent_id: this.agent.id,
           task_type: taskType,
-          timestamp: new Date().toISOString()
+          timestamp: new Date().toISOString(),
         };
         await handler(result.data, metadata);
       }
@@ -533,17 +518,17 @@ export class ADCPClient {
 
   /**
    * Discover available advertising products
-   * 
+   *
    * @param params - Product discovery parameters
    * @param inputHandler - Handler for clarification requests
    * @param options - Task execution options
-   * 
+   *
    * @example
    * ```typescript
    * const products = await client.getProducts(
-   *   { 
+   *   {
    *     brief: 'Premium coffee brands for millennials',
-   *     promoted_offering: 'Artisan coffee blends' 
+   *     promoted_offering: 'Artisan coffee blends'
    *   },
    *   (context) => {
    *     if (context.inputRequest.field === 'budget') return 50000;
@@ -568,7 +553,7 @@ export class ADCPClient {
 
   /**
    * List available creative formats
-   * 
+   *
    * @param params - Format listing parameters
    * @param inputHandler - Handler for clarification requests
    * @param options - Task execution options
@@ -589,7 +574,7 @@ export class ADCPClient {
 
   /**
    * Create a new media buy
-   * 
+   *
    * @param params - Media buy creation parameters
    * @param inputHandler - Handler for clarification requests
    * @param options - Task execution options
@@ -614,10 +599,10 @@ export class ADCPClient {
           url: deliveryWebhookUrl,
           authentication: {
             schemes: ['HMAC-SHA256'],
-            credentials: this.config.webhookSecret || 'placeholder_secret_min_32_characters_required'
+            credentials: this.config.webhookSecret || 'placeholder_secret_min_32_characters_required',
           },
-          reporting_frequency: 'monthly'
-        }
+          reporting_frequency: 'monthly',
+        },
       } as CreateMediaBuyRequest;
     }
 
@@ -632,7 +617,7 @@ export class ADCPClient {
 
   /**
    * Update an existing media buy
-   * 
+   *
    * @param params - Media buy update parameters
    * @param inputHandler - Handler for clarification requests
    * @param options - Task execution options
@@ -653,7 +638,7 @@ export class ADCPClient {
 
   /**
    * Sync creative assets
-   * 
+   *
    * @param params - Creative sync parameters
    * @param inputHandler - Handler for clarification requests
    * @param options - Task execution options
@@ -674,7 +659,7 @@ export class ADCPClient {
 
   /**
    * List creative assets
-   * 
+   *
    * @param params - Creative listing parameters
    * @param inputHandler - Handler for clarification requests
    * @param options - Task execution options
@@ -695,7 +680,7 @@ export class ADCPClient {
 
   /**
    * Get media buy delivery information
-   * 
+   *
    * @param params - Delivery information parameters
    * @param inputHandler - Handler for clarification requests
    * @param options - Task execution options
@@ -716,7 +701,7 @@ export class ADCPClient {
 
   /**
    * List authorized properties
-   * 
+   *
    * @param params - Property listing parameters
    * @param inputHandler - Handler for clarification requests
    * @param options - Task execution options
@@ -737,7 +722,7 @@ export class ADCPClient {
 
   /**
    * Provide performance feedback
-   * 
+   *
    * @param params - Performance feedback parameters
    * @param inputHandler - Handler for clarification requests
    * @param options - Task execution options
@@ -760,7 +745,7 @@ export class ADCPClient {
 
   /**
    * Get audience signals
-   * 
+   *
    * @param params - Signals request parameters
    * @param inputHandler - Handler for clarification requests
    * @param options - Task execution options
@@ -781,7 +766,7 @@ export class ADCPClient {
 
   /**
    * Activate audience signals
-   * 
+   *
    * @param params - Signal activation parameters
    * @param inputHandler - Handler for clarification requests
    * @param options - Task execution options
@@ -804,12 +789,12 @@ export class ADCPClient {
 
   /**
    * Execute any task by name with type safety
-   * 
+   *
    * @param taskName - Name of the task to execute
    * @param params - Task parameters
    * @param inputHandler - Handler for clarification requests
    * @param options - Task execution options
-   * 
+   *
    * @example
    * ```typescript
    * const result = await client.executeTask(
@@ -826,23 +811,17 @@ export class ADCPClient {
     options?: TaskOptions
   ): Promise<TaskResult<T>> {
     const agent = await this.ensureEndpointDiscovered();
-    return this.executor.executeTask<T>(
-      agent,
-      taskName,
-      params,
-      inputHandler,
-      options
-    );
+    return this.executor.executeTask<T>(agent, taskName, params, inputHandler, options);
   }
 
   // ====== DEFERRED TASK MANAGEMENT ======
 
   /**
    * Resume a deferred task using its token
-   * 
+   *
    * @param token - Deferred task token
    * @param inputHandler - Handler to provide the missing input
-   * 
+   *
    * @example
    * ```typescript
    * try {
@@ -858,10 +837,7 @@ export class ADCPClient {
    * }
    * ```
    */
-  async resumeDeferredTask<T = any>(
-    token: string,
-    inputHandler: InputHandler
-  ): Promise<TaskResult<T>> {
+  async resumeDeferredTask<T = any>(token: string, inputHandler: InputHandler): Promise<TaskResult<T>> {
     // This is a simplified implementation
     // In a full implementation, you'd need to store deferred task state
     // and restore it here
@@ -872,16 +848,16 @@ export class ADCPClient {
 
   /**
    * Continue an existing conversation with the agent
-   * 
+   *
    * @param message - Message to send to the agent
    * @param contextId - Conversation context ID to continue
    * @param inputHandler - Handler for any clarification requests
-   * 
+   *
    * @example
    * ```typescript
    * const agent = new ADCPClient(config);
    * const initial = await agent.getProducts({ brief: 'Tech products' });
-   * 
+   *
    * // Continue the conversation
    * const refined = await agent.continueConversation(
    *   'Focus only on laptops under $1000',
@@ -895,13 +871,7 @@ export class ADCPClient {
     inputHandler?: InputHandler
   ): Promise<TaskResult<T>> {
     const agent = await this.ensureEndpointDiscovered();
-    return this.executor.executeTask<T>(
-      agent,
-      'continue_conversation',
-      { message },
-      inputHandler,
-      { contextId }
-    );
+    return this.executor.executeTask<T>(agent, 'continue_conversation', { message }, inputHandler, { contextId });
   }
 
   /**
@@ -952,18 +922,16 @@ export class ADCPClient {
    * Get active tasks for this agent
    */
   getActiveTasks() {
-    return this.executor.getActiveTasks().filter(
-      (task: any) => task.agent.id === this.agent.id
-    );
+    return this.executor.getActiveTasks().filter((task: any) => task.agent.id === this.agent.id);
   }
 
   // ====== TASK MANAGEMENT & NOTIFICATIONS ======
 
   /**
    * List all tasks for this agent with detailed information
-   * 
+   *
    * @returns Promise resolving to array of task information
-   * 
+   *
    * @example
    * ```typescript
    * const tasks = await client.listTasks();
@@ -978,7 +946,7 @@ export class ADCPClient {
 
   /**
    * Get detailed information about a specific task
-   * 
+   *
    * @param taskId - ID of the task to get information for
    * @returns Promise resolving to task information
    */
@@ -988,10 +956,10 @@ export class ADCPClient {
 
   /**
    * Subscribe to task notifications for this agent
-   * 
+   *
    * @param callback - Function to call when task status changes
    * @returns Unsubscribe function
-   * 
+   *
    * @example
    * ```typescript
    * const unsubscribe = client.onTaskUpdate((task) => {
@@ -1000,7 +968,7 @@ export class ADCPClient {
    *     // Handle completion
    *   }
    * });
-   * 
+   *
    * // Later, stop listening
    * unsubscribe();
    * ```
@@ -1011,13 +979,13 @@ export class ADCPClient {
 
   /**
    * Subscribe to all task events (create, update, complete, error)
-   * 
+   *
    * @param callbacks - Event callbacks for different task events
    * @returns Unsubscribe function
    */
   onTaskEvents(callbacks: {
     onTaskCreated?: (task: TaskInfo) => void;
-    onTaskUpdated?: (task: TaskInfo) => void;  
+    onTaskUpdated?: (task: TaskInfo) => void;
     onTaskCompleted?: (task: TaskInfo) => void;
     onTaskFailed?: (task: TaskInfo, error: string) => void;
   }): () => void {
@@ -1092,44 +1060,46 @@ export class ADCPClient {
 
       const mcpClient = new MCPClient({
         name: 'AdCP-Client',
-        version: '1.0.0'
+        version: '1.0.0',
       });
 
       const authToken = this.agent.auth_token_env;
-      const customFetch = authToken ? async (input: any, init?: any) => {
-        // IMPORTANT: Must preserve SDK's default headers (especially Accept header)
-        // Convert existing headers to plain object for merging
-        let existingHeaders: Record<string, string> = {};
-        if (init?.headers) {
-          if (init.headers instanceof Headers) {
-            // Headers object - use forEach to extract all headers
-            init.headers.forEach((value: string, key: string) => {
-              existingHeaders[key] = value;
-            });
-          } else if (Array.isArray(init.headers)) {
-            // Array of [key, value] tuples
-            for (const [key, value] of init.headers) {
-              existingHeaders[key] = value;
-            }
-          } else {
-            // Plain object - copy all properties
-            for (const key in init.headers) {
-              if (Object.prototype.hasOwnProperty.call(init.headers, key)) {
-                existingHeaders[key] = init.headers[key] as string;
+      const customFetch = authToken
+        ? async (input: any, init?: any) => {
+            // IMPORTANT: Must preserve SDK's default headers (especially Accept header)
+            // Convert existing headers to plain object for merging
+            let existingHeaders: Record<string, string> = {};
+            if (init?.headers) {
+              if (init.headers instanceof Headers) {
+                // Headers object - use forEach to extract all headers
+                init.headers.forEach((value: string, key: string) => {
+                  existingHeaders[key] = value;
+                });
+              } else if (Array.isArray(init.headers)) {
+                // Array of [key, value] tuples
+                for (const [key, value] of init.headers) {
+                  existingHeaders[key] = value;
+                }
+              } else {
+                // Plain object - copy all properties
+                for (const key in init.headers) {
+                  if (Object.prototype.hasOwnProperty.call(init.headers, key)) {
+                    existingHeaders[key] = init.headers[key] as string;
+                  }
+                }
               }
             }
-          }
-        }
 
-        // Merge auth headers with existing headers
-        // Keep existing headers (including Accept) and only add/override with auth headers
-        const headers = {
-          ...existingHeaders,
-          'Authorization': `Bearer ${authToken}`,
-          'x-adcp-auth': authToken
-        };
-        return fetch(input, { ...init, headers });
-      } : undefined;
+            // Merge auth headers with existing headers
+            // Keep existing headers (including Accept) and only add/override with auth headers
+            const headers = {
+              ...existingHeaders,
+              Authorization: `Bearer ${authToken}`,
+              'x-adcp-auth': authToken,
+            };
+            return fetch(input, { ...init, headers });
+          }
+        : undefined;
 
       const transport = new StreamableHTTPClientTransport(
         new URL(agent.agent_uri),
@@ -1144,7 +1114,7 @@ export class ADCPClient {
         name: tool.name,
         description: tool.description,
         inputSchema: tool.inputSchema,
-        parameters: tool.inputSchema?.properties ? Object.keys(tool.inputSchema.properties) : []
+        parameters: tool.inputSchema?.properties ? Object.keys(tool.inputSchema.properties) : [],
       }));
 
       return {
@@ -1152,23 +1122,24 @@ export class ADCPClient {
         description: undefined,
         protocol: this.agent.protocol,
         url: agent.agent_uri,
-        tools
+        tools,
       };
-
     } else if (this.agent.protocol === 'a2a') {
       // Use A2A SDK to get agent card
       const clientModule = require('@a2a-js/sdk/client');
       const A2AClient = clientModule.A2AClient;
 
       const authToken = this.agent.auth_token_env;
-      const fetchImpl = authToken ? async (url: any, options?: any) => {
-        const headers = {
-          ...options?.headers,
-          'Authorization': `Bearer ${authToken}`,
-          'x-adcp-auth': authToken
-        };
-        return fetch(url, { ...options, headers });
-      } : undefined;
+      const fetchImpl = authToken
+        ? async (url: any, options?: any) => {
+            const headers = {
+              ...options?.headers,
+              Authorization: `Bearer ${authToken}`,
+              'x-adcp-auth': authToken,
+            };
+            return fetch(url, { ...options, headers });
+          }
+        : undefined;
 
       const cardUrl = this.normalizedAgent.agent_uri.endsWith('/.well-known/agent-card.json')
         ? this.normalizedAgent.agent_uri
@@ -1177,19 +1148,21 @@ export class ADCPClient {
       const client = await A2AClient.fromCardUrl(cardUrl, fetchImpl ? { fetchImpl } : {});
       const agentCard = client.agentCardPromise ? await client.agentCardPromise : client.agentCard;
 
-      const tools = agentCard?.skills ? agentCard.skills.map((skill: any) => ({
-        name: skill.name,
-        description: skill.description,
-        inputSchema: skill.inputSchema,
-        parameters: skill.inputFormats || []
-      })) : [];
+      const tools = agentCard?.skills
+        ? agentCard.skills.map((skill: any) => ({
+            name: skill.name,
+            description: skill.description,
+            inputSchema: skill.inputSchema,
+            parameters: skill.inputFormats || [],
+          }))
+        : [];
 
       return {
         name: agentCard?.displayName || agentCard?.name || this.agent.name,
         description: agentCard?.description,
         protocol: this.agent.protocol,
         url: this.normalizedAgent.agent_uri,
-        tools
+        tools,
       };
     }
 
@@ -1230,16 +1203,13 @@ export class ADCPClient {
    * });
    * ```
    */
-  static async discoverCreativeFormats(
-    creativeAgentUrl: string,
-    protocol: 'mcp' | 'a2a' = 'mcp'
-  ): Promise<Format[]> {
+  static async discoverCreativeFormats(creativeAgentUrl: string, protocol: 'mcp' | 'a2a' = 'mcp'): Promise<Format[]> {
     const client = new ADCPClient(
       {
         id: 'creative_agent_discovery',
         name: 'Creative Agent',
         agent_uri: creativeAgentUrl,
-        protocol
+        protocol,
       },
       {}
     );
@@ -1287,7 +1257,7 @@ export class ADCPClient {
       provide_performance_feedback: schemas.ProvidePerformanceFeedbackRequestSchema,
       get_signals: schemas.GetSignalsRequestSchema,
       activate_signal: schemas.ActivateSignalRequestSchema,
-      preview_creative: schemas.PreviewCreativeResponseSchema  // Note: using response schema temporarily
+      preview_creative: schemas.PreviewCreativeResponseSchema, // Note: using response schema temporarily
     };
 
     return schemaMap[taskType] || null;
@@ -1296,14 +1266,11 @@ export class ADCPClient {
 
 /**
  * Factory function to create an ADCP client
- * 
+ *
  * @param agent - Agent configuration
  * @param config - Client configuration
  * @returns Configured ADCPClient instance
  */
-export function createADCPClient(
-  agent: AgentConfig,
-  config?: ADCPClientConfig
-): ADCPClient {
+export function createADCPClient(agent: AgentConfig, config?: ADCPClientConfig): ADCPClient {
   return new ADCPClient(agent, config);
 }

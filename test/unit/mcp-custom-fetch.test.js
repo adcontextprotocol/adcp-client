@@ -13,19 +13,19 @@ describe('MCP Custom Fetch - Unit Test', () => {
     // Simulate the custom fetch logic from our fix
     const authHeaders = {
       'x-adcp-auth': 'test-token-123',
-      'Accept': 'application/json, text/event-stream'
+      Accept: 'application/json, text/event-stream',
     };
 
     // Simulate existing headers from SDK
     const existingHeaders = {
       'content-type': 'application/json',
-      'mcp-session-id': 'session-abc'
+      'mcp-session-id': 'session-abc',
     };
 
     // Merge logic (same as in our fix)
     const mergedHeaders = {
       ...existingHeaders,
-      ...authHeaders  // Auth headers take precedence
+      ...authHeaders, // Auth headers take precedence
     };
 
     // Verify all headers are present
@@ -41,7 +41,7 @@ describe('MCP Custom Fetch - Unit Test', () => {
     // Simulate converting Headers object to plain object
     const sdkHeaders = new Headers({
       'content-type': 'application/json',
-      'mcp-protocol-version': '2024-11-05'
+      'mcp-protocol-version': '2024-11-05',
     });
 
     // Convert Headers to plain object (same logic as our fix)
@@ -52,12 +52,12 @@ describe('MCP Custom Fetch - Unit Test', () => {
 
     // Add auth headers
     const authHeaders = {
-      'x-adcp-auth': 'token-xyz'
+      'x-adcp-auth': 'token-xyz',
     };
 
     const mergedHeaders = {
       ...existingHeaders,
-      ...authHeaders
+      ...authHeaders,
     };
 
     // Verify conversion worked
@@ -72,7 +72,7 @@ describe('MCP Custom Fetch - Unit Test', () => {
     // Simulate array-style headers
     const arrayHeaders = [
       ['content-type', 'application/json'],
-      ['user-agent', 'test-client']
+      ['user-agent', 'test-client'],
     ];
 
     // Convert array to plain object (same logic as our fix)
@@ -83,12 +83,12 @@ describe('MCP Custom Fetch - Unit Test', () => {
 
     // Add auth headers
     const authHeaders = {
-      'x-adcp-auth': 'token-123'
+      'x-adcp-auth': 'token-123',
     };
 
     const mergedHeaders = {
       ...existingHeaders,
-      ...authHeaders
+      ...authHeaders,
     };
 
     // Verify conversion worked
@@ -102,18 +102,18 @@ describe('MCP Custom Fetch - Unit Test', () => {
   test('auth headers take precedence over existing headers', () => {
     // Simulate conflict: both have 'Accept' header
     const existingHeaders = {
-      'Accept': 'text/plain'
+      Accept: 'text/plain',
     };
 
     const authHeaders = {
-      'Accept': 'application/json, text/event-stream',
-      'x-adcp-auth': 'token-456'
+      Accept: 'application/json, text/event-stream',
+      'x-adcp-auth': 'token-456',
     };
 
     // Merge with auth taking precedence
     const mergedHeaders = {
       ...existingHeaders,
-      ...authHeaders  // This spreads last, so it wins
+      ...authHeaders, // This spreads last, so it wins
     };
 
     // Verify auth header wins
@@ -164,9 +164,9 @@ describe('MCP Custom Fetch - Unit Test', () => {
 
   test('plain object header extraction with for...in loop', () => {
     const plainObjectHeaders = {
-      'Accept': 'application/json, text/event-stream',
+      Accept: 'application/json, text/event-stream',
       'Content-Type': 'application/json',
-      'Custom-Header': 'test-value'
+      'Custom-Header': 'test-value',
     };
 
     // Use for...in loop with hasOwnProperty check for plain objects

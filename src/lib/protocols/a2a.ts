@@ -36,9 +36,9 @@ export async function callA2ATool(
     const headers: Record<string, string> = {
       ...existingHeaders,
       ...(authToken && {
-        'Authorization': `Bearer ${authToken}`,
-        'x-adcp-auth': authToken
-      })
+        Authorization: `Bearer ${authToken}`,
+        'x-adcp-auth': authToken,
+      }),
     };
 
     debugLogs.push({
@@ -46,14 +46,12 @@ export async function callA2ATool(
       message: `A2A: Fetch to ${typeof url === 'string' ? url : url.toString()}`,
       timestamp: new Date().toISOString(),
       hasAuth: !!authToken,
-      headers: authToken
-        ? { ...headers, 'Authorization': 'Bearer ***', 'x-adcp-auth': '***' }
-        : headers
+      headers: authToken ? { ...headers, Authorization: 'Bearer ***', 'x-adcp-auth': '***' } : headers,
     });
 
     return fetch(url, {
       ...options,
-      headers
+      headers,
     });
   };
 
@@ -66,29 +64,31 @@ export async function callA2ATool(
   debugLogs.push({
     type: 'info',
     message: `A2A: Creating client for ${cardUrl}`,
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
   });
 
   const a2aClient = await A2AClient.fromCardUrl(cardUrl, {
-    fetchImpl
+    fetchImpl,
   });
-  
+
   // Build request payload following AdCP A2A spec
   const requestPayload = {
     message: {
       messageId: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-      role: "user",
-      kind: "message",  // Required by A2A spec
-      parts: [{
-        kind: "data",  // A2A spec uses "kind", not "type"
-        data: {
-          skill: toolName,
-          input: parameters  // A2A spec uses "input", not "parameters"
-        }
-      }]
-    }
+      role: 'user',
+      kind: 'message', // Required by A2A spec
+      parts: [
+        {
+          kind: 'data', // A2A spec uses "kind", not "type"
+          data: {
+            skill: toolName,
+            input: parameters, // A2A spec uses "input", not "parameters"
+          },
+        },
+      ],
+    },
   };
-  
+
   // Add debug log for A2A call
   const payloadSize = JSON.stringify(requestPayload).length;
   debugLogs.push({
@@ -96,15 +96,15 @@ export async function callA2ATool(
     message: `A2A: Calling skill ${toolName} with input: ${JSON.stringify(parameters)}. Payload size: ${payloadSize} bytes`,
     timestamp: new Date().toISOString(),
     payloadSize,
-    actualPayload: requestPayload
+    actualPayload: requestPayload,
   });
-  
+
   // Send message using A2A protocol
   debugLogs.push({
     type: 'info',
     message: `A2A: Sending message via sendMessage()`,
     timestamp: new Date().toISOString(),
-    skill: toolName
+    skill: toolName,
   });
 
   const messageResponse = await a2aClient.sendMessage(requestPayload);
@@ -115,15 +115,15 @@ export async function callA2ATool(
     message: `A2A: Response received (${messageResponse?.error ? 'error' : 'success'})`,
     timestamp: new Date().toISOString(),
     response: messageResponse,
-    skill: toolName
+    skill: toolName,
   });
-  
+
   // Check for JSON-RPC error in response
   if (messageResponse?.error || messageResponse?.result?.error) {
     const errorObj = messageResponse.error || messageResponse.result?.error;
     const errorMessage = errorObj.message || JSON.stringify(errorObj);
     throw new Error(`A2A agent returned error: ${errorMessage}`);
   }
-  
+
   return messageResponse;
 }

@@ -28,7 +28,7 @@ function mockFetch(responses) {
       status: response.status,
       statusText: response.statusText || 'OK',
       headers: options?.headers || {},
-      json: async () => response.data
+      json: async () => response.data,
     };
   };
 }
@@ -49,17 +49,17 @@ describe('PropertyCrawler', () => {
             authorized_agents: [
               {
                 url: 'https://test-agent.example.com',
-                authorized_for: 'Test agent'
-              }
+                authorized_for: 'Test agent',
+              },
             ],
             properties: [
               {
                 property_type: 'website',
                 name: 'example.com',
-                identifiers: [{ type: 'domain', value: 'example.com' }]
-              }
-            ]
-          })
+                identifiers: [{ type: 'domain', value: 'example.com' }],
+              },
+            ],
+          }),
         };
       };
 
@@ -92,8 +92,8 @@ describe('PropertyCrawler', () => {
           statusText: 'OK',
           json: async () => ({
             authorized_agents: [],
-            properties: []
-          })
+            properties: [],
+          }),
         };
       };
 
@@ -110,10 +110,7 @@ describe('PropertyCrawler', () => {
       );
 
       // Check that we identify ourselves via From header (RFC 9110)
-      assert.ok(
-        capturedHeaders['From'].includes(LIBRARY_VERSION),
-        'From header should include library version'
-      );
+      assert.ok(capturedHeaders['From'].includes(LIBRARY_VERSION), 'From header should include library version');
       assert.ok(
         capturedHeaders['From'].includes('adcp-property-crawler'),
         'From header should identify PropertyCrawler'
@@ -132,12 +129,12 @@ describe('PropertyCrawler', () => {
           authorized_agents: [
             {
               url: 'https://weather.sales-agent.scope3.com',
-              authorized_for: 'Official sales agent for Weather US display inventory'
-            }
+              authorized_for: 'Official sales agent for Weather US display inventory',
+            },
           ],
-          last_updated: '2025-10-15T12:00:00Z'
+          last_updated: '2025-10-15T12:00:00Z',
           // Missing properties array
-        })
+        }),
       });
 
       const { PropertyCrawler } = require('../../dist/lib/discovery/property-crawler.js');
@@ -165,10 +162,8 @@ describe('PropertyCrawler', () => {
         status: 200,
         statusText: 'OK',
         json: async () => ({
-          authorized_agents: [
-            { url: 'https://agent.example.com', authorized_for: 'Test' }
-          ]
-        })
+          authorized_agents: [{ url: 'https://agent.example.com', authorized_for: 'Test' }],
+        }),
       });
 
       const { PropertyCrawler } = require('../../dist/lib/discovery/property-crawler.js');
@@ -177,10 +172,7 @@ describe('PropertyCrawler', () => {
       const result = await crawler.fetchAdAgentsJson('example.com');
 
       assert.ok(result.warning, 'Should include warning');
-      assert.ok(
-        result.warning.includes('Inferred from domain'),
-        'Warning should mention inference'
-      );
+      assert.ok(result.warning.includes('Inferred from domain'), 'Warning should mention inference');
       assert.ok(
         result.warning.includes('publisher should add explicit properties array'),
         'Warning should guide publisher to add properties'
@@ -194,8 +186,8 @@ describe('PropertyCrawler', () => {
         statusText: 'OK',
         json: async () => ({
           $schema: 'https://adcontextprotocol.org/schemas/v1/adagents.json',
-          last_updated: '2025-10-15T12:00:00Z'
-        })
+          last_updated: '2025-10-15T12:00:00Z',
+        }),
       });
 
       const { PropertyCrawler } = require('../../dist/lib/discovery/property-crawler.js');
@@ -214,8 +206,8 @@ describe('PropertyCrawler', () => {
         status: 200,
         statusText: 'OK',
         json: async () => ({
-          properties: []
-        })
+          properties: [],
+        }),
       });
 
       const { PropertyCrawler } = require('../../dist/lib/discovery/property-crawler.js');
@@ -233,20 +225,18 @@ describe('PropertyCrawler', () => {
         status: 200,
         statusText: 'OK',
         json: async () => ({
-          authorized_agents: [
-            { url: 'https://agent.example.com', authorized_for: 'Test' }
-          ],
+          authorized_agents: [{ url: 'https://agent.example.com', authorized_for: 'Test' }],
           properties: [
             {
               property_type: 'website',
               name: 'My Custom Property',
               identifiers: [
                 { type: 'domain', value: 'example.com' },
-                { type: 'subdomain', value: 'www.example.com' }
-              ]
-            }
-          ]
-        })
+                { type: 'subdomain', value: 'www.example.com' },
+              ],
+            },
+          ],
+        }),
       });
 
       const { PropertyCrawler } = require('../../dist/lib/discovery/property-crawler.js');
@@ -268,7 +258,7 @@ describe('PropertyCrawler', () => {
       const responses = [
         // Domain 1: has authorized_agents, no properties
         {
-          authorized_agents: [{ url: 'https://agent1.com', authorized_for: 'Agent 1' }]
+          authorized_agents: [{ url: 'https://agent1.com', authorized_for: 'Agent 1' }],
         },
         // Domain 2: has explicit properties
         {
@@ -276,19 +266,19 @@ describe('PropertyCrawler', () => {
             {
               property_type: 'website',
               name: 'example2.com',
-              identifiers: [{ type: 'domain', value: 'example2.com' }]
-            }
-          ]
-        }
+              identifiers: [{ type: 'domain', value: 'example2.com' }],
+            },
+          ],
+        },
       ];
 
-      global.fetch = async (url) => {
+      global.fetch = async url => {
         const response = responses[fetchCallCount++];
         return {
           ok: true,
           status: 200,
           statusText: 'OK',
-          json: async () => response
+          json: async () => response,
         };
       };
 
@@ -315,16 +305,13 @@ describe('PropertyCrawler', () => {
         ok: false,
         status: 404,
         statusText: 'Not Found',
-        json: async () => ({})
+        json: async () => ({}),
       });
 
       const { PropertyCrawler } = require('../../dist/lib/discovery/property-crawler.js');
       const crawler = new PropertyCrawler({ logLevel: 'silent' });
 
-      await assert.rejects(
-        async () => await crawler.fetchAdAgentsJson('notfound.com'),
-        /HTTP 404/
-      );
+      await assert.rejects(async () => await crawler.fetchAdAgentsJson('notfound.com'), /HTTP 404/);
     });
 
     test('should throw error for network failures', async () => {
@@ -335,10 +322,7 @@ describe('PropertyCrawler', () => {
       const { PropertyCrawler } = require('../../dist/lib/discovery/property-crawler.js');
       const crawler = new PropertyCrawler({ logLevel: 'silent' });
 
-      await assert.rejects(
-        async () => await crawler.fetchAdAgentsJson('error.com'),
-        /Network error/
-      );
+      await assert.rejects(async () => await crawler.fetchAdAgentsJson('error.com'), /Network error/);
     });
   });
 
@@ -353,11 +337,11 @@ describe('PropertyCrawler', () => {
             {
               property_type: 'website',
               name: 'Test Property',
-              identifiers: [{ type: 'domain', value: 'example.com' }]
+              identifiers: [{ type: 'domain', value: 'example.com' }],
               // Missing publisher_domain
-            }
-          ]
-        })
+            },
+          ],
+        }),
       });
 
       const { PropertyCrawler } = require('../../dist/lib/discovery/property-crawler.js');
@@ -384,10 +368,10 @@ describe('PropertyCrawler', () => {
               property_type: 'website',
               name: 'Test Property',
               identifiers: [{ type: 'domain', value: 'other.com' }],
-              publisher_domain: 'original.com'
-            }
-          ]
-        })
+              publisher_domain: 'original.com',
+            },
+          ],
+        }),
       });
 
       const { PropertyCrawler } = require('../../dist/lib/discovery/property-crawler.js');

@@ -17,7 +17,7 @@ import type {
   TaskStatus,
   TaskInfo,
   DeferredContinuation,
-  SubmittedContinuation
+  SubmittedContinuation,
 } from './ConversationTypes';
 import { normalizeHandlerResponse, isDeferResponse, isAbortResponse } from '../handlers/types';
 import { ProtocolResponseParser, ADCP_STATUS, type ADCPStatus } from './ProtocolResponseParser';
@@ -82,7 +82,7 @@ export class TaskExecutor {
   private responseParser: ProtocolResponseParser;
   private activeTasks = new Map<string, TaskState>();
   private conversationStorage?: Map<string, Message[]>;
-  
+
   constructor(
     private config: {
       /** Default timeout for 'working' status (max 120s per PR #78) */
@@ -145,7 +145,7 @@ export class TaskExecutor {
     const taskId = options.contextId || randomUUID();
     const startTime = Date.now();
     const workingTimeout = this.config.workingTimeout || 120000; // 120s max per PR #78
-    
+
     // Register task in active tasks
     const taskState: TaskState = {
       taskId,
@@ -157,26 +157,29 @@ export class TaskExecutor {
       attempt: 0,
       maxAttempts: options.maxClarifications || this.config.defaultMaxClarifications || 3,
       options,
-      agent: { id: agent.id, name: agent.name, protocol: agent.protocol }
+      agent: { id: agent.id, name: agent.name, protocol: agent.protocol },
     };
     this.activeTasks.set(taskId, taskState);
 
     // Emit task creation event
-    this.emitTaskEvent({
-      taskId,
-      status: 'submitted',
-      taskType: taskName,
-      createdAt: startTime,
-      updatedAt: startTime
-    }, agent.id);
-    
+    this.emitTaskEvent(
+      {
+        taskId,
+        status: 'submitted',
+        taskType: taskName,
+        createdAt: startTime,
+        updatedAt: startTime,
+      },
+      agent.id
+    );
+
     // Create initial message
     const initialMessage: Message = {
       id: randomUUID(),
       role: 'user',
       content: { tool: taskName, params },
       timestamp: new Date().toISOString(),
-      metadata: { toolName: taskName, type: 'request' }
+      metadata: { toolName: taskName, type: 'request' },
     };
 
     // Start streaming connection
@@ -196,12 +199,19 @@ export class TaskExecutor {
         task_type: taskName,
         status: 'pending',
         payload: { params },
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
       });
 
       // Send initial request and get streaming response with webhook URL
-      const response = await ProtocolClient.callTool(agent, taskName, params, debugLogs, webhookUrl, this.config.webhookSecret);
-      
+      const response = await ProtocolClient.callTool(
+        agent,
+        taskName,
+        params,
+        debugLogs,
+        webhookUrl,
+        this.config.webhookSecret
+      );
+
       // Emit protocol_response activity
       const respStatus = this.responseParser.getStatus(response) as string | undefined;
       await this.config.onActivity?.({
@@ -213,20 +223,20 @@ export class TaskExecutor {
         task_type: taskName,
         status: respStatus,
         payload: response,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
       });
 
       // Add initial response message
       const responseMessage: Message = {
         id: randomUUID(),
-        role: 'agent', 
+        role: 'agent',
         content: response,
         timestamp: new Date().toISOString(),
-        metadata: { toolName: taskName, type: 'response' }
+        metadata: { toolName: taskName, type: 'response' },
       };
 
       const messages = [initialMessage, responseMessage];
-      
+
       // Handle response based on status
       return await this.handleAsyncResponse<T>(
         agent,
@@ -240,7 +250,6 @@ export class TaskExecutor {
         debugLogs,
         startTime
       );
-      
     } catch (error) {
       return this.createErrorResult<T>(taskId, agent, error, debugLogs, startTime);
     }
@@ -261,9 +270,8 @@ export class TaskExecutor {
     debugLogs: any[] = [],
     startTime: number = Date.now()
   ): Promise<TaskResult<T>> {
-    
     const status = this.responseParser.getStatus(response) as ADCPStatus;
-    
+
     switch (status) {
       case ADCP_STATUS.COMPLETED:
         // Task completed immediately
@@ -281,9 +289,9 @@ export class TaskExecutor {
         // In strict mode, schema validation failures cause task to fail
         const finalSuccess = operationSuccess && validationResult.valid;
         const finalError = !finalSuccess
-          ? (validationResult.errors.length > 0
-              ? `Schema validation failed: ${validationResult.errors.join('; ')}`
-              : (completedData?.error || completedData?.message || 'Operation failed'))
+          ? validationResult.errors.length > 0
+            ? `Schema validation failed: ${validationResult.errors.join('; ')}`
+            : completedData?.error || completedData?.message || 'Operation failed'
           : undefined;
 
         return {
@@ -298,31 +306,44 @@ export class TaskExecutor {
             responseTimeMs: Date.now() - startTime,
             timestamp: new Date().toISOString(),
             clarificationRounds: 0,
-            status: 'completed'
+            status: 'completed',
           },
           conversation: messages,
-          debug_logs: debugLogs
+          debug_logs: debugLogs,
         };
 
       case ADCP_STATUS.WORKING:
         // Server is processing - keep connection open for up to 120s
         return this.waitForWorkingCompletion<T>(
-          agent, taskId, taskName, params, response, messages, 
-          inputHandler, options, debugLogs, startTime
+          agent,
+          taskId,
+          taskName,
+          params,
+          response,
+          messages,
+          inputHandler,
+          options,
+          debugLogs,
+          startTime
         );
 
       case ADCP_STATUS.SUBMITTED:
         // Long-running task - set up webhook
-        return this.setupSubmittedTask<T>(
-          agent, taskId, taskName, response, messages, 
-          options, debugLogs, startTime
-        );
+        return this.setupSubmittedTask<T>(agent, taskId, taskName, response, messages, options, debugLogs, startTime);
 
       case ADCP_STATUS.INPUT_REQUIRED:
         // Server needs input - handler is mandatory
         return this.handleInputRequired<T>(
-          agent, taskId, taskName, params, response, messages,
-          inputHandler, options, debugLogs, startTime
+          agent,
+          taskId,
+          taskName,
+          params,
+          response,
+          messages,
+          inputHandler,
+          options,
+          debugLogs,
+          startTime
         );
 
       case ADCP_STATUS.FAILED:
@@ -333,7 +354,10 @@ export class TaskExecutor {
       default:
         // Unknown status - treat as completed if we have data
         const defaultData = this.extractResponseData(response, debugLogs);
-        if (defaultData && (defaultData !== response || response.structuredContent || response.result || response.data)) {
+        if (
+          defaultData &&
+          (defaultData !== response || response.structuredContent || response.result || response.data)
+        ) {
           // Check if the actual operation succeeded
           const defaultSuccess = defaultData?.success !== false && !defaultData?.error;
 
@@ -343,9 +367,9 @@ export class TaskExecutor {
           // In strict mode, schema validation failures cause task to fail
           const defaultFinalSuccess = defaultSuccess && defaultValidation.valid;
           const defaultFinalError = !defaultFinalSuccess
-            ? (defaultValidation.errors.length > 0
-                ? `Schema validation failed: ${defaultValidation.errors.join('; ')}`
-                : (defaultData?.error || defaultData?.message || 'Operation failed'))
+            ? defaultValidation.errors.length > 0
+              ? `Schema validation failed: ${defaultValidation.errors.join('; ')}`
+              : defaultData?.error || defaultData?.message || 'Operation failed'
             : undefined;
 
           return {
@@ -360,10 +384,10 @@ export class TaskExecutor {
               responseTimeMs: Date.now() - startTime,
               timestamp: new Date().toISOString(),
               clarificationRounds: 0,
-              status: 'completed'
+              status: 'completed',
             },
             conversation: messages,
-            debug_logs: debugLogs
+            debug_logs: debugLogs,
           };
         } else {
           throw new Error(`Unknown status: ${status || 'undefined'}`);
@@ -384,7 +408,7 @@ export class TaskExecutor {
     if (response?.structuredContent) {
       this.logDebug(debugLogs, 'info', 'Extracting data from MCP structuredContent', {
         hasStructuredContent: true,
-        keys: Object.keys(response.structuredContent)
+        keys: Object.keys(response.structuredContent),
       });
       return response.structuredContent;
     }
@@ -404,19 +428,19 @@ export class TaskExecutor {
               partCount: artifacts[0].parts.length,
               dataKeys: Object.keys(extractedData || {}),
               hasFormats: !!extractedData?.formats,
-              formatsCount: extractedData?.formats?.length
+              formatsCount: extractedData?.formats?.length,
             });
             return extractedData;
           }
         }
         this.logDebug(debugLogs, 'warning', 'A2A artifacts found but no data extracted', {
           artifactCount: artifacts.length,
-          hasFirstPart: !!artifacts[0]?.parts?.[0]
+          hasFirstPart: !!artifacts[0]?.parts?.[0],
         });
       }
       // Otherwise return the result as-is
       this.logDebug(debugLogs, 'info', 'Returning A2A result directly (no artifacts)', {
-        hasArtifacts: !!response.result.artifacts
+        hasArtifacts: !!response.result.artifacts,
       });
       return response.result;
     }
@@ -428,7 +452,7 @@ export class TaskExecutor {
 
     // Fallback to full response
     this.logDebug(debugLogs, 'warning', 'No standard data structure found, returning full response', {
-      responseKeys: Object.keys(response || {})
+      responseKeys: Object.keys(response || {}),
     });
     return response;
   }
@@ -442,7 +466,7 @@ export class TaskExecutor {
         type,
         message,
         timestamp: new Date().toISOString(),
-        details
+        details,
       });
     }
   }
@@ -467,13 +491,13 @@ export class TaskExecutor {
     const workingTimeout = this.config.workingTimeout || 120000;
     const pollInterval = this.config.pollingInterval || 2000;
     const deadline = Date.now() + workingTimeout;
-    
+
     while (Date.now() < deadline) {
       await this.sleep(pollInterval);
-      
+
       try {
         const taskInfo = await this.getTaskStatus(agent, taskId);
-        
+
         if (taskInfo.status === ADCP_STATUS.COMPLETED) {
           // Check if the actual operation succeeded
           const workingSuccess = taskInfo.result?.success !== false && !taskInfo.result?.error;
@@ -482,7 +506,9 @@ export class TaskExecutor {
             success: workingSuccess,
             status: 'completed',
             data: taskInfo.result,
-            error: workingSuccess ? undefined : (taskInfo.result?.error || taskInfo.result?.message || 'Operation failed'),
+            error: workingSuccess
+              ? undefined
+              : taskInfo.result?.error || taskInfo.result?.message || 'Operation failed',
             metadata: {
               taskId,
               taskName,
@@ -490,32 +516,39 @@ export class TaskExecutor {
               responseTimeMs: Date.now() - startTime,
               timestamp: new Date().toISOString(),
               clarificationRounds: 0,
-              status: 'completed'
+              status: 'completed',
             },
-            conversation: messages
+            conversation: messages,
           };
         }
-        
+
         if (taskInfo.status === ADCP_STATUS.INPUT_REQUIRED) {
           // Transition to input handling
           return this.handleInputRequired<T>(
-            agent, taskId, taskName, params, taskInfo, messages,
-            inputHandler, options, debugLogs, startTime
+            agent,
+            taskId,
+            taskName,
+            params,
+            taskInfo,
+            messages,
+            inputHandler,
+            options,
+            debugLogs,
+            startTime
           );
         }
-        
+
         if (taskInfo.status === ADCP_STATUS.FAILED) {
           throw new Error(`Task failed: ${taskInfo.error}`);
         }
-        
+
         // Still working, continue polling
-        
       } catch (error) {
         // Network error during polling - continue trying
         console.warn(`Polling error for task ${taskId}:`, error);
       }
     }
-    
+
     throw new TaskTimeoutError(taskId, workingTimeout);
   }
 
@@ -532,22 +565,21 @@ export class TaskExecutor {
     debugLogs: any[] = [],
     startTime: number = Date.now()
   ): Promise<TaskResult<T>> {
-    
     let webhookUrl = response.webhookUrl;
-    
+
     // If no webhook URL provided by server, generate one
     if (!webhookUrl && this.config.webhookManager) {
       webhookUrl = this.config.webhookManager.generateUrl(taskId);
       await this.config.webhookManager.registerWebhook(agent, taskId, webhookUrl);
     }
-    
+
     const submitted: SubmittedContinuation<T> = {
       taskId,
       webhookUrl,
       track: () => this.getTaskStatus(agent, taskId),
-      waitForCompletion: (pollInterval = 60000) => this.pollTaskCompletion<T>(agent, taskId, pollInterval)
+      waitForCompletion: (pollInterval = 60000) => this.pollTaskCompletion<T>(agent, taskId, pollInterval),
     };
-    
+
     return {
       success: false,
       status: 'submitted',
@@ -559,10 +591,10 @@ export class TaskExecutor {
         responseTimeMs: Date.now() - startTime,
         timestamp: new Date().toISOString(),
         clarificationRounds: 0,
-        status: 'submitted'
+        status: 'submitted',
       },
       conversation: messages,
-      debug_logs: debugLogs
+      debug_logs: debugLogs,
     };
   }
 
@@ -581,14 +613,13 @@ export class TaskExecutor {
     debugLogs: any[] = [],
     startTime: number = Date.now()
   ): Promise<TaskResult<T>> {
-    
     const inputRequest = this.responseParser.parseInputRequest(response);
-    
+
     // Handler is mandatory for input-required
     if (!inputHandler) {
       throw new InputRequiredError(inputRequest.question);
     }
-    
+
     // Build context for handler
     const context: ConversationContext = {
       messages,
@@ -598,26 +629,27 @@ export class TaskExecutor {
       attempt: 1,
       maxAttempts: options.maxClarifications || 3,
       deferToHuman: async () => ({ defer: true, token: randomUUID() }),
-      abort: (reason) => { throw new Error(reason || 'Task aborted'); },
+      abort: reason => {
+        throw new Error(reason || 'Task aborted');
+      },
       getSummary: () => messages.map(m => `${m.role}: ${JSON.stringify(m.content)}`).join('\n'),
-      wasFieldDiscussed: (field) => messages.some(m => 
-        m.content && typeof m.content === 'object' && m.content[field] !== undefined
-      ),
-      getPreviousResponse: (field) => {
-        const msg = messages.find(m => 
-          m.role === 'user' && m.content && typeof m.content === 'object' && m.content[field] !== undefined
+      wasFieldDiscussed: field =>
+        messages.some(m => m.content && typeof m.content === 'object' && m.content[field] !== undefined),
+      getPreviousResponse: field => {
+        const msg = messages.find(
+          m => m.role === 'user' && m.content && typeof m.content === 'object' && m.content[field] !== undefined
         );
         return msg?.content[field];
-      }
+      },
     };
-    
+
     // Call handler
     const handlerResponse = await inputHandler(context);
-    
+
     // Check if handler wants to defer
     if (isDeferResponse(handlerResponse)) {
       const token = handlerResponse.token;
-      
+
       // Save deferred state for later resumption
       if (this.config.deferredStorage) {
         await this.config.deferredStorage.set(token, {
@@ -627,16 +659,16 @@ export class TaskExecutor {
           taskName,
           params,
           messages,
-          createdAt: Date.now()
+          createdAt: Date.now(),
         });
       }
-      
+
       const deferred: DeferredContinuation<T> = {
         token,
         question: inputRequest.question,
-        resume: (input) => this.resumeDeferredTask<T>(token, input)
+        resume: input => this.resumeDeferredTask<T>(token, input),
       };
-      
+
       return {
         success: false,
         status: 'deferred',
@@ -648,17 +680,25 @@ export class TaskExecutor {
           responseTimeMs: Date.now() - startTime,
           timestamp: new Date().toISOString(),
           clarificationRounds: 1,
-          status: 'deferred'
+          status: 'deferred',
         },
         conversation: messages,
-        debug_logs: debugLogs
+        debug_logs: debugLogs,
       };
     }
-    
+
     // Handler provided input - continue with the task
     return this.continueTaskWithInput<T>(
-      agent, taskId, taskName, params, response.contextId, handlerResponse,
-      messages, options, debugLogs, startTime
+      agent,
+      taskId,
+      taskName,
+      params,
+      response.contextId,
+      handlerResponse,
+      messages,
+      options,
+      debugLogs,
+      startTime
     );
   }
 
@@ -680,14 +720,10 @@ export class TaskExecutor {
     return response.task || response;
   }
 
-  async pollTaskCompletion<T>(
-    agent: AgentConfig,
-    taskId: string, 
-    pollInterval = 60000
-  ): Promise<TaskResult<T>> {
+  async pollTaskCompletion<T>(agent: AgentConfig, taskId: string, pollInterval = 60000): Promise<TaskResult<T>> {
     while (true) {
       const status = await this.getTaskStatus(agent, taskId);
-      
+
       if (status.status === ADCP_STATUS.COMPLETED) {
         // Check if the actual operation succeeded
         const pollSuccess = status.result?.success !== false && !status.result?.error;
@@ -696,7 +732,7 @@ export class TaskExecutor {
           success: pollSuccess,
           status: 'completed',
           data: status.result,
-          error: pollSuccess ? undefined : (status.result?.error || status.result?.message || 'Operation failed'),
+          error: pollSuccess ? undefined : status.result?.error || status.result?.message || 'Operation failed',
           metadata: {
             taskId,
             taskName: status.taskType,
@@ -704,15 +740,15 @@ export class TaskExecutor {
             responseTimeMs: Date.now() - status.createdAt,
             timestamp: new Date().toISOString(),
             clarificationRounds: 0,
-            status: 'completed'
-          }
+            status: 'completed',
+          },
         };
       }
-      
+
       if (status.status === ADCP_STATUS.FAILED || status.status === ADCP_STATUS.CANCELED) {
         throw new Error(`Task ${status.status}: ${status.error}`);
       }
-      
+
       await this.sleep(pollInterval);
     }
   }
@@ -724,16 +760,21 @@ export class TaskExecutor {
     if (!this.config.deferredStorage) {
       throw new Error('Deferred storage not configured');
     }
-    
+
     const state = await this.config.deferredStorage.get(token);
     if (!state) {
       throw new Error(`Deferred task not found: ${token}`);
     }
-    
+
     // Continue task with the provided input
     return this.continueTaskWithInput<T>(
-      state.agent, state.taskId, state.taskName, state.params,
-      state.contextId, input, state.messages
+      state.agent,
+      state.taskId,
+      state.taskName,
+      state.params,
+      state.contextId,
+      input,
+      state.messages
     );
   }
 
@@ -752,37 +793,49 @@ export class TaskExecutor {
     debugLogs: any[] = [],
     startTime: number = Date.now()
   ): Promise<TaskResult<T>> {
-    
     // Add user input message
     const inputMessage: Message = {
       id: randomUUID(),
       role: 'user',
       content: input,
       timestamp: new Date().toISOString(),
-      metadata: { type: 'input_response' }
+      metadata: { type: 'input_response' },
     };
     messages.push(inputMessage);
-    
+
     // Continue the task with input
-    const response = await ProtocolClient.callTool(agent, 'continue_task', {
-      contextId,
-      input
-    }, debugLogs);
-    
+    const response = await ProtocolClient.callTool(
+      agent,
+      'continue_task',
+      {
+        contextId,
+        input,
+      },
+      debugLogs
+    );
+
     // Add response message
     const responseMessage: Message = {
       id: randomUUID(),
       role: 'agent',
       content: response,
       timestamp: new Date().toISOString(),
-      metadata: { type: 'continued_response' }
+      metadata: { type: 'continued_response' },
     };
     messages.push(responseMessage);
-    
+
     // Handle the continued response
     return this.handleAsyncResponse<T>(
-      agent, taskId, taskName, params, response, messages,
-      undefined, options, debugLogs, startTime
+      agent,
+      taskId,
+      taskName,
+      params,
+      response,
+      messages,
+      undefined,
+      options,
+      debugLogs,
+      startTime
     );
   }
 
@@ -811,9 +864,9 @@ export class TaskExecutor {
         responseTimeMs: Date.now() - startTime,
         timestamp: new Date().toISOString(),
         clarificationRounds: 0,
-        status: 'failed' // metadata status
+        status: 'failed', // metadata status
       },
-      debug_logs: debugLogs
+      debug_logs: debugLogs,
     };
   }
 
@@ -834,16 +887,22 @@ export class TaskExecutor {
 
   // ====== TASK MANAGEMENT & NOTIFICATION METHODS ======
 
-  private taskEventListeners = new Map<string, {
-    callback: (task: TaskInfo) => void;
-    agentId?: string;
-  }[]>();
+  private taskEventListeners = new Map<
+    string,
+    {
+      callback: (task: TaskInfo) => void;
+      agentId?: string;
+    }[]
+  >();
 
-  private webhookRegistrations = new Map<string, {
-    agent: AgentConfig;
-    webhookUrl: string;
-    taskTypes?: string[];
-  }>();
+  private webhookRegistrations = new Map<
+    string,
+    {
+      agent: AgentConfig;
+      webhookUrl: string;
+      taskTypes?: string[];
+    }
+  >();
 
   /**
    * Get task list for a specific agent
@@ -909,12 +968,15 @@ export class TaskExecutor {
   /**
    * Subscribe to task events with detailed callbacks
    */
-  onTaskEvents(agentId: string, callbacks: {
-    onTaskCreated?: (task: TaskInfo) => void;
-    onTaskUpdated?: (task: TaskInfo) => void;
-    onTaskCompleted?: (task: TaskInfo) => void;
-    onTaskFailed?: (task: TaskInfo, error: string) => void;
-  }): () => void {
+  onTaskEvents(
+    agentId: string,
+    callbacks: {
+      onTaskCreated?: (task: TaskInfo) => void;
+      onTaskUpdated?: (task: TaskInfo) => void;
+      onTaskCompleted?: (task: TaskInfo) => void;
+      onTaskFailed?: (task: TaskInfo, error: string) => void;
+    }
+  ): () => void {
     const unsubscribeFns: (() => void)[] = [];
 
     // Create combined handler that routes to specific callbacks
@@ -953,7 +1015,7 @@ export class TaskExecutor {
     this.webhookRegistrations.set(agent.id, {
       agent,
       webhookUrl,
-      taskTypes
+      taskTypes,
     });
 
     // TODO: Register with remote agent if it supports webhooks
@@ -1001,19 +1063,14 @@ export class TaskExecutor {
     const logViolations = this.config.logSchemaViolations !== false; // Default: true
 
     try {
-      const validationResult = responseValidator.validate(
-        response,
-        taskName,
-        { validateSchema: true, strict: false }
-      );
+      const validationResult = responseValidator.validate(response, taskName, { validateSchema: true, strict: false });
 
       if (!validationResult.valid) {
         // Log to debug logs if enabled
         if (logViolations) {
           const errorSummary = validationResult.errors.slice(0, 3).join('; ');
-          const moreErrors = validationResult.errors.length > 3
-            ? ` (and ${validationResult.errors.length - 3} more)`
-            : '';
+          const moreErrors =
+            validationResult.errors.length > 3 ? ` (and ${validationResult.errors.length - 3} more)` : '';
 
           debugLogs.push({
             timestamp: new Date().toISOString(),
@@ -1021,7 +1078,7 @@ export class TaskExecutor {
             message: `Schema validation ${strictMode ? 'failed' : 'warning'} for ${taskName}: ${errorSummary}${moreErrors}`,
             errors: validationResult.errors,
             schemaErrors: validationResult.schemaErrors,
-            strictMode
+            strictMode,
           });
         }
 
@@ -1036,7 +1093,7 @@ export class TaskExecutor {
         if (strictMode) {
           return {
             valid: false,
-            errors: validationResult.errors
+            errors: validationResult.errors,
           };
         }
       }
@@ -1044,14 +1101,14 @@ export class TaskExecutor {
       // Non-strict mode or validation passed
       return {
         valid: true,
-        errors: []
+        errors: [],
       };
     } catch (error) {
       console.error(`Error during schema validation:`, error);
       // On validation error, fail safe based on strict mode
       return {
         valid: !strictMode, // In strict mode, treat validation errors as failures
-        errors: strictMode ? [`Validation error: ${error}`] : []
+        errors: strictMode ? [`Validation error: ${error}`] : [],
       };
     }
   }
@@ -1064,7 +1121,7 @@ export class TaskExecutor {
     if (task) {
       const previousStatus = task.status;
       task.status = status;
-      
+
       const taskInfo: TaskInfo = {
         taskId: task.taskId,
         status: status,
@@ -1072,7 +1129,7 @@ export class TaskExecutor {
         createdAt: task.startTime,
         updatedAt: Date.now(),
         result,
-        error
+        error,
       };
 
       this.emitTaskEvent(taskInfo, task.agent.id);
@@ -1086,7 +1143,7 @@ export class TaskExecutor {
         task_type: task.taskName,
         status: status,
         payload: result ?? (error ? { error } : undefined),
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
       });
 
       // If task is finished, remove from active tasks after a delay

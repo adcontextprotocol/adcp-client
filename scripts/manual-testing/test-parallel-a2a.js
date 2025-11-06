@@ -26,7 +26,7 @@ async function testParallelCalls() {
   const calls = [
     callA2ATool(AGENT_URL, 'get_products', { brief: 'Test products' }, AUTH_TOKEN, debugLogs1),
     callA2ATool(AGENT_URL, 'list_creative_formats', {}, AUTH_TOKEN, debugLogs2),
-    callA2ATool(AGENT_URL, 'list_creatives', {}, AUTH_TOKEN, debugLogs3)
+    callA2ATool(AGENT_URL, 'list_creatives', {}, AUTH_TOKEN, debugLogs3),
   ];
 
   try {
@@ -52,16 +52,17 @@ async function testParallelCalls() {
 
     console.log('\nCall 3 (list_creatives):');
     debugLogs3.forEach(log => console.log(`  ${log.message}`));
-
   } catch (error) {
     console.error('Unexpected error:', error);
   }
 }
 
-testParallelCalls().then(() => {
-  console.log('\n=== Test Complete ===\n');
-  process.exit(0);
-}).catch(err => {
-  console.error('\n=== Test Failed ===\n', err);
-  process.exit(1);
-});
+testParallelCalls()
+  .then(() => {
+    console.log('\n=== Test Complete ===\n');
+    process.exit(0);
+  })
+  .catch(err => {
+    console.error('\n=== Test Failed ===\n', err);
+    process.exit(1);
+  });

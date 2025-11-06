@@ -20,7 +20,7 @@
   "searchInComments": true,
   "blockTags": [
     "@alpha",
-    "@beta", 
+    "@beta",
     "@deprecated",
     "@example",
     "@experimental",
@@ -39,14 +39,7 @@
     "@throws",
     "@virtual"
   ],
-  "categoryOrder": [
-    "Client Classes",
-    "Configuration",
-    "Types",
-    "Async Patterns",
-    "Utilities",
-    "*"
-  ],
+  "categoryOrder": ["Client Classes", "Configuration", "Types", "Async Patterns", "Utilities", "*"],
   "sort": ["source-order"],
   "visibilityFilters": {
     "protected": false,

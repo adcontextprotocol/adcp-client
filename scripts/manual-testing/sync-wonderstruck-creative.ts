@@ -25,32 +25,36 @@ async function syncWonderstruckCreative() {
         name: 'Wonderstruck Display 300x250',
         format_id: {
           agent_url: 'https://creative.adcontextprotocol.org',
-          id: 'display_300x250'
+          id: 'display_300x250',
         },
         assets: {
           image: {
             asset_type: 'image',
             url: 'https://storage.googleapis.com/scope3-assets-swift-catfish/customers/1/brand-agents/48/assets/079fadf7-ec79-4fcc-81b1-f3c6df585d5b.jpg',
             width: 300,
-            height: 250
+            height: 250,
           },
           click_url: {
             asset_type: 'url',
             url: 'https://wonderstruck.org',
-            description: 'Wonderstruck organization website'
-          }
+            description: 'Wonderstruck organization website',
+          },
         },
-        tags: ['display', 'banner', '300x250', 'wonderstruck']
-      }
-    ]
+        tags: ['display', 'banner', '300x250', 'wonderstruck'],
+      },
+    ],
   };
 
   console.log('📤 Syncing creative asset...');
   console.log(`   Creative ID: ${syncRequest.creatives[0].creative_id}`);
   console.log(`   Name: ${syncRequest.creatives[0].name}`);
   console.log(`   Format ID: ${syncRequest.creatives[0].format_id.agent_url}/${syncRequest.creatives[0].format_id.id}`);
-  console.log(`   Image URL: ${syncRequest.creatives[0].assets.image.asset_type === 'image' ? syncRequest.creatives[0].assets.image.url : 'N/A'}`);
-  console.log(`   Click URL: ${syncRequest.creatives[0].assets.click_url.asset_type === 'url' ? syncRequest.creatives[0].assets.click_url.url : 'N/A'}\n`);
+  console.log(
+    `   Image URL: ${syncRequest.creatives[0].assets.image.asset_type === 'image' ? syncRequest.creatives[0].assets.image.url : 'N/A'}`
+  );
+  console.log(
+    `   Click URL: ${syncRequest.creatives[0].assets.click_url.asset_type === 'url' ? syncRequest.creatives[0].assets.click_url.url : 'N/A'}\n`
+  );
 
   try {
     const result = await agent.syncCreatives(syncRequest);
@@ -95,7 +99,6 @@ async function syncWonderstruckCreative() {
 
       console.log('\n🎉 Creative successfully synced to Wonderstruck!');
       console.log('   You can now use this creative in media buys.');
-
     } else {
       console.log('❌ FAILED to sync creative\n');
       console.log('Error Details:');
@@ -108,7 +111,6 @@ async function syncWonderstruckCreative() {
     }
 
     console.log('='.repeat(50) + '\n');
-
   } catch (error: any) {
     console.error('\n❌ Exception occurred during sync:');
     console.error(`   ${error.message}`);
@@ -127,7 +129,7 @@ if (require.main === module) {
       console.log('✨ Done!');
       process.exit(0);
     })
-    .catch((error) => {
+    .catch(error => {
       console.error('Fatal error:', error);
       process.exit(1);
     });
