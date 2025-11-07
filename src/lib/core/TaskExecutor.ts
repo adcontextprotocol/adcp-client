@@ -435,7 +435,7 @@ export class TaskExecutor {
                 wrapperName: extractedData.name,
                 responseKeys: Object.keys(extractedData.response || {}),
                 hasFormats: !!extractedData.response?.formats,
-                formatsCount: extractedData.response?.formats?.length
+                formatsCount: extractedData.response?.formats?.length,
               });
               return extractedData.response;
             }
