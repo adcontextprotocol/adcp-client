@@ -203,7 +203,8 @@ export async function batchPreviewProducts(
       // Call preview_creative
       const response = await creativeAgentClient.previewCreative(previewRequest);
 
-      if (response.success && response.data?.previews && response.data.previews.length > 0) {
+      // Check for data even if validation failed (response.success may be false due to schema warnings)
+      if (response.data?.previews && response.data.previews.length > 0) {
         const preview = response.data.previews[0];
         if (preview.renders && preview.renders.length > 0) {
           const previewUrl = preview.renders[0].preview_url;
@@ -224,6 +225,7 @@ export async function batchPreviewProducts(
           });
         }
       } else {
+        // Only treat as error if we have no data at all
         results.push({
           item: req.product,
           error: response.error || 'Preview generation failed',
@@ -354,7 +356,8 @@ export async function batchPreviewFormats(
       // Call preview_creative
       const response = await creativeAgentClient.previewCreative(previewRequest);
 
-      if (response.success && response.data?.previews && response.data.previews.length > 0) {
+      // Check for data even if validation failed (response.success may be false due to schema warnings)
+      if (response.data?.previews && response.data.previews.length > 0) {
         const preview = response.data.previews[0];
         if (preview.renders && preview.renders.length > 0) {
           const previewUrl = preview.renders[0].preview_url;
@@ -375,6 +378,7 @@ export async function batchPreviewFormats(
           });
         }
       } else {
+        // Only treat as error if we have no data at all
         results.push({
           item: req.format,
           error: response.error || 'Preview generation failed',

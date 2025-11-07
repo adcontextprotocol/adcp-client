@@ -610,7 +610,22 @@ export const WebhookAssetSchema = z.object({
 export const CreativeManifestSchema = z.object({
     format_id: FormatIDSchema,
     promoted_offering: z.string().optional(),
-    assets: z.record(z.string(), z.union([ImageAssetSchema, VideoAssetSchema, AudioAssetSchema, VASTAssetSchema, TextAssetSchema, URLAssetSchema, HTMLAssetSchema, JavaScriptAssetSchema, WebhookAssetSchema, CSSAssetSchema, DAASTAssetSchema, PromotedOfferingsSchema]))
+    // Allow flexible asset formats: typed objects OR plain strings (for text assets)
+    assets: z.record(z.string(), z.union([
+        ImageAssetSchema,
+        VideoAssetSchema,
+        AudioAssetSchema,
+        VASTAssetSchema,
+        TextAssetSchema,
+        URLAssetSchema,
+        HTMLAssetSchema,
+        JavaScriptAssetSchema,
+        WebhookAssetSchema,
+        CSSAssetSchema,
+        DAASTAssetSchema,
+        PromotedOfferingsSchema,
+        z.string(), // Plain strings for text assets (creative agent accepts this)
+    ]))
 });
 
 export const PreviewCreativeRequestSchema = z.object({

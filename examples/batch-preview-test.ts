@@ -51,21 +51,27 @@ async function main() {
             url: 'https://images.unsplash.com/photo-1460925895917-afdab827c52f?w=400&h=300',
           },
           product_name: {
-            text: 'Premium Display Package',
+            content: 'Premium Display Package',
           },
           product_description: {
-            text: 'High-visibility display advertising with guaranteed impressions and premium placements across our network.',
+            content: 'High-visibility display advertising with guaranteed impressions and premium placements across our network.',
           },
           pricing_model: {
-            text: 'CPM',
+            content: 'CPM',
           },
           pricing_amount: {
-            text: '5000',
+            content: '$5,000/month',
           },
           pricing_currency: {
-            text: 'USD',
+            content: 'USD',
           },
-        },
+          delivery_type: {
+            content: 'Guaranteed',
+          },
+          primary_asset_type: {
+            content: 'Display',
+          },
+        } as any,
       },
     },
     {
@@ -82,21 +88,27 @@ async function main() {
             url: 'https://images.unsplash.com/photo-1536240478700-b869070f9279?w=400&h=300',
           },
           product_name: {
-            text: 'Video Advertising',
+            content: 'Video Advertising',
           },
           product_description: {
-            text: 'Pre-roll and mid-roll video inventory with 15s and 30s spots in HD quality.',
+            content: 'Pre-roll and mid-roll video inventory with 15s and 30s spots in HD quality.',
           },
           pricing_model: {
-            text: 'CPCV',
+            content: 'CPCV',
           },
           pricing_amount: {
-            text: '10000',
+            content: '$10,000/month',
           },
           pricing_currency: {
-            text: 'USD',
+            content: 'USD',
           },
-        },
+          delivery_type: {
+            content: 'Standard',
+          },
+          primary_asset_type: {
+            content: 'Video',
+          },
+        } as any,
       },
     },
     {
@@ -179,9 +191,9 @@ async function main() {
         },
         manifest: {
           format: {
-            text: JSON.stringify(format1),
+            content: JSON.stringify(format1),
           },
-        },
+        } as any,
       },
     },
     {
@@ -193,9 +205,9 @@ async function main() {
         },
         manifest: {
           format: {
-            text: JSON.stringify(format2),
+            content: JSON.stringify(format2),
           },
-        },
+        } as any,
       },
     },
   ];

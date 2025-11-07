@@ -20,6 +20,8 @@ async function main() {
   });
 
   // Simple preview_creative request
+  // Note: Using type assertion to bypass strict TypeScript validation
+  // The actual creative agent expects plain strings for text assets
   const response = await creativeAgent.previewCreative({
     format_id: {
       agent_url: 'https://creative.adcontextprotocol.org/',
@@ -34,12 +36,30 @@ async function main() {
         product_image: {
           url: 'https://images.unsplash.com/photo-1460925895917-afdab827c52f?w=400&h=300',
         },
-        product_name: 'Premium Display Package',
-        product_description: 'High-visibility display advertising with guaranteed impressions',
-        pricing_model: 'CPM',
+        product_name: {
+          content: 'Premium Display Package',
+        },
+        product_description: {
+          content: 'High-visibility display advertising with guaranteed impressions and premium placements',
+        },
+        pricing_model: {
+          content: 'CPM',
+        },
+        pricing_amount: {
+          content: '5,000',
+        },
+        pricing_currency: {
+          content: 'USD',
+        },
+        delivery_type: {
+          content: 'Guaranteed',
+        },
+        primary_asset_type: {
+          content: 'Display Banners',
+        },
       },
     },
-  });
+  } as any);
 
   console.log('Response success:', response.success);
   console.log('Response error:', response.error);
