@@ -26,6 +26,8 @@ import type {
   GetSignalsResponse,
   ActivateSignalRequest,
   ActivateSignalResponse,
+  PreviewCreativeRequest,
+  PreviewCreativeResponse,
   Format,
 } from '../types/tools.generated';
 
@@ -679,6 +681,27 @@ export class ADCPClient {
   }
 
   /**
+   * Preview a creative
+   *
+   * @param params - Preview creative parameters
+   * @param inputHandler - Handler for clarification requests
+   * @param options - Task execution options
+   */
+  async previewCreative(
+    params: PreviewCreativeRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<PreviewCreativeResponse>> {
+    return this.executeAndHandle<PreviewCreativeResponse>(
+      'preview_creative',
+      'onPreviewCreativeStatusChange',
+      params,
+      inputHandler,
+      options
+    );
+  }
+
+  /**
    * Get media buy delivery information
    *
    * @param params - Delivery information parameters
@@ -1257,7 +1280,7 @@ export class ADCPClient {
       provide_performance_feedback: schemas.ProvidePerformanceFeedbackRequestSchema,
       get_signals: schemas.GetSignalsRequestSchema,
       activate_signal: schemas.ActivateSignalRequestSchema,
-      preview_creative: schemas.PreviewCreativeResponseSchema, // Note: using response schema temporarily
+      preview_creative: schemas.PreviewCreativeRequestSchema,
     };
 
     return schemaMap[taskType] || null;

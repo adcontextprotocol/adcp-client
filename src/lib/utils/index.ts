@@ -4,6 +4,15 @@ import type { CreativeFormat } from '../types';
 export { logger, createLogger, type LogLevel, type LoggerConfig } from './logger';
 import { logger } from './logger';
 
+// Re-export preview utilities
+export {
+  batchPreviewProducts,
+  batchPreviewFormats,
+  clearPreviewCache,
+  type PreviewResult,
+  type BatchPreviewOptions,
+} from './preview-utils';
+
 // Configuration constants
 export const REQUEST_TIMEOUT = parseInt(process.env.REQUEST_TIMEOUT || '30000'); // 30 seconds
 export const MAX_CONCURRENT = parseInt(process.env.MAX_CONCURRENT || '5');
