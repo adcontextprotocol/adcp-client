@@ -1,8 +1,9 @@
 // Basic A2A Client Example
-import { createA2AClient, AdCPClient, type AgentConfig } from '@adcp/client';
+import { ADCPClient, type AgentConfig } from '@adcp/client';
+import { createA2AClient } from '@adcp/client/advanced';
 
 async function basicA2AExample() {
-  // Simple A2A client usage
+  // Direct A2A protocol client (advanced usage)
   const client = createA2AClient('https://test-agent.adcontextprotocol.org', 'your-auth-token');
 
   try {
@@ -14,7 +15,7 @@ async function basicA2AExample() {
   }
 }
 
-// Using AgentConfig with AdCPClient
+// Using ADCPClient (recommended)
 async function configuredA2AExample() {
   const agent: AgentConfig = {
     id: 'test-a2a-agent',
@@ -25,10 +26,11 @@ async function configuredA2AExample() {
     requiresAuth: true,
   };
 
-  const client = new AdCPClient([agent]);
+  const client = new ADCPClient([agent]);
 
   try {
-    const result = await client.callTool('test-a2a-agent', 'get_products', {
+    const agentClient = client.agent('test-a2a-agent');
+    const result = await agentClient.getProducts({
       brief: 'Sustainable fashion brands',
       promoted_offering: 'Eco-friendly clothing',
     });
@@ -60,20 +62,22 @@ async function multiAgentExample() {
     },
   ];
 
-  const client = new AdCPClient(agents);
+  const client = new ADCPClient(agents);
 
   try {
-    const results = await client.callToolOnAgents(['mcp-agent', 'a2a-agent'], 'get_products', {
+    const agentCollection = client.agents(['mcp-agent', 'a2a-agent']);
+    const results = await agentCollection.getProducts({
       brief: 'Tech gadgets for remote work',
       promoted_offering: 'Ergonomic workspace solutions',
     });
 
     console.log('Results from both agents:', results);
     results.forEach(result => {
-      console.log(`${result.agent_name}: ${result.success ? 'Success' : 'Failed'}`);
-      if (result.success) {
+      if (result.status === 'completed') {
+        console.log(`${result.agent.name}: Success`);
         console.log('  Data:', result.data);
       } else {
+        console.log(`${result.agent.name}: Failed`);
         console.log('  Error:', result.error);
       }
     });

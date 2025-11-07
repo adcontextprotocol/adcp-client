@@ -289,7 +289,7 @@ export class ADCPMultiAgentClient {
   private agentClients: Map<string, AgentClient> = new Map();
 
   constructor(
-    agentConfigs: AgentConfig[],
+    agentConfigs: AgentConfig[] = [],
     private config: ADCPClientConfig = {}
   ) {
     for (const agentConfig of agentConfigs) {

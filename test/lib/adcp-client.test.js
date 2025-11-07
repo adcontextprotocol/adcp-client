@@ -1,15 +1,15 @@
-// Unit tests for AdCPClient core functionality
+// Unit tests for ADCPClient core functionality
 const { test, describe } = require('node:test');
 const assert = require('node:assert');
 
-// Import the library - in real tests this would be: const { AdCPClient } = require('@adcp/client');
-const { AdCPClient, ConfigurationManager, createAdCPClient } = require('../../dist/lib/index.js');
+// Import the library - in real tests this would be: const { ADCPClient } = require('@adcp/client');
+const { ADCPClient, ConfigurationManager } = require('../../dist/lib/index.js');
 
-describe('AdCPClient', () => {
+describe('ADCPClient', () => {
   describe('constructor', () => {
     test('should create empty client when no agents provided', () => {
-      const client = new AdCPClient();
-      assert.strictEqual(client.getAgents().length, 0);
+      const client = new ADCPClient();
+      assert.strictEqual(client.getAgentConfigs().length, 0);
     });
 
     test('should initialize with provided agents', () => {
@@ -23,15 +23,15 @@ describe('AdCPClient', () => {
         },
       ];
 
-      const client = new AdCPClient(agents);
-      assert.strictEqual(client.getAgents().length, 1);
-      assert.strictEqual(client.getAgents()[0].id, 'test-agent');
+      const client = new ADCPClient(agents);
+      assert.strictEqual(client.getAgentConfigs().length, 1);
+      assert.strictEqual(client.getAgentConfigs()[0].id, 'test-agent');
     });
   });
 
   describe('addAgent', () => {
     test('should add agent to empty client', () => {
-      const client = new AdCPClient();
+      const client = new ADCPClient();
       const agent = {
         id: 'new-agent',
         name: 'New Agent',
@@ -42,12 +42,12 @@ describe('AdCPClient', () => {
       };
 
       client.addAgent(agent);
-      assert.strictEqual(client.getAgents().length, 1);
-      assert.strictEqual(client.getAgents()[0].id, 'new-agent');
+      assert.strictEqual(client.getAgentConfigs().length, 1);
+      assert.strictEqual(client.getAgentConfigs()[0].id, 'new-agent');
     });
 
     test('should add agent to existing agents', () => {
-      const client = new AdCPClient([
+      const client = new ADCPClient([
         {
           id: 'existing',
           name: 'Existing',
@@ -65,12 +65,12 @@ describe('AdCPClient', () => {
         requiresAuth: false,
       });
 
-      assert.strictEqual(client.getAgents().length, 2);
-      assert.strictEqual(client.getAgents()[1].id, 'new');
+      assert.strictEqual(client.getAgentConfigs().length, 2);
+      assert.strictEqual(client.getAgentConfigs()[1].id, 'new');
     });
   });
 
-  describe('getAgents', () => {
+  describe('getAgentConfigs', () => {
     test('should return defensive copy of agents', () => {
       const originalAgent = {
         id: 'test',
@@ -80,8 +80,8 @@ describe('AdCPClient', () => {
         requiresAuth: false,
       };
 
-      const client = new AdCPClient([originalAgent]);
-      const agents = client.getAgents();
+      const client = new ADCPClient([originalAgent]);
+      const agents = client.getAgentConfigs();
 
       // Modify the returned array
       agents.push({
@@ -93,14 +93,14 @@ describe('AdCPClient', () => {
       });
 
       // Original client should be unchanged
-      assert.strictEqual(client.getAgents().length, 1);
-      assert.strictEqual(client.getAgents()[0].id, 'test');
+      assert.strictEqual(client.getAgentConfigs().length, 1);
+      assert.strictEqual(client.getAgentConfigs()[0].id, 'test');
     });
   });
 
   describe('fluent API', () => {
     test('should throw error for non-existent agent', () => {
-      const client = new AdCPClient();
+      const client = new ADCPClient();
 
       assert.throws(
         () => {
@@ -112,8 +112,8 @@ describe('AdCPClient', () => {
       );
     });
 
-    test('should return Agent instance for valid agent', () => {
-      const client = new AdCPClient([
+    test('should return agent client for valid agent', () => {
+      const client = new ADCPClient([
         {
           id: 'test-agent',
           name: 'Test Agent',
@@ -132,7 +132,7 @@ describe('AdCPClient', () => {
     });
 
     test('should return AgentCollection for multiple agents', () => {
-      const client = new AdCPClient([
+      const client = new ADCPClient([
         {
           id: 'agent1',
           name: 'Agent 1',
@@ -157,7 +157,7 @@ describe('AdCPClient', () => {
     });
 
     test('should return AgentCollection for all agents', () => {
-      const client = new AdCPClient([
+      const client = new ADCPClient([
         {
           id: 'agent1',
           name: 'Agent 1',
@@ -173,7 +173,7 @@ describe('AdCPClient', () => {
     });
 
     test('should throw error when calling allAgents on empty client', () => {
-      const client = new AdCPClient();
+      const client = new ADCPClient();
 
       assert.throws(
         () => {
@@ -183,26 +183,6 @@ describe('AdCPClient', () => {
           message: 'No agents configured. Add agents to the client first.',
         }
       );
-    });
-  });
-
-  describe('getStandardFormats', () => {
-    test('should return array of creative formats', () => {
-      const client = new AdCPClient();
-      const formats = client.getStandardFormats();
-
-      assert.ok(Array.isArray(formats));
-      assert.ok(formats.length > 0);
-
-      // Check first format has required fields
-      const firstFormat = formats[0];
-      assert.ok(firstFormat.format_id);
-      assert.ok(firstFormat.name);
-      assert.ok(firstFormat.dimensions);
-      assert.ok(typeof firstFormat.dimensions.width === 'number');
-      assert.ok(typeof firstFormat.dimensions.height === 'number');
-      assert.ok(Array.isArray(firstFormat.file_types));
-      assert.ok(typeof firstFormat.max_file_size === 'number');
     });
   });
 });
@@ -282,27 +262,33 @@ describe('ConfigurationManager', () => {
   });
 });
 
-describe('convenience functions', () => {
-  test('createAdCPClient should create AdCPClient instance', () => {
-    const client = createAdCPClient();
-    assert.ok(client instanceof AdCPClient);
-    assert.strictEqual(client.getAgents().length, 0);
-  });
+describe('factory methods', () => {
+  test('fromEnv should create client from environment', () => {
+    // Save original env var
+    const originalConfig = process.env.SALES_AGENTS_CONFIG;
 
-  test('createAdCPClient should accept agents parameter', () => {
-    const agents = [
-      {
-        id: 'convenience-test',
-        name: 'Convenience Test',
-        agent_uri: 'https://convenience.example.com',
-        protocol: 'mcp',
-        requiresAuth: false,
-      },
-    ];
+    process.env.SALES_AGENTS_CONFIG = JSON.stringify({
+      agents: [
+        {
+          id: 'env-agent',
+          name: 'Env Agent',
+          agent_uri: 'https://env.example.com',
+          protocol: 'mcp',
+          requiresAuth: false,
+        },
+      ],
+    });
 
-    const client = createAdCPClient(agents);
-    assert.ok(client instanceof AdCPClient);
-    assert.strictEqual(client.getAgents().length, 1);
-    assert.strictEqual(client.getAgents()[0].id, 'convenience-test');
+    const client = ADCPClient.fromEnv();
+    assert.ok(client instanceof ADCPClient);
+    assert.strictEqual(client.getAgentConfigs().length, 1);
+    assert.strictEqual(client.getAgentConfigs()[0].id, 'env-agent');
+
+    // Restore original env var
+    if (originalConfig) {
+      process.env.SALES_AGENTS_CONFIG = originalConfig;
+    } else {
+      delete process.env.SALES_AGENTS_CONFIG;
+    }
   });
 });

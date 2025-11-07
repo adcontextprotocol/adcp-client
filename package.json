@@ -11,6 +11,11 @@
       "require": "./dist/lib/index.js",
       "types": "./dist/lib/index.d.ts"
     },
+    "./advanced": {
+      "import": "./dist/lib/advanced.js",
+      "require": "./dist/lib/advanced.js",
+      "types": "./dist/lib/advanced.d.ts"
+    },
     "./types": {
       "types": "./dist/lib/types/index.d.ts"
     }
