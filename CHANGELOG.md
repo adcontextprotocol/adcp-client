@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.7.2
+
+### Patch Changes
+
+- 523e490: Fix CLI tool missing dependency file in published package. The adcp command now works correctly when installed via npx.
+- a73d530: Fix MCP authentication bug where x-adcp-auth header was not being sent to servers. The client now properly includes authentication headers in all MCP requests using the SDK's requestInit.headers option instead of a custom fetch function. This fixes authentication failures with MCP servers that require the x-adcp-auth header.
+- 35eab77: Fixed ADCP schema validation for framework-wrapped responses. When agent frameworks like ADK wrap tool responses in the A2A FunctionResponse format `{ id, name, response: {...} }`, the client now correctly extracts the nested data before validation instead of validating the wrapper object. This fixes "formats: Required" validation errors when calling ADK-based agents.
+- bae7d59: Added EditorConfig and Prettier configuration files to enforce consistent code style across editors. Updated git hooks to support longer commit messages and improved commit-msg hook to work across different Node.js environments. Fixed localStorage issue in demo agent site that was erasing custom agents on page load.
+
 ## 2.7.1
 
 ### Patch Changes
@@ -19,9 +28,7 @@
 - 48add90: PropertyCrawler: Add browser headers and graceful degradation for missing properties array
 
   **Fixes:**
-
   1. **Browser-Like Headers**: PropertyCrawler now sends standard browser headers when fetching `.well-known/adagents.json` files:
-
      - User-Agent: Standard Chrome browser string (required by CDNs like Akamai)
      - Accept, Accept-Language, Accept-Encoding: Browser-standard values
      - From: Crawler identification per RFC 9110 (includes library version)
@@ -37,7 +44,6 @@
   This enables property discovery even when publishers have completed only partial AdCP setup, improving real-world compatibility.
 
   **Real-World Impact:**
-
   - AccuWeather: Now successfully crawled (was failing with 403)
   - Weather.com: Now returns inferred property (was returning nothing)
   - Result: Properties discoverable from partial implementations
@@ -61,12 +67,10 @@
 - d02ed3c: Fix MCP endpoint discovery Accept header handling and send both auth headers
 
   The `discoverMCPEndpoint()` and `getAgentInfo()` methods had issues with header handling:
-
   1. **Lost Accept headers**: Didn't preserve the MCP SDK's required `Accept: application/json, text/event-stream` header
   2. **Missing Authorization header**: Only sent `x-adcp-auth` but some servers expect both headers
 
   Changes:
-
   - Updated `discoverMCPEndpoint()` to use the same header-preserving pattern as `callMCPTool()`
   - Updated `getAgentInfo()` to properly handle Headers objects without losing SDK defaults
   - Both methods now correctly extract and merge headers from Headers objects, arrays, and plain objects
@@ -74,7 +78,6 @@
   - Added TypeScript type annotations for Headers.forEach callbacks
 
   Impact:
-
   - MCP endpoint discovery now works correctly with FastMCP SSE servers
   - Authentication works with servers expecting either `Authorization` or `x-adcp-auth` headers
   - Accept headers are properly preserved (fixes "406 Not Acceptable" errors)
@@ -88,19 +91,16 @@
   The customFetch function in mcp.ts was incorrectly handling Headers objects by using object spread syntax (`{...init.headers}`), which returns an empty object for Headers instances. This caused the MCP SDK's required `Accept: application/json, text/event-stream` header to be lost.
 
   **Changes:**
-
   - Fixed Headers object extraction to use `forEach()` instead of object spread
   - Fixed plain object extraction to use `for...in` loop with `hasOwnProperty` check
   - Added comprehensive tests for Headers object handling and Accept header preservation
 
   **Bug Timeline:**
-
   - Bug introduced in v2.3.2 (commit 086be48)
   - Exposed between v2.5.0 and v2.5.1 when SDK started passing Headers objects
   - Fixed in this release
 
   **Impact:**
-
   - MCP protocol requests now correctly include the required Accept header
   - MCP servers will no longer reject requests due to missing Accept header
 
@@ -117,19 +117,16 @@
   The customFetch function in mcp.ts was incorrectly handling Headers objects by using object spread syntax (`{...init.headers}`), which returns an empty object for Headers instances. This caused the MCP SDK's required `Accept: application/json, text/event-stream` header to be lost.
 
   **Changes:**
-
   - Fixed Headers object extraction to use `forEach()` instead of object spread
   - Fixed plain object extraction to use `for...in` loop with `hasOwnProperty` check
   - Added comprehensive tests for Headers object handling and Accept header preservation
 
   **Bug Timeline:**
-
   - Bug introduced in v2.3.2 (commit 086be48)
   - Exposed between v2.5.0 and v2.5.1 when SDK started passing Headers objects
   - Fixed in this release
 
   **Impact:**
-
   - MCP protocol requests now correctly include the required Accept header
   - MCP servers will no longer reject requests due to missing Accept header
 
@@ -142,7 +139,6 @@
 ### Patch Changes
 
 - cc82c4d: Fixed A2A protocol discovery endpoint and Accept headers
-
   - Changed discovery endpoint from incorrect `/.well-known/a2a-server` to correct `/.well-known/agent-card.json` per A2A spec
   - Updated Accept header from `application/json` to `application/json, */*` for better compatibility with various server implementations
   - Updated protocol detection test to correctly expect A2A detection for test-agent.adcontextprotocol.org
@@ -152,7 +148,6 @@
 ### Patch Changes
 
 - 799dc4a: Optimize pre-push git hook for faster development workflow
-
   - Reduced pre-push hook execution time from 5+ minutes to ~2-5 seconds
   - Now only runs essential fast checks: TypeScript typecheck + library build
   - Removed slow operations: schema sync, full test suite
@@ -160,14 +155,12 @@
   - Makes git push much faster while catching TypeScript and build errors early
 
 - b257d06: Improved debug logging and error messages for MCP protocol errors
-
   - CLI now displays debug logs, conversation history, and full metadata when --debug flag is used
   - MCP error responses (`isError: true`) now extract and display the actual error message from `content[].text`
   - Previously showed "Unknown error", now shows detailed error like "Error calling tool 'list_authorized_properties': name 'get_testing_context' is not defined"
   - Makes troubleshooting agent-side errors much easier for developers
 
 - 24a5ed7: UI formatting and error logging improvements
-
   - Fixed media buy packages to include format_ids array (was causing Pydantic validation errors)
   - Added error-level logging for failed media buy operations (create, update, get_delivery)
   - Fixed format objects display in products table (was showing [object Object])
@@ -198,7 +191,6 @@
 - Fix webhook HMAC verification by propagating `X-ADCP-Timestamp` through `AgentClient.handleWebhook` and server route
 
   Previously, the server only forwarded `X-ADCP-Signature` to the client verifier. The timestamp required by the HMAC scheme (message = `{timestamp}.{json_payload}`) was not passed through, causing verification to fail when `webhookSecret` was enabled. This change:
-
   - Updates `AgentClient.handleWebhook(payload, signature, timestamp)` to accept and forward the timestamp.
   - Updates the webhook route to extract `X-ADCP-Timestamp` and pass it into `handleWebhook`.
   - Allows `ADCPClient.handleWebhook` to successfully validate signatures using both headers.
@@ -235,7 +227,6 @@
   Multiple locations in the codebase were incorrectly using `format` instead of `format_id` when creating creative assets for sync_creatives calls. This caused the AdCP agent to reject creatives with validation errors: "Input should be a valid dictionary or instance of FormatId".
 
   **Fixed locations:**
-
   - `src/public/index.html:8611` - Creative upload form
   - `src/public/index.html:5137` - Sample creative generation
   - `scripts/manual-testing/full-wonderstruck-test.ts:284` - Test script (also fixed to use proper FormatID object structure)
@@ -251,13 +242,11 @@
   This release adds Zod schema exports alongside existing TypeScript types, enabling runtime validation of AdCP data structures. All core schemas, request schemas, and response schemas are now available as Zod schemas.
 
   **New exports:**
-
   - Core schemas: `MediaBuySchema`, `ProductSchema`, `CreativeAssetSchema`, `TargetingSchema`
   - Request schemas: `GetProductsRequestSchema`, `CreateMediaBuyRequestSchema`, `SyncCreativesRequestSchema`, etc.
   - Response schemas: `GetProductsResponseSchema`, `CreateMediaBuyResponseSchema`, `SyncCreativesResponseSchema`, etc.
 
   **Features:**
-
   - Runtime validation with detailed error messages
   - Type inference from schemas
   - Integration with React Hook Form, Formik, etc.
@@ -275,16 +264,15 @@
   **Usage:**
 
   ```typescript
-  import { MediaBuySchema } from "@adcp/client";
+  import { MediaBuySchema } from '@adcp/client';
 
   const result = MediaBuySchema.safeParse(data);
   if (result.success) {
-    console.log("Valid!", result.data);
+    console.log('Valid!', result.data);
   }
   ```
 
   **Documentation:**
-
   - `docs/ZOD-SCHEMAS.md` - Complete usage guide with NPM distribution details
   - `docs/VALIDATION_WORKFLOW.md` - CI integration (existing)
   - `examples/zod-validation-example.ts` - Working examples
@@ -292,7 +280,6 @@
 ### Patch Changes
 
 - 244f639: Sync with AdCP v2.1.0 schema updates for build_creative and preview_creative
-
   - Add support for creative namespace in schema sync script
   - Generate TypeScript types for build_creative and preview_creative tools
   - Update creative testing UI to handle new schema structure:
@@ -301,7 +288,6 @@
     - Display multiple renders with dimensions and roles for companion ads
 
   Schema changes from v2.0.0:
-
   - Formats now have renders array with role and structured dimensions
   - Preview responses: outputs → renders, output_id → render_id, output_role → role
   - Removed format_id and hints fields from preview renders
@@ -397,10 +383,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 const client = new ADCPMultiAgentClient(agents, {
   handlers: {
     onGetProductsComplete: (response, metadata) => {
-      console.log("Products received:", response.products);
+      console.log('Products received:', response.products);
     },
     onTaskFailed: (metadata, error) => {
-      console.error("Task failed:", error);
+      console.error('Task failed:', error);
     },
   },
 });
@@ -413,12 +399,12 @@ const client = new ADCPMultiAgentClient(agents, {
   handlers: {
     onGetProductsStatusChange: (response, metadata) => {
       // Check status to handle different cases
-      if (metadata.status === "completed") {
-        console.log("Products received:", response.products);
-      } else if (metadata.status === "failed") {
-        console.error("Task failed:", metadata.error);
-      } else if (metadata.status === "needs_input") {
-        console.log("Clarification needed:", response.message);
+      if (metadata.status === 'completed') {
+        console.log('Products received:', response.products);
+      } else if (metadata.status === 'failed') {
+        console.error('Task failed:', metadata.error);
+      } else if (metadata.status === 'needs_input') {
+        console.log('Clarification needed:', response.message);
       }
     },
   },
@@ -585,23 +571,23 @@ If you were previously using `@a2a-js/sdk` or `@modelcontextprotocol/sdk` direct
 
 ```typescript
 // Before (raw MCP SDK)
-import { Client as MCPClient } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { Client as MCPClient } from '@modelcontextprotocol/sdk/client/index.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 
 const client = new MCPClient({
-  name: "My App",
-  version: "1.0.0",
+  name: 'My App',
+  version: '1.0.0',
 });
 
 const transport = new StreamableHTTPClientTransport(new URL(agentUrl));
 await client.connect(transport);
-const result = await client.callTool({ name: "get_products", arguments: args });
+const result = await client.callTool({ name: 'get_products', arguments: args });
 
 // After (@adcp/client)
-import { createMCPClient } from "@adcp/client";
+import { createMCPClient } from '@adcp/client';
 
 const client = createMCPClient(agentUrl, authToken);
-const result = await client.callTool("get_products", args);
+const result = await client.callTool('get_products', args);
 ```
 
 #### From Testing Framework Only
@@ -610,12 +596,12 @@ If you were using this as a testing framework only:
 
 ```typescript
 // Before (server-side functions)
-import { testSingleAgent } from "./protocols";
+import { testSingleAgent } from './protocols';
 
 const result = await testSingleAgent(agentId, brief, offering, toolName);
 
 // After (library client)
-import { AdCPClient } from "@adcp/client";
+import { AdCPClient } from '@adcp/client';
 
 const client = new AdCPClient(agents);
 const result = await client.callTool(agentId, toolName, {
