@@ -204,10 +204,13 @@ export async function batchPreviewProducts(
       const response = await creativeAgentClient.previewCreative(previewRequest);
 
       // Check for data even if validation failed (response.success may be false due to schema warnings)
-      if (response.data?.previews && response.data.previews.length > 0) {
-        const preview = response.data.previews[0];
+      // Handle both single request (previews) and batch request (results) response formats
+      const responseData = response.data;
+      if (responseData && 'previews' in responseData && responseData.previews && responseData.previews.length > 0) {
+        const preview = responseData.previews[0];
         if (preview.renders && preview.renders.length > 0) {
-          const previewUrl = preview.renders[0].preview_url;
+          const render = preview.renders[0] as any;
+          const previewUrl = render.preview_url as string;
           const previewId = preview.preview_id;
 
           // Cache the result
@@ -357,10 +360,13 @@ export async function batchPreviewFormats(
       const response = await creativeAgentClient.previewCreative(previewRequest);
 
       // Check for data even if validation failed (response.success may be false due to schema warnings)
-      if (response.data?.previews && response.data.previews.length > 0) {
-        const preview = response.data.previews[0];
+      // Handle both single request (previews) and batch request (results) response formats
+      const responseData = response.data;
+      if (responseData && 'previews' in responseData && responseData.previews && responseData.previews.length > 0) {
+        const preview = responseData.previews[0];
         if (preview.renders && preview.renders.length > 0) {
-          const previewUrl = preview.renders[0].preview_url;
+          const render = preview.renders[0] as any;
+          const previewUrl = render.preview_url as string;
           const previewId = preview.preview_id;
 
           // Cache the result
