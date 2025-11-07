@@ -20,10 +20,7 @@ export type {
 
 // ====== CORE CONVERSATION-AWARE CLIENTS ======
 // Primary client for all use cases - single or multi-agent
-export {
-  ADCPMultiAgentClient as ADCPClient,
-  AgentCollection as NewAgentCollection,
-} from './core/ADCPMultiAgentClient';
+export { ADCPMultiAgentClient as ADCPClient, AgentCollection as NewAgentCollection } from './core/ADCPMultiAgentClient';
 export type { ADCPClientConfig } from './core/ADCPClient';
 
 /**
