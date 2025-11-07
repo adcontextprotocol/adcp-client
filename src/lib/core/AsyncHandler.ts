@@ -10,6 +10,7 @@ import type {
   UpdateMediaBuyResponse,
   SyncCreativesResponse,
   ListCreativesResponse,
+  PreviewCreativeResponse,
   GetMediaBuyDeliveryResponse,
   ListAuthorizedPropertiesResponse,
   ProvidePerformanceFeedbackResponse,
@@ -110,6 +111,10 @@ export interface AsyncHandlerConfig {
   onUpdateMediaBuyStatusChange?: (response: UpdateMediaBuyResponse, metadata: WebhookMetadata) => void | Promise<void>;
   onSyncCreativesStatusChange?: (response: SyncCreativesResponse, metadata: WebhookMetadata) => void | Promise<void>;
   onListCreativesStatusChange?: (response: ListCreativesResponse, metadata: WebhookMetadata) => void | Promise<void>;
+  onPreviewCreativeStatusChange?: (
+    response: PreviewCreativeResponse,
+    metadata: WebhookMetadata
+  ) => void | Promise<void>;
   onGetMediaBuyDeliveryStatusChange?: (
     response: GetMediaBuyDeliveryResponse,
     metadata: WebhookMetadata

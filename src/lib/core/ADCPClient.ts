@@ -26,6 +26,8 @@ import type {
   GetSignalsResponse,
   ActivateSignalRequest,
   ActivateSignalResponse,
+  PreviewCreativeRequest,
+  PreviewCreativeResponse,
   Format,
 } from '../types/tools.generated';
 
@@ -672,6 +674,27 @@ export class ADCPClient {
     return this.executeAndHandle<ListCreativesResponse>(
       'list_creatives',
       'onListCreativesStatusChange',
+      params,
+      inputHandler,
+      options
+    );
+  }
+
+  /**
+   * Preview a creative
+   *
+   * @param params - Preview creative parameters
+   * @param inputHandler - Handler for clarification requests
+   * @param options - Task execution options
+   */
+  async previewCreative(
+    params: PreviewCreativeRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<PreviewCreativeResponse>> {
+    return this.executeAndHandle<PreviewCreativeResponse>(
+      'preview_creative',
+      'onPreviewCreativeStatusChange',
       params,
       inputHandler,
       options
