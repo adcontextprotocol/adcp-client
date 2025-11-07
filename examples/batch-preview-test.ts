@@ -47,11 +47,24 @@ async function main() {
           id: 'product_card_standard',
         },
         manifest: {
-          title: 'Premium Display',
-          subtitle: 'Reach millions of engaged readers',
-          image_url: 'https://example.com/product1.jpg',
-          price: '$5,000/month',
-          features: ['300x250 banners', '728x90 leaderboards', 'Premium placements'],
+          product_image: {
+            url: 'https://images.unsplash.com/photo-1460925895917-afdab827c52f?w=400&h=300',
+          },
+          product_name: {
+            text: 'Premium Display Package',
+          },
+          product_description: {
+            text: 'High-visibility display advertising with guaranteed impressions and premium placements across our network.',
+          },
+          pricing_model: {
+            text: 'CPM',
+          },
+          pricing_amount: {
+            text: '5000',
+          },
+          pricing_currency: {
+            text: 'USD',
+          },
         },
       },
     },
@@ -65,11 +78,24 @@ async function main() {
           id: 'product_card_standard',
         },
         manifest: {
-          title: 'Video Ads',
-          subtitle: 'Pre-roll and mid-roll video inventory',
-          image_url: 'https://example.com/product2.jpg',
-          price: '$10,000/month',
-          features: ['15s and 30s spots', 'HD quality', 'Skip after 5s'],
+          product_image: {
+            url: 'https://images.unsplash.com/photo-1536240478700-b869070f9279?w=400&h=300',
+          },
+          product_name: {
+            text: 'Video Advertising',
+          },
+          product_description: {
+            text: 'Pre-roll and mid-roll video inventory with 15s and 30s spots in HD quality.',
+          },
+          pricing_model: {
+            text: 'CPCV',
+          },
+          pricing_amount: {
+            text: '10000',
+          },
+          pricing_currency: {
+            text: 'USD',
+          },
         },
       },
     },
@@ -123,46 +149,52 @@ async function main() {
   console.log('Test 2: Batch Preview Formats');
   console.log('═══════════════════════════════════════════════════════════\n');
 
+  const format1 = {
+    format_id: {
+      agent_url: 'https://example.com',
+      id: 'display_300x250',
+    },
+    name: 'Medium Rectangle',
+    description: '300x250 display banner',
+    type: 'display' as const,
+  };
+
+  const format2 = {
+    format_id: {
+      agent_url: 'https://example.com',
+      id: 'video_1920x1080',
+    },
+    name: 'HD Video',
+    description: '1920x1080 video format',
+    type: 'video' as const,
+  };
+
   const testFormats: Format[] = [
     {
-      format_id: {
-        agent_url: 'https://example.com',
-        id: 'display_300x250',
-      },
-      name: 'Medium Rectangle',
-      description: '300x250 display banner',
-      type: 'display',
+      ...format1,
       format_card: {
         format_id: {
           agent_url: CREATIVE_AGENT_URL.replace('/mcp', ''),
           id: 'format_card_standard',
         },
         manifest: {
-          title: 'Medium Rectangle',
-          dimensions: '300x250',
-          preview_image: 'https://example.com/300x250.png',
-          supported_assets: ['image', 'text', 'cta'],
+          format: {
+            text: JSON.stringify(format1),
+          },
         },
       },
     },
     {
-      format_id: {
-        agent_url: 'https://example.com',
-        id: 'video_1920x1080',
-      },
-      name: 'HD Video',
-      description: '1920x1080 video format',
-      type: 'video',
+      ...format2,
       format_card: {
         format_id: {
           agent_url: CREATIVE_AGENT_URL.replace('/mcp', ''),
           id: 'format_card_standard',
         },
         manifest: {
-          title: 'HD Video Ad',
-          dimensions: '1920x1080',
-          duration: '15-30 seconds',
-          supported_assets: ['video', 'audio', 'text'],
+          format: {
+            text: JSON.stringify(format2),
+          },
         },
       },
     },

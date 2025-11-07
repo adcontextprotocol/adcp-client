@@ -186,63 +186,53 @@ export async function batchPreviewProducts(
     groupedByFormat.get(formatKey)!.push(req);
   });
 
-  // Process each format group
-  for (const [formatKey, requests] of groupedByFormat) {
+  // Process each product individually
+  // Note: Each product has different manifest data, so we can't truly batch them
+  // We process them sequentially but could parallelize in the future
+  for (const req of previewRequests) {
     try {
-      const firstReq = requests[0];
-
-      // Build preview_creative request with inputs array for batch processing
+      // Build preview_creative request for this product
       const previewRequest: PreviewCreativeRequest = {
-        format_id: firstReq.formatId,
-        creative_manifest: requests[0].manifest, // Use first manifest as base
-        inputs: requests.map(req => ({
-          name: req.inputName,
-          macros: {}, // Product cards don't typically use macros
-        })),
+        format_id: req.formatId,
+        creative_manifest: {
+          format_id: req.formatId,
+          assets: req.manifest, // manifest contains the asset map (product_image, product_name, etc)
+        },
       };
 
       // Call preview_creative
       const response = await creativeAgentClient.previewCreative(previewRequest);
 
-      if (response.success && response.data?.previews) {
-        // Map previews back to products
-        requests.forEach((req, index) => {
-          const preview = response.data!.previews[index];
-          if (preview && preview.renders && preview.renders.length > 0) {
-            const previewUrl = preview.renders[0].preview_url;
-            const previewId = preview.preview_id;
+      if (response.success && response.data?.previews && response.data.previews.length > 0) {
+        const preview = response.data.previews[0];
+        if (preview.renders && preview.renders.length > 0) {
+          const previewUrl = preview.renders[0].preview_url;
+          const previewId = preview.preview_id;
 
-            // Cache the result
-            setCachedPreview(req.cacheKey, previewUrl, previewId);
+          // Cache the result
+          setCachedPreview(req.cacheKey, previewUrl, previewId);
 
-            results.push({
-              item: req.product,
-              previewUrl,
-              previewId,
-            });
-          } else {
-            results.push({
-              item: req.product,
-              error: 'No renders in preview response',
-            });
-          }
-        });
-      } else {
-        // Preview failed for this format group
-        requests.forEach(req => {
           results.push({
             item: req.product,
-            error: response.error || 'Preview generation failed',
+            previewUrl,
+            previewId,
           });
+        } else {
+          results.push({
+            item: req.product,
+            error: 'No renders in preview response',
+          });
+        }
+      } else {
+        results.push({
+          item: req.product,
+          error: response.error || 'Preview generation failed',
         });
       }
     } catch (error) {
-      // Error calling preview_creative
-      requests.forEach(req => {
-        results.push({
-          item: req.product,
-          error: error instanceof Error ? error.message : 'Unknown error',
-        });
+      results.push({
+        item: req.product,
+        error: error instanceof Error ? error.message : 'Unknown error',
       });
     }
   }
@@ -346,63 +336,54 @@ export async function batchPreviewFormats(
     groupedByFormat.get(formatKey)!.push(req);
   });
 
-  // Process each format group
-  for (const [formatKey, requests] of groupedByFormat) {
+  // Process each format individually
+  // Note: Each format has different manifest data, so we can't truly batch them
+  // We process them sequentially but could parallelize in the future
+  for (const req of previewRequests) {
     try {
-      const firstReq = requests[0];
-
-      // Build preview_creative request with inputs array for batch processing
+      // Build preview_creative request for this format
+      // For format cards, the manifest typically contains the format object as JSON
       const previewRequest: PreviewCreativeRequest = {
-        format_id: firstReq.formatId,
-        creative_manifest: requests[0].manifest, // Use first manifest as base
-        inputs: requests.map(req => ({
-          name: req.inputName,
-          macros: {}, // Format cards don't typically use macros
-        })),
+        format_id: req.formatId,
+        creative_manifest: {
+          format_id: req.formatId,
+          assets: req.manifest, // manifest contains the asset map (format, etc)
+        },
       };
 
       // Call preview_creative
       const response = await creativeAgentClient.previewCreative(previewRequest);
 
-      if (response.success && response.data?.previews) {
-        // Map previews back to formats
-        requests.forEach((req, index) => {
-          const preview = response.data!.previews[index];
-          if (preview && preview.renders && preview.renders.length > 0) {
-            const previewUrl = preview.renders[0].preview_url;
-            const previewId = preview.preview_id;
+      if (response.success && response.data?.previews && response.data.previews.length > 0) {
+        const preview = response.data.previews[0];
+        if (preview.renders && preview.renders.length > 0) {
+          const previewUrl = preview.renders[0].preview_url;
+          const previewId = preview.preview_id;
 
-            // Cache the result
-            setCachedPreview(req.cacheKey, previewUrl, previewId);
+          // Cache the result
+          setCachedPreview(req.cacheKey, previewUrl, previewId);
 
-            results.push({
-              item: req.format,
-              previewUrl,
-              previewId,
-            });
-          } else {
-            results.push({
-              item: req.format,
-              error: 'No renders in preview response',
-            });
-          }
-        });
-      } else {
-        // Preview failed for this format group
-        requests.forEach(req => {
           results.push({
             item: req.format,
-            error: response.error || 'Preview generation failed',
+            previewUrl,
+            previewId,
           });
+        } else {
+          results.push({
+            item: req.format,
+            error: 'No renders in preview response',
+          });
+        }
+      } else {
+        results.push({
+          item: req.format,
+          error: response.error || 'Preview generation failed',
         });
       }
     } catch (error) {
-      // Error calling preview_creative
-      requests.forEach(req => {
-        results.push({
-          item: req.format,
-          error: error instanceof Error ? error.message : 'Unknown error',
-        });
+      results.push({
+        item: req.format,
+        error: error instanceof Error ? error.message : 'Unknown error',
       });
     }
   }

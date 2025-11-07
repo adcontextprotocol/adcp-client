@@ -1280,7 +1280,7 @@ export class ADCPClient {
       provide_performance_feedback: schemas.ProvidePerformanceFeedbackRequestSchema,
       get_signals: schemas.GetSignalsRequestSchema,
       activate_signal: schemas.ActivateSignalRequestSchema,
-      preview_creative: schemas.PreviewCreativeResponseSchema, // Note: using response schema temporarily
+      preview_creative: schemas.PreviewCreativeRequestSchema,
     };
 
     return schemaMap[taskType] || null;
