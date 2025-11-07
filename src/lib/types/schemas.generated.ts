@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2025-11-07T16:14:51.821Z
+// Generated at: 2025-11-07T16:27:54.932Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -622,7 +622,7 @@ export const CreativeManifest1Schema = z.object({
 export const PreviewCreativeResponseSchema = z.union([z.object({
         previews: z.tuple([z.object({
                 preview_id: z.string(),
-                renders: z.tuple([z.union([z.record(z.string(), z.unknown()), z.record(z.string(), z.unknown()), z.record(z.string(), z.unknown())])]).rest(z.union([z.record(z.string(), z.unknown()), z.record(z.string(), z.unknown()), z.record(z.string(), z.unknown())])),
+                renders: z.tuple([z.record(z.string(), z.unknown()).and(z.record(z.string(), z.unknown())).and(z.record(z.string(), z.unknown()))]).rest(z.record(z.string(), z.unknown()).and(z.record(z.string(), z.unknown())).and(z.record(z.string(), z.unknown()))),
                 input: z.object({
                     name: z.string(),
                     macros: z.record(z.string(), z.string()).optional(),
@@ -630,7 +630,7 @@ export const PreviewCreativeResponseSchema = z.union([z.object({
                 })
             })]).rest(z.object({
             preview_id: z.string(),
-            renders: z.tuple([z.union([z.record(z.string(), z.unknown()), z.record(z.string(), z.unknown()), z.record(z.string(), z.unknown())])]).rest(z.union([z.record(z.string(), z.unknown()), z.record(z.string(), z.unknown()), z.record(z.string(), z.unknown())])),
+            renders: z.tuple([z.record(z.string(), z.unknown()).and(z.record(z.string(), z.unknown())).and(z.record(z.string(), z.unknown()))]).rest(z.record(z.string(), z.unknown()).and(z.record(z.string(), z.unknown())).and(z.record(z.string(), z.unknown()))),
             input: z.object({
                 name: z.string(),
                 macros: z.record(z.string(), z.string()).optional(),

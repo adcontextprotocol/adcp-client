@@ -3200,28 +3200,20 @@ export type PreviewCreativeResponse =
            * @minItems 1
            */
           renders: [
-            (
-              | {
-                  [k: string]: unknown;
-                }
-              | {
-                  [k: string]: unknown;
-                }
-              | {
-                  [k: string]: unknown;
-                }
-            ),
-            ...(
-              | {
-                  [k: string]: unknown;
-                }
-              | {
-                  [k: string]: unknown;
-                }
-              | {
-                  [k: string]: unknown;
-                }
-            )[]
+            {
+              [k: string]: unknown;
+            } & {
+              [k: string]: unknown;
+            } & {
+              [k: string]: unknown;
+            },
+            ...({
+              [k: string]: unknown;
+            } & {
+              [k: string]: unknown;
+            } & {
+              [k: string]: unknown;
+            })[]
           ];
           /**
            * The input parameters that generated this preview variant. Echoes back the request input or shows defaults used.
@@ -3254,28 +3246,20 @@ export type PreviewCreativeResponse =
            * @minItems 1
            */
           renders: [
-            (
-              | {
-                  [k: string]: unknown;
-                }
-              | {
-                  [k: string]: unknown;
-                }
-              | {
-                  [k: string]: unknown;
-                }
-            ),
-            ...(
-              | {
-                  [k: string]: unknown;
-                }
-              | {
-                  [k: string]: unknown;
-                }
-              | {
-                  [k: string]: unknown;
-                }
-            )[]
+            {
+              [k: string]: unknown;
+            } & {
+              [k: string]: unknown;
+            } & {
+              [k: string]: unknown;
+            },
+            ...({
+              [k: string]: unknown;
+            } & {
+              [k: string]: unknown;
+            } & {
+              [k: string]: unknown;
+            })[]
           ];
           /**
            * The input parameters that generated this preview variant. Echoes back the request input or shows defaults used.
