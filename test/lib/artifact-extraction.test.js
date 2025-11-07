@@ -178,6 +178,61 @@ describe('Artifact Extraction Tests', () => {
       const fallbackLog = debugLogs.find(log => log.message.includes('Returning A2A result directly'));
       assert.ok(fallbackLog, 'Should log fallback to result');
     });
+
+    it('should extract data from framework-wrapped responses (e.g., ADK FunctionResponse)', async () => {
+      // Mock A2A response with ADK FunctionResponse wrapper
+      // ADK wraps responses in { id, name, response: {...} } format
+      const mockResponse = {
+        result: {
+          artifacts: [
+            {
+              artifactId: 'skill_result_1',
+              name: 'list_creative_formats',
+              parts: [
+                {
+                  kind: 'data',
+                  data: {
+                    // Framework wrapper (ADK FunctionResponse)
+                    id: 'call_abc123',
+                    name: 'list_creative_formats',
+                    response: {
+                      // Actual ADCP data nested inside
+                      formats: [
+                        { format_id: 'video_1920x1080', name: 'HD Video', width: 1920, height: 1080 },
+                        { format_id: 'display_300x250', name: 'Medium Rectangle', width: 300, height: 250 },
+                      ],
+                      adcp_version: '1.6.0',
+                    },
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      };
+
+      const debugLogs = [];
+      const extractedData = executor.extractResponseData(mockResponse, debugLogs);
+
+      // Should extract the nested data from the 'response' field, not the wrapper
+      assert.ok(extractedData.formats, 'Should have formats from nested response');
+      assert.strictEqual(extractedData.formats.length, 2, 'Should have 2 formats');
+      assert.strictEqual(extractedData.formats[0].format_id, 'video_1920x1080');
+      assert.strictEqual(extractedData.adcp_version, '1.6.0');
+
+      // Should NOT have wrapper fields
+      assert.strictEqual(extractedData.id, undefined, 'Should not have wrapper id field');
+      assert.strictEqual(extractedData.name, undefined, 'Should not have wrapper name field');
+
+      // Check debug logs for wrapper detection
+      const wrapperLog = debugLogs.find(log => log.message.includes('Extracting data from framework wrapper'));
+      assert.ok(wrapperLog, 'Should log framework wrapper detection');
+      assert.ok(wrapperLog.details, 'Should have wrapper details');
+      assert.strictEqual(wrapperLog.details.wrapperId, 'call_abc123');
+      assert.strictEqual(wrapperLog.details.wrapperName, 'list_creative_formats');
+      assert.ok(wrapperLog.details.hasFormats, 'Should detect formats in nested data');
+      assert.strictEqual(wrapperLog.details.formatsCount, 2);
+    });
   });
 
   describe('MCP Protocol Extraction', () => {
