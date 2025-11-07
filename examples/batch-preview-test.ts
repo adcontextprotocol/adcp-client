@@ -54,7 +54,8 @@ async function main() {
             content: 'Premium Display Package',
           },
           product_description: {
-            content: 'High-visibility display advertising with guaranteed impressions and premium placements across our network.',
+            content:
+              'High-visibility display advertising with guaranteed impressions and premium placements across our network.',
           },
           pricing_model: {
             content: 'CPM',

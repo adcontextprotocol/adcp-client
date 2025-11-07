@@ -39,10 +39,11 @@ async function main() {
   console.log(`✅ Found ${formats.length} formats\n`);
 
   // Look for card formats
-  const cardFormats = formats.filter(f =>
-    f.format_id.id.includes('card') ||
-    f.name?.toLowerCase().includes('card') ||
-    f.description?.toLowerCase().includes('card')
+  const cardFormats = formats.filter(
+    f =>
+      f.format_id.id.includes('card') ||
+      f.name?.toLowerCase().includes('card') ||
+      f.description?.toLowerCase().includes('card')
   );
 
   if (cardFormats.length === 0) {
@@ -99,10 +100,7 @@ async function main() {
   console.log('EXAMPLE: Standard Display Format (for reference)');
   console.log('═══════════════════════════════════════════════════════════\n');
 
-  const displayFormat = formats.find(f =>
-    f.format_id.id.includes('display') &&
-    f.format_id.id.includes('300x250')
-  );
+  const displayFormat = formats.find(f => f.format_id.id.includes('display') && f.format_id.id.includes('300x250'));
 
   if (displayFormat) {
     console.log(`Format ID: ${displayFormat.format_id.id}`);
@@ -123,7 +121,7 @@ async function main() {
   console.log('─'.repeat(60));
   console.log('1. Card formats should define their assets_required');
   console.log('2. creative_manifest.assets should map asset_id -> asset object');
-  console.log('3. Each asset_id must match the format\'s assets_required');
+  console.log("3. Each asset_id must match the format's assets_required");
   console.log('4. Asset types (ImageAsset, TextAsset, etc) depend on asset_type\n');
 }
 

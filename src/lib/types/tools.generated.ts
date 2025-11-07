@@ -3031,292 +3031,307 @@ export interface BuildCreativeResponse {
 
 // preview_creative parameters
 /**
+ * Request to generate previews of one or more creative manifests. Accepts either a single creative request or an array of requests for batch processing.
+ */
+export type PreviewCreativeRequest =
+  | {
+      format_id: FormatID;
+      creative_manifest: CreativeManifest;
+      /**
+       * Array of input sets for generating multiple preview variants. Each input set defines macros and context values for one preview rendering. If not provided, creative agent will generate default previews.
+       */
+      inputs?: {
+        /**
+         * Human-readable name for this input set (e.g., 'Sunny morning on mobile', 'Evening podcast ad', 'Desktop dark mode')
+         */
+        name: string;
+        /**
+         * Macro values to use for this preview. Supports all universal macros from the format's supported_macros list. See docs/media-buy/creatives/universal-macros.md for available macros.
+         */
+        macros?: {
+          [k: string]: string;
+        };
+        /**
+         * Natural language description of the context for AI-generated content (e.g., 'User just searched for running shoes', 'Podcast discussing weather patterns', 'Article about electric vehicles')
+         */
+        context_description?: string;
+      }[];
+      /**
+       * Specific template ID for custom format rendering
+       */
+      template_id?: string;
+      /**
+       * Output format for previews. 'url' returns preview_url (iframe-embeddable URL), 'html' returns preview_html (raw HTML for direct embedding). Default: 'url' for backward compatibility.
+       */
+      output_format?: 'url' | 'html';
+    }
+  | {
+      /**
+       * Array of preview requests (1-50 items). Each follows the single request structure.
+       *
+       * @minItems 1
+       * @maxItems 50
+       */
+      requests: [
+        {
+          format_id: FormatID2;
+          creative_manifest: CreativeManifest1;
+          /**
+           * Array of input sets for generating multiple preview variants
+           */
+          inputs?: {
+            /**
+             * Human-readable name for this input set
+             */
+            name: string;
+            /**
+             * Macro values to use for this preview
+             */
+            macros?: {
+              [k: string]: string;
+            };
+            /**
+             * Natural language description of the context for AI-generated content
+             */
+            context_description?: string;
+          }[];
+          /**
+           * Specific template ID for custom format rendering
+           */
+          template_id?: string;
+          /**
+           * Output format for this preview. 'url' returns preview_url, 'html' returns preview_html.
+           */
+          output_format?: 'url' | 'html';
+        },
+        ...{
+          format_id: FormatID2;
+          creative_manifest: CreativeManifest1;
+          /**
+           * Array of input sets for generating multiple preview variants
+           */
+          inputs?: {
+            /**
+             * Human-readable name for this input set
+             */
+            name: string;
+            /**
+             * Macro values to use for this preview
+             */
+            macros?: {
+              [k: string]: string;
+            };
+            /**
+             * Natural language description of the context for AI-generated content
+             */
+            context_description?: string;
+          }[];
+          /**
+           * Specific template ID for custom format rendering
+           */
+          template_id?: string;
+          /**
+           * Output format for this preview. 'url' returns preview_url, 'html' returns preview_html.
+           */
+          output_format?: 'url' | 'html';
+        }[]
+      ];
+      /**
+       * Default output format for all requests in this batch. Individual requests can override this. 'url' returns preview_url (iframe-embeddable URL), 'html' returns preview_html (raw HTML for direct embedding).
+       */
+      output_format?: 'url' | 'html';
+    };
+/**
  * VAST (Video Ad Serving Template) tag for third-party video ad serving
  */
-export interface PreviewCreativeRequest {
-  format_id: FormatID;
-  creative_manifest: CreativeManifest;
+export interface CreativeManifest1 {
+  format_id: FormatID1;
   /**
-   * Array of input sets for generating multiple preview variants. Each input set defines macros and context values for one preview rendering. If not provided, creative agent will generate default previews.
+   * Product name or offering being advertised. Maps to promoted_offerings in create_media_buy request to associate creative with the product being promoted.
    */
-  inputs?: {
-    /**
-     * Human-readable name for this input set (e.g., 'Sunny morning on mobile', 'Evening podcast ad', 'Desktop dark mode')
-     */
-    name: string;
-    /**
-     * Macro values to use for this preview. Supports all universal macros from the format's supported_macros list. See docs/media-buy/creatives/universal-macros.md for available macros.
-     */
-    macros?: {
-      [k: string]: string;
-    };
-    /**
-     * Natural language description of the context for AI-generated content (e.g., 'User just searched for running shoes', 'Podcast discussing weather patterns', 'Article about electric vehicles')
-     */
-    context_description?: string;
-  }[];
+  promoted_offering?: string;
   /**
-   * Specific template ID for custom format rendering
+   * Map of asset IDs to actual asset content. Each key MUST match an asset_id from the format's assets_required array (e.g., 'banner_image', 'clickthrough_url', 'video_file', 'vast_tag'). The asset_id is the technical identifier used to match assets to format requirements.
+   *
+   * IMPORTANT: Creative manifest validation MUST be performed in the context of the format specification. The format defines what type each asset_id should be, which eliminates any validation ambiguity.
    */
-  template_id?: string;
+  assets: {
+    /**
+     * This interface was referenced by `undefined`'s JSON-Schema definition
+     * via the `patternProperty` "^[a-z0-9_]+$".
+     */
+    [k: string]:
+      | ImageAsset
+      | VideoAsset
+      | AudioAsset
+      | VASTAsset
+      | TextAsset
+      | URLAsset
+      | HTMLAsset
+      | JavaScriptAsset
+      | WebhookAsset
+      | CSSAsset
+      | DAASTAsset
+      | PromotedOfferings;
+  };
 }
-/**
- * Format identifier for rendering the preview
- */
+
 
 // preview_creative response
 /**
- * Response containing preview links for a creative. Each preview URL returns an HTML page that can be embedded in an iframe to display the rendered creative.
+ * Response containing preview links for one or more creatives. Format matches the request: single preview response for single requests, batch results for batch requests.
  */
-export interface PreviewCreativeResponse {
-  /**
-   * Array of preview variants. Each preview corresponds to an input set from the request. If no inputs were provided, returns a single default preview.
-   *
-   * @minItems 1
-   */
-  previews: [
-    {
+export type PreviewCreativeResponse =
+  | {
       /**
-       * Unique identifier for this preview variant
-       */
-      preview_id: string;
-      /**
-       * Array of rendered pieces for this preview variant. Most formats render as a single piece. Companion ad formats (video + banner), multi-placement formats, and adaptive formats render as multiple pieces.
+       * Array of preview variants. Each preview corresponds to an input set from the request. If no inputs were provided, returns a single default preview.
        *
        * @minItems 1
        */
-      renders: [
+      previews: [
         {
           /**
-           * Unique identifier for this rendered piece within the variant
+           * Unique identifier for this preview variant
            */
-          render_id: string;
+          preview_id: string;
           /**
-           * URL to an HTML page that renders this piece. Can be embedded in an iframe. Handles all rendering complexity internally (images, video players, audio players, interactive content, etc.).
+           * Array of rendered pieces for this preview variant. Most formats render as a single piece. Companion ad formats (video + banner), multi-placement formats, and adaptive formats render as multiple pieces.
+           *
+           * @minItems 1
            */
-          preview_url: string;
+          renders: [
+            (
+              | {
+                  [k: string]: unknown;
+                }
+              | {
+                  [k: string]: unknown;
+                }
+              | {
+                  [k: string]: unknown;
+                }
+            ),
+            ...(
+              | {
+                  [k: string]: unknown;
+                }
+              | {
+                  [k: string]: unknown;
+                }
+              | {
+                  [k: string]: unknown;
+                }
+            )[]
+          ];
           /**
-           * Semantic role of this rendered piece. Use 'primary' for main content, 'companion' for associated banners, descriptive strings for device variants or custom roles.
+           * The input parameters that generated this preview variant. Echoes back the request input or shows defaults used.
            */
-          role: string;
-          /**
-           * Dimensions for this rendered piece. For companion ads with multiple sizes, this specifies which size this piece is.
-           */
-          dimensions?: {
-            width: number;
-            height: number;
-          };
-          /**
-           * Optional security and embedding metadata for safe iframe integration
-           */
-          embedding?: {
+          input: {
             /**
-             * Recommended iframe sandbox attribute value (e.g., 'allow-scripts allow-same-origin')
+             * Human-readable name for this variant
              */
-            recommended_sandbox?: string;
+            name: string;
             /**
-             * Whether this output requires HTTPS for secure embedding
+             * Macro values applied to this variant
              */
-            requires_https?: boolean;
+            macros?: {
+              [k: string]: string;
+            };
             /**
-             * Whether this output supports fullscreen mode
+             * Context description applied to this variant
              */
-            supports_fullscreen?: boolean;
-            /**
-             * Content Security Policy requirements for embedding
-             */
-            csp_policy?: string;
+            context_description?: string;
           };
         },
         ...{
           /**
-           * Unique identifier for this rendered piece within the variant
+           * Unique identifier for this preview variant
            */
-          render_id: string;
+          preview_id: string;
           /**
-           * URL to an HTML page that renders this piece. Can be embedded in an iframe. Handles all rendering complexity internally (images, video players, audio players, interactive content, etc.).
+           * Array of rendered pieces for this preview variant. Most formats render as a single piece. Companion ad formats (video + banner), multi-placement formats, and adaptive formats render as multiple pieces.
+           *
+           * @minItems 1
            */
-          preview_url: string;
+          renders: [
+            (
+              | {
+                  [k: string]: unknown;
+                }
+              | {
+                  [k: string]: unknown;
+                }
+              | {
+                  [k: string]: unknown;
+                }
+            ),
+            ...(
+              | {
+                  [k: string]: unknown;
+                }
+              | {
+                  [k: string]: unknown;
+                }
+              | {
+                  [k: string]: unknown;
+                }
+            )[]
+          ];
           /**
-           * Semantic role of this rendered piece. Use 'primary' for main content, 'companion' for associated banners, descriptive strings for device variants or custom roles.
+           * The input parameters that generated this preview variant. Echoes back the request input or shows defaults used.
            */
-          role: string;
-          /**
-           * Dimensions for this rendered piece. For companion ads with multiple sizes, this specifies which size this piece is.
-           */
-          dimensions?: {
-            width: number;
-            height: number;
-          };
-          /**
-           * Optional security and embedding metadata for safe iframe integration
-           */
-          embedding?: {
+          input: {
             /**
-             * Recommended iframe sandbox attribute value (e.g., 'allow-scripts allow-same-origin')
+             * Human-readable name for this variant
              */
-            recommended_sandbox?: string;
+            name: string;
             /**
-             * Whether this output requires HTTPS for secure embedding
+             * Macro values applied to this variant
              */
-            requires_https?: boolean;
+            macros?: {
+              [k: string]: string;
+            };
             /**
-             * Whether this output supports fullscreen mode
+             * Context description applied to this variant
              */
-            supports_fullscreen?: boolean;
-            /**
-             * Content Security Policy requirements for embedding
-             */
-            csp_policy?: string;
+            context_description?: string;
           };
         }[]
       ];
       /**
-       * The input parameters that generated this preview variant. Echoes back the request input or shows defaults used.
+       * Optional URL to an interactive testing page that shows all preview variants with controls to switch between them, modify macro values, and test different scenarios.
        */
-      input: {
-        /**
-         * Human-readable name for this variant
-         */
-        name: string;
-        /**
-         * Macro values applied to this variant
-         */
-        macros?: {
-          [k: string]: string;
-        };
-        /**
-         * Context description applied to this variant
-         */
-        context_description?: string;
-      };
-    },
-    ...{
+      interactive_url?: string;
       /**
-       * Unique identifier for this preview variant
+       * ISO 8601 timestamp when preview links expire
        */
-      preview_id: string;
+      expires_at: string;
+    }
+  | {
       /**
-       * Array of rendered pieces for this preview variant. Most formats render as a single piece. Companion ad formats (video + banner), multi-placement formats, and adaptive formats render as multiple pieces.
+       * Array of preview results corresponding to each request in the same order. results[0] is the result for requests[0], results[1] for requests[1], etc. Order is guaranteed even when some requests fail. Each result contains either a successful preview response or an error.
        *
        * @minItems 1
        */
-      renders: [
-        {
-          /**
-           * Unique identifier for this rendered piece within the variant
-           */
-          render_id: string;
-          /**
-           * URL to an HTML page that renders this piece. Can be embedded in an iframe. Handles all rendering complexity internally (images, video players, audio players, interactive content, etc.).
-           */
-          preview_url: string;
-          /**
-           * Semantic role of this rendered piece. Use 'primary' for main content, 'companion' for associated banners, descriptive strings for device variants or custom roles.
-           */
-          role: string;
-          /**
-           * Dimensions for this rendered piece. For companion ads with multiple sizes, this specifies which size this piece is.
-           */
-          dimensions?: {
-            width: number;
-            height: number;
-          };
-          /**
-           * Optional security and embedding metadata for safe iframe integration
-           */
-          embedding?: {
-            /**
-             * Recommended iframe sandbox attribute value (e.g., 'allow-scripts allow-same-origin')
-             */
-            recommended_sandbox?: string;
-            /**
-             * Whether this output requires HTTPS for secure embedding
-             */
-            requires_https?: boolean;
-            /**
-             * Whether this output supports fullscreen mode
-             */
-            supports_fullscreen?: boolean;
-            /**
-             * Content Security Policy requirements for embedding
-             */
-            csp_policy?: string;
-          };
-        },
-        ...{
-          /**
-           * Unique identifier for this rendered piece within the variant
-           */
-          render_id: string;
-          /**
-           * URL to an HTML page that renders this piece. Can be embedded in an iframe. Handles all rendering complexity internally (images, video players, audio players, interactive content, etc.).
-           */
-          preview_url: string;
-          /**
-           * Semantic role of this rendered piece. Use 'primary' for main content, 'companion' for associated banners, descriptive strings for device variants or custom roles.
-           */
-          role: string;
-          /**
-           * Dimensions for this rendered piece. For companion ads with multiple sizes, this specifies which size this piece is.
-           */
-          dimensions?: {
-            width: number;
-            height: number;
-          };
-          /**
-           * Optional security and embedding metadata for safe iframe integration
-           */
-          embedding?: {
-            /**
-             * Recommended iframe sandbox attribute value (e.g., 'allow-scripts allow-same-origin')
-             */
-            recommended_sandbox?: string;
-            /**
-             * Whether this output requires HTTPS for secure embedding
-             */
-            requires_https?: boolean;
-            /**
-             * Whether this output supports fullscreen mode
-             */
-            supports_fullscreen?: boolean;
-            /**
-             * Content Security Policy requirements for embedding
-             */
-            csp_policy?: string;
-          };
-        }[]
+      results: [
+        (
+          | {
+              success?: true;
+            }
+          | {
+              success?: false;
+            }
+        ),
+        ...(
+          | {
+              success?: true;
+            }
+          | {
+              success?: false;
+            }
+        )[]
       ];
-      /**
-       * The input parameters that generated this preview variant. Echoes back the request input or shows defaults used.
-       */
-      input: {
-        /**
-         * Human-readable name for this variant
-         */
-        name: string;
-        /**
-         * Macro values applied to this variant
-         */
-        macros?: {
-          [k: string]: string;
-        };
-        /**
-         * Context description applied to this variant
-         */
-        context_description?: string;
-      };
-    }[]
-  ];
-  /**
-   * Optional URL to an interactive testing page that shows all preview variants with controls to switch between them, modify macro values, and test different scenarios.
-   */
-  interactive_url?: string;
-  /**
-   * ISO 8601 timestamp when preview links expire
-   */
-  expires_at: string;
-}
+    };
 
 
 // get_signals parameters

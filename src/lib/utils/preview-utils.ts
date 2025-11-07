@@ -50,7 +50,7 @@ function getCacheKey(formatId: FormatID, manifest: any): string {
   // Simple hash of manifest for cache key
   const manifestStr = JSON.stringify(manifest);
   const manifestHash = Array.from(manifestStr)
-    .reduce((hash, char) => ((hash << 5) - hash) + char.charCodeAt(0), 0)
+    .reduce((hash, char) => (hash << 5) - hash + char.charCodeAt(0), 0)
     .toString(36);
 
   return `${formatId.agent_url}:${formatId.id}:${manifestHash}`;
