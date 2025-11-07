@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas v2.4.0
-// Generated at: 2025-11-05T16:13:09.080Z
+// Generated at: 2025-11-07T11:52:22.869Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -908,6 +908,26 @@ export interface Product {
    * Expiration timestamp for custom products
    */
   expires_at?: string;
+  /**
+   * Optional standard visual card (300x400px) for displaying this product in user interfaces. Can be rendered via preview_creative or pre-generated.
+   */
+  product_card?: {
+    format_id: FormatID1;
+    /**
+     * Asset manifest for rendering the card, structure defined by the format
+     */
+    manifest: {};
+  };
+  /**
+   * Optional detailed card with carousel and full specifications. Provides rich product presentation similar to media kit pages.
+   */
+  product_card_detailed?: {
+    format_id: FormatID2;
+    /**
+     * Asset manifest for rendering the detailed card, structure defined by the format
+     */
+    manifest: {};
+  };
 }
 /**
  * Structured format identifier with agent URL and format name
@@ -1349,6 +1369,32 @@ export interface CreativePolicy {
    * Whether creative templates are provided
    */
   templates_available: boolean;
+}
+/**
+ * Structured format identifier with agent URL and format name
+ */
+export interface FormatID1 {
+  /**
+   * URL of the agent that defines this format (e.g., 'https://creatives.adcontextprotocol.org' for standard formats, or 'https://publisher.com/.well-known/adcp/sales' for custom formats)
+   */
+  agent_url: string;
+  /**
+   * Format identifier within the agent's namespace (e.g., 'display_300x250', 'video_standard_30s')
+   */
+  id: string;
+}
+/**
+ * Structured format identifier with agent URL and format name
+ */
+export interface FormatID2 {
+  /**
+   * URL of the agent that defines this format (e.g., 'https://creatives.adcontextprotocol.org' for standard formats, or 'https://publisher.com/.well-known/adcp/sales' for custom formats)
+   */
+  agent_url: string;
+  /**
+   * Format identifier within the agent's namespace (e.g., 'display_300x250', 'video_standard_30s')
+   */
+  id: string;
 }
 
 // TARGETING SCHEMA

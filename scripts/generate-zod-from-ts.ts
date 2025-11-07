@@ -87,6 +87,7 @@ const TOOL_TYPES = [
   'GetProductsResponse',
   'ListCreativeFormatsRequest',
   'ListCreativeFormatsResponse',
+  'Format', // Used by ListCreativeFormatsResponse
   'CreateMediaBuyRequest',
   'CreateMediaBuyResponse',
   'UpdateMediaBuyRequest',

@@ -421,6 +421,30 @@ export interface Product {
    * Expiration timestamp for custom products
    */
   expires_at?: string;
+  /**
+   * Optional standard visual card (300x400px) for displaying this product in user interfaces. Can be rendered via preview_creative or pre-generated.
+   */
+  product_card?: {
+    format_id: FormatID1;
+    /**
+     * Asset manifest for rendering the card, structure defined by the format
+     */
+    manifest: {
+      [k: string]: unknown;
+    };
+  };
+  /**
+   * Optional detailed card with carousel and full specifications. Provides rich product presentation similar to media kit pages.
+   */
+  product_card_detailed?: {
+    format_id: FormatID2;
+    /**
+     * Asset manifest for rendering the detailed card, structure defined by the format
+     */
+    manifest: {
+      [k: string]: unknown;
+    };
+  };
 }
 /**
  * Structured format identifier with agent URL and format name
@@ -851,6 +875,32 @@ export interface CreativePolicy {
   templates_available: boolean;
 }
 /**
+ * Structured format identifier with agent URL and format name
+ */
+export interface FormatID1 {
+  /**
+   * URL of the agent that defines this format (e.g., 'https://creatives.adcontextprotocol.org' for standard formats, or 'https://publisher.com/.well-known/adcp/sales' for custom formats)
+   */
+  agent_url: string;
+  /**
+   * Format identifier within the agent's namespace (e.g., 'display_300x250', 'video_standard_30s')
+   */
+  id: string;
+}
+/**
+ * Structured format identifier with agent URL and format name
+ */
+export interface FormatID2 {
+  /**
+   * URL of the agent that defines this format (e.g., 'https://creatives.adcontextprotocol.org' for standard formats, or 'https://publisher.com/.well-known/adcp/sales' for custom formats)
+   */
+  agent_url: string;
+  /**
+   * Format identifier within the agent's namespace (e.g., 'display_300x250', 'video_standard_30s')
+   */
+  id: string;
+}
+/**
  * Standard error structure for task-specific errors and warnings
  */
 export interface Error {
@@ -974,7 +1024,7 @@ export interface Format {
    */
   description?: string;
   /**
-   * Optional preview image URL for format browsing/discovery UI. Should be 400x300px (4:3 aspect ratio) PNG or JPG. Used as thumbnail/card image in format browsers.
+   * DEPRECATED: Use format_card instead. Optional preview image URL for format browsing/discovery UI. Should be 400x300px (4:3 aspect ratio) PNG or JPG. Used as thumbnail/card image in format browsers. This field is maintained for backward compatibility but format_card provides a more flexible, structured approach.
    */
   preview_image?: string;
   /**
@@ -1111,6 +1161,7 @@ export interface Format {
           | 'vast'
           | 'daast'
           | 'text'
+          | 'markdown'
           | 'html'
           | 'css'
           | 'javascript'
@@ -1167,6 +1218,7 @@ export interface Format {
             | 'vast'
             | 'daast'
             | 'text'
+            | 'markdown'
             | 'html'
             | 'css'
             | 'javascript'
@@ -1204,11 +1256,35 @@ export interface Format {
    * For generative formats: array of format IDs that this format can generate. When a format accepts inputs like brand_manifest and message, this specifies what concrete output formats can be produced (e.g., a generative banner format might output standard image banner formats).
    */
   output_format_ids?: FormatID1[];
+  /**
+   * Optional standard visual card (300x400px) for displaying this format in user interfaces. Can be rendered via preview_creative or pre-generated.
+   */
+  format_card?: {
+    format_id: FormatID2;
+    /**
+     * Asset manifest for rendering the card, structure defined by the format
+     */
+    manifest: {
+      [k: string]: unknown;
+    };
+  };
+  /**
+   * Optional detailed card with carousel and full specifications. Provides rich format documentation similar to ad spec pages.
+   */
+  format_card_detailed?: {
+    format_id: FormatID3;
+    /**
+     * Asset manifest for rendering the detailed card, structure defined by the format
+     */
+    manifest: {
+      [k: string]: unknown;
+    };
+  };
 }
 /**
  * Structured format identifier with agent URL and format name
  */
-export interface FormatID1 {
+export interface FormatID3 {
   /**
    * URL of the agent that defines this format (e.g., 'https://creatives.adcontextprotocol.org' for standard formats, or 'https://publisher.com/.well-known/adcp/sales' for custom formats)
    */
