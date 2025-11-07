@@ -34,56 +34,14 @@ export async function callMCPTool(
     });
   }
 
-  // Create custom fetch that injects auth headers into every request
-  // This ensures ALL requests (including initialization) include auth headers when needed
-  // IMPORTANT: We must preserve the SDK's default headers (especially Accept header)
-  const customFetch = async (input: RequestInfo | URL, init?: RequestInit) => {
-    // Convert existing headers to plain object for merging
-    // CRITICAL: Must handle Headers objects properly - spreading doesn't work!
-    let existingHeaders: Record<string, string> = {};
-    if (init?.headers) {
-      if (init.headers instanceof Headers) {
-        // Headers object - use forEach to extract all headers
-        init.headers.forEach((value, key) => {
-          existingHeaders[key] = value;
-        });
-      } else if (Array.isArray(init.headers)) {
-        // Array of [key, value] tuples
-        for (const [key, value] of init.headers) {
-          existingHeaders[key] = value;
-        }
-      } else {
-        // Plain object - copy all properties
-        for (const key in init.headers) {
-          if (Object.prototype.hasOwnProperty.call(init.headers, key)) {
-            existingHeaders[key] = init.headers[key] as string;
-          }
-        }
-      }
-    }
-
-    // Merge auth headers with existing headers
-    // Keep existing headers (including Accept) and only add/override with auth headers
-    const mergedHeaders = {
-      ...existingHeaders,
-      ...authHeaders,
-    };
-
-    const mergedInit: RequestInit = {
-      ...init,
-      headers: mergedHeaders,
-    };
-
-    debugLogs.push({
-      type: 'info',
-      message: `MCP: Fetch to ${typeof input === 'string' ? input : input.toString()}`,
-      timestamp: new Date().toISOString(),
-      hasAuth: !!authToken,
-      headers: authToken ? { ...mergedHeaders, 'x-adcp-auth': '***' } : mergedHeaders,
-    });
-
-    return fetch(input, mergedInit);
-  };
+  // Log auth configuration
+  debugLogs.push({
+    type: 'info',
+    message: `MCP: Auth configuration`,
+    timestamp: new Date().toISOString(),
+    hasAuth: !!authToken,
+    headers: authToken ? { 'x-adcp-auth': '***' } : {},
+  });
 
   try {
     // First, try to connect using StreamableHTTPClientTransport
@@ -98,9 +56,12 @@ export async function callMCPTool(
       version: '1.0.0',
     });
 
-    // Use the SDK with custom fetch function for authentication
+    // Use the SDK with requestInit headers for authentication
+    // The SDK's StreamableHTTPClientTransport will use these headers for ALL requests
     const transport = new StreamableHTTPClientTransport(baseUrl, {
-      fetch: customFetch,
+      requestInit: {
+        headers: authHeaders,
+      },
     });
     await mcpClient.connect(transport);
 
