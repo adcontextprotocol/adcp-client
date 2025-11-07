@@ -6,7 +6,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const { AdCPClient } = require('../../dist/lib/index.js');
+const { ADCPClient } = require('../../dist/lib/index.js');
 
 // Mock HTTP client for testing
 class MockHTTPClient {
@@ -40,9 +40,9 @@ test('MCP Endpoint Discovery - Trailing Slash Handling', async t => {
       requiresAuth: false,
     };
 
-    const client = new AdCPClient([agent]);
-    assert.strictEqual(client.getAgents().length, 1);
-    assert.strictEqual(client.getAgents()[0].agent_uri, 'https://example.com/mcp/');
+    const client = new ADCPClient([agent]);
+    assert.strictEqual(client.getAgentConfigs().length, 1);
+    assert.strictEqual(client.getAgentConfigs()[0].agent_uri, 'https://example.com/mcp/');
   });
 
   await t.test('preserves no trailing slash when not provided', async () => {
@@ -54,8 +54,8 @@ test('MCP Endpoint Discovery - Trailing Slash Handling', async t => {
       requiresAuth: false,
     };
 
-    const client = new AdCPClient([agent]);
-    assert.strictEqual(client.getAgents()[0].agent_uri, 'https://example.com/mcp');
+    const client = new ADCPClient([agent]);
+    assert.strictEqual(client.getAgentConfigs()[0].agent_uri, 'https://example.com/mcp');
   });
 
   await t.test('accepts URL with /mcp/ path', async () => {
@@ -67,8 +67,8 @@ test('MCP Endpoint Discovery - Trailing Slash Handling', async t => {
       requiresAuth: false,
     };
 
-    const client = new AdCPClient([agent]);
-    assert.strictEqual(client.getAgents()[0].agent_uri, 'https://audience-agent.fly.dev/mcp/');
+    const client = new ADCPClient([agent]);
+    assert.strictEqual(client.getAgentConfigs()[0].agent_uri, 'https://audience-agent.fly.dev/mcp/');
   });
 
   await t.test('accepts URL without /mcp path', async () => {
@@ -80,8 +80,8 @@ test('MCP Endpoint Discovery - Trailing Slash Handling', async t => {
       requiresAuth: false,
     };
 
-    const client = new AdCPClient([agent]);
-    assert.strictEqual(client.getAgents()[0].agent_uri, 'https://test-agent.adcontextprotocol.org');
+    const client = new ADCPClient([agent]);
+    assert.strictEqual(client.getAgentConfigs()[0].agent_uri, 'https://test-agent.adcontextprotocol.org');
   });
 
   await t.test('handles various URL patterns', async () => {
@@ -103,8 +103,8 @@ test('MCP Endpoint Discovery - Trailing Slash Handling', async t => {
         requiresAuth: false,
       };
 
-      const client = new AdCPClient([agent]);
-      assert.strictEqual(client.getAgents()[0].agent_uri, uri, `URL should be preserved as-is: ${uri}`);
+      const client = new ADCPClient([agent]);
+      assert.strictEqual(client.getAgentConfigs()[0].agent_uri, uri, `URL should be preserved as-is: ${uri}`);
     }
   });
 });
@@ -122,8 +122,8 @@ test('MCP Endpoint Discovery - URL Normalization', async t => {
         requiresAuth: false,
       };
 
-      const client = new AdCPClient([agent]);
-      const storedUri = client.getAgents()[0].agent_uri;
+      const client = new ADCPClient([agent]);
+      const storedUri = client.getAgentConfigs()[0].agent_uri;
 
       assert.ok(storedUri.endsWith('/'), `Trailing slash should be preserved in ${uri}, got ${storedUri}`);
     }
@@ -141,8 +141,8 @@ test('MCP Endpoint Discovery - URL Normalization', async t => {
         requiresAuth: false,
       };
 
-      const client = new AdCPClient([agent]);
-      const storedUri = client.getAgents()[0].agent_uri;
+      const client = new ADCPClient([agent]);
+      const storedUri = client.getAgentConfigs()[0].agent_uri;
 
       assert.strictEqual(storedUri, uri, `URL should not be modified: ${uri}, got ${storedUri}`);
     }
@@ -160,8 +160,8 @@ test('MCP Endpoint Discovery - Edge Cases', async t => {
       requiresAuth: false,
     };
 
-    const client = new AdCPClient([agent]);
-    assert.strictEqual(client.getAgents()[0].agent_uri, 'https://example.com//mcp/');
+    const client = new ADCPClient([agent]);
+    assert.strictEqual(client.getAgentConfigs()[0].agent_uri, 'https://example.com//mcp/');
   });
 
   await t.test('handles URLs with query parameters', async () => {
@@ -173,8 +173,8 @@ test('MCP Endpoint Discovery - Edge Cases', async t => {
       requiresAuth: false,
     };
 
-    const client = new AdCPClient([agent]);
-    assert.strictEqual(client.getAgents()[0].agent_uri, 'https://example.com/mcp/?foo=bar');
+    const client = new ADCPClient([agent]);
+    assert.strictEqual(client.getAgentConfigs()[0].agent_uri, 'https://example.com/mcp/?foo=bar');
   });
 
   await t.test('handles URLs with fragments', async () => {
@@ -186,8 +186,8 @@ test('MCP Endpoint Discovery - Edge Cases', async t => {
       requiresAuth: false,
     };
 
-    const client = new AdCPClient([agent]);
-    assert.strictEqual(client.getAgents()[0].agent_uri, 'https://example.com/mcp/#section');
+    const client = new ADCPClient([agent]);
+    assert.strictEqual(client.getAgentConfigs()[0].agent_uri, 'https://example.com/mcp/#section');
   });
 
   await t.test('handles URLs with port numbers', async () => {
@@ -199,8 +199,8 @@ test('MCP Endpoint Discovery - Edge Cases', async t => {
       requiresAuth: false,
     };
 
-    const client = new AdCPClient([agent]);
-    assert.strictEqual(client.getAgents()[0].agent_uri, 'https://example.com:8080/mcp/');
+    const client = new ADCPClient([agent]);
+    assert.strictEqual(client.getAgentConfigs()[0].agent_uri, 'https://example.com:8080/mcp/');
   });
 });
 
@@ -215,8 +215,8 @@ test('MCP Endpoint Discovery - Real-World Scenarios', async t => {
       requiresAuth: false,
     };
 
-    const client = new AdCPClient([agent]);
-    assert.strictEqual(client.getAgents()[0].agent_uri, 'https://audience-agent.fly.dev/mcp/');
+    const client = new ADCPClient([agent]);
+    assert.strictEqual(client.getAgentConfigs()[0].agent_uri, 'https://audience-agent.fly.dev/mcp/');
   });
 
   await t.test('supports root MCP endpoints', async () => {
@@ -229,8 +229,8 @@ test('MCP Endpoint Discovery - Real-World Scenarios', async t => {
       requiresAuth: false,
     };
 
-    const client = new AdCPClient([agent]);
-    assert.strictEqual(client.getAgents()[0].agent_uri, 'https://test-agent.adcontextprotocol.org');
+    const client = new ADCPClient([agent]);
+    assert.strictEqual(client.getAgentConfigs()[0].agent_uri, 'https://test-agent.adcontextprotocol.org');
   });
 
   await t.test('supports nested paths with trailing slash', async () => {
@@ -242,8 +242,8 @@ test('MCP Endpoint Discovery - Real-World Scenarios', async t => {
       requiresAuth: false,
     };
 
-    const client = new AdCPClient([agent]);
-    assert.strictEqual(client.getAgents()[0].agent_uri, 'https://example.com/api/v1/mcp/');
+    const client = new ADCPClient([agent]);
+    assert.strictEqual(client.getAgentConfigs()[0].agent_uri, 'https://example.com/api/v1/mcp/');
   });
 
   await t.test('supports localhost development URLs', async () => {
@@ -258,8 +258,8 @@ test('MCP Endpoint Discovery - Real-World Scenarios', async t => {
         requiresAuth: false,
       };
 
-      const client = new AdCPClient([agent]);
-      assert.strictEqual(client.getAgents()[0].agent_uri, uri);
+      const client = new ADCPClient([agent]);
+      assert.strictEqual(client.getAgentConfigs()[0].agent_uri, uri);
     }
   });
 });
