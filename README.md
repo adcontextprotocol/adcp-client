@@ -498,20 +498,26 @@ npx @adcp/client https://agent.example.com get_products '{"brief":"..."}' --json
 
 ### Authentication
 
-Three ways to provide auth tokens (priority order):
+Four ways to provide auth tokens (priority order):
 
 ```bash
-# 1. Explicit flag (highest priority)
-npx @adcp/client test get_products '{"brief":"..."}' --auth your-token
+# 1. Direct token via --auth (highest priority)
+npx @adcp/client test get_products '{"brief":"..."}' --auth ci-test-token
 
-# 2. Saved in agent config (recommended)
+# 2. Environment variable via --auth-env
+export MY_AGENT_TOKEN="secret-value"
+npx @adcp/client test get_products '{"brief":"..."}' --auth-env MY_AGENT_TOKEN
+
+# 3. Saved in agent config (recommended for reuse)
 npx @adcp/client --save-auth prod https://prod-agent.com
 # Will prompt for auth token securely
 
-# 3. Environment variable (fallback)
+# 4. ADCP_AUTH_TOKEN environment variable (fallback)
 export ADCP_AUTH_TOKEN=your-token
 npx @adcp/client test get_products '{"brief":"..."}'
 ```
+
+**Note**: Use `--auth` for direct token values and `--auth-env` for environment variable names. This allows short tokens (like `ci-test-token`) to work correctly without being mistaken for environment variable names.
 
 ### Agent Management
 

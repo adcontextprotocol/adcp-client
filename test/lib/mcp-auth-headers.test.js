@@ -93,12 +93,27 @@ test('MCP: Protocol integration sends auth headers', async t => {
       protocol: 'mcp',
       agent_uri: 'https://test.example.com/mcp',
       requiresAuth: true,
-      auth_token_env: 'test-direct-token-1234567890', // Direct token (not env var)
+      auth_token_env: 'test-direct-token-1234567890', // Direct token value
     };
 
     const authToken = getAuthToken(agentConfig);
 
     assert.strictEqual(authToken, 'test-direct-token-1234567890');
-    assert.ok(authToken.length > 20); // Verify it's a direct token, not env var name
+  });
+
+  await t.test('getAuthToken returns short tokens correctly', () => {
+    const { getAuthToken } = require('../../dist/lib/auth/index.js');
+
+    const agentConfig = {
+      id: 'test-agent',
+      protocol: 'mcp',
+      agent_uri: 'https://test.example.com/mcp',
+      requiresAuth: true,
+      auth_token_env: 'ci-test-token', // Short token (13 chars) - now works!
+    };
+
+    const authToken = getAuthToken(agentConfig);
+
+    assert.strictEqual(authToken, 'ci-test-token');
   });
 });

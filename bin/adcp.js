@@ -114,7 +114,8 @@ ARGUMENTS:
 
 OPTIONS:
   --protocol PROTO  Force protocol: 'mcp' or 'a2a' (default: auto-detect)
-  --auth TOKEN      Authentication token for the agent
+  --auth TOKEN      Authentication token (direct value)
+  --auth-env VAR    Environment variable name containing auth token
   --wait            Wait for async/webhook responses (requires ngrok or --local)
   --local           Use local webhook without ngrok (for local agents only)
   --timeout MS      Webhook timeout in milliseconds (default: 300000 = 5min)
@@ -136,6 +137,13 @@ EXAMPLES:
 
   # Non-interactive: save without auth
   adcp --save-auth myagent https://test-agent.adcontextprotocol.org --no-auth
+
+  # Use direct token
+  adcp myagent get_products '{"brief":"coffee"}' --auth ci-test-token
+
+  # Use environment variable for token
+  export MY_AGENT_TOKEN="secret-token-value"
+  adcp myagent get_products '{"brief":"coffee"}' --auth-env MY_AGENT_TOKEN
 
   # Interactive setup (prompts for URL, protocol, and auth)
   adcp --save-auth myagent
@@ -298,7 +306,41 @@ async function main() {
 
   // Parse options first
   const authIndex = args.indexOf('--auth');
-  let authToken = authIndex !== -1 ? args[authIndex + 1] : process.env.ADCP_AUTH_TOKEN;
+  const authEnvIndex = args.indexOf('--auth-env');
+
+  // Determine auth token: --auth takes precedence, then --auth-env, then env var
+  let authToken = null;
+
+  if (authIndex !== -1) {
+    // Direct token via --auth
+    authToken = args[authIndex + 1];
+
+    if (!authToken || authToken.startsWith('--')) {
+      console.error('ERROR: --auth flag requires a token value\n');
+      console.error('Usage: adcp <url> <tool> <payload> --auth <token>\n');
+      process.exit(2);
+    }
+  } else if (authEnvIndex !== -1) {
+    // Environment variable name via --auth-env
+    const envVarName = args[authEnvIndex + 1];
+
+    if (!envVarName || envVarName.startsWith('--')) {
+      console.error('ERROR: --auth-env flag requires an environment variable name\n');
+      console.error('Usage: adcp <url> <tool> <payload> --auth-env <VAR_NAME>\n');
+      process.exit(2);
+    }
+
+    authToken = process.env[envVarName];
+
+    if (!authToken) {
+      console.error(`ERROR: Environment variable '${envVarName}' is not set\n`);
+      process.exit(2);
+    }
+  } else {
+    // Fallback to ADCP_AUTH_TOKEN env var
+    authToken = process.env.ADCP_AUTH_TOKEN;
+  }
+
   const protocolIndex = args.indexOf('--protocol');
   const protocolFlag = protocolIndex !== -1 ? args[protocolIndex + 1] : null;
   const jsonOutput = args.includes('--json');
@@ -316,10 +358,14 @@ async function main() {
   }
 
   // Filter out flag arguments to find positional arguments
+  // Note: After validation above, if authIndex or authEnvIndex exist, their values are guaranteed valid
+  const authFlagValue = authIndex !== -1 ? args[authIndex + 1] : null;
+  const authEnvFlagValue = authEnvIndex !== -1 ? args[authEnvIndex + 1] : null;
   const positionalArgs = args.filter(
     arg =>
       !arg.startsWith('--') &&
-      arg !== authToken && // Don't include the auth token value
+      arg !== authFlagValue && // Don't include the --auth token value
+      arg !== authEnvFlagValue && // Don't include the --auth-env variable name
       arg !== protocolFlag && // Don't include the protocol value
       arg !== (timeoutIndex !== -1 ? args[timeoutIndex + 1] : null) // Don't include timeout value
   );

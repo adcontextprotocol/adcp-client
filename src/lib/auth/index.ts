@@ -13,20 +13,18 @@ export function generateUUID(): string {
 
 /**
  * Get authentication token for an agent
+ *
+ * This function treats auth_token_env as a direct token value.
+ * The CLI and application code are responsible for resolving environment variables
+ * before passing values to AgentConfig.
  */
 export function getAuthToken(agent: AgentConfig): string | undefined {
   if (!agent.requiresAuth || !agent.auth_token_env) {
     return undefined;
   }
 
-  // If auth_token_env looks like a direct token (not an env var name), use it directly
-  // Base64-like tokens are typically 40+ chars and contain mixed case/symbols
-  if (agent.auth_token_env.length > 20 && !agent.auth_token_env.match(/^[A-Z_][A-Z0-9_]*$/)) {
-    return agent.auth_token_env;
-  }
-
-  // Otherwise, look up the environment variable
-  return process.env[agent.auth_token_env];
+  // Return the token directly - it should already be resolved by the caller
+  return agent.auth_token_env;
 }
 
 /**
