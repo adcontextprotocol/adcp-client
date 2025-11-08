@@ -50,7 +50,7 @@ Defined in: [src/lib/core/ADCPMultiAgentClient.ts:297](https://github.com/adcont
 
 ##### config
 
-[`ADCPClientConfig`](../interfaces/ADCPClientConfig.md) = `{}`
+[`AdCPClientConfig`](../interfaces/AdCPClientConfig.md) = `{}`
 
 #### Returns
 
@@ -90,7 +90,7 @@ Automatically loads agents from:
 
 ##### config?
 
-[`ADCPClientConfig`](../interfaces/ADCPClientConfig.md)
+[`AdCPClientConfig`](../interfaces/AdCPClientConfig.md)
 
 Optional client configuration
 
@@ -127,7 +127,7 @@ Create client from environment variables only
 
 ##### config?
 
-[`ADCPClientConfig`](../interfaces/ADCPClientConfig.md)
+[`AdCPClientConfig`](../interfaces/AdCPClientConfig.md)
 
 Optional client configuration
 
@@ -164,7 +164,7 @@ Path to configuration file
 
 ##### config?
 
-[`ADCPClientConfig`](../interfaces/ADCPClientConfig.md)
+[`AdCPClientConfig`](../interfaces/AdCPClientConfig.md)
 
 Optional client configuration
 

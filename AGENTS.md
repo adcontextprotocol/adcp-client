@@ -90,7 +90,7 @@ const result = await executor.executeTask(agent, "get_products", params, inputHa
 Agents may need clarifications during execution. Use input handlers:
 
 ```typescript
-const client = new ADCPClient(agent, {
+const client = new AdCPClient(agent, {
   handlers: {
     onGetProductsStatusChange: (response, metadata) => {
       // Fires for ALL status changes: sync completion, webhook delivery, etc.
@@ -154,7 +154,7 @@ npm run test:all          # Full test suite
 
 ## File Organization
 
-- `src/lib/core/` - Main client classes (ADCPClient, TaskExecutor)
+- `src/lib/core/` - Main client classes (AdCPClient, TaskExecutor)
 - `src/lib/protocols/` - A2A/MCP protocol implementations
 - `src/lib/types/` - Generated TypeScript types from schemas
 - `src/server/` - Testing framework server

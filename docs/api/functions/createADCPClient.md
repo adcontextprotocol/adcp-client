@@ -2,13 +2,13 @@
 
 ***
 
-[@adcp/client API Reference](../README.md) / createADCPClient
+[@adcp/client API Reference](../README.md) / createAdCPClient
 
-# Function: createADCPClient()
+# Function: createAdCPClient()
 
-> **createADCPClient**(`agent`, `config?`): [`ADCPClient`](../classes/ADCPClient.md)
+> **createAdCPClient**(`agent`, `config?`): [`AdCPClient`](../classes/AdCPClient.md)
 
-Defined in: [src/lib/core/ADCPClient.ts:489](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/core/ADCPClient.ts#L489)
+Defined in: [src/lib/core/AdCPClient.ts:489](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/core/AdCPClient.ts#L489)
 
 Factory function to create an ADCP client
 
@@ -22,12 +22,12 @@ Agent configuration
 
 ### config?
 
-[`ADCPClientConfig`](../interfaces/ADCPClientConfig.md)
+[`AdCPClientConfig`](../interfaces/AdCPClientConfig.md)
 
 Client configuration
 
 ## Returns
 
-[`ADCPClient`](../classes/ADCPClient.md)
+[`AdCPClient`](../classes/AdCPClient.md)
 
-Configured ADCPClient instance
+Configured AdCPClient instance

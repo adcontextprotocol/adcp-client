@@ -518,9 +518,9 @@ adcp mcp https://agent.example.com/mcp get_products '{"brief":"coffee"}' --auth 
 ### Library (TypeScript)
 
 ```typescript
-import { ADCPClient } from '@adcp/client';
+import { AdCPClient } from '@adcp/client';
 
-const client = new ADCPClient({
+const client = new AdCPClient({
   id: 'agent',
   name: 'Agent',
   agent_uri: 'https://agent.example.com/mcp',

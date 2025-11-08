@@ -2,29 +2,29 @@
 "@adcp/client": major
 ---
 
-Simplified API surface - removed deprecated exports and renamed primary client to `ADCPClient`.
+Simplified API surface - removed deprecated exports and renamed primary client to `AdCPClient`.
 
 ## Breaking Changes
 
 **Removed:**
 - `AdCPClient` (deprecated wrapper with confusing lowercase 'd')
 - `createAdCPClient()`, `createAdCPClientFromEnv()`
-- `createADCPClient()`, `createADCPMultiAgentClient()`
+- `createAdCPClient()`, `createADCPMultiAgentClient()`
 
 **Moved to `/advanced`:**
-- Old single-agent `ADCPClient` → `SingleAgentClient`
+- Old single-agent `AdCPClient` → `SingleAgentClient`
 - `AgentClient`, protocol clients
 
 **Renamed:**
-- `ADCPMultiAgentClient` → `ADCPClient` (primary export)
+- `ADCPMultiAgentClient` → `AdCPClient` (primary export)
 
 ## New API
 
 ```typescript
-import { ADCPClient } from '@adcp/client';
+import { AdCPClient } from '@adcp/client';
 
-const client = new ADCPClient([agentConfig]);
-const client = ADCPClient.fromEnv();
+const client = new AdCPClient([agentConfig]);
+const client = AdCPClient.fromEnv();
 ```
 
 Works for single or multiple agents. See `MIGRATION-v3.md` for migration guide.

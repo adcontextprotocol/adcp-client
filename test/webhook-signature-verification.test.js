@@ -1,6 +1,6 @@
 const { test, describe } = require('node:test');
 const assert = require('node:assert');
-const { ADCPClient } = require('../dist/lib/core/ADCPClient');
+const { AdCPClient } = require('../dist/lib/core/AdCPClient');
 const crypto = require('crypto');
 
 describe('Webhook Signature Verification (PR #86 Spec)', () => {
@@ -15,7 +15,7 @@ describe('Webhook Signature Verification (PR #86 Spec)', () => {
   const webhookSecret = 'test-secret-key-minimum-32-characters-long';
 
   test('should verify valid webhook signature per PR #86 spec', () => {
-    const client = new ADCPClient(agent, { webhookSecret });
+    const client = new AdCPClient(agent, { webhookSecret });
 
     const payload = {
       event: 'creative.status_changed',
@@ -38,7 +38,7 @@ describe('Webhook Signature Verification (PR #86 Spec)', () => {
   });
 
   test('should reject webhook with invalid signature', () => {
-    const client = new ADCPClient(agent, { webhookSecret });
+    const client = new AdCPClient(agent, { webhookSecret });
 
     const payload = {
       event: 'creative.status_changed',
@@ -54,7 +54,7 @@ describe('Webhook Signature Verification (PR #86 Spec)', () => {
   });
 
   test('should reject webhook with old timestamp (> 5 minutes)', () => {
-    const client = new ADCPClient(agent, { webhookSecret });
+    const client = new AdCPClient(agent, { webhookSecret });
 
     const payload = {
       event: 'creative.status_changed',
@@ -77,7 +77,7 @@ describe('Webhook Signature Verification (PR #86 Spec)', () => {
   });
 
   test('should accept webhook within 5 minute window', () => {
-    const client = new ADCPClient(agent, { webhookSecret });
+    const client = new AdCPClient(agent, { webhookSecret });
 
     const payload = {
       event: 'creative.status_changed',
@@ -100,7 +100,7 @@ describe('Webhook Signature Verification (PR #86 Spec)', () => {
   });
 
   test('should handle timestamp as string', () => {
-    const client = new ADCPClient(agent, { webhookSecret });
+    const client = new AdCPClient(agent, { webhookSecret });
 
     const payload = {
       event: 'creative.status_changed',
@@ -123,7 +123,7 @@ describe('Webhook Signature Verification (PR #86 Spec)', () => {
   });
 
   test('should return false when webhookSecret not configured', () => {
-    const client = new ADCPClient(agent, {}); // No webhookSecret
+    const client = new AdCPClient(agent, {}); // No webhookSecret
 
     const payload = { event: 'test' };
     const timestamp = Math.floor(Date.now() / 1000);

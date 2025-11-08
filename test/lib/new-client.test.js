@@ -193,16 +193,16 @@ describe('ADCP Conversation Client Library', { skip: process.env.CI ? 'Slow test
 
 describe('Integration with existing codebase', () => {
   test('should maintain v3 API exports', () => {
-    const { ADCPClient, ADCPMultiAgentClient, ConfigurationManager } = require('../../dist/lib/index.js');
+    const { AdCPClient, ADCPMultiAgentClient, ConfigurationManager } = require('../../dist/lib/index.js');
 
-    // Test primary export (ADCPClient - the renamed ADCPMultiAgentClient)
-    assert(typeof ADCPClient === 'function', 'ADCPClient should be available');
+    // Test primary export (AdCPClient - the renamed ADCPMultiAgentClient)
+    assert(typeof AdCPClient === 'function', 'AdCPClient should be available');
 
     // Test deprecated alias still works
     assert(typeof ADCPMultiAgentClient === 'function', 'ADCPMultiAgentClient alias should still be available');
 
     // Verify they're the same class
-    assert(ADCPClient === ADCPMultiAgentClient, 'ADCPClient should be the same as ADCPMultiAgentClient');
+    assert(AdCPClient === ADCPMultiAgentClient, 'AdCPClient should be the same as ADCPMultiAgentClient');
 
     // Test configuration manager
     assert(typeof ConfigurationManager === 'function', 'ConfigurationManager should be available');

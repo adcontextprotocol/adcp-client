@@ -15,10 +15,10 @@ npm install @adcp/client @a2a-js/sdk @modelcontextprotocol/sdk
 The easiest way to get started is with the simple client:
 
 ```typescript
-import { ADCPClient } from '@adcp/client';
+import { AdCPClient } from '@adcp/client';
 
 // Create a client for a single agent
-const client = ADCPClient.simple('https://agent.example.com/mcp/', {
+const client = AdCPClient.simple('https://agent.example.com/mcp/', {
   authToken: 'YOUR_AUTH_TOKEN_HERE'
 });
 
@@ -104,7 +104,7 @@ const agents = [
 For testing, you can provide tokens directly:
 
 ```typescript
-const client = ADCPClient.simple('https://agent.example.com', {
+const client = AdCPClient.simple('https://agent.example.com', {
   authToken: 'YOUR_BEARER_TOKEN_HERE'
 });
 ```
@@ -116,7 +116,7 @@ The client supports various async patterns:
 ### Input-Required Tasks
 
 ```typescript
-const client = ADCPClient.simple('https://agent.example.com', {
+const client = AdCPClient.simple('https://agent.example.com', {
   authToken: 'token',
   inputHandler: async (request) => {
     console.log('Agent needs input:', request);

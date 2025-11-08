@@ -165,7 +165,7 @@
   - Added error-level logging for failed media buy operations (create, update, get_delivery)
   - Fixed format objects display in products table (was showing [object Object])
   - Added runtime schema validation infrastructure with Zod
-  - Added request validation to ADCPClient (fail fast on invalid requests)
+  - Added request validation to AdCPClient (fail fast on invalid requests)
   - Added configurable validation modes (strict/non-strict) via environment variables
   - Preserved trailing slashes in MCP endpoint discovery
   - Improved error display in UI debug panel with proper formatting
@@ -193,7 +193,7 @@
   Previously, the server only forwarded `X-ADCP-Signature` to the client verifier. The timestamp required by the HMAC scheme (message = `{timestamp}.{json_payload}`) was not passed through, causing verification to fail when `webhookSecret` was enabled. This change:
   - Updates `AgentClient.handleWebhook(payload, signature, timestamp)` to accept and forward the timestamp.
   - Updates the webhook route to extract `X-ADCP-Timestamp` and pass it into `handleWebhook`.
-  - Allows `ADCPClient.handleWebhook` to successfully validate signatures using both headers.
+  - Allows `AdCPClient.handleWebhook` to successfully validate signatures using both headers.
 
 ## 2.4.1
 

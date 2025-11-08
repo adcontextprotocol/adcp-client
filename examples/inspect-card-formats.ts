@@ -9,7 +9,7 @@
  * 3. How to properly structure creative_manifest for cards
  */
 
-import { ADCPClient } from '../src/lib/core/ADCPClient';
+import { AdCPClient } from '../src/lib/core/AdCPClient';
 
 const CREATIVE_AGENT_URL = process.env.CREATIVE_AGENT_URL || 'https://creative.adcontextprotocol.org/mcp';
 const CREATIVE_AGENT_PROTOCOL = (process.env.CREATIVE_AGENT_PROTOCOL || 'mcp') as 'mcp' | 'a2a';
@@ -17,7 +17,7 @@ const CREATIVE_AGENT_PROTOCOL = (process.env.CREATIVE_AGENT_PROTOCOL || 'mcp') a
 async function main() {
   console.log('🔍 Inspecting Card Format Definitions\n');
 
-  const creativeAgent = new ADCPClient({
+  const creativeAgent = new AdCPClient({
     id: 'creative_agent',
     name: 'Creative Agent',
     agent_uri: CREATIVE_AGENT_URL,

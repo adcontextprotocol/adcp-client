@@ -1,6 +1,6 @@
 # Migration Guide: v2.x → v3.0
 
-**Breaking Changes**: Simplified API with one canonical client name: `ADCPClient`
+**Breaking Changes**: Simplified API with one canonical client name: `AdCPClient`
 
 ---
 
@@ -9,7 +9,7 @@
 ### What Changed
 
 The main change is **naming simplification**:
-- ✅ `ADCPClient` is now the primary export (renamed from `ADCPMultiAgentClient`)
+- ✅ `AdCPClient` is now the primary export (renamed from `ADCPMultiAgentClient`)
 - ⚠️ `ADCPMultiAgentClient` still works as a deprecated alias (will be removed in v4.0)
 - ❌ `AdCPClient` (lowercase 'd') has been removed
 - ❌ Factory functions like `createAdCPClient()` have been removed
@@ -17,11 +17,11 @@ The main change is **naming simplification**:
 
 ### Simple Summary
 
-**If you were using `ADCPMultiAgentClient`**: Just rename it to `ADCPClient` (both work in v3, but `ADCPClient` is preferred)
+**If you were using `ADCPMultiAgentClient`**: Just rename it to `AdCPClient` (both work in v3, but `AdCPClient` is preferred)
 
-**If you were using `AdCPClient` (lowercase 'd')**: Change to `ADCPClient` and it works the same way
+**If you were using `AdCPClient` (lowercase 'd')**: Change to `AdCPClient` and it works the same way
 
-**If you were using the old single-agent `ADCPClient`**: Either use the new `ADCPClient` with an array of one agent, or import `SingleAgentClient` from `/advanced`
+**If you were using the old single-agent `AdCPClient`**: Either use the new `AdCPClient` with an array of one agent, or import `SingleAgentClient` from `/advanced`
 
 ---
 
@@ -43,9 +43,9 @@ const result = await agent.getProducts({ brief: '...' });
 
 **After (v3.0)**:
 \`\`\`typescript
-import { ADCPClient } from '@adcp/client';
+import { AdCPClient } from '@adcp/client';
 
-const client = new ADCPClient([
+const client = new AdCPClient([
   { id: 'agent-1', agent_uri: 'https://agent.com', protocol: 'a2a' }
 ]);
 
@@ -53,7 +53,7 @@ const agent = client.agent('agent-1');
 const result = await agent.getProducts({ brief: '...' });
 \`\`\`
 
-**Change**: Just rename `ADCPMultiAgentClient` → `ADCPClient`
+**Change**: Just rename `ADCPMultiAgentClient` → `AdCPClient`
 
 ---
 
@@ -73,9 +73,9 @@ const result = await agent.getProducts({ brief: '...' });
 
 **After (v3.0)**:
 \`\`\`typescript
-import { ADCPClient } from '@adcp/client';
+import { AdCPClient } from '@adcp/client';
 
-const client = new ADCPClient([
+const client = new AdCPClient([
   { id: 'agent-1', agent_uri: 'https://agent.com', protocol: 'a2a' }
 ]);
 
@@ -83,7 +83,7 @@ const agent = client.agent('agent-1');
 const result = await agent.getProducts({ brief: '...' });
 \`\`\`
 
-**Change**: Capitalize the 'D': `AdCPClient` → `ADCPClient`
+**Change**: Capitalize the 'D': `AdCPClient` → `AdCPClient`
 
 ---
 
@@ -102,34 +102,34 @@ const client = createAdCPClientFromEnv();
 
 **After (v3.0)**:
 \`\`\`typescript
-import { ADCPClient } from '@adcp/client';
+import { AdCPClient } from '@adcp/client';
 
 // Option 1: Use constructor
-const client = new ADCPClient([agentConfig]);
+const client = new AdCPClient([agentConfig]);
 
 // Option 2: Use static factory method
-const client = ADCPClient.fromEnv();
+const client = AdCPClient.fromEnv();
 \`\`\`
 
 **Change**: Use constructor or static factory methods instead of standalone functions
 
 ---
 
-### Pattern 4: Using old single-agent `ADCPClient`
+### Pattern 4: Using old single-agent `AdCPClient`
 
 **Before (v2.x)**:
 \`\`\`typescript
-import { ADCPClient } from '@adcp/client';
+import { AdCPClient } from '@adcp/client';
 
-const client = new ADCPClient(agentConfig); // Single agent, no array
+const client = new AdCPClient(agentConfig); // Single agent, no array
 const result = await client.getProducts({ brief: '...' });
 \`\`\`
 
-**After (v3.0) - Option A: Use new ADCPClient with array (recommended)**:
+**After (v3.0) - Option A: Use new AdCPClient with array (recommended)**:
 \`\`\`typescript
-import { ADCPClient } from '@adcp/client';
+import { AdCPClient } from '@adcp/client';
 
-const client = new ADCPClient([agentConfig]); // Array with one agent
+const client = new AdCPClient([agentConfig]); // Array with one agent
 const agent = client.agent(agentConfig.id);
 const result = await agent.getProducts({ brief: '...' });
 \`\`\`
@@ -142,7 +142,7 @@ const client = new SingleAgentClient(agentConfig); // Single agent, no array
 const result = await client.getProducts({ brief: '...' });
 \`\`\`
 
-**Recommendation**: Use Option A (new \`ADCPClient\`) for consistency. The single-agent API is available in \`/advanced\` but is not recommended for new code.
+**Recommendation**: Use Option A (new \`AdCPClient\`) for consistency. The single-agent API is available in \`/advanced\` but is not recommended for new code.
 
 ---
 
@@ -164,10 +164,10 @@ const agents = client.getAgentConfigs(); // Returns AgentConfig[]
 
 ## Breaking Changes Checklist
 
-- [ ] Replace \`AdCPClient\` with \`ADCPClient\` (capitalize the 'D')
-- [ ] Replace \`ADCPMultiAgentClient\` with \`ADCPClient\` (shorter name)
-- [ ] Replace \`createAdCPClient()\` with \`new ADCPClient()\`
-- [ ] Replace \`createAdCPClientFromEnv()\` with \`ADCPClient.fromEnv()\`
+- [ ] Replace \`AdCPClient\` with \`AdCPClient\` (capitalize the 'D')
+- [ ] Replace \`ADCPMultiAgentClient\` with \`AdCPClient\` (shorter name)
+- [ ] Replace \`createAdCPClient()\` with \`new AdCPClient()\`
+- [ ] Replace \`createAdCPClientFromEnv()\` with \`AdCPClient.fromEnv()\`
 - [ ] Replace \`client.getAgents()\` with \`client.getAgentConfigs()\`
 - [ ] If using single-agent API, wrap config in array or import from \`/advanced\`
 
@@ -175,7 +175,7 @@ const agents = client.getAgentConfigs(); // Returns AgentConfig[]
 
 ## Why These Changes?
 
-1. **Simpler naming**: \`ADCPClient\` is shorter and clearer than \`ADCPMultiAgentClient\`
+1. **Simpler naming**: \`AdCPClient\` is shorter and clearer than \`ADCPMultiAgentClient\`
 2. **Consistent casing**: Removed the confusing lowercase 'd' variant (\`AdCPClient\`)
 3. **Cleaner exports**: Advanced/low-level APIs moved to \`/advanced\` path
 4. **Future-proof**: Multi-agent is the default, single-agent is the special case

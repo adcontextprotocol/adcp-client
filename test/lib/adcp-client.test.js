@@ -1,14 +1,14 @@
-// Unit tests for ADCPClient core functionality
+// Unit tests for AdCPClient core functionality
 const { test, describe } = require('node:test');
 const assert = require('node:assert');
 
-// Import the library - in real tests this would be: const { ADCPClient } = require('@adcp/client');
-const { ADCPClient, ConfigurationManager } = require('../../dist/lib/index.js');
+// Import the library - in real tests this would be: const { AdCPClient } = require('@adcp/client');
+const { AdCPClient, ConfigurationManager } = require('../../dist/lib/index.js');
 
-describe('ADCPClient', () => {
+describe('AdCPClient', () => {
   describe('constructor', () => {
     test('should create empty client when no agents provided', () => {
-      const client = new ADCPClient();
+      const client = new AdCPClient();
       assert.strictEqual(client.getAgentConfigs().length, 0);
     });
 
@@ -23,7 +23,7 @@ describe('ADCPClient', () => {
         },
       ];
 
-      const client = new ADCPClient(agents);
+      const client = new AdCPClient(agents);
       assert.strictEqual(client.getAgentConfigs().length, 1);
       assert.strictEqual(client.getAgentConfigs()[0].id, 'test-agent');
     });
@@ -31,7 +31,7 @@ describe('ADCPClient', () => {
 
   describe('addAgent', () => {
     test('should add agent to empty client', () => {
-      const client = new ADCPClient();
+      const client = new AdCPClient();
       const agent = {
         id: 'new-agent',
         name: 'New Agent',
@@ -47,7 +47,7 @@ describe('ADCPClient', () => {
     });
 
     test('should add agent to existing agents', () => {
-      const client = new ADCPClient([
+      const client = new AdCPClient([
         {
           id: 'existing',
           name: 'Existing',
@@ -80,7 +80,7 @@ describe('ADCPClient', () => {
         requiresAuth: false,
       };
 
-      const client = new ADCPClient([originalAgent]);
+      const client = new AdCPClient([originalAgent]);
       const agents = client.getAgentConfigs();
 
       // Modify the returned array
@@ -100,7 +100,7 @@ describe('ADCPClient', () => {
 
   describe('fluent API', () => {
     test('should throw error for non-existent agent', () => {
-      const client = new ADCPClient();
+      const client = new AdCPClient();
 
       assert.throws(
         () => {
@@ -113,7 +113,7 @@ describe('ADCPClient', () => {
     });
 
     test('should return agent client for valid agent', () => {
-      const client = new ADCPClient([
+      const client = new AdCPClient([
         {
           id: 'test-agent',
           name: 'Test Agent',
@@ -132,7 +132,7 @@ describe('ADCPClient', () => {
     });
 
     test('should return AgentCollection for multiple agents', () => {
-      const client = new ADCPClient([
+      const client = new AdCPClient([
         {
           id: 'agent1',
           name: 'Agent 1',
@@ -157,7 +157,7 @@ describe('ADCPClient', () => {
     });
 
     test('should return AgentCollection for all agents', () => {
-      const client = new ADCPClient([
+      const client = new AdCPClient([
         {
           id: 'agent1',
           name: 'Agent 1',
@@ -173,7 +173,7 @@ describe('ADCPClient', () => {
     });
 
     test('should throw error when calling allAgents on empty client', () => {
-      const client = new ADCPClient();
+      const client = new AdCPClient();
 
       assert.throws(
         () => {
@@ -279,8 +279,8 @@ describe('factory methods', () => {
       ],
     });
 
-    const client = ADCPClient.fromEnv();
-    assert.ok(client instanceof ADCPClient);
+    const client = AdCPClient.fromEnv();
+    assert.ok(client instanceof AdCPClient);
     assert.strictEqual(client.getAgentConfigs().length, 1);
     assert.strictEqual(client.getAgentConfigs()[0].id, 'env-agent');
 

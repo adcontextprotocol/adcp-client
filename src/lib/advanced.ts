@@ -5,7 +5,7 @@
  * Single-agent client with conversation management
  *
  * @remarks
- * For most use cases, prefer the main ADCPClient (which handles single or multi-agent).
+ * For most use cases, prefer the main AdCPClient (which handles single or multi-agent).
  * This class is useful for:
  * - Building higher-level abstractions
  * - Integration with existing single-agent systems
@@ -31,7 +31,7 @@ export type { ADCPClientConfig } from './core/ADCPClient';
  * Agent client with automatic context tracking
  *
  * @remarks
- * Wraps ADCPClient and automatically maintains conversation context across calls.
+ * Wraps SingleAgentClient and automatically maintains conversation context across calls.
  * Useful for chat-like interactions where context should persist.
  *
  * @example
@@ -53,7 +53,7 @@ export { AgentClient, type TaskResponseTypeMap, type AdcpTaskName } from './core
  * Protocol-level clients for direct protocol interaction
  *
  * @remarks
- * Low-level clients for MCP and A2A protocols. Used internally by ADCPClient.
+ * Low-level clients for MCP and A2A protocols. Used internally by AdCPClient.
  * Only export these if you need to build custom protocol handlers.
  */
 export { ProtocolClient, callMCPTool, callA2ATool, createMCPClient, createA2AClient } from './protocols';

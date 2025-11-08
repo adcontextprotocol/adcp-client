@@ -4,14 +4,14 @@
  * Debug with detailed logging
  */
 
-import { ADCPClient } from '../src/lib/core/ADCPClient';
+import { AdCPClient } from '../src/lib/core/AdCPClient';
 import { batchPreviewProducts } from '../src/lib/utils/preview-utils';
 import type { Product } from '../src/lib/types/tools.generated';
 
 const CREATIVE_AGENT_URL = process.env.CREATIVE_AGENT_URL || 'https://creative.adcontextprotocol.org/mcp';
 
 async function main() {
-  const creativeAgent = new ADCPClient({
+  const creativeAgent = new AdCPClient({
     id: 'creative_agent',
     name: 'Creative Agent',
     agent_uri: CREATIVE_AGENT_URL,

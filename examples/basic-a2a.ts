@@ -1,7 +1,7 @@
 // Basic A2A Client Example
-import { ADCPClient, type AgentConfig } from '@adcp/client';
+import { AdCPClient, type AgentConfig } from '@adcp/client';
 
-// Using ADCPClient with A2A protocol (recommended)
+// Using AdCPClient with A2A protocol (recommended)
 async function configuredA2AExample() {
   const agent: AgentConfig = {
     id: 'test-a2a-agent',
@@ -12,7 +12,7 @@ async function configuredA2AExample() {
     requiresAuth: true,
   };
 
-  const client = new ADCPClient([agent]);
+  const client = new AdCPClient([agent]);
 
   try {
     const agentClient = client.agent('test-a2a-agent');
@@ -48,7 +48,7 @@ async function multiAgentExample() {
     },
   ];
 
-  const client = new ADCPClient(agents);
+  const client = new AdCPClient(agents);
 
   try {
     const agentCollection = client.agents(['mcp-agent', 'a2a-agent']);

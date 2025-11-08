@@ -1,12 +1,12 @@
 // Environment Configuration Example
-import { ADCPClient } from '@adcp/client';
+import { AdCPClient } from '@adcp/client';
 
 async function envConfigExample() {
   // Load agents from environment using factory method
   // Set SALES_AGENTS_CONFIG in your .env file like:
   // SALES_AGENTS_CONFIG='{"agents":[{"id":"test-agent","name":"Test Agent","agent_uri":"https://test-agent.example.com","protocol":"mcp","auth_token_env":"TEST_AUTH_TOKEN","requiresAuth":true}]}'
 
-  const client = ADCPClient.fromEnv();
+  const client = AdCPClient.fromEnv();
 
   if (client.agentCount === 0) {
     console.log('No agents configured. Set SALES_AGENTS_CONFIG environment variable.');

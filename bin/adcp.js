@@ -14,7 +14,7 @@
  *   adcp mcp https://agent.example.com/mcp create_media_buy @payload.json --auth $AGENT_TOKEN
  */
 
-const { ADCPClient, detectProtocol } = require('../dist/lib/index.js');
+const { AdCPClient, detectProtocol } = require('../dist/lib/index.js');
 const { readFileSync } = require('fs');
 const { AsyncWebhookHandler } = require('./adcp-async-handler.js');
 const { getAgent, listAgents, isAlias, interactiveSetup, removeAgent, getConfigPath } = require('./adcp-config.js');
@@ -65,7 +65,7 @@ function extractProtocolMessage(conversation, protocol) {
  * Display agent info - just calls library method
  */
 async function displayAgentInfo(agentConfig, jsonOutput) {
-  const client = new ADCPClient(agentConfig);
+  const client = new AdCPClient(agentConfig);
   const info = await client.getAgentInfo();
 
   if (jsonOutput) {
@@ -496,7 +496,7 @@ async function main() {
     }
 
     // Create ADCP client with optional webhook configuration
-    const client = new ADCPClient(agentConfig, {
+    const client = new AdCPClient(agentConfig, {
       debug: debug,
       ...(webhookUrl && {
         webhookUrlTemplate: webhookUrl,
