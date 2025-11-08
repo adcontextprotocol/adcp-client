@@ -13,15 +13,14 @@ The main change is **naming simplification**:
 - ⚠️ `ADCPMultiAgentClient` still works as a deprecated alias (will be removed in v4.0)
 - ❌ `AdCPClient` (lowercase 'd') has been removed
 - ❌ Factory functions like `createAdCPClient()` have been removed
-- 🔒 Single-agent API moved to `@adcp/client/advanced` as `SingleAgentClient`
 
 ### Simple Summary
 
 **If you were using `ADCPMultiAgentClient`**: Just rename it to `AdCPClient` (both work in v3, but `AdCPClient` is preferred)
 
-**If you were using `AdCPClient` (lowercase 'd')**: Change to `AdCPClient` and it works the same way
+**If you were using `AdCPClient` (lowercase 'd')**: Capitalize the 'D': `AdCPClient` → `AdCPClient`
 
-**If you were using the old single-agent `AdCPClient`**: Either use the new `AdCPClient` with an array of one agent, or import `SingleAgentClient` from `/advanced`
+**If you were using the old single-agent `AdCPClient`**: Use the new `AdCPClient` with an array of one agent, then call `.agent(id)` to get a single-agent client with conversation context
 
 ---
 
@@ -125,24 +124,22 @@ const client = new AdCPClient(agentConfig); // Single agent, no array
 const result = await client.getProducts({ brief: '...' });
 \`\`\`
 
-**After (v3.0) - Option A: Use new AdCPClient with array (recommended)**:
+**After (v3.0)**:
 \`\`\`typescript
 import { AdCPClient } from '@adcp/client';
 
-const client = new AdCPClient([agentConfig]); // Array with one agent
+// Wrap config in array, then get agent client with conversation context
+const client = new AdCPClient([agentConfig]);
 const agent = client.agent(agentConfig.id);
+
+// This agent client maintains conversation context automatically!
 const result = await agent.getProducts({ brief: '...' });
+
+// You can continue the conversation with context preserved
+const refined = await agent.continueConversation('Show only premium options');
 \`\`\`
 
-**After (v3.0) - Option B: Use SingleAgentClient from \`/advanced\`**:
-\`\`\`typescript
-import { SingleAgentClient } from '@adcp/client/advanced';
-
-const client = new SingleAgentClient(agentConfig); // Single agent, no array
-const result = await client.getProducts({ brief: '...' });
-\`\`\`
-
-**Recommendation**: Use Option A (new \`AdCPClient\`) for consistency. The single-agent API is available in \`/advanced\` but is not recommended for new code.
+**Key improvement**: The `.agent(id)` method returns a client with automatic conversation context tracking, which the old single-agent API didn't have!
 
 ---
 
@@ -169,7 +166,7 @@ const agents = client.getAgentConfigs(); // Returns AgentConfig[]
 - [ ] Replace \`createAdCPClient()\` with \`new AdCPClient()\`
 - [ ] Replace \`createAdCPClientFromEnv()\` with \`AdCPClient.fromEnv()\`
 - [ ] Replace \`client.getAgents()\` with \`client.getAgentConfigs()\`
-- [ ] If using single-agent API, wrap config in array or import from \`/advanced\`
+- [ ] If using single-agent API, wrap config in array and use \`.agent(id)\` to get conversation-aware client
 
 ---
 
@@ -177,5 +174,5 @@ const agents = client.getAgentConfigs(); // Returns AgentConfig[]
 
 1. **Simpler naming**: \`AdCPClient\` is shorter and clearer than \`ADCPMultiAgentClient\`
 2. **Consistent casing**: Removed the confusing lowercase 'd' variant (\`AdCPClient\`)
-3. **Cleaner exports**: Advanced/low-level APIs moved to \`/advanced\` path
-4. **Future-proof**: Multi-agent is the default, single-agent is the special case
+3. **Better conversation support**: The new \`.agent(id)\` method returns a client with automatic conversation context tracking
+4. **Unified API**: One client handles both single-agent and multi-agent use cases seamlessly

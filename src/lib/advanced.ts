@@ -1,59 +1,41 @@
-// Advanced exports for library authors and specialized use cases
-// Most developers should use ADCPMultiAgentClient from the main export
-
 /**
- * Single-agent client with conversation management
+ * Advanced exports for library authors building custom protocol implementations
  *
  * @remarks
- * For most use cases, prefer the main AdCPClient (which handles single or multi-agent).
- * This class is useful for:
- * - Building higher-level abstractions
- * - Integration with existing single-agent systems
- * - Advanced conversation management scenarios
+ * **Most developers should use AdCPClient from the main export**, which provides:
+ * - Single-agent access via `client.agent(id)` with conversation context
+ * - Multi-agent parallel operations via `client.agents([ids])`
+ * - All AdCP tools with full type safety
+ *
+ * These low-level protocol clients are only needed if you're:
+ * - Building custom protocol handlers
+ * - Integrating AdCP with other frameworks
+ * - Implementing custom agent orchestration
  *
  * @example
  * ```typescript
- * import { SingleAgentClient } from '@adcp/client/advanced';
+ * // ❌ Don't do this - use main AdCPClient instead:
+ * import { callA2ATool } from '@adcp/client/advanced';
  *
- * const client = new SingleAgentClient({
- *   id: 'agent-1',
- *   agent_uri: 'https://agent.com',
- *   protocol: 'a2a'
- * });
- *
- * const result = await client.getProducts({ brief: '...' });
+ * // ✅ Do this - use the main client:
+ * import { AdCPClient } from '@adcp/client';
+ * const client = new AdCPClient([agentConfig]);
+ * const agent = client.agent('agent-id');
+ * await agent.getProducts({ brief: '...' });
  * ```
  */
-export { ADCPClient as SingleAgentClient, createADCPClient } from './core/ADCPClient';
-export type { ADCPClientConfig } from './core/ADCPClient';
-
-/**
- * Agent client with automatic context tracking
- *
- * @remarks
- * Wraps SingleAgentClient and automatically maintains conversation context across calls.
- * Useful for chat-like interactions where context should persist.
- *
- * @example
- * ```typescript
- * import { AgentClient } from '@adcp/client/advanced';
- *
- * const client = new AgentClient(agentConfig);
- *
- * // First call establishes context
- * await client.getProducts({ brief: '...' });
- *
- * // Subsequent calls reuse the same context
- * await client.createMediaBuy({ ... }); // Same conversation
- * ```
- */
-export { AgentClient, type TaskResponseTypeMap, type AdcpTaskName } from './core/AgentClient';
 
 /**
  * Protocol-level clients for direct protocol interaction
  *
  * @remarks
  * Low-level clients for MCP and A2A protocols. Used internally by AdCPClient.
- * Only export these if you need to build custom protocol handlers.
+ * Only use these if you need to build custom protocol handlers or integrations.
+ *
+ * For normal usage, prefer AdCPClient which wraps these and provides:
+ * - Automatic agent configuration
+ * - Conversation context management
+ * - Type-safe tool methods
+ * - Error handling and validation
  */
 export { ProtocolClient, callMCPTool, callA2ATool, createMCPClient, createA2AClient } from './protocols';
