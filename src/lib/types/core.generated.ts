@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas v2.4.0
-// Generated at: 2025-11-07T11:52:22.869Z
+// Generated at: 2025-11-08T15:37:51.053Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -165,17 +165,173 @@ export interface FormatID {
 /**
  * VAST (Video Ad Serving Template) tag for third-party video ad serving
  */
-export type VASTAsset = VASTAsset1 & VASTAsset2;
-export type VASTAsset2 = {
-  [k: string]: unknown;
-};
+export type VASTAsset =
+  | {
+      /**
+       * Discriminator indicating VAST is delivered via URL endpoint
+       */
+      delivery_type: 'url';
+      /**
+       * URL endpoint that returns VAST XML
+       */
+      url: string;
+      /**
+       * VAST specification version
+       */
+      vast_version?: '2.0' | '3.0' | '4.0' | '4.1' | '4.2';
+      /**
+       * Whether VPAID (Video Player-Ad Interface Definition) is supported
+       */
+      vpaid_enabled?: boolean;
+      /**
+       * Expected video duration in milliseconds (if known)
+       */
+      duration_ms?: number;
+      /**
+       * Tracking events supported by this VAST tag
+       */
+      tracking_events?: (
+        | 'start'
+        | 'firstQuartile'
+        | 'midpoint'
+        | 'thirdQuartile'
+        | 'complete'
+        | 'impression'
+        | 'click'
+        | 'pause'
+        | 'resume'
+        | 'skip'
+        | 'mute'
+        | 'unmute'
+        | 'fullscreen'
+        | 'exitFullscreen'
+        | 'playerExpand'
+        | 'playerCollapse'
+      )[];
+    }
+  | {
+      /**
+       * Discriminator indicating VAST is delivered as inline XML content
+       */
+      delivery_type: 'inline';
+      /**
+       * Inline VAST XML content
+       */
+      content: string;
+      /**
+       * VAST specification version
+       */
+      vast_version?: '2.0' | '3.0' | '4.0' | '4.1' | '4.2';
+      /**
+       * Whether VPAID (Video Player-Ad Interface Definition) is supported
+       */
+      vpaid_enabled?: boolean;
+      /**
+       * Expected video duration in milliseconds (if known)
+       */
+      duration_ms?: number;
+      /**
+       * Tracking events supported by this VAST tag
+       */
+      tracking_events?: (
+        | 'start'
+        | 'firstQuartile'
+        | 'midpoint'
+        | 'thirdQuartile'
+        | 'complete'
+        | 'impression'
+        | 'click'
+        | 'pause'
+        | 'resume'
+        | 'skip'
+        | 'mute'
+        | 'unmute'
+        | 'fullscreen'
+        | 'exitFullscreen'
+        | 'playerExpand'
+        | 'playerCollapse'
+      )[];
+    };
 /**
  * DAAST (Digital Audio Ad Serving Template) tag for third-party audio ad serving
  */
-export type DAASTAsset = DAASTAsset1 & DAASTAsset2;
-export type DAASTAsset2 = {
-  [k: string]: unknown;
-};
+export type DAASTAsset =
+  | {
+      /**
+       * Discriminator indicating DAAST is delivered via URL endpoint
+       */
+      delivery_type: 'url';
+      /**
+       * URL endpoint that returns DAAST XML
+       */
+      url: string;
+      /**
+       * DAAST specification version
+       */
+      daast_version?: '1.0' | '1.1';
+      /**
+       * Expected audio duration in milliseconds (if known)
+       */
+      duration_ms?: number;
+      /**
+       * Tracking events supported by this DAAST tag
+       */
+      tracking_events?: (
+        | 'start'
+        | 'firstQuartile'
+        | 'midpoint'
+        | 'thirdQuartile'
+        | 'complete'
+        | 'impression'
+        | 'pause'
+        | 'resume'
+        | 'skip'
+        | 'mute'
+        | 'unmute'
+      )[];
+      /**
+       * Whether companion display ads are included
+       */
+      companion_ads?: boolean;
+    }
+  | {
+      /**
+       * Discriminator indicating DAAST is delivered as inline XML content
+       */
+      delivery_type: 'inline';
+      /**
+       * Inline DAAST XML content
+       */
+      content: string;
+      /**
+       * DAAST specification version
+       */
+      daast_version?: '1.0' | '1.1';
+      /**
+       * Expected audio duration in milliseconds (if known)
+       */
+      duration_ms?: number;
+      /**
+       * Tracking events supported by this DAAST tag
+       */
+      tracking_events?: (
+        | 'start'
+        | 'firstQuartile'
+        | 'midpoint'
+        | 'thirdQuartile'
+        | 'complete'
+        | 'impression'
+        | 'pause'
+        | 'resume'
+        | 'skip'
+        | 'mute'
+        | 'unmute'
+      )[];
+      /**
+       * Whether companion display ads are included
+       */
+      companion_ads?: boolean;
+    };
 /**
  * Brand information manifest containing assets, themes, and guidelines. Can be provided inline or as a URL reference to a hosted manifest.
  */
@@ -389,87 +545,6 @@ export interface JavaScriptAsset {
    * JavaScript module type
    */
   module_type?: 'esm' | 'commonjs' | 'script';
-}
-export interface VASTAsset1 {
-  /**
-   * URL endpoint that returns VAST XML
-   */
-  url?: string;
-  /**
-   * Inline VAST XML content
-   */
-  content?: string;
-  /**
-   * VAST specification version
-   */
-  vast_version?: '2.0' | '3.0' | '4.0' | '4.1' | '4.2';
-  /**
-   * Whether VPAID (Video Player-Ad Interface Definition) is supported
-   */
-  vpaid_enabled?: boolean;
-  /**
-   * Expected video duration in milliseconds (if known)
-   */
-  duration_ms?: number;
-  /**
-   * Tracking events supported by this VAST tag
-   */
-  tracking_events?: (
-    | 'start'
-    | 'firstQuartile'
-    | 'midpoint'
-    | 'thirdQuartile'
-    | 'complete'
-    | 'impression'
-    | 'click'
-    | 'pause'
-    | 'resume'
-    | 'skip'
-    | 'mute'
-    | 'unmute'
-    | 'fullscreen'
-    | 'exitFullscreen'
-    | 'playerExpand'
-    | 'playerCollapse'
-  )[];
-}
-export interface DAASTAsset1 {
-  /**
-   * URL endpoint that returns DAAST XML
-   */
-  url?: string;
-  /**
-   * Inline DAAST XML content
-   */
-  content?: string;
-  /**
-   * DAAST specification version
-   */
-  daast_version?: '1.0' | '1.1';
-  /**
-   * Expected audio duration in milliseconds (if known)
-   */
-  duration_ms?: number;
-  /**
-   * Tracking events supported by this DAAST tag
-   */
-  tracking_events?: (
-    | 'start'
-    | 'firstQuartile'
-    | 'midpoint'
-    | 'thirdQuartile'
-    | 'complete'
-    | 'impression'
-    | 'pause'
-    | 'resume'
-    | 'skip'
-    | 'mute'
-    | 'unmute'
-  )[];
-  /**
-   * Whether companion display ads are included
-   */
-  companion_ads?: boolean;
 }
 /**
  * Complete offering specification combining brand manifest, product selectors, and asset filters. Provides all context needed for creative generation about what is being promoted.
