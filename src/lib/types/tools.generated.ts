@@ -1911,39 +1911,45 @@ export interface PushNotificationConfig {
 
 // create_media_buy response
 /**
- * Response payload for create_media_buy task
+ * Response payload for create_media_buy task. Returns either complete success data OR error information, never both. This enforces atomic operation semantics - the media buy is either fully created or not created at all.
  */
-export interface CreateMediaBuyResponse {
-  /**
-   * Publisher's unique identifier for the created media buy
-   */
-  media_buy_id?: string;
-  /**
-   * Buyer's reference identifier for this media buy
-   */
-  buyer_ref: string;
-  /**
-   * ISO 8601 timestamp for creative upload deadline
-   */
-  creative_deadline?: string;
-  /**
-   * Array of created packages
-   */
-  packages?: {
-    /**
-     * Publisher's unique identifier for the package
-     */
-    package_id: string;
-    /**
-     * Buyer's reference identifier for the package
-     */
-    buyer_ref: string;
-  }[];
-  /**
-   * Task-specific errors and warnings (e.g., partial package creation failures)
-   */
-  errors?: Error[];
-}
+export type CreateMediaBuyResponse =
+  | {
+      /**
+       * Publisher's unique identifier for the created media buy
+       */
+      media_buy_id: string;
+      /**
+       * Buyer's reference identifier for this media buy
+       */
+      buyer_ref: string;
+      /**
+       * ISO 8601 timestamp for creative upload deadline
+       */
+      creative_deadline?: string;
+      /**
+       * Array of created packages
+       */
+      packages: {
+        /**
+         * Publisher's unique identifier for the package
+         */
+        package_id: string;
+        /**
+         * Buyer's reference identifier for the package
+         */
+        buyer_ref: string;
+      }[];
+    }
+  | {
+      /**
+       * Array of errors explaining why the operation failed
+       *
+       * @minItems 1
+       */
+      errors: [Error, ...Error[]];
+    };
+
 /**
  * Standard error structure for task-specific errors and warnings
  */
@@ -1995,68 +2001,80 @@ export interface SyncCreativesRequest {
 
 // sync_creatives response
 /**
- * Response from creative sync operation with results for each creative
+ * Response from creative sync operation. Returns either per-creative results (best-effort processing) OR operation-level errors (complete failure). This enforces atomic semantics at the operation level while allowing per-item failures within successful operations.
  */
-export interface SyncCreativesResponse {
-  /**
-   * Whether this was a dry run (no actual changes made)
-   */
-  dry_run?: boolean;
-  /**
-   * Results for each creative processed
-   */
-  creatives: {
-    /**
-     * Creative ID from the request
-     */
-    creative_id: string;
-    /**
-     * Action taken for this creative
-     */
-    action: 'created' | 'updated' | 'unchanged' | 'failed' | 'deleted';
-    /**
-     * Platform-specific ID assigned to the creative
-     */
-    platform_id?: string;
-    /**
-     * Field names that were modified (only present when action='updated')
-     */
-    changes?: string[];
-    /**
-     * Validation or processing errors (only present when action='failed')
-     */
-    errors?: string[];
-    /**
-     * Non-fatal warnings about this creative
-     */
-    warnings?: string[];
-    /**
-     * Preview URL for generative creatives (only present for generative formats)
-     */
-    preview_url?: string;
-    /**
-     * ISO 8601 timestamp when preview link expires (only present when preview_url exists)
-     */
-    expires_at?: string;
-    /**
-     * Package IDs this creative was successfully assigned to (only present when assignments were requested)
-     */
-    assigned_to?: string[];
-    /**
-     * Assignment errors by package ID (only present when assignment failures occurred)
-     */
-    assignment_errors?: {
+export type SyncCreativesResponse =
+  | {
       /**
-       * Error message for this package assignment
-       *
-       * This interface was referenced by `undefined`'s JSON-Schema definition
-       * via the `patternProperty` "^[a-zA-Z0-9_-]+$".
+       * Whether this was a dry run (no actual changes made)
        */
-      [k: string]: string;
+      dry_run?: boolean;
+      /**
+       * Results for each creative processed. Items with action='failed' indicate per-item validation/processing failures, not operation-level failures.
+       */
+      creatives: {
+        /**
+         * Creative ID from the request
+         */
+        creative_id: string;
+        /**
+         * Action taken for this creative
+         */
+        action: 'created' | 'updated' | 'unchanged' | 'failed' | 'deleted';
+        /**
+         * Platform-specific ID assigned to the creative
+         */
+        platform_id?: string;
+        /**
+         * Field names that were modified (only present when action='updated')
+         */
+        changes?: string[];
+        /**
+         * Validation or processing errors (only present when action='failed')
+         */
+        errors?: string[];
+        /**
+         * Non-fatal warnings about this creative
+         */
+        warnings?: string[];
+        /**
+         * Preview URL for generative creatives (only present for generative formats)
+         */
+        preview_url?: string;
+        /**
+         * ISO 8601 timestamp when preview link expires (only present when preview_url exists)
+         */
+        expires_at?: string;
+        /**
+         * Package IDs this creative was successfully assigned to (only present when assignments were requested)
+         */
+        assigned_to?: string[];
+        /**
+         * Assignment errors by package ID (only present when assignment failures occurred)
+         */
+        assignment_errors?: {
+          /**
+           * Error message for this package assignment
+           *
+           * This interface was referenced by `undefined`'s JSON-Schema definition
+           * via the `patternProperty` "^[a-zA-Z0-9_-]+$".
+           */
+          [k: string]: string;
+        };
+      }[];
+    }
+  | {
+      /**
+       * Operation-level errors that prevented processing any creatives (e.g., authentication failure, service unavailable, invalid request format)
+       *
+       * @minItems 1
+       */
+      errors: [Error, ...Error[]];
     };
-  }[];
-}
 
+/**
+ * Standard error structure for task-specific errors and warnings
+ */
 
 // list_creatives parameters
 /**
@@ -2509,39 +2527,45 @@ export interface UpdateMediaBuyRequest1 {
 
 // update_media_buy response
 /**
- * Response payload for update_media_buy task
+ * Response payload for update_media_buy task. Returns either complete success data OR error information, never both. This enforces atomic operation semantics - updates are either fully applied or not applied at all.
  */
-export interface UpdateMediaBuyResponse {
-  /**
-   * Publisher's identifier for the media buy
-   */
-  media_buy_id: string;
-  /**
-   * Buyer's reference identifier for the media buy
-   */
-  buyer_ref: string;
-  /**
-   * ISO 8601 timestamp when changes take effect (null if pending approval)
-   */
-  implementation_date?: string | null;
-  /**
-   * Array of packages that were modified
-   */
-  affected_packages?: {
-    /**
-     * Publisher's package identifier
-     */
-    package_id: string;
-    /**
-     * Buyer's reference for the package
-     */
-    buyer_ref: string;
-  }[];
-  /**
-   * Task-specific errors and warnings (e.g., partial update failures)
-   */
-  errors?: Error[];
-}
+export type UpdateMediaBuyResponse =
+  | {
+      /**
+       * Publisher's identifier for the media buy
+       */
+      media_buy_id: string;
+      /**
+       * Buyer's reference identifier for the media buy
+       */
+      buyer_ref: string;
+      /**
+       * ISO 8601 timestamp when changes take effect (null if pending approval)
+       */
+      implementation_date?: string | null;
+      /**
+       * Array of packages that were modified
+       */
+      affected_packages?: {
+        /**
+         * Publisher's package identifier
+         */
+        package_id: string;
+        /**
+         * Buyer's reference for the package
+         */
+        buyer_ref: string;
+      }[];
+    }
+  | {
+      /**
+       * Array of errors explaining why the operation failed
+       *
+       * @minItems 1
+       */
+      errors: [Error, ...Error[]];
+    };
+
 /**
  * Standard error structure for task-specific errors and warnings
  */
@@ -2979,18 +3003,24 @@ export interface ProvidePerformanceFeedbackRequest {
 
 // provide_performance_feedback response
 /**
- * Response payload for provide_performance_feedback task
+ * Response payload for provide_performance_feedback task. Returns either success confirmation OR error information, never both.
  */
-export interface ProvidePerformanceFeedbackResponse {
-  /**
-   * Whether the performance feedback was successfully received
-   */
-  success: boolean;
-  /**
-   * Task-specific errors and warnings (e.g., invalid measurement period, missing campaign data)
-   */
-  errors?: Error[];
-}
+export type ProvidePerformanceFeedbackResponse =
+  | {
+      /**
+       * Whether the performance feedback was successfully received
+       */
+      success: true;
+    }
+  | {
+      /**
+       * Array of errors explaining why feedback was rejected (e.g., invalid measurement period, missing campaign data)
+       *
+       * @minItems 1
+       */
+      errors: [Error, ...Error[]];
+    };
+
 /**
  * Standard error structure for task-specific errors and warnings
  */
@@ -3093,17 +3123,22 @@ export interface WebhookAsset {
 
 // build_creative response
 /**
- * VAST (Video Ad Serving Template) tag for third-party video ad serving
+ * Response containing the transformed or generated creative manifest, ready for use with preview_creative or sync_creatives. Returns either the complete creative manifest OR error information, never both.
  */
-export interface BuildCreativeResponse {
-  creative_manifest: CreativeManifest;
-  /**
-   * Task-specific errors and warnings
-   */
-  errors?: Error[];
-}
+export type BuildCreativeResponse =
+  | {
+      creative_manifest: CreativeManifest;
+    }
+  | {
+      /**
+       * Array of errors explaining why creative generation failed
+       *
+       * @minItems 1
+       */
+      errors: [Error, ...Error[]];
+    };
 /**
- * The generated or transformed creative manifest
+ * VAST (Video Ad Serving Template) tag for third-party video ad serving
  */
 
 // preview_creative parameters
@@ -3791,18 +3826,23 @@ export interface ActivateSignalRequest {
 
 // activate_signal response
 /**
- * A signal deployment to a specific destination platform with activation status and key
+ * Response payload for activate_signal task. Returns either complete success data OR error information, never both. This enforces atomic operation semantics - the signal is either fully activated or not activated at all.
  */
-export interface ActivateSignalResponse {
-  /**
-   * Array of deployment results for each destination
-   */
-  deployments: Deployment[];
-  /**
-   * Task-specific errors and warnings (e.g., activation failures, platform issues)
-   */
-  errors?: Error[];
-}
+export type ActivateSignalResponse =
+  | {
+      /**
+       * Array of deployment results for each destination
+       */
+      deployments: Deployment[];
+    }
+  | {
+      /**
+       * Array of errors explaining why activation failed (e.g., platform connectivity issues, signal definition problems, authentication failures)
+       *
+       * @minItems 1
+       */
+      errors: [Error, ...Error[]];
+    };
 /**
- * Standard error structure for task-specific errors and warnings
+ * A signal deployment to a specific destination platform with activation status and key
  */
