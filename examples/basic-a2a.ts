@@ -1,21 +1,7 @@
 // Basic A2A Client Example
 import { ADCPClient, type AgentConfig } from '@adcp/client';
-import { createA2AClient } from '@adcp/client/advanced';
 
-async function basicA2AExample() {
-  // Direct A2A protocol client (advanced usage)
-  const client = createA2AClient('https://test-agent.adcontextprotocol.org', 'your-auth-token');
-
-  try {
-    const result = await client.callTool('get_products', 'Looking for premium coffee brands', 'Artisan coffee blends');
-
-    console.log('Products:', result);
-  } catch (error) {
-    console.error('Error calling A2A agent:', error);
-  }
-}
-
-// Using ADCPClient (recommended)
+// Using ADCPClient with A2A protocol (recommended)
 async function configuredA2AExample() {
   const agent: AgentConfig = {
     id: 'test-a2a-agent',
@@ -88,7 +74,6 @@ async function multiAgentExample() {
 
 // Run examples
 if (require.main === module) {
-  basicA2AExample();
   configuredA2AExample();
   multiAgentExample();
 }

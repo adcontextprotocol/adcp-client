@@ -3328,26 +3328,32 @@ export interface GetSignalsRequest {
    */
   signal_spec: string;
   /**
-   * Where the signals need to be delivered
+   * Destination platforms where signals need to be activated
    */
   deliver_to: {
     /**
-     * Target platforms for signal deployment
+     * List of destination platforms (DSPs, sales agents, etc.). If the authenticated caller matches one of these destinations, activation keys will be included in the response.
+     *
+     * @minItems 1
      */
-    platforms: 'all' | string[];
-    /**
-     * Specific platform-account combinations
-     */
-    accounts?: {
-      /**
-       * Platform identifier
-       */
-      platform: string;
-      /**
-       * Account identifier on that platform
-       */
-      account: string;
-    }[];
+    destinations: [
+      (
+        | {
+            [k: string]: unknown;
+          }
+        | {
+            [k: string]: unknown;
+          }
+      ),
+      ...(
+        | {
+            [k: string]: unknown;
+          }
+        | {
+            [k: string]: unknown;
+          }
+      )[]
+    ];
     /**
      * Countries where signals will be used (ISO codes)
      */
@@ -3415,34 +3421,16 @@ export interface GetSignalsResponse {
      */
     coverage_percentage: number;
     /**
-     * Array of platform deployments
+     * Array of destination deployments
      */
-    deployments: {
-      /**
-       * Platform name
-       */
-      platform: string;
-      /**
-       * Specific account if applicable
-       */
-      account?: string | null;
-      /**
-       * Whether signal is currently active
-       */
-      is_live: boolean;
-      /**
-       * Deployment scope
-       */
-      scope: 'platform-wide' | 'account-specific';
-      /**
-       * Platform-specific segment ID
-       */
-      decisioning_platform_segment_id?: string;
-      /**
-       * Time to activate if not live
-       */
-      estimated_activation_duration_minutes?: number;
-    }[];
+    deployments: (
+      | {
+          [k: string]: unknown;
+        }
+      | {
+          [k: string]: unknown;
+        }
+    )[];
     /**
      * Pricing information
      */
@@ -3468,7 +3456,7 @@ export interface GetSignalsResponse {
 
 // activate_signal parameters
 /**
- * Request parameters for activating a signal on a specific platform/account
+ * Request parameters for activating a signal on a specific destination
  */
 export interface ActivateSignalRequest {
   /**
@@ -3476,13 +3464,28 @@ export interface ActivateSignalRequest {
    */
   signal_agent_segment_id: string;
   /**
-   * The target platform for activation
+   * Target destination(s) for activation. If the authenticated caller matches one of these destinations, activation keys will be included in the response.
+   *
+   * @minItems 1
    */
-  platform: string;
-  /**
-   * Account identifier (required for account-specific activation)
-   */
-  account?: string;
+  destinations: [
+    (
+      | {
+          [k: string]: unknown;
+        }
+      | {
+          [k: string]: unknown;
+        }
+    ),
+    ...(
+      | {
+          [k: string]: unknown;
+        }
+      | {
+          [k: string]: unknown;
+        }
+    )[]
+  ];
 }
 
 
@@ -3492,17 +3495,16 @@ export interface ActivateSignalRequest {
  */
 export interface ActivateSignalResponse {
   /**
-   * The platform-specific ID to use once activated
+   * Array of deployment results for each destination
    */
-  decisioning_platform_segment_id?: string;
-  /**
-   * Estimated time to complete (optional)
-   */
-  estimated_activation_duration_minutes?: number;
-  /**
-   * Timestamp when activation completed (optional)
-   */
-  deployed_at?: string;
+  deployments: (
+    | {
+        [k: string]: unknown;
+      }
+    | {
+        [k: string]: unknown;
+      }
+  )[];
   /**
    * Task-specific errors and warnings (e.g., activation failures, platform issues)
    */

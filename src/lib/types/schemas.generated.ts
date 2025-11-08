@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2025-11-07T21:42:44.037Z
+// Generated at: 2025-11-08T09:40:06.350Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -654,11 +654,7 @@ export const PreviewCreativeResponseSchema = z.union([z.object({
 export const GetSignalsRequestSchema = z.object({
     signal_spec: z.string(),
     deliver_to: z.object({
-        platforms: z.union([z.literal("all"), z.array(z.string())]),
-        accounts: z.array(z.object({
-            platform: z.string(),
-            account: z.string()
-        })).optional(),
+        destinations: z.tuple([z.union([z.record(z.string(), z.unknown()), z.record(z.string(), z.unknown())])]).rest(z.union([z.record(z.string(), z.unknown()), z.record(z.string(), z.unknown())])),
         countries: z.array(z.string())
     }),
     filters: z.object({
@@ -678,14 +674,7 @@ export const GetSignalsResponseSchema = z.object({
         signal_type: z.union([z.literal("marketplace"), z.literal("custom"), z.literal("owned")]),
         data_provider: z.string(),
         coverage_percentage: z.number(),
-        deployments: z.array(z.object({
-            platform: z.string(),
-            account: z.string().optional().nullable(),
-            is_live: z.boolean(),
-            scope: z.union([z.literal("platform-wide"), z.literal("account-specific")]),
-            decisioning_platform_segment_id: z.string().optional(),
-            estimated_activation_duration_minutes: z.number().optional()
-        })),
+        deployments: z.array(z.union([z.record(z.string(), z.unknown()), z.record(z.string(), z.unknown())])),
         pricing: z.object({
             cpm: z.number(),
             currency: z.string()
@@ -696,14 +685,11 @@ export const GetSignalsResponseSchema = z.object({
 
 export const ActivateSignalRequestSchema = z.object({
     signal_agent_segment_id: z.string(),
-    platform: z.string(),
-    account: z.string().optional()
+    destinations: z.tuple([z.union([z.record(z.string(), z.unknown()), z.record(z.string(), z.unknown())])]).rest(z.union([z.record(z.string(), z.unknown()), z.record(z.string(), z.unknown())]))
 });
 
 export const ActivateSignalResponseSchema = z.object({
-    decisioning_platform_segment_id: z.string().optional(),
-    estimated_activation_duration_minutes: z.number().optional(),
-    deployed_at: z.string().optional(),
+    deployments: z.array(z.union([z.record(z.string(), z.unknown()), z.record(z.string(), z.unknown())])),
     errors: z.array(ErrorSchema).optional()
 });
 
