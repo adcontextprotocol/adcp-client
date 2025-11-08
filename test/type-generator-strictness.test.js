@@ -29,8 +29,12 @@ test('generated types maintain strict schema enforcement', () => {
   // Updated from 20 to 33 due to AdCP v2.4.0 schema changes:
   // - PreviewCreativeResponse now has complex union types with batch support
   // - Render objects use union types for different render formats
-  // - These index signatures are intentional for union type discrimination
-  const MAX_ALLOWED = 33;
+  // Updated from 33 to 45 due to signals API refactoring (PR #125):
+  // - GetSignalsRequest.deliver_to.destinations uses union types
+  // - GetSignalsResponse.signals[].deployments uses union types
+  // - ActivateSignalRequest.destinations uses union types
+  // - These index signatures are intentional for flexible destination/deployment schemas
+  const MAX_ALLOWED = 45;
 
   console.log(`📊 Type strictness metrics:`);
   console.log(`   Index signatures found: ${count}`);

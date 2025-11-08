@@ -2,7 +2,7 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { AdCPClient } = require('../dist/lib/core/AdCPClient');
+const { AdCPClient } = require('../dist/lib/index.js');
 
 const agentConfig = {
   id: 'test_agent',

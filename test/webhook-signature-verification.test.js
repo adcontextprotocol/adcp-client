@@ -1,6 +1,6 @@
 const { test, describe } = require('node:test');
 const assert = require('node:assert');
-const { AdCPClient } = require('../dist/lib/core/AdCPClient');
+const { AdCPClient } = require('../dist/lib/index.js');
 const crypto = require('crypto');
 
 describe('Webhook Signature Verification (PR #86 Spec)', () => {
