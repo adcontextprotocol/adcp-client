@@ -1,6 +1,6 @@
 // Preview utilities for rendering product/format cards with creative agent
 
-import type { ADCPClient } from '../core/ADCPClient';
+import type { SingleAgentClient } from '../core/SingleAgentClient';
 import type { Format, Product, FormatID } from '../types/tools.generated';
 import type { PreviewCreativeRequest, PreviewCreativeResponse } from '../types/tools.generated';
 
@@ -103,7 +103,7 @@ export function clearPreviewCache(): void {
  *
  * @example
  * ```typescript
- * const creativeAgent = new ADCPClient({
+ * const creativeAgent = new SingleAgentClient({
  *   id: 'creative',
  *   name: 'Creative Agent',
  *   agent_uri: 'https://creative.adcontextprotocol.org/mcp',
@@ -120,7 +120,7 @@ export function clearPreviewCache(): void {
  */
 export async function batchPreviewProducts(
   products: Product[],
-  creativeAgentClient: ADCPClient,
+  creativeAgentClient: SingleAgentClient,
   options: BatchPreviewOptions = {}
 ): Promise<PreviewResult[]> {
   const cacheTtl = options.cacheTtl ?? 3600000; // 1 hour default
@@ -258,7 +258,7 @@ export async function batchPreviewProducts(
  *
  * @example
  * ```typescript
- * const creativeAgent = new ADCPClient({
+ * const creativeAgent = new SingleAgentClient({
  *   id: 'creative',
  *   name: 'Creative Agent',
  *   agent_uri: 'https://creative.adcontextprotocol.org/mcp',
@@ -275,7 +275,7 @@ export async function batchPreviewProducts(
  */
 export async function batchPreviewFormats(
   formats: Format[],
-  creativeAgentClient: ADCPClient,
+  creativeAgentClient: SingleAgentClient,
   options: BatchPreviewOptions = {}
 ): Promise<PreviewResult[]> {
   const cacheTtl = options.cacheTtl ?? 3600000; // 1 hour default

@@ -38,9 +38,9 @@ import { AsyncHandler } from './AsyncHandler';
 import * as crypto from 'crypto';
 
 /**
- * Configuration for ADCPClient
+ * Configuration for SingleAgentClient (and multi-agent client)
  */
-export interface ADCPClientConfig extends ConversationConfig {
+export interface SingleAgentClientConfig extends ConversationConfig {
   /** Enable debug logging */
   debug?: boolean;
   /** Custom user agent string */
@@ -90,10 +90,10 @@ export interface ADCPClientConfig extends ConversationConfig {
 }
 
 /**
- * Main ADCP Client providing strongly-typed conversation-aware interface
+ * Internal single-agent client implementation
  *
- * This client handles individual agent interactions with full conversation context.
- * For multi-agent operations, use ADCPMultiAgentClient or compose multiple instances.
+ * This is an internal implementation detail used by AgentClient and ADCPMultiAgentClient.
+ * External users should use AdCPClient (alias for ADCPMultiAgentClient) instead.
  *
  * Key features:
  * - 🔒 Full type safety for all ADCP tasks
@@ -103,7 +103,7 @@ export interface ADCPClientConfig extends ConversationConfig {
  * - 🐛 Debug logging and observability
  * - 🎯 Works with both MCP and A2A protocols
  */
-export class ADCPClient {
+export class SingleAgentClient {
   private executor: TaskExecutor;
   private asyncHandler?: AsyncHandler;
   private normalizedAgent: AgentConfig;
@@ -111,7 +111,7 @@ export class ADCPClient {
 
   constructor(
     private agent: AgentConfig,
-    private config: ADCPClientConfig = {}
+    private config: SingleAgentClientConfig = {}
   ) {
     // Normalize agent URL for MCP protocol
     this.normalizedAgent = this.normalizeAgentConfig(agent);
@@ -1208,7 +1208,7 @@ export class ADCPClient {
    * @example
    * ```typescript
    * // Discover formats from the standard creative agent
-   * const formats = await ADCPClient.discoverCreativeFormats(
+   * const formats = await SingleAgentClient.discoverCreativeFormats(
    *   'https://creative.adcontextprotocol.org/mcp'
    * );
    *
@@ -1227,7 +1227,7 @@ export class ADCPClient {
    * ```
    */
   static async discoverCreativeFormats(creativeAgentUrl: string, protocol: 'mcp' | 'a2a' = 'mcp'): Promise<Format[]> {
-    const client = new ADCPClient(
+    const client = new SingleAgentClient(
       {
         id: 'creative_agent_discovery',
         name: 'Creative Agent',
@@ -1288,12 +1288,13 @@ export class ADCPClient {
 }
 
 /**
- * Factory function to create an ADCP client
+ * Factory function to create a single-agent client (internal use)
  *
  * @param agent - Agent configuration
  * @param config - Client configuration
- * @returns Configured ADCPClient instance
+ * @returns Configured SingleAgentClient instance
+ * @internal
  */
-export function createADCPClient(agent: AgentConfig, config?: ADCPClientConfig): ADCPClient {
-  return new ADCPClient(agent, config);
+export function createSingleAgentClient(agent: AgentConfig, config?: SingleAgentClientConfig): SingleAgentClient {
+  return new SingleAgentClient(agent, config);
 }

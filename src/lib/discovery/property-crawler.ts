@@ -8,7 +8,7 @@
  * 4. Building property → agents mapping
  */
 
-import { ADCPClient } from '../core/ADCPClient';
+import { SingleAgentClient } from '../core/SingleAgentClient';
 import { getPropertyIndex } from './property-index';
 import { createLogger, type LogLevel } from '../utils/logger';
 import { LIBRARY_VERSION } from '../version';
@@ -117,7 +117,7 @@ export class PropertyCrawler {
    * Crawl a single agent to get its authorized publisher domains
    */
   async crawlAgent(agentInfo: AgentInfo): Promise<string[]> {
-    const client = new ADCPClient({
+    const client = new SingleAgentClient({
       id: 'crawler',
       name: 'Property Crawler',
       agent_uri: agentInfo.agent_url,
