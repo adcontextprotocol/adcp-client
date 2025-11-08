@@ -180,7 +180,8 @@ const clientConfig: AdCPClientConfig = {
         payload: response,
         metadata,
       });
-      app.log.info(`[${status}] Creatives synced: ${response.creatives?.length || 0} for ${metadata.operation_id}`);
+      const creativesCount = 'creatives' in response ? response.creatives?.length || 0 : 0;
+      app.log.info(`[${status}] Creatives synced: ${creativesCount} for ${metadata.operation_id}`);
     },
 
     onCreateMediaBuyStatusChange: (response, metadata) => {
@@ -194,7 +195,8 @@ const clientConfig: AdCPClientConfig = {
         payload: response,
         metadata,
       });
-      app.log.info(`[${status}] Media buy created: ${response.media_buy_id} for ${metadata.operation_id}`);
+      const mediaBuyId = 'media_buy_id' in response ? response.media_buy_id : 'error';
+      app.log.info(`[${status}] Media buy created: ${mediaBuyId} for ${metadata.operation_id}`);
     },
 
     onMediaBuyDeliveryNotification: (notification, metadata) => {
