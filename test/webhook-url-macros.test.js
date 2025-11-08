@@ -12,7 +12,7 @@ const agentConfig = {
 };
 
 test('path-based template', () => {
-  const client = new AdCPClient(agentConfig, {
+  const client = new AdCPClient([agentConfig], {
     webhookUrlTemplate: 'https://myapp.com/webhook/{task_type}/{agent_id}/{operation_id}',
   });
 
@@ -21,7 +21,7 @@ test('path-based template', () => {
 });
 
 test('query string template', () => {
-  const client = new AdCPClient(agentConfig, {
+  const client = new AdCPClient([agentConfig], {
     webhookUrlTemplate: 'https://myapp.com/webhook?agent={agent_id}&op={operation_id}&type={task_type}',
   });
 
@@ -30,7 +30,7 @@ test('query string template', () => {
 });
 
 test('mixed path and query template', () => {
-  const client = new AdCPClient(agentConfig, {
+  const client = new AdCPClient([agentConfig], {
     webhookUrlTemplate: 'https://myapp.com/api/v1/callbacks/{agent_id}?operation={operation_id}',
   });
 
@@ -39,7 +39,7 @@ test('mixed path and query template', () => {
 });
 
 test('notification webhook URL', () => {
-  const client = new AdCPClient(agentConfig, {
+  const client = new AdCPClient([agentConfig], {
     webhookUrlTemplate: 'https://myapp.com/webhook/{task_type}/{agent_id}/{operation_id}',
   });
 
@@ -48,7 +48,7 @@ test('notification webhook URL', () => {
 });
 
 test('throws error if webhookUrlTemplate not configured', () => {
-  const client = new AdCPClient(agentConfig, {});
+  const client = new AdCPClient([agentConfig], {});
 
   assert.throws(() => client.getWebhookUrl('sync_creatives', 'op_123'), /webhookUrlTemplate not configured/);
 });
