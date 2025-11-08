@@ -18,7 +18,7 @@ The main change is **naming simplification**:
 
 **If you were using `ADCPMultiAgentClient`**: Just rename it to `AdCPClient` (both work in v3, but `AdCPClient` is preferred)
 
-**If you were using `AdCPClient` (lowercase 'd')**: Capitalize the 'D': `AdCPClient` → `AdCPClient`
+**If you were using `AdCPClient` (lowercase 'd')**: Change to uppercase 'C' and 'P': `AdCPClient` → `AdCPClient`
 
 **If you were using the old single-agent `AdCPClient`**: Use the new `AdCPClient` with an array of one agent, then call `.agent(id)` to get a single-agent client with conversation context
 
@@ -82,7 +82,7 @@ const agent = client.agent('agent-1');
 const result = await agent.getProducts({ brief: '...' });
 \`\`\`
 
-**Change**: Capitalize the 'D': `AdCPClient` → `AdCPClient`
+**Change**: Change to uppercase 'C' and 'P': `AdCPClient` → `AdCPClient`
 
 ---
 
@@ -161,7 +161,7 @@ const agents = client.getAgentConfigs(); // Returns AgentConfig[]
 
 ## Breaking Changes Checklist
 
-- [ ] Replace \`AdCPClient\` with \`AdCPClient\` (capitalize the 'D')
+- [ ] Replace \`AdCPClient\` with \`AdCPClient\` (change to uppercase 'C' and 'P')
 - [ ] Replace \`ADCPMultiAgentClient\` with \`AdCPClient\` (shorter name)
 - [ ] Replace \`createAdCPClient()\` with \`new AdCPClient()\`
 - [ ] Replace \`createAdCPClientFromEnv()\` with \`AdCPClient.fromEnv()\`

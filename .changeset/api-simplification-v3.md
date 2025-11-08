@@ -8,15 +8,15 @@ Simplified API surface - removed deprecated exports and renamed primary client t
 
 **Removed:**
 - `AdCPClient` (deprecated wrapper with confusing lowercase 'd')
-- `createAdCPClient()`, `createAdCPClientFromEnv()`
-- `createAdCPClient()`, `createADCPMultiAgentClient()`
+- `createAdCPClient()`, `createAdCPClientFromEnv()` factory functions
+- `createADCPClient()`, `createADCPMultiAgentClient()` factory functions
+- `SingleAgentClient` and `AgentClient` exports from `/advanced` (use `client.agent(id)` instead)
 
 **Moved to `/advanced`:**
-- Old single-agent `AdCPClient` → `SingleAgentClient`
-- `AgentClient`, protocol clients
+- Protocol-level clients: `ProtocolClient`, `callMCPTool`, `callA2ATool`, `createMCPClient`, `createA2AClient`
 
 **Renamed:**
-- `ADCPMultiAgentClient` → `AdCPClient` (primary export)
+- `ADCPMultiAgentClient` → `AdCPClient` (primary export, proper AdCP capitalization)
 
 ## New API
 
