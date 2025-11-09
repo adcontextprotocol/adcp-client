@@ -192,23 +192,29 @@ describe('ADCP Conversation Client Library', { skip: process.env.CI ? 'Slow test
 });
 
 describe('Integration with existing codebase', () => {
-  test('should maintain backward compatibility', () => {
-    const { AdCPClient, ConfigurationManager } = require('../../dist/lib/index.js');
+  test('should maintain v3 API exports', () => {
+    const { AdCPClient, ADCPMultiAgentClient, ConfigurationManager } = require('../../dist/lib/index.js');
 
-    // Test legacy client still works
-    assert(typeof AdCPClient === 'function', 'Legacy AdCPClient should still be available');
+    // Test primary export (AdCPClient - the renamed ADCPMultiAgentClient)
+    assert(typeof AdCPClient === 'function', 'AdCPClient should be available');
+
+    // Test deprecated alias still works
+    assert(typeof ADCPMultiAgentClient === 'function', 'ADCPMultiAgentClient alias should still be available');
+
+    // Verify they're the same class
+    assert(AdCPClient === ADCPMultiAgentClient, 'AdCPClient should be the same as ADCPMultiAgentClient');
 
     // Test configuration manager
     assert(typeof ConfigurationManager === 'function', 'ConfigurationManager should be available');
     assert(typeof ConfigurationManager.loadAgentsFromEnv === 'function', 'Should have loadAgentsFromEnv method');
   });
 
-  test('should work with existing protocol clients', () => {
-    const { callMCPTool, callA2ATool, ProtocolClient } = require('../../dist/lib/index.js');
+  test('should work with protocol clients from /advanced', () => {
+    const { callMCPTool, callA2ATool, ProtocolClient } = require('../../dist/lib/advanced.js');
 
-    assert(typeof callMCPTool === 'function', 'MCP client should be available');
-    assert(typeof callA2ATool === 'function', 'A2A client should be available');
-    assert(typeof ProtocolClient === 'function', 'ProtocolClient should be available');
+    assert(typeof callMCPTool === 'function', 'MCP client should be available in /advanced');
+    assert(typeof callA2ATool === 'function', 'A2A client should be available in /advanced');
+    assert(typeof ProtocolClient === 'function', 'ProtocolClient should be available in /advanced');
   });
 });
 

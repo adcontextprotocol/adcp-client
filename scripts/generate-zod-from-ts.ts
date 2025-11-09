@@ -123,6 +123,8 @@ const TOOL_TYPES = [
   'GetSignalsResponse',
   'ActivateSignalRequest',
   'ActivateSignalResponse',
+  'Destination', // Discriminated union: platform or agent destinations
+  'Deployment', // Discriminated union: platform or agent deployments
 
   // Supporting types
   'PackageRequest',

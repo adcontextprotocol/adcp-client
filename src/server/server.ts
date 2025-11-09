@@ -10,7 +10,7 @@ import {
   getStandardFormats,
   type TaskResult,
   type InputHandler,
-  type ADCPClientConfig,
+  type AdCPClientConfig,
   type FormatID,
   ADCP_STATUS,
   InputRequiredError,
@@ -121,8 +121,8 @@ function storeEvent(event: Omit<StoredEvent, 'id' | 'timestamp'>) {
   return storedEvent;
 }
 
-// ADCPClient configuration with in-memory event storage
-const clientConfig: ADCPClientConfig = {
+// AdCPClient configuration with in-memory event storage
+const clientConfig: AdCPClientConfig = {
   webhookUrlTemplate: WEBHOOK_URL_TEMPLATE,
   webhookSecret: WEBHOOK_SECRET,
 
@@ -180,7 +180,8 @@ const clientConfig: ADCPClientConfig = {
         payload: response,
         metadata,
       });
-      app.log.info(`[${status}] Creatives synced: ${response.creatives?.length || 0} for ${metadata.operation_id}`);
+      const creativesCount = 'creatives' in response ? response.creatives?.length || 0 : 0;
+      app.log.info(`[${status}] Creatives synced: ${creativesCount} for ${metadata.operation_id}`);
     },
 
     onCreateMediaBuyStatusChange: (response, metadata) => {
@@ -194,7 +195,8 @@ const clientConfig: ADCPClientConfig = {
         payload: response,
         metadata,
       });
-      app.log.info(`[${status}] Media buy created: ${response.media_buy_id} for ${metadata.operation_id}`);
+      const mediaBuyId = 'media_buy_id' in response ? response.media_buy_id : 'error';
+      app.log.info(`[${status}] Media buy created: ${mediaBuyId} for ${metadata.operation_id}`);
     },
 
     onMediaBuyDeliveryNotification: (notification, metadata) => {
@@ -1358,7 +1360,7 @@ app.post<{
       ...clientConfig,
     });
 
-    // Access the underlying ADCPClient to get debug logs
+    // Access the underlying AdCPClient to get debug logs
     const adcpClient = creativeClient.getClient();
     const result = await adcpClient.listCreativeFormats(params);
 
@@ -1409,7 +1411,7 @@ app.post<{
       ...clientConfig,
     });
 
-    // Access the underlying ADCPClient to call build_creative
+    // Access the underlying AdCPClient to call build_creative
     // Per AdCP v2.1.0 schema: target_format_id at top level, format_id in creative_manifest
     const adcpClient = creativeClient.getClient();
     const result = await adcpClient.executeTask(
@@ -1471,7 +1473,7 @@ app.post<{
       ...clientConfig,
     });
 
-    // Access the underlying ADCPClient to call preview_creative
+    // Access the underlying AdCPClient to call preview_creative
     // Per AdCP v2.1.0 schema: format_id at top level and in creative_manifest
     const adcpClient = creativeClient.getClient();
     const result = await adcpClient.executeTask(
@@ -2043,7 +2045,7 @@ const start = async () => {
 
 // ====== WEBHOOK ENDPOINT ======
 
-// Webhook handler is now integrated into ADCPClient - no separate import needed
+// Webhook handler is now integrated into AdCPClient - no separate import needed
 
 /**
  * Unified webhook endpoint for async AdCP operations and notifications

@@ -4,7 +4,7 @@
  * Debug: Inspect actual preview_creative response
  */
 
-import { ADCPClient } from '../src/lib/core/ADCPClient';
+import { AdCPClient } from '../src/lib/core/AdCPClient';
 
 const CREATIVE_AGENT_URL = process.env.CREATIVE_AGENT_URL || 'https://creative.adcontextprotocol.org/mcp';
 const CREATIVE_AGENT_PROTOCOL = (process.env.CREATIVE_AGENT_PROTOCOL || 'mcp') as 'mcp' | 'a2a';
@@ -12,7 +12,7 @@ const CREATIVE_AGENT_PROTOCOL = (process.env.CREATIVE_AGENT_PROTOCOL || 'mcp') a
 async function main() {
   console.log('🐛 Debugging Preview Creative Response\n');
 
-  const creativeAgent = new ADCPClient({
+  const creativeAgent = new AdCPClient({
     id: 'creative_agent',
     name: 'Creative Agent',
     agent_uri: CREATIVE_AGENT_URL,

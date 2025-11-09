@@ -1,20 +1,7 @@
 // Basic A2A Client Example
-import { createA2AClient, AdCPClient, type AgentConfig } from '@adcp/client';
+import { AdCPClient, type AgentConfig } from '@adcp/client';
 
-async function basicA2AExample() {
-  // Simple A2A client usage
-  const client = createA2AClient('https://test-agent.adcontextprotocol.org', 'your-auth-token');
-
-  try {
-    const result = await client.callTool('get_products', 'Looking for premium coffee brands', 'Artisan coffee blends');
-
-    console.log('Products:', result);
-  } catch (error) {
-    console.error('Error calling A2A agent:', error);
-  }
-}
-
-// Using AgentConfig with AdCPClient
+// Using AdCPClient with A2A protocol (recommended)
 async function configuredA2AExample() {
   const agent: AgentConfig = {
     id: 'test-a2a-agent',
@@ -28,7 +15,8 @@ async function configuredA2AExample() {
   const client = new AdCPClient([agent]);
 
   try {
-    const result = await client.callTool('test-a2a-agent', 'get_products', {
+    const agentClient = client.agent('test-a2a-agent');
+    const result = await agentClient.getProducts({
       brief: 'Sustainable fashion brands',
       promoted_offering: 'Eco-friendly clothing',
     });
@@ -63,17 +51,19 @@ async function multiAgentExample() {
   const client = new AdCPClient(agents);
 
   try {
-    const results = await client.callToolOnAgents(['mcp-agent', 'a2a-agent'], 'get_products', {
+    const agentCollection = client.agents(['mcp-agent', 'a2a-agent']);
+    const results = await agentCollection.getProducts({
       brief: 'Tech gadgets for remote work',
       promoted_offering: 'Ergonomic workspace solutions',
     });
 
     console.log('Results from both agents:', results);
     results.forEach(result => {
-      console.log(`${result.agent_name}: ${result.success ? 'Success' : 'Failed'}`);
-      if (result.success) {
+      if (result.status === 'completed') {
+        console.log(`${result.agent.name}: Success`);
         console.log('  Data:', result.data);
       } else {
+        console.log(`${result.agent.name}: Failed`);
         console.log('  Error:', result.error);
       }
     });
@@ -84,7 +74,6 @@ async function multiAgentExample() {
 
 // Run examples
 if (require.main === module) {
-  basicA2AExample();
   configuredA2AExample();
   multiAgentExample();
 }

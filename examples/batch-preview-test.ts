@@ -9,7 +9,7 @@
  * 3. Caching behavior
  */
 
-import { ADCPClient } from '../src/lib/core/ADCPClient';
+import { AdCPClient } from '../src/lib/core/AdCPClient';
 import { batchPreviewProducts, batchPreviewFormats, clearPreviewCache } from '../src/lib/utils/preview-utils';
 import type { Product, Format } from '../src/lib/types/tools.generated';
 
@@ -20,8 +20,8 @@ const CREATIVE_AGENT_PROTOCOL = (process.env.CREATIVE_AGENT_PROTOCOL || 'mcp') a
 async function main() {
   console.log('🧪 Testing Batch Preview Functionality\n');
 
-  // Create ADCPClient for creative agent
-  const creativeAgent = new ADCPClient({
+  // Create AdCPClient for creative agent
+  const creativeAgent = new AdCPClient({
     id: 'creative_agent',
     name: 'Creative Agent',
     agent_uri: CREATIVE_AGENT_URL,

@@ -26,11 +26,18 @@ test('generated types maintain strict schema enforcement', () => {
   const count = indexSignatures.length;
 
   // Maximum acceptable count (based on oneOf/intersection types from JSON Schema)
-  // Updated from 20 to 33 due to AdCP v2.4.0 schema changes:
-  // - PreviewCreativeResponse now has complex union types with batch support
-  // - Render objects use union types for different render formats
-  // - These index signatures are intentional for union type discrimination
-  const MAX_ALLOWED = 33;
+  // Updated from 45 to 15 due to upstream schema improvements (PR #189):
+  // - Added discriminator fields to destinations/deployments (type: "platform" | "agent")
+  // - Added discriminator to SubAsset (asset_kind: "media" | "text")
+  // - Added discriminator to VAST/DAAST assets (delivery_type: "url" | "inline")
+  // - Extracted preview-render.json with proper oneOf instead of allOf + if/then
+  // - Result: 67% reduction in index signatures (45 → 15)
+  // Remaining 15 signatures are intentional for truly flexible schemas:
+  // - Asset metadata/requirements objects (format-specific)
+  // - Asset manifests (format-defined structures)
+  // - Error details (task-specific information)
+  // - BrandManifest intersections (inherited from allOf pattern)
+  const MAX_ALLOWED = 15;
 
   console.log(`📊 Type strictness metrics:`);
   console.log(`   Index signatures found: ${count}`);

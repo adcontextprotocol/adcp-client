@@ -15,7 +15,7 @@ Welcome to the official documentation for `@adcp/client`, the TypeScript/JavaScr
 - [Handler Patterns](./guides/HANDLER-PATTERNS-GUIDE.md)
 
 ### 🔧 API Reference
-- [ADCPClient](./api/classes/ADCPClient.html)
+- [AdCPClient](./api/classes/AdCPClient.html)
 - [ADCPMultiAgentClient](./api/classes/ADCPMultiAgentClient.html)
 - [Type Definitions](./api/modules.html)
 - [Full API Documentation](./api/index.html)

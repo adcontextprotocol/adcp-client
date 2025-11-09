@@ -19,15 +19,19 @@ export type {
 } from './discovery/types';
 
 // ====== CORE CONVERSATION-AWARE CLIENTS ======
-// New conversation-aware clients with input handler pattern
-export { ADCPClient, createADCPClient } from './core/ADCPClient';
-export type { ADCPClientConfig } from './core/ADCPClient';
-export { AgentClient, type TaskResponseTypeMap, type AdcpTaskName } from './core/AgentClient';
-export {
-  ADCPMultiAgentClient,
-  AgentCollection as NewAgentCollection,
-  createADCPMultiAgentClient,
-} from './core/ADCPMultiAgentClient';
+// Primary client for all use cases - single or multi-agent
+export { ADCPMultiAgentClient as AdCPClient, AgentCollection as NewAgentCollection } from './core/ADCPMultiAgentClient';
+export type { SingleAgentClientConfig as AdCPClientConfig } from './core/SingleAgentClient';
+
+/**
+ * @deprecated Use AdCPClient instead. ADCPMultiAgentClient will be removed in v4.0.
+ * @see AdCPClient
+ */
+export { ADCPMultiAgentClient } from './core/ADCPMultiAgentClient';
+
+// NOTE: SingleAgentClient is intentionally NOT exported - it's an internal implementation detail.
+// All users should use AdCPClient (alias for ADCPMultiAgentClient) which supports both
+// single-agent operations via agent(id) and multi-agent operations via agents([ids]).
 export { ConfigurationManager } from './core/ConfigurationManager';
 export {
   CreativeAgentClient,
@@ -172,66 +176,3 @@ export { detectProtocol, detectProtocolWithTimeout } from './utils/protocol-dete
 // ====== LEGACY AGENT CLASSES ======
 // Keep existing generated agent classes for backward compatibility
 export { Agent, AgentCollection } from './agents/index.generated';
-
-// ====== BACKWARD COMPATIBILITY & ENVIRONMENT LOADING ======
-
-import type { AgentConfig } from './types';
-import { ADCPMultiAgentClient } from './core/ADCPMultiAgentClient';
-
-/**
- * Legacy AdCPClient for backward compatibility - now redirects to ADCPMultiAgentClient
- * @deprecated Use ADCPMultiAgentClient instead for new code
- */
-export class AdCPClient {
-  private multiClient: ADCPMultiAgentClient;
-
-  constructor(agents?: AgentConfig[]) {
-    this.multiClient = new ADCPMultiAgentClient(agents || []);
-  }
-
-  agent(id: string) {
-    return this.multiClient.agent(id);
-  }
-  agents(ids: string[]) {
-    return this.multiClient.agents(ids);
-  }
-  allAgents() {
-    return this.multiClient.allAgents();
-  }
-  addAgent(agent: AgentConfig) {
-    this.multiClient.addAgent(agent);
-  }
-  getAgents() {
-    return this.multiClient.getAgentConfigs();
-  }
-  get agentCount() {
-    return this.multiClient.agentCount;
-  }
-  get agentIds() {
-    return this.multiClient.getAgentIds();
-  }
-
-  getStandardFormats() {
-    const { getStandardFormats } = require('./utils');
-    return getStandardFormats();
-  }
-}
-
-// Legacy configuration manager maintained for backward compatibility
-// The enhanced ConfigurationManager is exported above
-
-/**
- * Legacy createAdCPClient function for backward compatibility
- * @deprecated Use new ADCPMultiAgentClient constructor instead
- */
-export function createAdCPClient(agents?: AgentConfig[]): AdCPClient {
-  return new AdCPClient(agents);
-}
-
-/**
- * Load agents from environment and create multi-agent client
- * @deprecated Use ADCPMultiAgentClient.fromEnv() instead
- */
-export function createAdCPClientFromEnv(): ADCPMultiAgentClient {
-  return ADCPMultiAgentClient.fromEnv();
-}

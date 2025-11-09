@@ -1,6 +1,6 @@
 const { test, describe } = require('node:test');
 const assert = require('node:assert');
-const { ADCPClient } = require('../dist/lib/core/ADCPClient');
+const { AdCPClient } = require('../dist/lib/index.js');
 const crypto = require('crypto');
 
 describe('Webhook Signature Verification (PR #86 Spec)', () => {
@@ -15,7 +15,8 @@ describe('Webhook Signature Verification (PR #86 Spec)', () => {
   const webhookSecret = 'test-secret-key-minimum-32-characters-long';
 
   test('should verify valid webhook signature per PR #86 spec', () => {
-    const client = new ADCPClient(agent, { webhookSecret });
+    const client = new AdCPClient([agent], { webhookSecret });
+    const agentClient = client.agent('test_agent');
 
     const payload = {
       event: 'creative.status_changed',
@@ -33,12 +34,13 @@ describe('Webhook Signature Verification (PR #86 Spec)', () => {
     const signature = `sha256=${hmac.digest('hex')}`;
 
     // Verify signature
-    const isValid = client.verifyWebhookSignature(payload, signature, timestamp);
+    const isValid = agentClient.verifyWebhookSignature(payload, signature, timestamp);
     assert.strictEqual(isValid, true);
   });
 
   test('should reject webhook with invalid signature', () => {
-    const client = new ADCPClient(agent, { webhookSecret });
+    const client = new AdCPClient([agent], { webhookSecret });
+    const agentClient = client.agent('test_agent');
 
     const payload = {
       event: 'creative.status_changed',
@@ -49,12 +51,13 @@ describe('Webhook Signature Verification (PR #86 Spec)', () => {
     const timestamp = Math.floor(Date.now() / 1000);
     const invalidSignature = 'sha256=invalid_signature_here';
 
-    const isValid = client.verifyWebhookSignature(payload, invalidSignature, timestamp);
+    const isValid = agentClient.verifyWebhookSignature(payload, invalidSignature, timestamp);
     assert.strictEqual(isValid, false);
   });
 
   test('should reject webhook with old timestamp (> 5 minutes)', () => {
-    const client = new ADCPClient(agent, { webhookSecret });
+    const client = new AdCPClient([agent], { webhookSecret });
+    const agentClient = client.agent('test_agent');
 
     const payload = {
       event: 'creative.status_changed',
@@ -72,12 +75,13 @@ describe('Webhook Signature Verification (PR #86 Spec)', () => {
     const signature = `sha256=${hmac.digest('hex')}`;
 
     // Should reject due to timestamp being too old
-    const isValid = client.verifyWebhookSignature(payload, signature, oldTimestamp);
+    const isValid = agentClient.verifyWebhookSignature(payload, signature, oldTimestamp);
     assert.strictEqual(isValid, false);
   });
 
   test('should accept webhook within 5 minute window', () => {
-    const client = new ADCPClient(agent, { webhookSecret });
+    const client = new AdCPClient([agent], { webhookSecret });
+    const agentClient = client.agent('test_agent');
 
     const payload = {
       event: 'creative.status_changed',
@@ -95,12 +99,13 @@ describe('Webhook Signature Verification (PR #86 Spec)', () => {
     const signature = `sha256=${hmac.digest('hex')}`;
 
     // Should accept
-    const isValid = client.verifyWebhookSignature(payload, signature, recentTimestamp);
+    const isValid = agentClient.verifyWebhookSignature(payload, signature, recentTimestamp);
     assert.strictEqual(isValid, true);
   });
 
   test('should handle timestamp as string', () => {
-    const client = new ADCPClient(agent, { webhookSecret });
+    const client = new AdCPClient([agent], { webhookSecret });
+    const agentClient = client.agent('test_agent');
 
     const payload = {
       event: 'creative.status_changed',
@@ -118,18 +123,19 @@ describe('Webhook Signature Verification (PR #86 Spec)', () => {
     const signature = `sha256=${hmac.digest('hex')}`;
 
     // Should accept string timestamp
-    const isValid = client.verifyWebhookSignature(payload, signature, timestampStr);
+    const isValid = agentClient.verifyWebhookSignature(payload, signature, timestampStr);
     assert.strictEqual(isValid, true);
   });
 
   test('should return false when webhookSecret not configured', () => {
-    const client = new ADCPClient(agent, {}); // No webhookSecret
+    const client = new AdCPClient([agent], {}); // No webhookSecret
+    const agentClient = client.agent('test_agent');
 
     const payload = { event: 'test' };
     const timestamp = Math.floor(Date.now() / 1000);
     const signature = 'sha256=anything';
 
-    const isValid = client.verifyWebhookSignature(payload, signature, timestamp);
+    const isValid = agentClient.verifyWebhookSignature(payload, signature, timestamp);
     assert.strictEqual(isValid, false);
   });
 });

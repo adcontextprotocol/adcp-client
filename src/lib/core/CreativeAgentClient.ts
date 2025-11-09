@@ -1,7 +1,7 @@
 // Creative Agent Client - First-class support for creative agents
 
-import { ADCPClient } from './ADCPClient';
-import type { ADCPClientConfig } from './ADCPClient';
+import { SingleAgentClient } from './SingleAgentClient';
+import type { SingleAgentClientConfig } from './SingleAgentClient';
 import type { AgentConfig } from '../types';
 import type { FormatID } from '../types/core.generated';
 import type { ListCreativeFormatsRequest, ListCreativeFormatsResponse, Format } from '../types/tools.generated';
@@ -9,7 +9,7 @@ import type { ListCreativeFormatsRequest, ListCreativeFormatsResponse, Format } 
 /**
  * Configuration for CreativeAgentClient
  */
-export interface CreativeAgentClientConfig extends ADCPClientConfig {
+export interface CreativeAgentClientConfig extends SingleAgentClientConfig {
   /** Creative agent URL */
   agentUrl: string;
   /** Protocol to use (defaults to 'mcp') */
@@ -39,7 +39,7 @@ export interface CreativeAgentClientConfig extends ADCPClientConfig {
  * ```
  */
 export class CreativeAgentClient {
-  private client: ADCPClient;
+  private client: SingleAgentClient;
   private agentUrl: string;
 
   constructor(config: CreativeAgentClientConfig) {
@@ -51,7 +51,7 @@ export class CreativeAgentClient {
       ...(config.authToken && { auth_token_env: config.authToken }),
     };
 
-    this.client = new ADCPClient(agentConfig, config);
+    this.client = new SingleAgentClient(agentConfig, config);
     this.agentUrl = config.agentUrl;
   }
 
@@ -153,9 +153,9 @@ export class CreativeAgentClient {
   }
 
   /**
-   * Get the underlying ADCP client for advanced operations
+   * Get the underlying single-agent client for advanced operations
    */
-  getClient(): ADCPClient {
+  getClient(): SingleAgentClient {
     return this.client;
   }
 }

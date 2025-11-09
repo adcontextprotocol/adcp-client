@@ -1,7 +1,7 @@
 // Per-agent client wrapper with conversation context preservation
 
 import type { AgentConfig } from '../types';
-import { ADCPClient, type ADCPClientConfig } from './ADCPClient';
+import { SingleAgentClient, type SingleAgentClientConfig } from './SingleAgentClient';
 import type { InputHandler, TaskOptions, TaskResult, TaskInfo, Message } from './ConversationTypes';
 import type {
   GetProductsRequest,
@@ -58,14 +58,14 @@ export type AdcpTaskName = keyof TaskResponseTypeMap;
  * making it easy to have multi-turn conversations and maintain state.
  */
 export class AgentClient {
-  private client: ADCPClient;
+  private client: SingleAgentClient;
   private currentContextId?: string;
 
   constructor(
     private agent: AgentConfig,
-    private config: ADCPClientConfig = {}
+    private config: SingleAgentClientConfig = {}
   ) {
-    this.client = new ADCPClient(agent, config);
+    this.client = new SingleAgentClient(agent, config);
   }
 
   /**
@@ -89,6 +89,18 @@ export class AgentClient {
    */
   getWebhookUrl(taskType: string, operationId: string): string {
     return this.client.getWebhookUrl(taskType, operationId);
+  }
+
+  /**
+   * Verify webhook signature using HMAC-SHA256 per AdCP PR #86 spec
+   *
+   * @param payload - Webhook payload object
+   * @param signature - X-ADCP-Signature header value (format: "sha256=...")
+   * @param timestamp - X-ADCP-Timestamp header value (Unix timestamp)
+   * @returns true if signature is valid
+   */
+  verifyWebhookSignature(payload: any, signature: string, timestamp: string | number): boolean {
+    return this.client.verifyWebhookSignature(payload, signature, timestamp);
   }
 
   // ====== MEDIA BUY TASKS ======

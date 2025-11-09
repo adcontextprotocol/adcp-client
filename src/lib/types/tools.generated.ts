@@ -1306,24 +1306,172 @@ export type Pacing = 'even' | 'asap' | 'front_loaded';
 /**
  * VAST (Video Ad Serving Template) tag for third-party video ad serving
  */
-export type VASTAsset = VASTAsset1 & VASTAsset2;
-export type VASTAsset2 =
+export type VASTAsset =
   | {
-      [k: string]: unknown;
+      /**
+       * Discriminator indicating VAST is delivered via URL endpoint
+       */
+      delivery_type: 'url';
+      /**
+       * URL endpoint that returns VAST XML
+       */
+      url: string;
+      /**
+       * VAST specification version
+       */
+      vast_version?: '2.0' | '3.0' | '4.0' | '4.1' | '4.2';
+      /**
+       * Whether VPAID (Video Player-Ad Interface Definition) is supported
+       */
+      vpaid_enabled?: boolean;
+      /**
+       * Expected video duration in milliseconds (if known)
+       */
+      duration_ms?: number;
+      /**
+       * Tracking events supported by this VAST tag
+       */
+      tracking_events?: (
+        | 'start'
+        | 'firstQuartile'
+        | 'midpoint'
+        | 'thirdQuartile'
+        | 'complete'
+        | 'impression'
+        | 'click'
+        | 'pause'
+        | 'resume'
+        | 'skip'
+        | 'mute'
+        | 'unmute'
+        | 'fullscreen'
+        | 'exitFullscreen'
+        | 'playerExpand'
+        | 'playerCollapse'
+      )[];
     }
   | {
-      [k: string]: unknown;
+      /**
+       * Discriminator indicating VAST is delivered as inline XML content
+       */
+      delivery_type: 'inline';
+      /**
+       * Inline VAST XML content
+       */
+      content: string;
+      /**
+       * VAST specification version
+       */
+      vast_version?: '2.0' | '3.0' | '4.0' | '4.1' | '4.2';
+      /**
+       * Whether VPAID (Video Player-Ad Interface Definition) is supported
+       */
+      vpaid_enabled?: boolean;
+      /**
+       * Expected video duration in milliseconds (if known)
+       */
+      duration_ms?: number;
+      /**
+       * Tracking events supported by this VAST tag
+       */
+      tracking_events?: (
+        | 'start'
+        | 'firstQuartile'
+        | 'midpoint'
+        | 'thirdQuartile'
+        | 'complete'
+        | 'impression'
+        | 'click'
+        | 'pause'
+        | 'resume'
+        | 'skip'
+        | 'mute'
+        | 'unmute'
+        | 'fullscreen'
+        | 'exitFullscreen'
+        | 'playerExpand'
+        | 'playerCollapse'
+      )[];
     };
 /**
  * DAAST (Digital Audio Ad Serving Template) tag for third-party audio ad serving
  */
-export type DAASTAsset = DAASTAsset1 & DAASTAsset2;
-export type DAASTAsset2 =
+export type DAASTAsset =
   | {
-      [k: string]: unknown;
+      /**
+       * Discriminator indicating DAAST is delivered via URL endpoint
+       */
+      delivery_type: 'url';
+      /**
+       * URL endpoint that returns DAAST XML
+       */
+      url: string;
+      /**
+       * DAAST specification version
+       */
+      daast_version?: '1.0' | '1.1';
+      /**
+       * Expected audio duration in milliseconds (if known)
+       */
+      duration_ms?: number;
+      /**
+       * Tracking events supported by this DAAST tag
+       */
+      tracking_events?: (
+        | 'start'
+        | 'firstQuartile'
+        | 'midpoint'
+        | 'thirdQuartile'
+        | 'complete'
+        | 'impression'
+        | 'pause'
+        | 'resume'
+        | 'skip'
+        | 'mute'
+        | 'unmute'
+      )[];
+      /**
+       * Whether companion display ads are included
+       */
+      companion_ads?: boolean;
     }
   | {
-      [k: string]: unknown;
+      /**
+       * Discriminator indicating DAAST is delivered as inline XML content
+       */
+      delivery_type: 'inline';
+      /**
+       * Inline DAAST XML content
+       */
+      content: string;
+      /**
+       * DAAST specification version
+       */
+      daast_version?: '1.0' | '1.1';
+      /**
+       * Expected audio duration in milliseconds (if known)
+       */
+      duration_ms?: number;
+      /**
+       * Tracking events supported by this DAAST tag
+       */
+      tracking_events?: (
+        | 'start'
+        | 'firstQuartile'
+        | 'midpoint'
+        | 'thirdQuartile'
+        | 'complete'
+        | 'impression'
+        | 'pause'
+        | 'resume'
+        | 'skip'
+        | 'mute'
+        | 'unmute'
+      )[];
+      /**
+       * Whether companion display ads are included
+       */
+      companion_ads?: boolean;
     };
 /**
  * Brand information manifest containing assets, themes, and guidelines. Can be provided inline or as a URL reference to a hosted manifest.
@@ -1640,87 +1788,6 @@ export interface JavaScriptAsset {
    */
   module_type?: 'esm' | 'commonjs' | 'script';
 }
-export interface VASTAsset1 {
-  /**
-   * URL endpoint that returns VAST XML
-   */
-  url?: string;
-  /**
-   * Inline VAST XML content
-   */
-  content?: string;
-  /**
-   * VAST specification version
-   */
-  vast_version?: '2.0' | '3.0' | '4.0' | '4.1' | '4.2';
-  /**
-   * Whether VPAID (Video Player-Ad Interface Definition) is supported
-   */
-  vpaid_enabled?: boolean;
-  /**
-   * Expected video duration in milliseconds (if known)
-   */
-  duration_ms?: number;
-  /**
-   * Tracking events supported by this VAST tag
-   */
-  tracking_events?: (
-    | 'start'
-    | 'firstQuartile'
-    | 'midpoint'
-    | 'thirdQuartile'
-    | 'complete'
-    | 'impression'
-    | 'click'
-    | 'pause'
-    | 'resume'
-    | 'skip'
-    | 'mute'
-    | 'unmute'
-    | 'fullscreen'
-    | 'exitFullscreen'
-    | 'playerExpand'
-    | 'playerCollapse'
-  )[];
-}
-export interface DAASTAsset1 {
-  /**
-   * URL endpoint that returns DAAST XML
-   */
-  url?: string;
-  /**
-   * Inline DAAST XML content
-   */
-  content?: string;
-  /**
-   * DAAST specification version
-   */
-  daast_version?: '1.0' | '1.1';
-  /**
-   * Expected audio duration in milliseconds (if known)
-   */
-  duration_ms?: number;
-  /**
-   * Tracking events supported by this DAAST tag
-   */
-  tracking_events?: (
-    | 'start'
-    | 'firstQuartile'
-    | 'midpoint'
-    | 'thirdQuartile'
-    | 'complete'
-    | 'impression'
-    | 'pause'
-    | 'resume'
-    | 'skip'
-    | 'mute'
-    | 'unmute'
-  )[];
-  /**
-   * Whether companion display ads are included
-   */
-  companion_ads?: boolean;
-}
 /**
  * Complete offering specification combining brand manifest, product selectors, and asset filters. Provides all context needed for creative generation about what is being promoted.
  */
@@ -1844,39 +1911,45 @@ export interface PushNotificationConfig {
 
 // create_media_buy response
 /**
- * Response payload for create_media_buy task
+ * Response payload for create_media_buy task. Returns either complete success data OR error information, never both. This enforces atomic operation semantics - the media buy is either fully created or not created at all.
  */
-export interface CreateMediaBuyResponse {
-  /**
-   * Publisher's unique identifier for the created media buy
-   */
-  media_buy_id?: string;
-  /**
-   * Buyer's reference identifier for this media buy
-   */
-  buyer_ref: string;
-  /**
-   * ISO 8601 timestamp for creative upload deadline
-   */
-  creative_deadline?: string;
-  /**
-   * Array of created packages
-   */
-  packages?: {
-    /**
-     * Publisher's unique identifier for the package
-     */
-    package_id: string;
-    /**
-     * Buyer's reference identifier for the package
-     */
-    buyer_ref: string;
-  }[];
-  /**
-   * Task-specific errors and warnings (e.g., partial package creation failures)
-   */
-  errors?: Error[];
-}
+export type CreateMediaBuyResponse =
+  | {
+      /**
+       * Publisher's unique identifier for the created media buy
+       */
+      media_buy_id: string;
+      /**
+       * Buyer's reference identifier for this media buy
+       */
+      buyer_ref: string;
+      /**
+       * ISO 8601 timestamp for creative upload deadline
+       */
+      creative_deadline?: string;
+      /**
+       * Array of created packages
+       */
+      packages: {
+        /**
+         * Publisher's unique identifier for the package
+         */
+        package_id: string;
+        /**
+         * Buyer's reference identifier for the package
+         */
+        buyer_ref: string;
+      }[];
+    }
+  | {
+      /**
+       * Array of errors explaining why the operation failed
+       *
+       * @minItems 1
+       */
+      errors: [Error, ...Error[]];
+    };
+
 /**
  * Standard error structure for task-specific errors and warnings
  */
@@ -1928,68 +2001,80 @@ export interface SyncCreativesRequest {
 
 // sync_creatives response
 /**
- * Response from creative sync operation with results for each creative
+ * Response from creative sync operation. Returns either per-creative results (best-effort processing) OR operation-level errors (complete failure). This enforces atomic semantics at the operation level while allowing per-item failures within successful operations.
  */
-export interface SyncCreativesResponse {
-  /**
-   * Whether this was a dry run (no actual changes made)
-   */
-  dry_run?: boolean;
-  /**
-   * Results for each creative processed
-   */
-  creatives: {
-    /**
-     * Creative ID from the request
-     */
-    creative_id: string;
-    /**
-     * Action taken for this creative
-     */
-    action: 'created' | 'updated' | 'unchanged' | 'failed' | 'deleted';
-    /**
-     * Platform-specific ID assigned to the creative
-     */
-    platform_id?: string;
-    /**
-     * Field names that were modified (only present when action='updated')
-     */
-    changes?: string[];
-    /**
-     * Validation or processing errors (only present when action='failed')
-     */
-    errors?: string[];
-    /**
-     * Non-fatal warnings about this creative
-     */
-    warnings?: string[];
-    /**
-     * Preview URL for generative creatives (only present for generative formats)
-     */
-    preview_url?: string;
-    /**
-     * ISO 8601 timestamp when preview link expires (only present when preview_url exists)
-     */
-    expires_at?: string;
-    /**
-     * Package IDs this creative was successfully assigned to (only present when assignments were requested)
-     */
-    assigned_to?: string[];
-    /**
-     * Assignment errors by package ID (only present when assignment failures occurred)
-     */
-    assignment_errors?: {
+export type SyncCreativesResponse =
+  | {
       /**
-       * Error message for this package assignment
-       *
-       * This interface was referenced by `undefined`'s JSON-Schema definition
-       * via the `patternProperty` "^[a-zA-Z0-9_-]+$".
+       * Whether this was a dry run (no actual changes made)
        */
-      [k: string]: string;
+      dry_run?: boolean;
+      /**
+       * Results for each creative processed. Items with action='failed' indicate per-item validation/processing failures, not operation-level failures.
+       */
+      creatives: {
+        /**
+         * Creative ID from the request
+         */
+        creative_id: string;
+        /**
+         * Action taken for this creative
+         */
+        action: 'created' | 'updated' | 'unchanged' | 'failed' | 'deleted';
+        /**
+         * Platform-specific ID assigned to the creative
+         */
+        platform_id?: string;
+        /**
+         * Field names that were modified (only present when action='updated')
+         */
+        changes?: string[];
+        /**
+         * Validation or processing errors (only present when action='failed')
+         */
+        errors?: string[];
+        /**
+         * Non-fatal warnings about this creative
+         */
+        warnings?: string[];
+        /**
+         * Preview URL for generative creatives (only present for generative formats)
+         */
+        preview_url?: string;
+        /**
+         * ISO 8601 timestamp when preview link expires (only present when preview_url exists)
+         */
+        expires_at?: string;
+        /**
+         * Package IDs this creative was successfully assigned to (only present when assignments were requested)
+         */
+        assigned_to?: string[];
+        /**
+         * Assignment errors by package ID (only present when assignment failures occurred)
+         */
+        assignment_errors?: {
+          /**
+           * Error message for this package assignment
+           *
+           * This interface was referenced by `undefined`'s JSON-Schema definition
+           * via the `patternProperty` "^[a-zA-Z0-9_-]+$".
+           */
+          [k: string]: string;
+        };
+      }[];
+    }
+  | {
+      /**
+       * Operation-level errors that prevented processing any creatives (e.g., authentication failure, service unavailable, invalid request format)
+       *
+       * @minItems 1
+       */
+      errors: [Error, ...Error[]];
     };
-  }[];
-}
 
+/**
+ * Standard error structure for task-specific errors and warnings
+ */
 
 // list_creatives parameters
 /**
@@ -2133,13 +2218,42 @@ export interface ListCreativesRequest {
 /**
  * Current approval status of the creative
  */
-export type SubAsset = SubAsset1 & SubAsset2;
-export type SubAsset2 =
+export type SubAsset =
   | {
-      [k: string]: unknown;
+      /**
+       * Discriminator indicating this is a media asset with content_uri
+       */
+      asset_kind: 'media';
+      /**
+       * Type of asset. Common types: thumbnail_image, product_image, featured_image, logo
+       */
+      asset_type: string;
+      /**
+       * Unique identifier for the asset within the creative
+       */
+      asset_id: string;
+      /**
+       * URL for media assets (images, videos, etc.)
+       */
+      content_uri: string;
     }
   | {
-      [k: string]: unknown;
+      /**
+       * Discriminator indicating this is a text asset with content
+       */
+      asset_kind: 'text';
+      /**
+       * Type of asset. Common types: headline, body_text, cta_text, price_text, sponsor_name, author_name, click_url
+       */
+      asset_type: string;
+      /**
+       * Unique identifier for the asset within the creative
+       */
+      asset_id: string;
+      /**
+       * Text content for text-based assets like headlines, body text, CTA text, etc.
+       */
+      content: string | string[];
     };
 
 /**
@@ -2363,25 +2477,6 @@ export interface ListCreativesResponse {
 /**
  * Format identifier specifying which format this creative conforms to
  */
-export interface SubAsset1 {
-  /**
-   * Type of asset. Common types: headline, body_text, thumbnail_image, product_image, featured_image, logo, cta_text, price_text, sponsor_name, author_name, click_url
-   */
-  asset_type?: string;
-  /**
-   * Unique identifier for the asset within the creative
-   */
-  asset_id?: string;
-  /**
-   * URL for media assets (images, videos, etc.)
-   */
-  content_uri?: string;
-  /**
-   * Text content for text-based assets like headlines, body text, CTA text, etc.
-   */
-  content?: string | string[];
-}
-
 
 // update_media_buy parameters
 /**
@@ -2432,39 +2527,45 @@ export interface UpdateMediaBuyRequest1 {
 
 // update_media_buy response
 /**
- * Response payload for update_media_buy task
+ * Response payload for update_media_buy task. Returns either complete success data OR error information, never both. This enforces atomic operation semantics - updates are either fully applied or not applied at all.
  */
-export interface UpdateMediaBuyResponse {
-  /**
-   * Publisher's identifier for the media buy
-   */
-  media_buy_id: string;
-  /**
-   * Buyer's reference identifier for the media buy
-   */
-  buyer_ref: string;
-  /**
-   * ISO 8601 timestamp when changes take effect (null if pending approval)
-   */
-  implementation_date?: string | null;
-  /**
-   * Array of packages that were modified
-   */
-  affected_packages?: {
-    /**
-     * Publisher's package identifier
-     */
-    package_id: string;
-    /**
-     * Buyer's reference for the package
-     */
-    buyer_ref: string;
-  }[];
-  /**
-   * Task-specific errors and warnings (e.g., partial update failures)
-   */
-  errors?: Error[];
-}
+export type UpdateMediaBuyResponse =
+  | {
+      /**
+       * Publisher's identifier for the media buy
+       */
+      media_buy_id: string;
+      /**
+       * Buyer's reference identifier for the media buy
+       */
+      buyer_ref: string;
+      /**
+       * ISO 8601 timestamp when changes take effect (null if pending approval)
+       */
+      implementation_date?: string | null;
+      /**
+       * Array of packages that were modified
+       */
+      affected_packages?: {
+        /**
+         * Publisher's package identifier
+         */
+        package_id: string;
+        /**
+         * Buyer's reference for the package
+         */
+        buyer_ref: string;
+      }[];
+    }
+  | {
+      /**
+       * Array of errors explaining why the operation failed
+       *
+       * @minItems 1
+       */
+      errors: [Error, ...Error[]];
+    };
+
 /**
  * Standard error structure for task-specific errors and warnings
  */
@@ -2902,18 +3003,24 @@ export interface ProvidePerformanceFeedbackRequest {
 
 // provide_performance_feedback response
 /**
- * Response payload for provide_performance_feedback task
+ * Response payload for provide_performance_feedback task. Returns either success confirmation OR error information, never both.
  */
-export interface ProvidePerformanceFeedbackResponse {
-  /**
-   * Whether the performance feedback was successfully received
-   */
-  success: boolean;
-  /**
-   * Task-specific errors and warnings (e.g., invalid measurement period, missing campaign data)
-   */
-  errors?: Error[];
-}
+export type ProvidePerformanceFeedbackResponse =
+  | {
+      /**
+       * Whether the performance feedback was successfully received
+       */
+      success: true;
+    }
+  | {
+      /**
+       * Array of errors explaining why feedback was rejected (e.g., invalid measurement period, missing campaign data)
+       *
+       * @minItems 1
+       */
+      errors: [Error, ...Error[]];
+    };
+
 /**
  * Standard error structure for task-specific errors and warnings
  */
@@ -3016,17 +3123,22 @@ export interface WebhookAsset {
 
 // build_creative response
 /**
- * VAST (Video Ad Serving Template) tag for third-party video ad serving
+ * Response containing the transformed or generated creative manifest, ready for use with preview_creative or sync_creatives. Returns either the complete creative manifest OR error information, never both.
  */
-export interface BuildCreativeResponse {
-  creative_manifest: CreativeManifest;
-  /**
-   * Task-specific errors and warnings
-   */
-  errors?: Error[];
-}
+export type BuildCreativeResponse =
+  | {
+      creative_manifest: CreativeManifest;
+    }
+  | {
+      /**
+       * Array of errors explaining why creative generation failed
+       *
+       * @minItems 1
+       */
+      errors: [Error, ...Error[]];
+    };
 /**
- * The generated or transformed creative manifest
+ * VAST (Video Ad Serving Template) tag for third-party video ad serving
  */
 
 // preview_creative parameters
@@ -3199,22 +3311,7 @@ export type PreviewCreativeResponse =
            *
            * @minItems 1
            */
-          renders: [
-            {
-              [k: string]: unknown;
-            } & {
-              [k: string]: unknown;
-            } & {
-              [k: string]: unknown;
-            },
-            ...({
-              [k: string]: unknown;
-            } & {
-              [k: string]: unknown;
-            } & {
-              [k: string]: unknown;
-            })[]
-          ];
+          renders: [PreviewRender, ...PreviewRender[]];
           /**
            * The input parameters that generated this preview variant. Echoes back the request input or shows defaults used.
            */
@@ -3245,22 +3342,7 @@ export type PreviewCreativeResponse =
            *
            * @minItems 1
            */
-          renders: [
-            {
-              [k: string]: unknown;
-            } & {
-              [k: string]: unknown;
-            } & {
-              [k: string]: unknown;
-            },
-            ...({
-              [k: string]: unknown;
-            } & {
-              [k: string]: unknown;
-            } & {
-              [k: string]: unknown;
-            })[]
-          ];
+          renders: [PreviewRender, ...PreviewRender[]];
           /**
            * The input parameters that generated this preview variant. Echoes back the request input or shows defaults used.
            */
@@ -3316,9 +3398,188 @@ export type PreviewCreativeResponse =
         )[]
       ];
     };
+/**
+ * A single rendered piece of a creative preview with discriminated output format
+ */
+export type PreviewRender =
+  | {
+      /**
+       * Unique identifier for this rendered piece within the variant
+       */
+      render_id: string;
+      /**
+       * Discriminator indicating preview_url is provided
+       */
+      output_format: 'url';
+      /**
+       * URL to an HTML page that renders this piece. Can be embedded in an iframe.
+       */
+      preview_url: string;
+      /**
+       * Semantic role of this rendered piece. Use 'primary' for main content, 'companion' for associated banners, descriptive strings for device variants or custom roles.
+       */
+      role: string;
+      /**
+       * Dimensions for this rendered piece
+       */
+      dimensions?: {
+        width: number;
+        height: number;
+      };
+      /**
+       * Optional security and embedding metadata for safe iframe integration
+       */
+      embedding?: {
+        /**
+         * Recommended iframe sandbox attribute value (e.g., 'allow-scripts allow-same-origin')
+         */
+        recommended_sandbox?: string;
+        /**
+         * Whether this output requires HTTPS for secure embedding
+         */
+        requires_https?: boolean;
+        /**
+         * Whether this output supports fullscreen mode
+         */
+        supports_fullscreen?: boolean;
+        /**
+         * Content Security Policy requirements for embedding
+         */
+        csp_policy?: string;
+      };
+    }
+  | {
+      /**
+       * Unique identifier for this rendered piece within the variant
+       */
+      render_id: string;
+      /**
+       * Discriminator indicating preview_html is provided
+       */
+      output_format: 'html';
+      /**
+       * Raw HTML for this rendered piece. Can be embedded directly in the page without iframe. Security warning: Only use with trusted creative agents as this bypasses iframe sandboxing.
+       */
+      preview_html: string;
+      /**
+       * Semantic role of this rendered piece. Use 'primary' for main content, 'companion' for associated banners, descriptive strings for device variants or custom roles.
+       */
+      role: string;
+      /**
+       * Dimensions for this rendered piece
+       */
+      dimensions?: {
+        width: number;
+        height: number;
+      };
+      /**
+       * Optional security and embedding metadata
+       */
+      embedding?: {
+        /**
+         * Recommended iframe sandbox attribute value (e.g., 'allow-scripts allow-same-origin')
+         */
+        recommended_sandbox?: string;
+        /**
+         * Whether this output requires HTTPS for secure embedding
+         */
+        requires_https?: boolean;
+        /**
+         * Whether this output supports fullscreen mode
+         */
+        supports_fullscreen?: boolean;
+        /**
+         * Content Security Policy requirements for embedding
+         */
+        csp_policy?: string;
+      };
+    }
+  | {
+      /**
+       * Unique identifier for this rendered piece within the variant
+       */
+      render_id: string;
+      /**
+       * Discriminator indicating both preview_url and preview_html are provided
+       */
+      output_format: 'both';
+      /**
+       * URL to an HTML page that renders this piece. Can be embedded in an iframe.
+       */
+      preview_url: string;
+      /**
+       * Raw HTML for this rendered piece. Can be embedded directly in the page without iframe. Security warning: Only use with trusted creative agents as this bypasses iframe sandboxing.
+       */
+      preview_html: string;
+      /**
+       * Semantic role of this rendered piece. Use 'primary' for main content, 'companion' for associated banners, descriptive strings for device variants or custom roles.
+       */
+      role: string;
+      /**
+       * Dimensions for this rendered piece
+       */
+      dimensions?: {
+        width: number;
+        height: number;
+      };
+      /**
+       * Optional security and embedding metadata for safe iframe integration
+       */
+      embedding?: {
+        /**
+         * Recommended iframe sandbox attribute value (e.g., 'allow-scripts allow-same-origin')
+         */
+        recommended_sandbox?: string;
+        /**
+         * Whether this output requires HTTPS for secure embedding
+         */
+        requires_https?: boolean;
+        /**
+         * Whether this output supports fullscreen mode
+         */
+        supports_fullscreen?: boolean;
+        /**
+         * Content Security Policy requirements for embedding
+         */
+        csp_policy?: string;
+      };
+    };
 
 
 // get_signals parameters
+/**
+ * A destination platform where signals can be activated (DSP, sales agent, etc.)
+ */
+export type Destination =
+  | {
+      /**
+       * Discriminator indicating this is a platform-based destination
+       */
+      type: 'platform';
+      /**
+       * Platform identifier for DSPs (e.g., 'the-trade-desk', 'amazon-dsp')
+       */
+      platform: string;
+      /**
+       * Optional account identifier on the platform
+       */
+      account?: string;
+    }
+  | {
+      /**
+       * Discriminator indicating this is an agent URL-based destination
+       */
+      type: 'agent';
+      /**
+       * URL identifying the destination agent (for sales agents, etc.)
+       */
+      agent_url: string;
+      /**
+       * Optional account identifier on the agent
+       */
+      account?: string;
+    };
+
 /**
  * Request parameters for discovering signals based on description
  */
@@ -3328,26 +3589,15 @@ export interface GetSignalsRequest {
    */
   signal_spec: string;
   /**
-   * Where the signals need to be delivered
+   * Destination platforms where signals need to be activated
    */
   deliver_to: {
     /**
-     * Target platforms for signal deployment
+     * List of destination platforms (DSPs, sales agents, etc.). If the authenticated caller matches one of these destinations, activation keys will be included in the response.
+     *
+     * @minItems 1
      */
-    platforms: 'all' | string[];
-    /**
-     * Specific platform-account combinations
-     */
-    accounts?: {
-      /**
-       * Platform identifier
-       */
-      platform: string;
-      /**
-       * Account identifier on that platform
-       */
-      account: string;
-    }[];
+    destinations: [Destination, ...Destination[]];
     /**
      * Countries where signals will be used (ISO codes)
      */
@@ -3383,6 +3633,121 @@ export interface GetSignalsRequest {
 
 // get_signals response
 /**
+ * A signal deployment to a specific destination platform with activation status and key
+ */
+export type Deployment =
+  | {
+      /**
+       * Discriminator indicating this is a platform-based deployment
+       */
+      type: 'platform';
+      /**
+       * Platform identifier for DSPs
+       */
+      platform: string;
+      /**
+       * Account identifier if applicable
+       */
+      account?: string;
+      /**
+       * Whether signal is currently active on this destination
+       */
+      is_live: boolean;
+      activation_key?: ActivationKey;
+      /**
+       * Estimated time to activate if not live, or to complete activation if in progress
+       */
+      estimated_activation_duration_minutes?: number;
+      /**
+       * Timestamp when activation completed (if is_live=true)
+       */
+      deployed_at?: string;
+    }
+  | {
+      /**
+       * Discriminator indicating this is an agent URL-based deployment
+       */
+      type: 'agent';
+      /**
+       * URL identifying the destination agent
+       */
+      agent_url: string;
+      /**
+       * Account identifier if applicable
+       */
+      account?: string;
+      /**
+       * Whether signal is currently active on this destination
+       */
+      is_live: boolean;
+      activation_key?: ActivationKey1;
+      /**
+       * Estimated time to activate if not live, or to complete activation if in progress
+       */
+      estimated_activation_duration_minutes?: number;
+      /**
+       * Timestamp when activation completed (if is_live=true)
+       */
+      deployed_at?: string;
+    };
+/**
+ * The key to use for targeting. Only present if is_live=true AND requester has access to this destination.
+ */
+export type ActivationKey =
+  | {
+      /**
+       * Segment ID based targeting
+       */
+      type: 'segment_id';
+      /**
+       * The platform-specific segment identifier to use in campaign targeting
+       */
+      segment_id: string;
+    }
+  | {
+      /**
+       * Key-value pair based targeting
+       */
+      type: 'key_value';
+      /**
+       * The targeting parameter key
+       */
+      key: string;
+      /**
+       * The targeting parameter value
+       */
+      value: string;
+    };
+/**
+ * The key to use for targeting. Only present if is_live=true AND requester has access to this destination.
+ */
+export type ActivationKey1 =
+  | {
+      /**
+       * Segment ID based targeting
+       */
+      type: 'segment_id';
+      /**
+       * The platform-specific segment identifier to use in campaign targeting
+       */
+      segment_id: string;
+    }
+  | {
+      /**
+       * Key-value pair based targeting
+       */
+      type: 'key_value';
+      /**
+       * The targeting parameter key
+       */
+      key: string;
+      /**
+       * The targeting parameter value
+       */
+      value: string;
+    };
+
+/**
  * Response payload for get_signals task
  */
 export interface GetSignalsResponse {
@@ -3415,34 +3780,9 @@ export interface GetSignalsResponse {
      */
     coverage_percentage: number;
     /**
-     * Array of platform deployments
+     * Array of destination deployments
      */
-    deployments: {
-      /**
-       * Platform name
-       */
-      platform: string;
-      /**
-       * Specific account if applicable
-       */
-      account?: string | null;
-      /**
-       * Whether signal is currently active
-       */
-      is_live: boolean;
-      /**
-       * Deployment scope
-       */
-      scope: 'platform-wide' | 'account-specific';
-      /**
-       * Platform-specific segment ID
-       */
-      decisioning_platform_segment_id?: string;
-      /**
-       * Time to activate if not live
-       */
-      estimated_activation_duration_minutes?: number;
-    }[];
+    deployments: Deployment[];
     /**
      * Pricing information
      */
@@ -3468,7 +3808,7 @@ export interface GetSignalsResponse {
 
 // activate_signal parameters
 /**
- * Request parameters for activating a signal on a specific platform/account
+ * A destination platform where signals can be activated (DSP, sales agent, etc.)
  */
 export interface ActivateSignalRequest {
   /**
@@ -3476,38 +3816,33 @@ export interface ActivateSignalRequest {
    */
   signal_agent_segment_id: string;
   /**
-   * The target platform for activation
+   * Target destination(s) for activation. If the authenticated caller matches one of these destinations, activation keys will be included in the response.
+   *
+   * @minItems 1
    */
-  platform: string;
-  /**
-   * Account identifier (required for account-specific activation)
-   */
-  account?: string;
+  destinations: [Destination, ...Destination[]];
 }
 
 
 // activate_signal response
 /**
- * Response payload for activate_signal task
+ * Response payload for activate_signal task. Returns either complete success data OR error information, never both. This enforces atomic operation semantics - the signal is either fully activated or not activated at all.
  */
-export interface ActivateSignalResponse {
-  /**
-   * The platform-specific ID to use once activated
-   */
-  decisioning_platform_segment_id?: string;
-  /**
-   * Estimated time to complete (optional)
-   */
-  estimated_activation_duration_minutes?: number;
-  /**
-   * Timestamp when activation completed (optional)
-   */
-  deployed_at?: string;
-  /**
-   * Task-specific errors and warnings (e.g., activation failures, platform issues)
-   */
-  errors?: Error[];
-}
+export type ActivateSignalResponse =
+  | {
+      /**
+       * Array of deployment results for each destination
+       */
+      deployments: Deployment[];
+    }
+  | {
+      /**
+       * Array of errors explaining why activation failed (e.g., platform connectivity issues, signal definition problems, authentication failures)
+       *
+       * @minItems 1
+       */
+      errors: [Error, ...Error[]];
+    };
 /**
- * Standard error structure for task-specific errors and warnings
+ * A signal deployment to a specific destination platform with activation status and key
  */

@@ -29,7 +29,7 @@ Defined in: [src/lib/core/AgentClient.ts:46](https://github.com/adcontextprotoco
 
 ##### config
 
-[`ADCPClientConfig`](../interfaces/ADCPClientConfig.md) = `{}`
+[`AdCPClientConfig`](../interfaces/AdCPClientConfig.md) = `{}`
 
 #### Returns
 

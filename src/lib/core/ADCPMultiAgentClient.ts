@@ -2,7 +2,7 @@
 
 import type { AgentConfig } from '../types';
 import { AgentClient } from './AgentClient';
-import type { ADCPClientConfig } from './ADCPClient';
+import type { SingleAgentClientConfig } from './SingleAgentClient';
 import { ConfigurationManager } from './ConfigurationManager';
 import { CreativeAgentClient, STANDARD_CREATIVE_AGENTS } from './CreativeAgentClient';
 import type { CreativeFormat } from './CreativeAgentClient';
@@ -40,7 +40,7 @@ export class AgentCollection {
 
   constructor(
     private agents: AgentConfig[],
-    private config: ADCPClientConfig = {}
+    private config: SingleAgentClientConfig = {}
   ) {
     for (const agent of agents) {
       this.clients.set(agent.id, new AgentClient(agent, config));
@@ -289,8 +289,8 @@ export class ADCPMultiAgentClient {
   private agentClients: Map<string, AgentClient> = new Map();
 
   constructor(
-    agentConfigs: AgentConfig[],
-    private config: ADCPClientConfig = {}
+    agentConfigs: AgentConfig[] = [],
+    private config: SingleAgentClientConfig = {}
   ) {
     for (const agentConfig of agentConfigs) {
       this.agentClients.set(agentConfig.id, new AgentClient(agentConfig, config));
@@ -321,7 +321,7 @@ export class ADCPMultiAgentClient {
    * });
    * ```
    */
-  static fromConfig(config?: ADCPClientConfig): ADCPMultiAgentClient {
+  static fromConfig(config?: SingleAgentClientConfig): ADCPMultiAgentClient {
     const agents = ConfigurationManager.loadAgents();
 
     if (agents.length === 0) {
@@ -347,7 +347,7 @@ export class ADCPMultiAgentClient {
    * const client = ADCPMultiAgentClient.fromEnv();
    * ```
    */
-  static fromEnv(config?: ADCPClientConfig): ADCPMultiAgentClient {
+  static fromEnv(config?: SingleAgentClientConfig): ADCPMultiAgentClient {
     const agents = ConfigurationManager.loadAgentsFromEnv();
 
     if (agents.length === 0) {
@@ -375,7 +375,7 @@ export class ADCPMultiAgentClient {
    * const client = ADCPMultiAgentClient.fromFile();
    * ```
    */
-  static fromFile(configPath?: string, config?: ADCPClientConfig): ADCPMultiAgentClient {
+  static fromFile(configPath?: string, config?: SingleAgentClientConfig): ADCPMultiAgentClient {
     const agents = ConfigurationManager.loadAgentsFromConfig(configPath);
 
     if (agents.length === 0) {
@@ -784,6 +784,91 @@ export class ADCPMultiAgentClient {
     return counts;
   }
 
+  // ====== WEBHOOK METHODS ======
+
+  /**
+   * Generate webhook URL for a specific agent, task type, and operation
+   *
+   * @param agentId - ID of the agent
+   * @param taskType - Type of task (e.g., 'get_products', 'media_buy_delivery')
+   * @param operationId - Operation ID for this request
+   * @returns Full webhook URL with macros replaced
+   *
+   * @example
+   * ```typescript
+   * const webhookUrl = client.getWebhookUrl('agent1', 'sync_creatives', 'op_123');
+   * // Returns: https://myapp.com/webhook/sync_creatives/agent1/op_123
+   * ```
+   */
+  getWebhookUrl(agentId: string, taskType: string, operationId: string): string {
+    const agent = this.getAgent(agentId);
+    return agent.getWebhookUrl(taskType, operationId);
+  }
+
+  /**
+   * Handle webhook from any agent (async task completion or notifications)
+   *
+   * Automatically routes webhook to the correct agent based on agent_id in payload.
+   *
+   * @param payload - Webhook payload from agent (must contain agent_id or operation_id)
+   * @param signature - Optional signature for verification (X-ADCP-Signature)
+   * @param timestamp - Optional timestamp for verification (X-ADCP-Timestamp)
+   * @returns Whether webhook was handled successfully
+   *
+   * @example
+   * ```typescript
+   * app.post('/webhook', async (req, res) => {
+   *   const signature = req.headers['x-adcp-signature'];
+   *   const timestamp = req.headers['x-adcp-timestamp'];
+   *
+   *   try {
+   *     const handled = await client.handleWebhook(req.body, signature, timestamp);
+   *     res.status(200).json({ received: handled });
+   *   } catch (error) {
+   *     res.status(401).json({ error: error.message });
+   *   }
+   * });
+   * ```
+   */
+  async handleWebhook(payload: any, signature?: string, timestamp?: string | number): Promise<boolean> {
+    // Extract agent ID from payload
+    // Webhook payloads include agent_id or we can infer from operation_id pattern
+    const agentId = payload.agent_id || this.inferAgentIdFromPayload(payload);
+
+    if (!agentId) {
+      throw new Error('Cannot determine agent ID from webhook payload. Payload must contain agent_id or operation_id.');
+    }
+
+    const agent = this.getAgent(agentId);
+    return agent.handleWebhook(payload, signature, timestamp);
+  }
+
+  /**
+   * Infer agent ID from webhook payload when not explicitly provided
+   *
+   * Looks for patterns in operation_id or context_id that may contain agent information
+   */
+  private inferAgentIdFromPayload(payload: any): string | null {
+    // Try to extract from operation_id pattern (e.g., "delivery_report_agent1_2024-01")
+    if (payload.operation_id && typeof payload.operation_id === 'string') {
+      const match = payload.operation_id.match(/_([\w-]+)_\d{4}-\d{2}$/);
+      if (match && this.hasAgent(match[1])) {
+        return match[1];
+      }
+    }
+
+    // Try to extract from context_id if it contains agent reference
+    if (payload.context_id && typeof payload.context_id === 'string') {
+      for (const agentId of this.getAgentIds()) {
+        if (payload.context_id.includes(agentId)) {
+          return agentId;
+        }
+      }
+    }
+
+    return null;
+  }
+
   // ====== CREATIVE AGENT OPERATIONS ======
 
   /**
@@ -898,6 +983,9 @@ export class ADCPMultiAgentClient {
  * @param config - Client configuration
  * @returns Configured ADCPMultiAgentClient instance
  */
-export function createADCPMultiAgentClient(agents: AgentConfig[], config?: ADCPClientConfig): ADCPMultiAgentClient {
+export function createADCPMultiAgentClient(
+  agents: AgentConfig[],
+  config?: SingleAgentClientConfig
+): ADCPMultiAgentClient {
   return new ADCPMultiAgentClient(agents, config);
 }

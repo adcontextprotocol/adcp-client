@@ -430,7 +430,7 @@ npm run changeset
 ```bash
 npm run changeset
 # Select: major
-# Summary: "Removed deprecated Agent class, use ADCPClient instead"
+# Summary: "Removed deprecated Agent class, use AdCPClient instead"
 ```
 
 ### Verification Commands
