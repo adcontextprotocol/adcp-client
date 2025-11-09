@@ -18,6 +18,11 @@
     },
     "./types": {
       "types": "./dist/lib/types/index.d.ts"
+    },
+    "./testing": {
+      "import": "./dist/lib/testing/index.js",
+      "require": "./dist/lib/testing/index.js",
+      "types": "./dist/lib/testing/index.d.ts"
     }
   },
   "bin": {
