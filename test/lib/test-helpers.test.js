@@ -12,6 +12,8 @@ describe('Test Helpers', () => {
       TEST_AGENT_TOKEN,
       TEST_AGENT_MCP_CONFIG,
       TEST_AGENT_A2A_CONFIG,
+      creativeAgent,
+      creativeAgentA2A,
     } = require('../../dist/lib/index.js');
 
     assert.ok(testAgent, 'testAgent should be exported');
@@ -21,6 +23,8 @@ describe('Test Helpers', () => {
     assert.strictEqual(typeof TEST_AGENT_TOKEN, 'string', 'TEST_AGENT_TOKEN should be a string');
     assert.ok(TEST_AGENT_MCP_CONFIG, 'TEST_AGENT_MCP_CONFIG should be exported');
     assert.ok(TEST_AGENT_A2A_CONFIG, 'TEST_AGENT_A2A_CONFIG should be exported');
+    assert.ok(creativeAgent, 'creativeAgent should be exported');
+    assert.ok(creativeAgentA2A, 'creativeAgentA2A should be exported');
   });
 
   test('should export from /testing subpath', () => {
@@ -32,6 +36,8 @@ describe('Test Helpers', () => {
       TEST_AGENT_TOKEN,
       TEST_AGENT_MCP_CONFIG,
       TEST_AGENT_A2A_CONFIG,
+      creativeAgent,
+      creativeAgentA2A,
     } = require('../../dist/lib/testing/index.js');
 
     assert.ok(testAgent, 'testAgent should be exported from /testing');
@@ -41,6 +47,8 @@ describe('Test Helpers', () => {
     assert.strictEqual(typeof TEST_AGENT_TOKEN, 'string', 'TEST_AGENT_TOKEN should be a string');
     assert.ok(TEST_AGENT_MCP_CONFIG, 'TEST_AGENT_MCP_CONFIG should be exported from /testing');
     assert.ok(TEST_AGENT_A2A_CONFIG, 'TEST_AGENT_A2A_CONFIG should be exported from /testing');
+    assert.ok(creativeAgent, 'creativeAgent should be exported from /testing');
+    assert.ok(creativeAgentA2A, 'creativeAgentA2A should be exported from /testing');
   });
 
   test('TEST_AGENT_MCP_CONFIG should have correct structure', () => {
@@ -145,5 +153,25 @@ describe('Test Helpers', () => {
     assert.strictEqual(typeof TEST_AGENT_TOKEN, 'string');
     assert.ok(TEST_AGENT_TOKEN.length > 0, 'token should not be empty');
     assert.strictEqual(TEST_AGENT_TOKEN, '1v8tAhASaUYYp4odoQ1PnMpdqNaMiTrCRqYo9OJp6IQ');
+  });
+
+  test('creativeAgent should be a CreativeAgentClient instance', () => {
+    const { creativeAgent } = require('../../dist/lib/testing/index.js');
+
+    // Check that it has the expected CreativeAgentClient methods
+    assert.strictEqual(typeof creativeAgent.listFormats, 'function', 'should have listFormats method');
+    assert.strictEqual(typeof creativeAgent.findByType, 'function', 'should have findByType method');
+    assert.strictEqual(typeof creativeAgent.findByDimensions, 'function', 'should have findByDimensions method');
+    assert.strictEqual(typeof creativeAgent.findById, 'function', 'should have findById method');
+  });
+
+  test('creativeAgentA2A should be a CreativeAgentClient instance', () => {
+    const { creativeAgentA2A } = require('../../dist/lib/testing/index.js');
+
+    // Check that it has the expected CreativeAgentClient methods
+    assert.strictEqual(typeof creativeAgentA2A.listFormats, 'function', 'should have listFormats method');
+    assert.strictEqual(typeof creativeAgentA2A.findByType, 'function', 'should have findByType method');
+    assert.strictEqual(typeof creativeAgentA2A.findByDimensions, 'function', 'should have findByDimensions method');
+    assert.strictEqual(typeof creativeAgentA2A.findById, 'function', 'should have findById method');
   });
 });

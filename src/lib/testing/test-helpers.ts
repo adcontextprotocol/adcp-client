@@ -2,6 +2,7 @@
 // These provide pre-configured access to AdCP's public test agent
 
 import { ADCPMultiAgentClient } from '../core/ADCPMultiAgentClient';
+import { CreativeAgentClient, STANDARD_CREATIVE_AGENTS } from '../core/CreativeAgentClient';
 import type { AgentClient } from '../core/AgentClient';
 import type { AgentConfig } from '../types';
 
@@ -151,3 +152,62 @@ export function createTestAgent(overrides?: Partial<AgentConfig>): AgentConfig {
     ...overrides,
   };
 }
+
+// ====== CREATIVE AGENT HELPERS ======
+
+/**
+ * Pre-configured creative agent client using MCP protocol.
+ * Ready to use for creative generation and format listing.
+ *
+ * @example
+ * ```typescript
+ * import { creativeAgent } from '@adcp/client/testing';
+ *
+ * // List available creative formats
+ * const formats = await creativeAgent.listFormats();
+ * console.log(`Found ${formats.length} creative formats`);
+ *
+ * // Filter to specific format types
+ * const videoFormats = formats.filter(f => f.type === 'video');
+ * const displayFormats = formats.filter(f => f.type === 'display');
+ * ```
+ *
+ * @example
+ * ```typescript
+ * // Find formats by dimensions
+ * const formats = await creativeAgent.listFormats();
+ * const banner = formats.find(f =>
+ *   f.renders?.[0]?.dimensions?.width === 300 &&
+ *   f.renders?.[0]?.dimensions?.height === 250
+ * );
+ * ```
+ *
+ * @remarks
+ * This is the official AdCP reference creative agent.
+ * No authentication required for public endpoints.
+ */
+export const creativeAgent: CreativeAgentClient = new CreativeAgentClient({
+  agentUrl: STANDARD_CREATIVE_AGENTS.ADCP_REFERENCE,
+  protocol: 'mcp',
+});
+
+/**
+ * Pre-configured creative agent client using A2A protocol.
+ * Identical functionality to creativeAgent but uses A2A instead of MCP.
+ *
+ * @example
+ * ```typescript
+ * import { creativeAgentA2A } from '@adcp/client/testing';
+ *
+ * const formats = await creativeAgentA2A.listFormats({ type: 'video' });
+ * console.log(`Found ${formats.length} video formats`);
+ * ```
+ *
+ * @remarks
+ * This is the official AdCP reference creative agent.
+ * No authentication required for public endpoints.
+ */
+export const creativeAgentA2A: CreativeAgentClient = new CreativeAgentClient({
+  agentUrl: STANDARD_CREATIVE_AGENTS.ADCP_REFERENCE_A2A,
+  protocol: 'a2a',
+});
