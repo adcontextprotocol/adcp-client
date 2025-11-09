@@ -39,6 +39,30 @@ export const TEST_AGENT_A2A_CONFIG: AgentConfig = {
 };
 
 /**
+ * Public test agent configuration without authentication - MCP protocol
+ * Demonstrates unauthenticated agent access patterns
+ */
+export const TEST_AGENT_NO_AUTH_MCP_CONFIG: AgentConfig = {
+  id: 'test-agent-no-auth-mcp',
+  name: 'AdCP Public Test Agent (MCP, No Auth)',
+  agent_uri: 'https://test-agent.adcontextprotocol.org/mcp/',
+  protocol: 'mcp',
+  requiresAuth: false,
+};
+
+/**
+ * Public test agent configuration without authentication - A2A protocol
+ * Demonstrates unauthenticated agent access patterns
+ */
+export const TEST_AGENT_NO_AUTH_A2A_CONFIG: AgentConfig = {
+  id: 'test-agent-no-auth-a2a',
+  name: 'AdCP Public Test Agent (A2A, No Auth)',
+  agent_uri: 'https://test-agent.adcontextprotocol.org',
+  protocol: 'a2a',
+  requiresAuth: false,
+};
+
+/**
  * Pre-configured test agent client using MCP protocol.
  * Ready to use for examples, documentation, and quick testing.
  *
@@ -97,6 +121,61 @@ export const testAgent: AgentClient = new ADCPMultiAgentClient([TEST_AGENT_MCP_C
 export const testAgentA2A: AgentClient = new ADCPMultiAgentClient([TEST_AGENT_A2A_CONFIG]).agent('test-agent-a2a');
 
 /**
+ * Pre-configured test agent client WITHOUT authentication (MCP protocol).
+ * Demonstrates what happens when calling authenticated endpoints without auth.
+ * Useful for testing error handling and showing auth vs no-auth differences.
+ *
+ * @example
+ * ```typescript
+ * import { testAgentNoAuth } from '@adcp/client/testing';
+ *
+ * // This will fail with authentication error
+ * try {
+ *   const result = await testAgentNoAuth.getProducts({
+ *     brief: 'Coffee subscription',
+ *     promoted_offering: 'Premium coffee'
+ *   });
+ * } catch (error) {
+ *   console.log('Expected auth error:', error.message);
+ * }
+ * ```
+ *
+ * @remarks
+ * This agent intentionally does NOT include authentication.
+ * Use it to demonstrate authentication requirements and error handling.
+ */
+export const testAgentNoAuth: AgentClient = new ADCPMultiAgentClient([TEST_AGENT_NO_AUTH_MCP_CONFIG]).agent(
+  'test-agent-no-auth-mcp'
+);
+
+/**
+ * Pre-configured test agent client WITHOUT authentication (A2A protocol).
+ * Demonstrates what happens when calling authenticated endpoints without auth.
+ * Useful for testing error handling and showing auth vs no-auth differences.
+ *
+ * @example
+ * ```typescript
+ * import { testAgentNoAuthA2A } from '@adcp/client/testing';
+ *
+ * // Compare authenticated vs unauthenticated
+ * import { testAgentA2A } from '@adcp/client/testing';
+ *
+ * // This works (has auth)
+ * const authResult = await testAgentA2A.getProducts({ brief: 'Test' });
+ *
+ * // This fails (no auth)
+ * const noAuthResult = await testAgentNoAuthA2A.getProducts({ brief: 'Test' });
+ * ```
+ *
+ * @remarks
+ * This agent intentionally does NOT include authentication.
+ * Use it to demonstrate authentication requirements and error handling.
+ */
+export const testAgentNoAuthA2A: AgentClient = new ADCPMultiAgentClient([TEST_AGENT_NO_AUTH_A2A_CONFIG]).agent(
+  'test-agent-no-auth-a2a'
+);
+
+/**
  * Multi-agent client with both test agents configured.
  * Useful for testing multi-agent patterns and protocol comparisons.
  *
@@ -130,11 +209,11 @@ export const testAgentClient = new ADCPMultiAgentClient([TEST_AGENT_MCP_CONFIG, 
  *
  * @example
  * ```typescript
- * import { createTestAgent, ADCPMultiAgentClient } from '@adcp/client/testing';
+ * import { createTestAgent, AdCPClient } from '@adcp/client/testing';
  *
  * // Use default test agent with custom ID
  * const config = createTestAgent({ id: 'my-test-agent' });
- * const client = new ADCPMultiAgentClient([config]);
+ * const client = new AdCPClient([config]);
  * ```
  *
  * @example

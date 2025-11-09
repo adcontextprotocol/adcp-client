@@ -353,13 +353,23 @@ async function main() {
       url: 'https://test-agent.adcontextprotocol.org/mcp/',
       protocol: 'mcp',
       auth_token: '1v8tAhASaUYYp4odoQ1PnMpdqNaMiTrCRqYo9OJp6IQ',
-      description: 'AdCP public test agent (MCP)',
+      description: 'AdCP public test agent (MCP, with auth)',
     },
     'test-a2a': {
       url: 'https://test-agent.adcontextprotocol.org',
       protocol: 'a2a',
       auth_token: '1v8tAhASaUYYp4odoQ1PnMpdqNaMiTrCRqYo9OJp6IQ',
-      description: 'AdCP public test agent (A2A)',
+      description: 'AdCP public test agent (A2A, with auth)',
+    },
+    'test-no-auth': {
+      url: 'https://test-agent.adcontextprotocol.org/mcp/',
+      protocol: 'mcp',
+      description: 'AdCP public test agent (MCP, no auth - demonstrates auth errors)',
+    },
+    'test-a2a-no-auth': {
+      url: 'https://test-agent.adcontextprotocol.org',
+      protocol: 'a2a',
+      description: 'AdCP public test agent (A2A, no auth - demonstrates auth errors)',
     },
     creative: {
       url: 'https://creative.adcontextprotocol.org/mcp',

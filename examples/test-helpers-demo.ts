@@ -2,7 +2,7 @@
 // Test Helpers Demo - Using Pre-configured Test Agents
 // This example shows how to use the built-in test helpers for quick testing and examples
 
-import { testAgent, testAgentA2A, testAgentClient, createTestAgent, ADCPMultiAgentClient } from '../src/lib';
+import { testAgent, testAgentA2A, testAgentClient, createTestAgent, AdCPClient } from '../src/lib';
 
 /**
  * Example 1: Simplest Possible Usage
@@ -145,7 +145,7 @@ async function customTestAgent() {
   console.log(`  URI: ${customConfig.agent_uri}\n`);
 
   // Use it with a client
-  const client = new ADCPMultiAgentClient([customConfig]);
+  const client = new AdCPClient([customConfig]);
   const agent = client.agent('my-custom-test');
 
   try {
