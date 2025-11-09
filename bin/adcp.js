@@ -122,6 +122,12 @@ OPTIONS:
   --json            Output raw JSON response (default: pretty print)
   --debug           Show debug information
 
+BUILT-IN TEST AGENTS:
+  test                        AdCP public test agent (MCP) - pre-configured
+  test-a2a                    AdCP public test agent (A2A) - pre-configured
+  creative                    Official AdCP creative agent (MCP) - pre-configured
+  creative-a2a                Official AdCP creative agent (A2A) - pre-configured
+
 AGENT MANAGEMENT:
   --save-auth <alias> [url] [protocol] [--auth token | --no-auth]
                               Save agent configuration with an alias name
@@ -131,6 +137,14 @@ AGENT MANAGEMENT:
   --show-config               Show config file location
 
 EXAMPLES:
+  # Use built-in test agent (zero config!)
+  adcp test
+  adcp test get_products '{"brief":"coffee brands"}'
+  adcp creative list_creative_formats
+
+  # Use built-in test agent with A2A protocol
+  adcp test-a2a get_products '{"brief":"travel packages"}'
+
   # Non-interactive: save with auth token
   adcp --save-auth myagent https://test-agent.adcontextprotocol.org --auth your_token
 
@@ -333,8 +347,59 @@ async function main() {
 
   const firstArg = positionalArgs[0];
 
-  // Check if first arg is a saved alias
-  if (isAlias(firstArg)) {
+  // Built-in test helper aliases
+  const BUILT_IN_AGENTS = {
+    test: {
+      url: 'https://test-agent.adcontextprotocol.org/mcp/',
+      protocol: 'mcp',
+      auth_token: '1v8tAhASaUYYp4odoQ1PnMpdqNaMiTrCRqYo9OJp6IQ',
+      description: 'AdCP public test agent (MCP)',
+    },
+    'test-a2a': {
+      url: 'https://test-agent.adcontextprotocol.org',
+      protocol: 'a2a',
+      auth_token: '1v8tAhASaUYYp4odoQ1PnMpdqNaMiTrCRqYo9OJp6IQ',
+      description: 'AdCP public test agent (A2A)',
+    },
+    creative: {
+      url: 'https://creative.adcontextprotocol.org/mcp',
+      protocol: 'mcp',
+      description: 'Official AdCP creative agent (MCP)',
+    },
+    'creative-a2a': {
+      url: 'https://creative.adcontextprotocol.org/a2a',
+      protocol: 'a2a',
+      description: 'Official AdCP creative agent (A2A)',
+    },
+  };
+
+  // Check if first arg is a built-in alias or saved alias
+  if (BUILT_IN_AGENTS[firstArg]) {
+    // Built-in test helper mode
+    savedAgent = BUILT_IN_AGENTS[firstArg];
+    agentUrl = savedAgent.url;
+
+    // Protocol priority: --protocol flag > built-in config
+    if (!protocol) {
+      protocol = savedAgent.protocol;
+    }
+
+    toolName = positionalArgs[1];
+    payloadArg = positionalArgs[2] || '{}';
+
+    // Use built-in auth token if not overridden and available
+    if (!authToken && savedAgent.auth_token) {
+      authToken = savedAgent.auth_token;
+    }
+
+    if (debug) {
+      console.error(`DEBUG: Using built-in agent '${firstArg}'`);
+      console.error(`  ${savedAgent.description}`);
+      console.error(`  URL: ${agentUrl}`);
+      console.error(`  Protocol: ${protocol}`);
+      console.error('');
+    }
+  } else if (isAlias(firstArg)) {
     // Alias mode - load saved agent config
     savedAgent = getAgent(firstArg);
     agentUrl = savedAgent.url;
