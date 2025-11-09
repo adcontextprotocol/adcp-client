@@ -229,4 +229,11 @@ if (require.main === module) {
   main().catch(console.error);
 }
 
-export { simplestExample, protocolComparison, multiAgentExample, aiTestOrchestration, customTestAgent, variousOperations };
+export {
+  simplestExample,
+  protocolComparison,
+  multiAgentExample,
+  aiTestOrchestration,
+  customTestAgent,
+  variousOperations,
+};
