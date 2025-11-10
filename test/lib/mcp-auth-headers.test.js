@@ -101,4 +101,61 @@ test('MCP: Protocol integration sends auth headers', async t => {
     assert.strictEqual(authToken, 'test-direct-token-1234567890');
     assert.ok(authToken.length > 20); // Verify it's a direct token, not env var name
   });
+
+  await t.test('getAuthToken handles short tokens correctly', () => {
+    const { getAuthToken } = require('../../dist/lib/auth/index.js');
+
+    // Test with short token (like 'ci-test-token')
+    const shortTokenConfig = {
+      id: 'test-agent',
+      protocol: 'mcp',
+      agent_uri: 'https://test.example.com/mcp',
+      requiresAuth: true,
+      auth_token_env: 'ci-test-token', // Short token (13 chars)
+    };
+
+    const shortToken = getAuthToken(shortTokenConfig);
+    assert.strictEqual(shortToken, 'ci-test-token');
+
+    // Test with very short token
+    const veryShortTokenConfig = {
+      id: 'test-agent',
+      protocol: 'mcp',
+      agent_uri: 'https://test.example.com/mcp',
+      requiresAuth: true,
+      auth_token_env: 'abc123', // Very short token (6 chars)
+    };
+
+    const veryShortToken = getAuthToken(veryShortTokenConfig);
+    assert.strictEqual(veryShortToken, 'abc123');
+  });
+
+  await t.test('getAuthToken returns undefined when requiresAuth is false', () => {
+    const { getAuthToken } = require('../../dist/lib/auth/index.js');
+
+    const noAuthConfig = {
+      id: 'test-agent',
+      protocol: 'mcp',
+      agent_uri: 'https://test.example.com/mcp',
+      requiresAuth: false,
+      auth_token_env: 'test-token',
+    };
+
+    const authToken = getAuthToken(noAuthConfig);
+    assert.strictEqual(authToken, undefined);
+  });
+
+  await t.test('getAuthToken returns undefined when auth_token_env is missing', () => {
+    const { getAuthToken } = require('../../dist/lib/auth/index.js');
+
+    const missingTokenConfig = {
+      id: 'test-agent',
+      protocol: 'mcp',
+      agent_uri: 'https://test.example.com/mcp',
+      requiresAuth: true,
+    };
+
+    const authToken = getAuthToken(missingTokenConfig);
+    assert.strictEqual(authToken, undefined);
+  });
 });
