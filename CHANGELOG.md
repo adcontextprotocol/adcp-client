@@ -1,5 +1,46 @@
 # Changelog
 
+## 3.0.0
+
+### Major Changes
+
+- 5c1d32e: Simplified API surface - removed deprecated exports and renamed primary client to `AdCPClient`.
+
+  ## Breaking Changes
+
+  **Removed:**
+  - `AdCPClient` (deprecated wrapper with confusing lowercase 'd')
+  - `createAdCPClient()`, `createAdCPClientFromEnv()` factory functions
+  - `createADCPClient()`, `createADCPMultiAgentClient()` factory functions
+  - `SingleAgentClient` and `AgentClient` exports from `/advanced` (use `client.agent(id)` instead)
+
+  **Moved to `/advanced`:**
+  - Protocol-level clients: `ProtocolClient`, `callMCPTool`, `callA2ATool`, `createMCPClient`, `createA2AClient`
+
+  **Renamed:**
+  - `ADCPMultiAgentClient` → `AdCPClient` (primary export, proper AdCP capitalization)
+
+  ## New API
+
+  ```typescript
+  import { AdCPClient } from '@adcp/client';
+
+  const client = new AdCPClient([agentConfig]);
+  const client = AdCPClient.fromEnv();
+  ```
+
+  Works for single or multiple agents. See `MIGRATION-v3.md` for migration guide.
+
+### Minor Changes
+
+- bd57dd1: Added test helpers for easy testing and self-documenting examples. New exports include `testAgent` (pre-configured MCP test agent), `testAgentA2A` (pre-configured A2A test agent), `testAgentNoAuth` / `testAgentNoAuthA2A` (unauthenticated variants for demonstrating auth requirements), `testAgentClient` (multi-agent client with both protocols), `createTestAgent()` helper function, and `creativeAgent` (pre-configured MCP creative agent). Test helpers are available via `@adcp/client/testing` subpath export and provide instant access to AdCP's public test agent and official creative agent with no configuration required.
+
+  Also added built-in CLI aliases (`test`, `test-a2a`, `test-no-auth`, `test-a2a-no-auth`, `creative`) for zero-config command-line access to test and creative agents.
+
+### Patch Changes
+
+- bd57dd1: Fixed authentication bug where tokens shorter than 20 characters were incorrectly treated as environment variable names. The `auth_token_env` field now always contains the actual token value. For environment variable expansion, use shell substitution (e.g., `--auth $MY_TOKEN`).
+
 ## 2.7.2
 
 ### Patch Changes
