@@ -15,7 +15,6 @@ export {
   testAgentNoAuthA2A,
   TEST_AGENT_NO_AUTH_MCP_CONFIG,
   TEST_AGENT_NO_AUTH_A2A_CONFIG,
-  // Creative agents
+  // Creative agents (MCP only - A2A not yet supported)
   creativeAgent,
-  creativeAgentA2A,
 } from './test-helpers';

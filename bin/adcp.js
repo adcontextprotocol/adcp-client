@@ -102,7 +102,7 @@ function printUsage() {
 AdCP CLI Tool - Direct Agent Communication
 
 USAGE:
-  adcp <agent-alias|url> [tool-name] [payload] [options]
+  npx @adcp/client <agent-alias|url> [tool-name] [payload] [options]
 
 ARGUMENTS:
   agent-alias|url   Saved agent alias (e.g., 'test') or full URL to agent endpoint
@@ -123,10 +123,11 @@ OPTIONS:
   --debug           Show debug information
 
 BUILT-IN TEST AGENTS:
-  test                        AdCP public test agent (MCP) - pre-configured
-  test-a2a                    AdCP public test agent (A2A) - pre-configured
-  creative                    Official AdCP creative agent (MCP) - pre-configured
-  creative-a2a                Official AdCP creative agent (A2A) - pre-configured
+  test                        AdCP public test agent (MCP, with auth)
+  test-a2a                    AdCP public test agent (A2A, with auth)
+  test-no-auth                AdCP public test agent (MCP, no auth - demonstrates errors)
+  test-a2a-no-auth            AdCP public test agent (A2A, no auth - demonstrates errors)
+  creative                    Official AdCP creative agent (MCP only)
 
 AGENT MANAGEMENT:
   --save-auth <alias> [url] [protocol] [--auth token | --no-auth]
@@ -138,12 +139,15 @@ AGENT MANAGEMENT:
 
 EXAMPLES:
   # Use built-in test agent (zero config!)
-  adcp test
-  adcp test get_products '{"brief":"coffee brands"}'
-  adcp creative list_creative_formats
+  npx @adcp/client test
+  npx @adcp/client test get_products '{"brief":"coffee brands"}'
+  npx @adcp/client creative list_creative_formats
 
   # Use built-in test agent with A2A protocol
-  adcp test-a2a get_products '{"brief":"travel packages"}'
+  npx @adcp/client test-a2a get_products '{"brief":"travel packages"}'
+
+  # Compare authenticated vs unauthenticated (demonstrates auth errors)
+  npx @adcp/client test-no-auth get_products '{"brief":"test"}'
 
   # Non-interactive: save with auth token
   adcp --save-auth myagent https://test-agent.adcontextprotocol.org --auth your_token
@@ -374,12 +378,7 @@ async function main() {
     creative: {
       url: 'https://creative.adcontextprotocol.org/mcp',
       protocol: 'mcp',
-      description: 'Official AdCP creative agent (MCP)',
-    },
-    'creative-a2a': {
-      url: 'https://creative.adcontextprotocol.org/a2a',
-      protocol: 'a2a',
-      description: 'Official AdCP creative agent (A2A)',
+      description: 'Official AdCP creative agent (MCP only)',
     },
   };
 

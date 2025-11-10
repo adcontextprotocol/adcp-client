@@ -270,23 +270,5 @@ export const creativeAgent: CreativeAgentClient = new CreativeAgentClient({
   protocol: 'mcp',
 });
 
-/**
- * Pre-configured creative agent client using A2A protocol.
- * Identical functionality to creativeAgent but uses A2A instead of MCP.
- *
- * @example
- * ```typescript
- * import { creativeAgentA2A } from '@adcp/client/testing';
- *
- * const formats = await creativeAgentA2A.listFormats({ type: 'video' });
- * console.log(`Found ${formats.length} video formats`);
- * ```
- *
- * @remarks
- * This is the official AdCP reference creative agent.
- * No authentication required for public endpoints.
- */
-export const creativeAgentA2A: CreativeAgentClient = new CreativeAgentClient({
-  agentUrl: STANDARD_CREATIVE_AGENTS.ADCP_REFERENCE_A2A,
-  protocol: 'a2a',
-});
+// Note: creativeAgentA2A is not exported because A2A protocol is not yet supported
+// on the creative agent. Only MCP is currently available.
