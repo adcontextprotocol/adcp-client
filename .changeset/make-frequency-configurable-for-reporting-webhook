@@ -1,0 +1,5 @@
+---
+'@adcp/client': patch
+---
+
+make reporting webhook frequency configurable, use daily for frequency instead of monthly by default
