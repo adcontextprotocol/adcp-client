@@ -570,7 +570,8 @@ async function main() {
     }
 
     // Create ADCP client with optional webhook configuration
-    const client = new AdCPClient(agentConfig, {
+    // Note: AdCPClient (multi-agent) expects an array of configs
+    const client = new AdCPClient([agentConfig], {
       debug: debug,
       ...(webhookUrl && {
         webhookUrlTemplate: webhookUrl,
@@ -582,8 +583,9 @@ async function main() {
       console.error('DEBUG: Executing task...\n');
     }
 
-    // Execute the task
-    const result = await client.executeTask(toolName, payload);
+    // Execute the task using the single agent client API
+    const agentClient = client.agent('cli-agent');
+    const result = await agentClient.executeTask(toolName, payload);
 
     // If waiting for async response, handle webhook
     if (waitForAsync && webhookHandler) {

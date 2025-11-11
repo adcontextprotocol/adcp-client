@@ -58,6 +58,7 @@ export async function callMCPTool(
 
     // Use the SDK with requestInit headers for authentication
     // The SDK's StreamableHTTPClientTransport will use these headers for ALL requests
+    // Note: authHeaders already includes 'Accept: application/json, text/event-stream' from createMCPAuthHeaders
     const transport = new StreamableHTTPClientTransport(baseUrl, {
       requestInit: {
         headers: authHeaders,
