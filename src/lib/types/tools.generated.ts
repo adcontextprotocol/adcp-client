@@ -53,6 +53,10 @@ export interface GetProductsRequest {
      */
     min_exposures?: number;
   };
+  /**
+   * Initiator-provided context included in the request payload. Agentsmust echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.
+   */
+  context?: {};
 }
 export interface BrandManifest2 {
   /**
@@ -312,6 +316,10 @@ export interface GetProductsResponse {
    * Task-specific errors and warnings (e.g., product filtering issues)
    */
   errors?: Error[];
+  /**
+   * Initiator-provided context echoed inside the task payload. Opaque metadata such as UI/session hints, correlation tokens, or tracking identifiers.
+   */
+  context?: {};
 }
 /**
  * Represents available advertising inventory
@@ -974,6 +982,10 @@ export interface ListCreativeFormatsRequest {
    * Search for formats by name (case-insensitive partial match)
    */
   name_search?: string;
+  /**
+   * Initiator-provided context included in the request payload. Agents must echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.
+   */
+  context?: {};
 }
 /**
  * Structured format identifier with agent URL and format name
@@ -1009,6 +1021,10 @@ export interface ListCreativeFormatsResponse {
    * Task-specific errors and warnings (e.g., format availability issues)
    */
   errors?: Error[];
+  /**
+   * Initiator-provided context echoed inside the task payload. Opaque metadata such as UI/session hints, correlation tokens, or tracking identifiers.
+   */
+  context?: {};
 }
 /**
  * Represents a creative format with its requirements
@@ -1524,6 +1540,10 @@ export interface CreateMediaBuyRequest {
       | 'engagement_rate'
     )[];
   };
+  /**
+   * Initiator-provided context included in the request payload. Agentsmust echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.
+   */
+  context?: {};
 }
 /**
  * Package configuration for media buy creation
@@ -1940,6 +1960,10 @@ export type CreateMediaBuyResponse =
          */
         buyer_ref: string;
       }[];
+      /**
+       * Initiator-provided context echoed inside the task payload. Opaque metadata such as UI/session hints, correlation tokens, or tracking identifiers.
+       */
+      context?: {};
     }
   | {
       /**
@@ -1948,6 +1972,10 @@ export type CreateMediaBuyResponse =
        * @minItems 1
        */
       errors: [Error, ...Error[]];
+      /**
+       * Initiator-provided context echoed inside the task payload. Opaque metadata such as UI/session hints, correlation tokens, or tracking identifiers.
+       */
+      context?: {};
     };
 
 /**
@@ -1994,6 +2022,10 @@ export interface SyncCreativesRequest {
    */
   validation_mode?: 'strict' | 'lenient';
   push_notification_config?: PushNotificationConfig;
+  /**
+   * Initiator-provided context included in the request payload. Agents must echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.
+   */
+  context?: {};
 }
 /**
  * Creative asset for upload to library - supports static assets, generative formats, and third-party snippets
@@ -2062,6 +2094,10 @@ export type SyncCreativesResponse =
           [k: string]: string;
         };
       }[];
+      /**
+       * Initiator-provided context echoed inside the task payload. Opaque metadata such as UI/session hints, correlation tokens, or tracking identifiers.
+       */
+      context?: {};
     }
   | {
       /**
@@ -2070,6 +2106,10 @@ export type SyncCreativesResponse =
        * @minItems 1
        */
       errors: [Error, ...Error[]];
+      /**
+       * Initiator-provided context echoed inside the task payload. Opaque metadata such as UI/session hints, correlation tokens, or tracking identifiers.
+       */
+      context?: {};
     };
 
 /**
@@ -2211,6 +2251,10 @@ export interface ListCreativesRequest {
     | 'performance'
     | 'sub_assets'
   )[];
+  /**
+   * Initiator-provided context included in the request payload. Agentsmust echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.
+   */
+  context?: {};
 }
 
 
@@ -2473,6 +2517,10 @@ export interface ListCreativesResponse {
      */
     archived?: number;
   };
+  /**
+   * Initiator-provided context echoed inside the task payload. Opaque metadata such as UI/session hints, correlation tokens, or tracking identifiers.
+   */
+  context?: {};
 }
 /**
  * Format identifier specifying which format this creative conforms to
@@ -2520,6 +2568,10 @@ export interface UpdateMediaBuyRequest1 {
       }
   )[];
   push_notification_config?: PushNotificationConfig;
+  /**
+   * Initiator-provided context included in the request payload. Agents must echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.
+   */
+  context?: {};
 }
 /**
  * Optional webhook configuration for async update notifications. Publisher will send webhook when update completes if operation takes longer than immediate response time.
@@ -2556,6 +2608,10 @@ export type UpdateMediaBuyResponse =
          */
         buyer_ref: string;
       }[];
+      /**
+       * Initiator-provided context echoed inside the task payload. Opaque metadata such as UI/session hints, correlation tokens, or tracking identifiers.
+       */
+      context?: {};
     }
   | {
       /**
@@ -2564,6 +2620,10 @@ export type UpdateMediaBuyResponse =
        * @minItems 1
        */
       errors: [Error, ...Error[]];
+      /**
+       * Initiator-provided context echoed inside the task payload. Opaque metadata such as UI/session hints, correlation tokens, or tracking identifiers.
+       */
+      context?: {};
     };
 
 /**
@@ -2597,6 +2657,10 @@ export interface GetMediaBuyDeliveryRequest {
    * End date for reporting period (YYYY-MM-DD)
    */
   end_date?: string;
+  /**
+   * Initiator-provided context included in the request payload. Agentsmust echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.
+   */
+  context?: {};
 }
 
 
@@ -2605,6 +2669,10 @@ export interface GetMediaBuyDeliveryRequest {
  * Pricing model used for this media buy
  */
 export type PricingModel = 'cpm' | 'vcpm' | 'cpc' | 'cpcv' | 'cpv' | 'cpp' | 'flat_rate';
+/**
+ * The pricing model used for this package (e.g., cpm, cpcv, cpp). Indicates how the package is billed and which metrics are most relevant for optimization.
+ */
+export type PricingModel1 = 'cpm' | 'vcpm' | 'cpc' | 'cpcv' | 'cpv' | 'cpp' | 'flat_rate';
 
 /**
  * Response payload for get_media_buy_delivery task
@@ -2719,6 +2787,15 @@ export interface GetMediaBuyDeliveryResponse {
        * Delivery pace (1.0 = on track, <1.0 = behind, >1.0 = ahead)
        */
       pacing_index?: number;
+      pricing_model: PricingModel1;
+      /**
+       * The pricing rate for this package in the specified currency. For fixed-rate pricing, this is the agreed rate (e.g., CPM rate of 12.50 means $12.50 per 1,000 impressions). For auction-based pricing, this represents the effective rate based on actual delivery.
+       */
+      rate: number;
+      /**
+       * ISO 4217 currency code (e.g., USD, EUR, GBP) for this package's pricing. Indicates the currency in which the rate and spend values are denominated. Different packages can use different currencies when supported by the publisher.
+       */
+      currency: string;
     })[];
     /**
      * Day-by-day delivery
@@ -2742,6 +2819,10 @@ export interface GetMediaBuyDeliveryResponse {
    * Task-specific errors and warnings (e.g., missing delivery data, reporting platform issues)
    */
   errors?: Error[];
+  /**
+   * Initiator-provided context echoed inside the task payload. Opaque metadata such as UI/session hints, correlation tokens, or tracking identifiers.
+   */
+  context?: {};
 }
 /**
  * Standard delivery metrics that can be reported at media buy, package, or creative level
@@ -2887,6 +2968,10 @@ export interface ListAuthorizedPropertiesRequest {
    * @minItems 1
    */
   publisher_domains?: [string, ...string[]];
+  /**
+   * Initiator-provided context included in the request payload. Agentsmust echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.
+   */
+  context?: {};
 }
 
 
@@ -2943,6 +3028,10 @@ export interface ListAuthorizedPropertiesResponse {
    * Task-specific errors and warnings (e.g., property availability issues)
    */
   errors?: Error[];
+  /**
+   * Initiator-provided context echoed inside the task payload. Opaque metadata such as UI/session hints, correlation tokens, or tracking identifiers.
+   */
+  context?: {};
 }
 /**
  * Standard error structure for task-specific errors and warnings
@@ -2998,6 +3087,10 @@ export interface ProvidePerformanceFeedbackRequest {
    * Source of the performance data
    */
   feedback_source?: 'buyer_attribution' | 'third_party_measurement' | 'platform_analytics' | 'verification_partner';
+  /**
+   * Initiator-provided context included in the request payload. Agentsmust echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.
+   */
+  context?: {};
 }
 
 
@@ -3011,6 +3104,10 @@ export type ProvidePerformanceFeedbackResponse =
        * Whether the performance feedback was successfully received
        */
       success: true;
+      /**
+       * Initiator-provided context echoed inside the task payload. Opaque metadata such as UI/session hints, correlation tokens, or tracking identifiers.
+       */
+      context?: {};
     }
   | {
       /**
@@ -3019,6 +3116,10 @@ export type ProvidePerformanceFeedbackResponse =
        * @minItems 1
        */
       errors: [Error, ...Error[]];
+      /**
+       * Initiator-provided context echoed inside the task payload. Opaque metadata such as UI/session hints, correlation tokens, or tracking identifiers.
+       */
+      context?: {};
     };
 
 /**
@@ -3036,6 +3137,10 @@ export interface BuildCreativeRequest {
   message?: string;
   creative_manifest?: CreativeManifest;
   target_format_id: FormatID1;
+  /**
+   * Initiator-provided context included in the request payload. Agentsmust echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.
+   */
+  context?: {};
 }
 /**
  * Creative manifest to transform or generate from. For pure generation, this should include the target format_id and any required input assets (e.g., promoted_offerings for generative formats). For transformation (e.g., resizing, reformatting), this is the complete creative to adapt.
@@ -3128,6 +3233,10 @@ export interface WebhookAsset {
 export type BuildCreativeResponse =
   | {
       creative_manifest: CreativeManifest;
+      /**
+       * Initiator-provided context echoed inside the task payload. Opaque metadata such as UI/session hints, correlation tokens, or tracking identifiers.
+       */
+      context?: {};
     }
   | {
       /**
@@ -3136,6 +3245,10 @@ export type BuildCreativeResponse =
        * @minItems 1
        */
       errors: [Error, ...Error[]];
+      /**
+       * Initiator-provided context echoed inside the task payload. Opaque metadata such as UI/session hints, correlation tokens, or tracking identifiers.
+       */
+      context?: {};
     };
 /**
  * VAST (Video Ad Serving Template) tag for third-party video ad serving
@@ -3176,6 +3289,10 @@ export type PreviewCreativeRequest =
        * Output format for previews. 'url' returns preview_url (iframe-embeddable URL), 'html' returns preview_html (raw HTML for direct embedding). Default: 'url' for backward compatibility.
        */
       output_format?: 'url' | 'html';
+      /**
+       * Initiator-provided context included in the request payload. Agents must echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.
+       */
+      context?: {};
     }
   | {
       /**
@@ -3252,6 +3369,10 @@ export type PreviewCreativeRequest =
        * Default output format for all requests in this batch. Individual requests can override this. 'url' returns preview_url (iframe-embeddable URL), 'html' returns preview_html (raw HTML for direct embedding).
        */
       output_format?: 'url' | 'html';
+      /**
+       * Initiator-provided context included in the request payload. Agents must echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.
+       */
+      context?: {};
     };
 /**
  * VAST (Video Ad Serving Template) tag for third-party video ad serving
@@ -3372,6 +3493,10 @@ export type PreviewCreativeResponse =
        * ISO 8601 timestamp when preview links expire
        */
       expires_at: string;
+      /**
+       * Initiator-provided context echoed inside the preview payload. Opaque metadata such as UI/session hints, correlation tokens, or tracking identifiers.
+       */
+      context?: {};
     }
   | {
       /**
@@ -3397,6 +3522,10 @@ export type PreviewCreativeResponse =
             }
         )[]
       ];
+      /**
+       * Initiator-provided context echoed inside the preview payload. Opaque metadata such as UI/session hints, correlation tokens, or tracking identifiers.
+       */
+      context?: {};
     };
 /**
  * A single rendered piece of a creative preview with discriminated output format
@@ -3628,6 +3757,10 @@ export interface GetSignalsRequest {
    * Maximum number of results to return
    */
   max_results?: number;
+  /**
+   * Initiator-provided context included in the request payload. Agents must echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.
+   */
+  context?: {};
 }
 
 
@@ -3801,6 +3934,10 @@ export interface GetSignalsResponse {
    * Task-specific errors and warnings (e.g., signal discovery or pricing issues)
    */
   errors?: Error[];
+  /**
+   * Initiator-provided context echoed inside the task payload. Opaque metadata such as UI/session hints, correlation tokens, or tracking identifiers.
+   */
+  context?: {};
 }
 /**
  * Standard error structure for task-specific errors and warnings
@@ -3821,6 +3958,10 @@ export interface ActivateSignalRequest {
    * @minItems 1
    */
   destinations: [Destination, ...Destination[]];
+  /**
+   * Initiator-provided context included in the request payload. Agents must echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.
+   */
+  context?: {};
 }
 
 
@@ -3834,6 +3975,10 @@ export type ActivateSignalResponse =
        * Array of deployment results for each destination
        */
       deployments: Deployment[];
+      /**
+       * Initiator-provided context echoed inside the task payload. Opaque metadata such as UI/session hints, correlation tokens, or tracking identifiers.
+       */
+      context?: {};
     }
   | {
       /**
@@ -3842,6 +3987,10 @@ export type ActivateSignalResponse =
        * @minItems 1
        */
       errors: [Error, ...Error[]];
+      /**
+       * Initiator-provided context echoed inside the task payload. Opaque metadata such as UI/session hints, correlation tokens, or tracking identifiers.
+       */
+      context?: {};
     };
 /**
  * A signal deployment to a specific destination platform with activation status and key
