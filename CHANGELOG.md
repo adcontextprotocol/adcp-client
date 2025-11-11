@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.2
+
+### Patch Changes
+
+- 579849e: add support for application level context management
+
 ## 3.0.1
 
 ### Patch Changes
