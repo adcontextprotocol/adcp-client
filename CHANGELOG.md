@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.0.1
+
+### Patch Changes
+
+- c24cd21: Fix CLI tool missing dependency file in published package. The adcp command now works correctly when installed via npx.
+- c24cd21: Fixed MCP and A2A protocol authentication issues. MCP endpoints now receive required Accept headers, and CLI properly sets requiresAuth flag for authenticated agents.
+
 ## 3.0.0
 
 ### Major Changes
