@@ -26,6 +26,8 @@ export interface WebhookMetadata {
   operation_id: string;
   /** Server's context ID */
   context_id?: string;
+  /** Context object originally passed to the initial call */
+  context?: Record<string, any>;
   /** Server's task ID */
   task_id?: string;
   /** Agent ID */
@@ -90,6 +92,7 @@ export interface Activity {
   operation_id: string;
   agent_id: string;
   context_id?: string;
+  context?: Record<string, any>;
   task_id?: string;
   task_type: string;
   status?: string;

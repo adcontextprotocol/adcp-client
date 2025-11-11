@@ -21,7 +21,8 @@ export class ProtocolClient {
     args: Record<string, any>,
     debugLogs: any[] = [],
     webhookUrl?: string,
-    webhookSecret?: string
+    webhookSecret?: string,
+    context?: Record<string, any>
   ): Promise<any> {
     validateAgentUrl(agent.agent_uri);
 
@@ -43,14 +44,15 @@ export class ProtocolClient {
       : args;
 
     if (agent.protocol === 'mcp') {
-      return callMCPTool(agent.agent_uri, toolName, argsWithWebhook, authToken, debugLogs);
+      return callMCPTool(agent.agent_uri, toolName, argsWithWebhook, authToken, debugLogs, context);
     } else if (agent.protocol === 'a2a') {
       return callA2ATool(
         agent.agent_uri,
         toolName,
         argsWithWebhook, // This maps to 'parameters' in callA2ATool
         authToken,
-        debugLogs
+        debugLogs,
+        context
       );
     } else {
       throw new Error(`Unsupported protocol: ${agent.protocol}`);

@@ -9,7 +9,8 @@ export async function callMCPTool(
   toolName: string,
   args: any,
   authToken?: string,
-  debugLogs: any[] = []
+  debugLogs: any[] = [],
+  context?: Record<string, any>
 ): Promise<any> {
   let mcpClient: MCPClient | undefined = undefined;
   const baseUrl = new URL(agentUrl);
@@ -126,7 +127,11 @@ export async function callMCPTool(
 
     const response = await mcpClient.callTool({
       name: toolName,
-      arguments: args,
+      arguments: {
+        ...args,
+        // @TODO: @yusuf - Ask why we are not passing task id here? How it can live beyond one conversation? (doc: https://docs.adcontextprotocol.org/docs/protocols/context-management#context-id-vs-task-id)
+        context: context,
+      },
     });
 
     debugLogs.push({

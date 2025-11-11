@@ -508,6 +508,7 @@ export class SingleAgentClient {
           agent_id: this.agent.id,
           task_type: taskType,
           timestamp: new Date().toISOString(),
+          context: options?.context || {},
         };
         await handler(result.data, metadata);
       }

@@ -124,6 +124,8 @@ export interface TaskOptions {
   maxClarifications?: number;
   /** Context ID to continue existing conversation */
   contextId?: string;
+  /** Context object to keep track of the call context. */
+  context?: Record<string, any>
   /** Enable debug logging for this task */
   debug?: boolean;
   /** Additional metadata to include */

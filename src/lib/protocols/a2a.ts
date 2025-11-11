@@ -11,7 +11,8 @@ export async function callA2ATool(
   toolName: string,
   parameters: Record<string, any>,
   authToken?: string,
-  debugLogs: any[] = []
+  debugLogs: any[] = [],
+  context?: Record<string, any>
 ): Promise<any> {
   // Create authenticated fetch that wraps native fetch
   // This ensures ALL requests (including agent card fetching) include auth headers
@@ -82,7 +83,11 @@ export async function callA2ATool(
           kind: 'data', // A2A spec uses "kind", not "type"
           data: {
             skill: toolName,
-            input: parameters, // A2A spec uses "input", not "parameters"
+            input: {
+              ...parameters,
+              context: context,
+              // @TODO: @yusuf - Ask why we are not passing task id here? How it can live beyond one conversation? (doc: https://docs.adcontextprotocol.org/docs/protocols/context-management#context-id-vs-task-id)
+            }, // A2A spec uses "input", not "parameters"
           },
         },
       ],
