@@ -12,7 +12,7 @@ Configuration for conversation management
 
 ## Extended by
 
-- [`ADCPClientConfig`](ADCPClientConfig.md)
+- [`AdCPClientConfig`](AdCPClientConfig.md)
 
 ## Properties
 

@@ -2,7 +2,7 @@
 
 /**
  * Protocol Test Runner - Executes protocol compliance and validation tests
- * 
+ *
  * This script runs the protocol testing suite and provides detailed reporting
  * on protocol compliance issues.
  */
@@ -16,7 +16,7 @@ const colors = {
   red: '\x1b[31m',
   yellow: '\x1b[33m',
   blue: '\x1b[34m',
-  reset: '\x1b[0m'
+  reset: '\x1b[0m',
 };
 
 function log(message, color = colors.reset) {
@@ -39,27 +39,27 @@ async function runTests(testPattern, description) {
   return new Promise((resolve, reject) => {
     const testProcess = spawn('node', ['--test', testPattern], {
       stdio: ['inherit', 'pipe', 'pipe'],
-      cwd: path.join(__dirname, '..')
+      cwd: path.join(__dirname, '..'),
     });
 
     let stdout = '';
     let stderr = '';
 
-    testProcess.stdout.on('data', (data) => {
+    testProcess.stdout.on('data', data => {
       stdout += data.toString();
     });
 
-    testProcess.stderr.on('data', (data) => {
+    testProcess.stderr.on('data', data => {
       stderr += data.toString();
     });
 
-    testProcess.on('close', (code) => {
+    testProcess.on('close', code => {
       const result = {
         code,
         stdout,
         stderr,
         description,
-        success: code === 0
+        success: code === 0,
       };
 
       if (result.success) {
@@ -71,7 +71,7 @@ async function runTests(testPattern, description) {
       resolve(result);
     });
 
-    testProcess.on('error', (error) => {
+    testProcess.on('error', error => {
       reject(error);
     });
   });
@@ -84,7 +84,7 @@ function parseTestResults(output) {
     passed: 0,
     failed: 0,
     skipped: 0,
-    duration: 0
+    duration: 0,
   };
 
   // Parse Node.js test runner output
@@ -114,13 +114,13 @@ function generateReport(testResults) {
 
   testResults.forEach(result => {
     logSection(result.description);
-    
+
     if (result.success) {
       log('  Status: PASSED', colors.green);
       const parsed = parseTestResults(result.stdout);
       log(`  Tests: ${parsed.passed} passed, ${parsed.failed} failed, ${parsed.total} total`);
       log(`  Duration: ${parsed.duration}ms`);
-      
+
       totalTests += parsed.total;
       totalPassed += parsed.passed;
       totalFailed += parsed.failed;
@@ -140,7 +140,7 @@ function generateReport(testResults) {
   log(`Failed: ${totalFailed}`, totalFailed > 0 ? colors.red : colors.green);
   log(`Duration: ${totalDuration.toFixed(2)}ms`);
 
-  const successRate = totalTests > 0 ? (totalPassed / totalTests * 100).toFixed(1) : 0;
+  const successRate = totalTests > 0 ? ((totalPassed / totalTests) * 100).toFixed(1) : 0;
   log(`Success Rate: ${successRate}%`, successRate === '100.0' ? colors.green : colors.yellow);
 
   return {
@@ -148,29 +148,29 @@ function generateReport(testResults) {
     totalTests,
     totalPassed,
     totalFailed,
-    successRate: parseFloat(successRate)
+    successRate: parseFloat(successRate),
   };
 }
 
 async function main() {
   const startTime = Date.now();
-  
+
   logHeader('ADCP PROTOCOL TESTING SUITE');
   log('Running comprehensive protocol validation tests...\n');
 
   const testSuites = [
     {
       pattern: 'test/lib/protocol-compliance.test.js',
-      description: 'Protocol Compliance Tests'
+      description: 'Protocol Compliance Tests',
     },
     {
-      pattern: 'test/lib/protocol-schema-validation.test.js', 
-      description: 'Schema Validation Tests'
+      pattern: 'test/lib/protocol-schema-validation.test.js',
+      description: 'Schema Validation Tests',
     },
     {
       pattern: 'test/lib/protocol-integration-contract.test.js',
-      description: 'Integration Contract Tests'
-    }
+      description: 'Integration Contract Tests',
+    },
   ];
 
   const results = [];
@@ -186,13 +186,13 @@ async function main() {
       results.push({
         description: suite.description,
         success: false,
-        error: error.message
+        error: error.message,
       });
     }
   }
 
   const summary = generateReport(results);
-  
+
   const totalTime = Date.now() - startTime;
   log(`\nTotal execution time: ${totalTime}ms`);
 
@@ -204,7 +204,7 @@ async function main() {
   } else {
     logHeader('⚠️  PROTOCOL TEST FAILURES DETECTED');
     log('Please fix the following issues before deploying:', colors.red);
-    
+
     results.forEach(result => {
       if (!result.success) {
         log(`\n• ${result.description}:`, colors.red);
@@ -215,7 +215,7 @@ async function main() {
         }
       }
     });
-    
+
     log('\nCommon fixes:', colors.yellow);
     log('• Ensure A2A messages have kind: "message"');
     log('• Use "input" field instead of deprecated "parameters"');
@@ -257,13 +257,13 @@ Examples:
 if (args.includes('--only')) {
   const onlyIndex = args.indexOf('--only');
   const testType = args[onlyIndex + 1];
-  
+
   const testMap = {
-    'compliance': 'test/lib/protocol-compliance.test.js',
-    'schema': 'test/lib/protocol-schema-validation.test.js',
-    'integration': 'test/lib/protocol-integration-contract.test.js'
+    compliance: 'test/lib/protocol-compliance.test.js',
+    schema: 'test/lib/protocol-schema-validation.test.js',
+    integration: 'test/lib/protocol-integration-contract.test.js',
   };
-  
+
   if (testMap[testType]) {
     logHeader(`Running Only: ${testType.charAt(0).toUpperCase() + testType.slice(1)} Tests`);
     runTests(testMap[testType], `${testType} tests`)

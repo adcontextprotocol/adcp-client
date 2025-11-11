@@ -1,14 +1,8 @@
 // Per-agent client wrapper with conversation context preservation
 
 import type { AgentConfig } from '../types';
-import { ADCPClient, type ADCPClientConfig } from './ADCPClient';
-import type {
-  InputHandler,
-  TaskOptions,
-  TaskResult,
-  TaskInfo,
-  Message
-} from './ConversationTypes';
+import { SingleAgentClient, type SingleAgentClientConfig } from './SingleAgentClient';
+import type { InputHandler, TaskOptions, TaskResult, TaskInfo, Message } from './ConversationTypes';
 import type {
   GetProductsRequest,
   GetProductsResponse,
@@ -31,7 +25,7 @@ import type {
   GetSignalsRequest,
   GetSignalsResponse,
   ActivateSignalRequest,
-  ActivateSignalResponse
+  ActivateSignalResponse,
 } from '../types/tools.generated';
 
 /**
@@ -59,30 +53,31 @@ export type AdcpTaskName = keyof TaskResponseTypeMap;
 
 /**
  * Per-agent client that maintains conversation context across calls
- * 
+ *
  * This wrapper provides a persistent conversation context for a single agent,
  * making it easy to have multi-turn conversations and maintain state.
  */
 export class AgentClient {
-  private client: ADCPClient;
+  private client: SingleAgentClient;
   private currentContextId?: string;
 
   constructor(
     private agent: AgentConfig,
-    private config: ADCPClientConfig = {}
+    private config: SingleAgentClientConfig = {}
   ) {
-    this.client = new ADCPClient(agent, config);
+    this.client = new SingleAgentClient(agent, config);
   }
 
   /**
    * Handle webhook from agent (async task completion or notifications)
    *
    * @param payload - Webhook payload from agent
-   * @param signature - Optional signature for verification
+   * @param signature - Optional signature for verification (X-ADCP-Signature)
+   * @param timestamp - Optional timestamp for verification (X-ADCP-Timestamp)
    * @returns Whether webhook was handled successfully
    */
-  async handleWebhook(payload: any, signature?: string): Promise<boolean> {
-    return this.client.handleWebhook(payload, signature);
+  async handleWebhook(payload: any, signature?: string, timestamp?: string | number): Promise<boolean> {
+    return this.client.handleWebhook(payload, signature, timestamp);
   }
 
   /**
@@ -96,6 +91,18 @@ export class AgentClient {
     return this.client.getWebhookUrl(taskType, operationId);
   }
 
+  /**
+   * Verify webhook signature using HMAC-SHA256 per AdCP PR #86 spec
+   *
+   * @param payload - Webhook payload object
+   * @param signature - X-ADCP-Signature header value (format: "sha256=...")
+   * @param timestamp - X-ADCP-Timestamp header value (Unix timestamp)
+   * @returns true if signature is valid
+   */
+  verifyWebhookSignature(payload: any, signature: string, timestamp: string | number): boolean {
+    return this.client.verifyWebhookSignature(payload, signature, timestamp);
+  }
+
   // ====== MEDIA BUY TASKS ======
 
   /**
@@ -106,16 +113,15 @@ export class AgentClient {
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<GetProductsResponse>> {
-    const result = await this.client.getProducts(
-      params,
-      inputHandler,
-      { ...options, contextId: this.currentContextId }
-    );
-    
+    const result = await this.client.getProducts(params, inputHandler, {
+      ...options,
+      contextId: this.currentContextId,
+    });
+
     if (result.success) {
       this.currentContextId = result.metadata.taskId;
     }
-    
+
     return result;
   }
 
@@ -127,16 +133,15 @@ export class AgentClient {
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<ListCreativeFormatsResponse>> {
-    const result = await this.client.listCreativeFormats(
-      params,
-      inputHandler,
-      { ...options, contextId: this.currentContextId }
-    );
-    
+    const result = await this.client.listCreativeFormats(params, inputHandler, {
+      ...options,
+      contextId: this.currentContextId,
+    });
+
     if (result.success) {
       this.currentContextId = result.metadata.taskId;
     }
-    
+
     return result;
   }
 
@@ -148,16 +153,15 @@ export class AgentClient {
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<CreateMediaBuyResponse>> {
-    const result = await this.client.createMediaBuy(
-      params,
-      inputHandler,
-      { ...options, contextId: this.currentContextId }
-    );
-    
+    const result = await this.client.createMediaBuy(params, inputHandler, {
+      ...options,
+      contextId: this.currentContextId,
+    });
+
     if (result.success) {
       this.currentContextId = result.metadata.taskId;
     }
-    
+
     return result;
   }
 
@@ -169,16 +173,15 @@ export class AgentClient {
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<UpdateMediaBuyResponse>> {
-    const result = await this.client.updateMediaBuy(
-      params,
-      inputHandler,
-      { ...options, contextId: this.currentContextId }
-    );
-    
+    const result = await this.client.updateMediaBuy(params, inputHandler, {
+      ...options,
+      contextId: this.currentContextId,
+    });
+
     if (result.success) {
       this.currentContextId = result.metadata.taskId;
     }
-    
+
     return result;
   }
 
@@ -190,16 +193,15 @@ export class AgentClient {
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<SyncCreativesResponse>> {
-    const result = await this.client.syncCreatives(
-      params,
-      inputHandler,
-      { ...options, contextId: this.currentContextId }
-    );
-    
+    const result = await this.client.syncCreatives(params, inputHandler, {
+      ...options,
+      contextId: this.currentContextId,
+    });
+
     if (result.success) {
       this.currentContextId = result.metadata.taskId;
     }
-    
+
     return result;
   }
 
@@ -211,16 +213,15 @@ export class AgentClient {
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<ListCreativesResponse>> {
-    const result = await this.client.listCreatives(
-      params,
-      inputHandler,
-      { ...options, contextId: this.currentContextId }
-    );
-    
+    const result = await this.client.listCreatives(params, inputHandler, {
+      ...options,
+      contextId: this.currentContextId,
+    });
+
     if (result.success) {
       this.currentContextId = result.metadata.taskId;
     }
-    
+
     return result;
   }
 
@@ -232,16 +233,15 @@ export class AgentClient {
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<GetMediaBuyDeliveryResponse>> {
-    const result = await this.client.getMediaBuyDelivery(
-      params,
-      inputHandler,
-      { ...options, contextId: this.currentContextId }
-    );
-    
+    const result = await this.client.getMediaBuyDelivery(params, inputHandler, {
+      ...options,
+      contextId: this.currentContextId,
+    });
+
     if (result.success) {
       this.currentContextId = result.metadata.taskId;
     }
-    
+
     return result;
   }
 
@@ -253,16 +253,15 @@ export class AgentClient {
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<ListAuthorizedPropertiesResponse>> {
-    const result = await this.client.listAuthorizedProperties(
-      params,
-      inputHandler,
-      { ...options, contextId: this.currentContextId }
-    );
-    
+    const result = await this.client.listAuthorizedProperties(params, inputHandler, {
+      ...options,
+      contextId: this.currentContextId,
+    });
+
     if (result.success) {
       this.currentContextId = result.metadata.taskId;
     }
-    
+
     return result;
   }
 
@@ -274,16 +273,15 @@ export class AgentClient {
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<ProvidePerformanceFeedbackResponse>> {
-    const result = await this.client.providePerformanceFeedback(
-      params,
-      inputHandler,
-      { ...options, contextId: this.currentContextId }
-    );
-    
+    const result = await this.client.providePerformanceFeedback(params, inputHandler, {
+      ...options,
+      contextId: this.currentContextId,
+    });
+
     if (result.success) {
       this.currentContextId = result.metadata.taskId;
     }
-    
+
     return result;
   }
 
@@ -297,16 +295,12 @@ export class AgentClient {
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<GetSignalsResponse>> {
-    const result = await this.client.getSignals(
-      params,
-      inputHandler,
-      { ...options, contextId: this.currentContextId }
-    );
-    
+    const result = await this.client.getSignals(params, inputHandler, { ...options, contextId: this.currentContextId });
+
     if (result.success) {
       this.currentContextId = result.metadata.taskId;
     }
-    
+
     return result;
   }
 
@@ -318,16 +312,15 @@ export class AgentClient {
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<ActivateSignalResponse>> {
-    const result = await this.client.activateSignal(
-      params,
-      inputHandler,
-      { ...options, contextId: this.currentContextId }
-    );
-    
+    const result = await this.client.activateSignal(params, inputHandler, {
+      ...options,
+      contextId: this.currentContextId,
+    });
+
     if (result.success) {
       this.currentContextId = result.metadata.taskId;
     }
-    
+
     return result;
   }
 
@@ -335,15 +328,15 @@ export class AgentClient {
 
   /**
    * Continue the conversation with a natural language message
-   * 
+   *
    * @param message - Natural language message to send to the agent
    * @param inputHandler - Handler for any clarification requests
-   * 
+   *
    * @example
    * ```typescript
    * const agent = multiClient.agent('my-agent');
    * await agent.getProducts({ brief: 'Tech products' });
-   * 
+   *
    * // Continue the conversation
    * const refined = await agent.continueConversation(
    *   'Focus only on laptops under $1000'
@@ -359,11 +352,7 @@ export class AgentClient {
       throw new Error('No active conversation to continue. Start with a task method first.');
     }
 
-    const result = await this.client.continueConversation<T>(
-      message,
-      this.currentContextId,
-      inputHandler
-    );
+    const result = await this.client.continueConversation<T>(message, this.currentContextId, inputHandler);
 
     if (result.success) {
       this.currentContextId = result.metadata.taskId;
@@ -437,6 +426,13 @@ export class AgentClient {
   }
 
   /**
+   * Get agent information including capabilities
+   */
+  async getAgentInfo() {
+    return this.client.getAgentInfo();
+  }
+
+  /**
    * Check if there's an active conversation
    */
   hasActiveConversation(): boolean {
@@ -454,13 +450,13 @@ export class AgentClient {
 
   /**
    * Execute any ADCP task by name with full type safety
-   * 
+   *
    * @example
    * ```typescript
    * // ✅ TYPE-SAFE: Automatic response type inference
    * const result = await agent.executeTask('get_products', params);
    * // result is TaskResult<GetProductsResponse> - no casting needed!
-   * 
+   *
    * // ✅ CUSTOM TYPES: For non-standard tasks
    * const customResult = await agent.executeTask<MyCustomResponse>('custom_task', params);
    * ```
@@ -471,7 +467,7 @@ export class AgentClient {
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<TaskResponseTypeMap[K]>>;
-  
+
   /**
    * Execute any task by name with custom response type
    */
@@ -481,19 +477,17 @@ export class AgentClient {
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<T>>;
-  
+
   async executeTask<T = any>(
     taskName: string,
     params: any,
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<T>> {
-    const result = await this.client.executeTask<T>(
-      taskName,
-      params,
-      inputHandler,
-      { ...options, contextId: this.currentContextId }
-    );
+    const result = await this.client.executeTask<T>(taskName, params, inputHandler, {
+      ...options,
+      contextId: this.currentContextId,
+    });
 
     if (result.success) {
       this.currentContextId = result.metadata.taskId;

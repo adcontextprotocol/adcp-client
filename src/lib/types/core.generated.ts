@@ -1,5 +1,5 @@
-// Generated AdCP core types from official schemas v2.2.0
-// Generated at: 2025-10-24T11:16:31.795Z
+// Generated AdCP core types from official schemas v2.4.0
+// Generated at: 2025-11-08T15:37:51.053Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -165,17 +165,173 @@ export interface FormatID {
 /**
  * VAST (Video Ad Serving Template) tag for third-party video ad serving
  */
-export type VASTAsset = VASTAsset1 & VASTAsset2;
-export type VASTAsset2 = {
-  [k: string]: unknown;
-};
+export type VASTAsset =
+  | {
+      /**
+       * Discriminator indicating VAST is delivered via URL endpoint
+       */
+      delivery_type: 'url';
+      /**
+       * URL endpoint that returns VAST XML
+       */
+      url: string;
+      /**
+       * VAST specification version
+       */
+      vast_version?: '2.0' | '3.0' | '4.0' | '4.1' | '4.2';
+      /**
+       * Whether VPAID (Video Player-Ad Interface Definition) is supported
+       */
+      vpaid_enabled?: boolean;
+      /**
+       * Expected video duration in milliseconds (if known)
+       */
+      duration_ms?: number;
+      /**
+       * Tracking events supported by this VAST tag
+       */
+      tracking_events?: (
+        | 'start'
+        | 'firstQuartile'
+        | 'midpoint'
+        | 'thirdQuartile'
+        | 'complete'
+        | 'impression'
+        | 'click'
+        | 'pause'
+        | 'resume'
+        | 'skip'
+        | 'mute'
+        | 'unmute'
+        | 'fullscreen'
+        | 'exitFullscreen'
+        | 'playerExpand'
+        | 'playerCollapse'
+      )[];
+    }
+  | {
+      /**
+       * Discriminator indicating VAST is delivered as inline XML content
+       */
+      delivery_type: 'inline';
+      /**
+       * Inline VAST XML content
+       */
+      content: string;
+      /**
+       * VAST specification version
+       */
+      vast_version?: '2.0' | '3.0' | '4.0' | '4.1' | '4.2';
+      /**
+       * Whether VPAID (Video Player-Ad Interface Definition) is supported
+       */
+      vpaid_enabled?: boolean;
+      /**
+       * Expected video duration in milliseconds (if known)
+       */
+      duration_ms?: number;
+      /**
+       * Tracking events supported by this VAST tag
+       */
+      tracking_events?: (
+        | 'start'
+        | 'firstQuartile'
+        | 'midpoint'
+        | 'thirdQuartile'
+        | 'complete'
+        | 'impression'
+        | 'click'
+        | 'pause'
+        | 'resume'
+        | 'skip'
+        | 'mute'
+        | 'unmute'
+        | 'fullscreen'
+        | 'exitFullscreen'
+        | 'playerExpand'
+        | 'playerCollapse'
+      )[];
+    };
 /**
  * DAAST (Digital Audio Ad Serving Template) tag for third-party audio ad serving
  */
-export type DAASTAsset = DAASTAsset1 & DAASTAsset2;
-export type DAASTAsset2 = {
-  [k: string]: unknown;
-};
+export type DAASTAsset =
+  | {
+      /**
+       * Discriminator indicating DAAST is delivered via URL endpoint
+       */
+      delivery_type: 'url';
+      /**
+       * URL endpoint that returns DAAST XML
+       */
+      url: string;
+      /**
+       * DAAST specification version
+       */
+      daast_version?: '1.0' | '1.1';
+      /**
+       * Expected audio duration in milliseconds (if known)
+       */
+      duration_ms?: number;
+      /**
+       * Tracking events supported by this DAAST tag
+       */
+      tracking_events?: (
+        | 'start'
+        | 'firstQuartile'
+        | 'midpoint'
+        | 'thirdQuartile'
+        | 'complete'
+        | 'impression'
+        | 'pause'
+        | 'resume'
+        | 'skip'
+        | 'mute'
+        | 'unmute'
+      )[];
+      /**
+       * Whether companion display ads are included
+       */
+      companion_ads?: boolean;
+    }
+  | {
+      /**
+       * Discriminator indicating DAAST is delivered as inline XML content
+       */
+      delivery_type: 'inline';
+      /**
+       * Inline DAAST XML content
+       */
+      content: string;
+      /**
+       * DAAST specification version
+       */
+      daast_version?: '1.0' | '1.1';
+      /**
+       * Expected audio duration in milliseconds (if known)
+       */
+      duration_ms?: number;
+      /**
+       * Tracking events supported by this DAAST tag
+       */
+      tracking_events?: (
+        | 'start'
+        | 'firstQuartile'
+        | 'midpoint'
+        | 'thirdQuartile'
+        | 'complete'
+        | 'impression'
+        | 'pause'
+        | 'resume'
+        | 'skip'
+        | 'mute'
+        | 'unmute'
+      )[];
+      /**
+       * Whether companion display ads are included
+       */
+      companion_ads?: boolean;
+    };
 /**
  * Brand information manifest containing assets, themes, and guidelines. Can be provided inline or as a URL reference to a hosted manifest.
  */
@@ -389,87 +545,6 @@ export interface JavaScriptAsset {
    * JavaScript module type
    */
   module_type?: 'esm' | 'commonjs' | 'script';
-}
-export interface VASTAsset1 {
-  /**
-   * URL endpoint that returns VAST XML
-   */
-  url?: string;
-  /**
-   * Inline VAST XML content
-   */
-  content?: string;
-  /**
-   * VAST specification version
-   */
-  vast_version?: '2.0' | '3.0' | '4.0' | '4.1' | '4.2';
-  /**
-   * Whether VPAID (Video Player-Ad Interface Definition) is supported
-   */
-  vpaid_enabled?: boolean;
-  /**
-   * Expected video duration in milliseconds (if known)
-   */
-  duration_ms?: number;
-  /**
-   * Tracking events supported by this VAST tag
-   */
-  tracking_events?: (
-    | 'start'
-    | 'firstQuartile'
-    | 'midpoint'
-    | 'thirdQuartile'
-    | 'complete'
-    | 'impression'
-    | 'click'
-    | 'pause'
-    | 'resume'
-    | 'skip'
-    | 'mute'
-    | 'unmute'
-    | 'fullscreen'
-    | 'exitFullscreen'
-    | 'playerExpand'
-    | 'playerCollapse'
-  )[];
-}
-export interface DAASTAsset1 {
-  /**
-   * URL endpoint that returns DAAST XML
-   */
-  url?: string;
-  /**
-   * Inline DAAST XML content
-   */
-  content?: string;
-  /**
-   * DAAST specification version
-   */
-  daast_version?: '1.0' | '1.1';
-  /**
-   * Expected audio duration in milliseconds (if known)
-   */
-  duration_ms?: number;
-  /**
-   * Tracking events supported by this DAAST tag
-   */
-  tracking_events?: (
-    | 'start'
-    | 'firstQuartile'
-    | 'midpoint'
-    | 'thirdQuartile'
-    | 'complete'
-    | 'impression'
-    | 'pause'
-    | 'resume'
-    | 'skip'
-    | 'mute'
-    | 'unmute'
-  )[];
-  /**
-   * Whether companion display ads are included
-   */
-  companion_ads?: boolean;
 }
 /**
  * Complete offering specification combining brand manifest, product selectors, and asset filters. Provides all context needed for creative generation about what is being promoted.
@@ -908,6 +983,26 @@ export interface Product {
    * Expiration timestamp for custom products
    */
   expires_at?: string;
+  /**
+   * Optional standard visual card (300x400px) for displaying this product in user interfaces. Can be rendered via preview_creative or pre-generated.
+   */
+  product_card?: {
+    format_id: FormatID1;
+    /**
+     * Asset manifest for rendering the card, structure defined by the format
+     */
+    manifest: {};
+  };
+  /**
+   * Optional detailed card with carousel and full specifications. Provides rich product presentation similar to media kit pages.
+   */
+  product_card_detailed?: {
+    format_id: FormatID2;
+    /**
+     * Asset manifest for rendering the detailed card, structure defined by the format
+     */
+    manifest: {};
+  };
 }
 /**
  * Structured format identifier with agent URL and format name
@@ -1350,6 +1445,32 @@ export interface CreativePolicy {
    */
   templates_available: boolean;
 }
+/**
+ * Structured format identifier with agent URL and format name
+ */
+export interface FormatID1 {
+  /**
+   * URL of the agent that defines this format (e.g., 'https://creatives.adcontextprotocol.org' for standard formats, or 'https://publisher.com/.well-known/adcp/sales' for custom formats)
+   */
+  agent_url: string;
+  /**
+   * Format identifier within the agent's namespace (e.g., 'display_300x250', 'video_standard_30s')
+   */
+  id: string;
+}
+/**
+ * Structured format identifier with agent URL and format name
+ */
+export interface FormatID2 {
+  /**
+   * URL of the agent that defines this format (e.g., 'https://creatives.adcontextprotocol.org' for standard formats, or 'https://publisher.com/.well-known/adcp/sales' for custom formats)
+   */
+  agent_url: string;
+  /**
+   * Format identifier within the agent's namespace (e.g., 'display_300x250', 'video_standard_30s')
+   */
+  id: string;
+}
 
 // TARGETING SCHEMA
 /**
@@ -1382,5 +1503,77 @@ export interface FrequencyCap {
    * Minutes to suppress after impression
    */
   suppress_minutes: number;
+}
+
+// PROPERTY SCHEMA
+/**
+ * Type of identifier for this property
+ */
+export type PropertyIdentifierTypes =
+  | 'domain'
+  | 'subdomain'
+  | 'network_id'
+  | 'ios_bundle'
+  | 'android_package'
+  | 'apple_app_store_id'
+  | 'google_play_id'
+  | 'roku_store_id'
+  | 'fire_tv_asin'
+  | 'samsung_app_id'
+  | 'apple_tv_bundle'
+  | 'bundle_id'
+  | 'venue_id'
+  | 'screen_id'
+  | 'openooh_venue_type'
+  | 'rss_url'
+  | 'apple_podcast_id'
+  | 'spotify_show_id'
+  | 'podcast_guid';
+
+/**
+ * An advertising property that can be validated via adagents.json
+ */
+export interface Property {
+  /**
+   * Unique identifier for this property (optional). Enables referencing properties by ID instead of repeating full objects. Recommended format: lowercase with underscores (e.g., 'cnn_ctv_app', 'instagram_mobile')
+   */
+  property_id?: string;
+  /**
+   * Type of advertising property
+   */
+  property_type: 'website' | 'mobile_app' | 'ctv_app' | 'dooh' | 'podcast' | 'radio' | 'streaming_audio';
+  /**
+   * Human-readable property name
+   */
+  name: string;
+  /**
+   * Array of identifiers for this property
+   *
+   * @minItems 1
+   */
+  identifiers: [
+    {
+      type: PropertyIdentifierTypes;
+      /**
+       * The identifier value. For domain type: 'example.com' matches base domain plus www and m subdomains; 'edition.example.com' matches that specific subdomain; '*.example.com' matches ALL subdomains but NOT base domain
+       */
+      value: string;
+    },
+    ...{
+      type: PropertyIdentifierTypes;
+      /**
+       * The identifier value. For domain type: 'example.com' matches base domain plus www and m subdomains; 'edition.example.com' matches that specific subdomain; '*.example.com' matches ALL subdomains but NOT base domain
+       */
+      value: string;
+    }[]
+  ];
+  /**
+   * Tags for categorization and grouping (e.g., network membership, content categories)
+   */
+  tags?: string[];
+  /**
+   * Domain where adagents.json should be checked for authorization validation. Required for list_authorized_properties response. Optional in adagents.json (file location implies domain).
+   */
+  publisher_domain?: string;
 }
 

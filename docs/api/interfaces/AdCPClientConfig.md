@@ -2,13 +2,13 @@
 
 ***
 
-[@adcp/client API Reference](../README.md) / ADCPClientConfig
+[@adcp/client API Reference](../README.md) / AdCPClientConfig
 
-# Interface: ADCPClientConfig
+# Interface: AdCPClientConfig
 
-Defined in: [src/lib/core/ADCPClient.ts:40](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/core/ADCPClient.ts#L40)
+Defined in: [src/lib/core/AdCPClient.ts:40](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/core/AdCPClient.ts#L40)
 
-Configuration for ADCPClient
+Configuration for AdCPClient
 
 ## Extends
 
@@ -20,7 +20,7 @@ Configuration for ADCPClient
 
 > `optional` **debug**: `boolean`
 
-Defined in: [src/lib/core/ADCPClient.ts:42](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/core/ADCPClient.ts#L42)
+Defined in: [src/lib/core/AdCPClient.ts:42](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/core/AdCPClient.ts#L42)
 
 Enable debug logging
 
@@ -30,7 +30,7 @@ Enable debug logging
 
 > `optional` **userAgent**: `string`
 
-Defined in: [src/lib/core/ADCPClient.ts:44](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/core/ADCPClient.ts#L44)
+Defined in: [src/lib/core/AdCPClient.ts:44](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/core/AdCPClient.ts#L44)
 
 Custom user agent string
 
@@ -40,7 +40,7 @@ Custom user agent string
 
 > `optional` **headers**: `Record`\<`string`, `string`\>
 
-Defined in: [src/lib/core/ADCPClient.ts:46](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/core/ADCPClient.ts#L46)
+Defined in: [src/lib/core/AdCPClient.ts:46](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/core/AdCPClient.ts#L46)
 
 Additional headers to include in requests
 

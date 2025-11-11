@@ -31,7 +31,7 @@ jobs:
       run: |
         # Regenerate types from schemas
         npm run generate-types
-
+        
         # Check if any generated files changed
         if ! git diff --exit-code src/lib/types/*.generated.ts src/lib/agents/index.generated.ts 2>/dev/null; then
           echo ""
@@ -80,6 +80,9 @@ jobs:
         
     - name: Install dependencies
       run: npm ci
+      
+    - name: Check code formatting
+      run: npm run format:check
       
     - name: Check package.json integrity
       run: |

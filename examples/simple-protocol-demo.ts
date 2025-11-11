@@ -2,7 +2,7 @@
 
 /**
  * Simple Protocol Detection Demo
- * 
+ *
  * Shows how easy it is to detect input requests with ADCP spec PR #77
  */
 
@@ -17,30 +17,30 @@ function main() {
   const testCases = [
     {
       name: 'ADCP Standard: input-required',
-      response: { 
+      response: {
         status: 'input-required',
-        message: 'What is your budget?'
+        message: 'What is your budget?',
       },
-      expected: true
+      expected: true,
     },
-    
+
     {
       name: 'ADCP Standard: completed',
       response: {
         status: 'completed',
-        result: { products: ['Product A'] }
+        result: { products: ['Product A'] },
       },
-      expected: false
+      expected: false,
     },
 
     {
       name: 'Legacy fallback',
       response: {
         type: 'input_request',
-        question: 'Select a format'
+        question: 'Select a format',
       },
-      expected: true
-    }
+      expected: true,
+    },
   ];
 
   console.log('📊 Testing simplified detection:\n');
@@ -48,13 +48,13 @@ function main() {
   testCases.forEach(testCase => {
     console.log(`🧪 ${testCase.name}`);
     console.log(`   Response: ${JSON.stringify(testCase.response, null, 4)}`);
-    
+
     const needsInput = parser.isInputRequest(testCase.response);
     const status = parser.getStatus(testCase.response);
-    
+
     console.log(`   ✅ Needs Input: ${needsInput} (expected: ${testCase.expected})`);
     console.log(`   📋 ADCP Status: ${status || 'null'}`);
-    
+
     if (needsInput) {
       const parsed = parser.parseInputRequest(testCase.response);
       console.log(`   📝 Question: "${parsed.question}"`);

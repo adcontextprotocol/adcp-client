@@ -1,6 +1,6 @@
 # AdCP CLI Tool
 
-A simple command-line utility for calling AdCP agents directly without writing code.
+A simple command-line utility for calling AdCP agents directly without writing code. Features protocol auto-detection and agent alias management for quick access.
 
 ## Installation
 
@@ -26,36 +26,38 @@ npx adcp [arguments...]
 
 ## Quick Start
 
-### List Available Tools
-
-First, discover what tools/skills an agent supports:
+### Save an Agent for Easy Access
 
 ```bash
-adcp a2a https://test-agent.adcontextprotocol.org
-adcp mcp https://agent.example.com/mcp
+# Save agent with alias
+adcp --save-auth test https://test-agent.adcontextprotocol.org
+# Prompts for protocol (optional) and auth token (optional)
+
+# Now use the alias
+adcp test get_products '{"brief":"coffee brands"}'
 ```
 
-### Call a Tool
+### Direct URL Usage (No Setup Required)
 
-Once you know what's available, call a specific tool:
+Protocol auto-detection - no need to specify `mcp` or `a2a`:
 
 ```bash
-adcp mcp https://agent.example.com/mcp get_products '{"brief":"coffee brands"}'
+# List available tools
+adcp https://test-agent.adcontextprotocol.org
+
+# Call a tool
+adcp https://agent.example.com get_products '{"brief":"coffee brands"}'
 ```
 
 ## Usage
 
 ```
-adcp <protocol> <agent-url> [tool-name] [payload] [options]
+adcp <alias|url> [tool-name] [payload] [options]
 ```
 
-### Required Arguments
+### Arguments
 
-- **protocol**: Protocol to use (`mcp` or `a2a`)
-- **agent-url**: Full URL to the agent endpoint
-
-### Optional Arguments
-
+- **alias|url**: Saved agent alias (e.g., `test`) or full URL to agent endpoint
 - **tool-name**: Name of the AdCP tool/task to call (omit to list available tools)
 - **payload**: JSON payload for the tool (default: `{}`)
   - Inline JSON: `'{"brief":"text"}'`
@@ -64,53 +66,107 @@ adcp <protocol> <agent-url> [tool-name] [payload] [options]
 
 ### Options
 
+- `--protocol PROTO`: Force protocol: `mcp` or `a2a` (default: auto-detect)
 - `--auth TOKEN`: Authentication token for the agent
+- `--wait`: Wait for async/webhook responses (requires ngrok or --local)
+- `--local`: Use local webhook without ngrok (for local agents only)
+- `--timeout MS`: Webhook timeout in milliseconds (default: 300000 = 5min)
 - `--help, -h`: Show help message
 - `--json`: Output raw JSON response (default: pretty print)
 - `--debug`: Show debug information
 
+### Agent Management Commands
+
+- `--save-auth <alias> [url] [protocol]`: Save agent configuration
+- `--list-agents`: List all saved agents
+- `--remove-agent <alias>`: Remove saved agent configuration
+- `--show-config`: Show config file location
+
 ## Examples
+
+### Agent Alias Workflow
+
+```bash
+# Save agents
+adcp --save-auth test https://test-agent.adcontextprotocol.org
+adcp --save-auth prod https://prod-agent.example.com
+
+# List saved agents
+adcp --list-agents
+
+# Use aliases
+adcp test
+adcp test get_products '{"brief":"coffee brands"}'
+adcp prod create_media_buy @payload.json
+```
 
 ### List Available Tools/Skills
 
 Discover what an agent can do (no tool name = list tools):
 
 ```bash
-# List MCP tools
-adcp mcp https://agent.example.com/mcp
+# Auto-detect protocol
+adcp https://test-agent.adcontextprotocol.org
+adcp test
 
-# List A2A skills
-adcp a2a https://test-agent.adcontextprotocol.org
+# Explicit protocol (if needed)
+adcp mcp https://agent.example.com/mcp
+adcp a2a https://agent.example.com
 ```
 
 Example output:
 ```
-📋 Available A2A Skills
+🔍 Auto-detecting protocol...
+✓ Detected protocol: MCP
 
-Agent: AdCP Sales Agent
-Description: AI agent for programmatic advertising campaigns via AdCP protocol
+📋 Agent Information
+
+Name: CLI Agent
+Protocol: MCP
+URL: https://agent.example.com/mcp
+
+Available Tools (14):
 
 1. get_products
-   Browse available advertising products and inventory
+   Get available products matching the brief
 
 2. create_media_buy
-   Create advertising campaigns with products, targeting, and budget
+   Create a media buy with the specified parameters
 
 3. list_creative_formats
-   List all available creative formats and specifications
+   List all available creative formats
 ...
 ```
 
-### Basic Product Discovery (MCP)
+### Basic Product Discovery
 
 ```bash
-adcp mcp https://agent.example.com/mcp get_products '{"brief":"coffee subscription service","promoted_offering":"Premium coffee deliveries"}'
+# With alias (auto-detect)
+adcp test get_products '{"brief":"coffee subscription service"}'
+
+# With URL (auto-detect)
+adcp https://agent.example.com get_products '{"brief":"coffee brands"}'
+
+# Force specific protocol
+adcp https://agent.example.com get_products '{"brief":"coffee brands"}' --protocol mcp
+adcp test list_authorized_properties --protocol a2a
 ```
 
-### With Authentication (A2A)
+### Authentication Methods
 
 ```bash
-adcp a2a https://agent.example.com list_creative_formats '{}' --auth your_token_here
+# 1. Saved in agent config (recommended)
+adcp --save-auth prod https://prod-agent.com
+# Prompts for token securely
+
+adcp prod get_products '{"brief":"..."}'
+
+# 2. Explicit flag (overrides saved config)
+adcp test get_products '{"brief":"..."}' --auth your_token_here
+
+# 3. Environment variable (fallback)
+export ADCP_AUTH_TOKEN=your_token
+adcp https://agent.example.com get_products '{"brief":"..."}'
 ```
 
 ### From File
@@ -120,7 +176,7 @@ Create a payload file:
 ```json
 {
   "brief": "Eco-friendly products for millennials",
-  "promoted_offering": "Sustainable consumer goods",
+  "brand_manifest": {"promoted_offering": "Sustainable consumer goods"},
   "budget": 50000
 }
 ```
@@ -128,13 +184,17 @@ Create a payload file:
 Then call:
 
 ```bash
-adcp mcp https://agent.example.com/mcp get_products @payload.json --auth $AGENT_TOKEN
+# With alias
+adcp test get_products @payload.json
+
+# With URL
+adcp https://agent.example.com get_products @payload.json
 ```
 
 ### From Stdin
 
 ```bash
-echo '{"brief":"travel packages"}' | adcp mcp https://agent.example.com/mcp get_products -
+echo '{"brief":"travel packages"}' | adcp test get_products -
 ```
 
 ### Create Media Buy
@@ -458,9 +518,9 @@ adcp mcp https://agent.example.com/mcp get_products '{"brief":"coffee"}' --auth 
 ### Library (TypeScript)
 
 ```typescript
-import { ADCPClient } from '@adcp/client';
+import { AdCPClient } from '@adcp/client';
 
-const client = new ADCPClient({
+const client = new AdCPClient({
   id: 'agent',
   name: 'Agent',
   agent_uri: 'https://agent.example.com/mcp',

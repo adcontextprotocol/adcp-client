@@ -10,7 +10,7 @@ import {
   deferAllHandler,
   type AgentConfig,
   type InputHandler,
-  type ConversationContext
+  type ConversationContext,
 } from '../src/lib';
 
 // Example agent configurations
@@ -21,15 +21,15 @@ const agents: AgentConfig[] = [
     agent_uri: 'https://premium-agent.example.com/mcp/',
     protocol: 'mcp',
     requiresAuth: true,
-    auth_token_env: 'PREMIUM_AGENT_TOKEN'
+    auth_token_env: 'PREMIUM_AGENT_TOKEN',
   },
   {
-    id: 'budget-agent', 
+    id: 'budget-agent',
     name: 'Budget Ad Agent',
     agent_uri: 'https://budget-agent.example.com/a2a/',
     protocol: 'a2a',
-    requiresAuth: false
-  }
+    requiresAuth: false,
+  },
 ];
 
 /**
@@ -37,40 +37,46 @@ const agents: AgentConfig[] = [
  */
 async function singleAgentExample() {
   console.log('\n=== Single Agent Example ===');
-  
+
   const client = new ADCPMultiAgentClient(agents);
   const agent = client.agent('premium-agent');
-  
+
   // Create a smart input handler that can handle different fields
-  const smartHandler: InputHandler = createFieldHandler({
-    budget: 50000,
-    targeting: ['US', 'CA', 'UK'],
-    approval: (context: ConversationContext) => {
-      // Auto-approve on first attempt, defer on subsequent attempts
-      return context.attempt === 1 ? true : context.deferToHuman();
-    }
-  }, deferAllHandler); // Default to defer for unmapped fields
+  const smartHandler: InputHandler = createFieldHandler(
+    {
+      budget: 50000,
+      targeting: ['US', 'CA', 'UK'],
+      approval: (context: ConversationContext) => {
+        // Auto-approve on first attempt, defer on subsequent attempts
+        return context.attempt === 1 ? true : context.deferToHuman();
+      },
+    },
+    deferAllHandler
+  ); // Default to defer for unmapped fields
 
   try {
     // Initial request
     console.log('🔍 Getting products...');
-    const products = await agent.getProducts({
-      brief: 'Premium coffee brands for millennials',
-      promoted_offering: 'Artisan coffee blends'
-    }, smartHandler);
+    const products = await agent.getProducts(
+      {
+        brief: 'Premium coffee brands for millennials',
+        promoted_offering: 'Artisan coffee blends',
+      },
+      smartHandler
+    );
 
     if (products.success) {
       console.log(`✅ Found ${products.data.products?.length || 0} products`);
       console.log(`⏱️  Response time: ${products.metadata.responseTimeMs}ms`);
       console.log(`🔄 Clarification rounds: ${products.metadata.clarificationRounds}`);
-      
+
       // Continue the conversation
       console.log('\n💬 Continuing conversation...');
       const refined = await agent.continueConversation(
         'Focus only on premium organic brands with sustainability certifications',
         smartHandler
       );
-      
+
       if (refined.success) {
         console.log(`✅ Refined search returned ${refined.data.products?.length || 0} products`);
       }
@@ -87,38 +93,47 @@ async function singleAgentExample() {
  */
 async function multiAgentExample() {
   console.log('\n=== Multi-Agent Example ===');
-  
+
   const client = new ADCPMultiAgentClient(agents);
-  
+
   // Simple auto-approve handler for bulk operations
-  const autoHandler: InputHandler = (context) => {
+  const autoHandler: InputHandler = context => {
     console.log(`🤖 Auto-responding to ${context.agent.name}: ${context.inputRequest.question}`);
-    
+
     // Use suggestions if available, otherwise use sensible defaults
     if (context.inputRequest.suggestions?.length) {
       return context.inputRequest.suggestions[0];
     }
-    
+
     // Field-specific defaults
     switch (context.inputRequest.field) {
-      case 'budget': return 25000;
-      case 'targeting': return ['US'];
-      case 'approval': return true;
-      default: return true;
+      case 'budget':
+        return 25000;
+      case 'targeting':
+        return ['US'];
+      case 'approval':
+        return true;
+      default:
+        return true;
     }
   };
 
   try {
     console.log('🚀 Querying all agents in parallel...');
-    const results = await client.allAgents().getProducts({
-      brief: 'Tech gadgets for remote work',
-      promoted_offering: 'Productivity tools and accessories'
-    }, autoHandler);
+    const results = await client.allAgents().getProducts(
+      {
+        brief: 'Tech gadgets for remote work',
+        promoted_offering: 'Productivity tools and accessories',
+      },
+      autoHandler
+    );
 
     console.log(`📊 Got ${results.length} responses:`);
     results.forEach(result => {
       if (result.success) {
-        console.log(`  ✅ ${result.metadata.agent.name}: ${result.data.products?.length || 0} products (${result.metadata.responseTimeMs}ms)`);
+        console.log(
+          `  ✅ ${result.metadata.agent.name}: ${result.data.products?.length || 0} products (${result.metadata.responseTimeMs}ms)`
+        );
       } else {
         console.log(`  ❌ ${result.metadata.agent.name}: ${result.error}`);
       }
@@ -127,9 +142,7 @@ async function multiAgentExample() {
     // Find the best result
     const successful = results.filter(r => r.success);
     if (successful.length > 0) {
-      const best = successful.sort((a, b) => 
-        (b.data.products?.length || 0) - (a.data.products?.length || 0)
-      )[0];
+      const best = successful.sort((a, b) => (b.data.products?.length || 0) - (a.data.products?.length || 0))[0];
       console.log(`🏆 Best result: ${best.metadata.agent.name} with ${best.data.products?.length || 0} products`);
     }
   } catch (error) {
@@ -142,31 +155,37 @@ async function multiAgentExample() {
  */
 async function advancedHandlersExample() {
   console.log('\n=== Advanced Input Handlers Example ===');
-  
+
   const client = new ADCPMultiAgentClient(agents);
   const agent = client.agent('premium-agent');
 
   // Conditional handler based on agent type and context
-  const conditionalHandler = createConditionalHandler([
-    {
-      condition: (ctx) => ctx.agent.name.includes('Premium'),
-      handler: createFieldHandler({
-        budget: 100000, // Higher budget for premium agents
-        targeting: ['US', 'CA', 'UK', 'AU'],
-        approval: true
-      })
-    },
-    {
-      condition: (ctx) => ctx.attempt > 2,
-      handler: deferAllHandler // Defer if too many clarifications
-    }
-  ], autoApproveHandler);
+  const conditionalHandler = createConditionalHandler(
+    [
+      {
+        condition: ctx => ctx.agent.name.includes('Premium'),
+        handler: createFieldHandler({
+          budget: 100000, // Higher budget for premium agents
+          targeting: ['US', 'CA', 'UK', 'AU'],
+          approval: true,
+        }),
+      },
+      {
+        condition: ctx => ctx.attempt > 2,
+        handler: deferAllHandler, // Defer if too many clarifications
+      },
+    ],
+    autoApproveHandler
+  );
 
   try {
     console.log('🎯 Testing advanced input handling...');
-    const result = await agent.listCreativeFormats({
-      type: 'video'
-    }, conditionalHandler);
+    const result = await agent.listCreativeFormats(
+      {
+        type: 'video',
+      },
+      conditionalHandler
+    );
 
     if (result.success) {
       console.log(`✅ Got ${result.data.formats?.length || 0} video formats`);
@@ -184,14 +203,14 @@ async function advancedHandlersExample() {
  */
 async function conversationHistoryExample() {
   console.log('\n=== Conversation History Example ===');
-  
+
   const client = new ADCPMultiAgentClient(agents);
   const agent = client.agent('budget-agent');
 
   // Handler that uses conversation history
-  const historyAwareHandler: InputHandler = (context) => {
+  const historyAwareHandler: InputHandler = context => {
     console.log(`📜 Conversation has ${context.messages.length} messages`);
-    
+
     // Check if budget was previously discussed
     if (context.wasFieldDiscussed('budget')) {
       const previousBudget = context.getPreviousResponse('budget');
@@ -204,12 +223,15 @@ async function conversationHistoryExample() {
 
   try {
     console.log('📖 Starting conversation with history tracking...');
-    
+
     // First request
-    await agent.getProducts({
-      brief: 'Affordable marketing tools'
-    }, historyAwareHandler);
-    
+    await agent.getProducts(
+      {
+        brief: 'Affordable marketing tools',
+      },
+      historyAwareHandler
+    );
+
     console.log('📝 Conversation history:');
     const history = agent.getHistory();
     history?.forEach((msg, i) => {
@@ -217,9 +239,12 @@ async function conversationHistoryExample() {
     });
 
     // Second request in same conversation
-    await agent.listCreativeFormats({
-      type: 'display'
-    }, historyAwareHandler);
+    await agent.listCreativeFormats(
+      {
+        type: 'display',
+      },
+      historyAwareHandler
+    );
 
     console.log(`📊 Total messages in conversation: ${agent.getHistory()?.length || 0}`);
   } catch (error) {
@@ -233,10 +258,10 @@ async function conversationHistoryExample() {
 async function main() {
   console.log('🎯 ADCP Conversation-Aware Client Library Examples');
   console.log('================================================');
-  
+
   // Note: These examples will fail with real network calls since we're using example URLs
   // In a real scenario, you'd have actual agent endpoints
-  
+
   try {
     await singleAgentExample();
     await multiAgentExample();
@@ -247,11 +272,11 @@ async function main() {
     console.log('   In production, configure with real agent endpoints');
     console.log(`   Error: ${error.message}`);
   }
-  
+
   console.log('\n✨ Examples completed! Check the source code for implementation details.');
   console.log('\n📚 Key Features Demonstrated:');
   console.log('   • Conversation-aware single agent operations');
-  console.log('   • Parallel multi-agent execution'); 
+  console.log('   • Parallel multi-agent execution');
   console.log('   • Smart input handlers with field mapping');
   console.log('   • Conditional logic and retry patterns');
   console.log('   • Conversation history and context preservation');
@@ -263,9 +288,4 @@ if (require.main === module) {
   main().catch(console.error);
 }
 
-export {
-  singleAgentExample,
-  multiAgentExample,
-  advancedHandlersExample,
-  conversationHistoryExample
-};
+export { singleAgentExample, multiAgentExample, advancedHandlersExample, conversationHistoryExample };

@@ -33,7 +33,7 @@ async function demonstrateGenerativeCreatives() {
         name: 'Static Display Banner 300x250',
         format_id: {
           agent_url: 'https://creative.adcontextprotocol.org',
-          id: 'display_300x250'
+          id: 'display_300x250',
         },
         assets: {
           image: {
@@ -41,17 +41,17 @@ async function demonstrateGenerativeCreatives() {
             url: 'https://example.com/banner-300x250.jpg',
             width: 300,
             height: 250,
-            alt_text: 'Summer sale banner'
+            alt_text: 'Summer sale banner',
           },
           click_url: {
             asset_type: 'url',
             url: 'https://example.com/summer-sale',
-            description: 'Landing page for summer sale campaign'
-          }
+            description: 'Landing page for summer sale campaign',
+          },
         },
-        tags: ['display', 'static', 'summer-sale']
-      }
-    ]
+        tags: ['display', 'static', 'summer-sale'],
+      },
+    ],
   };
 
   console.log('Static Creative Structure:');
@@ -68,44 +68,44 @@ async function demonstrateGenerativeCreatives() {
         name: 'AI-Generated Display Banner',
         format_id: {
           agent_url: 'https://creative.adcontextprotocol.org',
-          id: 'display_300x250_generative'
+          id: 'display_300x250_generative',
         },
         assets: {
           brand_context: {
             asset_type: 'url',
             url: 'https://example.com',
-            description: 'Brand website for context extraction'
+            description: 'Brand website for context extraction',
           },
           generation_prompt: {
             asset_type: 'text',
-            content: 'Create a vibrant summer sale banner highlighting 30% off outdoor furniture'
+            content: 'Create a vibrant summer sale banner highlighting 30% off outdoor furniture',
           },
           logo: {
             asset_type: 'image',
             url: 'https://example.com/logo.png',
             width: 100,
-            height: 100
-          }
+            height: 100,
+          },
         },
         inputs: [
           {
             name: 'Desktop View',
             macros: {
-              DEVICE_TYPE: 'desktop'
+              DEVICE_TYPE: 'desktop',
             },
-            context_description: 'Preview for desktop browsers at 1920x1080'
+            context_description: 'Preview for desktop browsers at 1920x1080',
           },
           {
             name: 'Mobile View',
             macros: {
-              DEVICE_TYPE: 'mobile'
+              DEVICE_TYPE: 'mobile',
             },
-            context_description: 'Preview for mobile devices at 375x667'
-          }
+            context_description: 'Preview for mobile devices at 375x667',
+          },
         ],
-        tags: ['display', 'generative', 'ai', 'summer-sale']
-      }
-    ]
+        tags: ['display', 'generative', 'ai', 'summer-sale'],
+      },
+    ],
   };
 
   console.log('Generative Creative Structure:');
@@ -122,23 +122,23 @@ async function demonstrateGenerativeCreatives() {
         name: 'AI-Generated Display Banner',
         format_id: {
           agent_url: 'https://creative.adcontextprotocol.org',
-          id: 'display_300x250_generative'
+          id: 'display_300x250_generative',
         },
         assets: {
           brand_context: {
             asset_type: 'url',
             url: 'https://example.com',
-            description: 'Brand website for context extraction'
+            description: 'Brand website for context extraction',
           },
           generation_prompt: {
             asset_type: 'text',
-            content: 'Create a vibrant summer sale banner highlighting 30% off outdoor furniture'
-          }
+            content: 'Create a vibrant summer sale banner highlighting 30% off outdoor furniture',
+          },
         },
-        approved: true // Approve the generated preview
-      }
+        approved: true, // Approve the generated preview
+      },
     ],
-    patch: true // Only update the approval status
+    patch: true, // Only update the approval status
   };
 
   console.log('Approval Request Structure:');
@@ -155,23 +155,24 @@ async function demonstrateGenerativeCreatives() {
         name: 'AI-Generated Display Banner',
         format_id: {
           agent_url: 'https://creative.adcontextprotocol.org',
-          id: 'display_300x250_generative'
+          id: 'display_300x250_generative',
         },
         assets: {
           brand_context: {
             asset_type: 'url',
             url: 'https://example.com',
-            description: 'Brand website for context extraction'
+            description: 'Brand website for context extraction',
           },
           generation_prompt: {
             asset_type: 'text',
-            content: 'Create a warm, inviting summer sale banner with emphasis on comfort and quality. Show 30% off outdoor furniture with natural colors.'
-          }
+            content:
+              'Create a warm, inviting summer sale banner with emphasis on comfort and quality. Show 30% off outdoor furniture with natural colors.',
+          },
         },
-        approved: false // Request regeneration with updated prompt
-      }
+        approved: false, // Request regeneration with updated prompt
+      },
     ],
-    patch: true
+    patch: true,
   };
 
   console.log('Regeneration Request Structure:');
@@ -195,7 +196,7 @@ if (require.main === module) {
       console.log('\n✨ Done!');
       process.exit(0);
     })
-    .catch((error) => {
+    .catch(error => {
       console.error('Fatal error:', error);
       process.exit(1);
     });

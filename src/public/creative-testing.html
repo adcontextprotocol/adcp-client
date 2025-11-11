@@ -1,547 +1,815 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Creative Agent Testing - AdCP</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap"
+      rel="stylesheet"
+    />
     <style>
-        :root {
-            --primary-gradient: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            --success-gradient: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
-            --surface-primary: rgba(255, 255, 255, 0.95);
-            --text-primary: #1a202c;
-            --text-secondary: #4a5568;
-            --accent-blue: #4299e1;
-            --accent-green: #48bb78;
-        }
+      :root {
+        --primary-gradient: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        --success-gradient: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+        --surface-primary: rgba(255, 255, 255, 0.95);
+        --text-primary: #1a202c;
+        --text-secondary: #4a5568;
+        --accent-blue: #4299e1;
+        --accent-green: #48bb78;
+      }
 
-        body {
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            line-height: 1.6;
-            color: var(--text-primary);
-            max-width: 1600px;
-            margin: 0 auto;
-            padding: 0;
-            background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
-            min-height: 100vh;
-        }
+      body {
+        font-family:
+          'Inter',
+          -apple-system,
+          BlinkMacSystemFont,
+          'Segoe UI',
+          Roboto,
+          sans-serif;
+        line-height: 1.6;
+        color: var(--text-primary);
+        max-width: 1600px;
+        margin: 0 auto;
+        padding: 0;
+        background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+        min-height: 100vh;
+      }
 
-        .top-nav {
-            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
-            color: white;
-            padding: 24px 40px;
-            box-shadow: 0 8px 32px rgba(30, 60, 114, 0.3);
-        }
+      .top-nav {
+        background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+        color: white;
+        padding: 24px 40px;
+        box-shadow: 0 8px 32px rgba(30, 60, 114, 0.3);
+      }
 
-        .nav-container {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
+      .nav-container {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
 
-        .nav-brand h2 {
-            margin: 0;
-            font-size: 1.5rem;
-            font-weight: 700;
-        }
+      .nav-brand h2 {
+        margin: 0;
+        font-size: 1.5rem;
+        font-weight: 700;
+      }
 
-        .nav-links {
-            display: flex;
-            gap: 1.5rem;
-        }
+      .nav-links {
+        display: flex;
+        gap: 1.5rem;
+      }
 
-        .nav-link {
-            color: rgba(255, 255, 255, 0.9);
-            text-decoration: none;
-            padding: 0.5rem 1rem;
-            border-radius: 8px;
-            transition: all 0.3s;
-        }
+      .nav-link {
+        color: rgba(255, 255, 255, 0.9);
+        text-decoration: none;
+        padding: 0.5rem 1rem;
+        border-radius: 8px;
+        transition: all 0.3s;
+      }
 
-        .nav-link:hover {
-            background: rgba(255, 255, 255, 0.1);
-        }
+      .nav-link:hover {
+        background: rgba(255, 255, 255, 0.1);
+      }
 
-        .nav-link.active {
-            background: rgba(255, 255, 255, 0.2);
-            font-weight: 600;
-        }
+      .nav-link.active {
+        background: rgba(255, 255, 255, 0.2);
+        font-weight: 600;
+      }
 
-        .container {
-            padding: 2rem;
-        }
+      .container {
+        padding: 2rem;
+      }
 
-        .header {
-            margin-bottom: 2rem;
-        }
+      .header {
+        margin-bottom: 2rem;
+      }
 
-        h1 {
-            font-size: 2.5rem;
-            font-weight: 800;
-            background: linear-gradient(135deg, #1a4d3a 0%, #2d7a5a 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            margin-bottom: 0.5rem;
-        }
+      h1 {
+        font-size: 2.5rem;
+        font-weight: 800;
+        background: linear-gradient(135deg, #1a4d3a 0%, #2d7a5a 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        margin-bottom: 0.5rem;
+      }
 
-        .subtitle {
-            font-size: 1.125rem;
-            color: var(--text-secondary);
-            font-weight: 500;
-        }
+      .subtitle {
+        font-size: 1.125rem;
+        color: var(--text-secondary);
+        font-weight: 500;
+      }
 
-        .section {
-            background: var(--surface-primary);
-            border-radius: 16px;
-            padding: 2rem;
-            margin-bottom: 2rem;
-            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
-        }
+      .section {
+        background: var(--surface-primary);
+        border-radius: 16px;
+        padding: 2rem;
+        margin-bottom: 2rem;
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+      }
 
-        .section h3 {
-            margin-top: 0;
-            margin-bottom: 1.5rem;
-            font-size: 1.5rem;
-        }
+      .section h3 {
+        margin-top: 0;
+        margin-bottom: 1.5rem;
+        font-size: 1.5rem;
+      }
 
-        .form-group {
-            margin-bottom: 1.5rem;
-        }
+      .form-group {
+        margin-bottom: 1.5rem;
+      }
 
-        label {
-            display: block;
-            font-weight: 600;
-            margin-bottom: 0.5rem;
-            color: var(--text-primary);
-        }
+      label {
+        display: block;
+        font-weight: 600;
+        margin-bottom: 0.5rem;
+        color: var(--text-primary);
+      }
 
-        input[type="text"],
-        input[type="url"],
-        input[type="file"],
-        select,
-        textarea {
-            width: 100%;
-            padding: 0.75rem;
-            border: 2px solid #e2e8f0;
-            border-radius: 8px;
-            font-size: 1rem;
-            transition: border-color 0.3s;
-            box-sizing: border-box;
-        }
+      input[type='text'],
+      input[type='url'],
+      input[type='file'],
+      select,
+      textarea {
+        width: 100%;
+        padding: 0.75rem;
+        border: 2px solid #e2e8f0;
+        border-radius: 8px;
+        font-size: 1rem;
+        transition: border-color 0.3s;
+        box-sizing: border-box;
+      }
 
-        input:focus,
-        select:focus,
-        textarea:focus {
-            outline: none;
-            border-color: var(--accent-blue);
-        }
+      input:focus,
+      select:focus,
+      textarea:focus {
+        outline: none;
+        border-color: var(--accent-blue);
+      }
 
-        .button {
-            background: var(--primary-gradient);
-            color: white;
-            border: none;
-            padding: 0.875rem 1.5rem;
-            border-radius: 8px;
-            font-size: 1rem;
-            font-weight: 600;
-            cursor: pointer;
-            transition: transform 0.2s, box-shadow 0.2s;
-        }
+      .button {
+        background: var(--primary-gradient);
+        color: white;
+        border: none;
+        padding: 0.875rem 1.5rem;
+        border-radius: 8px;
+        font-size: 1rem;
+        font-weight: 600;
+        cursor: pointer;
+        transition:
+          transform 0.2s,
+          box-shadow 0.2s;
+      }
 
-        .button:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 8px 16px rgba(0, 0, 0, 0.2);
-        }
+      .button:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 8px 16px rgba(0, 0, 0, 0.2);
+      }
 
-        .button:disabled {
-            opacity: 0.6;
-            cursor: not-allowed;
-            transform: none;
-        }
+      .button:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+        transform: none;
+      }
 
-        .button-success {
-            background: var(--success-gradient);
-        }
+      .button-success {
+        background: var(--success-gradient);
+      }
 
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            margin-top: 1rem;
-        }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 1rem;
+      }
 
-        thead {
-            background: #f7fafc;
-        }
+      thead {
+        background: #f7fafc;
+      }
 
-        th, td {
-            padding: 1rem;
-            text-align: left;
-            border-bottom: 1px solid #e2e8f0;
-        }
+      th,
+      td {
+        padding: 1rem;
+        text-align: left;
+        border-bottom: 1px solid #e2e8f0;
+      }
 
-        th {
-            font-weight: 600;
-            color: var(--text-primary);
-        }
+      th {
+        font-weight: 600;
+        color: var(--text-primary);
+      }
 
-        tr:hover {
-            background: #f7fafc;
-        }
+      tr:hover {
+        background: #f7fafc;
+      }
 
-        .badge {
-            display: inline-block;
-            padding: 0.25rem 0.75rem;
-            border-radius: 12px;
-            font-size: 0.875rem;
-            font-weight: 500;
-        }
+      .badge {
+        display: inline-block;
+        padding: 0.25rem 0.75rem;
+        border-radius: 12px;
+        font-size: 0.875rem;
+        font-weight: 500;
+      }
 
-        .badge-display {
-            background: #e3f2fd;
-            color: #1976d2;
-        }
+      .badge-display {
+        background: #e3f2fd;
+        color: #1976d2;
+      }
 
-        .badge-video {
-            background: #fce4ec;
-            color: #c2185b;
-        }
+      .badge-video {
+        background: #fce4ec;
+        color: #c2185b;
+      }
 
-        .badge-native {
-            background: #f3e5f5;
-            color: #7b1fa2;
-        }
+      .badge-native {
+        background: #f3e5f5;
+        color: #7b1fa2;
+      }
 
-        .badge-dooh {
-            background: #fff3e0;
-            color: #ef6c00;
-        }
+      .badge-dooh {
+        background: #fff3e0;
+        color: #ef6c00;
+      }
 
-        .select-format-btn {
-            background: var(--accent-blue);
-            color: white;
-            border: none;
-            padding: 0.5rem 1rem;
-            border-radius: 6px;
-            cursor: pointer;
-            font-weight: 500;
-        }
+      .select-format-btn {
+        background: var(--accent-blue);
+        color: white;
+        border: none;
+        padding: 0.5rem 1rem;
+        border-radius: 6px;
+        cursor: pointer;
+        font-weight: 500;
+      }
 
-        .select-format-btn:hover {
-            background: #3182ce;
-        }
+      .select-format-btn:hover {
+        background: #3182ce;
+      }
 
-        .asset-input {
-            background: #f7fafc;
-            padding: 1rem;
-            border-radius: 8px;
-            margin-bottom: 1rem;
-        }
+      .asset-input {
+        background: #f7fafc;
+        padding: 1rem;
+        border-radius: 8px;
+        margin-bottom: 1rem;
+      }
 
-        .asset-input label {
-            font-size: 0.875rem;
-            color: var(--text-secondary);
-        }
+      .asset-input label {
+        font-size: 0.875rem;
+        color: var(--text-secondary);
+      }
 
-        .preview-container {
-            background: #f7fafc;
-            border-radius: 8px;
-            padding: 2rem;
-            text-align: center;
-            min-height: 300px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
+      .preview-container {
+        background: #f7fafc;
+        border-radius: 8px;
+        padding: 2rem;
+        text-align: center;
+        min-height: 300px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
 
-        .preview-container iframe {
-            width: 100%;
-            height: 500px;
-            border: none;
-            border-radius: 8px;
-        }
+      .preview-container iframe {
+        width: 100%;
+        height: 500px;
+        border: none;
+        border-radius: 8px;
+      }
 
-        .preview-container img {
-            max-width: 100%;
-            border-radius: 8px;
-        }
+      .preview-container img {
+        max-width: 100%;
+        border-radius: 8px;
+      }
 
-        .loading {
-            display: none;
-            text-align: center;
-            padding: 2rem;
-        }
+      .loading {
+        display: none;
+        text-align: center;
+        padding: 2rem;
+      }
 
-        .loading.active {
-            display: block;
-        }
+      .loading.active {
+        display: block;
+      }
 
-        .spinner {
-            border: 4px solid #f3f3f3;
-            border-top: 4px solid var(--accent-blue);
-            border-radius: 50%;
-            width: 40px;
-            height: 40px;
-            animation: spin 1s linear infinite;
-            margin: 0 auto;
-        }
+      .spinner {
+        border: 4px solid #f3f3f3;
+        border-top: 4px solid var(--accent-blue);
+        border-radius: 50%;
+        width: 40px;
+        height: 40px;
+        animation: spin 1s linear infinite;
+        margin: 0 auto;
+      }
 
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
+      @keyframes spin {
+        0% {
+          transform: rotate(0deg);
         }
+        100% {
+          transform: rotate(360deg);
+        }
+      }
 
-        .hidden {
-            display: none;
-        }
+      .hidden {
+        display: none;
+      }
 
-        .error {
-            background: #fff5f5;
-            border-left: 4px solid #fc466b;
-            padding: 1rem;
-            border-radius: 4px;
-            color: #c53030;
-            margin-top: 1rem;
-        }
+      .error {
+        background: #fff5f5;
+        border-left: 4px solid #fc466b;
+        padding: 1rem;
+        border-radius: 4px;
+        color: #c53030;
+        margin-top: 1rem;
+      }
 
-        .success {
-            background: #f0fff4;
-            border-left: 4px solid #38ef7d;
-            padding: 1rem;
-            border-radius: 4px;
-            color: #22543d;
-            margin-top: 1rem;
-        }
+      .success {
+        background: #f0fff4;
+        border-left: 4px solid #38ef7d;
+        padding: 1rem;
+        border-radius: 4px;
+        color: #22543d;
+        margin-top: 1rem;
+      }
 
-        /* Debug Logs Styles */
-        .debug-section {
-            background: #1e1e1e;
-            border-radius: 8px;
-            padding: 1rem;
-            margin-top: 1rem;
-            max-height: 500px;
-            overflow-y: auto;
-            font-family: 'Monaco', 'Courier New', monospace;
-        }
+      /* Debug Logs Styles */
+      .debug-section {
+        background: #1e1e1e;
+        border-radius: 8px;
+        padding: 1rem;
+        margin-top: 1rem;
+        max-height: 500px;
+        overflow-y: auto;
+        font-family: 'Monaco', 'Courier New', monospace;
+      }
 
-        .debug-entry {
-            margin: 8px 0;
-            padding: 8px;
-            border-radius: 4px;
-            border-left: 3px solid;
-            font-size: 12px;
-        }
+      .debug-entry {
+        margin: 8px 0;
+        padding: 8px;
+        border-radius: 4px;
+        border-left: 3px solid;
+        font-size: 12px;
+      }
 
-        .debug-entry.request {
-            background: rgba(59, 130, 246, 0.1);
-            border-left-color: #3b82f6;
-            color: #93c5fd;
-        }
+      .debug-entry.request {
+        background: rgba(59, 130, 246, 0.1);
+        border-left-color: #3b82f6;
+        color: #93c5fd;
+      }
 
-        .debug-entry.response {
-            background: rgba(34, 197, 94, 0.1);
-            border-left-color: #22c55e;
-            color: #86efac;
-        }
+      .debug-entry.response {
+        background: rgba(34, 197, 94, 0.1);
+        border-left-color: #22c55e;
+        color: #86efac;
+      }
 
-        .debug-entry.error {
-            background: rgba(239, 68, 68, 0.1);
-            border-left-color: #ef4444;
-            color: #fca5a5;
-        }
+      .debug-entry.error {
+        background: rgba(239, 68, 68, 0.1);
+        border-left-color: #ef4444;
+        color: #fca5a5;
+      }
 
-        .debug-header {
-            display: flex;
-            justify-content: space-between;
-            margin-bottom: 4px;
-            font-weight: 600;
-        }
+      .debug-header {
+        display: flex;
+        justify-content: space-between;
+        margin-bottom: 4px;
+        font-weight: 600;
+      }
 
-        .debug-time {
-            color: #9ca3af;
-            font-size: 11px;
-        }
+      .debug-time {
+        color: #9ca3af;
+        font-size: 11px;
+      }
 
-        .debug-body {
-            margin-top: 8px;
-            padding: 8px;
-            background: rgba(0, 0, 0, 0.3);
-            border-radius: 4px;
-            overflow-x: auto;
-            white-space: pre-wrap;
-            word-break: break-word;
-            color: #d1d5db;
-        }
+      .debug-body {
+        margin-top: 8px;
+        padding: 8px;
+        background: rgba(0, 0, 0, 0.3);
+        border-radius: 4px;
+        overflow-x: auto;
+        white-space: pre-wrap;
+        word-break: break-word;
+        color: #d1d5db;
+      }
+
+      /* Format Card Styles */
+      #formatsCards {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+        gap: 20px;
+        padding: 10px;
+      }
+
+      .format-card {
+        background: white;
+        border-radius: 12px;
+        overflow: hidden;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        transition: all 0.3s ease;
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+        cursor: pointer;
+      }
+
+      .format-card:hover {
+        transform: translateY(-4px);
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+      }
+
+      .format-card-preview {
+        width: 100%;
+        height: 200px;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        position: relative;
+        overflow: hidden;
+        transition: transform 0.2s ease;
+      }
+
+      a:hover .format-card-preview {
+        transform: scale(1.05);
+      }
+
+      a .format-card-preview::after {
+        content: '🔗';
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        font-size: 48px;
+        opacity: 0;
+        transition: opacity 0.2s ease;
+        pointer-events: none;
+        text-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+      }
+
+      a:hover .format-card-preview::after {
+        opacity: 0.9;
+      }
+
+      .format-card-preview img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+      }
+
+      .format-card-preview .placeholder {
+        font-size: 48px;
+        color: rgba(255, 255, 255, 0.8);
+      }
+
+      .format-card-type-badge {
+        position: absolute;
+        top: 12px;
+        right: 12px;
+        background: rgba(255, 255, 255, 0.95);
+        padding: 6px 12px;
+        border-radius: 20px;
+        font-size: 12px;
+        font-weight: 600;
+        text-transform: uppercase;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+      }
+
+      .format-card-content {
+        padding: 20px;
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+      }
+
+      .format-card-title {
+        font-size: 18px;
+        font-weight: 700;
+        color: #1a202c;
+        margin-bottom: 8px;
+        line-height: 1.3;
+      }
+
+      .format-card-format-id {
+        font-family: monospace;
+        font-size: 11px;
+        color: #718096;
+        margin-bottom: 12px;
+        word-break: break-all;
+      }
+
+      .format-card-description {
+        font-size: 14px;
+        color: #4a5568;
+        line-height: 1.5;
+        margin-bottom: 16px;
+        flex: 1;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        display: -webkit-box;
+        -webkit-line-clamp: 3;
+        -webkit-box-orient: vertical;
+      }
+
+      .format-card-details {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        padding-top: 16px;
+        border-top: 1px solid #e2e8f0;
+      }
+
+      .format-card-detail-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        font-size: 13px;
+      }
+
+      .format-card-detail-label {
+        color: #718096;
+        font-weight: 500;
+      }
+
+      .format-card-detail-value {
+        color: #1a202c;
+        font-weight: 600;
+      }
+
+      .format-card-footer {
+        padding: 12px 20px;
+        background: #f8f9fa;
+        border-top: 1px solid #e2e8f0;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+
+      .format-card-generative-badge {
+        background: #4caf50;
+        color: white;
+        padding: 4px 10px;
+        border-radius: 12px;
+        font-size: 12px;
+        font-weight: 600;
+      }
+
+      .format-card-select-btn {
+        background: #007bff;
+        color: white;
+        border: none;
+        padding: 6px 16px;
+        border-radius: 6px;
+        font-size: 13px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: background 0.2s;
+      }
+
+      .format-card-select-btn:hover {
+        background: #0056b3;
+      }
+
+      .format-card-link {
+        color: #007bff;
+        text-decoration: none;
+        font-size: 13px;
+        font-weight: 500;
+        transition: color 0.2s;
+      }
+
+      .format-card-link:hover {
+        color: #0056b3;
+        text-decoration: underline;
+      }
     </style>
-</head>
-<body>
+  </head>
+  <body>
     <!-- Top Navigation -->
     <nav class="top-nav">
-        <div class="nav-container">
-            <div class="nav-brand">
-                <h2>🎨 Creative Agent Testing</h2>
-            </div>
-            <div class="nav-links">
-                <a href="/" class="nav-link">🧪 Media Buy Testing</a>
-                <a href="/creative-testing.html" class="nav-link active">🎨 Creative Agent Testing</a>
-                <a href="/adagents.html" class="nav-link">🔗 AdAgents Manager</a>
-            </div>
+      <div class="nav-container">
+        <div class="nav-brand">
+          <h2>🎨 Creative Agent Testing</h2>
         </div>
+        <div class="nav-links">
+          <a href="/" class="nav-link">🧪 Media Buy Testing</a>
+          <a href="/creative-testing.html" class="nav-link active">🎨 Creative Agent Testing</a>
+          <a href="/adagents.html" class="nav-link">🔗 AdAgents Manager</a>
+        </div>
+      </div>
     </nav>
 
     <div class="container">
-        <div class="header">
-            <h1>Creative Lifecycle Testing</h1>
-            <p class="subtitle">Discover formats → Select format → Provide assets → Build creative → Preview</p>
+      <div class="header">
+        <h1>Creative Lifecycle Testing</h1>
+        <p class="subtitle">Discover formats → Select format → Provide assets → Build creative → Preview</p>
+      </div>
+
+      <!-- Step 1: Agent Configuration -->
+      <div class="section">
+        <h3>Step 1: Select Creative Agent</h3>
+        <div class="form-group">
+          <label for="agentUrl">Creative Agent URL:</label>
+          <input
+            type="url"
+            id="agentUrl"
+            value="https://creative.adcontextprotocol.org/mcp"
+            placeholder="https://creative.example.com/mcp"
+          />
+        </div>
+        <div class="form-group">
+          <label for="agentProtocol">Protocol:</label>
+          <select id="agentProtocol">
+            <option value="mcp">MCP</option>
+            <option value="a2a">A2A</option>
+          </select>
+        </div>
+        <button class="button" onclick="loadFormats()">Load Formats</button>
+      </div>
+
+      <!-- Step 2: Format Selection -->
+      <div class="section hidden" id="formatsSection">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem">
+          <h3 style="margin: 0">Step 2: Select Creative Format</h3>
+          <div style="display: flex; gap: 5px; border: 1px solid #ddd; border-radius: 6px; overflow: hidden">
+            <button
+              id="view-list-btn"
+              onclick="setFormatsView('list')"
+              style="
+                padding: 8px 16px;
+                border: none;
+                background: #f8f9fa;
+                color: #333;
+                cursor: pointer;
+                font-size: 14px;
+                font-weight: 500;
+              "
+            >
+              📋 List
+            </button>
+            <button
+              id="view-cards-btn"
+              onclick="setFormatsView('cards')"
+              style="
+                padding: 8px 16px;
+                border: none;
+                background: #007bff;
+                color: white;
+                cursor: pointer;
+                font-size: 14px;
+                font-weight: 500;
+              "
+            >
+              🎴 Cards
+            </button>
+          </div>
+        </div>
+        <div id="formatsTableView" style="display: none">
+          <div id="formatsTable"></div>
+        </div>
+        <div id="formatsCardsView">
+          <div id="formatsCards"></div>
+        </div>
+      </div>
+
+      <!-- Step 3: Asset Upload -->
+      <div class="section hidden" id="assetsSection">
+        <h3>Step 3: Provide Assets</h3>
+        <div id="selectedFormatInfo"></div>
+
+        <!-- Quick Examples -->
+        <div style="background: #f0f9ff; padding: 1rem; border-radius: 8px; margin-bottom: 1.5rem">
+          <label style="font-weight: 600; margin-bottom: 0.5rem; display: block">Quick Examples:</label>
+          <select id="quickExamples" onchange="loadQuickExample()" style="width: 100%; margin-bottom: 0.5rem">
+            <option value="">-- Select an example --</option>
+            <option value="nike-shoes">Nike Air Max Shoes</option>
+            <option value="coffee-brand">Coffee Brand Campaign</option>
+            <option value="tech-product">Tech Product Launch</option>
+            <option value="fashion-retail">Fashion Retail Sale</option>
+          </select>
+          <p style="font-size: 0.875rem; color: #4a5568; margin: 0">
+            Select an example to auto-fill assets for testing
+          </p>
         </div>
 
-        <!-- Step 1: Agent Configuration -->
-        <div class="section">
-            <h3>Step 1: Select Creative Agent</h3>
-            <div class="form-group">
-                <label for="agentUrl">Creative Agent URL:</label>
-                <input type="url" id="agentUrl" value="https://creative.adcontextprotocol.org/mcp" placeholder="https://creative.example.com/mcp">
-            </div>
-            <div class="form-group">
-                <label for="agentProtocol">Protocol:</label>
-                <select id="agentProtocol">
-                    <option value="mcp">MCP</option>
-                    <option value="a2a">A2A</option>
-                </select>
-            </div>
-            <button class="button" onclick="loadFormats()">Load Formats</button>
+        <div id="assetInputs"></div>
+        <div style="display: flex; gap: 1rem">
+          <button class="button" onclick="previewCreative()">Preview Creative</button>
+          <button class="button button-success" id="buildCreativeBtn" onclick="buildCreative()">Build Creative</button>
         </div>
+      </div>
 
-        <!-- Step 2: Format Selection -->
-        <div class="section hidden" id="formatsSection">
-            <h3>Step 2: Select Creative Format</h3>
-            <div id="formatsTable"></div>
+      <!-- Step 4: Preview -->
+      <div class="section hidden" id="previewSection">
+        <h3>Step 4: Preview Creative</h3>
+        <div class="preview-container" id="previewContainer">
+          <p style="color: #a0aec0">Creative preview will appear here</p>
         </div>
+      </div>
 
-        <!-- Step 3: Asset Upload -->
-        <div class="section hidden" id="assetsSection">
-            <h3>Step 3: Provide Assets</h3>
-            <div id="selectedFormatInfo"></div>
-
-            <!-- Quick Examples -->
-            <div style="background: #f0f9ff; padding: 1rem; border-radius: 8px; margin-bottom: 1.5rem;">
-                <label style="font-weight: 600; margin-bottom: 0.5rem; display: block;">Quick Examples:</label>
-                <select id="quickExamples" onchange="loadQuickExample()" style="width: 100%; margin-bottom: 0.5rem;">
-                    <option value="">-- Select an example --</option>
-                    <option value="nike-shoes">Nike Air Max Shoes</option>
-                    <option value="coffee-brand">Coffee Brand Campaign</option>
-                    <option value="tech-product">Tech Product Launch</option>
-                    <option value="fashion-retail">Fashion Retail Sale</option>
-                </select>
-                <p style="font-size: 0.875rem; color: #4a5568; margin: 0;">Select an example to auto-fill assets for testing</p>
-            </div>
-
-            <div id="assetInputs"></div>
-            <div style="display: flex; gap: 1rem;">
-                <button class="button" onclick="previewCreative()">Preview Creative</button>
-                <button class="button button-success" id="buildCreativeBtn" onclick="buildCreative()">Build Creative</button>
-            </div>
+      <!-- Debug Logs -->
+      <div class="section hidden" id="debugSection">
+        <h3>Debug Logs</h3>
+        <div class="debug-section" id="debugLogs">
+          <p style="color: #9ca3af; text-align: center; padding: 2rem">
+            No logs yet. Try loading formats or previewing a creative.
+          </p>
         </div>
+      </div>
 
-        <!-- Step 4: Preview -->
-        <div class="section hidden" id="previewSection">
-            <h3>Step 4: Preview Creative</h3>
-            <div class="preview-container" id="previewContainer">
-                <p style="color: #a0aec0;">Creative preview will appear here</p>
-            </div>
-        </div>
-
-        <!-- Debug Logs -->
-        <div class="section hidden" id="debugSection">
-            <h3>Debug Logs</h3>
-            <div class="debug-section" id="debugLogs">
-                <p style="color: #9ca3af; text-align: center; padding: 2rem;">No logs yet. Try loading formats or previewing a creative.</p>
-            </div>
-        </div>
-
-        <!-- Loading Indicator -->
-        <div id="loading" class="loading">
-            <div class="spinner"></div>
-            <p>Processing...</p>
-        </div>
+      <!-- Loading Indicator -->
+      <div id="loading" class="loading">
+        <div class="spinner"></div>
+        <p>Processing...</p>
+      </div>
     </div>
 
     <script>
-        // State management
-        const state = {
-            agentUrl: 'https://creative.adcontextprotocol.org/mcp',
-            protocol: 'mcp',
-            formats: [],
-            selectedFormat: null,
-            assets: {}
-        };
+      // State management
+      const state = {
+        agentUrl: 'https://creative.adcontextprotocol.org/mcp',
+        protocol: 'mcp',
+        formats: [],
+        selectedFormat: null,
+        assets: {},
+        formatsViewMode: 'cards', // 'list' or 'cards'
+      };
 
-        // Load creative formats from agent
-        async function loadFormats() {
-            const agentUrl = document.getElementById('agentUrl').value;
-            const protocol = document.getElementById('agentProtocol').value;
-            const loading = document.getElementById('loading');
-            const formatsSection = document.getElementById('formatsSection');
+      // Load creative formats from agent
+      async function loadFormats() {
+        const agentUrl = document.getElementById('agentUrl').value;
+        const protocol = document.getElementById('agentProtocol').value;
+        const loading = document.getElementById('loading');
+        const formatsSection = document.getElementById('formatsSection');
 
-            try {
-                loading.classList.add('active');
-                formatsSection.classList.add('hidden');
+        try {
+          loading.classList.add('active');
+          formatsSection.classList.add('hidden');
 
-                state.agentUrl = agentUrl;
-                state.protocol = protocol;
+          state.agentUrl = agentUrl;
+          state.protocol = protocol;
 
-                const response = await fetch('/api/creative/list-formats', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ agentUrl, protocol })
-                });
+          const response = await fetch('/api/creative/list-formats', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ agentUrl, protocol }),
+          });
 
-                const data = await response.json();
+          const data = await response.json();
 
-                // Always display debug logs if available (even on error)
-                if (data.debug_logs && Array.isArray(data.debug_logs)) {
-                    displayDebugLogs(data.debug_logs);
-                }
+          // Always display debug logs if available (even on error)
+          if (data.debug_logs && Array.isArray(data.debug_logs)) {
+            displayDebugLogs(data.debug_logs);
+          }
 
-                if (data.success && data.data && data.data.formats) {
-                    state.formats = data.data.formats;
-                    displayFormatsTable(state.formats);
-                    formatsSection.classList.remove('hidden');
-                } else {
-                    const errorMsg = data.error || 'Unknown error';
-                    showError('Failed to load formats: ' + errorMsg);
+          if (data.success && data.data && data.data.formats) {
+            state.formats = data.data.formats;
+            displayFormatsTable(state.formats);
+            formatsSection.classList.remove('hidden');
+          } else {
+            const errorMsg = data.error || 'Unknown error';
+            showError('Failed to load formats: ' + errorMsg);
 
-                    // Also add error to debug logs if not already there
-                    if (!data.debug_logs || data.debug_logs.length === 0) {
-                        displayDebugLogs([{
-                            type: 'error',
-                            message: errorMsg,
-                            timestamp: new Date().toISOString()
-                        }]);
-                    }
-                }
-            } catch (error) {
-                const errorMsg = 'Error loading formats: ' + error.message;
-                showError(errorMsg);
-
-                // Add to debug logs
-                displayDebugLogs([{
-                    type: 'error',
-                    message: errorMsg,
-                    timestamp: new Date().toISOString()
-                }]);
-            } finally {
-                loading.classList.remove('active');
+            // Also add error to debug logs if not already there
+            if (!data.debug_logs || data.debug_logs.length === 0) {
+              displayDebugLogs([
+                {
+                  type: 'error',
+                  message: errorMsg,
+                  timestamp: new Date().toISOString(),
+                },
+              ]);
             }
+          }
+        } catch (error) {
+          const errorMsg = 'Error loading formats: ' + error.message;
+          showError(errorMsg);
+
+          // Add to debug logs
+          displayDebugLogs([
+            {
+              type: 'error',
+              message: errorMsg,
+              timestamp: new Date().toISOString(),
+            },
+          ]);
+        } finally {
+          loading.classList.remove('active');
         }
+      }
 
-        // Display formats in a table
-        function displayFormatsTable(formats) {
-            const container = document.getElementById('formatsTable');
+      // Display formats (supports both list and cards view)
+      function displayFormatsTable(formats) {
+        if (state.formatsViewMode === 'cards') {
+          displayFormatsCards(formats);
+        } else {
+          displayFormatsList(formats);
+        }
+      }
 
-            const html = `
+      // Display formats as a list/table
+      function displayFormatsList(formats) {
+        const container = document.getElementById('formatsTable');
+
+        const html = `
                 <table>
                     <thead>
                         <tr>
@@ -553,8 +821,10 @@
                         </tr>
                     </thead>
                     <tbody>
-                        ${formats.map((format, index) => {
-                            const dimensions = format.renders && format.renders[0]?.dimensions
+                        ${formats
+                          .map((format, index) => {
+                            const dimensions =
+                              format.renders && format.renders[0]?.dimensions
                                 ? `${format.renders[0].dimensions.width}x${format.renders[0].dimensions.height}`
                                 : 'Variable';
 
@@ -571,29 +841,163 @@
                                     </td>
                                 </tr>
                             `;
-                        }).join('')}
+                          })
+                          .join('')}
                     </tbody>
                 </table>
             `;
 
-            container.innerHTML = html;
+        container.innerHTML = html;
+      }
+
+      // Display formats as cards
+      function displayFormatsCards(formats) {
+        const container = document.getElementById('formatsCards');
+
+        if (formats.length === 0) {
+          container.innerHTML =
+            '<p style="text-align: center; color: #9ca3af; padding: 2rem;">No formats available</p>';
+          return;
         }
 
-        // Select a format and show asset inputs
-        function selectFormat(index) {
-            const format = state.formats[index];
-            state.selectedFormat = format;
-            state.assets = {};
+        const html = formats
+          .map((format, index) => {
+            const formatId =
+              typeof format.format_id === 'object' ? format.format_id.id : String(format.format_id || 'N/A');
+            const hasPreview = format.preview_image;
+            const hasExample = format.example_url;
+            const isGenerative = format.output_format_ids && format.output_format_ids.length > 0;
+            const dimensions =
+              format.renders && format.renders[0]?.dimensions
+                ? `${format.renders[0].dimensions.width}×${format.renders[0].dimensions.height}`
+                : 'Variable';
+            const typeEmoji = getTypeEmoji(format.type);
 
-            // Reset quick examples dropdown
-            const examplesDropdown = document.getElementById('quickExamples');
-            if (examplesDropdown) {
-                examplesDropdown.value = '';
-            }
+            return `
+                    <div class="format-card" onclick="selectFormat(${index})">
+                        ${
+                          hasExample
+                            ? `<a href="${format.example_url}" target="_blank" style="text-decoration: none; color: inherit;" onclick="event.stopPropagation()">
+                                <div class="format-card-preview">
+                                    ${
+                                      hasPreview
+                                        ? `<img src="${format.preview_image}" alt="${format.name}" onerror="this.parentElement.innerHTML='<div class=\\'placeholder\\'>${typeEmoji}</div>'">`
+                                        : `<div class="placeholder">${typeEmoji}</div>`
+                                    }
+                                    <div class="format-card-type-badge">${format.type || 'Unknown'}</div>
+                                </div>
+                            </a>`
+                            : `<div class="format-card-preview">
+                                ${
+                                  hasPreview
+                                    ? `<img src="${format.preview_image}" alt="${format.name}" onerror="this.parentElement.innerHTML='<div class=\\'placeholder\\'>${typeEmoji}</div>'">`
+                                    : `<div class="placeholder">${typeEmoji}</div>`
+                                }
+                                <div class="format-card-type-badge">${format.type || 'Unknown'}</div>
+                            </div>`
+                        }
+                        <div class="format-card-content">
+                            <div class="format-card-title">${format.name || 'Unnamed Format'}</div>
+                            <div class="format-card-format-id">${formatId}</div>
+                            ${
+                              format.description
+                                ? `<div class="format-card-description">${format.description}</div>`
+                                : ''
+                            }
+                            <div class="format-card-details">
+                                <div class="format-card-detail-row">
+                                    <span class="format-card-detail-label">Dimensions</span>
+                                    <span class="format-card-detail-value">${dimensions}</span>
+                                </div>
+                                ${
+                                  format.assets_required
+                                    ? `<div class="format-card-detail-row">
+                                        <span class="format-card-detail-label">Assets</span>
+                                        <span class="format-card-detail-value">${Array.isArray(format.assets_required) ? format.assets_required.length : 'Custom'}</span>
+                                    </div>`
+                                    : ''
+                                }
+                            </div>
+                        </div>
+                        <div class="format-card-footer">
+                            ${
+                              isGenerative
+                                ? '<div class="format-card-generative-badge">✨ Generative</div>'
+                                : '<div></div>'
+                            }
+                            ${
+                              hasExample
+                                ? `<div style="color: #007bff; font-size: 12px;">🔗 Click image for example</div>`
+                                : '<div></div>'
+                            }
+                        </div>
+                    </div>
+                `;
+          })
+          .join('');
 
-            // Show format info
-            const infoDiv = document.getElementById('selectedFormatInfo');
-            infoDiv.innerHTML = `
+        container.innerHTML = html;
+      }
+
+      function getTypeEmoji(type) {
+        const emojiMap = {
+          display: '🖼️',
+          video: '🎬',
+          audio: '🎵',
+          native: '📱',
+          dooh: '📺',
+          rich_media: '✨',
+          universal: '🌐',
+        };
+        return emojiMap[type] || '🎨';
+      }
+
+      // Switch between list and cards view
+      function setFormatsView(mode) {
+        state.formatsViewMode = mode;
+
+        const tableView = document.getElementById('formatsTableView');
+        const cardsView = document.getElementById('formatsCardsView');
+        const listBtn = document.getElementById('view-list-btn');
+        const cardsBtn = document.getElementById('view-cards-btn');
+
+        if (mode === 'cards') {
+          tableView.style.display = 'none';
+          cardsView.style.display = 'block';
+          listBtn.style.background = '#f8f9fa';
+          listBtn.style.color = '#333';
+          cardsBtn.style.background = '#007bff';
+          cardsBtn.style.color = 'white';
+        } else {
+          tableView.style.display = 'block';
+          cardsView.style.display = 'none';
+          listBtn.style.background = '#007bff';
+          listBtn.style.color = 'white';
+          cardsBtn.style.background = '#f8f9fa';
+          cardsBtn.style.color = '#333';
+        }
+
+        // Re-render formats with new view
+        if (state.formats.length > 0) {
+          displayFormatsTable(state.formats);
+        }
+      }
+
+      // Select a format and show asset inputs
+      function selectFormat(index) {
+        const format = state.formats[index];
+        state.selectedFormat = format;
+        state.assets = {};
+
+        // Reset quick examples dropdown
+        const examplesDropdown = document.getElementById('quickExamples');
+        if (examplesDropdown) {
+          examplesDropdown.value = '';
+        }
+
+        // Show format info
+        const infoDiv = document.getElementById('selectedFormatInfo');
+        infoDiv.innerHTML = `
                 <div style="background: #f7fafc; padding: 1rem; border-radius: 8px; margin-bottom: 1.5rem;">
                     <h4 style="margin-top: 0;">${format.name}</h4>
                     <p style="color: #4a5568;">${format.description || 'No description'}</p>
@@ -603,40 +1007,41 @@
                 </div>
             `;
 
-            // Check if format is generative
-            // A format is generative if it has generation_prompt or output_format_ids
-            const hasGenerationPrompt = format.assets_required?.some(a => a.asset_id === 'generation_prompt');
-            const isGenerative = (format.output_format_ids && format.output_format_ids.length > 0) || hasGenerationPrompt;
-            console.log('Format:', format.name);
-            console.log('Has output_format_ids:', format.output_format_ids);
-            console.log('Has generation_prompt:', hasGenerationPrompt);
-            console.log('Is generative:', isGenerative);
+        // Check if format is generative
+        // A format is generative if it has generation_prompt or output_format_ids
+        const hasGenerationPrompt = format.assets_required?.some(a => a.asset_id === 'generation_prompt');
+        const isGenerative = (format.output_format_ids && format.output_format_ids.length > 0) || hasGenerationPrompt;
+        console.log('Format:', format.name);
+        console.log('Has output_format_ids:', format.output_format_ids);
+        console.log('Has generation_prompt:', hasGenerationPrompt);
+        console.log('Is generative:', isGenerative);
 
-            const buildBtn = document.getElementById('buildCreativeBtn');
-            if (buildBtn) {
-                if (isGenerative) {
-                    buildBtn.style.display = 'inline-block';
-                    console.log('Build button shown');
-                } else {
-                    buildBtn.style.display = 'none';
-                    console.log('Build button hidden - not generative');
-                }
-            } else {
-                console.error('Build button not found!');
-            }
+        const buildBtn = document.getElementById('buildCreativeBtn');
+        if (buildBtn) {
+          if (isGenerative) {
+            buildBtn.style.display = 'inline-block';
+            console.log('Build button shown');
+          } else {
+            buildBtn.style.display = 'none';
+            console.log('Build button hidden - not generative');
+          }
+        } else {
+          console.error('Build button not found!');
+        }
 
-            // Show asset inputs
-            const assetsDiv = document.getElementById('assetInputs');
-            const assetsRequired = format.assets_required || [];
+        // Show asset inputs
+        const assetsDiv = document.getElementById('assetInputs');
+        const assetsRequired = format.assets_required || [];
 
-            if (assetsRequired.length === 0) {
-                assetsDiv.innerHTML = '<p style="color: #718096;">This format requires no assets.</p>';
-            } else {
-                const inputsHtml = assetsRequired.map((asset, idx) => {
-                    const isRequired = asset.required ? 'required' : '';
-                    const inputHtml = getAssetInputHtml(asset, idx, isRequired);
+        if (assetsRequired.length === 0) {
+          assetsDiv.innerHTML = '<p style="color: #718096;">This format requires no assets.</p>';
+        } else {
+          const inputsHtml = assetsRequired
+            .map((asset, idx) => {
+              const isRequired = asset.required ? 'required' : '';
+              const inputHtml = getAssetInputHtml(asset, idx, isRequired);
 
-                    return `
+              return `
                         <div class="asset-input">
                             <label>
                                 ${asset.asset_id}
@@ -648,27 +1053,28 @@
                             ${inputHtml}
                         </div>
                     `;
-                }).join('');
+            })
+            .join('');
 
-                assetsDiv.innerHTML = inputsHtml;
-            }
-
-            // Show assets section
-            document.getElementById('assetsSection').classList.remove('hidden');
-            document.getElementById('previewSection').classList.add('hidden');
-
-            // Scroll to assets section
-            document.getElementById('assetsSection').scrollIntoView({ behavior: 'smooth' });
+          assetsDiv.innerHTML = inputsHtml;
         }
 
-        // Get asset input HTML based on asset type
-        function getAssetInputHtml(asset, idx, isRequired) {
-            const assetType = asset.asset_type;
-            const assetId = asset.asset_id;
+        // Show assets section
+        document.getElementById('assetsSection').classList.remove('hidden');
+        document.getElementById('previewSection').classList.add('hidden');
 
-            // For brand_manifest or promoted_offerings: offer URL or JSON paste options
-            if (assetType === 'brand_manifest' || assetType === 'promoted_offerings') {
-                return `
+        // Scroll to assets section
+        document.getElementById('assetsSection').scrollIntoView({ behavior: 'smooth' });
+      }
+
+      // Get asset input HTML based on asset type
+      function getAssetInputHtml(asset, idx, isRequired) {
+        const assetType = asset.asset_type;
+        const assetId = asset.asset_id;
+
+        // For brand_manifest or promoted_offerings: offer URL or JSON paste options
+        if (assetType === 'brand_manifest' || assetType === 'promoted_offerings') {
+          return `
                     <div style="margin-bottom: 0.5rem;">
                         <label style="font-size: 0.875rem; margin-bottom: 0.25rem;">
                             <input type="radio" name="asset_${idx}_type" value="url" checked onchange="toggleAssetInput(${idx}, 'url')"> URL
@@ -678,218 +1084,219 @@
                     <input type="url" id="asset_${idx}" ${isRequired} placeholder="https://example.com/brand.json" style="display: block;">
                     <textarea id="asset_${idx}_json" rows="10" ${isRequired} placeholder='{"brand_manifest": {"name": "Brand Name", ...}}' style="display: none;"></textarea>
                 `;
-            }
-
-            // For url asset type: just URL input
-            if (assetType === 'url') {
-                return `<input type="url" id="asset_${idx}" ${isRequired} placeholder="https://example.com">`;
-            }
-
-            // For text/generation prompts: textarea
-            if (assetType === 'text' || assetId.includes('prompt') || assetId.includes('brief')) {
-                return `<textarea id="asset_${idx}" rows="4" ${isRequired} placeholder="Enter ${assetType}..."></textarea>`;
-            }
-
-            // For HTML: textarea with larger size
-            if (assetType === 'html') {
-                return `<textarea id="asset_${idx}" rows="10" ${isRequired} placeholder="<html>...</html>"></textarea>`;
-            }
-
-            // For images/videos: file upload only
-            if (assetType === 'image') {
-                return `<input type="file" id="asset_${idx}" ${isRequired} accept="image/*">`;
-            }
-
-            if (assetType === 'video') {
-                return `<input type="file" id="asset_${idx}" ${isRequired} accept="video/*">`;
-            }
-
-            // Default: text input
-            return `<input type="text" id="asset_${idx}" ${isRequired} placeholder="Enter ${assetId}...">`;
         }
 
-        // Toggle between URL and JSON input for brand_manifest
-        function toggleAssetInput(idx, type) {
-            const urlInput = document.getElementById(`asset_${idx}`);
-            const jsonInput = document.getElementById(`asset_${idx}_json`);
-
-            if (type === 'url') {
-                urlInput.style.display = 'block';
-                jsonInput.style.display = 'none';
-                jsonInput.removeAttribute('required');
-                if (urlInput.hasAttribute('data-required')) {
-                    urlInput.setAttribute('required', '');
-                }
-            } else {
-                urlInput.style.display = 'none';
-                jsonInput.style.display = 'block';
-                urlInput.removeAttribute('required');
-                if (jsonInput.hasAttribute('data-required')) {
-                    jsonInput.setAttribute('required', '');
-                }
-            }
+        // For url asset type: just URL input
+        if (assetType === 'url') {
+          return `<input type="url" id="asset_${idx}" ${isRequired} placeholder="https://example.com">`;
         }
 
-        // Collect assets from form
-        function collectAssets() {
-            const assetsRequired = state.selectedFormat.assets_required || [];
-            const creativeAssets = {};
-
-            for (let i = 0; i < assetsRequired.length; i++) {
-                const asset = assetsRequired[i];
-                const input = document.getElementById(`asset_${i}`);
-
-                if (!input) continue;
-
-                // Check if this is a brand_manifest or promoted_offerings with JSON option
-                if (asset.asset_type === 'brand_manifest' || asset.asset_type === 'promoted_offerings') {
-                    const jsonInput = document.getElementById(`asset_${i}_json`);
-                    if (jsonInput && jsonInput.style.display !== 'none' && jsonInput.value) {
-                        // Parse JSON input
-                        try {
-                            creativeAssets[asset.asset_id] = JSON.parse(jsonInput.value);
-                        } catch (e) {
-                            // If JSON parsing fails, send as string and let the agent handle it
-                            creativeAssets[asset.asset_id] = jsonInput.value;
-                        }
-                    } else if (input.value) {
-                        // URL input
-                        creativeAssets[asset.asset_id] = input.value;
-                    }
-                } else if (input.type === 'file') {
-                    if (input.files.length > 0) {
-                        // For file uploads, we'd need to handle actual file upload
-                        // For now, show placeholder (this would need proper implementation)
-                        creativeAssets[asset.asset_id] = {
-                            type: asset.asset_type,
-                            filename: input.files[0].name,
-                            note: 'File upload not yet implemented - would need to upload to storage first'
-                        };
-                    }
-                } else if (asset.asset_type === 'text') {
-                    // Text assets must be wrapped in {content: "..."} per schema
-                    if (input.value) {
-                        creativeAssets[asset.asset_id] = {
-                            content: input.value
-                        };
-                    }
-                } else if (asset.asset_type === 'url') {
-                    // URL assets should be wrapped in {url: "..."} per schema
-                    if (input.value) {
-                        creativeAssets[asset.asset_id] = {
-                            url: input.value
-                        };
-                    }
-                } else {
-                    // Other types - send as-is
-                    if (input.value) {
-                        creativeAssets[asset.asset_id] = input.value;
-                    }
-                }
-            }
-
-            return creativeAssets;
+        // For text/generation prompts: textarea
+        if (assetType === 'text' || assetId.includes('prompt') || assetId.includes('brief')) {
+          return `<textarea id="asset_${idx}" rows="4" ${isRequired} placeholder="Enter ${assetType}..."></textarea>`;
         }
 
-        // Preview creative with provided assets
-        async function previewCreative() {
-            const loading = document.getElementById('loading');
-
-            try {
-                loading.classList.add('active');
-                const creativeAssets = collectAssets();
-
-                const response = await fetch('/api/creative/preview-creative', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        agentUrl: state.agentUrl,
-                        protocol: state.protocol,
-                        format_id: state.selectedFormat.format_id,
-                        assets: creativeAssets
-                    })
-                });
-
-                const data = await response.json();
-
-                // Display debug logs if available
-                if (data.debug_logs && Array.isArray(data.debug_logs)) {
-                    displayDebugLogs(data.debug_logs);
-                }
-
-                if (data.success) {
-                    displayPreview(data.data, 'preview');
-                } else {
-                    showError('Failed to preview creative: ' + (data.error || 'Unknown error'));
-                }
-            } catch (error) {
-                showError('Error previewing creative: ' + error.message);
-            } finally {
-                loading.classList.remove('active');
-            }
+        // For HTML: textarea with larger size
+        if (assetType === 'html') {
+          return `<textarea id="asset_${idx}" rows="10" ${isRequired} placeholder="<html>...</html>"></textarea>`;
         }
 
-        // Build creative with provided assets
-        async function buildCreative() {
-            const loading = document.getElementById('loading');
-
-            try {
-                loading.classList.add('active');
-                const creativeAssets = collectAssets();
-
-                const response = await fetch('/api/creative/build-creative', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        agentUrl: state.agentUrl,
-                        protocol: state.protocol,
-                        format_id: state.selectedFormat.format_id,
-                        assets: creativeAssets
-                    })
-                });
-
-                const data = await response.json();
-
-                // Display debug logs if available
-                if (data.debug_logs && Array.isArray(data.debug_logs)) {
-                    displayDebugLogs(data.debug_logs);
-                }
-
-                if (data.success) {
-                    displayPreview(data.data, 'build');
-                } else {
-                    showError('Failed to build creative: ' + (data.error || 'Unknown error'));
-                }
-            } catch (error) {
-                showError('Error building creative: ' + error.message);
-            } finally {
-                loading.classList.remove('active');
-            }
+        // For images/videos: file upload only
+        if (assetType === 'image') {
+          return `<input type="file" id="asset_${idx}" ${isRequired} accept="image/*">`;
         }
 
-        // Display creative preview
-        function displayPreview(result, mode) {
-            const previewSection = document.getElementById('previewSection');
-            const previewContainer = document.getElementById('previewContainer');
+        if (assetType === 'video') {
+          return `<input type="file" id="asset_${idx}" ${isRequired} accept="video/*">`;
+        }
 
-            // Show preview section
-            previewSection.classList.remove('hidden');
+        // Default: text input
+        return `<input type="text" id="asset_${idx}" ${isRequired} placeholder="Enter ${assetId}...">`;
+      }
 
-            const modeLabel = mode === 'build' ? 'Built Creative' : 'Creative Preview';
+      // Toggle between URL and JSON input for brand_manifest
+      function toggleAssetInput(idx, type) {
+        const urlInput = document.getElementById(`asset_${idx}`);
+        const jsonInput = document.getElementById(`asset_${idx}_json`);
 
-            // Handle new schema structure: preview_creative returns { previews: [...] }
-            if (result.previews && Array.isArray(result.previews) && result.previews.length > 0) {
-                let html = `<div style="width: 100%;">
+        if (type === 'url') {
+          urlInput.style.display = 'block';
+          jsonInput.style.display = 'none';
+          jsonInput.removeAttribute('required');
+          if (urlInput.hasAttribute('data-required')) {
+            urlInput.setAttribute('required', '');
+          }
+        } else {
+          urlInput.style.display = 'none';
+          jsonInput.style.display = 'block';
+          urlInput.removeAttribute('required');
+          if (jsonInput.hasAttribute('data-required')) {
+            jsonInput.setAttribute('required', '');
+          }
+        }
+      }
+
+      // Collect assets from form
+      function collectAssets() {
+        const assetsRequired = state.selectedFormat.assets_required || [];
+        const creativeAssets = {};
+
+        for (let i = 0; i < assetsRequired.length; i++) {
+          const asset = assetsRequired[i];
+          const input = document.getElementById(`asset_${i}`);
+
+          if (!input) continue;
+
+          // Check if this is a brand_manifest or promoted_offerings with JSON option
+          if (asset.asset_type === 'brand_manifest' || asset.asset_type === 'promoted_offerings') {
+            const jsonInput = document.getElementById(`asset_${i}_json`);
+            if (jsonInput && jsonInput.style.display !== 'none' && jsonInput.value) {
+              // Parse JSON input
+              try {
+                creativeAssets[asset.asset_id] = JSON.parse(jsonInput.value);
+              } catch (e) {
+                // If JSON parsing fails, send as string and let the agent handle it
+                creativeAssets[asset.asset_id] = jsonInput.value;
+              }
+            } else if (input.value) {
+              // URL input
+              creativeAssets[asset.asset_id] = input.value;
+            }
+          } else if (input.type === 'file') {
+            if (input.files.length > 0) {
+              // For file uploads, we'd need to handle actual file upload
+              // For now, show placeholder (this would need proper implementation)
+              creativeAssets[asset.asset_id] = {
+                type: asset.asset_type,
+                filename: input.files[0].name,
+                note: 'File upload not yet implemented - would need to upload to storage first',
+              };
+            }
+          } else if (asset.asset_type === 'text') {
+            // Text assets must be wrapped in {content: "..."} per schema
+            if (input.value) {
+              creativeAssets[asset.asset_id] = {
+                content: input.value,
+              };
+            }
+          } else if (asset.asset_type === 'url') {
+            // URL assets should be wrapped in {url: "..."} per schema
+            if (input.value) {
+              creativeAssets[asset.asset_id] = {
+                url: input.value,
+              };
+            }
+          } else {
+            // Other types - send as-is
+            if (input.value) {
+              creativeAssets[asset.asset_id] = input.value;
+            }
+          }
+        }
+
+        return creativeAssets;
+      }
+
+      // Preview creative with provided assets
+      async function previewCreative() {
+        const loading = document.getElementById('loading');
+
+        try {
+          loading.classList.add('active');
+          const creativeAssets = collectAssets();
+
+          const response = await fetch('/api/creative/preview-creative', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              agentUrl: state.agentUrl,
+              protocol: state.protocol,
+              format_id: state.selectedFormat.format_id,
+              assets: creativeAssets,
+            }),
+          });
+
+          const data = await response.json();
+
+          // Display debug logs if available
+          if (data.debug_logs && Array.isArray(data.debug_logs)) {
+            displayDebugLogs(data.debug_logs);
+          }
+
+          if (data.success) {
+            displayPreview(data.data, 'preview');
+          } else {
+            showError('Failed to preview creative: ' + (data.error || 'Unknown error'));
+          }
+        } catch (error) {
+          showError('Error previewing creative: ' + error.message);
+        } finally {
+          loading.classList.remove('active');
+        }
+      }
+
+      // Build creative with provided assets
+      async function buildCreative() {
+        const loading = document.getElementById('loading');
+
+        try {
+          loading.classList.add('active');
+          const creativeAssets = collectAssets();
+
+          const response = await fetch('/api/creative/build-creative', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              agentUrl: state.agentUrl,
+              protocol: state.protocol,
+              format_id: state.selectedFormat.format_id,
+              assets: creativeAssets,
+            }),
+          });
+
+          const data = await response.json();
+
+          // Display debug logs if available
+          if (data.debug_logs && Array.isArray(data.debug_logs)) {
+            displayDebugLogs(data.debug_logs);
+          }
+
+          if (data.success) {
+            displayPreview(data.data, 'build');
+          } else {
+            showError('Failed to build creative: ' + (data.error || 'Unknown error'));
+          }
+        } catch (error) {
+          showError('Error building creative: ' + error.message);
+        } finally {
+          loading.classList.remove('active');
+        }
+      }
+
+      // Display creative preview
+      function displayPreview(result, mode) {
+        const previewSection = document.getElementById('previewSection');
+        const previewContainer = document.getElementById('previewContainer');
+
+        // Show preview section
+        previewSection.classList.remove('hidden');
+
+        const modeLabel = mode === 'build' ? 'Built Creative' : 'Creative Preview';
+
+        // Handle new schema structure: preview_creative returns { previews: [...] }
+        if (result.previews && Array.isArray(result.previews) && result.previews.length > 0) {
+          let html = `<div style="width: 100%;">
                     <p style="color: var(--accent-green); font-weight: 600; margin-bottom: 1rem;">✓ ${modeLabel}</p>`;
 
-                result.previews.forEach((preview, idx) => {
-                    if (preview.renders && Array.isArray(preview.renders)) {
-                        preview.renders.forEach((render, renderIdx) => {
-                            const renderLabel = preview.renders.length > 1
-                                ? `${render.role || 'Render'} (${render.dimensions?.width}x${render.dimensions?.height})`
-                                : '';
+          result.previews.forEach((preview, idx) => {
+            if (preview.renders && Array.isArray(preview.renders)) {
+              preview.renders.forEach((render, renderIdx) => {
+                const renderLabel =
+                  preview.renders.length > 1
+                    ? `${render.role || 'Render'} (${render.dimensions?.width}x${render.dimensions?.height})`
+                    : '';
 
-                            html += `
+                html += `
                                 <div style="margin-bottom: 1rem;">
                                     ${renderLabel ? `<p style="font-weight: 500; margin-bottom: 0.5rem;">${renderLabel}</p>` : ''}
                                     <iframe src="${render.preview_url}"
@@ -897,64 +1304,64 @@
                                             style="width: ${render.dimensions?.width || 300}px; height: ${render.dimensions?.height || 250}px; border: 1px solid #ddd; border-radius: 4px;">
                                     </iframe>
                                 </div>`;
-                        });
-                    }
-                });
-
-                html += '</div>';
-                previewContainer.innerHTML = html;
+              });
             }
-            // Handle build_creative response: creative_manifest with assets
-            else if (result.creative_manifest && result.creative_manifest.assets) {
-                const manifest = result.creative_manifest;
-                let html = `<div style="width: 100%;">
+          });
+
+          html += '</div>';
+          previewContainer.innerHTML = html;
+        }
+        // Handle build_creative response: creative_manifest with assets
+        else if (result.creative_manifest && result.creative_manifest.assets) {
+          const manifest = result.creative_manifest;
+          let html = `<div style="width: 100%;">
                     <p style="color: var(--accent-green); font-weight: 600; margin-bottom: 1rem;">✓ ${modeLabel}</p>`;
 
-                // Look for HTML asset (most common for generative formats)
-                const htmlAsset = Object.values(manifest.assets).find(asset =>
-                    asset && typeof asset === 'object' && 'html' in asset
-                );
+          // Look for HTML asset (most common for generative formats)
+          const htmlAsset = Object.values(manifest.assets).find(
+            asset => asset && typeof asset === 'object' && 'html' in asset
+          );
 
-                if (htmlAsset && htmlAsset.html) {
-                    html += `
+          if (htmlAsset && htmlAsset.html) {
+            html += `
                         <div style="margin-bottom: 1rem;">
                             <iframe srcdoc="${htmlAsset.html.replace(/"/g, '&quot;')}"
                                     title="${modeLabel}"
                                     style="width: 300px; height: 250px; border: 1px solid #ddd; border-radius: 4px;">
                             </iframe>
                         </div>`;
-                } else {
-                    // Show the assets in a readable format
-                    html += `<div style="background: white; padding: 1rem; border-radius: 8px; text-align: left;">
+          } else {
+            // Show the assets in a readable format
+            html += `<div style="background: white; padding: 1rem; border-radius: 8px; text-align: left;">
                         <h4 style="margin-top: 0;">Generated Assets:</h4>`;
 
-                    Object.entries(manifest.assets).forEach(([assetId, asset]) => {
-                        html += `<div style="margin-bottom: 1rem;">
+            Object.entries(manifest.assets).forEach(([assetId, asset]) => {
+              html += `<div style="margin-bottom: 1rem;">
                             <strong>${assetId}:</strong>
                             <pre style="background: #f7fafc; padding: 0.5rem; border-radius: 4px; overflow-x: auto; font-size: 0.875rem;">${JSON.stringify(asset, null, 2)}</pre>
                         </div>`;
-                    });
+            });
 
-                    html += '</div>';
-                }
+            html += '</div>';
+          }
 
-                html += '</div>';
-                previewContainer.innerHTML = html;
-            }
-            // Legacy: Check for direct preview_url or creative_url in result
-            else if (result.preview_url || result.creative_url) {
-                const previewUrl = result.preview_url || result.creative_url;
-                previewContainer.innerHTML = `
+          html += '</div>';
+          previewContainer.innerHTML = html;
+        }
+        // Legacy: Check for direct preview_url or creative_url in result
+        else if (result.preview_url || result.creative_url) {
+          const previewUrl = result.preview_url || result.creative_url;
+          previewContainer.innerHTML = `
                     <div style="width: 100%;">
                         <p style="color: var(--accent-green); font-weight: 600; margin-bottom: 1rem;">✓ ${modeLabel}</p>
                         <iframe src="${previewUrl}" title="${modeLabel}"></iframe>
                     </div>
                 `;
-            }
-            // Fallback: Show JSON
-            else {
-                const modeLabel2 = mode === 'build' ? 'built' : 'previewed';
-                previewContainer.innerHTML = `
+        }
+        // Fallback: Show JSON
+        else {
+          const modeLabel2 = mode === 'build' ? 'built' : 'previewed';
+          previewContainer.innerHTML = `
                     <div>
                         <p style="color: var(--accent-green); font-weight: 600;">✓ Creative ${modeLabel2} successfully!</p>
                         <pre style="background: white; padding: 1rem; border-radius: 8px; text-align: left; overflow-x: auto;">
@@ -962,87 +1369,86 @@ ${JSON.stringify(result, null, 2)}
                         </pre>
                     </div>
                 `;
-            }
-
-            // Scroll to preview
-            previewSection.scrollIntoView({ behavior: 'smooth' });
         }
 
-        // Show error message
-        function showError(message) {
-            // Show error in preview section if available, otherwise in assets section
-            const previewSection = document.getElementById('previewSection');
-            const previewContainer = document.getElementById('previewContainer');
+        // Scroll to preview
+        previewSection.scrollIntoView({ behavior: 'smooth' });
+      }
 
-            if (previewContainer) {
-                // Show in preview section with prominent styling
-                previewSection.classList.remove('hidden');
-                previewContainer.innerHTML = `
+      // Show error message
+      function showError(message) {
+        // Show error in preview section if available, otherwise in assets section
+        const previewSection = document.getElementById('previewSection');
+        const previewContainer = document.getElementById('previewContainer');
+
+        if (previewContainer) {
+          // Show in preview section with prominent styling
+          previewSection.classList.remove('hidden');
+          previewContainer.innerHTML = `
                     <div style="width: 100%; text-align: left;">
                         <div class="error" style="max-width: 600px; margin: 0 auto;">
                             <strong>Error:</strong> ${message}
                         </div>
                     </div>
                 `;
-                // Scroll to error
-                previewSection.scrollIntoView({ behavior: 'smooth' });
-            } else {
-                // Fallback: Try multiple containers to ensure error is visible
-                const container = document.getElementById('assetInputs') ||
-                                document.getElementById('formatsSection');
+          // Scroll to error
+          previewSection.scrollIntoView({ behavior: 'smooth' });
+        } else {
+          // Fallback: Try multiple containers to ensure error is visible
+          const container = document.getElementById('assetInputs') || document.getElementById('formatsSection');
 
-                if (container) {
-                    const errorDiv = document.createElement('div');
-                    errorDiv.className = 'error';
-                    errorDiv.textContent = message;
-                    container.appendChild(errorDiv);
+          if (container) {
+            const errorDiv = document.createElement('div');
+            errorDiv.className = 'error';
+            errorDiv.textContent = message;
+            container.appendChild(errorDiv);
 
-                    setTimeout(() => errorDiv.remove(), 10000); // Show for 10 seconds
-                }
-            }
-
-            // Also log to console for debugging
-            console.error('UI Error:', message);
+            setTimeout(() => errorDiv.remove(), 10000); // Show for 10 seconds
+          }
         }
 
-        // Display debug logs
-        function displayDebugLogs(logs) {
-            if (!logs || !Array.isArray(logs) || logs.length === 0) {
-                return;
-            }
+        // Also log to console for debugging
+        console.error('UI Error:', message);
+      }
 
-            const debugSection = document.getElementById('debugSection');
-            const debugLogs = document.getElementById('debugLogs');
+      // Display debug logs
+      function displayDebugLogs(logs) {
+        if (!logs || !Array.isArray(logs) || logs.length === 0) {
+          return;
+        }
 
-            // Show debug section
-            debugSection.classList.remove('hidden');
+        const debugSection = document.getElementById('debugSection');
+        const debugLogs = document.getElementById('debugLogs');
 
-            // Clear initial message
-            if (debugLogs.innerHTML.includes('No logs yet')) {
-                debugLogs.innerHTML = '';
-            }
+        // Show debug section
+        debugSection.classList.remove('hidden');
 
-            // Display each log entry
-            logs.forEach(log => {
-                const entry = document.createElement('div');
-                entry.className = `debug-entry ${log.type || 'request'}`;
+        // Clear initial message
+        if (debugLogs.innerHTML.includes('No logs yet')) {
+          debugLogs.innerHTML = '';
+        }
 
-                const time = log.timestamp ? new Date(log.timestamp).toLocaleTimeString() : new Date().toLocaleTimeString();
-                const method = log.method || log.operation || 'Unknown';
-                const protocol = log.protocol || 'N/A';
+        // Display each log entry
+        logs.forEach(log => {
+          const entry = document.createElement('div');
+          entry.className = `debug-entry ${log.type || 'request'}`;
 
-                let headerText = '';
-                if (log.type === 'request') {
-                    headerText = `→ REQUEST: ${method} (${protocol})`;
-                } else if (log.type === 'response') {
-                    headerText = `← RESPONSE: ${log.status || 'OK'}`;
-                } else if (log.type === 'error') {
-                    headerText = `✗ ERROR: ${method}`;
-                } else {
-                    headerText = `${method} (${protocol})`;
-                }
+          const time = log.timestamp ? new Date(log.timestamp).toLocaleTimeString() : new Date().toLocaleTimeString();
+          const method = log.method || log.operation || 'Unknown';
+          const protocol = log.protocol || 'N/A';
 
-                entry.innerHTML = `
+          let headerText = '';
+          if (log.type === 'request') {
+            headerText = `→ REQUEST: ${method} (${protocol})`;
+          } else if (log.type === 'response') {
+            headerText = `← RESPONSE: ${log.status || 'OK'}`;
+          } else if (log.type === 'error') {
+            headerText = `✗ ERROR: ${method}`;
+          } else {
+            headerText = `${method} (${protocol})`;
+          }
+
+          entry.innerHTML = `
                     <div class="debug-header">
                         <span>${headerText}</span>
                         <span class="debug-time">${time}</span>
@@ -1050,217 +1456,223 @@ ${JSON.stringify(result, null, 2)}
                     ${log.body || log.message ? `<div class="debug-body">${formatDebugBody(log.body || log.message)}</div>` : ''}
                 `;
 
-                debugLogs.appendChild(entry);
-            });
+          debugLogs.appendChild(entry);
+        });
 
-            // Auto-scroll to bottom
-            debugLogs.scrollTop = debugLogs.scrollHeight;
+        // Auto-scroll to bottom
+        debugLogs.scrollTop = debugLogs.scrollHeight;
+      }
+
+      // Format debug body for display
+      function formatDebugBody(body) {
+        if (typeof body === 'string') {
+          try {
+            const parsed = JSON.parse(body);
+            return JSON.stringify(parsed, null, 2);
+          } catch (e) {
+            return body;
+          }
+        } else if (typeof body === 'object') {
+          return JSON.stringify(body, null, 2);
         }
+        return String(body);
+      }
 
-        // Format debug body for display
-        function formatDebugBody(body) {
-            if (typeof body === 'string') {
-                try {
-                    const parsed = JSON.parse(body);
-                    return JSON.stringify(parsed, null, 2);
-                } catch (e) {
-                    return body;
-                }
-            } else if (typeof body === 'object') {
-                return JSON.stringify(body, null, 2);
-            }
-            return String(body);
-        }
-
-        // Quick example data
-        const QUICK_EXAMPLES = {
-            'nike-shoes': {
-                name: 'Nike Air Max Shoes',
-                assets: {
-                    url: {
-                        url: 'https://www.nike.com/air-max'
-                    },
-                    promoted_offerings: {
-                        brand_manifest: {
-                            name: 'Nike',
-                            description: 'Just Do It - Athletic footwear and apparel',
-                            tagline: 'Just Do It',
-                            colors: {
-                                primary: '#000000',
-                                secondary: '#FFFFFF'
-                            }
-                        }
-                    },
-                    generation_prompt: {
-                        content: 'Create a dynamic ad showcasing Nike Air Max shoes with bold typography and energetic design'
-                    },
-                    headline: {
-                        content: 'Step into the Future with Nike Air Max'
-                    },
-                    description: {
-                        content: 'Experience unparalleled comfort and style with the latest Air Max technology'
-                    },
-                    call_to_action: {
-                        content: 'Shop Now'
-                    }
-                }
+      // Quick example data
+      const QUICK_EXAMPLES = {
+        'nike-shoes': {
+          name: 'Nike Air Max Shoes',
+          assets: {
+            url: {
+              url: 'https://www.nike.com/air-max',
             },
-            'coffee-brand': {
+            promoted_offerings: {
+              brand_manifest: {
+                name: 'Nike',
+                description: 'Just Do It - Athletic footwear and apparel',
+                tagline: 'Just Do It',
+                colors: {
+                  primary: '#000000',
+                  secondary: '#FFFFFF',
+                },
+              },
+            },
+            generation_prompt: {
+              content: 'Create a dynamic ad showcasing Nike Air Max shoes with bold typography and energetic design',
+            },
+            headline: {
+              content: 'Step into the Future with Nike Air Max',
+            },
+            description: {
+              content: 'Experience unparalleled comfort and style with the latest Air Max technology',
+            },
+            call_to_action: {
+              content: 'Shop Now',
+            },
+          },
+        },
+        'coffee-brand': {
+          name: 'Artisan Coffee Co.',
+          assets: {
+            url: {
+              url: 'https://www.artisancoffee.example.com',
+            },
+            promoted_offerings: {
+              brand_manifest: {
                 name: 'Artisan Coffee Co.',
-                assets: {
-                    url: {
-                        url: 'https://www.artisancoffee.example.com'
-                    },
-                    promoted_offerings: {
-                        brand_manifest: {
-                            name: 'Artisan Coffee Co.',
-                            description: 'Premium small-batch roasted coffee',
-                            tagline: 'Crafted with Passion',
-                            colors: {
-                                primary: '#3E2723',
-                                secondary: '#D7CCC8'
-                            }
-                        }
-                    },
-                    generation_prompt: {
-                        content: 'Create a warm, inviting ad for artisan coffee with earthy tones and cozy atmosphere'
-                    },
-                    headline: {
-                        content: 'Wake Up to Excellence'
-                    },
-                    description: {
-                        content: 'Discover our hand-selected beans roasted to perfection'
-                    },
-                    call_to_action: {
-                        content: 'Order Fresh Coffee'
-                    }
-                }
+                description: 'Premium small-batch roasted coffee',
+                tagline: 'Crafted with Passion',
+                colors: {
+                  primary: '#3E2723',
+                  secondary: '#D7CCC8',
+                },
+              },
             },
-            'tech-product': {
-                name: 'SmartHome Hub Pro',
-                assets: {
-                    url: {
-                        url: 'https://www.smarthub.example.com'
-                    },
-                    promoted_offerings: {
-                        brand_manifest: {
-                            name: 'TechCo',
-                            description: 'Smart home solutions for modern living',
-                            tagline: 'Your Home, Smarter',
-                            colors: {
-                                primary: '#1976D2',
-                                secondary: '#FFC107'
-                            }
-                        }
-                    },
-                    generation_prompt: {
-                        content: 'Create a sleek, modern tech ad showing connected smart home devices with clean design'
-                    },
-                    headline: {
-                        content: 'Control Everything from Anywhere'
-                    },
-                    description: {
-                        content: 'The SmartHome Hub Pro connects all your devices in one beautiful interface'
-                    },
-                    call_to_action: {
-                        content: 'Pre-Order Now'
-                    }
-                }
+            generation_prompt: {
+              content: 'Create a warm, inviting ad for artisan coffee with earthy tones and cozy atmosphere',
             },
-            'fashion-retail': {
-                name: 'Spring Fashion Sale',
-                assets: {
-                    url: {
-                        url: 'https://www.fashionhouse.example.com/sale'
-                    },
-                    promoted_offerings: {
-                        brand_manifest: {
-                            name: 'Fashion House',
-                            description: 'Contemporary fashion for confident individuals',
-                            tagline: 'Express Yourself',
-                            colors: {
-                                primary: '#E91E63',
-                                secondary: '#9C27B0'
-                            }
-                        }
-                    },
-                    generation_prompt: {
-                        content: 'Create an elegant fashion ad with vibrant spring colors and contemporary styling'
-                    },
-                    headline: {
-                        content: 'Spring Collection - Up to 50% Off'
-                    },
-                    description: {
-                        content: 'Refresh your wardrobe with our stunning new spring collection'
-                    },
-                    call_to_action: {
-                        content: 'Shop the Sale'
-                    }
-                }
-            }
-        };
+            headline: {
+              content: 'Wake Up to Excellence',
+            },
+            description: {
+              content: 'Discover our hand-selected beans roasted to perfection',
+            },
+            call_to_action: {
+              content: 'Order Fresh Coffee',
+            },
+          },
+        },
+        'tech-product': {
+          name: 'SmartHome Hub Pro',
+          assets: {
+            url: {
+              url: 'https://www.smarthub.example.com',
+            },
+            promoted_offerings: {
+              brand_manifest: {
+                name: 'TechCo',
+                description: 'Smart home solutions for modern living',
+                tagline: 'Your Home, Smarter',
+                colors: {
+                  primary: '#1976D2',
+                  secondary: '#FFC107',
+                },
+              },
+            },
+            generation_prompt: {
+              content: 'Create a sleek, modern tech ad showing connected smart home devices with clean design',
+            },
+            headline: {
+              content: 'Control Everything from Anywhere',
+            },
+            description: {
+              content: 'The SmartHome Hub Pro connects all your devices in one beautiful interface',
+            },
+            call_to_action: {
+              content: 'Pre-Order Now',
+            },
+          },
+        },
+        'fashion-retail': {
+          name: 'Spring Fashion Sale',
+          assets: {
+            url: {
+              url: 'https://www.fashionhouse.example.com/sale',
+            },
+            promoted_offerings: {
+              brand_manifest: {
+                name: 'Fashion House',
+                description: 'Contemporary fashion for confident individuals',
+                tagline: 'Express Yourself',
+                colors: {
+                  primary: '#E91E63',
+                  secondary: '#9C27B0',
+                },
+              },
+            },
+            generation_prompt: {
+              content: 'Create an elegant fashion ad with vibrant spring colors and contemporary styling',
+            },
+            headline: {
+              content: 'Spring Collection - Up to 50% Off',
+            },
+            description: {
+              content: 'Refresh your wardrobe with our stunning new spring collection',
+            },
+            call_to_action: {
+              content: 'Shop the Sale',
+            },
+          },
+        },
+      };
 
-        // Load a quick example
-        function loadQuickExample() {
-            const select = document.getElementById('quickExamples');
-            const exampleKey = select.value;
+      // Load a quick example
+      function loadQuickExample() {
+        const select = document.getElementById('quickExamples');
+        const exampleKey = select.value;
 
-            if (!exampleKey || !QUICK_EXAMPLES[exampleKey]) {
-                return;
-            }
-
-            const example = QUICK_EXAMPLES[exampleKey];
-            const assetsRequired = state.selectedFormat?.assets_required || [];
-
-            console.log('Loading example:', exampleKey);
-            console.log('Assets required:', assetsRequired.map(a => a.asset_id));
-            console.log('Example assets:', Object.keys(example.assets));
-
-            // Fill in the asset inputs with example data
-            assetsRequired.forEach((asset, idx) => {
-                const assetId = asset.asset_id;
-                const exampleValue = example.assets[assetId];
-
-                console.log(`Checking asset ${idx}: ${assetId}, has example value:`, exampleValue !== undefined);
-
-                if (exampleValue !== undefined) {
-                    const input = document.getElementById(`asset_${idx}`);
-                    const jsonInput = document.getElementById(`asset_${idx}_json`);
-
-                    console.log(`Input found for asset_${idx}:`, !!input, 'JSON input:', !!jsonInput);
-
-                    // Handle brand_manifest and promoted_offerings specially (complex objects)
-                    if ((assetId === 'brand_manifest' || assetId === 'promoted_offerings') && typeof exampleValue === 'object') {
-                        if (jsonInput) {
-                            jsonInput.value = JSON.stringify(exampleValue, null, 2);
-                            // Switch to JSON input mode
-                            const radioJson = document.querySelector(`input[name="asset_${idx}_type"][value="json"]`);
-                            if (radioJson) {
-                                radioJson.checked = true;
-                                toggleAssetInput(idx, 'json');
-                            }
-                        } else if (input) {
-                            input.value = JSON.stringify(exampleValue);
-                        }
-                    } else if (typeof exampleValue === 'object') {
-                        // For text/url assets that are objects like {content: "..."} or {url: "..."}
-                        if (exampleValue.content && input) {
-                            input.value = exampleValue.content;
-                        } else if (exampleValue.url && input) {
-                            input.value = exampleValue.url;
-                        } else if (input) {
-                            input.value = JSON.stringify(exampleValue);
-                        }
-                    } else if (input) {
-                        input.value = exampleValue;
-                    }
-                } else {
-                    console.log(`No example value for asset: ${assetId}`);
-                }
-            });
-
-            console.log('Example loaded successfully');
+        if (!exampleKey || !QUICK_EXAMPLES[exampleKey]) {
+          return;
         }
+
+        const example = QUICK_EXAMPLES[exampleKey];
+        const assetsRequired = state.selectedFormat?.assets_required || [];
+
+        console.log('Loading example:', exampleKey);
+        console.log(
+          'Assets required:',
+          assetsRequired.map(a => a.asset_id)
+        );
+        console.log('Example assets:', Object.keys(example.assets));
+
+        // Fill in the asset inputs with example data
+        assetsRequired.forEach((asset, idx) => {
+          const assetId = asset.asset_id;
+          const exampleValue = example.assets[assetId];
+
+          console.log(`Checking asset ${idx}: ${assetId}, has example value:`, exampleValue !== undefined);
+
+          if (exampleValue !== undefined) {
+            const input = document.getElementById(`asset_${idx}`);
+            const jsonInput = document.getElementById(`asset_${idx}_json`);
+
+            console.log(`Input found for asset_${idx}:`, !!input, 'JSON input:', !!jsonInput);
+
+            // Handle brand_manifest and promoted_offerings specially (complex objects)
+            if (
+              (assetId === 'brand_manifest' || assetId === 'promoted_offerings') &&
+              typeof exampleValue === 'object'
+            ) {
+              if (jsonInput) {
+                jsonInput.value = JSON.stringify(exampleValue, null, 2);
+                // Switch to JSON input mode
+                const radioJson = document.querySelector(`input[name="asset_${idx}_type"][value="json"]`);
+                if (radioJson) {
+                  radioJson.checked = true;
+                  toggleAssetInput(idx, 'json');
+                }
+              } else if (input) {
+                input.value = JSON.stringify(exampleValue);
+              }
+            } else if (typeof exampleValue === 'object') {
+              // For text/url assets that are objects like {content: "..."} or {url: "..."}
+              if (exampleValue.content && input) {
+                input.value = exampleValue.content;
+              } else if (exampleValue.url && input) {
+                input.value = exampleValue.url;
+              } else if (input) {
+                input.value = JSON.stringify(exampleValue);
+              }
+            } else if (input) {
+              input.value = exampleValue;
+            }
+          } else {
+            console.log(`No example value for asset: ${assetId}`);
+          }
+        });
+
+        console.log('Example loaded successfully');
+      }
     </script>
-</body>
+  </body>
 </html>

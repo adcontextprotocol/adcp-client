@@ -79,11 +79,15 @@ const TARGET_TYPES = [
 
 // Tool request/response types to generate
 const TOOL_TYPES = [
+  // Error type (needed by many responses)
+  'Error',
+
   // Media Buy tools
   'GetProductsRequest',
   'GetProductsResponse',
   'ListCreativeFormatsRequest',
   'ListCreativeFormatsResponse',
+  'Format', // Used by ListCreativeFormatsResponse
   'CreateMediaBuyRequest',
   'CreateMediaBuyResponse',
   'UpdateMediaBuyRequest',
@@ -98,6 +102,9 @@ const TOOL_TYPES = [
   'SyncCreativesResponse',
   'ListCreativesRequest',
   'ListCreativesResponse',
+  'SubAsset',
+  'SubAsset1',
+  'SubAsset2',
   'BuildCreativeRequest',
   'BuildCreativeResponse',
   'PreviewCreativeRequest',
@@ -116,6 +123,8 @@ const TOOL_TYPES = [
   'GetSignalsResponse',
   'ActivateSignalRequest',
   'ActivateSignalResponse',
+  'Destination', // Discriminated union: platform or agent destinations
+  'Deployment', // Discriminated union: platform or agent deployments
 
   // Supporting types
   'PackageRequest',
@@ -168,36 +177,34 @@ async function generateZodSchemas() {
     const coreContent = readFileSync(CORE_SOURCE_FILE, 'utf8');
     const toolsContent = readFileSync(TOOLS_SOURCE_FILE, 'utf8');
 
-    // Generate Zod schemas for core types
-    console.log(`📦 Generating core schemas for ${TARGET_TYPES.length} types...`);
+    // Merge both sources so cross-file type dependencies can be resolved
+    const combinedSource = `${coreContent}\n\n// ====== TOOL TYPES ======\n\n${toolsContent}`;
+    const allTypes = [...TARGET_TYPES, ...TOOL_TYPES];
 
-    const coreResult = generate({
-      sourceText: coreContent,
-      nameFilter: (name) => TARGET_TYPES.includes(name),
+    console.log(
+      `📦 Generating ${allTypes.length} schemas from combined source (${TARGET_TYPES.length} core + ${TOOL_TYPES.length} tools)...`
+    );
+
+    const result = generate({
+      sourceText: combinedSource,
+      nameFilter: name => allTypes.includes(name),
       skipParseJSDoc: false,
-      getSchemaName: (name) => `${name}Schema`,
+      getSchemaName: name => `${name}Schema`,
     });
 
-    // Generate Zod schemas for tool types
-    console.log(`📦 Generating tool schemas for ${TOOL_TYPES.length} types...`);
-
-    const toolsResult = generate({
-      sourceText: toolsContent,
-      nameFilter: (name) => TOOL_TYPES.includes(name),
-      skipParseJSDoc: false,
-      getSchemaName: (name) => `${name}Schema`,
-    });
-
-    const allErrors = [...coreResult.errors, ...toolsResult.errors];
-
-    if (allErrors.length > 0) {
-      console.error('⚠️  Errors during generation:');
-      allErrors.forEach(error => console.error(`   - ${error}`));
+    // Check for generation errors and fail hard if any exist
+    if (result.errors.length > 0) {
+      console.error('❌ Schema generation failed with errors:');
+      result.errors.forEach(error => console.error(`   ${error}`));
+      console.error('\n💡 If schemas are missing due to dependencies:');
+      console.error('   1. Add the missing types to TARGET_TYPES or TOOL_TYPES in this script');
+      console.error('   2. Ensure all dependent types are also included');
+      console.error('   3. Re-run: npm run generate-zod-schemas\n');
+      process.exit(1);
     }
 
     // Get the generated Zod schemas
-    const coreSchemas = coreResult.getZodSchemasFile();
-    const toolSchemas = toolsResult.getZodSchemasFile();
+    const zodSchemas = result.getZodSchemasFile();
 
     // Create header with metadata
     const header = `// Generated Zod v4 schemas from TypeScript types
@@ -211,35 +218,7 @@ async function generateZodSchemas() {
 
 `;
 
-    // Combine schemas (remove duplicate imports and duplicate exports)
-    let combinedSchemas = coreSchemas;
-
-    // Parse tool schemas to remove duplicates that already exist in core
-    const coreSchemaNames = new Set(
-      Array.from(coreSchemas.matchAll(/export const (\w+Schema) =/g)).map(m => m[1])
-    );
-
-    // Filter out duplicate schemas from tools - need to handle multi-line exports
-    const toolSchemasWithoutImport = toolSchemas.replace(/^import \{ z \} from "zod";\s*/m, '');
-
-    // Split by export statements and filter
-    const exportStatements = toolSchemasWithoutImport.split(/(?=export const )/);
-    const deduplicatedExports = exportStatements.filter(statement => {
-      if (!statement.trim()) return false;
-
-      const match = statement.match(/export const (\w+Schema) =/);
-      if (match && coreSchemaNames.has(match[1])) {
-        console.log(`   Skipping duplicate schema: ${match[1]}`);
-        return false;
-      }
-      return true;
-    });
-
-    const deduplicatedToolSchemas = deduplicatedExports.join('');
-
-    combinedSchemas += '\n// ====== TOOL SCHEMAS ======\n' + deduplicatedToolSchemas;
-
-    const finalContent = header + combinedSchemas;
+    const finalContent = header + zodSchemas;
 
     // Write the output
     const changed = writeFileIfChanged(OUTPUT_FILE, finalContent);
@@ -250,15 +229,9 @@ async function generateZodSchemas() {
       console.log(`✅ Zod schemas are up to date: ${OUTPUT_FILE}`);
     }
 
-    const totalCount = TARGET_TYPES.length + TOOL_TYPES.length;
-    console.log(`📊 Generated ${totalCount} Zod v4 schemas (${TARGET_TYPES.length} core + ${TOOL_TYPES.length} tools)`);
-
-    if (allErrors.length === 0) {
-      console.log('✨ No errors!');
-    } else {
-      console.log(`⚠️  Completed with ${allErrors.length} warnings`);
-    }
-
+    const totalCount = allTypes.length;
+    console.log(`📊 Generated ${totalCount} Zod v4 schemas`);
+    console.log('✨ No errors!');
   } catch (error) {
     console.error('❌ Failed to generate Zod schemas:', error);
     process.exit(1);

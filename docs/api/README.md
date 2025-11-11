@@ -8,7 +8,7 @@
 
 - [Agent](classes/Agent.md)
 - [AgentCollection](classes/AgentCollection.md)
-- [ADCPClient](classes/ADCPClient.md)
+- [AdCPClient](classes/AdCPClient.md)
 - [NewAgentCollection](classes/NewAgentCollection.md)
 - [ADCPMultiAgentClient](classes/ADCPMultiAgentClient.md)
 - [AgentClient](classes/AgentClient.md)
@@ -35,7 +35,7 @@
 
 ## Interfaces
 
-- [ADCPClientConfig](interfaces/ADCPClientConfig.md)
+- [AdCPClientConfig](interfaces/AdCPClientConfig.md)
 - [Message](interfaces/Message.md)
 - [InputRequest](interfaces/InputRequest.md)
 - [ConversationContext](interfaces/ConversationContext.md)
@@ -139,7 +139,7 @@
 - [createAdCPHeaders](functions/createAdCPHeaders.md)
 - [createAuthenticatedFetch](functions/createAuthenticatedFetch.md)
 - [createMCPAuthHeaders](functions/createMCPAuthHeaders.md)
-- [createADCPClient](functions/createADCPClient.md)
+- [createAdCPClient](functions/createAdCPClient.md)
 - [createADCPMultiAgentClient](functions/createADCPMultiAgentClient.md)
 - [isADCPError](functions/isADCPError.md)
 - [isErrorOfType](functions/isErrorOfType.md)

@@ -12,7 +12,7 @@ const colors = {
   green: '\x1b[32m',
   yellow: '\x1b[33m',
   blue: '\x1b[34m',
-  reset: '\x1b[0m'
+  reset: '\x1b[0m',
 };
 
 function log(message, color = 'reset') {
@@ -33,10 +33,34 @@ if echo "$COMMIT_MSG" | grep -qE "^Merge (branch|pull request)"; then
   exit 0
 fi
 
-# Run commitlint
-echo "$COMMIT_MSG" | npx commitlint --config commitlint.config.js
+# Run commitlint - check if npx is available
+# First try to find Node.js in common locations
+if [ -f "$HOME/.nvm/versions/node/v20.19.1/bin/npx" ]; then
+  NPX_CMD="$HOME/.nvm/versions/node/v20.19.1/bin/npx"
+elif command -v npx >/dev/null 2>&1; then
+  NPX_CMD="npx"
+elif [ -f "/opt/homebrew/bin/npx" ]; then
+  NPX_CMD="/opt/homebrew/bin/npx"
+elif [ -f "/usr/local/bin/npx" ]; then
+  NPX_CMD="/usr/local/bin/npx"
+else
+  NPX_CMD=""
+fi
 
-if [ $? -ne 0 ]; then
+# Run commitlint using the project's local installation
+if [ -n "$NPX_CMD" ]; then
+  # Change to the project directory to ensure we use local node_modules
+  cd "$(dirname "$0")/../.." || exit 1
+
+  echo "$COMMIT_MSG" | $NPX_CMD commitlint --config commitlint.config.js
+  COMMITLINT_EXIT=$?
+else
+  echo "❌ npx not found - Node.js is required for commit message validation"
+  echo "   Install Node.js or ensure npx is in your PATH"
+  exit 1
+fi
+
+if [ $COMMITLINT_EXIT -ne 0 ]; then
   echo ""
   echo "❌ Commit message does not follow conventional commits format!"
   echo ""
@@ -57,44 +81,51 @@ fi
 const prePushHook = `#!/bin/bash
 
 # Pre-push hook to validate code before pushing
-# This mirrors GitHub Actions CI checks locally
+# Goal: Fast validation (<10s) - CI will run comprehensive checks
 
 echo "🔍 Running pre-push validation..."
 
-# Check if schema cache exists
-if [ ! -d "schemas/cache/latest" ]; then
-  echo "⚠️  Schema cache not found - this is your first push"
-  echo "📥 Downloading schemas from AdCP specification..."
-  npm run sync-schemas
-fi
+# Only run essential fast checks locally:
+# 1. TypeScript compilation (catches syntax/type errors)
+# 2. Build (ensures code compiles)
+# 3. Skip schema sync (too slow, CI will catch issues)
+# 4. Skip tests (too slow, CI will catch issues)
 
-# Run the comprehensive CI validation (includes schema validation)
-npm run ci:pre-push
-
+echo "📝 Checking TypeScript types..."
+npm run typecheck
 if [ $? -ne 0 ]; then
   echo ""
-  echo "❌ Pre-push validation failed!"
-  echo "🔧 Fix the issues above before pushing"
-  echo ""
-  echo "💡 To run validation manually: npm run ci:validate"
-  echo "💡 Schema issues? Try: npm run sync-schemas && npm run generate-types"
+  echo "❌ TypeScript errors found!"
+  echo "🔧 Fix type errors before pushing"
   echo ""
   exit 1
 fi
 
-echo "✅ Pre-push validation passed! Proceeding with push..."
+echo "🔨 Building library..."
+npm run build:lib > /dev/null 2>&1
+if [ $? -ne 0 ]; then
+  echo ""
+  echo "❌ Build failed!"
+  echo "🔧 Fix build errors before pushing"
+  echo ""
+  npm run build:lib
+  exit 1
+fi
+
+echo "✅ Pre-push validation passed! (~5s)"
+echo "💡 Full validation (tests, schemas) will run in GitHub Actions CI"
 `;
 
 function installHooks() {
   // Handle both regular git repos and git worktrees
   let gitDir = path.join(process.cwd(), '.git');
-  
+
   // Check if .git exists
   if (!fs.existsSync(gitDir)) {
     log('❌ Not a git repository', 'red');
     process.exit(1);
   }
-  
+
   // If .git is a file (worktree), read the actual git directory
   if (fs.statSync(gitDir).isFile()) {
     const gitContent = fs.readFileSync(gitDir, 'utf8').trim();
@@ -105,7 +136,7 @@ function installHooks() {
       }
     }
   }
-  
+
   const hooksDir = path.join(gitDir, 'hooks');
   const prePushPath = path.join(hooksDir, 'pre-push');
   const commitMsgPath = path.join(hooksDir, 'commit-msg');
@@ -134,10 +165,12 @@ function installHooks() {
   // Install pre-push hook
   if (fs.existsSync(prePushPath)) {
     const existingContent = fs.readFileSync(prePushPath, 'utf8');
-    if (!existingContent.includes('npm run ci:pre-push')) {
+    // Update if it's the old slow version or doesn't have our fast hook
+    if (existingContent.includes('npm run ci:pre-push') || !existingContent.includes('Fast validation')) {
       fs.writeFileSync(prePushPath, prePushHook);
       fs.chmodSync(prePushPath, 0o755);
       installed++;
+      log('  ✨ Updated pre-push hook to fast version', 'green');
     }
   } else {
     fs.writeFileSync(prePushPath, prePushHook);
@@ -154,15 +187,15 @@ function installHooks() {
   log('', 'reset');
   log('🪝 Installed hooks:', 'blue');
   log('  • commit-msg - Validates commit message format (conventional commits)', 'reset');
-  log('  • pre-push   - Runs schema checks, typecheck, build, and tests', 'reset');
+  log('  • pre-push   - Fast validation: typecheck + build (~5s)', 'reset');
   log('', 'reset');
-  log('⚠️  Note: Git hooks may not work in all environments (worktrees, some git clients)', 'yellow');
-  log('   CI on GitHub is the source of truth for validation', 'yellow');
+  log('⚡ What changed: Pre-push now runs FAST checks only (~5s)', 'green');
+  log('   Full tests, schema validation run in GitHub Actions CI', 'reset');
   log('', 'reset');
   log('💡 What this prevents:', 'blue');
   log('  • Commit messages that fail CI commitlint checks', 'reset');
-  log('  • Pushing code that doesn\'t build or pass tests', 'reset');
-  log('  • Schema synchronization issues', 'reset');
+  log('  • Pushing code with TypeScript errors or build failures', 'reset');
+  log('  • Note: Tests/schemas validated in CI (too slow for local)', 'reset');
 }
 
 // CLI execution

@@ -23,7 +23,7 @@ class FileBackup {
     this.filesToBackup = [
       'src/lib/types/core.generated.ts',
       'src/lib/types/tools.generated.ts',
-      'src/lib/agents/index.generated.ts'
+      'src/lib/agents/index.generated.ts',
     ];
   }
 
@@ -47,7 +47,7 @@ class FileBackup {
     for (const file of this.filesToBackup) {
       const fullPath = path.join(__dirname, '..', file);
       const backupPath = path.join(this.backupDir, path.basename(file));
-      
+
       if (existsSync(backupPath)) {
         const content = readFileSync(backupPath, 'utf8');
         writeFileSync(fullPath, content);
@@ -65,7 +65,7 @@ class FileBackup {
     for (const file of this.filesToBackup) {
       const fullPath = path.join(__dirname, '..', file);
       const backupPath = path.join(this.backupDir, path.basename(file));
-      
+
       if (!existsSync(fullPath) && !existsSync(backupPath)) {
         continue; // Both missing, no difference
       }
@@ -91,7 +91,7 @@ class FileBackup {
     if (differences.length === 0) {
       return {
         success: true,
-        message: '✅ Generated types match committed types - schemas are in sync'
+        message: '✅ Generated types match committed types - schemas are in sync',
       };
     }
 
@@ -101,10 +101,10 @@ class FileBackup {
       details: differences,
       suggestions: [
         'Run: npm run sync-schemas',
-        'Run: npm run generate-types', 
+        'Run: npm run generate-types',
         'Run: npm run sync-version --auto-update',
-        'Commit the updated files'
-      ]
+        'Commit the updated files',
+      ],
     };
   }
 }
@@ -133,7 +133,6 @@ async function validateSchemas(): Promise<ValidationResult> {
     const result = backup.compare();
 
     return result;
-
   } catch (error) {
     return {
       success: false,
@@ -141,8 +140,8 @@ async function validateSchemas(): Promise<ValidationResult> {
       suggestions: [
         'Check your internet connection',
         'Verify AdCP schema endpoints are accessible',
-        'Run npm run sync-schemas manually for detailed errors'
-      ]
+        'Run npm run sync-schemas manually for detailed errors',
+      ],
     };
   } finally {
     // Always restore original files
@@ -159,7 +158,7 @@ function validateVersionAlignment(): ValidationResult {
     if (!existsSync(packagePath)) {
       return {
         success: false,
-        message: '❌ package.json not found'
+        message: '❌ package.json not found',
       };
     }
 
@@ -167,7 +166,7 @@ function validateVersionAlignment(): ValidationResult {
       return {
         success: false,
         message: '❌ Schema cache not found',
-        suggestions: ['Run: npm run sync-schemas']
+        suggestions: ['Run: npm run sync-schemas'],
       };
     }
 
@@ -181,7 +180,7 @@ function validateVersionAlignment(): ValidationResult {
       return {
         success: false,
         message: '⚠️ package.json missing adcp_version field',
-        suggestions: ['Run: npm run sync-version --auto-update']
+        suggestions: ['Run: npm run sync-version --auto-update'],
       };
     }
 
@@ -189,19 +188,18 @@ function validateVersionAlignment(): ValidationResult {
       return {
         success: false,
         message: `⚠️ Version mismatch: package.json has ${libraryAdcpVersion}, schemas are ${actualAdcpVersion}`,
-        suggestions: ['Run: npm run sync-version --auto-update']
+        suggestions: ['Run: npm run sync-version --auto-update'],
       };
     }
 
     return {
       success: true,
-      message: `✅ Version alignment correct: AdCP v${actualAdcpVersion}`
+      message: `✅ Version alignment correct: AdCP v${actualAdcpVersion}`,
     };
-
   } catch (error) {
     return {
       success: false,
-      message: `❌ Version validation failed: ${error.message}`
+      message: `❌ Version validation failed: ${error.message}`,
     };
   }
 }
@@ -238,7 +236,7 @@ async function validate(): Promise<void> {
 
   // 3. Summary
   const allPassed = results.every(r => r.success);
-  
+
   if (allPassed) {
     console.log('🎉 All validations passed!');
     console.log('✅ Schemas are synchronized and types are up to date');
