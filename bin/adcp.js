@@ -196,7 +196,10 @@ async function main() {
     name: 'CLI Agent',
     agent_uri: agentUrl,
     protocol: protocol,
-    ...(authToken && { auth_token_env: authToken })
+    ...(authToken && {
+      auth_token_env: authToken,
+      requiresAuth: true
+    })
   };
 
   try {

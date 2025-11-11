@@ -156,14 +156,6 @@ export class ADCPClient {
     const { StreamableHTTPClientTransport } = await import('@modelcontextprotocol/sdk/client/streamableHttp.js');
 
     const authToken = this.agent.auth_token_env;
-    const customFetch = authToken ? async (input: any, init?: any) => {
-      const headers = {
-        ...init?.headers,
-        'Authorization': `Bearer ${authToken}`,
-        'x-adcp-auth': authToken
-      };
-      return fetch(input, { ...init, headers });
-    } : undefined;
 
     const testEndpoint = async (url: string): Promise<boolean> => {
       try {
@@ -172,9 +164,22 @@ export class ADCPClient {
           version: '1.0.0'
         });
 
+        const transportOptions: any = {
+          requestInit: {
+            headers: {
+              'Accept': 'application/json, text/event-stream'
+            }
+          }
+        };
+
+        if (authToken) {
+          transportOptions.requestInit.headers['Authorization'] = `Bearer ${authToken}`;
+          transportOptions.requestInit.headers['x-adcp-auth'] = authToken;
+        }
+
         const transport = new StreamableHTTPClientTransport(
           new URL(url),
-          customFetch ? { fetch: customFetch } : {}
+          transportOptions
         );
 
         await mcpClient.connect(transport);

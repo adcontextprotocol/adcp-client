@@ -90,10 +90,17 @@ export async function callMCPTool(
       version: '1.0.0'
     });
 
-    // Use the SDK with custom fetch function for authentication
-    const transport = new StreamableHTTPClientTransport(baseUrl, {
-      fetch: customFetch
-    });
+    // Configure transport with proper headers including Accept header required by MCP
+    const transportOptions: any = {
+      requestInit: {
+        headers: {
+          'Accept': 'application/json, text/event-stream',
+          ...authHeaders
+        }
+      }
+    };
+
+    const transport = new StreamableHTTPClientTransport(baseUrl, transportOptions);
     await mcpClient.connect(transport);
     
     debugLogs.push({
