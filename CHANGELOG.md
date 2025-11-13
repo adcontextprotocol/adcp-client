@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.3
+
+### Patch Changes
+
+- a4cc9da: Fix CLI tool missing dependency file in published package. The adcp command now works correctly when installed via npx.
+
 ## 3.0.2
 
 ### Patch Changes
