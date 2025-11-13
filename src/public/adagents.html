@@ -490,34 +490,24 @@
             <p>Validate, create, and manage adagents.json files for the Ad Context Protocol. Ensure your domain properly declares authorized sales agents according to the AdCP specification.</p>
         </div>
 
-        <!-- Domain Validation Section -->
+        <!-- Unified AdAgents.json Manager Section -->
         <div class="section">
-            <h3>🔍 Domain Validation</h3>
-            <p style="color: #666; margin-bottom: 20px;">Check if a domain has a properly formatted adagents.json file and validate agent cards. Enter any domain to validate compliance with the AdCP specification.</p>
-            
-            <div style="display: flex; gap: 12px; margin-bottom: 20px;">
-                <input type="text" id="domain-input" placeholder="example.com" style="flex: 1;">
-                <button class="btn" onclick="validateDomain()" id="validate-btn">🔍 Validate Domain</button>
-            </div>
-            
-            <div id="validation-results" style="display: none;">
-                <!-- Validation results will be populated here -->
-            </div>
-        </div>
+            <h3 id="main-section-title">🔗 Manage AdAgents.json</h3>
+            <p id="main-section-description" style="color: #666; margin-bottom: 20px;">Enter your domain to create or update your adagents.json file. We'll automatically detect if you have an existing file and load it for editing.</p>
 
-        <!-- AdAgents.json Creator Section -->
-        <div class="section">
-            <h3 id="creator-section-title">📝 Create AdAgents.json</h3>
-            <p id="creator-section-description" style="color: #666; margin-bottom: 20px;">Create a properly formatted adagents.json file for your domain. Add authorized sales agents and generate a compliant file ready for deployment.</p>
-            
             <!-- Domain Input Step -->
-            <div id="creator-domain-step">
-                <h4>Step 1: Enter Your Domain</h4>
-                <p style="color: #666; margin-bottom: 16px;">First, enter your domain name to get personalized deployment instructions.</p>
+            <div id="domain-input-step">
+                <h4>Enter Your Domain</h4>
+                <p style="color: #666; margin-bottom: 16px;">Start by entering your domain name. We'll check for existing configuration and help you create or update your adagents.json file.</p>
                 <div style="display: flex; gap: 12px; margin-bottom: 20px;">
-                    <input type="text" id="creator-domain-input" placeholder="example.com" style="flex: 1;">
-                    <button class="btn" onclick="startCreating()" id="start-creating-btn">▶️ Start Creating</button>
+                    <input type="text" id="domain-input" placeholder="example.com" style="flex: 1;">
+                    <button class="btn" onclick="startManaging()" id="start-btn">▶️ Continue</button>
                 </div>
+            </div>
+
+            <!-- Validation Results (shown after domain check) -->
+            <div id="validation-status" style="display: none; margin-bottom: 20px;">
+                <!-- Validation status will be shown here -->
             </div>
             
             <!-- Agent Creation Form (hidden initially) -->
@@ -628,57 +618,195 @@
         // AdAgents.json Management Functions
         // ============================================================================
 
-        async function validateDomain() {
+        async function startManaging() {
             const domain = document.getElementById('domain-input').value.trim();
-            const validateBtn = document.getElementById('validate-btn');
-            const resultsDiv = document.getElementById('validation-results');
+            const startBtn = document.getElementById('start-btn');
+            const statusDiv = document.getElementById('validation-status');
 
             if (!domain) {
                 alert('Please enter a domain name');
                 return;
             }
 
-            validateBtn.disabled = true;
-            validateBtn.textContent = '🔄 Validating...';
-            resultsDiv.style.display = 'none';
+            // Normalize domain
+            const normalizedDomain = domain.replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/$/, '');
+
+            startBtn.disabled = true;
+            startBtn.textContent = '🔄 Checking domain...';
+            statusDiv.style.display = 'none';
 
             try {
-                console.log(`Validating adagents.json for domain: ${domain}`);
-                
+                console.log(`Checking adagents.json for domain: ${normalizedDomain}`);
+
                 const response = await fetch('/api/adagents/validate', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
                     },
-                    body: JSON.stringify({ domain })
+                    body: JSON.stringify({ domain: normalizedDomain })
                 });
 
                 const result = await response.json();
-                
-                if (result.success) {
-                    displayValidationResults(result.data);
-                    console.log(`Domain validation completed for ${domain}`);
+                let isUpdate = false;
+                let existingAgents = [];
+                let statusHtml = '';
+
+                if (result.success && result.data.found) {
+                    if (result.data.validation.valid) {
+                        // Valid adagents.json exists - this is an update
+                        isUpdate = true;
+                        if (result.data.validation.raw_data && result.data.validation.raw_data.authorized_agents) {
+                            existingAgents = result.data.validation.raw_data.authorized_agents;
+                        }
+                        statusHtml = `
+                            <div style="background: #d1fae5; border: 1px solid #6ee7b7; border-radius: 8px; padding: 16px;">
+                                <strong style="color: #065f46;">✅ Found existing adagents.json</strong><br>
+                                <span style="color: #047857;">Found ${existingAgents.length} agent(s). Edit them below or add new ones.</span>
+                            </div>
+                        `;
+                        console.log(`Found existing valid adagents.json with ${existingAgents.length} agents`);
+                    } else {
+                        // Invalid adagents.json found
+                        statusHtml = `
+                            <div style="background: #fef3c7; border: 1px solid #fbbf24; border-radius: 8px; padding: 16px;">
+                                <strong style="color: #92400e;">⚠️ Found invalid adagents.json</strong><br>
+                                <span style="color: #b45309;">Your existing file has errors. Let's create a new valid one.</span>
+                            </div>
+                        `;
+                        console.log('Found invalid adagents.json - will create new file');
+                    }
                 } else {
-                    throw new Error(result.error || 'Validation failed');
+                    // No adagents.json found
+                    statusHtml = `
+                        <div style="background: #e0e7ff; border: 1px solid #a5b4fc; border-radius: 8px; padding: 16px;">
+                            <strong style="color: #3730a3;">📝 No adagents.json found</strong><br>
+                            <span style="color: #4f46e5;">Let's create one for your domain.</span>
+                        </div>
+                    `;
+                    console.log('No adagents.json found - will create new file');
                 }
 
+                statusDiv.innerHTML = statusHtml;
+                statusDiv.style.display = 'block';
+
+                // Update UI based on create vs update mode
+                updateUIForMode(normalizedDomain, isUpdate, existingAgents);
+
+                // Hide domain step, show creation form
+                document.getElementById('domain-input-step').style.display = 'none';
+                document.getElementById('creator-form').style.display = 'block';
+
+                startBtn.disabled = false;
+                startBtn.textContent = '▶️ Continue';
+
             } catch (error) {
-                console.error(`Domain validation failed: ${error.message}`);
-                resultsDiv.innerHTML = `
-                    <div class="validation-result result-error">
-                        <strong>❌ Validation Error</strong><br>
-                        ${error.message}
+                console.error(`Error checking domain: ${error.message}`);
+                statusDiv.innerHTML = `
+                    <div style="background: #fee2e2; border: 1px solid #fca5a5; border-radius: 8px; padding: 16px;">
+                        <strong style="color: #991b1b;">❌ Error checking domain</strong><br>
+                        <span style="color: #dc2626;">${error.message}</span><br>
+                        <span style="color: #7f1d1d;">Continuing in create mode...</span>
                     </div>
                 `;
-                resultsDiv.style.display = 'block';
-            } finally {
-                validateBtn.disabled = false;
-                validateBtn.textContent = '🔍 Validate Domain';
+                statusDiv.style.display = 'block';
+
+                // On error, default to create mode
+                updateUIForMode(normalizedDomain, false, []);
+
+                // Hide domain step, show creation form
+                document.getElementById('domain-input-step').style.display = 'none';
+                document.getElementById('creator-form').style.display = 'block';
+
+                startBtn.disabled = false;
+                startBtn.textContent = '▶️ Continue';
             }
         }
 
+        function updateUIForMode(normalizedDomain, isUpdate, existingAgents) {
+            // Update section title
+            const sectionTitle = document.getElementById('main-section-title');
+
+            if (isUpdate) {
+                sectionTitle.innerHTML = '📝 Update AdAgents.json';
+            } else {
+                sectionTitle.innerHTML = '📝 Create AdAgents.json';
+            }
+
+            // Update personalized instructions
+            document.getElementById('user-domain-display').textContent = normalizedDomain;
+            document.getElementById('user-file-path').textContent = `https://${normalizedDomain}/.well-known/adagents.json`;
+            document.getElementById('generated-domain-display').textContent = normalizedDomain;
+            document.getElementById('reminder-file-path').textContent = `https://${normalizedDomain}/.well-known/adagents.json`;
+
+            // Pre-populate agents if updating
+            if (isUpdate && existingAgents.length > 0) {
+                const agentsList = document.getElementById('agents-list');
+                agentsList.innerHTML = '';
+
+                existingAgents.forEach(agent => {
+                    const newEntry = document.createElement('div');
+                    newEntry.className = 'agent-entry';
+
+                    const hasProperties = agent.properties && agent.properties.length > 0;
+
+                    newEntry.innerHTML = `
+                        <div class="agent-entry-header">
+                            <input type="url" placeholder="https://agent.example.com" style="flex: 2;" class="agent-url" value="${agent.url}">
+                            <input type="text" placeholder="Authorized for all products and services" style="flex: 3;" class="agent-auth" value="${agent.authorized_for}">
+                            <button class="btn" onclick="removeAgentEntry(this)" style="background: #dc3545;">✖️</button>
+                        </div>
+                        <div class="properties-toggle" onclick="toggleProperties(this)">
+                            ${hasProperties ? '➖ Hide Properties' : '➕ Add Properties (optional)'}
+                        </div>
+                        <div class="properties-section ${hasProperties ? 'visible' : ''}">
+                            <h5>Properties for this agent:</h5>
+                            <div class="properties-list"></div>
+                            <button class="btn btn-secondary" onclick="addProperty(this)" style="margin-top: 8px; padding: 6px 12px; font-size: 13px;">➕ Add Property</button>
+                        </div>
+                    `;
+
+                    agentsList.appendChild(newEntry);
+
+                    // Add existing properties
+                    if (hasProperties) {
+                        const propertiesList = newEntry.querySelector('.properties-list');
+                        agent.properties.forEach(prop => {
+                            const propertyEntry = document.createElement('div');
+                            propertyEntry.className = 'property-entry';
+                            const identifier = prop.identifiers && prop.identifiers[0] ? `${prop.identifiers[0].type}:${prop.identifiers[0].value}` : '';
+                            propertyEntry.innerHTML = `
+                                <select class="property-type">
+                                    <option value="website" ${prop.property_type === 'website' ? 'selected' : ''}>Website</option>
+                                    <option value="mobile_app" ${prop.property_type === 'mobile_app' ? 'selected' : ''}>Mobile App</option>
+                                    <option value="ctv_app" ${prop.property_type === 'ctv_app' ? 'selected' : ''}>CTV App</option>
+                                    <option value="dooh" ${prop.property_type === 'dooh' ? 'selected' : ''}>DOOH</option>
+                                    <option value="podcast" ${prop.property_type === 'podcast' ? 'selected' : ''}>Podcast</option>
+                                    <option value="radio" ${prop.property_type === 'radio' ? 'selected' : ''}>Radio</option>
+                                    <option value="streaming_audio" ${prop.property_type === 'streaming_audio' ? 'selected' : ''}>Streaming Audio</option>
+                                </select>
+                                <input type="text" placeholder="Property name" class="property-name" value="${prop.name || ''}">
+                                <input type="text" placeholder="domain:example.com or type:value" class="property-identifier" value="${identifier}">
+                                <button class="btn" onclick="removeProperty(this)" style="background: #dc3545;">✖️</button>
+                            `;
+                            propertiesList.appendChild(propertyEntry);
+                        });
+                    }
+                });
+
+                console.log(`Pre-populated ${existingAgents.length} existing agents for update`);
+            }
+
+            // Update step 2 title
+            const step2Title = document.getElementById('step-2-title');
+            if (isUpdate) {
+                step2Title.textContent = 'Step 2: Update Authorized Agents';
+            } else {
+                step2Title.textContent = 'Step 2: Add Authorized Agents';
+            }
+        }
+
+        // Legacy function - keeping for backward compatibility (not used anymore)
         function displayValidationResults(data) {
-            const resultsDiv = document.getElementById('validation-results');
             const { domain, found, validation, agent_cards } = data;
 
             let html = `<h4>Validation Results for ${domain}</h4>`;
@@ -1145,165 +1273,11 @@
             document.getElementById('json-output').value = '';
         }
 
-        async function startCreating() {
-            const domain = document.getElementById('creator-domain-input').value.trim();
-            const startBtn = document.getElementById('start-creating-btn');
-            
-            if (!domain) {
-                alert('Please enter a domain name');
-                return;
-            }
-
-            // Normalize domain (remove protocol, www, trailing slash)
-            const normalizedDomain = domain.replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/$/, '');
-            
-            startBtn.disabled = true;
-            startBtn.textContent = '🔄 Checking domain...';
-            
-            try {
-                // First validate domain to see if adagents.json exists
-                console.log(`Checking existing adagents.json for domain: ${normalizedDomain}`);
-                
-                const response = await fetch('/api/adagents/validate', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({ domain: normalizedDomain })
-                });
-
-                const result = await response.json();
-                let isUpdate = false;
-                let existingAgents = [];
-                
-                if (result.success && result.data.found && result.data.validation.valid) {
-                    // Valid adagents.json exists - this is an update
-                    isUpdate = true;
-                    if (result.data.validation.raw_data && result.data.validation.raw_data.authorized_agents) {
-                        existingAgents = result.data.validation.raw_data.authorized_agents;
-                    }
-                    console.log(`Found existing valid adagents.json with ${existingAgents.length} agents`);
-                } else {
-                    console.log(`No valid adagents.json found - will create new file`);
-                }
-
-                // Update UI based on create vs update mode
-                updateUIForCreateOrUpdate(normalizedDomain, isUpdate, existingAgents);
-                
-                // Hide domain step, show creation form
-                document.getElementById('creator-domain-step').style.display = 'none';
-                document.getElementById('creator-form').style.display = 'block';
-                
-                startBtn.disabled = false;
-                startBtn.textContent = '▶️ Start Creating';
-                
-            } catch (error) {
-                console.error(`Error checking domain: ${error.message}`);
-                // On error, default to create mode
-                updateUIForCreateOrUpdate(normalizedDomain, false, []);
-                
-                // Hide domain step, show creation form
-                document.getElementById('creator-domain-step').style.display = 'none';
-                document.getElementById('creator-form').style.display = 'block';
-                
-                startBtn.disabled = false;
-                startBtn.textContent = '▶️ Start Creating';
-            }
-        }
-
-        function updateUIForCreateOrUpdate(normalizedDomain, isUpdate, existingAgents) {
-            // Update section title and description
-            const sectionTitle = document.getElementById('creator-section-title');
-            const sectionDescription = document.getElementById('creator-section-description');
-            
-            if (isUpdate) {
-                sectionTitle.innerHTML = '📝 Update AdAgents.json';
-                sectionDescription.textContent = 'Update the existing adagents.json file for your domain. Modify authorized sales agents and generate an updated compliant file ready for deployment.';
-            } else {
-                sectionTitle.innerHTML = '📝 Create AdAgents.json';
-                sectionDescription.textContent = 'Create a properly formatted adagents.json file for your domain. Add authorized sales agents and generate a compliant file ready for deployment.';
-            }
-            
-            // Update personalized instructions
-            document.getElementById('user-domain-display').textContent = normalizedDomain;
-            document.getElementById('user-file-path').textContent = `https://${normalizedDomain}/.well-known/adagents.json`;
-            document.getElementById('generated-domain-display').textContent = normalizedDomain;
-            document.getElementById('reminder-file-path').textContent = `https://${normalizedDomain}/.well-known/adagents.json`;
-            
-            // Pre-populate agents if updating
-            if (isUpdate && existingAgents.length > 0) {
-                const agentsList = document.getElementById('agents-list');
-                agentsList.innerHTML = '';
-                
-                existingAgents.forEach(agent => {
-                    const newEntry = document.createElement('div');
-                    newEntry.className = 'agent-entry';
-
-                    const hasProperties = agent.properties && agent.properties.length > 0;
-
-                    newEntry.innerHTML = `
-                        <div class="agent-entry-header">
-                            <input type="url" placeholder="https://agent.example.com" style="flex: 2;" class="agent-url" value="${agent.url}">
-                            <input type="text" placeholder="Authorized for all products and services" style="flex: 3;" class="agent-auth" value="${agent.authorized_for}">
-                            <button class="btn" onclick="removeAgentEntry(this)" style="background: #dc3545;">✖️</button>
-                        </div>
-                        <div class="properties-toggle" onclick="toggleProperties(this)">
-                            ${hasProperties ? '➖ Hide Properties' : '➕ Add Properties (optional)'}
-                        </div>
-                        <div class="properties-section ${hasProperties ? 'visible' : ''}">
-                            <h5>Properties for this agent:</h5>
-                            <div class="properties-list"></div>
-                            <button class="btn btn-secondary" onclick="addProperty(this)" style="margin-top: 8px; padding: 6px 12px; font-size: 13px;">➕ Add Property</button>
-                        </div>
-                    `;
-
-                    agentsList.appendChild(newEntry);
-
-                    // Add existing properties
-                    if (hasProperties) {
-                        const propertiesList = newEntry.querySelector('.properties-list');
-                        agent.properties.forEach(prop => {
-                            const propertyEntry = document.createElement('div');
-                            propertyEntry.className = 'property-entry';
-                            const identifier = prop.identifiers && prop.identifiers[0] ? `${prop.identifiers[0].type}:${prop.identifiers[0].value}` : '';
-                            propertyEntry.innerHTML = `
-                                <select class="property-type">
-                                    <option value="website" ${prop.property_type === 'website' ? 'selected' : ''}>Website</option>
-                                    <option value="mobile_app" ${prop.property_type === 'mobile_app' ? 'selected' : ''}>Mobile App</option>
-                                    <option value="ctv_app" ${prop.property_type === 'ctv_app' ? 'selected' : ''}>CTV App</option>
-                                    <option value="dooh" ${prop.property_type === 'dooh' ? 'selected' : ''}>DOOH</option>
-                                    <option value="podcast" ${prop.property_type === 'podcast' ? 'selected' : ''}>Podcast</option>
-                                    <option value="radio" ${prop.property_type === 'radio' ? 'selected' : ''}>Radio</option>
-                                    <option value="streaming_audio" ${prop.property_type === 'streaming_audio' ? 'selected' : ''}>Streaming Audio</option>
-                                </select>
-                                <input type="text" placeholder="Property name" class="property-name" value="${prop.name || ''}">
-                                <input type="text" placeholder="domain:example.com or type:value" class="property-identifier" value="${identifier}">
-                                <button class="btn" onclick="removeProperty(this)" style="background: #dc3545;">✖️</button>
-                            `;
-                            propertiesList.appendChild(propertyEntry);
-                        });
-                    }
-                });
-                
-                console.log(`Pre-populated ${existingAgents.length} existing agents for update`);
-            }
-            
-            // Update personalized instructions based on create/update mode
-            const instructionsHeading = document.querySelector('#personalized-instructions h4');
-            const step2Title = document.getElementById('step-2-title');
-            if (isUpdate) {
-                instructionsHeading.innerHTML = `📍 File Update Instructions for <span id="user-domain-display">${normalizedDomain}</span>`;
-                step2Title.textContent = 'Step 2: Update Authorized Agents';
-            } else {
-                instructionsHeading.innerHTML = `📍 File Placement Instructions for <span id="user-domain-display">${normalizedDomain}</span>`;
-                step2Title.textContent = 'Step 2: Add Authorized Agents';
-            }
-        }
-
         function resetCreator() {
             // Clear form data
-            document.getElementById('creator-domain-input').value = '';
+            document.getElementById('domain-input').value = '';
             document.getElementById('json-output').value = '';
+            document.getElementById('validation-status').style.display = 'none';
 
             // Reset agent entries to single default entry
             const agentsList = document.getElementById('agents-list');
@@ -1330,9 +1304,12 @@
             document.getElementById('generated-json').style.display = 'none';
             document.getElementById('validate-cards-btn').style.display = 'none';
             document.getElementById('agent-cards-results').style.display = 'none';
-            document.getElementById('creator-domain-step').style.display = 'block';
-            
-            console.log('Reset adagents.json creator to domain entry step');
+            document.getElementById('domain-input-step').style.display = 'block';
+
+            // Reset section title
+            document.getElementById('main-section-title').innerHTML = '🔗 Manage AdAgents.json';
+
+            console.log('Reset adagents.json manager to domain entry step');
         }
 
         // Initialize with one example agent entry
