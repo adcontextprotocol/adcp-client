@@ -1,4 +1,4 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
@@ -46,13 +46,7 @@
 
       /* Modern Typography System */
       body {
-        font-family:
-          'Inter',
-          -apple-system,
-          BlinkMacSystemFont,
-          'Segoe UI',
-          Roboto,
-          sans-serif;
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
         font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
         line-height: 1.6;
         color: var(--text-primary);
@@ -72,8 +66,7 @@
         left: 0;
         width: 100%;
         height: 100%;
-        background:
-          radial-gradient(circle at 20% 50%, rgba(120, 119, 198, 0.3) 0%, transparent 50%),
+        background: radial-gradient(circle at 20% 50%, rgba(120, 119, 198, 0.3) 0%, transparent 50%),
           radial-gradient(circle at 80% 20%, rgba(255, 119, 198, 0.3) 0%, transparent 50%),
           radial-gradient(circle at 40% 80%, rgba(120, 119, 198, 0.2) 0%, transparent 50%);
         pointer-events: none;
@@ -173,9 +166,7 @@
         border-radius: 16px;
         padding: 32px;
         margin-bottom: 32px;
-        box-shadow:
-          0 8px 32px rgba(0, 0, 0, 0.08),
-          0 1px 3px rgba(0, 0, 0, 0.12);
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.08), 0 1px 3px rgba(0, 0, 0, 0.12);
         transition: all var(--timing-normal) var(--easing);
         position: relative;
         overflow: hidden;
@@ -1517,9 +1508,17 @@
             html += `
                         <div style="margin-bottom: 10px; padding: 12px; border-left: 4px solid ${statusColor}; background: white; border-radius: 4px;">
                             <strong>${status} ${card.agent_url}${agentName}</strong>${endpointInfo}
-                            ${card.response_time_ms ? `<span style="color: #666; font-size: 12px;"> (${card.response_time_ms}ms)</span>` : ''}
+                            ${
+                              card.response_time_ms
+                                ? `<span style="color: #666; font-size: 12px;"> (${card.response_time_ms}ms)</span>`
+                                : ''
+                            }
                             ${card.status_code ? `<br><em>HTTP ${card.status_code}</em>` : ''}
-                            ${card.errors.length > 0 ? `<br><span style="color: #dc2626;">Errors: ${card.errors.join(', ')}</span>` : ''}
+                            ${
+                              card.errors.length > 0
+                                ? `<br><span style="color: #dc2626;">Errors: ${card.errors.join(', ')}</span>`
+                                : ''
+                            }
                         </div>
                     `;
           });
@@ -1531,7 +1530,11 @@
           html += `
                     <details style="margin-top: 20px;">
                         <summary style="cursor: pointer; font-weight: bold; color: var(--text-secondary);">📄 Raw AdAgents.json Data</summary>
-                        <pre style="background: #1a202c; color: #f7fafc; padding: 16px; border-radius: 8px; margin-top: 12px; font-size: 12px; overflow-x: auto;">${JSON.stringify(validation.raw_data, null, 2)}</pre>
+                        <pre style="background: #1a202c; color: #f7fafc; padding: 16px; border-radius: 8px; margin-top: 12px; font-size: 12px; overflow-x: auto;">${JSON.stringify(
+                          validation.raw_data,
+                          null,
+                          2
+                        )}</pre>
                     </details>
                 `;
         }
@@ -1729,7 +1732,9 @@
             if (assignedAgents === 0) {
               assignmentTag = `<span class="dashboard-card-tag warning">⚠️ All agents can sell</span>`;
             } else {
-              assignmentTag = `<span class="dashboard-card-tag assigned">🔗 ${assignedAgents} agent${assignedAgents > 1 ? 's' : ''} assigned</span>`;
+              assignmentTag = `<span class="dashboard-card-tag assigned">🔗 ${assignedAgents} agent${
+                assignedAgents > 1 ? 's' : ''
+              } assigned</span>`;
             }
 
             return `
@@ -1983,11 +1988,15 @@
           formContainer.innerHTML = `
                     <div class="form-group">
                         <label>Primary Domain</label>
-                        <input type="text" id="identifier-domain" placeholder="e.g., cnn.com" value="${existingDomain?.value || ''}">
+                        <input type="text" id="identifier-domain" placeholder="e.g., cnn.com" value="${
+                          existingDomain?.value || ''
+                        }">
                     </div>
                     <div class="form-group">
                         <label style="display: flex; align-items: center; cursor: pointer;">
-                            <input type="checkbox" id="include-subdomains" ${includeSubdomains ? 'checked' : ''} style="margin-right: 8px;">
+                            <input type="checkbox" id="include-subdomains" ${
+                              includeSubdomains ? 'checked' : ''
+                            } style="margin-right: 8px;">
                             Include all subdomains
                         </label>
                         <p style="font-size: 12px; color: #666; margin: 4px 0 0 0;">
@@ -2016,9 +2025,13 @@
                                 const existing = existingIdentifiers.find(i => i.type === p.key);
                                 return `
                                     <div class="identifier-item">
-                                        <input type="checkbox" id="platform-${p.key}" ${existing ? 'checked' : ''} onchange="togglePlatformInput('${p.key}')">
+                                        <input type="checkbox" id="platform-${p.key}" ${
+                                  existing ? 'checked' : ''
+                                } onchange="togglePlatformInput('${p.key}')">
                                         <label for="platform-${p.key}">${p.label}</label>
-                                        <input type="text" id="identifier-${p.key}" placeholder="${p.placeholder}" value="${existing?.value || ''}" ${!existing ? 'disabled' : ''}>
+                                        <input type="text" id="identifier-${p.key}" placeholder="${
+                                  p.placeholder
+                                }" value="${existing?.value || ''}" ${!existing ? 'disabled' : ''}>
                                     </div>
                                 `;
                               })
@@ -2043,9 +2056,13 @@
                                 const existing = existingIdentifiers.find(i => i.type === p.key);
                                 return `
                                     <div class="identifier-item">
-                                        <input type="checkbox" id="platform-${p.key}" ${existing ? 'checked' : ''} onchange="togglePlatformInput('${p.key}')">
+                                        <input type="checkbox" id="platform-${p.key}" ${
+                                  existing ? 'checked' : ''
+                                } onchange="togglePlatformInput('${p.key}')">
                                         <label for="platform-${p.key}">${p.label}</label>
-                                        <input type="text" id="identifier-${p.key}" placeholder="${p.placeholder}" value="${existing?.value || ''}" ${!existing ? 'disabled' : ''}>
+                                        <input type="text" id="identifier-${p.key}" placeholder="${
+                                  p.placeholder
+                                }" value="${existing?.value || ''}" ${!existing ? 'disabled' : ''}>
                                     </div>
                                 `;
                               })
@@ -2069,9 +2086,13 @@
                                 const existing = existingIdentifiers.find(i => i.type === p.key);
                                 return `
                                     <div class="identifier-item">
-                                        <input type="checkbox" id="platform-${p.key}" ${existing ? 'checked' : ''} onchange="togglePlatformInput('${p.key}')">
+                                        <input type="checkbox" id="platform-${p.key}" ${
+                                  existing ? 'checked' : ''
+                                } onchange="togglePlatformInput('${p.key}')">
                                         <label for="platform-${p.key}">${p.label}</label>
-                                        <input type="text" id="identifier-${p.key}" placeholder="${p.placeholder}" value="${existing?.value || ''}" ${!existing ? 'disabled' : ''}>
+                                        <input type="text" id="identifier-${p.key}" placeholder="${
+                                  p.placeholder
+                                }" value="${existing?.value || ''}" ${!existing ? 'disabled' : ''}>
                                     </div>
                                 `;
                               })
@@ -2084,7 +2105,9 @@
           formContainer.innerHTML = `
                     <div class="form-group">
                         <label>Identifier Value</label>
-                        <input type="text" id="identifier-custom" placeholder="Enter identifier" value="${existingIdentifiers[0]?.value || ''}">
+                        <input type="text" id="identifier-custom" placeholder="Enter identifier" value="${
+                          existingIdentifiers[0]?.value || ''
+                        }">
                     </div>
                 `;
         }
@@ -2370,7 +2393,9 @@
             const isSelected = state.selectedPropertyIds.includes(prop.property_id);
 
             return `
-                    <div class="dashboard-card" style="border: ${isSelected ? '2px solid #3b82f6' : '2px solid #e2e8f0'};">
+                    <div class="dashboard-card" style="border: ${
+                      isSelected ? '2px solid #3b82f6' : '2px solid #e2e8f0'
+                    };">
                         <div class="dashboard-card-content">
                             <label style="display: flex; align-items: center; cursor: pointer;">
                                 <input type="checkbox" ${isSelected ? 'checked' : ''}
@@ -2472,7 +2497,9 @@
           .map(
             prop => `
                 <label style="display: block; padding: 4px 0; cursor: pointer;">
-                    <input type="checkbox" value="${prop.property_id}" ${selectedIds.includes(prop.property_id) ? 'checked' : ''} style="margin-right: 6px;">
+                    <input type="checkbox" value="${prop.property_id}" ${
+              selectedIds.includes(prop.property_id) ? 'checked' : ''
+            } style="margin-right: 6px;">
                     ${getPropertyIcon(prop.property_type)} ${prop.property_id} - ${prop.name}
                 </label>
             `
@@ -2493,7 +2520,9 @@
           .map(
             tag => `
                 <label style="display: block; padding: 4px 0; cursor: pointer;">
-                    <input type="checkbox" value="${tag}" ${selectedTags.includes(tag) ? 'checked' : ''} style="margin-right: 6px;">
+                    <input type="checkbox" value="${tag}" ${
+              selectedTags.includes(tag) ? 'checked' : ''
+            } style="margin-right: 6px;">
                     🏷️ ${tag}
                 </label>
             `
@@ -2855,11 +2884,15 @@
                         <select class="property-type">
                             ${PROPERTY_TYPES.map(
                               type =>
-                                `<option value="${type}" ${type === example.property_type ? 'selected' : ''}>${type}</option>`
+                                `<option value="${type}" ${
+                                  type === example.property_type ? 'selected' : ''
+                                }>${type}</option>`
                             ).join('')}
                         </select>
                         <input type="text" placeholder="Property Name" class="property-name" value="${example.name}">
-                        <input type="text" placeholder="Tags (comma-separated)" class="property-tags" value="${example.tags?.join(', ') || ''}">
+                        <input type="text" placeholder="Tags (comma-separated)" class="property-tags" value="${
+                          example.tags?.join(', ') || ''
+                        }">
                         <button class="btn" onclick="removePropertyEntry(this)" style="background: #dc3545;">✖️</button>
                     </div>
                     <div class="property-identifiers">
@@ -2872,10 +2905,14 @@
                                     <select class="identifier-type">
                                         ${IDENTIFIER_TYPES.map(
                                           type =>
-                                            `<option value="${type}" ${type === id.type ? 'selected' : ''}>${type}</option>`
+                                            `<option value="${type}" ${
+                                              type === id.type ? 'selected' : ''
+                                            }>${type}</option>`
                                         ).join('')}
                                     </select>
-                                    <input type="text" placeholder="Identifier value" class="identifier-value" value="${id.value}">
+                                    <input type="text" placeholder="Identifier value" class="identifier-value" value="${
+                                      id.value
+                                    }">
                                     <button class="btn" onclick="removeIdentifierEntry(this)" style="background: #dc3545; padding: 6px 10px;">✖️</button>
                                 </div>
                             `
@@ -3084,10 +3121,22 @@
           html += `
                     <div style="margin-bottom: 10px; padding: 12px; border-left: 4px solid ${statusColor}; background: white; border-radius: 4px;">
                         <strong>${status} ${card.agent_url}</strong>
-                        ${card.response_time_ms ? `<span style="color: #666; font-size: 12px;"> (${card.response_time_ms}ms)</span>` : ''}
+                        ${
+                          card.response_time_ms
+                            ? `<span style="color: #666; font-size: 12px;"> (${card.response_time_ms}ms)</span>`
+                            : ''
+                        }
                         ${card.status_code ? `<br><em>HTTP ${card.status_code}</em>` : ''}
-                        ${card.errors.length > 0 ? `<br><span style="color: #dc2626;">Issues: ${card.errors.join(', ')}</span>` : ''}
-                        ${card.valid && card.card_data ? `<br><span style="color: #166534;">✅ Agent card found and valid</span>` : ''}
+                        ${
+                          card.errors.length > 0
+                            ? `<br><span style="color: #dc2626;">Issues: ${card.errors.join(', ')}</span>`
+                            : ''
+                        }
+                        ${
+                          card.valid && card.card_data
+                            ? `<br><span style="color: #166534;">✅ Agent card found and valid</span>`
+                            : ''
+                        }
                     </div>
                 `;
         });
@@ -3235,8 +3284,9 @@
         document.getElementById('user-domain-display').textContent = normalizedDomain;
         document.getElementById('user-file-path').textContent = `https://${normalizedDomain}/.well-known/adagents.json`;
         document.getElementById('generated-domain-display').textContent = normalizedDomain;
-        document.getElementById('reminder-file-path').textContent =
-          `https://${normalizedDomain}/.well-known/adagents.json`;
+        document.getElementById(
+          'reminder-file-path'
+        ).textContent = `https://${normalizedDomain}/.well-known/adagents.json`;
 
         // Pre-populate agents if updating
         if (isUpdate && existingAgents.length > 0) {

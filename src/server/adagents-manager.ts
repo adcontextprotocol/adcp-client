@@ -261,7 +261,7 @@ export class AdAgentsManager {
         result.errors.push({
           field: `${prefix}.property_ids`,
           message: 'property_ids must be an array',
-          severity: 'error'
+          severity: 'error',
         });
       }
     }

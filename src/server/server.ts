@@ -210,7 +210,9 @@ const clientConfig: AdCPClientConfig = {
         metadata,
       });
       app.log.info(
-        `📊 Delivery notification (${metadata.notification_type}): ${notification.media_buy_deliveries?.length || 0} deliveries`
+        `📊 Delivery notification (${metadata.notification_type}): ${
+          notification.media_buy_deliveries?.length || 0
+        } deliveries`
       );
     },
   },
@@ -744,7 +746,9 @@ function extractResponseData(result: any): any {
   if (result?.structuredContent) {
     if (result.structuredContent.products || result.structuredContent.formats) {
       // Extract text content as informational message for user
-      let textMessage = `Found ${result.structuredContent.formats?.length || result.structuredContent.products?.length || 0} items from agent`;
+      let textMessage = `Found ${
+        result.structuredContent.formats?.length || result.structuredContent.products?.length || 0
+      } items from agent`;
       if (result.content && Array.isArray(result.content)) {
         const textContent = result.content.find((item: any) => item.type === 'text');
         if (textContent?.text) {
@@ -2032,7 +2036,9 @@ const start = async () => {
     const strictMode = clientConfig.validation?.strictSchemaValidation !== false;
     const logViolations = clientConfig.validation?.logSchemaViolations !== false;
     app.log.info(
-      `✅ Schema validation: ${strictMode ? 'STRICT' : 'NON-STRICT'} (${logViolations ? 'logging enabled' : 'logging disabled'})`
+      `✅ Schema validation: ${strictMode ? 'STRICT' : 'NON-STRICT'} (${
+        logViolations ? 'logging enabled' : 'logging disabled'
+      })`
     );
     if (!strictMode) {
       app.log.warn(`⚠️  Non-strict validation mode - schema violations will not fail tasks`);

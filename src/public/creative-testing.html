@@ -1,4 +1,4 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
@@ -22,13 +22,7 @@
       }
 
       body {
-        font-family:
-          'Inter',
-          -apple-system,
-          BlinkMacSystemFont,
-          'Segoe UI',
-          Roboto,
-          sans-serif;
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
         line-height: 1.6;
         color: var(--text-primary);
         max-width: 1600px;
@@ -157,9 +151,7 @@
         font-size: 1rem;
         font-weight: 600;
         cursor: pointer;
-        transition:
-          transform 0.2s,
-          box-shadow 0.2s;
+        transition: transform 0.2s, box-shadow 0.2s;
       }
 
       .button:hover {
@@ -877,7 +869,9 @@
                     <div class="format-card" onclick="selectFormat(${index})">
                         ${
                           hasExample
-                            ? `<a href="${format.example_url}" target="_blank" style="text-decoration: none; color: inherit;" onclick="event.stopPropagation()">
+                            ? `<a href="${
+                                format.example_url
+                              }" target="_blank" style="text-decoration: none; color: inherit;" onclick="event.stopPropagation()">
                                 <div class="format-card-preview">
                                     ${
                                       hasPreview
@@ -913,7 +907,11 @@
                                   format.assets_required
                                     ? `<div class="format-card-detail-row">
                                         <span class="format-card-detail-label">Assets</span>
-                                        <span class="format-card-detail-value">${Array.isArray(format.assets_required) ? format.assets_required.length : 'Custom'}</span>
+                                        <span class="format-card-detail-value">${
+                                          Array.isArray(format.assets_required)
+                                            ? format.assets_required.length
+                                            : 'Custom'
+                                        }</span>
                                     </div>`
                                     : ''
                                 }
@@ -1298,10 +1296,16 @@
 
                 html += `
                                 <div style="margin-bottom: 1rem;">
-                                    ${renderLabel ? `<p style="font-weight: 500; margin-bottom: 0.5rem;">${renderLabel}</p>` : ''}
+                                    ${
+                                      renderLabel
+                                        ? `<p style="font-weight: 500; margin-bottom: 0.5rem;">${renderLabel}</p>`
+                                        : ''
+                                    }
                                     <iframe src="${render.preview_url}"
                                             title="${modeLabel} ${renderLabel}"
-                                            style="width: ${render.dimensions?.width || 300}px; height: ${render.dimensions?.height || 250}px; border: 1px solid #ddd; border-radius: 4px;">
+                                            style="width: ${render.dimensions?.width || 300}px; height: ${
+                  render.dimensions?.height || 250
+                }px; border: 1px solid #ddd; border-radius: 4px;">
                                     </iframe>
                                 </div>`;
               });
@@ -1338,7 +1342,11 @@
             Object.entries(manifest.assets).forEach(([assetId, asset]) => {
               html += `<div style="margin-bottom: 1rem;">
                             <strong>${assetId}:</strong>
-                            <pre style="background: #f7fafc; padding: 0.5rem; border-radius: 4px; overflow-x: auto; font-size: 0.875rem;">${JSON.stringify(asset, null, 2)}</pre>
+                            <pre style="background: #f7fafc; padding: 0.5rem; border-radius: 4px; overflow-x: auto; font-size: 0.875rem;">${JSON.stringify(
+                              asset,
+                              null,
+                              2
+                            )}</pre>
                         </div>`;
             });
 
@@ -1453,7 +1461,11 @@ ${JSON.stringify(result, null, 2)}
                         <span>${headerText}</span>
                         <span class="debug-time">${time}</span>
                     </div>
-                    ${log.body || log.message ? `<div class="debug-body">${formatDebugBody(log.body || log.message)}</div>` : ''}
+                    ${
+                      log.body || log.message
+                        ? `<div class="debug-body">${formatDebugBody(log.body || log.message)}</div>`
+                        : ''
+                    }
                 `;
 
           debugLogs.appendChild(entry);

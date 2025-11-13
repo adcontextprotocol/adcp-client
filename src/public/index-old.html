@@ -1,4 +1,4 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
@@ -596,7 +596,9 @@
           .map(
             (result, index) => `
                 <div class="result-item">
-                    <div class="result-header ${result.success ? 'success' : 'error'}" onclick="toggleResultContent(${index})">
+                    <div class="result-header ${
+                      result.success ? 'success' : 'error'
+                    }" onclick="toggleResultContent(${index})">
                         <div class="result-name">${result.agent_name}</div>
                         <div class="result-status">
                             <span class="status-badge ${result.success ? 'success' : 'error'}">
@@ -608,7 +610,11 @@
                     <div class="result-content" id="result-content-${index}">
                         ${
                           result.success
-                            ? `<h4>Response Data:</h4><div class="response-data">${JSON.stringify(result.data, null, 2)}</div>`
+                            ? `<h4>Response Data:</h4><div class="response-data">${JSON.stringify(
+                                result.data,
+                                null,
+                                2
+                              )}</div>`
                             : `<div class="error-message"><strong>Error:</strong> ${result.error}</div>`
                         }
                     </div>
