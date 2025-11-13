@@ -68,6 +68,12 @@ export interface SingleAgentClientConfig extends ConversationConfig {
    */
   webhookUrlTemplate?: string;
   /**
+   * Reporting webhook frequency
+   *
+   * @default 'daily'
+   */
+  reportingWebhookFrequency?: 'hourly' | 'daily' | 'monthly';
+  /**
    * Runtime schema validation options
    */
   validation?: {
@@ -581,7 +587,7 @@ export class SingleAgentClient {
             schemes: ['HMAC-SHA256'],
             credentials: this.config.webhookSecret || 'placeholder_secret_min_32_characters_required',
           },
-          reporting_frequency: 'monthly',
+          reporting_frequency: this.config.reportingWebhookFrequency || 'daily',
         },
       } as CreateMediaBuyRequest;
     }
