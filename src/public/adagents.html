@@ -2591,9 +2591,13 @@
         const data = {
           $schema: 'https://adcontextprotocol.org/schemas/v1/adagents.json',
           authorized_agents: state.agents,
-          properties: state.properties.length > 0 ? state.properties : undefined,
           last_updated: new Date().toISOString(),
         };
+
+        // Only include properties if there are any
+        if (state.properties.length > 0) {
+          data.properties = state.properties;
+        }
 
         const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
         const url = URL.createObjectURL(blob);
