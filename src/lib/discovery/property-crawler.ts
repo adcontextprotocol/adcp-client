@@ -153,12 +153,19 @@ export class PropertyCrawler {
 
       const data = await response.json() as AdAgentsJson;
 
-      if (!data.properties || !Array.isArray(data.properties)) {
-        return [];
+      // Extract properties from all authorized agents
+      const allProperties: Property[] = [];
+
+      if (data.authorized_agents && Array.isArray(data.authorized_agents)) {
+        for (const agent of data.authorized_agents) {
+          if (agent.properties && Array.isArray(agent.properties)) {
+            allProperties.push(...agent.properties);
+          }
+        }
       }
 
       // Add publisher_domain to each property if not present
-      return data.properties.map(prop => ({
+      return allProperties.map((prop: Property) => ({
         ...prop,
         publisher_domain: prop.publisher_domain || domain
       }));

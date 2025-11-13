@@ -389,15 +389,16 @@ export interface ListCreativesResponse {
 }
 
 // AdAgents.json Types - Based on AdCP reference specification
+export interface AuthorizedAgent {
+  url: string;
+  authorized_for: string;
+  properties?: any[]; // Property type defined in discovery/types.ts
+}
+
 export interface AdAgentsJson {
   $schema?: string;
   authorized_agents: AuthorizedAgent[];
   last_updated?: string;
-}
-
-export interface AuthorizedAgent {
-  url: string;
-  authorized_for: string;
 }
 
 // Validation Types
