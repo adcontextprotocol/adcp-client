@@ -266,9 +266,7 @@
 
         /* Agent Entry Styling */
         .agent-entry {
-            display: flex;
-            gap: 12px;
-            margin-bottom: 12px;
+            margin-bottom: 16px;
             padding: 16px;
             border: 2px solid #e2e8f0;
             border-radius: 12px;
@@ -281,14 +279,75 @@
             background: #f1f5f9;
         }
 
-        .agent-entry input {
+        .agent-entry-header {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+        }
+
+        .agent-entry-header input {
             margin: 0;
         }
 
-        .agent-entry .btn {
+        .agent-entry-header .btn {
             padding: 8px 12px;
             margin: 0;
-            align-self: flex-start;
+        }
+
+        .properties-section {
+            margin-top: 12px;
+            padding-top: 12px;
+            border-top: 1px solid #e2e8f0;
+            display: none;
+        }
+
+        .properties-section.visible {
+            display: block;
+        }
+
+        .properties-section h5 {
+            margin: 0 0 8px 0;
+            font-size: 14px;
+            color: var(--text-secondary);
+        }
+
+        .property-entry {
+            display: grid;
+            grid-template-columns: 1fr 2fr 2fr auto;
+            gap: 8px;
+            margin-bottom: 8px;
+            padding: 8px;
+            background: white;
+            border-radius: 4px;
+            border: 1px solid #e2e8f0;
+        }
+
+        .property-entry input, .property-entry select {
+            padding: 6px 8px;
+            font-size: 13px;
+        }
+
+        .property-entry .btn {
+            padding: 6px 10px;
+            font-size: 12px;
+        }
+
+        .properties-toggle {
+            display: inline-block;
+            margin-top: 8px;
+            padding: 6px 12px;
+            font-size: 13px;
+            color: var(--accent-blue);
+            background: #eff6ff;
+            border: 1px solid #dbeafe;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: all 0.2s;
+            user-select: none;
+        }
+
+        .properties-toggle:hover {
+            background: #dbeafe;
         }
 
         /* Results Display */
@@ -476,9 +535,19 @@
                 <h4 id="step-2-title">Step 2: Add Authorized Agents</h4>
                 <div id="agents-list" style="margin-bottom: 20px;">
                     <div class="agent-entry">
-                        <input type="url" placeholder="https://agent.example.com" style="flex: 2;" class="agent-url">
-                        <input type="text" placeholder="Authorized for all products and services" style="flex: 3;" class="agent-auth">
-                        <button class="btn" onclick="removeAgentEntry(this)" style="background: #dc3545;">✖️</button>
+                        <div class="agent-entry-header">
+                            <input type="url" placeholder="https://agent.example.com" style="flex: 2;" class="agent-url">
+                            <input type="text" placeholder="Authorized for all products and services" style="flex: 3;" class="agent-auth">
+                            <button class="btn" onclick="removeAgentEntry(this)" style="background: #dc3545;">✖️</button>
+                        </div>
+                        <div class="properties-toggle" onclick="toggleProperties(this)">
+                            ➕ Add Properties (optional)
+                        </div>
+                        <div class="properties-section">
+                            <h5>Properties for this agent:</h5>
+                            <div class="properties-list"></div>
+                            <button class="btn btn-secondary" onclick="addProperty(this)" style="margin-top: 8px; padding: 6px 12px; font-size: 13px;">➕ Add Property</button>
+                        </div>
                     </div>
                 </div>
                 
@@ -722,50 +791,147 @@
             const agentsList = document.getElementById('agents-list');
             const newEntry = document.createElement('div');
             newEntry.className = 'agent-entry';
-            
+
             newEntry.innerHTML = `
-                <input type="url" placeholder="https://agent.example.com" style="flex: 2;" class="agent-url">
-                <input type="text" placeholder="Authorized for all products and services" style="flex: 3;" class="agent-auth">
-                <button class="btn" onclick="removeAgentEntry(this)" style="background: #dc3545;">✖️</button>
+                <div class="agent-entry-header">
+                    <input type="url" placeholder="https://agent.example.com" style="flex: 2;" class="agent-url">
+                    <input type="text" placeholder="Authorized for all products and services" style="flex: 3;" class="agent-auth">
+                    <button class="btn" onclick="removeAgentEntry(this)" style="background: #dc3545;">✖️</button>
+                </div>
+                <div class="properties-toggle" onclick="toggleProperties(this)">
+                    ➕ Add Properties (optional)
+                </div>
+                <div class="properties-section">
+                    <h5>Properties for this agent:</h5>
+                    <div class="properties-list"></div>
+                    <button class="btn btn-secondary" onclick="addProperty(this)" style="margin-top: 8px; padding: 6px 12px; font-size: 13px;">➕ Add Property</button>
+                </div>
             `;
-            
+
             agentsList.appendChild(newEntry);
         }
 
         function removeAgentEntry(button) {
             const agentsList = document.getElementById('agents-list');
             if (agentsList.children.length > 1) {
-                button.parentElement.remove();
+                button.closest('.agent-entry').remove();
             } else {
                 alert('At least one agent is required');
             }
+        }
+
+        function toggleProperties(toggleButton) {
+            const agentEntry = toggleButton.closest('.agent-entry');
+            const propertiesSection = agentEntry.querySelector('.properties-section');
+
+            if (propertiesSection.classList.contains('visible')) {
+                propertiesSection.classList.remove('visible');
+                toggleButton.textContent = '➕ Add Properties (optional)';
+            } else {
+                propertiesSection.classList.add('visible');
+                toggleButton.textContent = '➖ Hide Properties';
+            }
+        }
+
+        function addProperty(button) {
+            const propertiesList = button.closest('.properties-section').querySelector('.properties-list');
+            const propertyEntry = document.createElement('div');
+            propertyEntry.className = 'property-entry';
+
+            propertyEntry.innerHTML = `
+                <select class="property-type">
+                    <option value="website">Website</option>
+                    <option value="mobile_app">Mobile App</option>
+                    <option value="ctv_app">CTV App</option>
+                    <option value="dooh">DOOH</option>
+                    <option value="podcast">Podcast</option>
+                    <option value="radio">Radio</option>
+                    <option value="streaming_audio">Streaming Audio</option>
+                </select>
+                <input type="text" placeholder="Property name" class="property-name">
+                <input type="text" placeholder="domain:example.com or type:value" class="property-identifier">
+                <button class="btn" onclick="removeProperty(this)" style="background: #dc3545;">✖️</button>
+            `;
+
+            propertiesList.appendChild(propertyEntry);
+        }
+
+        function removeProperty(button) {
+            button.closest('.property-entry').remove();
         }
 
         function loadExampleAgents() {
             // Clear existing entries
             const agentsList = document.getElementById('agents-list');
             agentsList.innerHTML = '';
-            
+
             // Add example entries
             const examples = [
-                { url: 'https://test-agent.adcontextprotocol.org', auth: 'Authorized for all display and video advertising products' },
-                { url: 'https://agent2.example.com', auth: 'Authorized for premium inventory and high-value campaigns only' }
+                {
+                    url: 'https://test-agent.adcontextprotocol.org',
+                    auth: 'Authorized for all display and video advertising products',
+                    properties: [
+                        { type: 'website', name: 'Main Site', identifier: 'domain:example.com' }
+                    ]
+                },
+                {
+                    url: 'https://agent2.example.com',
+                    auth: 'Authorized for premium inventory and high-value campaigns only',
+                    properties: []
+                }
             ];
-            
+
             examples.forEach(example => {
                 const newEntry = document.createElement('div');
                 newEntry.className = 'agent-entry';
-                
+
                 newEntry.innerHTML = `
-                    <input type="url" placeholder="https://agent.example.com" style="flex: 2;" class="agent-url" value="${example.url}">
-                    <input type="text" placeholder="Authorized for all products and services" style="flex: 3;" class="agent-auth" value="${example.auth}">
-                    <button class="btn" onclick="removeAgentEntry(this)" style="background: #dc3545;">✖️</button>
+                    <div class="agent-entry-header">
+                        <input type="url" placeholder="https://agent.example.com" style="flex: 2;" class="agent-url" value="${example.url}">
+                        <input type="text" placeholder="Authorized for all products and services" style="flex: 3;" class="agent-auth" value="${example.auth}">
+                        <button class="btn" onclick="removeAgentEntry(this)" style="background: #dc3545;">✖️</button>
+                    </div>
+                    <div class="properties-toggle" onclick="toggleProperties(this)">
+                        ➕ Add Properties (optional)
+                    </div>
+                    <div class="properties-section ${example.properties.length > 0 ? 'visible' : ''}">
+                        <h5>Properties for this agent:</h5>
+                        <div class="properties-list"></div>
+                        <button class="btn btn-secondary" onclick="addProperty(this)" style="margin-top: 8px; padding: 6px 12px; font-size: 13px;">➕ Add Property</button>
+                    </div>
                 `;
-                
+
                 agentsList.appendChild(newEntry);
+
+                // Add example properties if any
+                if (example.properties.length > 0) {
+                    const propertiesList = newEntry.querySelector('.properties-list');
+                    const toggle = newEntry.querySelector('.properties-toggle');
+                    toggle.textContent = '➖ Hide Properties';
+
+                    example.properties.forEach(prop => {
+                        const propertyEntry = document.createElement('div');
+                        propertyEntry.className = 'property-entry';
+                        propertyEntry.innerHTML = `
+                            <select class="property-type">
+                                <option value="website" ${prop.type === 'website' ? 'selected' : ''}>Website</option>
+                                <option value="mobile_app" ${prop.type === 'mobile_app' ? 'selected' : ''}>Mobile App</option>
+                                <option value="ctv_app" ${prop.type === 'ctv_app' ? 'selected' : ''}>CTV App</option>
+                                <option value="dooh" ${prop.type === 'dooh' ? 'selected' : ''}>DOOH</option>
+                                <option value="podcast" ${prop.type === 'podcast' ? 'selected' : ''}>Podcast</option>
+                                <option value="radio" ${prop.type === 'radio' ? 'selected' : ''}>Radio</option>
+                                <option value="streaming_audio" ${prop.type === 'streaming_audio' ? 'selected' : ''}>Streaming Audio</option>
+                            </select>
+                            <input type="text" placeholder="Property name" class="property-name" value="${prop.name}">
+                            <input type="text" placeholder="domain:example.com or type:value" class="property-identifier" value="${prop.identifier}">
+                            <button class="btn" onclick="removeProperty(this)" style="background: #dc3545;">✖️</button>
+                        `;
+                        propertiesList.appendChild(propertyEntry);
+                    });
+                }
             });
-            
-            console.log('Loaded example adagents configuration');
+
+            console.log('Loaded example adagents configuration with properties');
         }
 
         async function generateAdAgentsJson() {
@@ -781,7 +947,38 @@
                     return;
                 }
 
-                authorizedAgents.push({ url, authorized_for: authorizedFor });
+                // Collect properties for this agent
+                const properties = [];
+                const propertyEntries = entry.querySelectorAll('.property-entry');
+
+                for (const propEntry of propertyEntries) {
+                    const propertyType = propEntry.querySelector('.property-type').value;
+                    const propertyName = propEntry.querySelector('.property-name').value.trim();
+                    const identifierString = propEntry.querySelector('.property-identifier').value.trim();
+
+                    if (propertyName && identifierString) {
+                        // Parse identifier (format: "type:value")
+                        const [idType, idValue] = identifierString.split(':').map(s => s.trim());
+
+                        if (idType && idValue) {
+                            properties.push({
+                                property_type: propertyType,
+                                name: propertyName,
+                                identifiers: [{
+                                    type: idType,
+                                    value: idValue
+                                }]
+                            });
+                        }
+                    }
+                }
+
+                const agent = { url, authorized_for: authorizedFor };
+                if (properties.length > 0) {
+                    agent.properties = properties;
+                }
+
+                authorizedAgents.push(agent);
             }
 
             const generateBtn = document.getElementById('generate-btn');
@@ -1041,14 +1238,51 @@
                 existingAgents.forEach(agent => {
                     const newEntry = document.createElement('div');
                     newEntry.className = 'agent-entry';
-                    
+
+                    const hasProperties = agent.properties && agent.properties.length > 0;
+
                     newEntry.innerHTML = `
-                        <input type="url" placeholder="https://agent.example.com" style="flex: 2;" class="agent-url" value="${agent.url}">
-                        <input type="text" placeholder="Authorized for all products and services" style="flex: 3;" class="agent-auth" value="${agent.authorized_for}">
-                        <button class="btn" onclick="removeAgentEntry(this)" style="background: #dc3545;">✖️</button>
+                        <div class="agent-entry-header">
+                            <input type="url" placeholder="https://agent.example.com" style="flex: 2;" class="agent-url" value="${agent.url}">
+                            <input type="text" placeholder="Authorized for all products and services" style="flex: 3;" class="agent-auth" value="${agent.authorized_for}">
+                            <button class="btn" onclick="removeAgentEntry(this)" style="background: #dc3545;">✖️</button>
+                        </div>
+                        <div class="properties-toggle" onclick="toggleProperties(this)">
+                            ${hasProperties ? '➖ Hide Properties' : '➕ Add Properties (optional)'}
+                        </div>
+                        <div class="properties-section ${hasProperties ? 'visible' : ''}">
+                            <h5>Properties for this agent:</h5>
+                            <div class="properties-list"></div>
+                            <button class="btn btn-secondary" onclick="addProperty(this)" style="margin-top: 8px; padding: 6px 12px; font-size: 13px;">➕ Add Property</button>
+                        </div>
                     `;
-                    
+
                     agentsList.appendChild(newEntry);
+
+                    // Add existing properties
+                    if (hasProperties) {
+                        const propertiesList = newEntry.querySelector('.properties-list');
+                        agent.properties.forEach(prop => {
+                            const propertyEntry = document.createElement('div');
+                            propertyEntry.className = 'property-entry';
+                            const identifier = prop.identifiers && prop.identifiers[0] ? `${prop.identifiers[0].type}:${prop.identifiers[0].value}` : '';
+                            propertyEntry.innerHTML = `
+                                <select class="property-type">
+                                    <option value="website" ${prop.property_type === 'website' ? 'selected' : ''}>Website</option>
+                                    <option value="mobile_app" ${prop.property_type === 'mobile_app' ? 'selected' : ''}>Mobile App</option>
+                                    <option value="ctv_app" ${prop.property_type === 'ctv_app' ? 'selected' : ''}>CTV App</option>
+                                    <option value="dooh" ${prop.property_type === 'dooh' ? 'selected' : ''}>DOOH</option>
+                                    <option value="podcast" ${prop.property_type === 'podcast' ? 'selected' : ''}>Podcast</option>
+                                    <option value="radio" ${prop.property_type === 'radio' ? 'selected' : ''}>Radio</option>
+                                    <option value="streaming_audio" ${prop.property_type === 'streaming_audio' ? 'selected' : ''}>Streaming Audio</option>
+                                </select>
+                                <input type="text" placeholder="Property name" class="property-name" value="${prop.name || ''}">
+                                <input type="text" placeholder="domain:example.com or type:value" class="property-identifier" value="${identifier}">
+                                <button class="btn" onclick="removeProperty(this)" style="background: #dc3545;">✖️</button>
+                            `;
+                            propertiesList.appendChild(propertyEntry);
+                        });
+                    }
                 });
                 
                 console.log(`Pre-populated ${existingAgents.length} existing agents for update`);
@@ -1070,14 +1304,24 @@
             // Clear form data
             document.getElementById('creator-domain-input').value = '';
             document.getElementById('json-output').value = '';
-            
+
             // Reset agent entries to single default entry
             const agentsList = document.getElementById('agents-list');
             agentsList.innerHTML = `
                 <div class="agent-entry">
-                    <input type="url" placeholder="https://agent.example.com" style="flex: 2;" class="agent-url">
-                    <input type="text" placeholder="Authorized for all products and services" style="flex: 3;" class="agent-auth">
-                    <button class="btn" onclick="removeAgentEntry(this)" style="background: #dc3545;">✖️</button>
+                    <div class="agent-entry-header">
+                        <input type="url" placeholder="https://agent.example.com" style="flex: 2;" class="agent-url">
+                        <input type="text" placeholder="Authorized for all products and services" style="flex: 3;" class="agent-auth">
+                        <button class="btn" onclick="removeAgentEntry(this)" style="background: #dc3545;">✖️</button>
+                    </div>
+                    <div class="properties-toggle" onclick="toggleProperties(this)">
+                        ➕ Add Properties (optional)
+                    </div>
+                    <div class="properties-section">
+                        <h5>Properties for this agent:</h5>
+                        <div class="properties-list"></div>
+                        <button class="btn btn-secondary" onclick="addProperty(this)" style="margin-top: 8px; padding: 6px 12px; font-size: 13px;">➕ Add Property</button>
+                    </div>
                 </div>
             `;
             
