@@ -38,7 +38,10 @@ import type {
 export class AgentCollection {
   private clients: Map<string, AgentClient> = new Map();
 
-  constructor(private agents: AgentConfig[], private config: SingleAgentClientConfig = {}) {
+  constructor(
+    private agents: AgentConfig[],
+    private config: SingleAgentClientConfig = {}
+  ) {
     for (const agent of agents) {
       this.clients.set(agent.id, new AgentClient(agent, config));
     }
@@ -285,7 +288,10 @@ export class AgentCollection {
 export class ADCPMultiAgentClient {
   private agentClients: Map<string, AgentClient> = new Map();
 
-  constructor(agentConfigs: AgentConfig[] = [], private config: SingleAgentClientConfig = {}) {
+  constructor(
+    agentConfigs: AgentConfig[] = [],
+    private config: SingleAgentClientConfig = {}
+  ) {
     for (const agentConfig of agentConfigs) {
       this.agentClients.set(agentConfig.id, new AgentClient(agentConfig, config));
     }

@@ -109,7 +109,10 @@ export class SingleAgentClient {
   private normalizedAgent: AgentConfig;
   private discoveredEndpoint?: string; // Cache discovered endpoint
 
-  constructor(private agent: AgentConfig, private config: SingleAgentClientConfig = {}) {
+  constructor(
+    private agent: AgentConfig,
+    private config: SingleAgentClientConfig = {}
+  ) {
     // Normalize agent URL for MCP protocol
     this.normalizedAgent = this.normalizeAgentConfig(agent);
 

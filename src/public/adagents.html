@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
@@ -46,7 +46,13 @@
 
       /* Modern Typography System */
       body {
-        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        font-family:
+          'Inter',
+          -apple-system,
+          BlinkMacSystemFont,
+          'Segoe UI',
+          Roboto,
+          sans-serif;
         font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
         line-height: 1.6;
         color: var(--text-primary);
@@ -66,7 +72,8 @@
         left: 0;
         width: 100%;
         height: 100%;
-        background: radial-gradient(circle at 20% 50%, rgba(120, 119, 198, 0.3) 0%, transparent 50%),
+        background:
+          radial-gradient(circle at 20% 50%, rgba(120, 119, 198, 0.3) 0%, transparent 50%),
           radial-gradient(circle at 80% 20%, rgba(255, 119, 198, 0.3) 0%, transparent 50%),
           radial-gradient(circle at 40% 80%, rgba(120, 119, 198, 0.2) 0%, transparent 50%);
         pointer-events: none;
@@ -166,7 +173,9 @@
         border-radius: 16px;
         padding: 32px;
         margin-bottom: 32px;
-        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.08), 0 1px 3px rgba(0, 0, 0, 0.12);
+        box-shadow:
+          0 8px 32px rgba(0, 0, 0, 0.08),
+          0 1px 3px rgba(0, 0, 0, 0.12);
         transition: all var(--timing-normal) var(--easing);
         position: relative;
         overflow: hidden;
@@ -2026,12 +2035,12 @@
                                 return `
                                     <div class="identifier-item">
                                         <input type="checkbox" id="platform-${p.key}" ${
-                                  existing ? 'checked' : ''
-                                } onchange="togglePlatformInput('${p.key}')">
+                                          existing ? 'checked' : ''
+                                        } onchange="togglePlatformInput('${p.key}')">
                                         <label for="platform-${p.key}">${p.label}</label>
                                         <input type="text" id="identifier-${p.key}" placeholder="${
-                                  p.placeholder
-                                }" value="${existing?.value || ''}" ${!existing ? 'disabled' : ''}>
+                                          p.placeholder
+                                        }" value="${existing?.value || ''}" ${!existing ? 'disabled' : ''}>
                                     </div>
                                 `;
                               })
@@ -2057,12 +2066,12 @@
                                 return `
                                     <div class="identifier-item">
                                         <input type="checkbox" id="platform-${p.key}" ${
-                                  existing ? 'checked' : ''
-                                } onchange="togglePlatformInput('${p.key}')">
+                                          existing ? 'checked' : ''
+                                        } onchange="togglePlatformInput('${p.key}')">
                                         <label for="platform-${p.key}">${p.label}</label>
                                         <input type="text" id="identifier-${p.key}" placeholder="${
-                                  p.placeholder
-                                }" value="${existing?.value || ''}" ${!existing ? 'disabled' : ''}>
+                                          p.placeholder
+                                        }" value="${existing?.value || ''}" ${!existing ? 'disabled' : ''}>
                                     </div>
                                 `;
                               })
@@ -2087,12 +2096,12 @@
                                 return `
                                     <div class="identifier-item">
                                         <input type="checkbox" id="platform-${p.key}" ${
-                                  existing ? 'checked' : ''
-                                } onchange="togglePlatformInput('${p.key}')">
+                                          existing ? 'checked' : ''
+                                        } onchange="togglePlatformInput('${p.key}')">
                                         <label for="platform-${p.key}">${p.label}</label>
                                         <input type="text" id="identifier-${p.key}" placeholder="${
-                                  p.placeholder
-                                }" value="${existing?.value || ''}" ${!existing ? 'disabled' : ''}>
+                                          p.placeholder
+                                        }" value="${existing?.value || ''}" ${!existing ? 'disabled' : ''}>
                                     </div>
                                 `;
                               })
@@ -2498,8 +2507,8 @@
             prop => `
                 <label style="display: block; padding: 4px 0; cursor: pointer;">
                     <input type="checkbox" value="${prop.property_id}" ${
-              selectedIds.includes(prop.property_id) ? 'checked' : ''
-            } style="margin-right: 6px;">
+                      selectedIds.includes(prop.property_id) ? 'checked' : ''
+                    } style="margin-right: 6px;">
                     ${getPropertyIcon(prop.property_type)} ${prop.property_id} - ${prop.name}
                 </label>
             `
@@ -2521,8 +2530,8 @@
             tag => `
                 <label style="display: block; padding: 4px 0; cursor: pointer;">
                     <input type="checkbox" value="${tag}" ${
-              selectedTags.includes(tag) ? 'checked' : ''
-            } style="margin-right: 6px;">
+                      selectedTags.includes(tag) ? 'checked' : ''
+                    } style="margin-right: 6px;">
                     🏷️ ${tag}
                 </label>
             `
@@ -3284,9 +3293,8 @@
         document.getElementById('user-domain-display').textContent = normalizedDomain;
         document.getElementById('user-file-path').textContent = `https://${normalizedDomain}/.well-known/adagents.json`;
         document.getElementById('generated-domain-display').textContent = normalizedDomain;
-        document.getElementById(
-          'reminder-file-path'
-        ).textContent = `https://${normalizedDomain}/.well-known/adagents.json`;
+        document.getElementById('reminder-file-path').textContent =
+          `https://${normalizedDomain}/.well-known/adagents.json`;
 
         // Pre-populate agents if updating
         if (isUpdate && existingAgents.length > 0) {

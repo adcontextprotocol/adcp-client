@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
@@ -46,7 +46,13 @@
 
       /* Modern Typography System */
       body {
-        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        font-family:
+          'Inter',
+          -apple-system,
+          BlinkMacSystemFont,
+          'Segoe UI',
+          Roboto,
+          sans-serif;
         font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
         line-height: 1.6;
         color: var(--text-primary);
@@ -97,7 +103,9 @@
         background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
         color: white;
         padding: 24px 40px;
-        box-shadow: 0 8px 32px rgba(30, 60, 114, 0.3), 0 2px 8px rgba(0, 0, 0, 0.15);
+        box-shadow:
+          0 8px 32px rgba(30, 60, 114, 0.3),
+          0 2px 8px rgba(0, 0, 0, 0.15);
         position: relative;
         overflow: hidden;
       }
@@ -109,7 +117,8 @@
         left: 0;
         right: 0;
         bottom: 0;
-        background: radial-gradient(circle at 20% 80%, rgba(120, 119, 198, 0.3), transparent 50%),
+        background:
+          radial-gradient(circle at 20% 80%, rgba(120, 119, 198, 0.3), transparent 50%),
           radial-gradient(circle at 80% 20%, rgba(255, 114, 94, 0.3), transparent 50%);
         pointer-events: none;
       }
@@ -409,7 +418,9 @@
         border-radius: 16px;
         padding: 32px;
         margin-bottom: 32px;
-        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.08), 0 1px 3px rgba(0, 0, 0, 0.12);
+        box-shadow:
+          0 8px 32px rgba(0, 0, 0, 0.08),
+          0 1px 3px rgba(0, 0, 0, 0.12);
         transition: all var(--timing-normal) var(--easing);
         position: relative;
         overflow: hidden;
@@ -434,7 +445,9 @@
       .creative-formats:hover,
       .active-media-buys:hover {
         transform: translateY(-4px);
-        box-shadow: 0 16px 48px rgba(0, 0, 0, 0.12), 0 4px 12px rgba(0, 0, 0, 0.08);
+        box-shadow:
+          0 16px 48px rgba(0, 0, 0, 0.12),
+          0 4px 12px rgba(0, 0, 0, 0.08);
       }
 
       /* Glassmorphic Debug Panel - Bottom Positioned */
@@ -448,7 +461,9 @@
         background: rgba(26, 26, 26, 0.95);
         backdrop-filter: blur(20px);
         border: 1px solid rgba(255, 255, 255, 0.1);
-        box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.3), inset 0 1px 1px rgba(255, 255, 255, 0.1);
+        box-shadow:
+          0 -8px 32px rgba(0, 0, 0, 0.3),
+          inset 0 1px 1px rgba(255, 255, 255, 0.1);
         transition: bottom var(--timing-normal) var(--easing);
         display: flex;
         flex-direction: column;
@@ -1149,7 +1164,9 @@
         font-weight: 600;
         font-family: inherit;
         transition: all var(--timing-normal) var(--easing);
-        box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3), 0 1px 3px rgba(0, 0, 0, 0.1);
+        box-shadow:
+          0 4px 12px rgba(102, 126, 234, 0.3),
+          0 1px 3px rgba(0, 0, 0, 0.1);
         overflow: hidden;
         display: inline-flex;
         align-items: center;
@@ -1171,7 +1188,9 @@
 
       .btn:hover {
         transform: translateY(-2px);
-        box-shadow: 0 8px 24px rgba(102, 126, 234, 0.4), 0 4px 12px rgba(0, 0, 0, 0.15);
+        box-shadow:
+          0 8px 24px rgba(102, 126, 234, 0.4),
+          0 4px 12px rgba(0, 0, 0, 0.15);
       }
 
       .btn:hover::before {
@@ -3633,15 +3652,18 @@
       let eventPollInterval = null; // Event polling interval
 
       // Clean old agent card cache entries every 10 minutes
-      setInterval(() => {
-        const now = Date.now();
-        const maxAge = 10 * 60 * 1000; // 10 minutes
-        for (const [key, value] of agentCardCache.entries()) {
-          if (now - value.timestamp > maxAge) {
-            agentCardCache.delete(key);
+      setInterval(
+        () => {
+          const now = Date.now();
+          const maxAge = 10 * 60 * 1000; // 10 minutes
+          for (const [key, value] of agentCardCache.entries()) {
+            if (now - value.timestamp > maxAge) {
+              agentCardCache.delete(key);
+            }
           }
-        }
-      }, 5 * 60 * 1000); // Run every 5 minutes
+        },
+        5 * 60 * 1000
+      ); // Run every 5 minutes
 
       // Local storage key for custom agents
       const CUSTOM_AGENTS_STORAGE_KEY = 'adcp_custom_agents';
@@ -4118,12 +4140,12 @@
             status === 'active' || status === 'approved'
               ? '#28a745'
               : status === 'pending' || status === 'review'
-              ? '#ffc107'
-              : status === 'rejected' || status === 'failed'
-              ? '#dc3545'
-              : status === 'archived'
-              ? '#6c757d'
-              : '#000';
+                ? '#ffc107'
+                : status === 'rejected' || status === 'failed'
+                  ? '#dc3545'
+                  : status === 'archived'
+                    ? '#6c757d'
+                    : '#000';
 
           const dimensions = creative.width && creative.height ? `${creative.width}×${creative.height}` : 'N/A';
 
@@ -4328,8 +4350,8 @@
                 <tr>
                     <td style="padding: 12px; border: 1px solid #dee2e6;">
                         <input type="checkbox" onchange="toggleProductSelection('${product.product_id}')" ${
-              selectedProducts.has(product.product_id) ? 'checked' : ''
-            }>
+                          selectedProducts.has(product.product_id) ? 'checked' : ''
+                        }>
                     </td>
                     <td style="padding: 12px; border: 1px solid #dee2e6;">${product.product_id || 'N/A'}</td>
                     <td style="padding: 12px; border: 1px solid #dee2e6;">${product.name || 'Unnamed Product'}</td>
@@ -5588,8 +5610,8 @@
                         <span style="color: ${
                           responseHasErrors ? '#dc2626' : '#333'
                         }; font-weight: bold;">${responseIcon} ADCP create_media_buy Response ${
-            responseHasErrors ? '(ERROR)' : ''
-          }</span>
+                          responseHasErrors ? '(ERROR)' : ''
+                        }</span>
                         <span class="timestamp">${new Date().toLocaleTimeString()}</span>
                     </div>
                     <div class="debug-content-item">
@@ -5915,14 +5937,14 @@
                 </div>
                 <div style="display: grid; gap: 10px;">
                     <div><strong>Formats Selected:</strong> ${selectedFormats.length} (${selectedFormats
-          .map(f => f.name)
-          .join(', ')})</div>
+                      .map(f => f.name)
+                      .join(', ')})</div>
                     <div><strong>Assets to Generate:</strong> ${selectedFormats.length} creative${
-          selectedFormats.length > 1 ? 's' : ''
-        }</div>
+                      selectedFormats.length > 1 ? 's' : ''
+                    }</div>
                     <div><strong>Package Assignments:</strong> ${selectedPackages.length} package${
-          selectedPackages.length > 1 ? 's' : ''
-        }</div>
+                      selectedPackages.length > 1 ? 's' : ''
+                    }</div>
                     <div><strong>Sample Generation:</strong> ${generateSamples ? '✅ Enabled' : '❌ Disabled'}</div>
                     <div><strong>Naming:</strong> ${namePrefix}_[format_id]_${Date.now()}</div>
                 </div>
@@ -6210,8 +6232,8 @@
                         <tr style="border-bottom: 1px solid #ddd;">
                             <td style="padding: 8px; font-weight: bold;">Spent:</td>
                             <td style="padding: 8px;">$${mediaBuy.spent?.toLocaleString() || '0'} (${
-          mediaBuy.budget ? ((mediaBuy.spent / mediaBuy.budget) * 100).toFixed(1) : '0'
-        }%)</td>
+                              mediaBuy.budget ? ((mediaBuy.spent / mediaBuy.budget) * 100).toFixed(1) : '0'
+                            }%)</td>
                         </tr>
                         <tr style="border-bottom: 1px solid #ddd;">
                             <td style="padding: 8px; font-weight: bold;">Impressions:</td>
@@ -7021,8 +7043,8 @@
                             <div class="debug-pair-title">
                                 📞 Call ${pairIndex + 1}: ${methodName}
                                 <span class="debug-status ${statusClass}">[${status}${
-              statusText ? ' ' + statusText : ''
-            }]</span>
+                                  statusText ? ' ' + statusText : ''
+                                }]</span>
                             </div>
                             <div class="debug-pair-time">${timestamp}</div>
                             <div class="debug-pair-toggle">${isError ? '▲' : '▼'}</div>
@@ -7755,8 +7777,8 @@
                         <div>
                             <strong>Status:</strong>
                             <span class="debug-status ${statusClass}">${response.status} ${
-            response.statusText || ''
-          }</span>
+                              response.statusText || ''
+                            }</span>
                         </div>
                 `;
 
@@ -9706,8 +9728,8 @@ ${JSON.stringify(result, null, 2)}
               (format.format_id?.includes('video')
                 ? 'video'
                 : format.format_id?.includes('native')
-                ? 'native'
-                : 'display');
+                  ? 'native'
+                  : 'display');
             if (formatType === 'video') {
               const duration = document.getElementById('video-duration').value;
               if (duration) {
