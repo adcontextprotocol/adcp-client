@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2025-11-11T19:48:08.338Z
+// Generated at: 2025-11-12T19:32:27.885Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -334,6 +334,8 @@ export const TargetingOverlaySchema = z.object({
     geo_region_any_of: z.array(z.string()).optional(),
     geo_metro_any_of: z.array(z.string()).optional(),
     geo_postal_code_any_of: z.array(z.string()).optional(),
+    axe_include_segment: z.string().optional(),
+    axe_exclude_segment: z.string().optional(),
     frequency_cap: FrequencyCapSchema.optional()
 });
 
