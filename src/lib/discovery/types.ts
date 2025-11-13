@@ -43,16 +43,17 @@ export interface Property {
   publisher_domain?: string;
 }
 
-/** adagents.json structure including properties */
+/** Authorized agent from adagents.json */
+export interface AuthorizedAgent {
+  url: string;
+  authorized_for: string;
+  property_ids?: string[];
+}
+
+/** adagents.json structure */
 export interface AdAgentsJson {
   $schema?: string;
   authorized_agents: AuthorizedAgent[];
   properties?: Property[];
   last_updated?: string;
-}
-
-/** Authorized agent from adagents.json */
-export interface AuthorizedAgent {
-  url: string;
-  authorized_for: string;
 }

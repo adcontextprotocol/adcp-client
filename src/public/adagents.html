@@ -1517,9 +1517,17 @@
             html += `
                         <div style="margin-bottom: 10px; padding: 12px; border-left: 4px solid ${statusColor}; background: white; border-radius: 4px;">
                             <strong>${status} ${card.agent_url}${agentName}</strong>${endpointInfo}
-                            ${card.response_time_ms ? `<span style="color: #666; font-size: 12px;"> (${card.response_time_ms}ms)</span>` : ''}
+                            ${
+                              card.response_time_ms
+                                ? `<span style="color: #666; font-size: 12px;"> (${card.response_time_ms}ms)</span>`
+                                : ''
+                            }
                             ${card.status_code ? `<br><em>HTTP ${card.status_code}</em>` : ''}
-                            ${card.errors.length > 0 ? `<br><span style="color: #dc2626;">Errors: ${card.errors.join(', ')}</span>` : ''}
+                            ${
+                              card.errors.length > 0
+                                ? `<br><span style="color: #dc2626;">Errors: ${card.errors.join(', ')}</span>`
+                                : ''
+                            }
                         </div>
                     `;
           });
@@ -1531,7 +1539,11 @@
           html += `
                     <details style="margin-top: 20px;">
                         <summary style="cursor: pointer; font-weight: bold; color: var(--text-secondary);">📄 Raw AdAgents.json Data</summary>
-                        <pre style="background: #1a202c; color: #f7fafc; padding: 16px; border-radius: 8px; margin-top: 12px; font-size: 12px; overflow-x: auto;">${JSON.stringify(validation.raw_data, null, 2)}</pre>
+                        <pre style="background: #1a202c; color: #f7fafc; padding: 16px; border-radius: 8px; margin-top: 12px; font-size: 12px; overflow-x: auto;">${JSON.stringify(
+                          validation.raw_data,
+                          null,
+                          2
+                        )}</pre>
                     </details>
                 `;
         }
@@ -1729,7 +1741,9 @@
             if (assignedAgents === 0) {
               assignmentTag = `<span class="dashboard-card-tag warning">⚠️ All agents can sell</span>`;
             } else {
-              assignmentTag = `<span class="dashboard-card-tag assigned">🔗 ${assignedAgents} agent${assignedAgents > 1 ? 's' : ''} assigned</span>`;
+              assignmentTag = `<span class="dashboard-card-tag assigned">🔗 ${assignedAgents} agent${
+                assignedAgents > 1 ? 's' : ''
+              } assigned</span>`;
             }
 
             return `
@@ -1983,11 +1997,15 @@
           formContainer.innerHTML = `
                     <div class="form-group">
                         <label>Primary Domain</label>
-                        <input type="text" id="identifier-domain" placeholder="e.g., cnn.com" value="${existingDomain?.value || ''}">
+                        <input type="text" id="identifier-domain" placeholder="e.g., cnn.com" value="${
+                          existingDomain?.value || ''
+                        }">
                     </div>
                     <div class="form-group">
                         <label style="display: flex; align-items: center; cursor: pointer;">
-                            <input type="checkbox" id="include-subdomains" ${includeSubdomains ? 'checked' : ''} style="margin-right: 8px;">
+                            <input type="checkbox" id="include-subdomains" ${
+                              includeSubdomains ? 'checked' : ''
+                            } style="margin-right: 8px;">
                             Include all subdomains
                         </label>
                         <p style="font-size: 12px; color: #666; margin: 4px 0 0 0;">
@@ -2016,9 +2034,13 @@
                                 const existing = existingIdentifiers.find(i => i.type === p.key);
                                 return `
                                     <div class="identifier-item">
-                                        <input type="checkbox" id="platform-${p.key}" ${existing ? 'checked' : ''} onchange="togglePlatformInput('${p.key}')">
+                                        <input type="checkbox" id="platform-${p.key}" ${
+                                          existing ? 'checked' : ''
+                                        } onchange="togglePlatformInput('${p.key}')">
                                         <label for="platform-${p.key}">${p.label}</label>
-                                        <input type="text" id="identifier-${p.key}" placeholder="${p.placeholder}" value="${existing?.value || ''}" ${!existing ? 'disabled' : ''}>
+                                        <input type="text" id="identifier-${p.key}" placeholder="${
+                                          p.placeholder
+                                        }" value="${existing?.value || ''}" ${!existing ? 'disabled' : ''}>
                                     </div>
                                 `;
                               })
@@ -2043,9 +2065,13 @@
                                 const existing = existingIdentifiers.find(i => i.type === p.key);
                                 return `
                                     <div class="identifier-item">
-                                        <input type="checkbox" id="platform-${p.key}" ${existing ? 'checked' : ''} onchange="togglePlatformInput('${p.key}')">
+                                        <input type="checkbox" id="platform-${p.key}" ${
+                                          existing ? 'checked' : ''
+                                        } onchange="togglePlatformInput('${p.key}')">
                                         <label for="platform-${p.key}">${p.label}</label>
-                                        <input type="text" id="identifier-${p.key}" placeholder="${p.placeholder}" value="${existing?.value || ''}" ${!existing ? 'disabled' : ''}>
+                                        <input type="text" id="identifier-${p.key}" placeholder="${
+                                          p.placeholder
+                                        }" value="${existing?.value || ''}" ${!existing ? 'disabled' : ''}>
                                     </div>
                                 `;
                               })
@@ -2069,9 +2095,13 @@
                                 const existing = existingIdentifiers.find(i => i.type === p.key);
                                 return `
                                     <div class="identifier-item">
-                                        <input type="checkbox" id="platform-${p.key}" ${existing ? 'checked' : ''} onchange="togglePlatformInput('${p.key}')">
+                                        <input type="checkbox" id="platform-${p.key}" ${
+                                          existing ? 'checked' : ''
+                                        } onchange="togglePlatformInput('${p.key}')">
                                         <label for="platform-${p.key}">${p.label}</label>
-                                        <input type="text" id="identifier-${p.key}" placeholder="${p.placeholder}" value="${existing?.value || ''}" ${!existing ? 'disabled' : ''}>
+                                        <input type="text" id="identifier-${p.key}" placeholder="${
+                                          p.placeholder
+                                        }" value="${existing?.value || ''}" ${!existing ? 'disabled' : ''}>
                                     </div>
                                 `;
                               })
@@ -2084,7 +2114,9 @@
           formContainer.innerHTML = `
                     <div class="form-group">
                         <label>Identifier Value</label>
-                        <input type="text" id="identifier-custom" placeholder="Enter identifier" value="${existingIdentifiers[0]?.value || ''}">
+                        <input type="text" id="identifier-custom" placeholder="Enter identifier" value="${
+                          existingIdentifiers[0]?.value || ''
+                        }">
                     </div>
                 `;
         }
@@ -2370,7 +2402,9 @@
             const isSelected = state.selectedPropertyIds.includes(prop.property_id);
 
             return `
-                    <div class="dashboard-card" style="border: ${isSelected ? '2px solid #3b82f6' : '2px solid #e2e8f0'};">
+                    <div class="dashboard-card" style="border: ${
+                      isSelected ? '2px solid #3b82f6' : '2px solid #e2e8f0'
+                    };">
                         <div class="dashboard-card-content">
                             <label style="display: flex; align-items: center; cursor: pointer;">
                                 <input type="checkbox" ${isSelected ? 'checked' : ''}
@@ -2472,7 +2506,9 @@
           .map(
             prop => `
                 <label style="display: block; padding: 4px 0; cursor: pointer;">
-                    <input type="checkbox" value="${prop.property_id}" ${selectedIds.includes(prop.property_id) ? 'checked' : ''} style="margin-right: 6px;">
+                    <input type="checkbox" value="${prop.property_id}" ${
+                      selectedIds.includes(prop.property_id) ? 'checked' : ''
+                    } style="margin-right: 6px;">
                     ${getPropertyIcon(prop.property_type)} ${prop.property_id} - ${prop.name}
                 </label>
             `
@@ -2493,7 +2529,9 @@
           .map(
             tag => `
                 <label style="display: block; padding: 4px 0; cursor: pointer;">
-                    <input type="checkbox" value="${tag}" ${selectedTags.includes(tag) ? 'checked' : ''} style="margin-right: 6px;">
+                    <input type="checkbox" value="${tag}" ${
+                      selectedTags.includes(tag) ? 'checked' : ''
+                    } style="margin-right: 6px;">
                     🏷️ ${tag}
                 </label>
             `
@@ -2591,9 +2629,13 @@
         const data = {
           $schema: 'https://adcontextprotocol.org/schemas/v1/adagents.json',
           authorized_agents: state.agents,
-          properties: state.properties.length > 0 ? state.properties : undefined,
           last_updated: new Date().toISOString(),
         };
+
+        // Only include properties if there are any
+        if (state.properties.length > 0) {
+          data.properties = state.properties;
+        }
 
         const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
         const url = URL.createObjectURL(blob);
@@ -2851,11 +2893,15 @@
                         <select class="property-type">
                             ${PROPERTY_TYPES.map(
                               type =>
-                                `<option value="${type}" ${type === example.property_type ? 'selected' : ''}>${type}</option>`
+                                `<option value="${type}" ${
+                                  type === example.property_type ? 'selected' : ''
+                                }>${type}</option>`
                             ).join('')}
                         </select>
                         <input type="text" placeholder="Property Name" class="property-name" value="${example.name}">
-                        <input type="text" placeholder="Tags (comma-separated)" class="property-tags" value="${example.tags?.join(', ') || ''}">
+                        <input type="text" placeholder="Tags (comma-separated)" class="property-tags" value="${
+                          example.tags?.join(', ') || ''
+                        }">
                         <button class="btn" onclick="removePropertyEntry(this)" style="background: #dc3545;">✖️</button>
                     </div>
                     <div class="property-identifiers">
@@ -2868,10 +2914,14 @@
                                     <select class="identifier-type">
                                         ${IDENTIFIER_TYPES.map(
                                           type =>
-                                            `<option value="${type}" ${type === id.type ? 'selected' : ''}>${type}</option>`
+                                            `<option value="${type}" ${
+                                              type === id.type ? 'selected' : ''
+                                            }>${type}</option>`
                                         ).join('')}
                                     </select>
-                                    <input type="text" placeholder="Identifier value" class="identifier-value" value="${id.value}">
+                                    <input type="text" placeholder="Identifier value" class="identifier-value" value="${
+                                      id.value
+                                    }">
                                     <button class="btn" onclick="removeIdentifierEntry(this)" style="background: #dc3545; padding: 6px 10px;">✖️</button>
                                 </div>
                             `
@@ -3080,10 +3130,22 @@
           html += `
                     <div style="margin-bottom: 10px; padding: 12px; border-left: 4px solid ${statusColor}; background: white; border-radius: 4px;">
                         <strong>${status} ${card.agent_url}</strong>
-                        ${card.response_time_ms ? `<span style="color: #666; font-size: 12px;"> (${card.response_time_ms}ms)</span>` : ''}
+                        ${
+                          card.response_time_ms
+                            ? `<span style="color: #666; font-size: 12px;"> (${card.response_time_ms}ms)</span>`
+                            : ''
+                        }
                         ${card.status_code ? `<br><em>HTTP ${card.status_code}</em>` : ''}
-                        ${card.errors.length > 0 ? `<br><span style="color: #dc2626;">Issues: ${card.errors.join(', ')}</span>` : ''}
-                        ${card.valid && card.card_data ? `<br><span style="color: #166534;">✅ Agent card found and valid</span>` : ''}
+                        ${
+                          card.errors.length > 0
+                            ? `<br><span style="color: #dc2626;">Issues: ${card.errors.join(', ')}</span>`
+                            : ''
+                        }
+                        ${
+                          card.valid && card.card_data
+                            ? `<br><span style="color: #166534;">✅ Agent card found and valid</span>`
+                            : ''
+                        }
                     </div>
                 `;
         });

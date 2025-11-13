@@ -50,10 +50,16 @@ async function syncWonderstruckCreative() {
   console.log(`   Name: ${syncRequest.creatives[0].name}`);
   console.log(`   Format ID: ${syncRequest.creatives[0].format_id.agent_url}/${syncRequest.creatives[0].format_id.id}`);
   console.log(
-    `   Image URL: ${syncRequest.creatives[0].assets.image.asset_type === 'image' ? syncRequest.creatives[0].assets.image.url : 'N/A'}`
+    `   Image URL: ${
+      syncRequest.creatives[0].assets.image.asset_type === 'image' ? syncRequest.creatives[0].assets.image.url : 'N/A'
+    }`
   );
   console.log(
-    `   Click URL: ${syncRequest.creatives[0].assets.click_url.asset_type === 'url' ? syncRequest.creatives[0].assets.click_url.url : 'N/A'}\n`
+    `   Click URL: ${
+      syncRequest.creatives[0].assets.click_url.asset_type === 'url'
+        ? syncRequest.creatives[0].assets.click_url.url
+        : 'N/A'
+    }\n`
   );
 
   try {

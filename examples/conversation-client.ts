@@ -132,7 +132,9 @@ async function multiAgentExample() {
     results.forEach(result => {
       if (result.success) {
         console.log(
-          `  ✅ ${result.metadata.agent.name}: ${result.data.products?.length || 0} products (${result.metadata.responseTimeMs}ms)`
+          `  ✅ ${result.metadata.agent.name}: ${result.data.products?.length || 0} products (${
+            result.metadata.responseTimeMs
+          }ms)`
         );
       } else {
         console.log(`  ❌ ${result.metadata.agent.name}: ${result.error}`);

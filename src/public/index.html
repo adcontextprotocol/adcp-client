@@ -3590,7 +3590,9 @@
           eventEntry.className = 'debug-entry';
           eventEntry.innerHTML = `
                     <div class="debug-header">
-                        <span style="color: #333; font-weight: bold;">📡 Webhook Event: ${event.task_type || 'Unknown'}</span>
+                        <span style="color: #333; font-weight: bold;">📡 Webhook Event: ${
+                          event.task_type || 'Unknown'
+                        }</span>
                         <span class="timestamp">${new Date(event.timestamp).toLocaleTimeString()}</span>
                     </div>
                     <div class="debug-content-item">
@@ -3599,7 +3601,11 @@
                             <strong>Operation ID:</strong> ${event.operation_id || 'N/A'}<br>
                             <strong>Agent ID:</strong> ${event.agent_id || 'N/A'}
                         </div>
-                        <pre style="background: #f8f9fa; padding: 10px; border-radius: 4px; font-size: 12px; overflow-x: auto; color: #333;">${JSON.stringify(event.payload || event, null, 2)}</pre>
+                        <pre style="background: #f8f9fa; padding: 10px; border-radius: 4px; font-size: 12px; overflow-x: auto; color: #333;">${JSON.stringify(
+                          event.payload || event,
+                          null,
+                          2
+                        )}</pre>
                     </div>
                 `;
 
@@ -4343,7 +4349,9 @@
             product => `
                 <tr>
                     <td style="padding: 12px; border: 1px solid #dee2e6;">
-                        <input type="checkbox" onchange="toggleProductSelection('${product.product_id}')" ${selectedProducts.has(product.product_id) ? 'checked' : ''}>
+                        <input type="checkbox" onchange="toggleProductSelection('${product.product_id}')" ${
+                          selectedProducts.has(product.product_id) ? 'checked' : ''
+                        }>
                     </td>
                     <td style="padding: 12px; border: 1px solid #dee2e6;">${product.product_id || 'N/A'}</td>
                     <td style="padding: 12px; border: 1px solid #dee2e6;">${product.name || 'Unnamed Product'}</td>
@@ -4351,7 +4359,9 @@
                     <td style="padding: 12px; border: 1px solid #dee2e6;">${formatCPM(product.cpm)}</td>
                     <td style="padding: 12px; border: 1px solid #dee2e6;">${formatMinSpend(product.min_spend)}</td>
                     <td style="padding: 12px; border: 1px solid #dee2e6;">${formatFormats(product)}</td>
-                    <td style="padding: 12px; border: 1px solid #dee2e6; text-align: center;">${getValidationStatusIcon(product)}</td>
+                    <td style="padding: 12px; border: 1px solid #dee2e6; text-align: center;">${getValidationStatusIcon(
+                      product
+                    )}</td>
                 </tr>
             `
           )
@@ -4600,20 +4610,30 @@
           .map(
             format => `
                 <tr>
-                    <td style="padding: 12px; border: 1px solid #dee2e6; font-family: monospace; font-size: 0.9em;">${formatFormatId(format.format_id)}</td>
+                    <td style="padding: 12px; border: 1px solid #dee2e6; font-family: monospace; font-size: 0.9em;">${formatFormatId(
+                      format.format_id
+                    )}</td>
                     <td style="padding: 12px; border: 1px solid #dee2e6;">${format.name || 'Unnamed Format'}</td>
                     <td style="padding: 12px; border: 1px solid #dee2e6;">
                         <span style="background: #e3f2fd; padding: 4px 8px; border-radius: 4px; font-size: 0.85em;">
                             ${format.type || 'N/A'}
                         </span>
                     </td>
-                    <td style="padding: 12px; border: 1px solid #dee2e6; font-size: 0.9em;">${formatDimensions(format.renders)}</td>
+                    <td style="padding: 12px; border: 1px solid #dee2e6; font-size: 0.9em;">${formatDimensions(
+                      format.renders
+                    )}</td>
                     <td style="padding: 12px; border: 1px solid #dee2e6; text-align: center;">
                         ${formatGenerativeStatus(format.output_format_ids)}
                     </td>
-                    <td style="padding: 12px; border: 1px solid #dee2e6; font-size: 0.85em;">${formatOutputFormats(format.output_format_ids)}</td>
-                    <td style="padding: 12px; border: 1px solid #dee2e6;">${formatAssetsRequired(format.assets_required)}</td>
-                    <td style="padding: 12px; border: 1px solid #dee2e6; text-align: center;">${getFormatValidationStatusIcon(format)}</td>
+                    <td style="padding: 12px; border: 1px solid #dee2e6; font-size: 0.85em;">${formatOutputFormats(
+                      format.output_format_ids
+                    )}</td>
+                    <td style="padding: 12px; border: 1px solid #dee2e6;">${formatAssetsRequired(
+                      format.assets_required
+                    )}</td>
+                    <td style="padding: 12px; border: 1px solid #dee2e6; text-align: center;">${getFormatValidationStatusIcon(
+                      format
+                    )}</td>
                 </tr>
             `
           )
@@ -4646,7 +4666,9 @@
                     <div class="format-card">
                         ${
                           hasExample
-                            ? `<a href="${format.example_url}" target="_blank" style="text-decoration: none; color: inherit;">
+                            ? `<a href="${
+                                format.example_url
+                              }" target="_blank" style="text-decoration: none; color: inherit;">
                                 <div class="format-card-preview">
                                     ${
                                       hasPreview
@@ -4682,7 +4704,11 @@
                                   format.assets_required
                                     ? `<div class="format-card-detail-row">
                                         <span class="format-card-detail-label">Assets</span>
-                                        <span class="format-card-detail-value">${Array.isArray(format.assets_required) ? format.assets_required.length : 'Custom'}</span>
+                                        <span class="format-card-detail-value">${
+                                          Array.isArray(format.assets_required)
+                                            ? format.assets_required.length
+                                            : 'Custom'
+                                        }</span>
                                     </div>`
                                     : ''
                                 }
@@ -4999,9 +5025,15 @@
                     <tr data-mb-id="${mediaBuy.id}">
                         <td style="padding: 12px; border: 1px solid #dee2e6;">${mediaBuy.id}</td>
                         <td style="padding: 12px; border: 1px solid #dee2e6;">${status} ${mediaBuy.status}</td>
-                        <td style="padding: 12px; border: 1px solid #dee2e6;">$${mediaBuy.budget?.toLocaleString() || '0'}</td>
-                        <td style="padding: 12px; border: 1px solid #dee2e6;">$${mediaBuy.spent?.toLocaleString() || '0'} (${spentPercentage}%)</td>
-                        <td style="padding: 12px; border: 1px solid #dee2e6;">${(mediaBuy.impressions || 0).toLocaleString()}</td>
+                        <td style="padding: 12px; border: 1px solid #dee2e6;">$${
+                          mediaBuy.budget?.toLocaleString() || '0'
+                        }</td>
+                        <td style="padding: 12px; border: 1px solid #dee2e6;">$${
+                          mediaBuy.spent?.toLocaleString() || '0'
+                        } (${spentPercentage}%)</td>
+                        <td style="padding: 12px; border: 1px solid #dee2e6;">${(
+                          mediaBuy.impressions || 0
+                        ).toLocaleString()}</td>
                         <td style="padding: 12px; border: 1px solid #dee2e6;">${mediaBuy.ctr || '0'}%</td>
                         <td style="padding: 12px; border: 1px solid #dee2e6;">
                             ${getMediaBuyActions(mediaBuy)}
@@ -5542,7 +5574,11 @@
                         <span class="timestamp">${new Date().toLocaleTimeString()}</span>
                     </div>
                     <div class="debug-content-item">
-                        <pre style="background: #f8f9fa; padding: 10px; border-radius: 4px; font-size: 12px; overflow-x: auto; color: #333;">${JSON.stringify(createMediaBuyParams, null, 2)}</pre>
+                        <pre style="background: #f8f9fa; padding: 10px; border-radius: 4px; font-size: 12px; overflow-x: auto; color: #333;">${JSON.stringify(
+                          createMediaBuyParams,
+                          null,
+                          2
+                        )}</pre>
                     </div>
                 `;
 
@@ -5571,7 +5607,11 @@
 
           responseEntry.innerHTML = `
                     <div class="debug-header">
-                        <span style="color: ${responseHasErrors ? '#dc2626' : '#333'}; font-weight: bold;">${responseIcon} ADCP create_media_buy Response ${responseHasErrors ? '(ERROR)' : ''}</span>
+                        <span style="color: ${
+                          responseHasErrors ? '#dc2626' : '#333'
+                        }; font-weight: bold;">${responseIcon} ADCP create_media_buy Response ${
+                          responseHasErrors ? '(ERROR)' : ''
+                        }</span>
                         <span class="timestamp">${new Date().toLocaleTimeString()}</span>
                     </div>
                     <div class="debug-content-item">
@@ -5828,7 +5868,11 @@
                         <div style="font-size: 12px; color: #666;">
                             ${format.type || 'Unknown type'} • ${format.is_standard ? 'IAB Standard' : 'Custom format'}
                         </div>
-                        ${format.requirements ? `<div style="font-size: 11px; color: #999; margin-top: 2px;">${format.requirements}</div>` : ''}
+                        ${
+                          format.requirements
+                            ? `<div style="font-size: 11px; color: #999; margin-top: 2px;">${format.requirements}</div>`
+                            : ''
+                        }
                     </div>
                     <span class="format-badge ${format.source === 'agent' ? 'agent' : 'standard'}">
                         ${format.source === 'agent' ? '🤖' : '📚'} ${format.source || 'unknown'}
@@ -5892,9 +5936,15 @@
                     <strong>📊 Asset Preview</strong>
                 </div>
                 <div style="display: grid; gap: 10px;">
-                    <div><strong>Formats Selected:</strong> ${selectedFormats.length} (${selectedFormats.map(f => f.name).join(', ')})</div>
-                    <div><strong>Assets to Generate:</strong> ${selectedFormats.length} creative${selectedFormats.length > 1 ? 's' : ''}</div>
-                    <div><strong>Package Assignments:</strong> ${selectedPackages.length} package${selectedPackages.length > 1 ? 's' : ''}</div>
+                    <div><strong>Formats Selected:</strong> ${selectedFormats.length} (${selectedFormats
+                      .map(f => f.name)
+                      .join(', ')})</div>
+                    <div><strong>Assets to Generate:</strong> ${selectedFormats.length} creative${
+                      selectedFormats.length > 1 ? 's' : ''
+                    }</div>
+                    <div><strong>Package Assignments:</strong> ${selectedPackages.length} package${
+                      selectedPackages.length > 1 ? 's' : ''
+                    }</div>
                     <div><strong>Sample Generation:</strong> ${generateSamples ? '✅ Enabled' : '❌ Disabled'}</div>
                     <div><strong>Naming:</strong> ${namePrefix}_[format_id]_${Date.now()}</div>
                 </div>
@@ -5910,7 +5960,9 @@
                                 format => `
                                 <div style="padding: 6px 10px; background: #e9ecef; border-radius: 3px; margin-bottom: 4px; font-size: 12px;">
                                     📁 ${namePrefix}_${format.format_id}_${Date.now()}
-                                    <span style="color: #666; margin-left: 10px;">(${format.type || 'unknown'} format)</span>
+                                    <span style="color: #666; margin-left: 10px;">(${
+                                      format.type || 'unknown'
+                                    } format)</span>
                                 </div>
                             `
                               )
@@ -6065,7 +6117,9 @@
         }
 
         // Use a placeholder image service
-        return `https://via.placeholder.com/${width}x${height}/007bff/ffffff?text=${encodeURIComponent(format.name || format.format_id)}`;
+        return `https://via.placeholder.com/${width}x${height}/007bff/ffffff?text=${encodeURIComponent(
+          format.name || format.format_id
+        )}`;
       }
 
       function generatePlaceholderVideoUrl(format) {
@@ -6177,7 +6231,9 @@
                         </tr>
                         <tr style="border-bottom: 1px solid #ddd;">
                             <td style="padding: 8px; font-weight: bold;">Spent:</td>
-                            <td style="padding: 8px;">$${mediaBuy.spent?.toLocaleString() || '0'} (${mediaBuy.budget ? ((mediaBuy.spent / mediaBuy.budget) * 100).toFixed(1) : '0'}%)</td>
+                            <td style="padding: 8px;">$${mediaBuy.spent?.toLocaleString() || '0'} (${
+                              mediaBuy.budget ? ((mediaBuy.spent / mediaBuy.budget) * 100).toFixed(1) : '0'
+                            }%)</td>
                         </tr>
                         <tr style="border-bottom: 1px solid #ddd;">
                             <td style="padding: 8px; font-weight: bold;">Impressions:</td>
@@ -6189,11 +6245,17 @@
                         </tr>
                         <tr style="border-bottom: 1px solid #ddd;">
                             <td style="padding: 8px; font-weight: bold;">Created:</td>
-                            <td style="padding: 8px;">${mediaBuy.created ? new Date(mediaBuy.created).toLocaleString() : 'Unknown'}</td>
+                            <td style="padding: 8px;">${
+                              mediaBuy.created ? new Date(mediaBuy.created).toLocaleString() : 'Unknown'
+                            }</td>
                         </tr>
                     </table>
                     <div style="margin-top: 20px;">
-                        <pre style="background: #f5f5f5; padding: 10px; border-radius: 4px; overflow-x: auto;">${JSON.stringify(mediaBuy, null, 2)}</pre>
+                        <pre style="background: #f5f5f5; padding: 10px; border-radius: 4px; overflow-x: auto;">${JSON.stringify(
+                          mediaBuy,
+                          null,
+                          2
+                        )}</pre>
                     </div>
                 </div>
             `;
@@ -6492,14 +6554,18 @@
                         <div><strong>Agent:</strong> ${latestEvent.agent_id || 'N/A'}</div>
                         <div><strong>Events:</strong> ${events.length}</div>
                         <details style="margin-top: 8px;">
-                            <summary style="cursor: pointer; color: #4a9eff;">View History (${events.length} events)</summary>
+                            <summary style="cursor: pointer; color: #4a9eff;">View History (${
+                              events.length
+                            } events)</summary>
                             <div style="margin-top: 8px;">
                                 ${events
                                   .map(
                                     (e, i) => `
                                     <div style="padding: 4px 0; border-top: 1px solid #333;">
                                         <strong>${i + 1}.</strong> ${e.type} - ${e.status || 'N/A'}
-                                        <span style="color: #999; font-size: 11px;">(${new Date(e.timestamp).toLocaleTimeString()})</span>
+                                        <span style="color: #999; font-size: 11px;">(${new Date(
+                                          e.timestamp
+                                        ).toLocaleTimeString()})</span>
                                     </div>
                                 `
                                   )
@@ -6889,7 +6955,13 @@
                                     <span class="debug-log-time">${formatTime(log.timestamp)}</span>
                                 </div>
                                 <div class="debug-log-message">${escapeHtml(log.message || 'No message')}</div>
-                                ${formattedData ? `<pre class="debug-log-data ${isError ? 'error' : ''}">${escapeHtml(formattedData)}</pre>` : ''}
+                                ${
+                                  formattedData
+                                    ? `<pre class="debug-log-data ${isError ? 'error' : ''}">${escapeHtml(
+                                        formattedData
+                                      )}</pre>`
+                                    : ''
+                                }
                             </div>
                             `;
                           })
@@ -6970,7 +7042,9 @@
                         <div class="debug-pair-header" onclick="toggleDebugPair('${callId}')">
                             <div class="debug-pair-title">
                                 📞 Call ${pairIndex + 1}: ${methodName}
-                                <span class="debug-status ${statusClass}">[${status}${statusText ? ' ' + statusText : ''}]</span>
+                                <span class="debug-status ${statusClass}">[${status}${
+                                  statusText ? ' ' + statusText : ''
+                                }]</span>
                             </div>
                             <div class="debug-pair-time">${timestamp}</div>
                             <div class="debug-pair-toggle">${isError ? '▲' : '▼'}</div>
@@ -7190,7 +7264,11 @@
           statsDiv.innerHTML = `
                     <strong>Product Validation:</strong><br>
                     Valid: ${validation.validProducts}/${validation.totalProducts} products<br>
-                    ${validation.invalidProducts > 0 ? `<span style="color: #ff4444;">Invalid: ${validation.invalidProducts}</span>` : ''}
+                    ${
+                      validation.invalidProducts > 0
+                        ? `<span style="color: #ff4444;">Invalid: ${validation.invalidProducts}</span>`
+                        : ''
+                    }
                 `;
           details.appendChild(statsDiv);
 
@@ -7400,11 +7478,19 @@
 
           // Add request information if available
           if (validation.originalResponse) {
-            debugReport += `## Original Response\n\`\`\`json\n${JSON.stringify(validation.originalResponse, null, 2)}\n\`\`\`\n\n`;
+            debugReport += `## Original Response\n\`\`\`json\n${JSON.stringify(
+              validation.originalResponse,
+              null,
+              2
+            )}\n\`\`\`\n\n`;
           }
 
           if (validation.parsedResponse) {
-            debugReport += `## Parsed Response\n\`\`\`json\n${JSON.stringify(validation.parsedResponse, null, 2)}\n\`\`\`\n\n`;
+            debugReport += `## Parsed Response\n\`\`\`json\n${JSON.stringify(
+              validation.parsedResponse,
+              null,
+              2
+            )}\n\`\`\`\n\n`;
           }
 
           // Add product-specific errors if present
@@ -7690,7 +7776,9 @@
                         <h4>📥 Response</h4>
                         <div>
                             <strong>Status:</strong>
-                            <span class="debug-status ${statusClass}">${response.status} ${response.statusText || ''}</span>
+                            <span class="debug-status ${statusClass}">${response.status} ${
+                              response.statusText || ''
+                            }</span>
                         </div>
                 `;
 
@@ -9794,7 +9882,9 @@ ${JSON.stringify(result, null, 2)}
                             </tr>
                             <tr style="border-bottom: 1px solid #eee;">
                                 <td style="padding: 10px; font-weight: 600;">Publisher Domains</td>
-                                <td style="padding: 10px; font-family: monospace; font-size: 12px;">${escapeHtml(publisherDomains.join(', '))}</td>
+                                <td style="padding: 10px; font-family: monospace; font-size: 12px;">${escapeHtml(
+                                  publisherDomains.join(', ')
+                                )}</td>
                             </tr>
                 `;
 
@@ -9802,7 +9892,11 @@ ${JSON.stringify(result, null, 2)}
             html += `
                             <tr style="border-bottom: 1px solid #eee;">
                                 <td style="padding: 10px; font-weight: 600;">Primary Channels</td>
-                                <td style="padding: 10px;">${escapeHtml(Array.isArray(data.primary_channels) ? data.primary_channels.join(', ') : data.primary_channels)}</td>
+                                <td style="padding: 10px;">${escapeHtml(
+                                  Array.isArray(data.primary_channels)
+                                    ? data.primary_channels.join(', ')
+                                    : data.primary_channels
+                                )}</td>
                             </tr>
                     `;
           }
@@ -9811,7 +9905,11 @@ ${JSON.stringify(result, null, 2)}
             html += `
                             <tr style="border-bottom: 1px solid #eee;">
                                 <td style="padding: 10px; font-weight: 600;">Primary Countries</td>
-                                <td style="padding: 10px;">${escapeHtml(Array.isArray(data.primary_countries) ? data.primary_countries.join(', ') : data.primary_countries)}</td>
+                                <td style="padding: 10px;">${escapeHtml(
+                                  Array.isArray(data.primary_countries)
+                                    ? data.primary_countries.join(', ')
+                                    : data.primary_countries
+                                )}</td>
                             </tr>
                     `;
           }
@@ -9860,9 +9958,13 @@ ${JSON.stringify(result, null, 2)}
         properties.forEach(prop => {
           html += `
                     <tr style="border-bottom: 1px solid #eee;">
-                        <td style="padding: 10px; font-family: monospace; font-size: 12px;">${escapeHtml(prop.property_id || prop.id || 'N/A')}</td>
+                        <td style="padding: 10px; font-family: monospace; font-size: 12px;">${escapeHtml(
+                          prop.property_id || prop.id || 'N/A'
+                        )}</td>
                         <td style="padding: 10px;">${escapeHtml(prop.property_name || prop.name || 'N/A')}</td>
-                        <td style="padding: 10px; font-family: monospace; font-size: 12px;">${escapeHtml(prop.domain || prop.publisher_domain || 'N/A')}</td>
+                        <td style="padding: 10px; font-family: monospace; font-size: 12px;">${escapeHtml(
+                          prop.domain || prop.publisher_domain || 'N/A'
+                        )}</td>
                         <td style="padding: 10px;">${escapeHtml(prop.type || prop.property_type || 'N/A')}</td>
                     </tr>
                 `;
@@ -9989,7 +10091,9 @@ ${JSON.stringify(result, null, 2)}
                         </td>
                         <td style="padding: 10px; font-size: 12px;">${tags || 'None'}</td>
                         <td style="padding: 10px;">
-                            <button class="btn btn-small" onclick="assignCreativeToMediaBuy('${creative.id || creative.creative_id}')">
+                            <button class="btn btn-small" onclick="assignCreativeToMediaBuy('${
+                              creative.id || creative.creative_id
+                            }')">
                                 Assign
                             </button>
                         </td>

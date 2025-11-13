@@ -387,17 +387,17 @@ export interface ListCreativesResponse {
 // NOTE: Official schemas are synced to schemas/cache/ and types generated to core.generated.ts
 // These simplified types are maintained for the testing UI.
 
+export interface AuthorizedAgent {
+  url: string;
+  authorized_for: string;
+  property_ids?: string[];
+}
+
 export interface AdAgentsJson {
   $schema?: string;
   authorized_agents: AuthorizedAgent[];
   properties?: Property[];
   last_updated?: string;
-}
-
-export interface AuthorizedAgent {
-  url: string;
-  authorized_for: string;
-  property_ids?: string[];
 }
 
 export interface Property {

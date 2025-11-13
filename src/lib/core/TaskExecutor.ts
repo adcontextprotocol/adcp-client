@@ -1093,7 +1093,9 @@ export class TaskExecutor {
           debugLogs.push({
             timestamp: new Date().toISOString(),
             type: strictMode ? 'error' : 'warning',
-            message: `Schema validation ${strictMode ? 'failed' : 'warning'} for ${taskName}: ${errorSummary}${moreErrors}`,
+            message: `Schema validation ${
+              strictMode ? 'failed' : 'warning'
+            } for ${taskName}: ${errorSummary}${moreErrors}`,
             errors: validationResult.errors,
             schemaErrors: validationResult.schemaErrors,
             strictMode,

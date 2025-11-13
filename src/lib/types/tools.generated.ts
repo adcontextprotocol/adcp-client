@@ -1608,6 +1608,14 @@ export interface TargetingOverlay {
    * Restrict delivery to specific postal/ZIP codes. Use for regulatory compliance or RCT testing.
    */
   geo_postal_code_any_of?: string[];
+  /**
+   * AXE segment ID to include for targeting
+   */
+  axe_include_segment?: string;
+  /**
+   * AXE segment ID to exclude from targeting
+   */
+  axe_exclude_segment?: string;
   frequency_cap?: FrequencyCap;
 }
 /**

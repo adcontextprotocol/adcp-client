@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas v2.4.0
-// Generated at: 2025-11-08T15:37:51.053Z
+// Generated at: 2025-11-13T15:28:49.190Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -117,6 +117,14 @@ export interface TargetingOverlay {
    * Restrict delivery to specific postal/ZIP codes. Use for regulatory compliance or RCT testing.
    */
   geo_postal_code_any_of?: string[];
+  /**
+   * AXE segment ID to include for targeting
+   */
+  axe_include_segment?: string;
+  /**
+   * AXE segment ID to exclude from targeting
+   */
+  axe_exclude_segment?: string;
   frequency_cap?: FrequencyCap;
 }
 /**
@@ -1493,6 +1501,14 @@ export interface TargetingOverlay {
    * Restrict delivery to specific postal/ZIP codes. Use for regulatory compliance or RCT testing.
    */
   geo_postal_code_any_of?: string[];
+  /**
+   * AXE segment ID to include for targeting
+   */
+  axe_include_segment?: string;
+  /**
+   * AXE segment ID to exclude from targeting
+   */
+  axe_exclude_segment?: string;
   frequency_cap?: FrequencyCap;
 }
 /**

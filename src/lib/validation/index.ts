@@ -166,7 +166,9 @@ export async function handleAdCPResponse(
   } catch (parseError) {
     return {
       success: false,
-      error: `Invalid JSON response from ${agentName}: ${parseError instanceof Error ? parseError.message : 'Parse error'}`,
+      error: `Invalid JSON response from ${agentName}: ${
+        parseError instanceof Error ? parseError.message : 'Parse error'
+      }`,
       warnings,
     };
   }
