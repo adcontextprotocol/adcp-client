@@ -457,26 +457,81 @@ ORDER BY sequence_number;
 
 ## CLI Tool
 
-For development and testing, use the included CLI tool to interact with AdCP agents:
+For development and testing, use the included CLI tool to interact with AdCP agents.
+
+### Quick Start with Aliases
+
+Save agents for quick access:
 
 ```bash
-# List available tools from an agent
-npx @adcp/client mcp https://test-agent.adcontextprotocol.org
+# Save an agent with an alias
+npx @adcp/client --save-auth test https://test-agent.adcontextprotocol.org
 
-# Call a tool with inline JSON payload
-npx @adcp/client a2a https://agent.example.com get_products '{"brief":"Coffee brands"}'
+# Use the alias
+npx @adcp/client test get_products '{"brief":"Coffee brands"}'
 
-# Use a file for payload
-npx @adcp/client mcp https://agent.example.com create_media_buy @payload.json
-
-# With authentication
-npx @adcp/client mcp https://agent.example.com get_products '{"brief":"..."}' --auth your-token
-
-# JSON output for scripting
-npx @adcp/client mcp https://agent.example.com get_products '{"brief":"..."}' --json
+# List saved agents
+npx @adcp/client --list-agents
 ```
 
-**MCP Endpoint Discovery**: The client automatically discovers MCP endpoints. Just provide any URL - it tests your path first, and if no MCP server responds, it tries adding `/mcp`. Works with root domains, custom paths, anything.
+### Direct URL Usage
+
+Auto-detect protocol and call directly:
+
+```bash
+# Protocol auto-detection (default)
+npx @adcp/client https://test-agent.adcontextprotocol.org get_products '{"brief":"Coffee"}'
+
+# Force specific protocol with --protocol flag
+npx @adcp/client https://agent.example.com get_products '{"brief":"Coffee"}' --protocol mcp
+npx @adcp/client https://agent.example.com list_authorized_properties --protocol a2a
+
+# List available tools
+npx @adcp/client https://agent.example.com
+
+# Use a file for payload
+npx @adcp/client https://agent.example.com create_media_buy @payload.json
+
+# JSON output for scripting
+npx @adcp/client https://agent.example.com get_products '{"brief":"..."}' --json | jq '.products'
+```
+
+### Authentication
+
+Three ways to provide auth tokens (priority order):
+
+```bash
+# 1. Explicit flag (highest priority)
+npx @adcp/client test get_products '{"brief":"..."}' --auth your-token
+
+# 2. Saved in agent config (recommended)
+npx @adcp/client --save-auth prod https://prod-agent.com
+# Will prompt for auth token securely
+
+# 3. Environment variable (fallback)
+export ADCP_AUTH_TOKEN=your-token
+npx @adcp/client test get_products '{"brief":"..."}'
+```
+
+### Agent Management
+
+```bash
+# Save agent with auth
+npx @adcp/client --save-auth prod https://prod-agent.com mcp
+
+# List all saved agents
+npx @adcp/client --list-agents
+
+# Remove an agent
+npx @adcp/client --remove-agent test
+
+# Show config file location
+npx @adcp/client --show-config
+```
+
+**Protocol Auto-Detection**: The CLI automatically detects whether an endpoint uses MCP or A2A by checking URL patterns and discovery endpoints. Override with `--protocol mcp` or `--protocol a2a` if needed.
+
+**Config File**: Agent configurations are saved to `~/.adcp/config.json` with secure file permissions (0600).
 
 See [docs/CLI.md](docs/CLI.md) for complete CLI documentation including webhook support for async operations.
 
@@ -539,10 +594,10 @@ Contributions welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) file for details.
+Apache 2.0 License - see [LICENSE](LICENSE) file for details.
 
 ## Support
 
-- **Documentation**: [GitHub Pages](https://your-org.github.io/adcp-client/)
-- **Issues**: [GitHub Issues](https://github.com/your-org/adcp-client/issues)
+- **Documentation**: [docs.adcontextprotocol.org](https://docs.adcontextprotocol.org)
+- **Issues**: [GitHub Issues](https://github.com/adcontextprotocol/adcp-client/issues)
 - **Protocol Spec**: [AdCP Specification](https://github.com/adcontextprotocol/adcp)

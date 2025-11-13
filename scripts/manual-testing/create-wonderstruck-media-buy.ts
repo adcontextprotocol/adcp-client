@@ -22,7 +22,7 @@ async function createWonderstruckMediaBuy() {
 
   const productsResult = await agent.getProducts({
     brief: 'Looking for 300x250 display advertising inventory',
-    promoted_offering: 'Wonderstruck brand awareness'
+    promoted_offering: 'Wonderstruck brand awareness',
   });
 
   if (!productsResult.success) {
@@ -101,7 +101,7 @@ async function createWonderstruckMediaBuy() {
     promoted_offering: 'Wonderstruck brand awareness campaign with 300x250 display creative', // Required field per AdCP spec
     budget: {
       total: 5000,
-      currency: 'USD'
+      currency: 'USD',
     },
     start_time: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), // Tomorrow
     end_time: new Date(Date.now() + 31 * 24 * 60 * 60 * 1000).toISOString(), // 31 days from now
@@ -113,10 +113,10 @@ async function createWonderstruckMediaBuy() {
         creative_ids: [creativeId], // Optional: creative IDs to assign at creation time
         budget: {
           total: 5000, // Budget uses 'total', not 'amount'
-          currency: 'USD'
-        }
-      }
-    ]
+          currency: 'USD',
+        },
+      },
+    ],
   };
 
   console.log(`\n📤 Creating media buy...`);
@@ -162,7 +162,6 @@ async function createWonderstruckMediaBuy() {
 
       console.log('\n🎉 Media buy successfully created on Wonderstruck!');
       console.log('   Your 300x250 creative is now running.');
-
     } else {
       console.log('❌ FAILED to create media buy\n');
       console.log('Error Details:');
@@ -190,7 +189,6 @@ async function createWonderstruckMediaBuy() {
     }
 
     console.log('='.repeat(50) + '\n');
-
   } catch (error: any) {
     console.error('\n❌ Exception occurred:');
     console.error(`   ${error.message}`);
@@ -209,7 +207,7 @@ if (require.main === module) {
       console.log('✨ Done!');
       process.exit(0);
     })
-    .catch((error) => {
+    .catch(error => {
       console.error('Fatal error:', error);
       process.exit(1);
     });

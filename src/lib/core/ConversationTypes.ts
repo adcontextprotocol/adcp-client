@@ -52,12 +52,12 @@ export interface InputRequest {
 /**
  * Different types of responses an input handler can provide
  */
-export type InputHandlerResponse = 
-  | any                              // Direct answer
-  | Promise<any>                     // Async answer  
-  | { defer: true; token: string }   // Defer to human
+export type InputHandlerResponse =
+  | any // Direct answer
+  | Promise<any> // Async answer
+  | { defer: true; token: string } // Defer to human
   | { abort: true; reason?: string } // Abort task
-  | never;                           // For control flow (abort() helper)
+  | never; // For control flow (abort() helper)
 
 /**
  * Function signature for input handlers
@@ -84,19 +84,19 @@ export interface ConversationContext {
   attempt: number;
   /** Maximum allowed clarification attempts */
   maxAttempts: number;
-  
+
   /** Helper method to defer task to human */
   deferToHuman(): Promise<{ defer: true; token: string }>;
-  
+
   /** Helper method to abort the task */
   abort(reason?: string): never;
-  
+
   /** Get conversation summary for context */
   getSummary(): string;
-  
+
   /** Check if a field was previously discussed */
   wasFieldDiscussed(field: string): boolean;
-  
+
   /** Get previous response for a field */
   getPreviousResponse(field: string): any;
 }
@@ -104,7 +104,15 @@ export interface ConversationContext {
 /**
  * Status of a task execution
  */
-export type TaskStatus = 'pending' | 'running' | 'needs_input' | 'completed' | 'failed' | 'deferred' | 'aborted' | 'submitted';
+export type TaskStatus =
+  | 'pending'
+  | 'running'
+  | 'needs_input'
+  | 'completed'
+  | 'failed'
+  | 'deferred'
+  | 'aborted'
+  | 'submitted';
 
 /**
  * Options for task execution

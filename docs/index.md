@@ -15,7 +15,7 @@ Welcome to the official documentation for `@adcp/client`, the TypeScript/JavaScr
 - [Handler Patterns](./guides/HANDLER-PATTERNS-GUIDE.md)
 
 ### 🔧 API Reference
-- [ADCPClient](./api/classes/ADCPClient.html)
+- [AdCPClient](./api/classes/AdCPClient.html)
 - [ADCPMultiAgentClient](./api/classes/ADCPMultiAgentClient.html)
 - [Type Definitions](./api/modules.html)
 - [Full API Documentation](./api/index.html)
@@ -28,7 +28,7 @@ Welcome to the official documentation for `@adcp/client`, the TypeScript/JavaScr
 
 ### 📦 Resources
 - [npm Package](https://www.npmjs.com/package/@adcp/client)
-- [GitHub Repository](https://github.com/your-org/adcp-client)
+- [GitHub Repository](https://github.com/adcontextprotocol/adcp-client)
 - [AdCP Specification](https://adcontextprotocol.org)
 
 ## Features at a Glance
@@ -42,5 +42,5 @@ Welcome to the official documentation for `@adcp/client`, the TypeScript/JavaScr
 ## Need Help?
 
 - 📋 [Troubleshooting Guide](./guides/ASYNC-TROUBLESHOOTING-GUIDE.md)
-- 🐛 [Report an Issue](https://github.com/your-org/adcp-client/issues)
-- 💬 [Discussions](https://github.com/your-org/adcp-client/discussions)
+- 🐛 [Report an Issue](https://github.com/adcontextprotocol/adcp-client/issues)
+- 💬 [Discussions](https://github.com/adcontextprotocol/adcp-client/discussions)

@@ -22,7 +22,7 @@ Array of agent configurations
 
 ### config?
 
-[`ADCPClientConfig`](../interfaces/ADCPClientConfig.md)
+[`AdCPClientConfig`](../interfaces/AdCPClientConfig.md)
 
 Client configuration
 

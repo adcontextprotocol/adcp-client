@@ -2,7 +2,12 @@
 // Full Wonderstruck test: Brand Card → Get Products → Create Media Buy → Sync Creatives → Update Media Buy
 
 import { readFileSync } from 'fs';
-import { ADCPMultiAgentClient, type CreateMediaBuyRequest, type SyncCreativesRequest, type UpdateMediaBuyRequest } from '../../src/lib';
+import {
+  ADCPMultiAgentClient,
+  type CreateMediaBuyRequest,
+  type SyncCreativesRequest,
+  type UpdateMediaBuyRequest,
+} from '../../src/lib';
 import path from 'path';
 
 async function fullWonderstruckTest() {
@@ -46,14 +51,14 @@ async function fullWonderstruckTest() {
   console.log(`\n🔍 Querying ${allAgentIds.length} agents: ${allAgentIds.join(', ')}\n`);
 
   const productResults = await Promise.all(
-    allAgentIds.map(async (id) => {
+    allAgentIds.map(async id => {
       const agentClient = client.agent(id);
       const agentConfig = agentClient.getAgent();
       try {
         console.log(`   Querying ${agentConfig.name}...`);
         const result = await agentClient.getProducts({
           brief,
-          promoted_offering: `${brandCard.brand_name}: ${brandCard.mission}`
+          promoted_offering: `${brandCard.brand_name}: ${brandCard.mission}`,
         });
         if (!result.success) {
           console.log(`   ⚠️  ${agentConfig.name} returned error: ${result.error}`);
@@ -110,9 +115,10 @@ async function fullWonderstruckTest() {
   console.log('='.repeat(50));
 
   // First, try to find the Wonderstruck "Live 300x250" product
-  let selectedProductEntry = allProducts.find(({ product, agentName }) =>
-    agentName.toLowerCase().includes('wonderstruck') &&
-    (product.name?.includes('300x250') || product.description?.includes('300x250'))
+  let selectedProductEntry = allProducts.find(
+    ({ product, agentName }) =>
+      agentName.toLowerCase().includes('wonderstruck') &&
+      (product.name?.includes('300x250') || product.description?.includes('300x250'))
   );
 
   if (selectedProductEntry) {
@@ -129,18 +135,16 @@ async function fullWonderstruckTest() {
   // Last resort: Any display product
   if (!selectedProductEntry) {
     console.log('⚠️  No product explicitly supports 300x250, checking for display products...');
-    selectedProductEntry = allProducts.find(({ product }) =>
-      product.name?.toLowerCase().includes('display') ||
-      product.description?.toLowerCase().includes('display')
+    selectedProductEntry = allProducts.find(
+      ({ product }) =>
+        product.name?.toLowerCase().includes('display') || product.description?.toLowerCase().includes('display')
     );
   }
 
   // Use any product from Wonderstruck if available
   if (!selectedProductEntry) {
     console.log('⚠️  No display product found, using first available Wonderstruck product...');
-    selectedProductEntry = allProducts.find(({ agentName }) =>
-      agentName.toLowerCase().includes('wonderstruck')
-    );
+    selectedProductEntry = allProducts.find(({ agentName }) => agentName.toLowerCase().includes('wonderstruck'));
   }
 
   if (!selectedProductEntry) {
@@ -189,9 +193,7 @@ async function fullWonderstruckTest() {
 
   // Choose the best format: prefer image over generative
   // The format's renders array contains the actual dimensions
-  const selectedFormat = displayFormats.find(f =>
-    f.format_id.id.includes('image')
-  ) || displayFormats[0];
+  const selectedFormat = displayFormats.find(f => f.format_id.id.includes('image')) || displayFormats[0];
 
   if (!selectedFormat) {
     throw new Error('No display format found in creative agent');
@@ -212,10 +214,12 @@ async function fullWonderstruckTest() {
   }
 
   // Use structured format IDs per AdCP v1.8.0 spec (creative agent already returns them structured)
-  const formatIds = [{
-    agent_url: selectedFormat.format_id.agent_url,
-    id: selectedFormat.format_id.id
-  }];
+  const formatIds = [
+    {
+      agent_url: selectedFormat.format_id.agent_url,
+      id: selectedFormat.format_id.id,
+    },
+  ];
 
   const mediaBuyRequest: CreateMediaBuyRequest = {
     buyer_ref: buyerRef,
@@ -231,9 +235,9 @@ async function fullWonderstruckTest() {
         product_id: selectedProduct.product_id, // NEW in v1.8.0: Use product_id instead of products array
         format_ids: formatIds,
         ...(selectedPricingOption && { pricing_option_id: selectedPricingOption.pricing_option_id }), // NEW in PR #88: Select pricing model
-        budget: 5000 // NEW in PR #88: Package budget is now just a number
-      }
-    ]
+        budget: 5000, // NEW in PR #88: Package budget is now just a number
+      },
+    ],
   };
 
   console.log(`📤 Creating media buy with ASAP start time...`);
@@ -283,16 +287,16 @@ async function fullWonderstruckTest() {
         name: `${brandCard.brand_name} - ${width}x${height} Display`,
         format_id: {
           agent_url: 'https://creatives.adcontextprotocol.org',
-          id: `display_${width}x${height}`
+          id: `display_${width}x${height}`,
         },
         assets: {},
         media_url: displayAsset.url,
         click_url: brandCard.website,
         width: displayAsset.dimensions.width,
         height: displayAsset.dimensions.height,
-        tags: ['wonderstruck', 'podcast', 'consciousness', `${width}x${height}`]
-      }
-    ]
+        tags: ['wonderstruck', 'podcast', 'consciousness', `${width}x${height}`],
+      },
+    ],
   };
 
   console.log(`📤 Syncing creative...`);
@@ -323,9 +327,9 @@ async function fullWonderstruckTest() {
     packages: [
       {
         package_id: mediaBuyResult.data.packages?.[0]?.package_id,
-        creative_ids: [creativeId]
-      }
-    ]
+        creative_ids: [creativeId],
+      },
+    ],
   };
 
   console.log(`📤 Updating media buy...`);
@@ -366,7 +370,7 @@ if (require.main === module) {
       console.log('✨ Test completed!');
       process.exit(0);
     })
-    .catch((error) => {
+    .catch(error => {
       console.error('❌ Fatal error:', error);
       console.error(error.stack);
       process.exit(1);

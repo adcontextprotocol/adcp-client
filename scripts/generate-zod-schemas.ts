@@ -50,7 +50,7 @@ const ADCP_CORE_SCHEMAS = [
   'creative-assignment',
   'creative-manifest',
   'performance-feedback',
-  'property'
+  'property',
 ];
 
 // Write file only if content differs (excluding timestamp)
@@ -175,7 +175,7 @@ function loadOfficialAdCPTools(): ToolDefinition[] {
             name: toolName,
             methodName,
             requestSchema: schemas.requestSchema,
-            responseSchema: schemas.responseSchema
+            responseSchema: schemas.responseSchema,
           });
         }
       }
@@ -193,7 +193,7 @@ function loadOfficialAdCPTools(): ToolDefinition[] {
             name: toolName,
             methodName,
             requestSchema: schemas.requestSchema,
-            responseSchema: schemas.responseSchema
+            responseSchema: schemas.responseSchema,
           });
         }
       }
@@ -212,7 +212,7 @@ function convertSchemaToZod(schema: any, schemaName: string): string {
     // Use json-schema-to-zod to convert
     const zodCode = jsonSchemaToZod(schema, {
       name: schemaName,
-      module: 'esm'
+      module: 'esm',
     });
 
     // Remove the import statement since we have one at the top of the file

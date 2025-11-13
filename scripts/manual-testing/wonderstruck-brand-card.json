@@ -84,13 +84,7 @@
       "usage": "display advertising, banner placements"
     }
   ],
-  "call_to_actions": [
-    "Listen Now",
-    "Explore Episodes",
-    "Subscribe",
-    "Learn More",
-    "Join the Journey"
-  ],
+  "call_to_actions": ["Listen Now", "Explore Episodes", "Subscribe", "Learn More", "Join the Journey"],
   "prohibited_content": [
     "superficial self-help",
     "materialistic messaging",

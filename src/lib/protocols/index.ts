@@ -36,20 +36,14 @@ export class ProtocolClient {
             url: webhookUrl,
             authentication: {
               schemes: ['HMAC-SHA256'],
-              credentials: webhookSecret || 'placeholder_secret_min_32_characters_required'
-            }
-          }
+              credentials: webhookSecret || 'placeholder_secret_min_32_characters_required',
+            },
+          },
         }
       : args;
 
     if (agent.protocol === 'mcp') {
-      return callMCPTool(
-        agent.agent_uri,
-        toolName,
-        argsWithWebhook,
-        authToken,
-        debugLogs
-      );
+      return callMCPTool(agent.agent_uri, toolName, argsWithWebhook, authToken, debugLogs);
     } else if (agent.protocol === 'a2a') {
       return callA2ATool(
         agent.agent_uri,
@@ -69,10 +63,10 @@ export class ProtocolClient {
  */
 export const createMCPClient = (agentUrl: string, authToken?: string) => ({
   callTool: (toolName: string, args: Record<string, any>, debugLogs?: any[]) =>
-    callMCPTool(agentUrl, toolName, args, authToken, debugLogs)
+    callMCPTool(agentUrl, toolName, args, authToken, debugLogs),
 });
 
 export const createA2AClient = (agentUrl: string, authToken?: string) => ({
   callTool: (toolName: string, parameters: Record<string, any>, debugLogs?: any[]) =>
-    callA2ATool(agentUrl, toolName, parameters, authToken, debugLogs)
+    callA2ATool(agentUrl, toolName, parameters, authToken, debugLogs),
 });

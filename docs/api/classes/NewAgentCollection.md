@@ -26,7 +26,7 @@ Defined in: [src/lib/core/ADCPMultiAgentClient.ts:43](https://github.com/adconte
 
 ##### config
 
-[`ADCPClientConfig`](../interfaces/ADCPClientConfig.md) = `{}`
+[`AdCPClientConfig`](../interfaces/AdCPClientConfig.md) = `{}`
 
 #### Returns
 

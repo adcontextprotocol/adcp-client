@@ -26,7 +26,7 @@ export interface GetProductsRequest {
    * Natural language description of campaign requirements
    */
   brief?: string;
-  brand_manifest: BrandManifestReference;
+  brand_manifest?: BrandManifestReference;
   /**
    * Structured filters for product discovery
    */
@@ -53,6 +53,10 @@ export interface GetProductsRequest {
      */
     min_exposures?: number;
   };
+  /**
+   * Initiator-provided context included in the request payload. Agentsmust echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.
+   */
+  context?: {};
 }
 export interface BrandManifest2 {
   /**
@@ -312,6 +316,10 @@ export interface GetProductsResponse {
    * Task-specific errors and warnings (e.g., product filtering issues)
    */
   errors?: Error[];
+  /**
+   * Initiator-provided context echoed inside the task payload. Opaque metadata such as UI/session hints, correlation tokens, or tracking identifiers.
+   */
+  context?: {};
 }
 /**
  * Represents available advertising inventory
@@ -421,6 +429,30 @@ export interface Product {
    * Expiration timestamp for custom products
    */
   expires_at?: string;
+  /**
+   * Optional standard visual card (300x400px) for displaying this product in user interfaces. Can be rendered via preview_creative or pre-generated.
+   */
+  product_card?: {
+    format_id: FormatID1;
+    /**
+     * Asset manifest for rendering the card, structure defined by the format
+     */
+    manifest: {
+      [k: string]: unknown;
+    };
+  };
+  /**
+   * Optional detailed card with carousel and full specifications. Provides rich product presentation similar to media kit pages.
+   */
+  product_card_detailed?: {
+    format_id: FormatID2;
+    /**
+     * Asset manifest for rendering the detailed card, structure defined by the format
+     */
+    manifest: {
+      [k: string]: unknown;
+    };
+  };
 }
 /**
  * Structured format identifier with agent URL and format name
@@ -851,6 +883,32 @@ export interface CreativePolicy {
   templates_available: boolean;
 }
 /**
+ * Structured format identifier with agent URL and format name
+ */
+export interface FormatID1 {
+  /**
+   * URL of the agent that defines this format (e.g., 'https://creatives.adcontextprotocol.org' for standard formats, or 'https://publisher.com/.well-known/adcp/sales' for custom formats)
+   */
+  agent_url: string;
+  /**
+   * Format identifier within the agent's namespace (e.g., 'display_300x250', 'video_standard_30s')
+   */
+  id: string;
+}
+/**
+ * Structured format identifier with agent URL and format name
+ */
+export interface FormatID2 {
+  /**
+   * URL of the agent that defines this format (e.g., 'https://creatives.adcontextprotocol.org' for standard formats, or 'https://publisher.com/.well-known/adcp/sales' for custom formats)
+   */
+  agent_url: string;
+  /**
+   * Format identifier within the agent's namespace (e.g., 'display_300x250', 'video_standard_30s')
+   */
+  id: string;
+}
+/**
  * Standard error structure for task-specific errors and warnings
  */
 export interface Error {
@@ -924,6 +982,10 @@ export interface ListCreativeFormatsRequest {
    * Search for formats by name (case-insensitive partial match)
    */
   name_search?: string;
+  /**
+   * Initiator-provided context included in the request payload. Agents must echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.
+   */
+  context?: {};
 }
 /**
  * Structured format identifier with agent URL and format name
@@ -959,6 +1021,10 @@ export interface ListCreativeFormatsResponse {
    * Task-specific errors and warnings (e.g., format availability issues)
    */
   errors?: Error[];
+  /**
+   * Initiator-provided context echoed inside the task payload. Opaque metadata such as UI/session hints, correlation tokens, or tracking identifiers.
+   */
+  context?: {};
 }
 /**
  * Represents a creative format with its requirements
@@ -974,7 +1040,7 @@ export interface Format {
    */
   description?: string;
   /**
-   * Optional preview image URL for format browsing/discovery UI. Should be 400x300px (4:3 aspect ratio) PNG or JPG. Used as thumbnail/card image in format browsers.
+   * DEPRECATED: Use format_card instead. Optional preview image URL for format browsing/discovery UI. Should be 400x300px (4:3 aspect ratio) PNG or JPG. Used as thumbnail/card image in format browsers. This field is maintained for backward compatibility but format_card provides a more flexible, structured approach.
    */
   preview_image?: string;
   /**
@@ -1111,6 +1177,7 @@ export interface Format {
           | 'vast'
           | 'daast'
           | 'text'
+          | 'markdown'
           | 'html'
           | 'css'
           | 'javascript'
@@ -1167,6 +1234,7 @@ export interface Format {
             | 'vast'
             | 'daast'
             | 'text'
+            | 'markdown'
             | 'html'
             | 'css'
             | 'javascript'
@@ -1204,11 +1272,35 @@ export interface Format {
    * For generative formats: array of format IDs that this format can generate. When a format accepts inputs like brand_manifest and message, this specifies what concrete output formats can be produced (e.g., a generative banner format might output standard image banner formats).
    */
   output_format_ids?: FormatID1[];
+  /**
+   * Optional standard visual card (300x400px) for displaying this format in user interfaces. Can be rendered via preview_creative or pre-generated.
+   */
+  format_card?: {
+    format_id: FormatID2;
+    /**
+     * Asset manifest for rendering the card, structure defined by the format
+     */
+    manifest: {
+      [k: string]: unknown;
+    };
+  };
+  /**
+   * Optional detailed card with carousel and full specifications. Provides rich format documentation similar to ad spec pages.
+   */
+  format_card_detailed?: {
+    format_id: FormatID3;
+    /**
+     * Asset manifest for rendering the detailed card, structure defined by the format
+     */
+    manifest: {
+      [k: string]: unknown;
+    };
+  };
 }
 /**
  * Structured format identifier with agent URL and format name
  */
-export interface FormatID1 {
+export interface FormatID3 {
   /**
    * URL of the agent that defines this format (e.g., 'https://creatives.adcontextprotocol.org' for standard formats, or 'https://publisher.com/.well-known/adcp/sales' for custom formats)
    */
@@ -1230,24 +1322,172 @@ export type Pacing = 'even' | 'asap' | 'front_loaded';
 /**
  * VAST (Video Ad Serving Template) tag for third-party video ad serving
  */
-export type VASTAsset = VASTAsset1 & VASTAsset2;
-export type VASTAsset2 =
+export type VASTAsset =
   | {
-      [k: string]: unknown;
+      /**
+       * Discriminator indicating VAST is delivered via URL endpoint
+       */
+      delivery_type: 'url';
+      /**
+       * URL endpoint that returns VAST XML
+       */
+      url: string;
+      /**
+       * VAST specification version
+       */
+      vast_version?: '2.0' | '3.0' | '4.0' | '4.1' | '4.2';
+      /**
+       * Whether VPAID (Video Player-Ad Interface Definition) is supported
+       */
+      vpaid_enabled?: boolean;
+      /**
+       * Expected video duration in milliseconds (if known)
+       */
+      duration_ms?: number;
+      /**
+       * Tracking events supported by this VAST tag
+       */
+      tracking_events?: (
+        | 'start'
+        | 'firstQuartile'
+        | 'midpoint'
+        | 'thirdQuartile'
+        | 'complete'
+        | 'impression'
+        | 'click'
+        | 'pause'
+        | 'resume'
+        | 'skip'
+        | 'mute'
+        | 'unmute'
+        | 'fullscreen'
+        | 'exitFullscreen'
+        | 'playerExpand'
+        | 'playerCollapse'
+      )[];
     }
   | {
-      [k: string]: unknown;
+      /**
+       * Discriminator indicating VAST is delivered as inline XML content
+       */
+      delivery_type: 'inline';
+      /**
+       * Inline VAST XML content
+       */
+      content: string;
+      /**
+       * VAST specification version
+       */
+      vast_version?: '2.0' | '3.0' | '4.0' | '4.1' | '4.2';
+      /**
+       * Whether VPAID (Video Player-Ad Interface Definition) is supported
+       */
+      vpaid_enabled?: boolean;
+      /**
+       * Expected video duration in milliseconds (if known)
+       */
+      duration_ms?: number;
+      /**
+       * Tracking events supported by this VAST tag
+       */
+      tracking_events?: (
+        | 'start'
+        | 'firstQuartile'
+        | 'midpoint'
+        | 'thirdQuartile'
+        | 'complete'
+        | 'impression'
+        | 'click'
+        | 'pause'
+        | 'resume'
+        | 'skip'
+        | 'mute'
+        | 'unmute'
+        | 'fullscreen'
+        | 'exitFullscreen'
+        | 'playerExpand'
+        | 'playerCollapse'
+      )[];
     };
 /**
  * DAAST (Digital Audio Ad Serving Template) tag for third-party audio ad serving
  */
-export type DAASTAsset = DAASTAsset1 & DAASTAsset2;
-export type DAASTAsset2 =
+export type DAASTAsset =
   | {
-      [k: string]: unknown;
+      /**
+       * Discriminator indicating DAAST is delivered via URL endpoint
+       */
+      delivery_type: 'url';
+      /**
+       * URL endpoint that returns DAAST XML
+       */
+      url: string;
+      /**
+       * DAAST specification version
+       */
+      daast_version?: '1.0' | '1.1';
+      /**
+       * Expected audio duration in milliseconds (if known)
+       */
+      duration_ms?: number;
+      /**
+       * Tracking events supported by this DAAST tag
+       */
+      tracking_events?: (
+        | 'start'
+        | 'firstQuartile'
+        | 'midpoint'
+        | 'thirdQuartile'
+        | 'complete'
+        | 'impression'
+        | 'pause'
+        | 'resume'
+        | 'skip'
+        | 'mute'
+        | 'unmute'
+      )[];
+      /**
+       * Whether companion display ads are included
+       */
+      companion_ads?: boolean;
     }
   | {
-      [k: string]: unknown;
+      /**
+       * Discriminator indicating DAAST is delivered as inline XML content
+       */
+      delivery_type: 'inline';
+      /**
+       * Inline DAAST XML content
+       */
+      content: string;
+      /**
+       * DAAST specification version
+       */
+      daast_version?: '1.0' | '1.1';
+      /**
+       * Expected audio duration in milliseconds (if known)
+       */
+      duration_ms?: number;
+      /**
+       * Tracking events supported by this DAAST tag
+       */
+      tracking_events?: (
+        | 'start'
+        | 'firstQuartile'
+        | 'midpoint'
+        | 'thirdQuartile'
+        | 'complete'
+        | 'impression'
+        | 'pause'
+        | 'resume'
+        | 'skip'
+        | 'mute'
+        | 'unmute'
+      )[];
+      /**
+       * Whether companion display ads are included
+       */
+      companion_ads?: boolean;
     };
 /**
  * Brand information manifest containing assets, themes, and guidelines. Can be provided inline or as a URL reference to a hosted manifest.
@@ -1280,10 +1520,6 @@ export interface CreateMediaBuyRequest {
    * Campaign end date/time in ISO 8601 format
    */
   end_time: string;
-  /**
-   * Total budget for this media buy. Currency is determined by the pricing_option_id selected in each package.
-   */
-  budget: number;
   reporting_webhook?: PushNotificationConfig & {
     /**
      * Frequency for automated reporting delivery. Must be supported by all products in the media buy.
@@ -1304,6 +1540,10 @@ export interface CreateMediaBuyRequest {
       | 'engagement_rate'
     )[];
   };
+  /**
+   * Initiator-provided context included in the request payload. Agentsmust echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.
+   */
+  context?: {};
 }
 /**
  * Package configuration for media buy creation
@@ -1568,87 +1808,6 @@ export interface JavaScriptAsset {
    */
   module_type?: 'esm' | 'commonjs' | 'script';
 }
-export interface VASTAsset1 {
-  /**
-   * URL endpoint that returns VAST XML
-   */
-  url?: string;
-  /**
-   * Inline VAST XML content
-   */
-  content?: string;
-  /**
-   * VAST specification version
-   */
-  vast_version?: '2.0' | '3.0' | '4.0' | '4.1' | '4.2';
-  /**
-   * Whether VPAID (Video Player-Ad Interface Definition) is supported
-   */
-  vpaid_enabled?: boolean;
-  /**
-   * Expected video duration in milliseconds (if known)
-   */
-  duration_ms?: number;
-  /**
-   * Tracking events supported by this VAST tag
-   */
-  tracking_events?: (
-    | 'start'
-    | 'firstQuartile'
-    | 'midpoint'
-    | 'thirdQuartile'
-    | 'complete'
-    | 'impression'
-    | 'click'
-    | 'pause'
-    | 'resume'
-    | 'skip'
-    | 'mute'
-    | 'unmute'
-    | 'fullscreen'
-    | 'exitFullscreen'
-    | 'playerExpand'
-    | 'playerCollapse'
-  )[];
-}
-export interface DAASTAsset1 {
-  /**
-   * URL endpoint that returns DAAST XML
-   */
-  url?: string;
-  /**
-   * Inline DAAST XML content
-   */
-  content?: string;
-  /**
-   * DAAST specification version
-   */
-  daast_version?: '1.0' | '1.1';
-  /**
-   * Expected audio duration in milliseconds (if known)
-   */
-  duration_ms?: number;
-  /**
-   * Tracking events supported by this DAAST tag
-   */
-  tracking_events?: (
-    | 'start'
-    | 'firstQuartile'
-    | 'midpoint'
-    | 'thirdQuartile'
-    | 'complete'
-    | 'impression'
-    | 'pause'
-    | 'resume'
-    | 'skip'
-    | 'mute'
-    | 'unmute'
-  )[];
-  /**
-   * Whether companion display ads are included
-   */
-  companion_ads?: boolean;
-}
 /**
  * Complete offering specification combining brand manifest, product selectors, and asset filters. Provides all context needed for creative generation about what is being promoted.
  */
@@ -1772,39 +1931,53 @@ export interface PushNotificationConfig {
 
 // create_media_buy response
 /**
- * Response payload for create_media_buy task
+ * Response payload for create_media_buy task. Returns either complete success data OR error information, never both. This enforces atomic operation semantics - the media buy is either fully created or not created at all.
  */
-export interface CreateMediaBuyResponse {
-  /**
-   * Publisher's unique identifier for the created media buy
-   */
-  media_buy_id?: string;
-  /**
-   * Buyer's reference identifier for this media buy
-   */
-  buyer_ref: string;
-  /**
-   * ISO 8601 timestamp for creative upload deadline
-   */
-  creative_deadline?: string;
-  /**
-   * Array of created packages
-   */
-  packages?: {
-    /**
-     * Publisher's unique identifier for the package
-     */
-    package_id: string;
-    /**
-     * Buyer's reference identifier for the package
-     */
-    buyer_ref: string;
-  }[];
-  /**
-   * Task-specific errors and warnings (e.g., partial package creation failures)
-   */
-  errors?: Error[];
-}
+export type CreateMediaBuyResponse =
+  | {
+      /**
+       * Publisher's unique identifier for the created media buy
+       */
+      media_buy_id: string;
+      /**
+       * Buyer's reference identifier for this media buy
+       */
+      buyer_ref: string;
+      /**
+       * ISO 8601 timestamp for creative upload deadline
+       */
+      creative_deadline?: string;
+      /**
+       * Array of created packages
+       */
+      packages: {
+        /**
+         * Publisher's unique identifier for the package
+         */
+        package_id: string;
+        /**
+         * Buyer's reference identifier for the package
+         */
+        buyer_ref: string;
+      }[];
+      /**
+       * Initiator-provided context echoed inside the task payload. Opaque metadata such as UI/session hints, correlation tokens, or tracking identifiers.
+       */
+      context?: {};
+    }
+  | {
+      /**
+       * Array of errors explaining why the operation failed
+       *
+       * @minItems 1
+       */
+      errors: [Error, ...Error[]];
+      /**
+       * Initiator-provided context echoed inside the task payload. Opaque metadata such as UI/session hints, correlation tokens, or tracking identifiers.
+       */
+      context?: {};
+    };
+
 /**
  * Standard error structure for task-specific errors and warnings
  */
@@ -1849,6 +2022,10 @@ export interface SyncCreativesRequest {
    */
   validation_mode?: 'strict' | 'lenient';
   push_notification_config?: PushNotificationConfig;
+  /**
+   * Initiator-provided context included in the request payload. Agents must echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.
+   */
+  context?: {};
 }
 /**
  * Creative asset for upload to library - supports static assets, generative formats, and third-party snippets
@@ -1856,68 +2033,88 @@ export interface SyncCreativesRequest {
 
 // sync_creatives response
 /**
- * Response from creative sync operation with results for each creative
+ * Response from creative sync operation. Returns either per-creative results (best-effort processing) OR operation-level errors (complete failure). This enforces atomic semantics at the operation level while allowing per-item failures within successful operations.
  */
-export interface SyncCreativesResponse {
-  /**
-   * Whether this was a dry run (no actual changes made)
-   */
-  dry_run?: boolean;
-  /**
-   * Results for each creative processed
-   */
-  creatives: {
-    /**
-     * Creative ID from the request
-     */
-    creative_id: string;
-    /**
-     * Action taken for this creative
-     */
-    action: 'created' | 'updated' | 'unchanged' | 'failed' | 'deleted';
-    /**
-     * Platform-specific ID assigned to the creative
-     */
-    platform_id?: string;
-    /**
-     * Field names that were modified (only present when action='updated')
-     */
-    changes?: string[];
-    /**
-     * Validation or processing errors (only present when action='failed')
-     */
-    errors?: string[];
-    /**
-     * Non-fatal warnings about this creative
-     */
-    warnings?: string[];
-    /**
-     * Preview URL for generative creatives (only present for generative formats)
-     */
-    preview_url?: string;
-    /**
-     * ISO 8601 timestamp when preview link expires (only present when preview_url exists)
-     */
-    expires_at?: string;
-    /**
-     * Package IDs this creative was successfully assigned to (only present when assignments were requested)
-     */
-    assigned_to?: string[];
-    /**
-     * Assignment errors by package ID (only present when assignment failures occurred)
-     */
-    assignment_errors?: {
+export type SyncCreativesResponse =
+  | {
       /**
-       * Error message for this package assignment
-       *
-       * This interface was referenced by `undefined`'s JSON-Schema definition
-       * via the `patternProperty` "^[a-zA-Z0-9_-]+$".
+       * Whether this was a dry run (no actual changes made)
        */
-      [k: string]: string;
+      dry_run?: boolean;
+      /**
+       * Results for each creative processed. Items with action='failed' indicate per-item validation/processing failures, not operation-level failures.
+       */
+      creatives: {
+        /**
+         * Creative ID from the request
+         */
+        creative_id: string;
+        /**
+         * Action taken for this creative
+         */
+        action: 'created' | 'updated' | 'unchanged' | 'failed' | 'deleted';
+        /**
+         * Platform-specific ID assigned to the creative
+         */
+        platform_id?: string;
+        /**
+         * Field names that were modified (only present when action='updated')
+         */
+        changes?: string[];
+        /**
+         * Validation or processing errors (only present when action='failed')
+         */
+        errors?: string[];
+        /**
+         * Non-fatal warnings about this creative
+         */
+        warnings?: string[];
+        /**
+         * Preview URL for generative creatives (only present for generative formats)
+         */
+        preview_url?: string;
+        /**
+         * ISO 8601 timestamp when preview link expires (only present when preview_url exists)
+         */
+        expires_at?: string;
+        /**
+         * Package IDs this creative was successfully assigned to (only present when assignments were requested)
+         */
+        assigned_to?: string[];
+        /**
+         * Assignment errors by package ID (only present when assignment failures occurred)
+         */
+        assignment_errors?: {
+          /**
+           * Error message for this package assignment
+           *
+           * This interface was referenced by `undefined`'s JSON-Schema definition
+           * via the `patternProperty` "^[a-zA-Z0-9_-]+$".
+           */
+          [k: string]: string;
+        };
+      }[];
+      /**
+       * Initiator-provided context echoed inside the task payload. Opaque metadata such as UI/session hints, correlation tokens, or tracking identifiers.
+       */
+      context?: {};
+    }
+  | {
+      /**
+       * Operation-level errors that prevented processing any creatives (e.g., authentication failure, service unavailable, invalid request format)
+       *
+       * @minItems 1
+       */
+      errors: [Error, ...Error[]];
+      /**
+       * Initiator-provided context echoed inside the task payload. Opaque metadata such as UI/session hints, correlation tokens, or tracking identifiers.
+       */
+      context?: {};
     };
-  }[];
-}
 
+/**
+ * Standard error structure for task-specific errors and warnings
+ */
 
 // list_creatives parameters
 /**
@@ -2054,6 +2251,10 @@ export interface ListCreativesRequest {
     | 'performance'
     | 'sub_assets'
   )[];
+  /**
+   * Initiator-provided context included in the request payload. Agentsmust echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.
+   */
+  context?: {};
 }
 
 
@@ -2061,13 +2262,42 @@ export interface ListCreativesRequest {
 /**
  * Current approval status of the creative
  */
-export type SubAsset = SubAsset1 & SubAsset2;
-export type SubAsset2 =
+export type SubAsset =
   | {
-      [k: string]: unknown;
+      /**
+       * Discriminator indicating this is a media asset with content_uri
+       */
+      asset_kind: 'media';
+      /**
+       * Type of asset. Common types: thumbnail_image, product_image, featured_image, logo
+       */
+      asset_type: string;
+      /**
+       * Unique identifier for the asset within the creative
+       */
+      asset_id: string;
+      /**
+       * URL for media assets (images, videos, etc.)
+       */
+      content_uri: string;
     }
   | {
-      [k: string]: unknown;
+      /**
+       * Discriminator indicating this is a text asset with content
+       */
+      asset_kind: 'text';
+      /**
+       * Type of asset. Common types: headline, body_text, cta_text, price_text, sponsor_name, author_name, click_url
+       */
+      asset_type: string;
+      /**
+       * Unique identifier for the asset within the creative
+       */
+      asset_id: string;
+      /**
+       * Text content for text-based assets like headlines, body text, CTA text, etc.
+       */
+      content: string | string[];
     };
 
 /**
@@ -2287,29 +2517,14 @@ export interface ListCreativesResponse {
      */
     archived?: number;
   };
+  /**
+   * Initiator-provided context echoed inside the task payload. Opaque metadata such as UI/session hints, correlation tokens, or tracking identifiers.
+   */
+  context?: {};
 }
 /**
  * Format identifier specifying which format this creative conforms to
  */
-export interface SubAsset1 {
-  /**
-   * Type of asset. Common types: headline, body_text, thumbnail_image, product_image, featured_image, logo, cta_text, price_text, sponsor_name, author_name, click_url
-   */
-  asset_type?: string;
-  /**
-   * Unique identifier for the asset within the creative
-   */
-  asset_id?: string;
-  /**
-   * URL for media assets (images, videos, etc.)
-   */
-  content_uri?: string;
-  /**
-   * Text content for text-based assets like headlines, body text, CTA text, etc.
-   */
-  content?: string | string[];
-}
-
 
 // update_media_buy parameters
 /**
@@ -2342,10 +2557,6 @@ export interface UpdateMediaBuyRequest1 {
    */
   end_time?: string;
   /**
-   * Updated total budget for this media buy. Currency is determined by the pricing_option_id selected in each package.
-   */
-  budget?: number;
-  /**
    * Package-specific updates
    */
   packages?: (
@@ -2357,6 +2568,10 @@ export interface UpdateMediaBuyRequest1 {
       }
   )[];
   push_notification_config?: PushNotificationConfig;
+  /**
+   * Initiator-provided context included in the request payload. Agents must echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.
+   */
+  context?: {};
 }
 /**
  * Optional webhook configuration for async update notifications. Publisher will send webhook when update completes if operation takes longer than immediate response time.
@@ -2364,39 +2579,53 @@ export interface UpdateMediaBuyRequest1 {
 
 // update_media_buy response
 /**
- * Response payload for update_media_buy task
+ * Response payload for update_media_buy task. Returns either complete success data OR error information, never both. This enforces atomic operation semantics - updates are either fully applied or not applied at all.
  */
-export interface UpdateMediaBuyResponse {
-  /**
-   * Publisher's identifier for the media buy
-   */
-  media_buy_id: string;
-  /**
-   * Buyer's reference identifier for the media buy
-   */
-  buyer_ref: string;
-  /**
-   * ISO 8601 timestamp when changes take effect (null if pending approval)
-   */
-  implementation_date?: string | null;
-  /**
-   * Array of packages that were modified
-   */
-  affected_packages?: {
-    /**
-     * Publisher's package identifier
-     */
-    package_id: string;
-    /**
-     * Buyer's reference for the package
-     */
-    buyer_ref: string;
-  }[];
-  /**
-   * Task-specific errors and warnings (e.g., partial update failures)
-   */
-  errors?: Error[];
-}
+export type UpdateMediaBuyResponse =
+  | {
+      /**
+       * Publisher's identifier for the media buy
+       */
+      media_buy_id: string;
+      /**
+       * Buyer's reference identifier for the media buy
+       */
+      buyer_ref: string;
+      /**
+       * ISO 8601 timestamp when changes take effect (null if pending approval)
+       */
+      implementation_date?: string | null;
+      /**
+       * Array of packages that were modified
+       */
+      affected_packages?: {
+        /**
+         * Publisher's package identifier
+         */
+        package_id: string;
+        /**
+         * Buyer's reference for the package
+         */
+        buyer_ref: string;
+      }[];
+      /**
+       * Initiator-provided context echoed inside the task payload. Opaque metadata such as UI/session hints, correlation tokens, or tracking identifiers.
+       */
+      context?: {};
+    }
+  | {
+      /**
+       * Array of errors explaining why the operation failed
+       *
+       * @minItems 1
+       */
+      errors: [Error, ...Error[]];
+      /**
+       * Initiator-provided context echoed inside the task payload. Opaque metadata such as UI/session hints, correlation tokens, or tracking identifiers.
+       */
+      context?: {};
+    };
+
 /**
  * Standard error structure for task-specific errors and warnings
  */
@@ -2428,6 +2657,10 @@ export interface GetMediaBuyDeliveryRequest {
    * End date for reporting period (YYYY-MM-DD)
    */
   end_date?: string;
+  /**
+   * Initiator-provided context included in the request payload. Agentsmust echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.
+   */
+  context?: {};
 }
 
 
@@ -2436,6 +2669,10 @@ export interface GetMediaBuyDeliveryRequest {
  * Pricing model used for this media buy
  */
 export type PricingModel = 'cpm' | 'vcpm' | 'cpc' | 'cpcv' | 'cpv' | 'cpp' | 'flat_rate';
+/**
+ * The pricing model used for this package (e.g., cpm, cpcv, cpp). Indicates how the package is billed and which metrics are most relevant for optimization.
+ */
+export type PricingModel1 = 'cpm' | 'vcpm' | 'cpc' | 'cpcv' | 'cpv' | 'cpp' | 'flat_rate';
 
 /**
  * Response payload for get_media_buy_delivery task
@@ -2550,6 +2787,15 @@ export interface GetMediaBuyDeliveryResponse {
        * Delivery pace (1.0 = on track, <1.0 = behind, >1.0 = ahead)
        */
       pacing_index?: number;
+      pricing_model: PricingModel1;
+      /**
+       * The pricing rate for this package in the specified currency. For fixed-rate pricing, this is the agreed rate (e.g., CPM rate of 12.50 means $12.50 per 1,000 impressions). For auction-based pricing, this represents the effective rate based on actual delivery.
+       */
+      rate: number;
+      /**
+       * ISO 4217 currency code (e.g., USD, EUR, GBP) for this package's pricing. Indicates the currency in which the rate and spend values are denominated. Different packages can use different currencies when supported by the publisher.
+       */
+      currency: string;
     })[];
     /**
      * Day-by-day delivery
@@ -2573,6 +2819,10 @@ export interface GetMediaBuyDeliveryResponse {
    * Task-specific errors and warnings (e.g., missing delivery data, reporting platform issues)
    */
   errors?: Error[];
+  /**
+   * Initiator-provided context echoed inside the task payload. Opaque metadata such as UI/session hints, correlation tokens, or tracking identifiers.
+   */
+  context?: {};
 }
 /**
  * Standard delivery metrics that can be reported at media buy, package, or creative level
@@ -2718,6 +2968,10 @@ export interface ListAuthorizedPropertiesRequest {
    * @minItems 1
    */
   publisher_domains?: [string, ...string[]];
+  /**
+   * Initiator-provided context included in the request payload. Agentsmust echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.
+   */
+  context?: {};
 }
 
 
@@ -2774,6 +3028,10 @@ export interface ListAuthorizedPropertiesResponse {
    * Task-specific errors and warnings (e.g., property availability issues)
    */
   errors?: Error[];
+  /**
+   * Initiator-provided context echoed inside the task payload. Opaque metadata such as UI/session hints, correlation tokens, or tracking identifiers.
+   */
+  context?: {};
 }
 /**
  * Standard error structure for task-specific errors and warnings
@@ -2829,23 +3087,41 @@ export interface ProvidePerformanceFeedbackRequest {
    * Source of the performance data
    */
   feedback_source?: 'buyer_attribution' | 'third_party_measurement' | 'platform_analytics' | 'verification_partner';
+  /**
+   * Initiator-provided context included in the request payload. Agentsmust echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.
+   */
+  context?: {};
 }
 
 
 // provide_performance_feedback response
 /**
- * Response payload for provide_performance_feedback task
+ * Response payload for provide_performance_feedback task. Returns either success confirmation OR error information, never both.
  */
-export interface ProvidePerformanceFeedbackResponse {
-  /**
-   * Whether the performance feedback was successfully received
-   */
-  success: boolean;
-  /**
-   * Task-specific errors and warnings (e.g., invalid measurement period, missing campaign data)
-   */
-  errors?: Error[];
-}
+export type ProvidePerformanceFeedbackResponse =
+  | {
+      /**
+       * Whether the performance feedback was successfully received
+       */
+      success: true;
+      /**
+       * Initiator-provided context echoed inside the task payload. Opaque metadata such as UI/session hints, correlation tokens, or tracking identifiers.
+       */
+      context?: {};
+    }
+  | {
+      /**
+       * Array of errors explaining why feedback was rejected (e.g., invalid measurement period, missing campaign data)
+       *
+       * @minItems 1
+       */
+      errors: [Error, ...Error[]];
+      /**
+       * Initiator-provided context echoed inside the task payload. Opaque metadata such as UI/session hints, correlation tokens, or tracking identifiers.
+       */
+      context?: {};
+    };
+
 /**
  * Standard error structure for task-specific errors and warnings
  */
@@ -2861,6 +3137,10 @@ export interface BuildCreativeRequest {
   message?: string;
   creative_manifest?: CreativeManifest;
   target_format_id: FormatID1;
+  /**
+   * Initiator-provided context included in the request payload. Agentsmust echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.
+   */
+  context?: {};
 }
 /**
  * Creative manifest to transform or generate from. For pure generation, this should include the target format_id and any required input assets (e.g., promoted_offerings for generative formats). For transformation (e.g., resizing, reformatting), this is the complete creative to adapt.
@@ -2948,310 +3228,487 @@ export interface WebhookAsset {
 
 // build_creative response
 /**
- * VAST (Video Ad Serving Template) tag for third-party video ad serving
+ * Response containing the transformed or generated creative manifest, ready for use with preview_creative or sync_creatives. Returns either the complete creative manifest OR error information, never both.
  */
-export interface BuildCreativeResponse {
-  creative_manifest: CreativeManifest;
-  /**
-   * Task-specific errors and warnings
-   */
-  errors?: Error[];
-}
+export type BuildCreativeResponse =
+  | {
+      creative_manifest: CreativeManifest;
+      /**
+       * Initiator-provided context echoed inside the task payload. Opaque metadata such as UI/session hints, correlation tokens, or tracking identifiers.
+       */
+      context?: {};
+    }
+  | {
+      /**
+       * Array of errors explaining why creative generation failed
+       *
+       * @minItems 1
+       */
+      errors: [Error, ...Error[]];
+      /**
+       * Initiator-provided context echoed inside the task payload. Opaque metadata such as UI/session hints, correlation tokens, or tracking identifiers.
+       */
+      context?: {};
+    };
 /**
- * The generated or transformed creative manifest
+ * VAST (Video Ad Serving Template) tag for third-party video ad serving
  */
 
 // preview_creative parameters
 /**
+ * Request to generate previews of one or more creative manifests. Accepts either a single creative request or an array of requests for batch processing.
+ */
+export type PreviewCreativeRequest =
+  | {
+      format_id: FormatID;
+      creative_manifest: CreativeManifest;
+      /**
+       * Array of input sets for generating multiple preview variants. Each input set defines macros and context values for one preview rendering. If not provided, creative agent will generate default previews.
+       */
+      inputs?: {
+        /**
+         * Human-readable name for this input set (e.g., 'Sunny morning on mobile', 'Evening podcast ad', 'Desktop dark mode')
+         */
+        name: string;
+        /**
+         * Macro values to use for this preview. Supports all universal macros from the format's supported_macros list. See docs/media-buy/creatives/universal-macros.md for available macros.
+         */
+        macros?: {
+          [k: string]: string;
+        };
+        /**
+         * Natural language description of the context for AI-generated content (e.g., 'User just searched for running shoes', 'Podcast discussing weather patterns', 'Article about electric vehicles')
+         */
+        context_description?: string;
+      }[];
+      /**
+       * Specific template ID for custom format rendering
+       */
+      template_id?: string;
+      /**
+       * Output format for previews. 'url' returns preview_url (iframe-embeddable URL), 'html' returns preview_html (raw HTML for direct embedding). Default: 'url' for backward compatibility.
+       */
+      output_format?: 'url' | 'html';
+      /**
+       * Initiator-provided context included in the request payload. Agents must echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.
+       */
+      context?: {};
+    }
+  | {
+      /**
+       * Array of preview requests (1-50 items). Each follows the single request structure.
+       *
+       * @minItems 1
+       * @maxItems 50
+       */
+      requests: [
+        {
+          format_id: FormatID2;
+          creative_manifest: CreativeManifest1;
+          /**
+           * Array of input sets for generating multiple preview variants
+           */
+          inputs?: {
+            /**
+             * Human-readable name for this input set
+             */
+            name: string;
+            /**
+             * Macro values to use for this preview
+             */
+            macros?: {
+              [k: string]: string;
+            };
+            /**
+             * Natural language description of the context for AI-generated content
+             */
+            context_description?: string;
+          }[];
+          /**
+           * Specific template ID for custom format rendering
+           */
+          template_id?: string;
+          /**
+           * Output format for this preview. 'url' returns preview_url, 'html' returns preview_html.
+           */
+          output_format?: 'url' | 'html';
+        },
+        ...{
+          format_id: FormatID2;
+          creative_manifest: CreativeManifest1;
+          /**
+           * Array of input sets for generating multiple preview variants
+           */
+          inputs?: {
+            /**
+             * Human-readable name for this input set
+             */
+            name: string;
+            /**
+             * Macro values to use for this preview
+             */
+            macros?: {
+              [k: string]: string;
+            };
+            /**
+             * Natural language description of the context for AI-generated content
+             */
+            context_description?: string;
+          }[];
+          /**
+           * Specific template ID for custom format rendering
+           */
+          template_id?: string;
+          /**
+           * Output format for this preview. 'url' returns preview_url, 'html' returns preview_html.
+           */
+          output_format?: 'url' | 'html';
+        }[]
+      ];
+      /**
+       * Default output format for all requests in this batch. Individual requests can override this. 'url' returns preview_url (iframe-embeddable URL), 'html' returns preview_html (raw HTML for direct embedding).
+       */
+      output_format?: 'url' | 'html';
+      /**
+       * Initiator-provided context included in the request payload. Agents must echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.
+       */
+      context?: {};
+    };
+/**
  * VAST (Video Ad Serving Template) tag for third-party video ad serving
  */
-export interface PreviewCreativeRequest {
-  format_id: FormatID;
-  creative_manifest: CreativeManifest;
+export interface CreativeManifest1 {
+  format_id: FormatID1;
   /**
-   * Array of input sets for generating multiple preview variants. Each input set defines macros and context values for one preview rendering. If not provided, creative agent will generate default previews.
+   * Product name or offering being advertised. Maps to promoted_offerings in create_media_buy request to associate creative with the product being promoted.
    */
-  inputs?: {
-    /**
-     * Human-readable name for this input set (e.g., 'Sunny morning on mobile', 'Evening podcast ad', 'Desktop dark mode')
-     */
-    name: string;
-    /**
-     * Macro values to use for this preview. Supports all universal macros from the format's supported_macros list. See docs/media-buy/creatives/universal-macros.md for available macros.
-     */
-    macros?: {
-      [k: string]: string;
-    };
-    /**
-     * Natural language description of the context for AI-generated content (e.g., 'User just searched for running shoes', 'Podcast discussing weather patterns', 'Article about electric vehicles')
-     */
-    context_description?: string;
-  }[];
+  promoted_offering?: string;
   /**
-   * Specific template ID for custom format rendering
+   * Map of asset IDs to actual asset content. Each key MUST match an asset_id from the format's assets_required array (e.g., 'banner_image', 'clickthrough_url', 'video_file', 'vast_tag'). The asset_id is the technical identifier used to match assets to format requirements.
+   *
+   * IMPORTANT: Creative manifest validation MUST be performed in the context of the format specification. The format defines what type each asset_id should be, which eliminates any validation ambiguity.
    */
-  template_id?: string;
+  assets: {
+    /**
+     * This interface was referenced by `undefined`'s JSON-Schema definition
+     * via the `patternProperty` "^[a-z0-9_]+$".
+     */
+    [k: string]:
+      | ImageAsset
+      | VideoAsset
+      | AudioAsset
+      | VASTAsset
+      | TextAsset
+      | URLAsset
+      | HTMLAsset
+      | JavaScriptAsset
+      | WebhookAsset
+      | CSSAsset
+      | DAASTAsset
+      | PromotedOfferings;
+  };
 }
-/**
- * Format identifier for rendering the preview
- */
+
 
 // preview_creative response
 /**
- * Response containing preview links for a creative. Each preview URL returns an HTML page that can be embedded in an iframe to display the rendered creative.
+ * Response containing preview links for one or more creatives. Format matches the request: single preview response for single requests, batch results for batch requests.
  */
-export interface PreviewCreativeResponse {
-  /**
-   * Array of preview variants. Each preview corresponds to an input set from the request. If no inputs were provided, returns a single default preview.
-   *
-   * @minItems 1
-   */
-  previews: [
-    {
+export type PreviewCreativeResponse =
+  | {
       /**
-       * Unique identifier for this preview variant
-       */
-      preview_id: string;
-      /**
-       * Array of rendered pieces for this preview variant. Most formats render as a single piece. Companion ad formats (video + banner), multi-placement formats, and adaptive formats render as multiple pieces.
+       * Array of preview variants. Each preview corresponds to an input set from the request. If no inputs were provided, returns a single default preview.
        *
        * @minItems 1
        */
-      renders: [
+      previews: [
         {
           /**
-           * Unique identifier for this rendered piece within the variant
+           * Unique identifier for this preview variant
            */
-          render_id: string;
+          preview_id: string;
           /**
-           * URL to an HTML page that renders this piece. Can be embedded in an iframe. Handles all rendering complexity internally (images, video players, audio players, interactive content, etc.).
+           * Array of rendered pieces for this preview variant. Most formats render as a single piece. Companion ad formats (video + banner), multi-placement formats, and adaptive formats render as multiple pieces.
+           *
+           * @minItems 1
            */
-          preview_url: string;
+          renders: [PreviewRender, ...PreviewRender[]];
           /**
-           * Semantic role of this rendered piece. Use 'primary' for main content, 'companion' for associated banners, descriptive strings for device variants or custom roles.
+           * The input parameters that generated this preview variant. Echoes back the request input or shows defaults used.
            */
-          role: string;
-          /**
-           * Dimensions for this rendered piece. For companion ads with multiple sizes, this specifies which size this piece is.
-           */
-          dimensions?: {
-            width: number;
-            height: number;
-          };
-          /**
-           * Optional security and embedding metadata for safe iframe integration
-           */
-          embedding?: {
+          input: {
             /**
-             * Recommended iframe sandbox attribute value (e.g., 'allow-scripts allow-same-origin')
+             * Human-readable name for this variant
              */
-            recommended_sandbox?: string;
+            name: string;
             /**
-             * Whether this output requires HTTPS for secure embedding
+             * Macro values applied to this variant
              */
-            requires_https?: boolean;
+            macros?: {
+              [k: string]: string;
+            };
             /**
-             * Whether this output supports fullscreen mode
+             * Context description applied to this variant
              */
-            supports_fullscreen?: boolean;
-            /**
-             * Content Security Policy requirements for embedding
-             */
-            csp_policy?: string;
+            context_description?: string;
           };
         },
         ...{
           /**
-           * Unique identifier for this rendered piece within the variant
+           * Unique identifier for this preview variant
            */
-          render_id: string;
+          preview_id: string;
           /**
-           * URL to an HTML page that renders this piece. Can be embedded in an iframe. Handles all rendering complexity internally (images, video players, audio players, interactive content, etc.).
+           * Array of rendered pieces for this preview variant. Most formats render as a single piece. Companion ad formats (video + banner), multi-placement formats, and adaptive formats render as multiple pieces.
+           *
+           * @minItems 1
            */
-          preview_url: string;
+          renders: [PreviewRender, ...PreviewRender[]];
           /**
-           * Semantic role of this rendered piece. Use 'primary' for main content, 'companion' for associated banners, descriptive strings for device variants or custom roles.
+           * The input parameters that generated this preview variant. Echoes back the request input or shows defaults used.
            */
-          role: string;
-          /**
-           * Dimensions for this rendered piece. For companion ads with multiple sizes, this specifies which size this piece is.
-           */
-          dimensions?: {
-            width: number;
-            height: number;
-          };
-          /**
-           * Optional security and embedding metadata for safe iframe integration
-           */
-          embedding?: {
+          input: {
             /**
-             * Recommended iframe sandbox attribute value (e.g., 'allow-scripts allow-same-origin')
+             * Human-readable name for this variant
              */
-            recommended_sandbox?: string;
+            name: string;
             /**
-             * Whether this output requires HTTPS for secure embedding
+             * Macro values applied to this variant
              */
-            requires_https?: boolean;
+            macros?: {
+              [k: string]: string;
+            };
             /**
-             * Whether this output supports fullscreen mode
+             * Context description applied to this variant
              */
-            supports_fullscreen?: boolean;
-            /**
-             * Content Security Policy requirements for embedding
-             */
-            csp_policy?: string;
+            context_description?: string;
           };
         }[]
       ];
       /**
-       * The input parameters that generated this preview variant. Echoes back the request input or shows defaults used.
+       * Optional URL to an interactive testing page that shows all preview variants with controls to switch between them, modify macro values, and test different scenarios.
        */
-      input: {
-        /**
-         * Human-readable name for this variant
-         */
-        name: string;
-        /**
-         * Macro values applied to this variant
-         */
-        macros?: {
-          [k: string]: string;
-        };
-        /**
-         * Context description applied to this variant
-         */
-        context_description?: string;
-      };
-    },
-    ...{
+      interactive_url?: string;
       /**
-       * Unique identifier for this preview variant
+       * ISO 8601 timestamp when preview links expire
        */
-      preview_id: string;
+      expires_at: string;
       /**
-       * Array of rendered pieces for this preview variant. Most formats render as a single piece. Companion ad formats (video + banner), multi-placement formats, and adaptive formats render as multiple pieces.
+       * Initiator-provided context echoed inside the preview payload. Opaque metadata such as UI/session hints, correlation tokens, or tracking identifiers.
+       */
+      context?: {};
+    }
+  | {
+      /**
+       * Array of preview results corresponding to each request in the same order. results[0] is the result for requests[0], results[1] for requests[1], etc. Order is guaranteed even when some requests fail. Each result contains either a successful preview response or an error.
        *
        * @minItems 1
        */
-      renders: [
-        {
-          /**
-           * Unique identifier for this rendered piece within the variant
-           */
-          render_id: string;
-          /**
-           * URL to an HTML page that renders this piece. Can be embedded in an iframe. Handles all rendering complexity internally (images, video players, audio players, interactive content, etc.).
-           */
-          preview_url: string;
-          /**
-           * Semantic role of this rendered piece. Use 'primary' for main content, 'companion' for associated banners, descriptive strings for device variants or custom roles.
-           */
-          role: string;
-          /**
-           * Dimensions for this rendered piece. For companion ads with multiple sizes, this specifies which size this piece is.
-           */
-          dimensions?: {
-            width: number;
-            height: number;
-          };
-          /**
-           * Optional security and embedding metadata for safe iframe integration
-           */
-          embedding?: {
-            /**
-             * Recommended iframe sandbox attribute value (e.g., 'allow-scripts allow-same-origin')
-             */
-            recommended_sandbox?: string;
-            /**
-             * Whether this output requires HTTPS for secure embedding
-             */
-            requires_https?: boolean;
-            /**
-             * Whether this output supports fullscreen mode
-             */
-            supports_fullscreen?: boolean;
-            /**
-             * Content Security Policy requirements for embedding
-             */
-            csp_policy?: string;
-          };
-        },
-        ...{
-          /**
-           * Unique identifier for this rendered piece within the variant
-           */
-          render_id: string;
-          /**
-           * URL to an HTML page that renders this piece. Can be embedded in an iframe. Handles all rendering complexity internally (images, video players, audio players, interactive content, etc.).
-           */
-          preview_url: string;
-          /**
-           * Semantic role of this rendered piece. Use 'primary' for main content, 'companion' for associated banners, descriptive strings for device variants or custom roles.
-           */
-          role: string;
-          /**
-           * Dimensions for this rendered piece. For companion ads with multiple sizes, this specifies which size this piece is.
-           */
-          dimensions?: {
-            width: number;
-            height: number;
-          };
-          /**
-           * Optional security and embedding metadata for safe iframe integration
-           */
-          embedding?: {
-            /**
-             * Recommended iframe sandbox attribute value (e.g., 'allow-scripts allow-same-origin')
-             */
-            recommended_sandbox?: string;
-            /**
-             * Whether this output requires HTTPS for secure embedding
-             */
-            requires_https?: boolean;
-            /**
-             * Whether this output supports fullscreen mode
-             */
-            supports_fullscreen?: boolean;
-            /**
-             * Content Security Policy requirements for embedding
-             */
-            csp_policy?: string;
-          };
-        }[]
+      results: [
+        (
+          | {
+              success?: true;
+            }
+          | {
+              success?: false;
+            }
+        ),
+        ...(
+          | {
+              success?: true;
+            }
+          | {
+              success?: false;
+            }
+        )[]
       ];
       /**
-       * The input parameters that generated this preview variant. Echoes back the request input or shows defaults used.
+       * Initiator-provided context echoed inside the preview payload. Opaque metadata such as UI/session hints, correlation tokens, or tracking identifiers.
        */
-      input: {
-        /**
-         * Human-readable name for this variant
-         */
-        name: string;
-        /**
-         * Macro values applied to this variant
-         */
-        macros?: {
-          [k: string]: string;
-        };
-        /**
-         * Context description applied to this variant
-         */
-        context_description?: string;
+      context?: {};
+    };
+/**
+ * A single rendered piece of a creative preview with discriminated output format
+ */
+export type PreviewRender =
+  | {
+      /**
+       * Unique identifier for this rendered piece within the variant
+       */
+      render_id: string;
+      /**
+       * Discriminator indicating preview_url is provided
+       */
+      output_format: 'url';
+      /**
+       * URL to an HTML page that renders this piece. Can be embedded in an iframe.
+       */
+      preview_url: string;
+      /**
+       * Semantic role of this rendered piece. Use 'primary' for main content, 'companion' for associated banners, descriptive strings for device variants or custom roles.
+       */
+      role: string;
+      /**
+       * Dimensions for this rendered piece
+       */
+      dimensions?: {
+        width: number;
+        height: number;
       };
-    }[]
-  ];
-  /**
-   * Optional URL to an interactive testing page that shows all preview variants with controls to switch between them, modify macro values, and test different scenarios.
-   */
-  interactive_url?: string;
-  /**
-   * ISO 8601 timestamp when preview links expire
-   */
-  expires_at: string;
-}
+      /**
+       * Optional security and embedding metadata for safe iframe integration
+       */
+      embedding?: {
+        /**
+         * Recommended iframe sandbox attribute value (e.g., 'allow-scripts allow-same-origin')
+         */
+        recommended_sandbox?: string;
+        /**
+         * Whether this output requires HTTPS for secure embedding
+         */
+        requires_https?: boolean;
+        /**
+         * Whether this output supports fullscreen mode
+         */
+        supports_fullscreen?: boolean;
+        /**
+         * Content Security Policy requirements for embedding
+         */
+        csp_policy?: string;
+      };
+    }
+  | {
+      /**
+       * Unique identifier for this rendered piece within the variant
+       */
+      render_id: string;
+      /**
+       * Discriminator indicating preview_html is provided
+       */
+      output_format: 'html';
+      /**
+       * Raw HTML for this rendered piece. Can be embedded directly in the page without iframe. Security warning: Only use with trusted creative agents as this bypasses iframe sandboxing.
+       */
+      preview_html: string;
+      /**
+       * Semantic role of this rendered piece. Use 'primary' for main content, 'companion' for associated banners, descriptive strings for device variants or custom roles.
+       */
+      role: string;
+      /**
+       * Dimensions for this rendered piece
+       */
+      dimensions?: {
+        width: number;
+        height: number;
+      };
+      /**
+       * Optional security and embedding metadata
+       */
+      embedding?: {
+        /**
+         * Recommended iframe sandbox attribute value (e.g., 'allow-scripts allow-same-origin')
+         */
+        recommended_sandbox?: string;
+        /**
+         * Whether this output requires HTTPS for secure embedding
+         */
+        requires_https?: boolean;
+        /**
+         * Whether this output supports fullscreen mode
+         */
+        supports_fullscreen?: boolean;
+        /**
+         * Content Security Policy requirements for embedding
+         */
+        csp_policy?: string;
+      };
+    }
+  | {
+      /**
+       * Unique identifier for this rendered piece within the variant
+       */
+      render_id: string;
+      /**
+       * Discriminator indicating both preview_url and preview_html are provided
+       */
+      output_format: 'both';
+      /**
+       * URL to an HTML page that renders this piece. Can be embedded in an iframe.
+       */
+      preview_url: string;
+      /**
+       * Raw HTML for this rendered piece. Can be embedded directly in the page without iframe. Security warning: Only use with trusted creative agents as this bypasses iframe sandboxing.
+       */
+      preview_html: string;
+      /**
+       * Semantic role of this rendered piece. Use 'primary' for main content, 'companion' for associated banners, descriptive strings for device variants or custom roles.
+       */
+      role: string;
+      /**
+       * Dimensions for this rendered piece
+       */
+      dimensions?: {
+        width: number;
+        height: number;
+      };
+      /**
+       * Optional security and embedding metadata for safe iframe integration
+       */
+      embedding?: {
+        /**
+         * Recommended iframe sandbox attribute value (e.g., 'allow-scripts allow-same-origin')
+         */
+        recommended_sandbox?: string;
+        /**
+         * Whether this output requires HTTPS for secure embedding
+         */
+        requires_https?: boolean;
+        /**
+         * Whether this output supports fullscreen mode
+         */
+        supports_fullscreen?: boolean;
+        /**
+         * Content Security Policy requirements for embedding
+         */
+        csp_policy?: string;
+      };
+    };
 
 
 // get_signals parameters
+/**
+ * A destination platform where signals can be activated (DSP, sales agent, etc.)
+ */
+export type Destination =
+  | {
+      /**
+       * Discriminator indicating this is a platform-based destination
+       */
+      type: 'platform';
+      /**
+       * Platform identifier for DSPs (e.g., 'the-trade-desk', 'amazon-dsp')
+       */
+      platform: string;
+      /**
+       * Optional account identifier on the platform
+       */
+      account?: string;
+    }
+  | {
+      /**
+       * Discriminator indicating this is an agent URL-based destination
+       */
+      type: 'agent';
+      /**
+       * URL identifying the destination agent (for sales agents, etc.)
+       */
+      agent_url: string;
+      /**
+       * Optional account identifier on the agent
+       */
+      account?: string;
+    };
+
 /**
  * Request parameters for discovering signals based on description
  */
@@ -3261,26 +3718,15 @@ export interface GetSignalsRequest {
    */
   signal_spec: string;
   /**
-   * Where the signals need to be delivered
+   * Destination platforms where signals need to be activated
    */
   deliver_to: {
     /**
-     * Target platforms for signal deployment
+     * List of destination platforms (DSPs, sales agents, etc.). If the authenticated caller matches one of these destinations, activation keys will be included in the response.
+     *
+     * @minItems 1
      */
-    platforms: 'all' | string[];
-    /**
-     * Specific platform-account combinations
-     */
-    accounts?: {
-      /**
-       * Platform identifier
-       */
-      platform: string;
-      /**
-       * Account identifier on that platform
-       */
-      account: string;
-    }[];
+    destinations: [Destination, ...Destination[]];
     /**
      * Countries where signals will be used (ISO codes)
      */
@@ -3311,10 +3757,129 @@ export interface GetSignalsRequest {
    * Maximum number of results to return
    */
   max_results?: number;
+  /**
+   * Initiator-provided context included in the request payload. Agents must echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.
+   */
+  context?: {};
 }
 
 
 // get_signals response
+/**
+ * A signal deployment to a specific destination platform with activation status and key
+ */
+export type Deployment =
+  | {
+      /**
+       * Discriminator indicating this is a platform-based deployment
+       */
+      type: 'platform';
+      /**
+       * Platform identifier for DSPs
+       */
+      platform: string;
+      /**
+       * Account identifier if applicable
+       */
+      account?: string;
+      /**
+       * Whether signal is currently active on this destination
+       */
+      is_live: boolean;
+      activation_key?: ActivationKey;
+      /**
+       * Estimated time to activate if not live, or to complete activation if in progress
+       */
+      estimated_activation_duration_minutes?: number;
+      /**
+       * Timestamp when activation completed (if is_live=true)
+       */
+      deployed_at?: string;
+    }
+  | {
+      /**
+       * Discriminator indicating this is an agent URL-based deployment
+       */
+      type: 'agent';
+      /**
+       * URL identifying the destination agent
+       */
+      agent_url: string;
+      /**
+       * Account identifier if applicable
+       */
+      account?: string;
+      /**
+       * Whether signal is currently active on this destination
+       */
+      is_live: boolean;
+      activation_key?: ActivationKey1;
+      /**
+       * Estimated time to activate if not live, or to complete activation if in progress
+       */
+      estimated_activation_duration_minutes?: number;
+      /**
+       * Timestamp when activation completed (if is_live=true)
+       */
+      deployed_at?: string;
+    };
+/**
+ * The key to use for targeting. Only present if is_live=true AND requester has access to this destination.
+ */
+export type ActivationKey =
+  | {
+      /**
+       * Segment ID based targeting
+       */
+      type: 'segment_id';
+      /**
+       * The platform-specific segment identifier to use in campaign targeting
+       */
+      segment_id: string;
+    }
+  | {
+      /**
+       * Key-value pair based targeting
+       */
+      type: 'key_value';
+      /**
+       * The targeting parameter key
+       */
+      key: string;
+      /**
+       * The targeting parameter value
+       */
+      value: string;
+    };
+/**
+ * The key to use for targeting. Only present if is_live=true AND requester has access to this destination.
+ */
+export type ActivationKey1 =
+  | {
+      /**
+       * Segment ID based targeting
+       */
+      type: 'segment_id';
+      /**
+       * The platform-specific segment identifier to use in campaign targeting
+       */
+      segment_id: string;
+    }
+  | {
+      /**
+       * Key-value pair based targeting
+       */
+      type: 'key_value';
+      /**
+       * The targeting parameter key
+       */
+      key: string;
+      /**
+       * The targeting parameter value
+       */
+      value: string;
+    };
+
 /**
  * Response payload for get_signals task
  */
@@ -3348,34 +3913,9 @@ export interface GetSignalsResponse {
      */
     coverage_percentage: number;
     /**
-     * Array of platform deployments
+     * Array of destination deployments
      */
-    deployments: {
-      /**
-       * Platform name
-       */
-      platform: string;
-      /**
-       * Specific account if applicable
-       */
-      account?: string | null;
-      /**
-       * Whether signal is currently active
-       */
-      is_live: boolean;
-      /**
-       * Deployment scope
-       */
-      scope: 'platform-wide' | 'account-specific';
-      /**
-       * Platform-specific segment ID
-       */
-      decisioning_platform_segment_id?: string;
-      /**
-       * Time to activate if not live
-       */
-      estimated_activation_duration_minutes?: number;
-    }[];
+    deployments: Deployment[];
     /**
      * Pricing information
      */
@@ -3394,6 +3934,10 @@ export interface GetSignalsResponse {
    * Task-specific errors and warnings (e.g., signal discovery or pricing issues)
    */
   errors?: Error[];
+  /**
+   * Initiator-provided context echoed inside the task payload. Opaque metadata such as UI/session hints, correlation tokens, or tracking identifiers.
+   */
+  context?: {};
 }
 /**
  * Standard error structure for task-specific errors and warnings
@@ -3401,7 +3945,7 @@ export interface GetSignalsResponse {
 
 // activate_signal parameters
 /**
- * Request parameters for activating a signal on a specific platform/account
+ * A destination platform where signals can be activated (DSP, sales agent, etc.)
  */
 export interface ActivateSignalRequest {
   /**
@@ -3409,38 +3953,45 @@ export interface ActivateSignalRequest {
    */
   signal_agent_segment_id: string;
   /**
-   * The target platform for activation
+   * Target destination(s) for activation. If the authenticated caller matches one of these destinations, activation keys will be included in the response.
+   *
+   * @minItems 1
    */
-  platform: string;
+  destinations: [Destination, ...Destination[]];
   /**
-   * Account identifier (required for account-specific activation)
+   * Initiator-provided context included in the request payload. Agents must echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.
    */
-  account?: string;
+  context?: {};
 }
 
 
 // activate_signal response
 /**
- * Response payload for activate_signal task
+ * Response payload for activate_signal task. Returns either complete success data OR error information, never both. This enforces atomic operation semantics - the signal is either fully activated or not activated at all.
  */
-export interface ActivateSignalResponse {
-  /**
-   * The platform-specific ID to use once activated
-   */
-  decisioning_platform_segment_id?: string;
-  /**
-   * Estimated time to complete (optional)
-   */
-  estimated_activation_duration_minutes?: number;
-  /**
-   * Timestamp when activation completed (optional)
-   */
-  deployed_at?: string;
-  /**
-   * Task-specific errors and warnings (e.g., activation failures, platform issues)
-   */
-  errors?: Error[];
-}
+export type ActivateSignalResponse =
+  | {
+      /**
+       * Array of deployment results for each destination
+       */
+      deployments: Deployment[];
+      /**
+       * Initiator-provided context echoed inside the task payload. Opaque metadata such as UI/session hints, correlation tokens, or tracking identifiers.
+       */
+      context?: {};
+    }
+  | {
+      /**
+       * Array of errors explaining why activation failed (e.g., platform connectivity issues, signal definition problems, authentication failures)
+       *
+       * @minItems 1
+       */
+      errors: [Error, ...Error[]];
+      /**
+       * Initiator-provided context echoed inside the task payload. Opaque metadata such as UI/session hints, correlation tokens, or tracking identifiers.
+       */
+      context?: {};
+    };
 /**
- * Standard error structure for task-specific errors and warnings
+ * A signal deployment to a specific destination platform with activation status and key
  */

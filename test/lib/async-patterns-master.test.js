@@ -19,7 +19,6 @@ const assert = require('node:assert');
  */
 
 describe.skip('TaskExecutor Async Patterns - Master Test Suite', () => {
-  
   test('should verify all test suites exist', () => {
     const fs = require('fs');
     const path = require('path');
@@ -29,7 +28,7 @@ describe.skip('TaskExecutor Async Patterns - Master Test Suite', () => {
       './task-executor-mocking-strategy.test.js',
       './handler-controlled-flow.test.js',
       './error-scenarios.test.js',
-      './type-safety-verification.test.js'
+      './type-safety-verification.test.js',
     ];
 
     // Only verify files exist, don't load them (loading executes tests)
@@ -42,7 +41,7 @@ describe.skip('TaskExecutor Async Patterns - Master Test Suite', () => {
   });
 
   test('should verify core library exports for testing', () => {
-    const { 
+    const {
       TaskExecutor,
       ADCP_STATUS,
       TaskTimeoutError,
@@ -51,7 +50,7 @@ describe.skip('TaskExecutor Async Patterns - Master Test Suite', () => {
       ProtocolClient,
       createFieldHandler,
       autoApproveHandler,
-      deferAllHandler
+      deferAllHandler,
     } = require('../../dist/lib/index.js');
 
     // Verify all required classes and functions are available
@@ -68,102 +67,105 @@ describe.skip('TaskExecutor Async Patterns - Master Test Suite', () => {
     console.log('✅ All core exports verified for testing');
   });
 
-  test('should benchmark async pattern performance', { skip: process.env.CI ? 'Slow test - skipped in CI' : false }, async () => {
-    const { TaskExecutor, ProtocolClient } = require('../../dist/lib/index.js');
-    
-    const mockAgent = {
-      id: 'benchmark-agent',
-      name: 'Benchmark Agent', 
-      agent_uri: 'https://benchmark.test.com',
-      protocol: 'mcp',
-      requiresAuth: false
-    };
+  test(
+    'should benchmark async pattern performance',
+    { skip: process.env.CI ? 'Slow test - skipped in CI' : false },
+    async () => {
+      const { TaskExecutor, ProtocolClient } = require('../../dist/lib/index.js');
 
-    // Benchmark different patterns
-    const benchmarks = {
-      completed: { executions: 0, totalTime: 0 },
-      working: { executions: 0, totalTime: 0 },
-      inputRequired: { executions: 0, totalTime: 0 },
-      submitted: { executions: 0, totalTime: 0 }
-    };
-
-    // Test completed pattern performance
-    const originalCallTool = ProtocolClient.callTool;
-    
-    try {
-      // Completed pattern benchmark
-      ProtocolClient.callTool = async () => ({
-        status: 'completed',
-        result: { benchmark: 'completed' }
-      });
-
-      for (let i = 0; i < 10; i++) {
-        const startTime = Date.now();
-        const executor = new TaskExecutor();
-        await executor.executeTask(mockAgent, 'benchmarkCompleted', {});
-        benchmarks.completed.totalTime += Date.now() - startTime;
-        benchmarks.completed.executions++;
-      }
-
-      // Input required pattern benchmark
-      ProtocolClient.callTool = async (agent, taskName) => {
-        if (taskName === 'continue_task') {
-          return { status: 'completed', result: { benchmark: 'input-required' } };
-        } else {
-          return {
-            status: 'input-required',
-            question: 'Benchmark input?',
-            field: 'benchmark'
-          };
-        }
+      const mockAgent = {
+        id: 'benchmark-agent',
+        name: 'Benchmark Agent',
+        agent_uri: 'https://benchmark.test.com',
+        protocol: 'mcp',
+        requiresAuth: false,
       };
 
-      const quickHandler = async () => 'benchmark-response';
+      // Benchmark different patterns
+      const benchmarks = {
+        completed: { executions: 0, totalTime: 0 },
+        working: { executions: 0, totalTime: 0 },
+        inputRequired: { executions: 0, totalTime: 0 },
+        submitted: { executions: 0, totalTime: 0 },
+      };
 
-      for (let i = 0; i < 10; i++) {
-        const startTime = Date.now();
-        const executor = new TaskExecutor();
-        await executor.executeTask(mockAgent, 'benchmarkInput', {}, quickHandler);
-        benchmarks.inputRequired.totalTime += Date.now() - startTime;
-        benchmarks.inputRequired.executions++;
-      }
+      // Test completed pattern performance
+      const originalCallTool = ProtocolClient.callTool;
 
-      // Calculate averages
-      Object.keys(benchmarks).forEach(pattern => {
-        const data = benchmarks[pattern];
-        if (data.executions > 0) {
-          const avgTime = data.totalTime / data.executions;
-          console.log(`📊 ${pattern}: avg ${avgTime.toFixed(2)}ms over ${data.executions} executions`);
-          
-          // Performance assertions
-          assert(avgTime < 1000, `${pattern} should complete within 1 second on average`);
+      try {
+        // Completed pattern benchmark
+        ProtocolClient.callTool = async () => ({
+          status: 'completed',
+          result: { benchmark: 'completed' },
+        });
+
+        for (let i = 0; i < 10; i++) {
+          const startTime = Date.now();
+          const executor = new TaskExecutor();
+          await executor.executeTask(mockAgent, 'benchmarkCompleted', {});
+          benchmarks.completed.totalTime += Date.now() - startTime;
+          benchmarks.completed.executions++;
         }
-      });
 
-    } finally {
-      ProtocolClient.callTool = originalCallTool;
+        // Input required pattern benchmark
+        ProtocolClient.callTool = async (agent, taskName) => {
+          if (taskName === 'continue_task') {
+            return { status: 'completed', result: { benchmark: 'input-required' } };
+          } else {
+            return {
+              status: 'input-required',
+              question: 'Benchmark input?',
+              field: 'benchmark',
+            };
+          }
+        };
+
+        const quickHandler = async () => 'benchmark-response';
+
+        for (let i = 0; i < 10; i++) {
+          const startTime = Date.now();
+          const executor = new TaskExecutor();
+          await executor.executeTask(mockAgent, 'benchmarkInput', {}, quickHandler);
+          benchmarks.inputRequired.totalTime += Date.now() - startTime;
+          benchmarks.inputRequired.executions++;
+        }
+
+        // Calculate averages
+        Object.keys(benchmarks).forEach(pattern => {
+          const data = benchmarks[pattern];
+          if (data.executions > 0) {
+            const avgTime = data.totalTime / data.executions;
+            console.log(`📊 ${pattern}: avg ${avgTime.toFixed(2)}ms over ${data.executions} executions`);
+
+            // Performance assertions
+            assert(avgTime < 1000, `${pattern} should complete within 1 second on average`);
+          }
+        });
+      } finally {
+        ProtocolClient.callTool = originalCallTool;
+      }
     }
-  });
+  );
 
   test('should validate integration between all patterns', async () => {
     const { TaskExecutor, ProtocolClient, createFieldHandler } = require('../../dist/lib/index.js');
-    
+
     const mockAgent = {
       id: 'integration-agent',
       name: 'Integration Agent',
-      agent_uri: 'https://integration.test.com', 
+      agent_uri: 'https://integration.test.com',
       protocol: 'mcp',
-      requiresAuth: false
+      requiresAuth: false,
     };
 
     // Complex integration scenario that uses multiple patterns
     let stepCount = 0;
     const originalCallTool = ProtocolClient.callTool;
-    
+
     try {
       ProtocolClient.callTool = async (agent, taskName, params) => {
         stepCount++;
-        
+
         if (taskName === 'continue_task') {
           // After input, go to working state
           return { status: 'working' };
@@ -172,30 +174,30 @@ describe.skip('TaskExecutor Async Patterns - Master Test Suite', () => {
           return {
             task: {
               status: 'completed',
-              result: { 
+              result: {
                 integrated: true,
                 steps: stepCount,
-                finalValue: 'integration-success'
-              }
-            }
+                finalValue: 'integration-success',
+              },
+            },
           };
         } else {
           // Initial call - needs input
           return {
             status: 'input-required',
             question: 'Integration test input?',
-            field: 'integration_value'
+            field: 'integration_value',
           };
         }
       };
 
       const integrationHandler = createFieldHandler({
-        integration_value: 'test-integration-value'
+        integration_value: 'test-integration-value',
       });
 
       const executor = new TaskExecutor({
         workingTimeout: 5000,
-        pollingInterval: 10 // Fast polling for tests
+        pollingInterval: 10, // Fast polling for tests
       });
 
       const result = await executor.executeTask(
@@ -210,9 +212,8 @@ describe.skip('TaskExecutor Async Patterns - Master Test Suite', () => {
       assert.strictEqual(result.data.integrated, true);
       assert.strictEqual(result.data.finalValue, 'integration-success');
       assert(stepCount >= 3, 'Should have gone through multiple steps');
-      
-      console.log('✅ Integration test passed through multiple async patterns');
 
+      console.log('✅ Integration test passed through multiple async patterns');
     } finally {
       ProtocolClient.callTool = originalCallTool;
     }
@@ -222,7 +223,7 @@ describe.skip('TaskExecutor Async Patterns - Master Test Suite', () => {
     // Verify that test scenarios cover real-world use cases
     const realWorldScenarios = [
       'Campaign creation with approval workflow',
-      'Budget allocation with manager escalation', 
+      'Budget allocation with manager escalation',
       'Long-running data processing with webhook',
       'Multi-step targeting configuration',
       'Error recovery and retry patterns',
@@ -230,7 +231,7 @@ describe.skip('TaskExecutor Async Patterns - Master Test Suite', () => {
       'Type safety with complex data structures',
       'Concurrent task execution',
       'Protocol-specific error handling',
-      'Handler composition and conditional routing'
+      'Handler composition and conditional routing',
     ];
 
     console.log('📋 Real-world scenarios covered in test suites:');
@@ -248,26 +249,26 @@ describe.skip('TaskExecutor Async Patterns - Master Test Suite', () => {
         'Use ProtocolClient.callTool mocking for consistent protocol abstraction',
         'Mock at the protocol level, not HTTP level, for better test reliability',
         'Use EventEmitter patterns for webhook simulation',
-        'Implement controllable timing for polling scenarios'
+        'Implement controllable timing for polling scenarios',
       ],
       patterns: [
         'Test each ADCP status pattern (completed, working, submitted, input-required) separately',
         'Verify handler-controlled flow with various input scenarios',
         'Test error recovery and timeout behaviors thoroughly',
-        'Validate type safety across async continuations'
+        'Validate type safety across async continuations',
       ],
       integration: [
         'Test pattern transitions (working -> input-required -> completed)',
         'Verify conversation history is maintained across patterns',
         'Test complex handler scenarios with real-world workflows',
-        'Validate concurrent execution and resource management'
+        'Validate concurrent execution and resource management',
       ],
       maintenance: [
         'Keep tests focused on behavior, not implementation details',
         'Use type-safe mocks that match production interfaces',
         'Benchmark performance to catch regressions',
-        'Update tests when adding new async patterns'
-      ]
+        'Update tests when adding new async patterns',
+      ],
     };
 
     console.log('\n📚 Testing Strategy Recommendations:');
