@@ -392,12 +392,13 @@ export interface ListCreativesResponse {
 export interface AuthorizedAgent {
   url: string;
   authorized_for: string;
-  properties?: any[]; // Property type defined in discovery/types.ts
+  property_ids?: string[];
 }
 
 export interface AdAgentsJson {
   $schema?: string;
   authorized_agents: AuthorizedAgent[];
+  properties?: any[]; // Property type defined in discovery/types.ts
   last_updated?: string;
 }
 

@@ -257,92 +257,12 @@ export class AdAgentsManager {
       }
     }
 
-    // Validate optional properties array
-    if (agent.properties !== undefined) {
-      if (!Array.isArray(agent.properties)) {
+    // Validate optional property_ids array
+    if (agent.property_ids !== undefined) {
+      if (!Array.isArray(agent.property_ids)) {
         result.errors.push({
-          field: `${prefix}.properties`,
-          message: 'properties must be an array',
-          severity: 'error'
-        });
-      } else {
-        agent.properties.forEach((property: any, propIndex: number) => {
-          this.validateProperty(property, index, propIndex, result);
-        });
-      }
-    }
-  }
-
-  /**
-   * Validates an individual property entry
-   */
-  private validateProperty(property: any, agentIndex: number, propertyIndex: number, result: AdAgentsValidationResult): void {
-    const prefix = `authorized_agents[${agentIndex}].properties[${propertyIndex}]`;
-
-    if (typeof property !== 'object' || property === null) {
-      result.errors.push({
-        field: prefix,
-        message: 'Each property must be an object',
-        severity: 'error'
-      });
-      return;
-    }
-
-    // Required fields
-    if (!property.property_type) {
-      result.errors.push({
-        field: `${prefix}.property_type`,
-        message: 'property_type field is required',
-        severity: 'error'
-      });
-    } else if (typeof property.property_type !== 'string') {
-      result.errors.push({
-        field: `${prefix}.property_type`,
-        message: 'property_type must be a string',
-        severity: 'error'
-      });
-    }
-
-    if (!property.name) {
-      result.errors.push({
-        field: `${prefix}.name`,
-        message: 'name field is required',
-        severity: 'error'
-      });
-    } else if (typeof property.name !== 'string') {
-      result.errors.push({
-        field: `${prefix}.name`,
-        message: 'name must be a string',
-        severity: 'error'
-      });
-    }
-
-    if (!property.identifiers) {
-      result.errors.push({
-        field: `${prefix}.identifiers`,
-        message: 'identifiers field is required',
-        severity: 'error'
-      });
-    } else if (!Array.isArray(property.identifiers)) {
-      result.errors.push({
-        field: `${prefix}.identifiers`,
-        message: 'identifiers must be an array',
-        severity: 'error'
-      });
-    } else if (property.identifiers.length === 0) {
-      result.errors.push({
-        field: `${prefix}.identifiers`,
-        message: 'identifiers array cannot be empty',
-        severity: 'error'
-      });
-    }
-
-    // Validate tags if present
-    if (property.tags !== undefined) {
-      if (!Array.isArray(property.tags)) {
-        result.errors.push({
-          field: `${prefix}.tags`,
-          message: 'tags must be an array',
+          field: `${prefix}.property_ids`,
+          message: 'property_ids must be an array',
           severity: 'error'
         });
       }

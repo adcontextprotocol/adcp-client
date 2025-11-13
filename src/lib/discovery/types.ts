@@ -54,12 +54,13 @@ export interface Property {
 export interface AuthorizedAgent {
   url: string;
   authorized_for: string;
-  properties?: Property[];
+  property_ids?: string[];
 }
 
 /** adagents.json structure */
 export interface AdAgentsJson {
   $schema?: string;
   authorized_agents: AuthorizedAgent[];
+  properties?: Property[];
   last_updated?: string;
 }
