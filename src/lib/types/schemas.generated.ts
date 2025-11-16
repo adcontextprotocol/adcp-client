@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2025-11-13T15:28:50.046Z
+// Generated at: 2025-11-16T15:15:38.964Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -364,15 +364,23 @@ export const ProductSchema = z.object({
     product_id: z.string(),
     name: z.string(),
     description: z.string(),
-    publisher_properties: z.tuple([z.object({
+    publisher_properties: z.tuple([z.union([z.object({
+                publisher_domain: z.string(),
+                selection_type: z.literal("by_id"),
+                property_ids: z.tuple([z.string()]).rest(z.string())
+            }), z.object({
+                publisher_domain: z.string(),
+                selection_type: z.literal("by_tag"),
+                property_tags: z.tuple([z.string()]).rest(z.string())
+            })])]).rest(z.union([z.object({
             publisher_domain: z.string(),
-            property_ids: z.tuple([z.string()]).rest(z.string()).optional(),
-            property_tags: z.tuple([z.string()]).rest(z.string()).optional()
-        })]).rest(z.object({
-        publisher_domain: z.string(),
-        property_ids: z.tuple([z.string()]).rest(z.string()).optional(),
-        property_tags: z.tuple([z.string()]).rest(z.string()).optional()
-    })),
+            selection_type: z.literal("by_id"),
+            property_ids: z.tuple([z.string()]).rest(z.string())
+        }), z.object({
+            publisher_domain: z.string(),
+            selection_type: z.literal("by_tag"),
+            property_tags: z.tuple([z.string()]).rest(z.string())
+        })])),
     format_ids: z.array(FormatIDSchema),
     placements: z.tuple([PlacementSchema]).rest(PlacementSchema).optional(),
     delivery_type: DeliveryTypeSchema,
@@ -908,14 +916,15 @@ export const FormatSchema = z.object({
         })
     })).optional(),
     assets_required: z.array(z.union([z.object({
+            item_type: z.literal("individual"),
             asset_id: z.string(),
             asset_type: z.union([z.literal("image"), z.literal("video"), z.literal("audio"), z.literal("vast"), z.literal("daast"), z.literal("text"), z.literal("markdown"), z.literal("html"), z.literal("css"), z.literal("javascript"), z.literal("url"), z.literal("webhook"), z.literal("promoted_offerings")]),
             asset_role: z.string().optional(),
             required: z.boolean().optional(),
             requirements: z.record(z.string(), z.unknown()).optional()
         }), z.object({
+            item_type: z.literal("repeatable_group"),
             asset_group_id: z.string(),
-            repeatable: z.literal(true),
             min_count: z.number(),
             max_count: z.number(),
             assets: z.array(z.object({
@@ -1072,6 +1081,7 @@ export const BuildCreativeResponseSchema = z.union([z.object({
     })]);
 
 export const PreviewCreativeRequestSchema = z.union([z.object({
+        request_type: z.literal("single"),
         format_id: FormatIDSchema,
         creative_manifest: CreativeManifestSchema,
         inputs: z.array(z.object({
@@ -1083,6 +1093,7 @@ export const PreviewCreativeRequestSchema = z.union([z.object({
         output_format: z.union([z.literal("url"), z.literal("html")]).optional(),
         context: z.object({}).optional()
     }), z.object({
+        request_type: z.literal("batch"),
         requests: z.tuple([z.object({
                 format_id: FormatID2Schema,
                 creative_manifest: CreativeManifest1Schema,
@@ -1109,6 +1120,7 @@ export const PreviewCreativeRequestSchema = z.union([z.object({
     })]);
 
 export const PreviewCreativeResponseSchema = z.union([z.object({
+        response_type: z.literal("single"),
         previews: z.tuple([z.object({
                 preview_id: z.string(),
                 renders: z.tuple([PreviewRenderSchema]).rest(PreviewRenderSchema),
@@ -1130,6 +1142,7 @@ export const PreviewCreativeResponseSchema = z.union([z.object({
         expires_at: z.string(),
         context: z.object({}).optional()
     }), z.object({
+        response_type: z.literal("batch"),
         results: z.tuple([z.union([z.object({
                     success: z.literal(true).optional()
                 }), z.object({

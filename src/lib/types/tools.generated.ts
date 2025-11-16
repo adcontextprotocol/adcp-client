@@ -343,42 +343,74 @@ export interface Product {
    * @minItems 1
    */
   publisher_properties: [
-    {
-      /**
-       * Domain where publisher's adagents.json is hosted (e.g., 'cnn.com')
-       */
-      publisher_domain: string;
-      /**
-       * Specific property IDs from the publisher's adagents.json. Mutually exclusive with property_tags.
-       *
-       * @minItems 1
-       */
-      property_ids?: [string, ...string[]];
-      /**
-       * Property tags from the publisher's adagents.json. Product covers all properties with these tags. Mutually exclusive with property_ids.
-       *
-       * @minItems 1
-       */
-      property_tags?: [string, ...string[]];
-    },
-    ...{
-      /**
-       * Domain where publisher's adagents.json is hosted (e.g., 'cnn.com')
-       */
-      publisher_domain: string;
-      /**
-       * Specific property IDs from the publisher's adagents.json. Mutually exclusive with property_tags.
-       *
-       * @minItems 1
-       */
-      property_ids?: [string, ...string[]];
-      /**
-       * Property tags from the publisher's adagents.json. Product covers all properties with these tags. Mutually exclusive with property_ids.
-       *
-       * @minItems 1
-       */
-      property_tags?: [string, ...string[]];
-    }[]
+    (
+      | {
+          /**
+           * Domain where publisher's adagents.json is hosted (e.g., 'cnn.com')
+           */
+          publisher_domain: string;
+          /**
+           * Discriminator indicating selection by specific property IDs
+           */
+          selection_type: 'by_id';
+          /**
+           * Specific property IDs from the publisher's adagents.json
+           *
+           * @minItems 1
+           */
+          property_ids: [string, ...string[]];
+        }
+      | {
+          /**
+           * Domain where publisher's adagents.json is hosted (e.g., 'cnn.com')
+           */
+          publisher_domain: string;
+          /**
+           * Discriminator indicating selection by property tags
+           */
+          selection_type: 'by_tag';
+          /**
+           * Property tags from the publisher's adagents.json. Product covers all properties with these tags
+           *
+           * @minItems 1
+           */
+          property_tags: [string, ...string[]];
+        }
+    ),
+    ...(
+      | {
+          /**
+           * Domain where publisher's adagents.json is hosted (e.g., 'cnn.com')
+           */
+          publisher_domain: string;
+          /**
+           * Discriminator indicating selection by specific property IDs
+           */
+          selection_type: 'by_id';
+          /**
+           * Specific property IDs from the publisher's adagents.json
+           *
+           * @minItems 1
+           */
+          property_ids: [string, ...string[]];
+        }
+      | {
+          /**
+           * Domain where publisher's adagents.json is hosted (e.g., 'cnn.com')
+           */
+          publisher_domain: string;
+          /**
+           * Discriminator indicating selection by property tags
+           */
+          selection_type: 'by_tag';
+          /**
+           * Property tags from the publisher's adagents.json. Product covers all properties with these tags
+           *
+           * @minItems 1
+           */
+          property_tags: [string, ...string[]];
+        }
+    )[]
   ];
   /**
    * Array of supported creative format IDs - structured format_id objects with agent_url and id
@@ -1164,6 +1196,10 @@ export interface Format {
   assets_required?: (
     | {
         /**
+         * Discriminator indicating this is an individual asset requirement
+         */
+        item_type: 'individual';
+        /**
          * Unique identifier for this asset. Creative manifests MUST use this exact value as the key in the assets object.
          */
         asset_id: string;
@@ -1201,13 +1237,13 @@ export interface Format {
       }
     | {
         /**
+         * Discriminator indicating this is a repeatable asset group
+         */
+        item_type: 'repeatable_group';
+        /**
          * Identifier for this asset group (e.g., 'product', 'slide', 'card')
          */
         asset_group_id: string;
-        /**
-         * Indicates this is a repeatable asset group
-         */
-        repeatable: true;
         /**
          * Minimum number of repetitions required
          */
@@ -3268,6 +3304,10 @@ export type BuildCreativeResponse =
  */
 export type PreviewCreativeRequest =
   | {
+      /**
+       * Discriminator indicating this is a single preview request
+       */
+      request_type: 'single';
       format_id: FormatID;
       creative_manifest: CreativeManifest;
       /**
@@ -3303,6 +3343,10 @@ export type PreviewCreativeRequest =
       context?: {};
     }
   | {
+      /**
+       * Discriminator indicating this is a batch preview request
+       */
+      request_type: 'batch';
       /**
        * Array of preview requests (1-50 items). Each follows the single request structure.
        *
@@ -3425,6 +3469,10 @@ export interface CreativeManifest1 {
 export type PreviewCreativeResponse =
   | {
       /**
+       * Discriminator indicating this is a single preview response
+       */
+      response_type: 'single';
+      /**
        * Array of preview variants. Each preview corresponds to an input set from the request. If no inputs were provided, returns a single default preview.
        *
        * @minItems 1
@@ -3507,6 +3555,10 @@ export type PreviewCreativeResponse =
       context?: {};
     }
   | {
+      /**
+       * Discriminator indicating this is a batch preview response
+       */
+      response_type: 'batch';
       /**
        * Array of preview results corresponding to each request in the same order. results[0] is the result for requests[0], results[1] for requests[1], etc. Order is guaranteed even when some requests fail. Each result contains either a successful preview response or an error.
        *
