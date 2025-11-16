@@ -193,6 +193,7 @@ export async function batchPreviewProducts(
     try {
       // Build preview_creative request for this product
       const previewRequest: PreviewCreativeRequest = {
+        request_type: 'single',
         format_id: req.formatId,
         creative_manifest: {
           format_id: req.formatId,
@@ -349,6 +350,7 @@ export async function batchPreviewFormats(
       // Build preview_creative request for this format
       // For format cards, the manifest typically contains the format object as JSON
       const previewRequest: PreviewCreativeRequest = {
+        request_type: 'single',
         format_id: req.formatId,
         creative_manifest: {
           format_id: req.formatId,
