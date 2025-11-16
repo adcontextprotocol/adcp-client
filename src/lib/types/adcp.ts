@@ -383,23 +383,7 @@ export interface ListCreativesResponse {
   };
 }
 
-// AdAgents.json Types - Based on AdCP v2.2.0 specification
-// NOTE: Official schemas are synced to schemas/cache/ and types generated to core.generated.ts
-// These simplified types are maintained for the testing UI.
-
-export interface AuthorizedAgent {
-  url: string;
-  authorized_for: string;
-  property_ids?: string[];
-}
-
-export interface AdAgentsJson {
-  $schema?: string;
-  authorized_agents: AuthorizedAgent[];
-  properties?: Property[];
-  last_updated?: string;
-}
-
+// Property Types - Used for discovery and property management
 export interface Property {
   property_id?: string;
   property_type: PropertyType;
@@ -436,60 +420,3 @@ export type PropertyIdentifierType =
   | 'apple_podcast_id'
   | 'iab_tech_lab_domain_id'
   | 'custom';
-
-// Validation Types
-export interface AdAgentsValidationResult {
-  valid: boolean;
-  errors: ValidationError[];
-  warnings: ValidationWarning[];
-  domain: string;
-  url: string;
-  status_code?: number;
-  raw_data?: any;
-}
-
-export interface ValidationError {
-  field: string;
-  message: string;
-  severity: 'error' | 'warning';
-}
-
-export interface ValidationWarning {
-  field: string;
-  message: string;
-  suggestion?: string;
-}
-
-export interface AgentCardValidationResult {
-  agent_url: string;
-  valid: boolean;
-  status_code?: number;
-  card_data?: any;
-  card_endpoint?: string;
-  errors: string[];
-  response_time_ms?: number;
-}
-
-// API Request/Response Types for AdAgents Management
-export interface ValidateAdAgentsRequest {
-  domain: string;
-}
-
-export interface ValidateAdAgentsResponse {
-  domain: string;
-  found: boolean;
-  validation: AdAgentsValidationResult;
-  agent_cards?: AgentCardValidationResult[];
-}
-
-export interface CreateAdAgentsRequest {
-  authorized_agents: AuthorizedAgent[];
-  include_schema?: boolean;
-  include_timestamp?: boolean;
-}
-
-export interface CreateAdAgentsResponse {
-  success: boolean;
-  adagents_json: string;
-  validation: AdAgentsValidationResult;
-}
