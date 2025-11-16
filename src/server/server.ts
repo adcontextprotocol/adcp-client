@@ -15,14 +15,7 @@ import {
   ADCP_STATUS,
   InputRequiredError,
 } from '../lib';
-import type {
-  TestRequest,
-  ApiResponse,
-  TestResponse,
-  AgentListResponse,
-  AgentConfig,
-  TestResult,
-} from '../lib/types';
+import type { TestRequest, ApiResponse, TestResponse, AgentListResponse, AgentConfig, TestResult } from '../lib/types';
 
 // __dirname is available in CommonJS mode
 
