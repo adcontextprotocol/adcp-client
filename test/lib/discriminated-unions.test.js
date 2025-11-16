@@ -399,11 +399,7 @@ describe('Discriminated Union Validation', () => {
       };
 
       const singleResult = PreviewCreativeRequestSchema.safeParse(missingSingleFields);
-      assert.strictEqual(
-        singleResult.success,
-        false,
-        'Single request_type must have format_id and creative_manifest'
-      );
+      assert.strictEqual(singleResult.success, false, 'Single request_type must have format_id and creative_manifest');
 
       // Batch variant requires requests array, NOT format_id
       const missingBatchFields = {
