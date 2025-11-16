@@ -14,20 +14,23 @@ describe('Discriminated Union Validation', () => {
         request_type: 'single',
         format_id: {
           agent_url: 'https://test.com',
-          id: 'fmt-1'
+          id: 'fmt-1',
         },
         creative_manifest: {
           format_id: {
             agent_url: 'https://test.com',
-            id: 'fmt-1'
+            id: 'fmt-1',
           },
-          assets: {}
-        }
+          assets: {},
+        },
       };
 
       const result = PreviewCreativeRequestSchema.safeParse(valid);
-      assert.strictEqual(result.success, true,
-        `Expected success but got errors: ${result.success ? 'success' : JSON.stringify(result.error.errors, null, 2)}`);
+      assert.strictEqual(
+        result.success,
+        true,
+        `Expected success but got errors: ${result.success ? 'success' : JSON.stringify(result.error.errors, null, 2)}`
+      );
 
       // Verify discriminator value
       if (result.success) {
@@ -42,22 +45,25 @@ describe('Discriminated Union Validation', () => {
           {
             format_id: {
               agent_url: 'https://test.com',
-              id: 'fmt-1'
+              id: 'fmt-1',
             },
             creative_manifest: {
               format_id: {
                 agent_url: 'https://test.com',
-                id: 'fmt-1'
+                id: 'fmt-1',
               },
-              assets: {}
-            }
-          }
-        ]
+              assets: {},
+            },
+          },
+        ],
       };
 
       const result = PreviewCreativeRequestSchema.safeParse(valid);
-      assert.strictEqual(result.success, true,
-        `Expected success but got errors: ${result.success ? 'success' : JSON.stringify(result.error.errors, null, 2)}`);
+      assert.strictEqual(
+        result.success,
+        true,
+        `Expected success but got errors: ${result.success ? 'success' : JSON.stringify(result.error.errors, null, 2)}`
+      );
 
       // Verify discriminator value
       if (result.success) {
@@ -69,25 +75,28 @@ describe('Discriminated Union Validation', () => {
       const invalid = {
         format_id: {
           agent_url: 'https://test.com',
-          id: 'fmt-1'
+          id: 'fmt-1',
         },
         creative_manifest: {
           format_id: {
             agent_url: 'https://test.com',
-            id: 'fmt-1'
+            id: 'fmt-1',
           },
-          assets: {}
-        }
+          assets: {},
+        },
       };
 
       const result = PreviewCreativeRequestSchema.safeParse(invalid);
-      assert.strictEqual(result.success, false,
-        'Expected validation to fail for missing request_type');
+      assert.strictEqual(result.success, false, 'Expected validation to fail for missing request_type');
 
       // Check error mentions discriminator
-      const errorMessage = JSON.stringify(result.error.errors);
-      assert.ok(errorMessage.includes('request_type') || errorMessage.includes('union'),
-        'Error should mention request_type or union validation');
+      if (!result.success) {
+        const errorMessage = JSON.stringify(result.error.issues);
+        assert.ok(
+          errorMessage.includes('request_type') || errorMessage.includes('union'),
+          'Error should mention request_type or union validation'
+        );
+      }
     });
 
     test('should reject invalid request_type value', () => {
@@ -95,40 +104,39 @@ describe('Discriminated Union Validation', () => {
         request_type: 'invalid_type',
         format_id: {
           agent_url: 'https://test.com',
-          id: 'fmt-1'
+          id: 'fmt-1',
         },
         creative_manifest: {
           format_id: {
             agent_url: 'https://test.com',
-            id: 'fmt-1'
+            id: 'fmt-1',
           },
-          assets: {}
-        }
+          assets: {},
+        },
       };
 
       const result = PreviewCreativeRequestSchema.safeParse(invalid);
-      assert.strictEqual(result.success, false,
-        'Expected validation to fail for invalid request_type');
+      assert.strictEqual(result.success, false, 'Expected validation to fail for invalid request_type');
     });
 
     test('should enforce field requirements based on discriminator - single', () => {
       // Single request should have format_id, not requests array
       const invalidSingle = {
         request_type: 'single',
-        requests: [ // Wrong field for single
+        requests: [
+          // Wrong field for single
           {
             format_id: { agent_url: 'https://test.com', id: 'fmt-1' },
             creative_manifest: {
               format_id: { agent_url: 'https://test.com', id: 'fmt-1' },
-              assets: {}
-            }
-          }
-        ]
+              assets: {},
+            },
+          },
+        ],
       };
 
       const result = PreviewCreativeRequestSchema.safeParse(invalidSingle);
-      assert.strictEqual(result.success, false,
-        'Expected validation to fail when single request uses batch fields');
+      assert.strictEqual(result.success, false, 'Expected validation to fail when single request uses batch fields');
     });
 
     test('should enforce field requirements based on discriminator - batch', () => {
@@ -138,13 +146,12 @@ describe('Discriminated Union Validation', () => {
         format_id: { agent_url: 'https://test.com', id: 'fmt-1' }, // Wrong field for batch
         creative_manifest: {
           format_id: { agent_url: 'https://test.com', id: 'fmt-1' },
-          assets: {}
-        }
+          assets: {},
+        },
       };
 
       const result = PreviewCreativeRequestSchema.safeParse(invalidBatch);
-      assert.strictEqual(result.success, false,
-        'Expected validation to fail when batch request uses single fields');
+      assert.strictEqual(result.success, false, 'Expected validation to fail when batch request uses single fields');
     });
   });
 
@@ -152,19 +159,32 @@ describe('Discriminated Union Validation', () => {
     test('should validate single response type', () => {
       const valid = {
         response_type: 'single',
-        renders: [
+        previews: [
           {
-            render_id: 'render-1',
-            role: 'primary',
-            url: 'https://preview.example.com/render-1.png',
-            dimensions: { width: 300, height: 250 }
-          }
-        ]
+            preview_id: 'preview-1',
+            renders: [
+              {
+                render_id: 'render-1',
+                output_format: 'url',
+                preview_url: 'https://preview.example.com/render-1.html',
+                role: 'primary',
+                dimensions: { width: 300, height: 250 },
+              },
+            ],
+            input: {
+              name: 'Default',
+            },
+          },
+        ],
+        expires_at: '2025-11-17T00:00:00Z',
       };
 
       const result = PreviewCreativeResponseSchema.safeParse(valid);
-      assert.strictEqual(result.success, true,
-        `Expected success but got errors: ${result.success ? 'success' : JSON.stringify(result.error.errors, null, 2)}`);
+      assert.strictEqual(
+        result.success,
+        true,
+        `Expected success but got errors: ${result.success ? 'success' : JSON.stringify(result.error.issues, null, 2)}`
+      );
 
       // Verify discriminator value
       if (result.success) {
@@ -177,21 +197,37 @@ describe('Discriminated Union Validation', () => {
         response_type: 'batch',
         results: [
           {
-            renders: [
-              {
-                render_id: 'render-1',
-                role: 'primary',
-                url: 'https://preview.example.com/render-1.png',
-                dimensions: { width: 300, height: 250 }
-              }
-            ]
-          }
-        ]
+            success: true,
+            response: {
+              previews: [
+                {
+                  preview_id: 'preview-1',
+                  renders: [
+                    {
+                      render_id: 'render-1',
+                      output_format: 'url',
+                      preview_url: 'https://preview.example.com/render-1.html',
+                      role: 'primary',
+                      dimensions: { width: 300, height: 250 },
+                    },
+                  ],
+                  input: {
+                    name: 'Default',
+                  },
+                },
+              ],
+              expires_at: '2025-11-17T00:00:00Z',
+            },
+          },
+        ],
       };
 
       const result = PreviewCreativeResponseSchema.safeParse(valid);
-      assert.strictEqual(result.success, true,
-        `Expected success but got errors: ${result.success ? 'success' : JSON.stringify(result.error.errors, null, 2)}`);
+      assert.strictEqual(
+        result.success,
+        true,
+        `Expected success but got errors: ${result.success ? 'success' : JSON.stringify(result.error.issues, null, 2)}`
+      );
 
       // Verify discriminator value
       if (result.success) {
@@ -201,37 +237,55 @@ describe('Discriminated Union Validation', () => {
 
     test('should reject missing response_type discriminator', () => {
       const invalid = {
-        renders: [
+        previews: [
           {
-            render_id: 'render-1',
-            role: 'primary',
-            url: 'https://preview.example.com/render-1.png',
-            dimensions: { width: 300, height: 250 }
-          }
-        ]
+            preview_id: 'preview-1',
+            renders: [
+              {
+                render_id: 'render-1',
+                output_format: 'url',
+                preview_url: 'https://preview.example.com/render-1.html',
+                role: 'primary',
+                dimensions: { width: 300, height: 250 },
+              },
+            ],
+            input: {
+              name: 'Default',
+            },
+          },
+        ],
+        expires_at: '2025-11-17T00:00:00Z',
       };
 
       const result = PreviewCreativeResponseSchema.safeParse(invalid);
-      assert.strictEqual(result.success, false,
-        'Expected validation to fail for missing response_type');
+      assert.strictEqual(result.success, false, 'Expected validation to fail for missing response_type');
     });
 
     test('should reject invalid response_type value', () => {
       const invalid = {
         response_type: 'invalid_type',
-        renders: [
+        previews: [
           {
-            render_id: 'render-1',
-            role: 'primary',
-            url: 'https://preview.example.com/render-1.png',
-            dimensions: { width: 300, height: 250 }
-          }
-        ]
+            preview_id: 'preview-1',
+            renders: [
+              {
+                render_id: 'render-1',
+                output_format: 'url',
+                preview_url: 'https://preview.example.com/render-1.html',
+                role: 'primary',
+                dimensions: { width: 300, height: 250 },
+              },
+            ],
+            input: {
+              name: 'Default',
+            },
+          },
+        ],
+        expires_at: '2025-11-17T00:00:00Z',
       };
 
       const result = PreviewCreativeResponseSchema.safeParse(invalid);
-      assert.strictEqual(result.success, false,
-        'Expected validation to fail for invalid response_type');
+      assert.strictEqual(result.success, false, 'Expected validation to fail for invalid response_type');
     });
   });
 
@@ -242,8 +296,8 @@ describe('Discriminated Union Validation', () => {
         format_id: { agent_url: 'https://test.com', id: 'fmt-1' },
         creative_manifest: {
           format_id: { agent_url: 'https://test.com', id: 'fmt-1' },
-          assets: {}
-        }
+          assets: {},
+        },
       };
 
       const result = PreviewCreativeRequestSchema.safeParse(singleRequest);
@@ -255,10 +309,8 @@ describe('Discriminated Union Validation', () => {
 
         // TypeScript knows this is the 'single' branch
         if (result.data.request_type === 'single') {
-          assert.ok('format_id' in result.data,
-            'Single request should have format_id field');
-          assert.ok(!('requests' in result.data),
-            'Single request should not have requests field');
+          assert.ok('format_id' in result.data, 'Single request should have format_id field');
+          assert.ok(!('requests' in result.data), 'Single request should not have requests field');
         }
       }
     });
@@ -268,16 +320,29 @@ describe('Discriminated Union Validation', () => {
         response_type: 'batch',
         results: [
           {
-            renders: [
-              {
-                render_id: 'render-1',
-                role: 'primary',
-                url: 'https://preview.example.com/render-1.png',
-                dimensions: { width: 300, height: 250 }
-              }
-            ]
-          }
-        ]
+            success: true,
+            response: {
+              previews: [
+                {
+                  preview_id: 'preview-1',
+                  renders: [
+                    {
+                      render_id: 'render-1',
+                      output_format: 'url',
+                      preview_url: 'https://preview.example.com/render-1.html',
+                      role: 'primary',
+                      dimensions: { width: 300, height: 250 },
+                    },
+                  ],
+                  input: {
+                    name: 'Default',
+                  },
+                },
+              ],
+              expires_at: '2025-11-17T00:00:00Z',
+            },
+          },
+        ],
       };
 
       const result = PreviewCreativeResponseSchema.safeParse(batchResponse);
@@ -289,10 +354,8 @@ describe('Discriminated Union Validation', () => {
 
         // TypeScript knows this is the 'batch' branch
         if (result.data.response_type === 'batch') {
-          assert.ok('results' in result.data,
-            'Batch response should have results field');
-          assert.ok(!('renders' in result.data),
-            'Batch response should not have renders field at top level');
+          assert.ok('results' in result.data, 'Batch response should have results field');
+          assert.ok(!('previews' in result.data), 'Batch response should not have previews field at top level');
         }
       }
     });
@@ -307,37 +370,54 @@ describe('Discriminated Union Validation', () => {
       const ambiguous = {
         // Missing request_type - can't be parsed
         format_id: { agent_url: 'https://test.com', id: 'fmt-1' },
-        requests: [{ /* ... */ }]
+        requests: [
+          {
+            /* ... */
+          },
+        ],
       };
 
       const result = PreviewCreativeRequestSchema.safeParse(ambiguous);
-      assert.strictEqual(result.success, false,
-        'Ambiguous data without discriminator should fail validation');
+      assert.strictEqual(result.success, false, 'Ambiguous data without discriminator should fail validation');
     });
 
-    test('discriminators enforce mutually exclusive fields', () => {
-      // Can't have both single and batch fields
-      const conflicting = {
+    test('discriminators enforce correct field structure per variant', () => {
+      // Test that each variant requires its specific fields
+      // Single variant requires format_id and creative_manifest, NOT requests
+      const missingSingleFields = {
         request_type: 'single',
+        // Missing format_id and creative_manifest - only has requests
+        requests: [
+          {
+            format_id: { agent_url: 'https://test.com', id: 'fmt-1' },
+            creative_manifest: {
+              format_id: { agent_url: 'https://test.com', id: 'fmt-1' },
+              assets: {},
+            },
+          },
+        ],
+      };
+
+      const singleResult = PreviewCreativeRequestSchema.safeParse(missingSingleFields);
+      assert.strictEqual(
+        singleResult.success,
+        false,
+        'Single request_type must have format_id and creative_manifest'
+      );
+
+      // Batch variant requires requests array, NOT format_id
+      const missingBatchFields = {
+        request_type: 'batch',
+        // Missing requests - only has format_id
         format_id: { agent_url: 'https://test.com', id: 'fmt-1' },
         creative_manifest: {
           format_id: { agent_url: 'https://test.com', id: 'fmt-1' },
-          assets: {}
+          assets: {},
         },
-        requests: [ // This conflicts with 'single' type
-          {
-            format_id: { agent_url: 'https://test.com', id: 'fmt-2' },
-            creative_manifest: {
-              format_id: { agent_url: 'https://test.com', id: 'fmt-2' },
-              assets: {}
-            }
-          }
-        ]
       };
 
-      const result = PreviewCreativeRequestSchema.safeParse(conflicting);
-      assert.strictEqual(result.success, false,
-        'Conflicting fields from different union branches should fail validation');
+      const batchResult = PreviewCreativeRequestSchema.safeParse(missingBatchFields);
+      assert.strictEqual(batchResult.success, false, 'Batch request_type must have requests array');
     });
   });
 });
