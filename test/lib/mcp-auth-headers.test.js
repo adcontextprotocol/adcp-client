@@ -93,37 +93,37 @@ test('MCP: Protocol integration sends auth headers', async t => {
       protocol: 'mcp',
       agent_uri: 'https://test.example.com/mcp',
       requiresAuth: true,
-      auth_token_env: 'test-direct-token-1234567890', // Direct token (not env var)
+      auth_token: 'test-direct-token-1234567890', // Direct token value
     };
 
     const authToken = getAuthToken(agentConfig);
 
     assert.strictEqual(authToken, 'test-direct-token-1234567890');
-    assert.ok(authToken.length > 20); // Verify it's a direct token, not env var name
+    assert.ok(authToken.length > 20); // Verify it's a direct token
   });
 
-  await t.test('getAuthToken handles short tokens correctly', () => {
+  await t.test('getAuthToken handles direct tokens of any length', () => {
     const { getAuthToken } = require('../../dist/lib/auth/index.js');
 
-    // Test with short token (like 'ci-test-token')
+    // Test with short direct token
     const shortTokenConfig = {
       id: 'test-agent',
       protocol: 'mcp',
       agent_uri: 'https://test.example.com/mcp',
       requiresAuth: true,
-      auth_token_env: 'ci-test-token', // Short token (13 chars)
+      auth_token: 'ci-test-token', // Direct short token
     };
 
     const shortToken = getAuthToken(shortTokenConfig);
     assert.strictEqual(shortToken, 'ci-test-token');
 
-    // Test with very short token
+    // Test with very short direct token
     const veryShortTokenConfig = {
       id: 'test-agent',
       protocol: 'mcp',
       agent_uri: 'https://test.example.com/mcp',
       requiresAuth: true,
-      auth_token_env: 'abc123', // Very short token (6 chars)
+      auth_token: 'abc123', // Direct very short token
     };
 
     const veryShortToken = getAuthToken(veryShortTokenConfig);
@@ -157,5 +157,116 @@ test('MCP: Protocol integration sends auth headers', async t => {
 
     const authToken = getAuthToken(missingTokenConfig);
     assert.strictEqual(authToken, undefined);
+  });
+
+  await t.test('auth_token_env resolves environment variables', () => {
+    const { getAuthToken } = require('../../dist/lib/auth/index.js');
+
+    // Set up environment variable
+    process.env.TEST_AUTH_TOKEN = 'resolved-from-env-123456';
+
+    const envVarConfig = {
+      id: 'test-agent',
+      protocol: 'mcp',
+      agent_uri: 'https://test.example.com/mcp',
+      requiresAuth: true,
+      auth_token_env: 'TEST_AUTH_TOKEN',
+    };
+
+    const authToken = getAuthToken(envVarConfig);
+    assert.strictEqual(authToken, 'resolved-from-env-123456');
+
+    // Clean up
+    delete process.env.TEST_AUTH_TOKEN;
+  });
+
+  await t.test('auth_token takes precedence over auth_token_env', () => {
+    const { getAuthToken } = require('../../dist/lib/auth/index.js');
+
+    // Set up environment variable
+    process.env.TEST_AUTH_TOKEN = 'from-env';
+
+    const bothFieldsConfig = {
+      id: 'test-agent',
+      protocol: 'mcp',
+      agent_uri: 'https://test.example.com/mcp',
+      requiresAuth: true,
+      auth_token: 'direct-token-wins',
+      auth_token_env: 'TEST_AUTH_TOKEN',
+    };
+
+    const authToken = getAuthToken(bothFieldsConfig);
+    assert.strictEqual(authToken, 'direct-token-wins');
+
+    // Clean up
+    delete process.env.TEST_AUTH_TOKEN;
+  });
+
+  await t.test('auth_token_env warns when environment variable not found', () => {
+    const { getAuthToken } = require('../../dist/lib/auth/index.js');
+
+    // Capture console.warn
+    const warnings = [];
+    const originalWarn = console.warn;
+    console.warn = msg => warnings.push(msg);
+
+    const missingEnvConfig = {
+      id: 'test-agent',
+      protocol: 'mcp',
+      agent_uri: 'https://test.example.com/mcp',
+      requiresAuth: true,
+      auth_token_env: 'NONEXISTENT_TOKEN',
+    };
+
+    const authToken = getAuthToken(missingEnvConfig);
+
+    assert.strictEqual(authToken, undefined);
+    assert.ok(warnings.some(w => w.includes('NONEXISTENT_TOKEN')));
+    assert.ok(warnings.some(w => w.includes('test-agent')));
+
+    // Restore console.warn
+    console.warn = originalWarn;
+  });
+
+  await t.test('production mode throws error for missing env var', () => {
+    const { getAuthToken } = require('../../dist/lib/auth/index.js');
+
+    const originalNodeEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+
+    const missingEnvConfig = {
+      id: 'prod-agent',
+      protocol: 'mcp',
+      agent_uri: 'https://test.example.com/mcp',
+      requiresAuth: true,
+      auth_token_env: 'MISSING_PROD_TOKEN',
+    };
+
+    assert.throws(() => getAuthToken(missingEnvConfig), /Environment variable "MISSING_PROD_TOKEN" not found/);
+
+    // Restore NODE_ENV
+    process.env.NODE_ENV = originalNodeEnv;
+  });
+
+  await t.test('production mode throws error when no auth configured', () => {
+    const { getAuthToken } = require('../../dist/lib/auth/index.js');
+
+    const originalNodeEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+
+    const noAuthConfig = {
+      id: 'prod-agent',
+      protocol: 'mcp',
+      agent_uri: 'https://test.example.com/mcp',
+      requiresAuth: true,
+    };
+
+    assert.throws(
+      () => getAuthToken(noAuthConfig),
+      /requires authentication but no auth_token or auth_token_env configured/
+    );
+
+    // Restore NODE_ENV
+    process.env.NODE_ENV = originalNodeEnv;
   });
 });

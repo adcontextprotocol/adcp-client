@@ -129,3 +129,4 @@ playwright-report/
 *.pfxscripts/manual-testing/test-local-agent.ts
 data/
 *.db*
+AUTH_TOKEN_FLOW_TRACE.md

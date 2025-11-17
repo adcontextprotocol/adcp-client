@@ -279,13 +279,26 @@ The ADCP client can load agents from multiple sources:
          "protocol": "mcp",
          "requiresAuth": true,
          "auth_token_env": "PREMIUM_TOKEN"
+       },
+       {
+         "id": "dev-agent",
+         "name": "Development Agent",
+         "agent_uri": "https://dev.example.com",
+         "protocol": "a2a",
+         "requiresAuth": true,
+         "auth_token": "direct-token-value-for-testing"
        }
      ]
    }
 
+   Authentication options:
+   - auth_token_env: Environment variable name (recommended for production)
+   - auth_token: Direct token value (useful for development/testing)
+
 3️⃣  Programmatic Configuration:
    const client = new ADCPMultiAgentClient([
-     { id: 'agent', agent_uri: 'https://...', protocol: 'mcp' }
+     { id: 'agent', agent_uri: 'https://...', protocol: 'mcp',
+       auth_token_env: 'MY_TOKEN' }
    ]);
 
 📖 For more examples, see the documentation.
