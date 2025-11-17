@@ -242,10 +242,7 @@ test('MCP: Protocol integration sends auth headers', async t => {
       auth_token_env: 'MISSING_PROD_TOKEN',
     };
 
-    assert.throws(
-      () => getAuthToken(missingEnvConfig),
-      /Environment variable "MISSING_PROD_TOKEN" not found/
-    );
+    assert.throws(() => getAuthToken(missingEnvConfig), /Environment variable "MISSING_PROD_TOKEN" not found/);
 
     // Restore NODE_ENV
     process.env.NODE_ENV = originalNodeEnv;
