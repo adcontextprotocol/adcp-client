@@ -70,8 +70,50 @@ async function syncSchemas(version?: string): Promise<void> {
   const indexUrl = `${ADCP_BASE_URL}/schemas/v1/index.json`;
   console.log(`📥 Fetching schema index from ${indexUrl}...`);
 
-  const schemaIndex: SchemaIndex = await fetchJson(indexUrl);
-  const adcpVersion = version || schemaIndex.adcp_version;
+  let schemaIndex: SchemaIndex;
+  let adcpVersion: string;
+
+  try {
+    schemaIndex = await fetchJson(indexUrl);
+    adcpVersion = version || schemaIndex.adcp_version;
+  } catch (error) {
+    console.warn(`⚠️  Failed to fetch schema index: ${error.message}`);
+
+    // Try to find the latest cached schema version
+    if (existsSync(SCHEMA_CACHE_DIR)) {
+      const cachedVersions = require('fs')
+        .readdirSync(SCHEMA_CACHE_DIR)
+        .filter(
+          dir =>
+            dir !== 'latest' &&
+            existsSync(path.join(SCHEMA_CACHE_DIR, dir, 'index.json'))
+        );
+
+      if (cachedVersions.length > 0) {
+        // Use the most recent cached version (sort by version number)
+        cachedVersions.sort((a, b) => b.localeCompare(a));
+        const latestCachedVersion = cachedVersions[0];
+        const indexPath = path.join(SCHEMA_CACHE_DIR, latestCachedVersion, 'index.json');
+
+        console.log(`📦 Using cached schemas from v${latestCachedVersion}...`);
+        schemaIndex = JSON.parse(require('fs').readFileSync(indexPath, 'utf8'));
+        adcpVersion = version || schemaIndex.adcp_version;
+
+        console.log(`✅ Using cached AdCP v${adcpVersion} schemas`);
+        console.log(`⚠️  Note: Schemas not updated from remote (remote unavailable)`);
+        console.log(`📁 Cached schemas: ${path.join(SCHEMA_CACHE_DIR, latestCachedVersion)}`);
+
+        // Exit early - no need to download when using cached schemas
+        return;
+      }
+    }
+
+    // No cached schemas available - fail
+    throw new Error(
+      'Remote schema server unavailable and no cached schemas found. ' +
+        'Cannot sync schemas without remote access or local cache.'
+    );
+  }
 
   console.log(`📋 AdCP Version: ${adcpVersion}`);
   console.log(`🗂️  Caching schemas to: ${SCHEMA_CACHE_DIR}/${adcpVersion}/`);
