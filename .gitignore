@@ -9,9 +9,6 @@ dist/
 build/
 *.tsbuildinfo
 
-# Schema cache
-schemas/cache/
-
 # Environment variables
 .env
 .env.local

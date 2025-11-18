@@ -11,6 +11,7 @@ import {
   type CreateMediaBuyRequest,
   type TaskResult,
 } from '../lib';
+import type { BrandManifestReference, BrandManifestReference1 } from '../lib/types/tools.generated';
 import { ADCP_VERSION } from '../lib/version';
 
 /**
@@ -155,9 +156,9 @@ export class SalesAgentsHandlers {
       if (toolName === 'get_products') {
         // Build GetProductsRequest with proper types
         // brand_manifest must be either a valid URL or a BrandManifest object
-        let brandManifest: string | { name?: string; url?: string };
+        let brandManifest: BrandManifestReference;
 
-        const manifestInput = brandStory || userProvidedOffering || 'Test brand';
+        const manifestInput: string = brandStory || userProvidedOffering || 'Test brand';
 
         // Check if it's a valid URL
         try {
@@ -238,9 +239,9 @@ export class SalesAgentsHandlers {
         result = await agent.listCreativeFormats(params);
       } else if (toolName === 'create_media_buy') {
         // brand_manifest must be either a valid URL or a BrandManifest object
-        let brandManifestForBuy: string | { name?: string; url?: string };
+        let brandManifestForBuy: BrandManifestReference1;
 
-        const manifestInputForBuy = brandStory || userProvidedOffering || 'Test brand';
+        const manifestInputForBuy: string = brandStory || userProvidedOffering || 'Test brand';
 
         // Check if it's a valid URL
         try {

@@ -150,7 +150,8 @@
   },
   "overrides": {
     "@types/glob": "^8.1.0",
-    "js-yaml": "^4.1.1"
+    "js-yaml": "^4.1.1",
+    "glob": "^11.0.4"
   },
   "adcp_version": "2.4.0"
 }

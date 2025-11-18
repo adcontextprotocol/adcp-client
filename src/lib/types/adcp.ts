@@ -18,6 +18,14 @@ export interface MediaBuy {
   updated_at: string;
 }
 
+/**
+ * Creative asset for use in media buys and campaigns.
+ *
+ * This is a simplified user-facing type. For protocol-level operations,
+ * use the generated `CreativeAsset` type from `tools.generated.ts`.
+ *
+ * @public
+ */
 export interface CreativeAsset {
   id: string;
   name: string;
@@ -28,9 +36,13 @@ export interface CreativeAsset {
     height: number;
   };
   // Support for both hosted and third-party assets
-  url?: string; // For backward compatibility (deprecated)
-  media_url?: string; // Hosted asset URL
-  snippet?: string; // Third-party asset snippet
+  /** @deprecated Use assets field in PackageRequest instead. Kept for backward compatibility. */
+  url?: string;
+  /** @deprecated Use assets field in PackageRequest instead. Kept for backward compatibility. */
+  media_url?: string;
+  /** @deprecated Use assets field in PackageRequest instead. Kept for backward compatibility. */
+  snippet?: string;
+  /** @deprecated Use assets field in PackageRequest instead. Kept for backward compatibility. */
   snippet_type?: 'html' | 'javascript' | 'amp';
   status: 'active' | 'inactive' | 'pending_review' | 'approved' | 'rejected';
   file_size?: number;
@@ -200,11 +212,17 @@ export interface ApiResponse<T = any> {
   timestamp: string;
 }
 
+/**
+ * @internal
+ */
 export interface AgentListResponse {
   agents: AgentConfig[];
   total: number;
 }
 
+/**
+ * @internal
+ */
 export interface TestResponse {
   test_id: string;
   results: TestResult[];
@@ -216,7 +234,13 @@ export interface TestResponse {
   };
 }
 
-// Creative Library Management Types (AdCP v1.3.0)
+/**
+ * Creative Library Management Types (AdCP v1.3.0)
+ *
+ * @deprecated This type is for internal server use only. Client applications should use
+ * the ListCreativesResponse type from generated schemas.
+ * @internal
+ */
 export interface CreativeLibraryItem {
   creative_id: string;
   name: string;
@@ -262,7 +286,10 @@ export interface CreativeComplianceData {
   reviewer_notes?: string;
 }
 
-// New Task Request/Response Types
+/**
+ * Internal server types for creative management operations.
+ * @internal
+ */
 export interface ManageCreativeAssetsRequest {
   action: 'upload' | 'list' | 'update' | 'assign' | 'unassign' | 'delete';
   adcp_version?: string;
@@ -280,6 +307,9 @@ export interface ManageCreativeAssetsRequest {
   archive?: boolean; // For delete (soft vs hard delete)
 }
 
+/**
+ * @internal
+ */
 export interface SyncCreativesRequest {
   creatives: CreativeAsset[];
   patch?: boolean; // Enable partial updates
@@ -288,6 +318,9 @@ export interface SyncCreativesRequest {
   validation_mode?: 'strict' | 'lenient';
 }
 
+/**
+ * @internal
+ */
 export interface ListCreativesRequest {
   filters?: CreativeFilters;
   sort?: {
@@ -319,7 +352,9 @@ export interface PaginationOptions {
   cursor?: string;
 }
 
-// Response Types
+/**
+ * @internal
+ */
 export interface ManageCreativeAssetsResponse {
   success: boolean;
   action: string;
@@ -356,6 +391,9 @@ export interface ManageCreativeAssetsResponse {
   }[];
 }
 
+/**
+ * @internal
+ */
 export interface SyncCreativesResponse {
   success: boolean;
   summary: {
@@ -374,6 +412,9 @@ export interface SyncCreativesResponse {
   dry_run?: boolean;
 }
 
+/**
+ * @internal
+ */
 export interface ListCreativesResponse {
   success: boolean;
   creatives: CreativeLibraryItem[];
