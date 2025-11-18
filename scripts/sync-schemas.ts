@@ -83,11 +83,7 @@ async function syncSchemas(version?: string): Promise<void> {
     if (existsSync(SCHEMA_CACHE_DIR)) {
       const cachedVersions = require('fs')
         .readdirSync(SCHEMA_CACHE_DIR)
-        .filter(
-          dir =>
-            dir !== 'latest' &&
-            existsSync(path.join(SCHEMA_CACHE_DIR, dir, 'index.json'))
-        );
+        .filter(dir => dir !== 'latest' && existsSync(path.join(SCHEMA_CACHE_DIR, dir, 'index.json')));
 
       if (cachedVersions.length > 0) {
         // Use the most recent cached version (sort by version number)
