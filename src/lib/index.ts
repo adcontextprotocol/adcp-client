@@ -133,7 +133,7 @@ export type {
   TestRequest,
   ApiResponse,
   // Data models (user-facing from adcp.ts, not generated duplicates)
-  CreativeAsset,  // User-facing type with practical fields
+  CreativeAsset, // User-facing type with practical fields
   AdvertisingProduct,
   MediaBuy,
   Targeting,
@@ -221,7 +221,7 @@ export type {
   ActivateSignalRequest,
   ActivateSignalResponse,
   // Core data structures from generated schemas
-  FormatID,  // Core identifier type
+  FormatID, // Core identifier type
   Format,
   Product,
   PackageRequest,

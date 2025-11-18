@@ -58,12 +58,20 @@ describe('Public API Surface', () => {
       assert.strictEqual(AdCPClient.VideoAssetSchema, undefined, 'VideoAssetSchema should not be exported');
       assert.strictEqual(AdCPClient.VASTAssetSchema, undefined, 'VASTAssetSchema should not be exported');
       assert.strictEqual(AdCPClient.TargetingSchema, undefined, 'TargetingSchema should not be exported');
-      assert.strictEqual(AdCPClient.GeographicTargetingSchema, undefined, 'GeographicTargetingSchema should not be exported');
+      assert.strictEqual(
+        AdCPClient.GeographicTargetingSchema,
+        undefined,
+        'GeographicTargetingSchema should not be exported'
+      );
     });
 
     it('should NOT export numbered discriminated union types', () => {
       // These indicate schema naming collisions that shouldn't be in public API
-      assert.strictEqual(AdCPClient.BrandManifestReference1, undefined, 'BrandManifestReference1 should not be exported');
+      assert.strictEqual(
+        AdCPClient.BrandManifestReference1,
+        undefined,
+        'BrandManifestReference1 should not be exported'
+      );
       assert.strictEqual(AdCPClient.CreativeStatus1, undefined, 'CreativeStatus1 should not be exported');
       assert.strictEqual(AdCPClient.UpdateMediaBuyRequest2, undefined, 'UpdateMediaBuyRequest2 should not be exported');
       assert.strictEqual(AdCPClient.PricingModel1, undefined, 'PricingModel1 should not be exported');
@@ -75,8 +83,14 @@ describe('Public API Surface', () => {
       const exportedKeys = Object.keys(AdCPClient);
 
       // Server-only request/response types
-      assert.ok(!exportedKeys.includes('ManageCreativeAssetsRequest'), 'ManageCreativeAssetsRequest should not be in exports');
-      assert.ok(!exportedKeys.includes('ManageCreativeAssetsResponse'), 'ManageCreativeAssetsResponse should not be in exports');
+      assert.ok(
+        !exportedKeys.includes('ManageCreativeAssetsRequest'),
+        'ManageCreativeAssetsRequest should not be in exports'
+      );
+      assert.ok(
+        !exportedKeys.includes('ManageCreativeAssetsResponse'),
+        'ManageCreativeAssetsResponse should not be in exports'
+      );
 
       // Note: TestResponse and AgentListResponse are exported for internal server use,
       // but they're marked @internal in JSDoc so IDEs can hide them
@@ -88,7 +102,10 @@ describe('Public API Surface', () => {
 
       // Before cleanup: ~200+ exports
       // After cleanup: ~70-100 exports (allowing some buffer for growth)
-      assert.ok(exportCount < 150, `Export count (${exportCount}) should be less than 150 to maintain clean API surface`);
+      assert.ok(
+        exportCount < 150,
+        `Export count (${exportCount}) should be less than 150 to maintain clean API surface`
+      );
 
       console.log(`\n📊 Current public API exports: ${exportCount}`);
       console.log(`✅ Export count is within acceptable bounds (< 150)`);
@@ -104,7 +121,8 @@ describe('Public API Surface', () => {
 
       // Expected: 26 request/response schemas (13 tools × 2) + 4 core data model schemas = 30
       // Allow buffer up to 40 for any additions
-      assert.ok(schemaExports.length <= 40,
+      assert.ok(
+        schemaExports.length <= 40,
         `Schema exports (${schemaExports.length}) should be ≤ 40. Found: ${schemaExports.join(', ')}`
       );
 
@@ -117,7 +135,7 @@ describe('Public API Surface', () => {
       // Test FormatIDSchema works
       const validFormatID = {
         agent_url: 'https://formats.example.com',
-        id: 'video_1920x1080_30s'
+        id: 'video_1920x1080_30s',
       };
 
       const result = AdCPClient.FormatIDSchema.safeParse(validFormatID);
@@ -127,7 +145,7 @@ describe('Public API Surface', () => {
     it('should export schemas that reject invalid data', () => {
       const invalidFormatID = {
         // Missing required fields
-        id: 'video_1920x1080_30s'
+        id: 'video_1920x1080_30s',
       };
 
       const result = AdCPClient.FormatIDSchema.safeParse(invalidFormatID);
@@ -151,7 +169,7 @@ describe('Public API Surface', () => {
 
     it('should have AsyncHandler with expected configuration', () => {
       const handler = new AdCPClient.AsyncHandler({
-        webhookBaseUrl: 'https://example.com/webhooks'
+        webhookBaseUrl: 'https://example.com/webhooks',
       });
 
       assert.ok(handler, 'AsyncHandler should be instantiable');
@@ -177,11 +195,11 @@ describe('Public API Surface', () => {
   describe('No Internal Type Leakage', () => {
     it('should not have exports with "Internal" in the name', () => {
       const exportedKeys = Object.keys(AdCPClient);
-      const internalExports = exportedKeys.filter(key =>
-        key.toLowerCase().includes('internal')
-      );
+      const internalExports = exportedKeys.filter(key => key.toLowerCase().includes('internal'));
 
-      assert.strictEqual(internalExports.length, 0,
+      assert.strictEqual(
+        internalExports.length,
+        0,
         `No exports should contain "Internal" in name. Found: ${internalExports.join(', ')}`
       );
     });
@@ -192,7 +210,9 @@ describe('Public API Surface', () => {
       // Check for exports ending with digit (e.g., Type1, Request2)
       const numberedExports = exportedKeys.filter(key => /\d$/.test(key));
 
-      assert.strictEqual(numberedExports.length, 0,
+      assert.strictEqual(
+        numberedExports.length,
+        0,
         `No exports should end with numbers (indicates discriminated union collision). Found: ${numberedExports.join(', ')}`
       );
     });
@@ -212,10 +232,11 @@ describe('Public API Surface', () => {
         baseNames.get(baseName).push(key);
       });
 
-      const duplicates = Array.from(baseNames.entries())
-        .filter(([_, variants]) => variants.length > 1);
+      const duplicates = Array.from(baseNames.entries()).filter(([_, variants]) => variants.length > 1);
 
-      assert.strictEqual(duplicates.length, 0,
+      assert.strictEqual(
+        duplicates.length,
+        0,
         `No duplicate base names should exist. Found: ${JSON.stringify(duplicates)}`
       );
     });
@@ -241,7 +262,7 @@ describe('Public API Surface', () => {
         'BuildCreative',
         'PreviewCreative',
         'GetSignals',
-        'ActivateSignal'
+        'ActivateSignal',
       ];
 
       const exportedKeys = Object.keys(AdCPClient);
@@ -250,12 +271,8 @@ describe('Public API Surface', () => {
         const requestSchema = `${tool}RequestSchema`;
         const responseSchema = `${tool}ResponseSchema`;
 
-        assert.ok(exportedKeys.includes(requestSchema),
-          `${requestSchema} should be exported`
-        );
-        assert.ok(exportedKeys.includes(responseSchema),
-          `${responseSchema} should be exported`
-        );
+        assert.ok(exportedKeys.includes(requestSchema), `${requestSchema} should be exported`);
+        assert.ok(exportedKeys.includes(responseSchema), `${responseSchema} should be exported`);
       });
     });
   });
@@ -267,7 +284,7 @@ describe('Public API Surface', () => {
       const categories = {
         schemas: new Set(),
         functions: new Set(),
-        other: new Set()
+        other: new Set(),
       };
 
       // Categorize each export once
@@ -289,13 +306,9 @@ describe('Public API Surface', () => {
       console.log(`   Total: ${exportedKeys.length}`);
 
       // Sanity check: categorization covers all exports
-      const totalCategorized = categories.schemas.size +
-                              categories.functions.size +
-                              categories.other.size;
+      const totalCategorized = categories.schemas.size + categories.functions.size + categories.other.size;
 
-      assert.strictEqual(totalCategorized, exportedKeys.length,
-        'All exports should be accounted for in categories'
-      );
+      assert.strictEqual(totalCategorized, exportedKeys.length, 'All exports should be accounted for in categories');
     });
   });
 });
@@ -307,7 +320,7 @@ describe('Type Safety Validation (TypeScript)', () => {
       // TypeScript compilation will fail if types are wrong
       const request = {
         brand_manifest: 'https://example.com',
-        brief: 'Test brief'
+        brief: 'Test brief',
       };
 
       const validationResult = AdCPClient.GetProductsRequestSchema.safeParse(request);
@@ -320,7 +333,7 @@ describe('Type Safety Validation (TypeScript)', () => {
         brand_manifest: 'https://example.com',
         packages: [],
         start_time: 'asap',
-        end_time: '2024-12-31T23:59:59Z'
+        end_time: '2024-12-31T23:59:59Z',
       };
 
       const validationResult = AdCPClient.CreateMediaBuyRequestSchema.safeParse(request);
@@ -332,7 +345,7 @@ describe('Type Safety Validation (TypeScript)', () => {
     it('should validate FormatID structure', () => {
       const formatId = {
         agent_url: 'https://formats.example.com',
-        id: 'video_1920x1080_30s'
+        id: 'video_1920x1080_30s',
       };
 
       const result = AdCPClient.FormatIDSchema.safeParse(formatId);
@@ -347,7 +360,9 @@ describe('Type Safety Validation (TypeScript)', () => {
     it('should have ProductSchema available for validation', () => {
       // Just verify the schema exists and can be called
       assert.ok(AdCPClient.ProductSchema, 'ProductSchema should be exported');
-      assert.strictEqual(typeof AdCPClient.ProductSchema.safeParse, 'function',
+      assert.strictEqual(
+        typeof AdCPClient.ProductSchema.safeParse,
+        'function',
         'ProductSchema should have safeParse method'
       );
     });
@@ -360,13 +375,16 @@ describe('Clean API Experience', () => {
     const importedExports = Object.keys(AdCPClient);
 
     // Ensure no confusing numbered variants
-    const confusingExports = importedExports.filter(key =>
-      /\d$/.test(key) || // ends with number
-      key.includes('Internal') || // contains "Internal"
-      key.includes('_generated') // contains "_generated"
+    const confusingExports = importedExports.filter(
+      key =>
+        /\d$/.test(key) || // ends with number
+        key.includes('Internal') || // contains "Internal"
+        key.includes('_generated') // contains "_generated"
     );
 
-    assert.strictEqual(confusingExports.length, 0,
+    assert.strictEqual(
+      confusingExports.length,
+      0,
       `Clean API should not have confusing exports. Found: ${confusingExports.join(', ')}`
     );
   });
@@ -375,8 +393,8 @@ describe('Clean API Experience', () => {
     const exportedKeys = Object.keys(AdCPClient);
 
     // Request types should end with Request or RequestSchema
-    const requestTypes = exportedKeys.filter(k =>
-      k.includes('Request') && !k.includes('Input') && !k.includes('Required')
+    const requestTypes = exportedKeys.filter(
+      k => k.includes('Request') && !k.includes('Input') && !k.includes('Required')
     );
     requestTypes.forEach(key => {
       assert.ok(
@@ -387,11 +405,8 @@ describe('Clean API Experience', () => {
 
     // Response types should end with Response or ResponseSchema
     // Exclude utility classes like ResponseParser, ResponseValidator
-    const responseTypes = exportedKeys.filter(k =>
-      k.includes('Response') &&
-      !k.includes('Parser') &&
-      !k.includes('Handler') &&
-      !k.includes('Validator')
+    const responseTypes = exportedKeys.filter(
+      k => k.includes('Response') && !k.includes('Parser') && !k.includes('Handler') && !k.includes('Validator')
     );
     responseTypes.forEach(key => {
       assert.ok(
@@ -406,15 +421,14 @@ describe('Clean API Experience', () => {
 
     // Every export ending with Schema should be a Zod schema
     // Exclude utility functions like getExpectedSchema
-    const schemas = exportedKeys.filter(k =>
-      k.endsWith('Schema') && !k.startsWith('get')
-    );
+    const schemas = exportedKeys.filter(k => k.endsWith('Schema') && !k.startsWith('get'));
 
     schemas.forEach(schema => {
       const schemaValue = AdCPClient[schema];
 
       // Schemas should be Zod objects with safeParse
-      assert.ok(schemaValue && typeof schemaValue.safeParse === 'function',
+      assert.ok(
+        schemaValue && typeof schemaValue.safeParse === 'function',
         `${schema} should be a Zod schema with safeParse method`
       );
     });
