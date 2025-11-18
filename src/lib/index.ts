@@ -124,11 +124,74 @@ export {
 export { InputRequiredError } from './core/TaskExecutor';
 
 // ====== CORE TYPES ======
-export * from './types';
+// Curated exports from types - not all internal types
+export type {
+  // Agent configuration
+  AgentConfig,
+  // Testing types
+  TestResult,
+  TestRequest,
+  ApiResponse,
+  // Data models (user-facing from adcp.ts, not generated duplicates)
+  CreativeAsset,  // User-facing type with practical fields
+  AdvertisingProduct,
+  MediaBuy,
+  Targeting,
+  GeographicTargeting,
+  DemographicTargeting,
+  BehavioralTargeting,
+  ContextualTargeting,
+  DeviceTargeting,
+  FrequencyCap,
+  DeliverySchedule,
+  DayParting,
+  // NOTE: Property, PropertyIdentifier, PropertyType exported above from discovery/types
+  // NOTE: CreativeFormat exported above from core/CreativeAgentClient
+} from './types';
+
+// ====== ZOD SCHEMAS ======
+// Re-export curated Zod schemas for runtime validation (curated in types/index.ts)
+export {
+  // Media Buy Tool Schemas
+  GetProductsRequestSchema,
+  GetProductsResponseSchema,
+  ListCreativeFormatsRequestSchema,
+  ListCreativeFormatsResponseSchema,
+  CreateMediaBuyRequestSchema,
+  CreateMediaBuyResponseSchema,
+  UpdateMediaBuyRequestSchema,
+  UpdateMediaBuyResponseSchema,
+  SyncCreativesRequestSchema,
+  SyncCreativesResponseSchema,
+  ListCreativesRequestSchema,
+  ListCreativesResponseSchema,
+  GetMediaBuyDeliveryRequestSchema,
+  GetMediaBuyDeliveryResponseSchema,
+  ListAuthorizedPropertiesRequestSchema,
+  ListAuthorizedPropertiesResponseSchema,
+  ProvidePerformanceFeedbackRequestSchema,
+  ProvidePerformanceFeedbackResponseSchema,
+  // Creative Tool Schemas
+  BuildCreativeRequestSchema,
+  BuildCreativeResponseSchema,
+  PreviewCreativeRequestSchema,
+  PreviewCreativeResponseSchema,
+  // Signals Tool Schemas
+  GetSignalsRequestSchema,
+  GetSignalsResponseSchema,
+  ActivateSignalRequestSchema,
+  ActivateSignalResponseSchema,
+  // Core data model schemas (frequently validated)
+  FormatIDSchema,
+  ProductSchema,
+  PackageRequestSchema,
+  CreativeAssetSchema,
+} from './types';
 
 // ====== TOOL TYPES ======
-// All ADCP task request/response types
+// All ADCP task request/response types from generated schemas
 export type {
+  // Media Buy Tools
   GetProductsRequest,
   GetProductsResponse,
   ListCreativeFormatsRequest,
@@ -147,16 +210,24 @@ export type {
   ListAuthorizedPropertiesResponse,
   ProvidePerformanceFeedbackRequest,
   ProvidePerformanceFeedbackResponse,
+  // Creative Tools
+  BuildCreativeRequest,
+  BuildCreativeResponse,
+  PreviewCreativeRequest,
+  PreviewCreativeResponse,
+  // Signals Tools
   GetSignalsRequest,
   GetSignalsResponse,
   ActivateSignalRequest,
   ActivateSignalResponse,
-  // Core data structures
+  // Core data structures from generated schemas
+  FormatID,  // Core identifier type
   Format,
   Product,
   PackageRequest,
-  CreativeAsset,
   CreativePolicy,
+  // NOTE: CreativeAsset is exported from types/adcp.ts to avoid conflicts
+  // The generated CreativeAsset from tools.generated.ts is for internal use only
 } from './types/tools.generated';
 
 // ====== PROTOCOL CLIENTS ======

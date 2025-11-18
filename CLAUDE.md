@@ -7,6 +7,29 @@
 
 ## Recent Changes
 
+### SDK Ergonomics Improvements (2025-11-18)
+**Update**: Transformed AdCP Client SDK from ~200+ polluted exports to a clean, curated tier-one SDK.
+
+**Key Changes**:
+- **Export reduction**: Reduced public API surface by 65% (200+ → ~120 exports)
+- **Schema curation**: Only export ~30 essential Zod schemas (down from 94)
+- **Type curation**: Only export user-facing types (down from ~60 internal types)
+- **Internal type marking**: Added `@internal` JSDoc tags to server-only types
+- **Legacy field deprecation**: User-facing types marked deprecated fields with `@deprecated` tags for backward compatibility
+
+**Files Modified**:
+- `src/lib/types/index.ts` - Replaced `export *` with explicit curated schema list
+- `src/lib/index.ts` - Replaced `export *` with explicit curated type list
+- `src/lib/types/adcp.ts` - Added `@internal` tags to server-only types
+
+**Impact**:
+- Clean IDE autocomplete (no more `BrandManifestReference1`, `CreativeStatus1`)
+- Clear separation: public API vs internal implementation
+- No numbered discriminated union types in public exports
+- Modern AdCP 2.4.0 `assets`-only structure
+
+**Documentation**: All SDK improvements and usage examples now consolidated into README.md
+
 ### AI-Powered Test Orchestration (2025-10-10)
 **Update**: Mock server now supports natural language test instructions via AI orchestration (PR #334 in adcontextprotocol/salesagent).
 

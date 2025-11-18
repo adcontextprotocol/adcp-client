@@ -7,13 +7,6 @@
  */
 export type BrandManifestReference = BrandManifest | string;
 /**
- * Inline brand manifest object
- */
-export type BrandManifest = BrandManifest1 & BrandManifest2;
-export type BrandManifest1 = {
-  [k: string]: unknown;
-};
-/**
  * Type of inventory delivery
  */
 export type DeliveryType = 'guaranteed' | 'non_guaranteed';
@@ -58,7 +51,10 @@ export interface GetProductsRequest {
    */
   context?: {};
 }
-export interface BrandManifest2 {
+/**
+ * Inline brand manifest object
+ */
+export interface BrandManifest {
   /**
    * Primary brand URL for context and asset discovery. Creative agents can infer brand information from this URL.
    */
@@ -66,7 +62,7 @@ export interface BrandManifest2 {
   /**
    * Brand or business name
    */
-  name?: string;
+  name: string;
   /**
    * Brand logo assets with semantic tags for different use cases
    */
@@ -338,12 +334,22 @@ export interface Product {
    */
   description: string;
   /**
-   * Publisher properties covered by this product. Buyers fetch actual property definitions from each publisher's adagents.json and validate agent authorization.
+   * Publisher properties covered by this product. Buyers fetch actual property definitions from each publisher's adagents.json and validate agent authorization. Selection patterns mirror the authorization patterns in adagents.json for consistency.
    *
    * @minItems 1
    */
   publisher_properties: [
     (
+      | {
+          /**
+           * Domain where publisher's adagents.json is hosted (e.g., 'cnn.com')
+           */
+          publisher_domain: string;
+          /**
+           * Discriminator indicating all properties from this publisher are included
+           */
+          selection_type: 'all';
+        }
       | {
           /**
            * Domain where publisher's adagents.json is hosted (e.g., 'cnn.com')
@@ -378,6 +384,16 @@ export interface Product {
         }
     ),
     ...(
+      | {
+          /**
+           * Domain where publisher's adagents.json is hosted (e.g., 'cnn.com')
+           */
+          publisher_domain: string;
+          /**
+           * Discriminator indicating all properties from this publisher are included
+           */
+          selection_type: 'all';
+        }
       | {
           /**
            * Domain where publisher's adagents.json is hosted (e.g., 'cnn.com')
@@ -530,6 +546,10 @@ export interface CPMFixedRatePricingOption {
    */
   currency: string;
   /**
+   * Whether this is a fixed rate (true) or auction-based (false)
+   */
+  is_fixed: true;
+  /**
    * Minimum spend requirement per package using this pricing option, in the specified currency
    */
   min_spend_per_package?: number;
@@ -550,6 +570,10 @@ export interface CPMAuctionPricingOption {
    * ISO 4217 currency code
    */
   currency: string;
+  /**
+   * Whether this is a fixed rate (true) or auction-based (false)
+   */
+  is_fixed: false;
   /**
    * Pricing guidance for auction-based CPM bidding
    */
@@ -601,6 +625,10 @@ export interface VCPMFixedRatePricingOption {
    */
   currency: string;
   /**
+   * Whether this is a fixed rate (true) or auction-based (false)
+   */
+  is_fixed: true;
+  /**
    * Minimum spend requirement per package using this pricing option, in the specified currency
    */
   min_spend_per_package?: number;
@@ -621,6 +649,10 @@ export interface VCPMAuctionPricingOption {
    * ISO 4217 currency code
    */
   currency: string;
+  /**
+   * Whether this is a fixed rate (true) or auction-based (false)
+   */
+  is_fixed: false;
   /**
    * Statistical guidance for auction pricing
    */
@@ -672,6 +704,10 @@ export interface CPCPricingOption {
    */
   currency: string;
   /**
+   * Whether this is a fixed rate (true) or auction-based (false)
+   */
+  is_fixed: true;
+  /**
    * Minimum spend requirement per package using this pricing option, in the specified currency
    */
   min_spend_per_package?: number;
@@ -697,6 +733,10 @@ export interface CPCVPricingOption {
    */
   currency: string;
   /**
+   * Whether this is a fixed rate (true) or auction-based (false)
+   */
+  is_fixed: true;
+  /**
    * Minimum spend requirement per package using this pricing option, in the specified currency
    */
   min_spend_per_package?: number;
@@ -721,6 +761,10 @@ export interface CPVPricingOption {
    * ISO 4217 currency code
    */
   currency: string;
+  /**
+   * Whether this is a fixed rate (true) or auction-based (false)
+   */
+  is_fixed: true;
   /**
    * CPV-specific parameters defining the view threshold
    */
@@ -759,6 +803,10 @@ export interface CPPPricingOption {
    * ISO 4217 currency code
    */
   currency: string;
+  /**
+   * Whether this is a fixed rate (true) or auction-based (false)
+   */
+  is_fixed: true;
   /**
    * CPP-specific parameters for demographic targeting and GRP requirements
    */
@@ -1528,7 +1576,7 @@ export type DAASTAsset =
 /**
  * Brand information manifest containing assets, themes, and guidelines. Can be provided inline or as a URL reference to a hosted manifest.
  */
-export type BrandManifestReference1 = BrandManifest1 | string;
+export type BrandManifestReference1 = BrandManifest | string;
 /**
  * Campaign start timing: 'asap' or ISO 8601 date-time
  */
@@ -1907,6 +1955,9 @@ export interface PromotedOfferings {
     exclude_tags?: string[];
   };
 }
+/**
+ * Inline brand manifest object
+ */
 export interface PromotedProducts {
   /**
    * Direct product SKU references from the brand manifest product catalog
@@ -2420,10 +2471,6 @@ export interface ListCreativesResponse {
      */
     updated_date: string;
     /**
-     * URL of the creative file (for hosted assets)
-     */
-    media_url?: string;
-    /**
      * Assets for this creative, keyed by asset_role
      */
     assets?: {
@@ -2444,22 +2491,6 @@ export interface ListCreativesResponse {
         | PromotedOfferings
         | URLAsset;
     };
-    /**
-     * Landing page URL for the creative
-     */
-    click_url?: string;
-    /**
-     * Duration in milliseconds (for video/audio)
-     */
-    duration?: number;
-    /**
-     * Width in pixels (for video/display)
-     */
-    width?: number;
-    /**
-     * Height in pixels (for video/display)
-     */
-    height?: number;
     /**
      * User-defined tags for organization and searchability
      */
