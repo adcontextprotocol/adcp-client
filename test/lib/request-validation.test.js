@@ -39,7 +39,7 @@ describe('SingleAgentClient Request Validation', () => {
             ],
           });
         },
-        (err) => {
+        err => {
           return err.message.includes('Request validation failed for sync_creatives');
         },
         'Should throw validation error for assets as array'
@@ -72,7 +72,7 @@ describe('SingleAgentClient Request Validation', () => {
             ],
           });
         },
-        (err) => {
+        err => {
           return err.message.includes('Request validation failed for sync_creatives');
         },
         'Should throw validation error for non-existent package_assignments'
@@ -105,7 +105,7 @@ describe('SingleAgentClient Request Validation', () => {
             ],
           });
         },
-        (err) => {
+        err => {
           return err.message.includes('Request validation failed for sync_creatives');
         },
         'Should throw validation error for non-existent brand_safe field'
@@ -138,7 +138,7 @@ describe('SingleAgentClient Request Validation', () => {
             mode: 'dry_run',
           });
         },
-        (err) => {
+        err => {
           return err.message.includes('Request validation failed for sync_creatives');
         },
         'Should throw validation error for non-existent mode parameter'
@@ -153,12 +153,17 @@ describe('SingleAgentClient Request Validation', () => {
 
       await assert.rejects(
         async () => {
-          // Invalid request with extra field
+          // Valid request with required fields + invalid top-level field
           await agent.createMediaBuy({
-            invalid_field: 'should fail',
+            buyer_ref: 'buyer123',
+            packages: [],
+            brand_manifest: 'https://example.com/brand',
+            start_time: 'immediate',
+            end_time: '2025-12-31T23:59:59Z',
+            invalid_field: 'should fail', // This extra field should trigger strict validation
           });
         },
-        (err) => {
+        err => {
           return err.message.includes('Request validation failed for create_media_buy');
         },
         'Should throw validation error for invalid create_media_buy request'
@@ -173,12 +178,13 @@ describe('SingleAgentClient Request Validation', () => {
 
       await assert.rejects(
         async () => {
-          // Invalid request with extra field
+          // Valid request with required fields + invalid top-level field
           await agent.buildCreative({
-            invalid_field: 'should fail',
+            target_format_id: { agent_url: 'https://test.example.com', id: 'format1' },
+            invalid_field: 'should fail', // This extra field should trigger strict validation
           });
         },
-        (err) => {
+        err => {
           return err.message.includes('Request validation failed for build_creative');
         },
         'Should throw validation error for invalid build_creative request'
@@ -198,7 +204,7 @@ describe('SingleAgentClient Request Validation', () => {
             invalid_field: 'should fail',
           });
         },
-        (err) => {
+        err => {
           return err.message.includes('Request validation failed for get_products');
         },
         'Should throw validation error for invalid get_products request'
