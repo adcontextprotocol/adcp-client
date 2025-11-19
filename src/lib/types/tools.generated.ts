@@ -49,7 +49,9 @@ export interface GetProductsRequest {
   /**
    * Initiator-provided context included in the request payload. Agentsmust echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.
    */
-  context?: {};
+  context?: {
+    [k: string]: unknown;
+  };
 }
 /**
  * Inline brand manifest object
@@ -1022,7 +1024,9 @@ export interface ListCreativeFormatsRequest {
   /**
    * Initiator-provided context included in the request payload. Agents must echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.
    */
-  context?: {};
+  context?: {
+    [k: string]: unknown;
+  };
 }
 /**
  * Structured format identifier with agent URL and format name
@@ -1584,7 +1588,9 @@ export interface CreateMediaBuyRequest {
   /**
    * Initiator-provided context included in the request payload. Agentsmust echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.
    */
-  context?: {};
+  context?: {
+    [k: string]: unknown;
+  };
 }
 /**
  * Package configuration for media buy creation
@@ -2077,7 +2083,9 @@ export interface SyncCreativesRequest {
   /**
    * Initiator-provided context included in the request payload. Agents must echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.
    */
-  context?: {};
+  context?: {
+    [k: string]: unknown;
+  };
 }
 /**
  * Creative asset for upload to library - supports static assets, generative formats, and third-party snippets
@@ -2306,7 +2314,9 @@ export interface ListCreativesRequest {
   /**
    * Initiator-provided context included in the request payload. Agentsmust echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.
    */
-  context?: {};
+  context?: {
+    [k: string]: unknown;
+  };
 }
 
 
@@ -2603,7 +2613,9 @@ export interface UpdateMediaBuyRequest1 {
   /**
    * Initiator-provided context included in the request payload. Agents must echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.
    */
-  context?: {};
+  context?: {
+    [k: string]: unknown;
+  };
 }
 /**
  * Optional webhook configuration for async update notifications. Publisher will send webhook when update completes if operation takes longer than immediate response time.
@@ -2692,7 +2704,9 @@ export interface GetMediaBuyDeliveryRequest {
   /**
    * Initiator-provided context included in the request payload. Agentsmust echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.
    */
-  context?: {};
+  context?: {
+    [k: string]: unknown;
+  };
 }
 
 
@@ -3003,7 +3017,9 @@ export interface ListAuthorizedPropertiesRequest {
   /**
    * Initiator-provided context included in the request payload. Agentsmust echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.
    */
-  context?: {};
+  context?: {
+    [k: string]: unknown;
+  };
 }
 
 
@@ -3122,7 +3138,9 @@ export interface ProvidePerformanceFeedbackRequest {
   /**
    * Initiator-provided context included in the request payload. Agentsmust echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.
    */
-  context?: {};
+  context?: {
+    [k: string]: unknown;
+  };
 }
 
 
@@ -3172,7 +3190,9 @@ export interface BuildCreativeRequest {
   /**
    * Initiator-provided context included in the request payload. Agentsmust echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.
    */
-  context?: {};
+  context?: {
+    [k: string]: unknown;
+  };
 }
 /**
  * Creative manifest to transform or generate from. For pure generation, this should include the target format_id and any required input assets (e.g., promoted_offerings for generative formats). For transformation (e.g., resizing, reformatting), this is the complete creative to adapt.
@@ -3328,7 +3348,9 @@ export type PreviewCreativeRequest =
       /**
        * Initiator-provided context included in the request payload. Agents must echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.
        */
-      context?: {};
+      context?: {
+        [k: string]: unknown;
+      };
     }
   | {
       /**
@@ -3412,7 +3434,9 @@ export type PreviewCreativeRequest =
       /**
        * Initiator-provided context included in the request payload. Agents must echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.
        */
-      context?: {};
+      context?: {
+        [k: string]: unknown;
+      };
     };
 /**
  * VAST (Video Ad Serving Template) tag for third-party video ad serving
@@ -3808,7 +3832,9 @@ export interface GetSignalsRequest {
   /**
    * Initiator-provided context included in the request payload. Agents must echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.
    */
-  context?: {};
+  context?: {
+    [k: string]: unknown;
+  };
 }
 
 
@@ -4009,7 +4035,9 @@ export interface ActivateSignalRequest {
   /**
    * Initiator-provided context included in the request payload. Agents must echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.
    */
-  context?: {};
+  context?: {
+    [k: string]: unknown;
+  };
 }
 
 
