@@ -155,7 +155,7 @@ export class SalesAgentsHandlers {
       if (toolName === 'get_products') {
         // Build GetProductsRequest with proper types
         // brand_manifest must be either a valid URL or a BrandManifest object
-        let brandManifest: string | { name?: string; url?: string };
+        let brandManifest: string | { name: string; url?: string };
 
         const manifestInput = brandStory || userProvidedOffering || 'Test brand';
 
@@ -238,7 +238,7 @@ export class SalesAgentsHandlers {
         result = await agent.listCreativeFormats(params);
       } else if (toolName === 'create_media_buy') {
         // brand_manifest must be either a valid URL or a BrandManifest object
-        let brandManifestForBuy: string | { name?: string; url?: string };
+        let brandManifestForBuy: string | { name: string; url?: string };
 
         const manifestInputForBuy = brandStory || userProvidedOffering || 'Test brand';
 
