@@ -32,12 +32,21 @@ test('generated types maintain strict schema enforcement', () => {
   // - Added discriminator to VAST/DAAST assets (delivery_type: "url" | "inline")
   // - Extracted preview-render.json with proper oneOf instead of allOf + if/then
   // - Result: 67% reduction in index signatures (45 → 15)
-  // Remaining 15 signatures are intentional for truly flexible schemas:
-  // - Asset metadata/requirements objects (format-specific)
-  // - Asset manifests (format-defined structures)
-  // - Error details (task-specific information)
-  // - BrandManifest intersections (inherited from allOf pattern)
-  const MAX_ALLOWED = 15;
+  //
+  // Updated from 15 to 28 to account for AdCP protocol context fields:
+  // - Context fields must preserve arbitrary properties per AdCP spec
+  // - 14 request/response schemas have context fields that "must echo this value back unchanged"
+  // - These are protocol-mandated for distributed tracing and request correlation
+  // - Context fields use z.record(z.string(), z.unknown()) which creates index signatures
+  //
+  // Breakdown of 28 signatures:
+  // - 14 context fields (protocol-mandated, cannot be strict)
+  // - 14 other intentional flexible schemas:
+  //   * Asset metadata/requirements objects (format-specific)
+  //   * Asset manifests (format-defined structures)
+  //   * Error details (task-specific information)
+  //   * BrandManifest intersections (inherited from allOf pattern)
+  const MAX_ALLOWED = 28;
 
   console.log(`📊 Type strictness metrics:`);
   console.log(`   Index signatures found: ${count}`);
