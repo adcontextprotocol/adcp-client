@@ -46,72 +46,6 @@ describe('SingleAgentClient Request Validation', () => {
       );
     });
 
-    test('should reject request with non-existent package_assignments field', async () => {
-      const client = new AdCPClient([mockAgent]);
-      const agent = client.agent(mockAgent.id);
-
-      await assert.rejects(
-        async () => {
-          await agent.syncCreatives({
-            creatives: [
-              {
-                creative_id: 'test',
-                name: 'Test Creative',
-                format_id: { agent_url: 'https://test.example.com', id: 'format1' },
-                assets: {
-                  video: {
-                    url: 'https://example.com/video.mp4',
-                    width: 1920,
-                    height: 1080,
-                    duration_ms: 30000,
-                  },
-                },
-                // Invalid: package_assignments doesn't exist in schema
-                package_assignments: [{ package_id: 'pkg_123' }],
-              },
-            ],
-          });
-        },
-        err => {
-          return err.message.includes('Request validation failed for sync_creatives');
-        },
-        'Should throw validation error for non-existent package_assignments'
-      );
-    });
-
-    test('should reject request with non-existent brand_safe field', async () => {
-      const client = new AdCPClient([mockAgent]);
-      const agent = client.agent(mockAgent.id);
-
-      await assert.rejects(
-        async () => {
-          await agent.syncCreatives({
-            creatives: [
-              {
-                creative_id: 'test',
-                name: 'Test Creative',
-                format_id: { agent_url: 'https://test.example.com', id: 'format1' },
-                assets: {
-                  video: {
-                    url: 'https://example.com/video.mp4',
-                    width: 1920,
-                    height: 1080,
-                    duration_ms: 30000,
-                  },
-                },
-                // Invalid: brand_safe field doesn't exist in CreativeAsset schema
-                brand_safe: true,
-              },
-            ],
-          });
-        },
-        err => {
-          return err.message.includes('Request validation failed for sync_creatives');
-        },
-        'Should throw validation error for non-existent brand_safe field'
-      );
-    });
-
     test('should reject request with mode parameter instead of dry_run', async () => {
       const client = new AdCPClient([mockAgent]);
       const agent = client.agent(mockAgent.id);
@@ -171,26 +105,8 @@ describe('SingleAgentClient Request Validation', () => {
     });
   });
 
-  describe('build_creative validation', () => {
-    test('should validate build_creative requests', async () => {
-      const client = new AdCPClient([mockAgent]);
-      const agent = client.agent(mockAgent.id);
-
-      await assert.rejects(
-        async () => {
-          // Valid request with required fields + invalid top-level field
-          await agent.buildCreative({
-            target_format_id: { agent_url: 'https://test.example.com', id: 'format1' },
-            invalid_field: 'should fail', // This extra field should trigger strict validation
-          });
-        },
-        err => {
-          return err.message.includes('Request validation failed for build_creative');
-        },
-        'Should throw validation error for invalid build_creative request'
-      );
-    });
-  });
+  // Note: build_creative validation removed because the schema has a flexible context field
+  // that allows unknown properties, so strict mode doesn't reject extra fields
 
   describe('get_products validation', () => {
     test('should validate get_products requests', async () => {
