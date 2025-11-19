@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2025-11-16T15:15:38.964Z
+// Generated at: 2025-11-19T01:18:19.981Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -63,11 +63,9 @@ export const DAASTAssetSchema = z.union([z.object({
         companion_ads: z.boolean().optional()
     })]);
 
-export const BrandManifest1Schema = z.record(z.string(), z.unknown());
-
-export const BrandManifest2Schema = z.object({
+export const BrandManifestSchema = z.object({
     url: z.string().optional(),
-    name: z.string().optional(),
+    name: z.string(),
     logos: z.array(z.object({
         url: z.string(),
         tags: z.array(z.string()).optional(),
@@ -177,6 +175,8 @@ export const URLAssetSchema = z.object({
     description: z.string().optional()
 });
 
+export const BrandManifestReferenceSchema = z.union([BrandManifestSchema, z.string()]);
+
 export const PromotedProductsSchema = z.object({
     manifest_skus: z.array(z.string()).optional(),
     manifest_tags: z.array(z.string()).optional(),
@@ -191,6 +191,7 @@ export const CPMFixedRatePricingOptionSchema = z.object({
     pricing_model: z.literal("cpm"),
     rate: z.number(),
     currency: z.string(),
+    is_fixed: z.literal(true),
     min_spend_per_package: z.number().optional()
 });
 
@@ -198,6 +199,7 @@ export const CPMAuctionPricingOptionSchema = z.object({
     pricing_option_id: z.string(),
     pricing_model: z.literal("cpm"),
     currency: z.string(),
+    is_fixed: z.literal(false),
     price_guidance: z.object({
         floor: z.number(),
         p25: z.number().optional(),
@@ -213,6 +215,7 @@ export const VCPMFixedRatePricingOptionSchema = z.object({
     pricing_model: z.literal("vcpm"),
     rate: z.number(),
     currency: z.string(),
+    is_fixed: z.literal(true),
     min_spend_per_package: z.number().optional()
 });
 
@@ -220,6 +223,7 @@ export const VCPMAuctionPricingOptionSchema = z.object({
     pricing_option_id: z.string(),
     pricing_model: z.literal("vcpm"),
     currency: z.string(),
+    is_fixed: z.literal(false),
     price_guidance: z.object({
         floor: z.number(),
         p25: z.number().optional(),
@@ -235,6 +239,7 @@ export const CPCPricingOptionSchema = z.object({
     pricing_model: z.literal("cpc"),
     rate: z.number(),
     currency: z.string(),
+    is_fixed: z.literal(true),
     min_spend_per_package: z.number().optional()
 });
 
@@ -243,6 +248,7 @@ export const CPCVPricingOptionSchema = z.object({
     pricing_model: z.literal("cpcv"),
     rate: z.number(),
     currency: z.string(),
+    is_fixed: z.literal(true),
     min_spend_per_package: z.number().optional()
 });
 
@@ -251,6 +257,7 @@ export const CPVPricingOptionSchema = z.object({
     pricing_model: z.literal("cpv"),
     rate: z.number(),
     currency: z.string(),
+    is_fixed: z.literal(true),
     parameters: z.object({
         view_threshold: z.union([z.number(), z.object({
                 duration_seconds: z.number()
@@ -264,6 +271,7 @@ export const CPPPricingOptionSchema = z.object({
     pricing_model: z.literal("cpp"),
     rate: z.number(),
     currency: z.string(),
+    is_fixed: z.literal(true),
     parameters: z.object({
         demographic: z.string(),
         min_points: z.number().optional()
@@ -356,15 +364,28 @@ export const PropertySchema = z.object({
     publisher_domain: z.string().optional()
 });
 
-export const BrandManifestSchema = BrandManifest1Schema.and(BrandManifest2Schema);
-
-export const BrandManifestReferenceSchema = z.union([BrandManifestSchema, z.string()]);
+export const GetProductsRequestSchema = z.object({
+    brief: z.string().optional(),
+    brand_manifest: BrandManifestReferenceSchema.optional(),
+    filters: z.object({
+        delivery_type: DeliveryTypeSchema.optional(),
+        is_fixed_price: z.boolean().optional(),
+        format_types: z.array(z.union([z.literal("video"), z.literal("display"), z.literal("audio")])).optional(),
+        format_ids: z.array(FormatIDSchema).optional(),
+        standard_formats_only: z.boolean().optional(),
+        min_exposures: z.number().optional()
+    }).optional(),
+    context: z.object({}).optional()
+});
 
 export const ProductSchema = z.object({
     product_id: z.string(),
     name: z.string(),
     description: z.string(),
     publisher_properties: z.tuple([z.union([z.object({
+                publisher_domain: z.string(),
+                selection_type: z.literal("all")
+            }), z.object({
                 publisher_domain: z.string(),
                 selection_type: z.literal("by_id"),
                 property_ids: z.tuple([z.string()]).rest(z.string())
@@ -373,6 +394,9 @@ export const ProductSchema = z.object({
                 selection_type: z.literal("by_tag"),
                 property_tags: z.tuple([z.string()]).rest(z.string())
             })])]).rest(z.union([z.object({
+            publisher_domain: z.string(),
+            selection_type: z.literal("all")
+        }), z.object({
             publisher_domain: z.string(),
             selection_type: z.literal("by_id"),
             property_ids: z.tuple([z.string()]).rest(z.string())
@@ -433,7 +457,7 @@ export const FormatID3Schema = z.object({
     id: z.string()
 });
 
-export const BrandManifestReference1Schema = z.union([BrandManifest1Schema, z.string()]);
+export const BrandManifestReference1Schema = z.union([BrandManifestSchema, z.string()]);
 
 export const StartTimingSchema = z.union([z.literal("asap"), z.string()]);
 
@@ -549,12 +573,7 @@ export const ListCreativesResponseSchema = z.object({
         status: CreativeStatusSchema,
         created_date: z.string(),
         updated_date: z.string(),
-        media_url: z.string().optional(),
         assets: z.record(z.string(), z.union([ImageAssetSchema, VideoAssetSchema, AudioAssetSchema, TextAssetSchema, HTMLAssetSchema, CSSAssetSchema, JavaScriptAssetSchema, VASTAssetSchema, DAASTAssetSchema, PromotedOfferingsSchema, URLAssetSchema])).optional(),
-        click_url: z.string().optional(),
-        duration: z.number().optional(),
-        width: z.number().optional(),
-        height: z.number().optional(),
         tags: z.array(z.string()).optional(),
         assignments: z.object({
             assignment_count: z.number(),
@@ -853,20 +872,6 @@ export const PackageSchema = z.object({
     creative_assignments: z.array(CreativeAssignmentSchema).optional(),
     format_ids_to_provide: z.array(FormatIDSchema).optional(),
     status: PackageStatusSchema
-});
-
-export const GetProductsRequestSchema = z.object({
-    brief: z.string().optional(),
-    brand_manifest: BrandManifestReferenceSchema.optional(),
-    filters: z.object({
-        delivery_type: DeliveryTypeSchema.optional(),
-        is_fixed_price: z.boolean().optional(),
-        format_types: z.array(z.union([z.literal("video"), z.literal("display"), z.literal("audio")])).optional(),
-        format_ids: z.array(FormatIDSchema).optional(),
-        standard_formats_only: z.boolean().optional(),
-        min_exposures: z.number().optional()
-    }).optional(),
-    context: z.object({}).optional()
 });
 
 export const GetProductsResponseSchema = z.object({
