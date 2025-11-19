@@ -7,13 +7,6 @@
  */
 export type BrandManifestReference = BrandManifest | string;
 /**
- * Inline brand manifest object
- */
-export type BrandManifest = BrandManifest1 & BrandManifest2;
-export type BrandManifest1 = {
-  [k: string]: unknown;
-};
-/**
  * Type of inventory delivery
  */
 export type DeliveryType = 'guaranteed' | 'non_guaranteed';
@@ -56,9 +49,14 @@ export interface GetProductsRequest {
   /**
    * Initiator-provided context included in the request payload. Agentsmust echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.
    */
-  context?: {};
+  context?: {
+    [k: string]: unknown;
+  };
 }
-export interface BrandManifest2 {
+/**
+ * Inline brand manifest object
+ */
+export interface BrandManifest {
   /**
    * Primary brand URL for context and asset discovery. Creative agents can infer brand information from this URL.
    */
@@ -66,7 +64,7 @@ export interface BrandManifest2 {
   /**
    * Brand or business name
    */
-  name?: string;
+  name: string;
   /**
    * Brand logo assets with semantic tags for different use cases
    */
@@ -291,6 +289,52 @@ export interface FormatID {
 
 // get_products response
 /**
+ * Selects properties from a publisher's adagents.json. Used for both product definitions and agent authorization. Supports three selection patterns: all properties, specific IDs, or by tags.
+ */
+export type PublisherPropertySelector =
+  | {
+      /**
+       * Domain where publisher's adagents.json is hosted (e.g., 'cnn.com')
+       */
+      publisher_domain: string;
+      /**
+       * Discriminator indicating all properties from this publisher are included
+       */
+      selection_type: 'all';
+    }
+  | {
+      /**
+       * Domain where publisher's adagents.json is hosted (e.g., 'cnn.com')
+       */
+      publisher_domain: string;
+      /**
+       * Discriminator indicating selection by specific property IDs
+       */
+      selection_type: 'by_id';
+      /**
+       * Specific property IDs from the publisher's adagents.json
+       *
+       * @minItems 1
+       */
+      property_ids: [string, ...string[]];
+    }
+  | {
+      /**
+       * Domain where publisher's adagents.json is hosted (e.g., 'cnn.com')
+       */
+      publisher_domain: string;
+      /**
+       * Discriminator indicating selection by property tags
+       */
+      selection_type: 'by_tag';
+      /**
+       * Property tags from the publisher's adagents.json. Selector covers all properties with these tags
+       *
+       * @minItems 1
+       */
+      property_tags: [string, ...string[]];
+    };
+/**
  * Type of inventory delivery
  */
 export type PricingOption =
@@ -338,80 +382,11 @@ export interface Product {
    */
   description: string;
   /**
-   * Publisher properties covered by this product. Buyers fetch actual property definitions from each publisher's adagents.json and validate agent authorization.
+   * Publisher properties covered by this product. Buyers fetch actual property definitions from each publisher's adagents.json and validate agent authorization. Selection patterns mirror the authorization patterns in adagents.json for consistency.
    *
    * @minItems 1
    */
-  publisher_properties: [
-    (
-      | {
-          /**
-           * Domain where publisher's adagents.json is hosted (e.g., 'cnn.com')
-           */
-          publisher_domain: string;
-          /**
-           * Discriminator indicating selection by specific property IDs
-           */
-          selection_type: 'by_id';
-          /**
-           * Specific property IDs from the publisher's adagents.json
-           *
-           * @minItems 1
-           */
-          property_ids: [string, ...string[]];
-        }
-      | {
-          /**
-           * Domain where publisher's adagents.json is hosted (e.g., 'cnn.com')
-           */
-          publisher_domain: string;
-          /**
-           * Discriminator indicating selection by property tags
-           */
-          selection_type: 'by_tag';
-          /**
-           * Property tags from the publisher's adagents.json. Product covers all properties with these tags
-           *
-           * @minItems 1
-           */
-          property_tags: [string, ...string[]];
-        }
-    ),
-    ...(
-      | {
-          /**
-           * Domain where publisher's adagents.json is hosted (e.g., 'cnn.com')
-           */
-          publisher_domain: string;
-          /**
-           * Discriminator indicating selection by specific property IDs
-           */
-          selection_type: 'by_id';
-          /**
-           * Specific property IDs from the publisher's adagents.json
-           *
-           * @minItems 1
-           */
-          property_ids: [string, ...string[]];
-        }
-      | {
-          /**
-           * Domain where publisher's adagents.json is hosted (e.g., 'cnn.com')
-           */
-          publisher_domain: string;
-          /**
-           * Discriminator indicating selection by property tags
-           */
-          selection_type: 'by_tag';
-          /**
-           * Property tags from the publisher's adagents.json. Product covers all properties with these tags
-           *
-           * @minItems 1
-           */
-          property_tags: [string, ...string[]];
-        }
-    )[]
-  ];
+  publisher_properties: [PublisherPropertySelector, ...PublisherPropertySelector[]];
   /**
    * Array of supported creative format IDs - structured format_id objects with agent_url and id
    */
@@ -530,6 +505,10 @@ export interface CPMFixedRatePricingOption {
    */
   currency: string;
   /**
+   * Whether this is a fixed rate (true) or auction-based (false)
+   */
+  is_fixed: true;
+  /**
    * Minimum spend requirement per package using this pricing option, in the specified currency
    */
   min_spend_per_package?: number;
@@ -550,6 +529,10 @@ export interface CPMAuctionPricingOption {
    * ISO 4217 currency code
    */
   currency: string;
+  /**
+   * Whether this is a fixed rate (true) or auction-based (false)
+   */
+  is_fixed: false;
   /**
    * Pricing guidance for auction-based CPM bidding
    */
@@ -601,6 +584,10 @@ export interface VCPMFixedRatePricingOption {
    */
   currency: string;
   /**
+   * Whether this is a fixed rate (true) or auction-based (false)
+   */
+  is_fixed: true;
+  /**
    * Minimum spend requirement per package using this pricing option, in the specified currency
    */
   min_spend_per_package?: number;
@@ -621,6 +608,10 @@ export interface VCPMAuctionPricingOption {
    * ISO 4217 currency code
    */
   currency: string;
+  /**
+   * Whether this is a fixed rate (true) or auction-based (false)
+   */
+  is_fixed: false;
   /**
    * Statistical guidance for auction pricing
    */
@@ -672,6 +663,10 @@ export interface CPCPricingOption {
    */
   currency: string;
   /**
+   * Whether this is a fixed rate (true) or auction-based (false)
+   */
+  is_fixed: true;
+  /**
    * Minimum spend requirement per package using this pricing option, in the specified currency
    */
   min_spend_per_package?: number;
@@ -697,6 +692,10 @@ export interface CPCVPricingOption {
    */
   currency: string;
   /**
+   * Whether this is a fixed rate (true) or auction-based (false)
+   */
+  is_fixed: true;
+  /**
    * Minimum spend requirement per package using this pricing option, in the specified currency
    */
   min_spend_per_package?: number;
@@ -721,6 +720,10 @@ export interface CPVPricingOption {
    * ISO 4217 currency code
    */
   currency: string;
+  /**
+   * Whether this is a fixed rate (true) or auction-based (false)
+   */
+  is_fixed: true;
   /**
    * CPV-specific parameters defining the view threshold
    */
@@ -759,6 +762,10 @@ export interface CPPPricingOption {
    * ISO 4217 currency code
    */
   currency: string;
+  /**
+   * Whether this is a fixed rate (true) or auction-based (false)
+   */
+  is_fixed: true;
   /**
    * CPP-specific parameters for demographic targeting and GRP requirements
    */
@@ -1017,7 +1024,9 @@ export interface ListCreativeFormatsRequest {
   /**
    * Initiator-provided context included in the request payload. Agents must echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.
    */
-  context?: {};
+  context?: {
+    [k: string]: unknown;
+  };
 }
 /**
  * Structured format identifier with agent URL and format name
@@ -1528,7 +1537,7 @@ export type DAASTAsset =
 /**
  * Brand information manifest containing assets, themes, and guidelines. Can be provided inline or as a URL reference to a hosted manifest.
  */
-export type BrandManifestReference1 = BrandManifest1 | string;
+export type BrandManifestReference1 = BrandManifest | string;
 /**
  * Campaign start timing: 'asap' or ISO 8601 date-time
  */
@@ -1579,7 +1588,9 @@ export interface CreateMediaBuyRequest {
   /**
    * Initiator-provided context included in the request payload. Agentsmust echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.
    */
-  context?: {};
+  context?: {
+    [k: string]: unknown;
+  };
 }
 /**
  * Package configuration for media buy creation
@@ -1907,6 +1918,9 @@ export interface PromotedOfferings {
     exclude_tags?: string[];
   };
 }
+/**
+ * Inline brand manifest object
+ */
 export interface PromotedProducts {
   /**
    * Direct product SKU references from the brand manifest product catalog
@@ -2069,7 +2083,9 @@ export interface SyncCreativesRequest {
   /**
    * Initiator-provided context included in the request payload. Agents must echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.
    */
-  context?: {};
+  context?: {
+    [k: string]: unknown;
+  };
 }
 /**
  * Creative asset for upload to library - supports static assets, generative formats, and third-party snippets
@@ -2298,7 +2314,9 @@ export interface ListCreativesRequest {
   /**
    * Initiator-provided context included in the request payload. Agentsmust echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.
    */
-  context?: {};
+  context?: {
+    [k: string]: unknown;
+  };
 }
 
 
@@ -2420,10 +2438,6 @@ export interface ListCreativesResponse {
      */
     updated_date: string;
     /**
-     * URL of the creative file (for hosted assets)
-     */
-    media_url?: string;
-    /**
      * Assets for this creative, keyed by asset_role
      */
     assets?: {
@@ -2444,22 +2458,6 @@ export interface ListCreativesResponse {
         | PromotedOfferings
         | URLAsset;
     };
-    /**
-     * Landing page URL for the creative
-     */
-    click_url?: string;
-    /**
-     * Duration in milliseconds (for video/audio)
-     */
-    duration?: number;
-    /**
-     * Width in pixels (for video/display)
-     */
-    width?: number;
-    /**
-     * Height in pixels (for video/display)
-     */
-    height?: number;
     /**
      * User-defined tags for organization and searchability
      */
@@ -2615,7 +2613,9 @@ export interface UpdateMediaBuyRequest1 {
   /**
    * Initiator-provided context included in the request payload. Agents must echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.
    */
-  context?: {};
+  context?: {
+    [k: string]: unknown;
+  };
 }
 /**
  * Optional webhook configuration for async update notifications. Publisher will send webhook when update completes if operation takes longer than immediate response time.
@@ -2704,7 +2704,9 @@ export interface GetMediaBuyDeliveryRequest {
   /**
    * Initiator-provided context included in the request payload. Agentsmust echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.
    */
-  context?: {};
+  context?: {
+    [k: string]: unknown;
+  };
 }
 
 
@@ -3015,7 +3017,9 @@ export interface ListAuthorizedPropertiesRequest {
   /**
    * Initiator-provided context included in the request payload. Agentsmust echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.
    */
-  context?: {};
+  context?: {
+    [k: string]: unknown;
+  };
 }
 
 
@@ -3134,7 +3138,9 @@ export interface ProvidePerformanceFeedbackRequest {
   /**
    * Initiator-provided context included in the request payload. Agentsmust echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.
    */
-  context?: {};
+  context?: {
+    [k: string]: unknown;
+  };
 }
 
 
@@ -3184,7 +3190,9 @@ export interface BuildCreativeRequest {
   /**
    * Initiator-provided context included in the request payload. Agentsmust echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.
    */
-  context?: {};
+  context?: {
+    [k: string]: unknown;
+  };
 }
 /**
  * Creative manifest to transform or generate from. For pure generation, this should include the target format_id and any required input assets (e.g., promoted_offerings for generative formats). For transformation (e.g., resizing, reformatting), this is the complete creative to adapt.
@@ -3340,7 +3348,9 @@ export type PreviewCreativeRequest =
       /**
        * Initiator-provided context included in the request payload. Agents must echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.
        */
-      context?: {};
+      context?: {
+        [k: string]: unknown;
+      };
     }
   | {
       /**
@@ -3424,7 +3434,9 @@ export type PreviewCreativeRequest =
       /**
        * Initiator-provided context included in the request payload. Agents must echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.
        */
-      context?: {};
+      context?: {
+        [k: string]: unknown;
+      };
     };
 /**
  * VAST (Video Ad Serving Template) tag for third-party video ad serving
@@ -3820,7 +3832,9 @@ export interface GetSignalsRequest {
   /**
    * Initiator-provided context included in the request payload. Agents must echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.
    */
-  context?: {};
+  context?: {
+    [k: string]: unknown;
+  };
 }
 
 
@@ -4021,7 +4035,9 @@ export interface ActivateSignalRequest {
   /**
    * Initiator-provided context included in the request payload. Agents must echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.
    */
-  context?: {};
+  context?: {
+    [k: string]: unknown;
+  };
 }
 
 

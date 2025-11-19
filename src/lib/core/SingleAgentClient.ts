@@ -1234,7 +1234,15 @@ export class SingleAgentClient {
     }
 
     try {
-      schema.parse(params);
+      // Use strict() to reject unknown keys instead of stripping them
+      // This ensures we fail fast on typos and invalid top-level fields
+      // NOTE: Nested objects will still use default Zod behavior (strip unknown fields)
+      // to maintain compatibility with agent implementations that may include extra metadata
+      if (schema instanceof z.ZodObject) {
+        schema.strict().parse(params);
+      } else {
+        schema.parse(params);
+      }
     } catch (error) {
       if (error instanceof z.ZodError) {
         const issues = error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('; ');
@@ -1252,6 +1260,10 @@ export class SingleAgentClient {
     const schemaMap: Partial<Record<string, z.ZodSchema>> = {
       list_creative_formats: schemas.ListCreativeFormatsRequestSchema,
       list_creatives: schemas.ListCreativesRequestSchema,
+      sync_creatives: schemas.SyncCreativesRequestSchema,
+      create_media_buy: schemas.CreateMediaBuyRequestSchema,
+      build_creative: schemas.BuildCreativeRequestSchema,
+      get_products: schemas.GetProductsRequestSchema,
       update_media_buy: schemas.UpdateMediaBuyRequestSchema,
       get_media_buy_delivery: schemas.GetMediaBuyDeliveryRequestSchema,
       list_authorized_properties: schemas.ListAuthorizedPropertiesRequestSchema,

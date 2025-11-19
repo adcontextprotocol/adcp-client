@@ -83,6 +83,9 @@ interface ToolDefinition {
 /**
  * Recursively remove additionalProperties: true from schema to enforce strict typing
  * This prevents [k: string]: unknown in generated TypeScript types
+ *
+ * EXCEPTION: Fields with descriptions containing "must echo this value back unchanged"
+ * (like context fields) preserve additionalProperties: true to maintain protocol compliance.
  */
 function enforceStrictSchema(schema: any): any {
   if (!schema || typeof schema !== 'object') {
@@ -92,8 +95,14 @@ function enforceStrictSchema(schema: any): any {
   // Create a shallow copy
   const strictSchema = { ...schema };
 
-  // Remove additionalProperties if it's true
-  if (strictSchema.additionalProperties === true) {
+  // Check if this field must preserve arbitrary properties (e.g., context fields)
+  const mustPreserveProperties =
+    strictSchema.description &&
+    typeof strictSchema.description === 'string' &&
+    strictSchema.description.toLowerCase().includes('must echo this value back unchanged');
+
+  // Remove additionalProperties if it's true, UNLESS the field must preserve properties
+  if (strictSchema.additionalProperties === true && !mustPreserveProperties) {
     delete strictSchema.additionalProperties;
   }
 
