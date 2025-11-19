@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas v2.4.0
-// Generated at: 2025-11-19T01:18:19.386Z
+// Generated at: 2025-11-19T02:11:27.509Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -862,6 +862,52 @@ export interface URLAsset {
 
 // PRODUCT SCHEMA
 /**
+ * Selects properties from a publisher's adagents.json. Used for both product definitions and agent authorization. Supports three selection patterns: all properties, specific IDs, or by tags.
+ */
+export type PublisherPropertySelector =
+  | {
+      /**
+       * Domain where publisher's adagents.json is hosted (e.g., 'cnn.com')
+       */
+      publisher_domain: string;
+      /**
+       * Discriminator indicating all properties from this publisher are included
+       */
+      selection_type: 'all';
+    }
+  | {
+      /**
+       * Domain where publisher's adagents.json is hosted (e.g., 'cnn.com')
+       */
+      publisher_domain: string;
+      /**
+       * Discriminator indicating selection by specific property IDs
+       */
+      selection_type: 'by_id';
+      /**
+       * Specific property IDs from the publisher's adagents.json
+       *
+       * @minItems 1
+       */
+      property_ids: [string, ...string[]];
+    }
+  | {
+      /**
+       * Domain where publisher's adagents.json is hosted (e.g., 'cnn.com')
+       */
+      publisher_domain: string;
+      /**
+       * Discriminator indicating selection by property tags
+       */
+      selection_type: 'by_tag';
+      /**
+       * Property tags from the publisher's adagents.json. Selector covers all properties with these tags
+       *
+       * @minItems 1
+       */
+      property_tags: [string, ...string[]];
+    };
+/**
  * Type of inventory delivery
  */
 export type DeliveryType = 'guaranteed' | 'non_guaranteed';
@@ -900,96 +946,7 @@ export interface Product {
    *
    * @minItems 1
    */
-  publisher_properties: [
-    (
-      | {
-          /**
-           * Domain where publisher's adagents.json is hosted (e.g., 'cnn.com')
-           */
-          publisher_domain: string;
-          /**
-           * Discriminator indicating all properties from this publisher are included
-           */
-          selection_type: 'all';
-        }
-      | {
-          /**
-           * Domain where publisher's adagents.json is hosted (e.g., 'cnn.com')
-           */
-          publisher_domain: string;
-          /**
-           * Discriminator indicating selection by specific property IDs
-           */
-          selection_type: 'by_id';
-          /**
-           * Specific property IDs from the publisher's adagents.json
-           *
-           * @minItems 1
-           */
-          property_ids: [string, ...string[]];
-        }
-      | {
-          /**
-           * Domain where publisher's adagents.json is hosted (e.g., 'cnn.com')
-           */
-          publisher_domain: string;
-          /**
-           * Discriminator indicating selection by property tags
-           */
-          selection_type: 'by_tag';
-          /**
-           * Property tags from the publisher's adagents.json. Product covers all properties with these tags
-           *
-           * @minItems 1
-           */
-          property_tags: [string, ...string[]];
-        }
-    ),
-    ...(
-      | {
-          /**
-           * Domain where publisher's adagents.json is hosted (e.g., 'cnn.com')
-           */
-          publisher_domain: string;
-          /**
-           * Discriminator indicating all properties from this publisher are included
-           */
-          selection_type: 'all';
-        }
-      | {
-          /**
-           * Domain where publisher's adagents.json is hosted (e.g., 'cnn.com')
-           */
-          publisher_domain: string;
-          /**
-           * Discriminator indicating selection by specific property IDs
-           */
-          selection_type: 'by_id';
-          /**
-           * Specific property IDs from the publisher's adagents.json
-           *
-           * @minItems 1
-           */
-          property_ids: [string, ...string[]];
-        }
-      | {
-          /**
-           * Domain where publisher's adagents.json is hosted (e.g., 'cnn.com')
-           */
-          publisher_domain: string;
-          /**
-           * Discriminator indicating selection by property tags
-           */
-          selection_type: 'by_tag';
-          /**
-           * Property tags from the publisher's adagents.json. Product covers all properties with these tags
-           *
-           * @minItems 1
-           */
-          property_tags: [string, ...string[]];
-        }
-    )[]
-  ];
+  publisher_properties: [PublisherPropertySelector, ...PublisherPropertySelector[]];
   /**
    * Array of supported creative format IDs - structured format_id objects with agent_url and id
    */

@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2025-11-19T01:18:19.981Z
+// Generated at: 2025-11-19T02:11:28.169Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -297,6 +297,19 @@ export const FlatRatePricingOptionSchema = z.object({
     min_spend_per_package: z.number().optional()
 });
 
+export const PublisherPropertySelectorSchema = z.union([z.object({
+        publisher_domain: z.string(),
+        selection_type: z.literal("all")
+    }), z.object({
+        publisher_domain: z.string(),
+        selection_type: z.literal("by_id"),
+        property_ids: z.tuple([z.string()]).rest(z.string())
+    }), z.object({
+        publisher_domain: z.string(),
+        selection_type: z.literal("by_tag"),
+        property_tags: z.tuple([z.string()]).rest(z.string())
+    })]);
+
 export const PlacementSchema = z.object({
     placement_id: z.string(),
     name: z.string(),
@@ -382,29 +395,7 @@ export const ProductSchema = z.object({
     product_id: z.string(),
     name: z.string(),
     description: z.string(),
-    publisher_properties: z.tuple([z.union([z.object({
-                publisher_domain: z.string(),
-                selection_type: z.literal("all")
-            }), z.object({
-                publisher_domain: z.string(),
-                selection_type: z.literal("by_id"),
-                property_ids: z.tuple([z.string()]).rest(z.string())
-            }), z.object({
-                publisher_domain: z.string(),
-                selection_type: z.literal("by_tag"),
-                property_tags: z.tuple([z.string()]).rest(z.string())
-            })])]).rest(z.union([z.object({
-            publisher_domain: z.string(),
-            selection_type: z.literal("all")
-        }), z.object({
-            publisher_domain: z.string(),
-            selection_type: z.literal("by_id"),
-            property_ids: z.tuple([z.string()]).rest(z.string())
-        }), z.object({
-            publisher_domain: z.string(),
-            selection_type: z.literal("by_tag"),
-            property_tags: z.tuple([z.string()]).rest(z.string())
-        })])),
+    publisher_properties: z.tuple([PublisherPropertySelectorSchema]).rest(PublisherPropertySelectorSchema),
     format_ids: z.array(FormatIDSchema),
     placements: z.tuple([PlacementSchema]).rest(PlacementSchema).optional(),
     delivery_type: DeliveryTypeSchema,
