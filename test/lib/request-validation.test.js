@@ -127,4 +127,115 @@ describe('SingleAgentClient Request Validation', () => {
       );
     });
   });
+
+  describe('context field preservation', () => {
+    test('should allow arbitrary properties in context field for get_products', async () => {
+      const client = new AdCPClient([mockAgent]);
+      const agent = client.agent(mockAgent.id);
+
+      // This should NOT throw - context field should accept arbitrary properties
+      await assert.doesNotReject(async () => {
+        try {
+          await agent.getProducts({
+            context: {
+              trace_id: '123',
+              request_id: 'abc',
+              custom_field: 'anything',
+              nested: { deeply: { nested: 'value' } },
+            },
+          });
+        } catch (err) {
+          // Network errors are expected since we're not mocking the agent
+          // We only care that validation doesn't reject the context field
+          if (err.message.includes('Request validation failed')) {
+            throw err;
+          }
+        }
+      });
+    });
+
+    test('should allow arbitrary properties in context field for sync_creatives', async () => {
+      const client = new AdCPClient([mockAgent]);
+      const agent = client.agent(mockAgent.id);
+
+      await assert.doesNotReject(async () => {
+        try {
+          await agent.syncCreatives({
+            creatives: [
+              {
+                creative_id: 'test',
+                name: 'Test Creative',
+                format_id: { agent_url: 'https://test.example.com', id: 'format1' },
+                assets: {
+                  video: {
+                    url: 'https://example.com/video.mp4',
+                    width: 1920,
+                    height: 1080,
+                    duration_ms: 30000,
+                  },
+                },
+              },
+            ],
+            context: {
+              correlation_id: 'xyz-789',
+              tenant_id: 'tenant-123',
+              any_property: 'should be preserved',
+            },
+          });
+        } catch (err) {
+          if (err.message.includes('Request validation failed')) {
+            throw err;
+          }
+        }
+      });
+    });
+
+    test('should allow arbitrary properties in context field for create_media_buy', async () => {
+      const client = new AdCPClient([mockAgent]);
+      const agent = client.agent(mockAgent.id);
+
+      await assert.doesNotReject(async () => {
+        try {
+          await agent.createMediaBuy({
+            buyer_ref: 'buyer123',
+            packages: [],
+            brand_manifest: 'https://example.com/brand',
+            start_time: 'immediate',
+            end_time: '2025-12-31T23:59:59Z',
+            context: {
+              session_id: 'sess-456',
+              user_agent: 'test-client/1.0',
+              custom_metadata: { foo: 'bar', baz: 123 },
+            },
+          });
+        } catch (err) {
+          if (err.message.includes('Request validation failed')) {
+            throw err;
+          }
+        }
+      });
+    });
+
+    test('should allow arbitrary properties in context field for build_creative', async () => {
+      const client = new AdCPClient([mockAgent]);
+      const agent = client.agent(mockAgent.id);
+
+      await assert.doesNotReject(async () => {
+        try {
+          await agent.buildCreative({
+            target_format_id: { agent_url: 'https://test.example.com', id: 'format1' },
+            context: {
+              build_id: 'build-789',
+              environment: 'test',
+              arbitrary_data: { nested: { structure: true } },
+            },
+          });
+        } catch (err) {
+          if (err.message.includes('Request validation failed')) {
+            throw err;
+          }
+        }
+      });
+    });
+  });
 });
