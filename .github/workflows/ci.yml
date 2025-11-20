@@ -164,6 +164,12 @@ jobs:
 
     - name: Check for changeset
       run: |
+        # Check if this is a version bump commit (skip changeset check for releases)
+        if git log --format=%B -n 1 HEAD | grep -qE '^chore: release v[0-9]+\.[0-9]+\.[0-9]+'; then
+          echo "ℹ️ Version bump commit detected - skipping changeset check"
+          exit 0
+        fi
+
         # Check if any library code was modified (src/lib/, package.json)
         LIBRARY_FILES_CHANGED=$(git diff --name-only origin/${{ github.base_ref }}...HEAD | grep -E '^(src/lib/|package\.json|scripts/(sync-schemas|generate-types)\.ts)' || true)
 
@@ -171,22 +177,28 @@ jobs:
           echo "📝 Library files were modified:"
           echo "$LIBRARY_FILES_CHANGED"
 
-          # Check if there are any changesets (excluding README.md)
-          CHANGESET_FILES=$(find .changeset -name '*.md' ! -name 'README.md' 2>/dev/null || true)
+          # If only package.json version and CHANGELOG.md were modified, allow it (version bump)
+          ALL_CHANGED=$(git diff --name-only origin/${{ github.base_ref }}...HEAD)
+          if echo "$ALL_CHANGED" | grep -qvE '^(package\.json|CHANGELOG\.md|\.changeset/.*)$'; then
+            # Other files besides version bump files were changed, require changeset
+            CHANGESET_FILES=$(find .changeset -name '*.md' ! -name 'README.md' 2>/dev/null || true)
 
-          if [ -z "$CHANGESET_FILES" ]; then
-            echo ""
-            echo "❌ Library code was modified but no changeset was found!"
-            echo ""
-            echo "Please run: npm run changeset"
-            echo ""
-            echo "This will create a changeset file describing your changes."
-            echo "Changesets are required for all library changes to ensure proper versioning."
-            exit 1
+            if [ -z "$CHANGESET_FILES" ]; then
+              echo ""
+              echo "❌ Library code was modified but no changeset was found!"
+              echo ""
+              echo "Please run: npm run changeset"
+              echo ""
+              echo "This will create a changeset file describing your changes."
+              echo "Changesets are required for all library changes to ensure proper versioning."
+              exit 1
+            else
+              echo ""
+              echo "✅ Changeset found:"
+              ls -la .changeset/*.md | grep -v README.md
+            fi
           else
-            echo ""
-            echo "✅ Changeset found:"
-            ls -la .changeset/*.md | grep -v README.md
+            echo "ℹ️ Only version bump files modified (package.json, CHANGELOG.md) - changeset not required"
           fi
         else
           echo "ℹ️ No library files modified, changeset not required"

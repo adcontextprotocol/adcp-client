@@ -1,5 +1,18 @@
 # Changelog
 
+## 3.1.0
+
+### Minor Changes
+
+- discriminated-unions-fix: Add discriminated union support and fix missing AdCP tools. Re-synced AdCP schemas to include all 13 tools (was only generating 4). Added support for discriminated unions in type definitions.
+- slow-kings-boil: Fixed critical validation bug where sync_creatives, create_media_buy, build_creative, and get_products requests were not being validated. Request validation now uses strict mode to reject unknown top-level fields.
+
+### Patch Changes
+
+- 1763342270: Added explicit auth_token field and fixed auth_token_env to properly support environment variable lookup. AgentConfig now supports two authentication methods: auth_token (direct value) and auth_token_env (environment variable name).
+- d064ad36: Fixed A2A protocol to use 'parameters' field instead of 'input' per AdCP specification.
+- make-reporting-webhook-configurable: Make reporting_webhook configurable.
+
 ## 3.0.3
 
 ### Patch Changes
