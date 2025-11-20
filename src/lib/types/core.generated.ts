@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas v2.4.0
-// Generated at: 2025-11-19T02:11:27.509Z
+// Generated at: 2025-11-20T15:07:36.193Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -344,6 +344,23 @@ export type DAASTAsset =
  * Brand information manifest containing assets, themes, and guidelines. Can be provided inline or as a URL reference to a hosted manifest.
  */
 export type BrandManifestReference = BrandManifest | string;
+/**
+ * Type of asset. Note: Brand manifests typically contain basic media assets (image, video, audio, text). Code assets (html, javascript, css) and ad markup (vast, daast) are usually not part of brand asset libraries.
+ */
+export type AssetContentType =
+  | 'image'
+  | 'video'
+  | 'audio'
+  | 'text'
+  | 'markdown'
+  | 'html'
+  | 'css'
+  | 'javascript'
+  | 'vast'
+  | 'daast'
+  | 'promoted_offerings'
+  | 'url'
+  | 'webhook';
 
 /**
  * Creative asset for upload to library - supports static assets, generative formats, and third-party snippets
@@ -693,10 +710,7 @@ export interface BrandManifest {
      * Unique identifier for this asset
      */
     asset_id: string;
-    /**
-     * Type of asset
-     */
-    asset_type: 'image' | 'video' | 'audio' | 'text';
+    asset_type: AssetContentType;
     /**
      * URL to CDN-hosted asset file
      */
