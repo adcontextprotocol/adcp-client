@@ -3795,12 +3795,12 @@ export type PreviewRender =
 
 // get_signals parameters
 /**
- * A destination platform where signals can be activated (DSP, sales agent, etc.)
+ * A deployment target where signals can be activated (DSP, sales agent, etc.)
  */
 export type Destination =
   | {
       /**
-       * Discriminator indicating this is a platform-based destination
+       * Discriminator indicating this is a platform-based deployment
        */
       type: 'platform';
       /**
@@ -3814,11 +3814,11 @@ export type Destination =
     }
   | {
       /**
-       * Discriminator indicating this is an agent URL-based destination
+       * Discriminator indicating this is an agent URL-based deployment
        */
       type: 'agent';
       /**
-       * URL identifying the destination agent (for sales agents, etc.)
+       * URL identifying the deployment agent (for sales agents, etc.)
        */
       agent_url: string;
       /**
@@ -3836,15 +3836,15 @@ export interface GetSignalsRequest {
    */
   signal_spec: string;
   /**
-   * Destination platforms where signals need to be activated
+   * Deployment targets where signals need to be activated
    */
   deliver_to: {
     /**
-     * List of destination platforms (DSPs, sales agents, etc.). If the authenticated caller matches one of these destinations, activation keys will be included in the response.
+     * List of deployment targets (DSPs, sales agents, etc.). If the authenticated caller matches one of these deployment targets, activation keys will be included in the response.
      *
      * @minItems 1
      */
-    destinations: [Destination, ...Destination[]];
+    deployments: [Destination, ...Destination[]];
     /**
      * Countries where signals will be used (ISO codes)
      */
@@ -3886,7 +3886,7 @@ export interface GetSignalsRequest {
 
 // get_signals response
 /**
- * A signal deployment to a specific destination platform with activation status and key
+ * A signal deployment to a specific deployment target with activation status and key
  */
 export type Deployment =
   | {
@@ -3903,7 +3903,7 @@ export type Deployment =
        */
       account?: string;
       /**
-       * Whether signal is currently active on this destination
+       * Whether signal is currently active on this deployment
        */
       is_live: boolean;
       activation_key?: ActivationKey;
@@ -3922,7 +3922,7 @@ export type Deployment =
        */
       type: 'agent';
       /**
-       * URL identifying the destination agent
+       * URL identifying the deployment agent
        */
       agent_url: string;
       /**
@@ -3930,7 +3930,7 @@ export type Deployment =
        */
       account?: string;
       /**
-       * Whether signal is currently active on this destination
+       * Whether signal is currently active on this deployment
        */
       is_live: boolean;
       activation_key?: ActivationKey1;
@@ -3944,7 +3944,7 @@ export type Deployment =
       deployed_at?: string;
     };
 /**
- * The key to use for targeting. Only present if is_live=true AND requester has access to this destination.
+ * The key to use for targeting. Only present if is_live=true AND requester has access to this deployment.
  */
 export type ActivationKey =
   | {
@@ -3972,7 +3972,7 @@ export type ActivationKey =
       value: string;
     };
 /**
- * The key to use for targeting. Only present if is_live=true AND requester has access to this destination.
+ * The key to use for targeting. Only present if is_live=true AND requester has access to this deployment.
  */
 export type ActivationKey1 =
   | {
@@ -4033,7 +4033,7 @@ export interface GetSignalsResponse {
      */
     coverage_percentage: number;
     /**
-     * Array of destination deployments
+     * Array of deployment targets
      */
     deployments: Deployment[];
     /**
@@ -4065,7 +4065,7 @@ export interface GetSignalsResponse {
 
 // activate_signal parameters
 /**
- * A destination platform where signals can be activated (DSP, sales agent, etc.)
+ * A deployment target where signals can be activated (DSP, sales agent, etc.)
  */
 export interface ActivateSignalRequest {
   /**
@@ -4073,11 +4073,11 @@ export interface ActivateSignalRequest {
    */
   signal_agent_segment_id: string;
   /**
-   * Target destination(s) for activation. If the authenticated caller matches one of these destinations, activation keys will be included in the response.
+   * Target deployment(s) for activation. If the authenticated caller matches one of these deployment targets, activation keys will be included in the response.
    *
    * @minItems 1
    */
-  destinations: [Destination, ...Destination[]];
+  deployments: [Destination, ...Destination[]];
   /**
    * Initiator-provided context included in the request payload. Agents must echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.
    */
@@ -4094,7 +4094,7 @@ export interface ActivateSignalRequest {
 export type ActivateSignalResponse =
   | {
       /**
-       * Array of deployment results for each destination
+       * Array of deployment results for each deployment target
        */
       deployments: Deployment[];
       /**
@@ -4115,5 +4115,5 @@ export type ActivateSignalResponse =
       context?: {};
     };
 /**
- * A signal deployment to a specific destination platform with activation status and key
+ * A signal deployment to a specific deployment target with activation status and key
  */

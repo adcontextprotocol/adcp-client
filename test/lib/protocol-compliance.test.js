@@ -87,13 +87,13 @@ describe('A2A Protocol Compliance', { skip: process.env.CI ? 'Slow tests - skipp
       assert.strictEqual(part.kind, 'data', 'Part must have kind: "data"');
       assert.ok(part.data, 'Part must have data property');
       assert.strictEqual(part.data.skill, toolName, 'Part data must have correct skill');
-      assert.deepStrictEqual(part.data.input, parameters, 'Part data must use "input" not "parameters"');
+      assert.deepStrictEqual(part.data.parameters, parameters, 'Part data must use "parameters" not "input"');
     });
 
-    test('should reject attempt to use deprecated "parameters" field', async () => {
+    test('should reject attempt to use deprecated "input" field', async () => {
       setupA2AMocks();
 
-      // This test ensures we don't regress to using "parameters" instead of "input"
+      // This test ensures we don't regress to using "input" instead of "parameters"
       const agentUrl = 'https://test-agent.example.com';
       const toolName = 'get_products';
       const parameters = { category: 'electronics' };
@@ -103,10 +103,10 @@ describe('A2A Protocol Compliance', { skip: process.env.CI ? 'Slow tests - skipp
       const sentMessage = capturedMessages[0];
       const part = sentMessage.message.parts[0];
 
-      // Verify we're using "input" not "parameters"
-      assert.ok(part.data.input, 'Should use "input" field');
-      assert.strictEqual(part.data.parameters, undefined, 'Should not have deprecated "parameters" field');
-      assert.deepStrictEqual(part.data.input, parameters, 'Input should contain the parameters data');
+      // Verify we're using "parameters" not "input"
+      assert.ok(part.data.parameters, 'Should use "parameters" field');
+      assert.strictEqual(part.data.input, undefined, 'Should not have deprecated "input" field');
+      assert.deepStrictEqual(part.data.parameters, parameters, 'Parameters should contain the parameters data');
     });
 
     test('should validate messageId format and uniqueness', async () => {
@@ -143,7 +143,7 @@ describe('A2A Protocol Compliance', { skip: process.env.CI ? 'Slow tests - skipp
       const sentMessage = capturedMessages[0];
       const part = sentMessage.message.parts[0];
 
-      assert.deepStrictEqual(part.data.input, {}, 'Empty parameters should result in empty input object');
+      assert.deepStrictEqual(part.data.parameters, {}, 'Empty parameters should result in empty parameters object');
       assert.strictEqual(part.data.skill, 'skill_without_params', 'Skill name should be preserved');
     });
 
@@ -168,7 +168,11 @@ describe('A2A Protocol Compliance', { skip: process.env.CI ? 'Slow tests - skipp
       const sentMessage = capturedMessages[0];
       const part = sentMessage.message.parts[0];
 
-      assert.deepStrictEqual(part.data.input, complexParams, 'Complex nested parameters should be preserved exactly');
+      assert.deepStrictEqual(
+        part.data.parameters,
+        complexParams,
+        'Complex nested parameters should be preserved exactly'
+      );
     });
   });
 
@@ -250,7 +254,7 @@ describe('A2A Protocol Compliance', { skip: process.env.CI ? 'Slow tests - skipp
           result: {
             error: {
               code: -32600,
-              message: "Malformed request: 'parameters' field not supported, use 'input' instead",
+              message: "Malformed request: 'input' field not supported, use 'parameters' instead",
             },
           },
         }),
@@ -264,7 +268,7 @@ describe('A2A Protocol Compliance', { skip: process.env.CI ? 'Slow tests - skipp
           await callA2ATool('https://test.com', 'test_skill', {});
         },
         {
-          message: /A2A agent returned error: Malformed request: 'parameters' field not supported, use 'input' instead/,
+          message: /A2A agent returned error: Malformed request: 'input' field not supported, use 'parameters' instead/,
         },
         'Should throw error when server returns nested error in result'
       );
@@ -288,7 +292,7 @@ describe('A2A Protocol Compliance', { skip: process.env.CI ? 'Slow tests - skipp
       assert.ok(requestLog, 'Should have request debug log');
       assert.ok(requestLog.actualPayload, 'Should include actual payload in debug log');
       assert.strictEqual(requestLog.actualPayload.message.parts[0].data.skill, 'debug_test');
-      assert.deepStrictEqual(requestLog.actualPayload.message.parts[0].data.input, testParams);
+      assert.deepStrictEqual(requestLog.actualPayload.message.parts[0].data.parameters, testParams);
 
       // Find response log
       const responseLog = debugLogs.find(log => log.type === 'success' && log.message.includes('Response received'));
@@ -317,7 +321,7 @@ describe('Schema Validation Utilities', () => {
             kind: 'data',
             data: {
               skill: 'test_skill',
-              input: { param: 'value' },
+              parameters: { param: 'value' },
             },
           },
         ],
@@ -338,16 +342,16 @@ describe('Schema Validation Utilities', () => {
         message: {
           messageId: 'msg_123',
           role: 'user',
-          parts: [{ kind: 'data', data: { skill: 'test', input: {} } }],
+          parts: [{ kind: 'data', data: { skill: 'test', parameters: {} } }],
         },
       },
-      // Using deprecated 'parameters' instead of 'input'
+      // Using deprecated 'input' instead of 'parameters'
       {
         message: {
           messageId: 'msg_123',
           role: 'user',
           kind: 'message',
-          parts: [{ kind: 'data', data: { skill: 'test', parameters: {} } }],
+          parts: [{ kind: 'data', data: { skill: 'test', input: {} } }],
         },
       },
       // Invalid part kind
@@ -356,7 +360,7 @@ describe('Schema Validation Utilities', () => {
           messageId: 'msg_123',
           role: 'user',
           kind: 'message',
-          parts: [{ kind: 'invalid', data: { skill: 'test', input: {} } }],
+          parts: [{ kind: 'invalid', data: { skill: 'test', parameters: {} } }],
         },
       },
     ];
@@ -365,8 +369,7 @@ describe('Schema Validation Utilities', () => {
     invalidMessages.forEach((msg, index) => {
       // Placeholder checks - replace with real schema validation
       if (index === 0) assert.strictEqual(msg.message.kind, undefined, 'Should detect missing kind');
-      if (index === 1)
-        assert.ok(msg.message.parts[0].data.parameters !== undefined, 'Should detect deprecated parameters field');
+      if (index === 1) assert.ok(msg.message.parts[0].data.input !== undefined, 'Should detect deprecated input field');
       if (index === 2) assert.strictEqual(msg.message.parts[0].kind, 'invalid', 'Should detect invalid part kind');
     });
   });

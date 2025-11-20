@@ -103,13 +103,13 @@ class MockA2AServer {
             errors.push('Data part must have skill name');
           }
 
-          if (dataPart.data?.input === undefined) {
-            errors.push("Data part must have 'input' field");
+          if (dataPart.data?.parameters === undefined) {
+            errors.push("Data part must have 'parameters' field");
           }
 
           // Check for deprecated fields
-          if (dataPart.data?.parameters !== undefined) {
-            errors.push("Data part uses deprecated 'parameters' field, use 'input' instead");
+          if (dataPart.data?.input !== undefined) {
+            errors.push("Data part uses deprecated 'input' field, use 'parameters' instead");
           }
         }
       }
@@ -314,8 +314,8 @@ describe('A2A Integration Contract Tests', { skip: process.env.CI ? 'Slow tests 
     const dataPart = message.parts.find(p => p.kind === 'data');
     assert.ok(dataPart, 'Should have data part');
     assert.strictEqual(dataPart.data.skill, 'get_products');
-    assert.deepStrictEqual(dataPart.data.input, { category: 'electronics', limit: 5 });
-    assert.strictEqual(dataPart.data.parameters, undefined, "Should not use deprecated 'parameters' field");
+    assert.deepStrictEqual(dataPart.data.parameters, { category: 'electronics', limit: 5 });
+    assert.strictEqual(dataPart.data.input, undefined, "Should not use deprecated 'input' field");
 
     // Verify response handling
     assert.ok(result);
@@ -345,7 +345,7 @@ describe('A2A Integration Contract Tests', { skip: process.env.CI ? 'Slow tests 
                   kind: 'data',
                   data: {
                     skill: 'get_products',
-                    parameters: { category: 'electronics' }, // Using deprecated field
+                    input: { category: 'electronics' }, // Using deprecated field
                   },
                 },
               ],
@@ -492,7 +492,7 @@ describe('Cross-Protocol Integration Tests', () => {
           kind: 'data',
           data: {
             skill: 'get_products',
-            input: testParameters,
+            parameters: testParameters,
           },
         },
       ],
@@ -527,7 +527,7 @@ describe('Cross-Protocol Integration Tests', () => {
 
     // Verify parameter consistency
     assert.deepStrictEqual(
-      expectedA2AMessage.parts[0].data.input,
+      expectedA2AMessage.parts[0].data.parameters,
       expectedMCPRequest.params.arguments,
       'Parameters should be identical across protocols'
     );

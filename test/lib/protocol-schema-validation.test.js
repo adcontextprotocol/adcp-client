@@ -52,17 +52,17 @@ function validateA2AMessagePayload(payload) {
         if (!part.data) {
           errors.push(`Part ${index}: data parts must have a data property`);
         } else {
-          // Check for deprecated 'parameters' field
-          if (part.data.parameters !== undefined) {
-            errors.push(`Part ${index}: Use 'input' instead of deprecated 'parameters' field`);
+          // Check for deprecated 'input' field
+          if (part.data.input !== undefined) {
+            errors.push(`Part ${index}: Use 'parameters' instead of deprecated 'input' field`);
           }
 
           if (!part.data.skill) {
             errors.push(`Part ${index}: data parts must have a skill property`);
           }
 
-          if (part.data.input === undefined && part.data.parameters === undefined) {
-            errors.push(`Part ${index}: data parts must have an 'input' property`);
+          if (part.data.parameters === undefined && part.data.input === undefined) {
+            errors.push(`Part ${index}: data parts must have a 'parameters' property`);
           }
         }
       } else if (part.kind === 'text') {
@@ -129,7 +129,7 @@ describe('A2A Schema Validation', () => {
             kind: 'data',
             data: {
               skill: 'get_products',
-              input: {
+              parameters: {
                 category: 'electronics',
                 limit: 10,
               },
@@ -153,7 +153,7 @@ describe('A2A Schema Validation', () => {
         parts: [
           {
             kind: 'data',
-            data: { skill: 'test', input: {} },
+            data: { skill: 'test', parameters: {} },
           },
         ],
       },
@@ -164,7 +164,7 @@ describe('A2A Schema Validation', () => {
     assert.ok(result.errors.some(err => err.includes('kind: "message"')));
   });
 
-  test('should detect deprecated parameters field', () => {
+  test('should detect deprecated input field', () => {
     const invalidPayload = {
       message: {
         messageId: 'msg_123',
@@ -175,7 +175,7 @@ describe('A2A Schema Validation', () => {
             kind: 'data',
             data: {
               skill: 'get_products',
-              parameters: { category: 'electronics' }, // Should be 'input'
+              input: { category: 'electronics' }, // Should be 'parameters'
             },
           },
         ],
@@ -184,7 +184,7 @@ describe('A2A Schema Validation', () => {
 
     const result = validateA2AMessagePayload(invalidPayload);
     assert.strictEqual(result.valid, false);
-    assert.ok(result.errors.some(err => err.includes("Use 'input' instead of deprecated 'parameters'")));
+    assert.ok(result.errors.some(err => err.includes("Use 'parameters' instead of deprecated 'input'")));
   });
 
   test('should validate multiple parts correctly', () => {
@@ -202,7 +202,7 @@ describe('A2A Schema Validation', () => {
             kind: 'data',
             data: {
               skill: 'get_products',
-              input: { category: 'electronics' },
+              parameters: { category: 'electronics' },
             },
           },
         ],
@@ -222,7 +222,7 @@ describe('A2A Schema Validation', () => {
         parts: [
           {
             kind: 'invalid_kind',
-            data: { skill: 'test', input: {} },
+            data: { skill: 'test', parameters: {} },
           },
         ],
       },
@@ -383,7 +383,7 @@ describe('Cross-Protocol Validation Utilities', () => {
         parts: [
           {
             kind: 'data',
-            data: { skill: 'get_products', input: parameters },
+            data: { skill: 'get_products', parameters: parameters },
           },
         ],
       },
@@ -407,7 +407,7 @@ describe('Cross-Protocol Validation Utilities', () => {
 
     // Parameters should be identical
     assert.deepStrictEqual(
-      a2aPayload.message.parts[0].data.input,
+      a2aPayload.message.parts[0].data.parameters,
       mcpPayload.params.arguments,
       'Parameters should be consistent across protocols'
     );
