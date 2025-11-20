@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2025-11-20T15:07:37.074Z
+// Generated at: 2025-11-20T19:39:11.558Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -764,7 +764,7 @@ export const DestinationSchema = z.union([z.object({
 export const GetSignalsRequestSchema = z.object({
     signal_spec: z.string(),
     deliver_to: z.object({
-        destinations: z.tuple([DestinationSchema]).rest(DestinationSchema),
+        deployments: z.tuple([DestinationSchema]).rest(DestinationSchema),
         countries: z.array(z.string())
     }),
     filters: z.object({
@@ -815,7 +815,7 @@ export const DeploymentSchema = z.union([z.object({
 
 export const ActivateSignalRequestSchema = z.object({
     signal_agent_segment_id: z.string(),
-    destinations: z.tuple([DestinationSchema]).rest(DestinationSchema),
+    deployments: z.tuple([DestinationSchema]).rest(DestinationSchema),
     context: z.record(z.string(), z.unknown()).optional()
 });
 
