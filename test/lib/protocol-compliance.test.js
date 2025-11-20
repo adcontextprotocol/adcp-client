@@ -168,7 +168,11 @@ describe('A2A Protocol Compliance', { skip: process.env.CI ? 'Slow tests - skipp
       const sentMessage = capturedMessages[0];
       const part = sentMessage.message.parts[0];
 
-      assert.deepStrictEqual(part.data.parameters, complexParams, 'Complex nested parameters should be preserved exactly');
+      assert.deepStrictEqual(
+        part.data.parameters,
+        complexParams,
+        'Complex nested parameters should be preserved exactly'
+      );
     });
   });
 
@@ -365,8 +369,7 @@ describe('Schema Validation Utilities', () => {
     invalidMessages.forEach((msg, index) => {
       // Placeholder checks - replace with real schema validation
       if (index === 0) assert.strictEqual(msg.message.kind, undefined, 'Should detect missing kind');
-      if (index === 1)
-        assert.ok(msg.message.parts[0].data.input !== undefined, 'Should detect deprecated input field');
+      if (index === 1) assert.ok(msg.message.parts[0].data.input !== undefined, 'Should detect deprecated input field');
       if (index === 2) assert.strictEqual(msg.message.parts[0].kind, 'invalid', 'Should detect invalid part kind');
     });
   });
