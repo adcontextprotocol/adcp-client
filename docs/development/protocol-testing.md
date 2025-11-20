@@ -2,7 +2,7 @@
 
 ## Overview
 
-This document outlines a comprehensive testing strategy to prevent protocol validation issues like the recent A2A SDK bug where we were missing `kind: "message"` and using `parameters` instead of `input`. The strategy focuses on testing protocol compliance without relying on external servers.
+This document outlines a comprehensive testing strategy to prevent protocol validation issues like the recent A2A SDK bug where we were missing `kind: "message"` and using `input` instead of `parameters`. The strategy focuses on testing protocol compliance without relying on external servers.
 
 ## Root Cause Analysis
 
@@ -44,8 +44,8 @@ test('should generate correctly formatted A2A message with required fields', asy
   
   const message = capturedMessages[0].message;
   assert.strictEqual(message.kind, 'message');        // Catch missing kind
-  assert.ok(message.parts[0].data.input);             // Catch parameters vs input
-  assert.strictEqual(message.parts[0].data.parameters, undefined); // Prevent regression
+  assert.ok(message.parts[0].data.parameters);        // Catch input vs parameters
+  assert.strictEqual(message.parts[0].data.input, undefined); // Prevent regression
 });
 ```
 
@@ -73,9 +73,9 @@ function validateA2AMessagePayload(payload) {
   if (payload.message.kind !== 'message') {
     errors.push('Message must have kind: "message"');
   }
-  
-  if (payload.message.parts[0].data.parameters !== undefined) {
-    errors.push("Use 'input' instead of deprecated 'parameters' field");
+
+  if (payload.message.parts[0].data.input !== undefined) {
+    errors.push("Use 'parameters' instead of deprecated 'input' field");
   }
   
   return { valid: errors.length === 0, errors };
@@ -212,7 +212,7 @@ MCPClient.connect = async () => ({ transport: mockTransport });
 
 ### 1. Message Format Validation
 - [x] Required field presence (`kind`, `messageId`, `role`)
-- [x] Correct field names (`input` vs `parameters`)
+- [x] Correct field names (`parameters` vs `input`)
 - [x] Valid field types and formats
 - [x] Proper nesting structure
 - [x] Multi-part message handling

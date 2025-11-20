@@ -488,7 +488,7 @@ const client = new ADCPMultiAgentClient(agents, {
 
 ### Fixed
 
-- **A2A Protocol Compliance** - Fixed message format to use `kind: "message"` and `input` instead of deprecated `parameters` field
+- **A2A Protocol Compliance** - Fixed message format to use `kind: "message"` and `parameters` field per AdCP specification
 - **Package-Lock Version Sync** - Resolved version mismatch between package.json (0.2.3) and package-lock.json (0.2.2)
 - **MCP Product Extraction** - Fixed product extraction logic for proper display in testing UI
 

@@ -82,7 +82,7 @@ export async function callA2ATool(
           kind: 'data', // A2A spec uses "kind", not "type"
           data: {
             skill: toolName,
-            input: parameters, // A2A spec uses "input", not "parameters"
+            parameters: parameters,
           },
         },
       ],
@@ -93,7 +93,7 @@ export async function callA2ATool(
   const payloadSize = JSON.stringify(requestPayload).length;
   debugLogs.push({
     type: 'info',
-    message: `A2A: Calling skill ${toolName} with input: ${JSON.stringify(
+    message: `A2A: Calling skill ${toolName} with parameters: ${JSON.stringify(
       parameters
     )}. Payload size: ${payloadSize} bytes`,
     timestamp: new Date().toISOString(),
