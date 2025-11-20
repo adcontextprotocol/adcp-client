@@ -7,6 +7,23 @@
  */
 export type BrandManifestReference = BrandManifest | string;
 /**
+ * Type of asset. Note: Brand manifests typically contain basic media assets (image, video, audio, text). Code assets (html, javascript, css) and ad markup (vast, daast) are usually not part of brand asset libraries.
+ */
+export type AssetContentType =
+  | 'image'
+  | 'video'
+  | 'audio'
+  | 'text'
+  | 'markdown'
+  | 'html'
+  | 'css'
+  | 'javascript'
+  | 'vast'
+  | 'daast'
+  | 'promoted_offerings'
+  | 'url'
+  | 'webhook';
+/**
  * Type of inventory delivery
  */
 export type DeliveryType = 'guaranteed' | 'non_guaranteed';
@@ -144,10 +161,7 @@ export interface BrandManifest {
      * Unique identifier for this asset
      */
     asset_id: string;
-    /**
-     * Type of asset
-     */
-    asset_type: 'image' | 'video' | 'audio' | 'text';
+    asset_type: AssetContentType;
     /**
      * URL to CDN-hosted asset file
      */
@@ -982,21 +996,22 @@ export interface Error {
 
 // list_creative_formats parameters
 /**
- * Request parameters for discovering supported creative formats
+ * Filter by format type (technical categories with distinct requirements)
+ */
+export type FormatCategory = 'audio' | 'video' | 'display' | 'native' | 'dooh' | 'rich_media' | 'universal';
+/**
+ * Types of content that can be used as creative assets. Describes what KIND of content an asset contains (image, video, code, etc.), not where it displays.
  */
 export interface ListCreativeFormatsRequest {
   /**
    * Return only these specific format IDs (e.g., from get_products response)
    */
   format_ids?: FormatID[];
-  /**
-   * Filter by format type (technical categories with distinct requirements)
-   */
-  type?: 'audio' | 'video' | 'display' | 'dooh';
+  type?: FormatCategory;
   /**
    * Filter to formats that include these asset types. For third-party tags, search for 'html' or 'javascript'. E.g., ['image', 'text'] returns formats with images and text, ['javascript'] returns formats accepting JavaScript tags.
    */
-  asset_types?: ('image' | 'video' | 'audio' | 'text' | 'html' | 'javascript' | 'url')[];
+  asset_types?: AssetContentType[];
   /**
    * Maximum width in pixels (inclusive). Returns formats where ANY render has width <= this value. For multi-render formats, matches if at least one render fits.
    */
@@ -1033,6 +1048,24 @@ export interface ListCreativeFormatsRequest {
  */
 
 // list_creative_formats response
+/**
+ * Media type of this format - determines rendering method and asset requirements
+ */
+export type AssetContentType1 =
+  | 'image'
+  | 'video'
+  | 'audio'
+  | 'text'
+  | 'markdown'
+  | 'html'
+  | 'css'
+  | 'javascript'
+  | 'vast'
+  | 'daast'
+  | 'promoted_offerings'
+  | 'url'
+  | 'webhook';
+
 /**
  * Response payload for list_creative_formats task
  */
@@ -1088,10 +1121,7 @@ export interface Format {
    * Optional URL to showcase page with examples and interactive demos of this format
    */
   example_url?: string;
-  /**
-   * Media type of this format - determines rendering method and asset requirements
-   */
-  type: 'audio' | 'video' | 'display' | 'native' | 'dooh' | 'rich_media' | 'universal';
+  type: FormatCategory;
   /**
    * Specification of rendered pieces for this format. Most formats produce a single render. Companion ad formats (video + banner), adaptive formats, and multi-placement formats produce multiple renders. Each render specifies its role and dimensions.
    *
@@ -1212,23 +1242,7 @@ export interface Format {
          * Unique identifier for this asset. Creative manifests MUST use this exact value as the key in the assets object.
          */
         asset_id: string;
-        /**
-         * Type of asset
-         */
-        asset_type:
-          | 'image'
-          | 'video'
-          | 'audio'
-          | 'vast'
-          | 'daast'
-          | 'text'
-          | 'markdown'
-          | 'html'
-          | 'css'
-          | 'javascript'
-          | 'url'
-          | 'webhook'
-          | 'promoted_offerings';
+        asset_type: AssetContentType;
         /**
          * Optional descriptive label for this asset's purpose (e.g., 'hero_image', 'logo'). Not used for referencing assets in manifests—use asset_id instead. This field is for human-readable documentation and UI display only.
          */
@@ -1269,23 +1283,7 @@ export interface Format {
            * Identifier for this asset within the group
            */
           asset_id: string;
-          /**
-           * Type of asset
-           */
-          asset_type:
-            | 'image'
-            | 'video'
-            | 'audio'
-            | 'vast'
-            | 'daast'
-            | 'text'
-            | 'markdown'
-            | 'html'
-            | 'css'
-            | 'javascript'
-            | 'url'
-            | 'webhook'
-            | 'promoted_offerings';
+          asset_type: AssetContentType1;
           /**
            * Optional descriptive label for this asset's purpose (e.g., 'hero_image', 'logo'). Not used for referencing assets in manifests—use asset_id instead. This field is for human-readable documentation and UI display only.
            */
@@ -2006,18 +2004,9 @@ export type CreateMediaBuyResponse =
        */
       creative_deadline?: string;
       /**
-       * Array of created packages
+       * Array of created packages with complete state information
        */
-      packages: {
-        /**
-         * Publisher's unique identifier for the package
-         */
-        package_id: string;
-        /**
-         * Buyer's reference identifier for the package
-         */
-        buyer_ref: string;
-      }[];
+      packages: Package[];
       /**
        * Initiator-provided context echoed inside the task payload. Opaque metadata such as UI/session hints, correlation tokens, or tracking identifiers.
        */
@@ -2035,9 +2024,76 @@ export type CreateMediaBuyResponse =
        */
       context?: {};
     };
+/**
+ * Budget pacing strategy
+ */
+export type PackageStatus = 'draft' | 'active' | 'paused' | 'completed';
 
 /**
- * Standard error structure for task-specific errors and warnings
+ * A specific product within a media buy (line item)
+ */
+export interface Package {
+  /**
+   * Publisher's unique identifier for the package
+   */
+  package_id: string;
+  /**
+   * Buyer's reference identifier for this package
+   */
+  buyer_ref?: string;
+  /**
+   * ID of the product this package is based on
+   */
+  product_id?: string;
+  /**
+   * Budget allocation for this package in the currency specified by the pricing option
+   */
+  budget?: number;
+  pacing?: Pacing;
+  /**
+   * ID of the selected pricing option from the product's pricing_options array
+   */
+  pricing_option_id?: string;
+  /**
+   * Bid price for auction-based CPM pricing (present if using cpm-auction-option)
+   */
+  bid_price?: number;
+  /**
+   * Impression goal for this package
+   */
+  impressions?: number;
+  targeting_overlay?: TargetingOverlay;
+  /**
+   * Creative assets assigned to this package
+   */
+  creative_assignments?: CreativeAssignment[];
+  /**
+   * Format IDs that creative assets will be provided for this package
+   */
+  format_ids_to_provide?: FormatID[];
+  status: PackageStatus;
+}
+/**
+ * Optional geographic refinements for media buys. Most targeting should be expressed in the brief and handled by the publisher. These fields are primarily for geographic restrictions (RCT testing, regulatory compliance).
+ */
+export interface CreativeAssignment {
+  /**
+   * Unique identifier for the creative
+   */
+  creative_id: string;
+  /**
+   * Delivery weight for this creative
+   */
+  weight?: number;
+  /**
+   * Optional array of placement IDs where this creative should run. When omitted, the creative runs on all placements in the package. References placement_id values from the product's placements array.
+   *
+   * @minItems 1
+   */
+  placement_ids?: [string, ...string[]];
+}
+/**
+ * Structured format identifier with agent URL and format name
  */
 
 // sync_creatives parameters
@@ -2640,18 +2696,9 @@ export type UpdateMediaBuyResponse =
        */
       implementation_date?: string | null;
       /**
-       * Array of packages that were modified
+       * Array of packages that were modified with complete state information
        */
-      affected_packages?: {
-        /**
-         * Publisher's package identifier
-         */
-        package_id: string;
-        /**
-         * Buyer's reference for the package
-         */
-        buyer_ref: string;
-      }[];
+      affected_packages?: Package[];
       /**
        * Initiator-provided context echoed inside the task payload. Opaque metadata such as UI/session hints, correlation tokens, or tracking identifiers.
        */
@@ -2669,9 +2716,8 @@ export type UpdateMediaBuyResponse =
        */
       context?: {};
     };
-
 /**
- * Standard error structure for task-specific errors and warnings
+ * Budget pacing strategy
  */
 
 // get_media_buy_delivery parameters

@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2025-11-19T02:47:31.146Z
+// Generated at: 2025-11-20T15:07:37.074Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -63,68 +63,6 @@ export const DAASTAssetSchema = z.union([z.object({
         companion_ads: z.boolean().optional()
     })]);
 
-export const BrandManifestSchema = z.object({
-    url: z.string().optional(),
-    name: z.string(),
-    logos: z.array(z.object({
-        url: z.string(),
-        tags: z.array(z.string()).optional(),
-        width: z.number().optional(),
-        height: z.number().optional()
-    })).optional(),
-    colors: z.object({
-        primary: z.string().optional(),
-        secondary: z.string().optional(),
-        accent: z.string().optional(),
-        background: z.string().optional(),
-        text: z.string().optional()
-    }).optional(),
-    fonts: z.object({
-        primary: z.string().optional(),
-        secondary: z.string().optional(),
-        font_urls: z.array(z.string()).optional()
-    }).optional(),
-    tone: z.string().optional(),
-    tagline: z.string().optional(),
-    assets: z.array(z.object({
-        asset_id: z.string(),
-        asset_type: z.union([z.literal("image"), z.literal("video"), z.literal("audio"), z.literal("text")]),
-        url: z.string(),
-        tags: z.array(z.string()).optional(),
-        name: z.string().optional(),
-        description: z.string().optional(),
-        width: z.number().optional(),
-        height: z.number().optional(),
-        duration_seconds: z.number().optional(),
-        file_size_bytes: z.number().optional(),
-        format: z.string().optional(),
-        metadata: z.record(z.string(), z.unknown()).optional()
-    })).optional(),
-    product_catalog: z.object({
-        feed_url: z.string(),
-        feed_format: z.union([z.literal("google_merchant_center"), z.literal("facebook_catalog"), z.literal("custom")]).optional(),
-        categories: z.array(z.string()).optional(),
-        last_updated: z.string().optional(),
-        update_frequency: z.union([z.literal("realtime"), z.literal("hourly"), z.literal("daily"), z.literal("weekly")]).optional()
-    }).optional(),
-    disclaimers: z.array(z.object({
-        text: z.string(),
-        context: z.string().optional(),
-        required: z.boolean().optional()
-    })).optional(),
-    industry: z.string().optional(),
-    target_audience: z.string().optional(),
-    contact: z.object({
-        email: z.string().optional(),
-        phone: z.string().optional()
-    }).optional(),
-    metadata: z.object({
-        created_date: z.string().optional(),
-        updated_date: z.string().optional(),
-        version: z.string().optional()
-    }).optional()
-});
-
 export const ImageAssetSchema = z.object({
     url: z.string(),
     width: z.number().optional(),
@@ -175,14 +113,14 @@ export const URLAssetSchema = z.object({
     description: z.string().optional()
 });
 
-export const BrandManifestReferenceSchema = z.union([BrandManifestSchema, z.string()]);
-
 export const PromotedProductsSchema = z.object({
     manifest_skus: z.array(z.string()).optional(),
     manifest_tags: z.array(z.string()).optional(),
     manifest_category: z.string().optional(),
     manifest_query: z.string().optional()
 });
+
+export const AssetContentTypeSchema = z.union([z.literal("image"), z.literal("video"), z.literal("audio"), z.literal("text"), z.literal("markdown"), z.literal("html"), z.literal("css"), z.literal("javascript"), z.literal("vast"), z.literal("daast"), z.literal("promoted_offerings"), z.literal("url"), z.literal("webhook")]);
 
 export const DeliveryTypeSchema = z.union([z.literal("guaranteed"), z.literal("non_guaranteed")]);
 
@@ -377,19 +315,69 @@ export const PropertySchema = z.object({
     publisher_domain: z.string().optional()
 });
 
-export const GetProductsRequestSchema = z.object({
-    brief: z.string().optional(),
-    brand_manifest: BrandManifestReferenceSchema.optional(),
-    filters: z.object({
-        delivery_type: DeliveryTypeSchema.optional(),
-        is_fixed_price: z.boolean().optional(),
-        format_types: z.array(z.union([z.literal("video"), z.literal("display"), z.literal("audio")])).optional(),
-        format_ids: z.array(FormatIDSchema).optional(),
-        standard_formats_only: z.boolean().optional(),
-        min_exposures: z.number().optional()
+export const BrandManifestSchema = z.object({
+    url: z.string().optional(),
+    name: z.string(),
+    logos: z.array(z.object({
+        url: z.string(),
+        tags: z.array(z.string()).optional(),
+        width: z.number().optional(),
+        height: z.number().optional()
+    })).optional(),
+    colors: z.object({
+        primary: z.string().optional(),
+        secondary: z.string().optional(),
+        accent: z.string().optional(),
+        background: z.string().optional(),
+        text: z.string().optional()
     }).optional(),
-    context: z.record(z.string(), z.unknown()).optional()
+    fonts: z.object({
+        primary: z.string().optional(),
+        secondary: z.string().optional(),
+        font_urls: z.array(z.string()).optional()
+    }).optional(),
+    tone: z.string().optional(),
+    tagline: z.string().optional(),
+    assets: z.array(z.object({
+        asset_id: z.string(),
+        asset_type: AssetContentTypeSchema,
+        url: z.string(),
+        tags: z.array(z.string()).optional(),
+        name: z.string().optional(),
+        description: z.string().optional(),
+        width: z.number().optional(),
+        height: z.number().optional(),
+        duration_seconds: z.number().optional(),
+        file_size_bytes: z.number().optional(),
+        format: z.string().optional(),
+        metadata: z.record(z.string(), z.unknown()).optional()
+    })).optional(),
+    product_catalog: z.object({
+        feed_url: z.string(),
+        feed_format: z.union([z.literal("google_merchant_center"), z.literal("facebook_catalog"), z.literal("custom")]).optional(),
+        categories: z.array(z.string()).optional(),
+        last_updated: z.string().optional(),
+        update_frequency: z.union([z.literal("realtime"), z.literal("hourly"), z.literal("daily"), z.literal("weekly")]).optional()
+    }).optional(),
+    disclaimers: z.array(z.object({
+        text: z.string(),
+        context: z.string().optional(),
+        required: z.boolean().optional()
+    })).optional(),
+    industry: z.string().optional(),
+    target_audience: z.string().optional(),
+    contact: z.object({
+        email: z.string().optional(),
+        phone: z.string().optional()
+    }).optional(),
+    metadata: z.object({
+        created_date: z.string().optional(),
+        updated_date: z.string().optional(),
+        version: z.string().optional()
+    }).optional()
 });
+
+export const BrandManifestReferenceSchema = z.union([BrandManifestSchema, z.string()]);
 
 export const ProductSchema = z.object({
     product_id: z.string(),
@@ -430,18 +418,9 @@ export const ErrorSchema = z.object({
     details: z.record(z.string(), z.unknown()).optional()
 });
 
-export const ListCreativeFormatsRequestSchema = z.object({
-    format_ids: z.array(FormatIDSchema).optional(),
-    type: z.union([z.literal("audio"), z.literal("video"), z.literal("display"), z.literal("dooh")]).optional(),
-    asset_types: z.array(z.union([z.literal("image"), z.literal("video"), z.literal("audio"), z.literal("text"), z.literal("html"), z.literal("javascript"), z.literal("url")])).optional(),
-    max_width: z.number().optional(),
-    max_height: z.number().optional(),
-    min_width: z.number().optional(),
-    min_height: z.number().optional(),
-    is_responsive: z.boolean().optional(),
-    name_search: z.string().optional(),
-    context: z.record(z.string(), z.unknown()).optional()
-});
+export const FormatCategorySchema = z.union([z.literal("audio"), z.literal("video"), z.literal("display"), z.literal("native"), z.literal("dooh"), z.literal("rich_media"), z.literal("universal")]);
+
+export const AssetContentType1Schema = z.union([z.literal("image"), z.literal("video"), z.literal("audio"), z.literal("text"), z.literal("markdown"), z.literal("html"), z.literal("css"), z.literal("javascript"), z.literal("vast"), z.literal("daast"), z.literal("promoted_offerings"), z.literal("url"), z.literal("webhook")]);
 
 export const FormatID3Schema = z.object({
     agent_url: z.string(),
@@ -476,19 +455,20 @@ export const PromotedOfferingsSchema = z.object({
     }).optional()
 });
 
-export const CreateMediaBuyResponseSchema = z.union([z.object({
-        media_buy_id: z.string(),
-        buyer_ref: z.string(),
-        creative_deadline: z.string().optional(),
-        packages: z.array(z.object({
-            package_id: z.string(),
-            buyer_ref: z.string()
-        })),
-        context: z.object({}).optional()
-    }), z.object({
-        errors: z.tuple([ErrorSchema]).rest(ErrorSchema),
-        context: z.object({}).optional()
-    })]);
+export const PackageSchema = z.object({
+    package_id: z.string(),
+    buyer_ref: z.string().optional(),
+    product_id: z.string().optional(),
+    budget: z.number().optional(),
+    pacing: PacingSchema.optional(),
+    pricing_option_id: z.string().optional(),
+    bid_price: z.number().optional(),
+    impressions: z.number().optional(),
+    targeting_overlay: TargetingOverlaySchema.optional(),
+    creative_assignments: z.array(CreativeAssignmentSchema).optional(),
+    format_ids_to_provide: z.array(FormatIDSchema).optional(),
+    status: PackageStatusSchema
+});
 
 export const CreativeAssetSchema = z.object({
     creative_id: z.string(),
@@ -612,10 +592,7 @@ export const UpdateMediaBuyResponseSchema = z.union([z.object({
         media_buy_id: z.string(),
         buyer_ref: z.string(),
         implementation_date: z.string().optional().nullable(),
-        affected_packages: z.array(z.object({
-            package_id: z.string(),
-            buyer_ref: z.string()
-        })).optional(),
+        affected_packages: z.array(PackageSchema).optional(),
         context: z.object({}).optional()
     }), z.object({
         errors: z.tuple([ErrorSchema]).rest(ErrorSchema),
@@ -850,19 +827,30 @@ export const ActivateSignalResponseSchema = z.union([z.object({
         context: z.object({}).optional()
     })]);
 
-export const PackageSchema = z.object({
-    package_id: z.string(),
+export const MediaBuySchema = z.object({
+    media_buy_id: z.string(),
     buyer_ref: z.string().optional(),
-    product_id: z.string().optional(),
-    budget: z.number().optional(),
-    pacing: PacingSchema.optional(),
-    pricing_option_id: z.string().optional(),
-    bid_price: z.number().optional(),
-    impressions: z.number().optional(),
-    targeting_overlay: TargetingOverlaySchema.optional(),
-    creative_assignments: z.array(CreativeAssignmentSchema).optional(),
-    format_ids_to_provide: z.array(FormatIDSchema).optional(),
-    status: PackageStatusSchema
+    status: MediaBuyStatusSchema,
+    promoted_offering: z.string(),
+    total_budget: z.number(),
+    packages: z.array(PackageSchema),
+    creative_deadline: z.string().optional(),
+    created_at: z.string().optional(),
+    updated_at: z.string().optional()
+});
+
+export const GetProductsRequestSchema = z.object({
+    brief: z.string().optional(),
+    brand_manifest: BrandManifestReferenceSchema.optional(),
+    filters: z.object({
+        delivery_type: DeliveryTypeSchema.optional(),
+        is_fixed_price: z.boolean().optional(),
+        format_types: z.array(z.union([z.literal("video"), z.literal("display"), z.literal("audio")])).optional(),
+        format_ids: z.array(FormatIDSchema).optional(),
+        standard_formats_only: z.boolean().optional(),
+        min_exposures: z.number().optional()
+    }).optional(),
+    context: z.record(z.string(), z.unknown()).optional()
 });
 
 export const GetProductsResponseSchema = z.object({
@@ -871,13 +859,26 @@ export const GetProductsResponseSchema = z.object({
     context: z.object({}).optional()
 });
 
+export const ListCreativeFormatsRequestSchema = z.object({
+    format_ids: z.array(FormatIDSchema).optional(),
+    type: FormatCategorySchema.optional(),
+    asset_types: z.array(AssetContentTypeSchema).optional(),
+    max_width: z.number().optional(),
+    max_height: z.number().optional(),
+    min_width: z.number().optional(),
+    min_height: z.number().optional(),
+    is_responsive: z.boolean().optional(),
+    name_search: z.string().optional(),
+    context: z.record(z.string(), z.unknown()).optional()
+});
+
 export const FormatSchema = z.object({
     format_id: FormatIDSchema,
     name: z.string(),
     description: z.string().optional(),
     preview_image: z.string().optional(),
     example_url: z.string().optional(),
-    type: z.union([z.literal("audio"), z.literal("video"), z.literal("display"), z.literal("native"), z.literal("dooh"), z.literal("rich_media"), z.literal("universal")]),
+    type: FormatCategorySchema,
     renders: z.tuple([z.object({
             role: z.string(),
             dimensions: z.object({
@@ -914,7 +915,7 @@ export const FormatSchema = z.object({
     assets_required: z.array(z.union([z.object({
             item_type: z.literal("individual"),
             asset_id: z.string(),
-            asset_type: z.union([z.literal("image"), z.literal("video"), z.literal("audio"), z.literal("vast"), z.literal("daast"), z.literal("text"), z.literal("markdown"), z.literal("html"), z.literal("css"), z.literal("javascript"), z.literal("url"), z.literal("webhook"), z.literal("promoted_offerings")]),
+            asset_type: AssetContentTypeSchema,
             asset_role: z.string().optional(),
             required: z.boolean().optional(),
             requirements: z.record(z.string(), z.unknown()).optional()
@@ -925,7 +926,7 @@ export const FormatSchema = z.object({
             max_count: z.number(),
             assets: z.array(z.object({
                 asset_id: z.string(),
-                asset_type: z.union([z.literal("image"), z.literal("video"), z.literal("audio"), z.literal("vast"), z.literal("daast"), z.literal("text"), z.literal("markdown"), z.literal("html"), z.literal("css"), z.literal("javascript"), z.literal("url"), z.literal("webhook"), z.literal("promoted_offerings")]),
+                asset_type: AssetContentType1Schema,
                 asset_role: z.string().optional(),
                 required: z.boolean().optional(),
                 requirements: z.record(z.string(), z.unknown()).optional()
@@ -956,6 +957,17 @@ export const PackageRequestSchema = z.object({
     creative_ids: z.array(z.string()).optional(),
     creatives: z.array(CreativeAssetSchema).optional()
 });
+
+export const CreateMediaBuyResponseSchema = z.union([z.object({
+        media_buy_id: z.string(),
+        buyer_ref: z.string(),
+        creative_deadline: z.string().optional(),
+        packages: z.array(PackageSchema),
+        context: z.object({}).optional()
+    }), z.object({
+        errors: z.tuple([ErrorSchema]).rest(ErrorSchema),
+        context: z.object({}).optional()
+    })]);
 
 export const SyncCreativesRequestSchema = z.object({
     creatives: z.array(CreativeAssetSchema),
@@ -1167,18 +1179,6 @@ export const GetSignalsResponseSchema = z.object({
     })),
     errors: z.array(ErrorSchema).optional(),
     context: z.object({}).optional()
-});
-
-export const MediaBuySchema = z.object({
-    media_buy_id: z.string(),
-    buyer_ref: z.string().optional(),
-    status: MediaBuyStatusSchema,
-    promoted_offering: z.string(),
-    total_budget: z.number(),
-    packages: z.array(PackageSchema),
-    creative_deadline: z.string().optional(),
-    created_at: z.string().optional(),
-    updated_at: z.string().optional()
 });
 
 export const ListCreativeFormatsResponseSchema = z.object({
