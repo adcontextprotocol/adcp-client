@@ -420,26 +420,26 @@ export class TaskExecutor {
         // TODO: CRITICAL LIMITATION - Multiple Artifact Handling
         // ========================================================
         // The A2A protocol specification supports multiple artifacts in a single response,
-        // where each artifact has a unique `name` field to identify different content types
-        // or data structures (see: https://docs.adcontextprotocol.org/docs/protocols/a2a-guide#response-structure)
+        // where each artifact has a unique `artifactId` field to identify different content types
+        // or data structures (see @a2a-js/sdk Artifact interface)
         //
         // CURRENT BEHAVIOR (INCORRECT):
         // - We only extract data from `artifacts[0].parts[0]` (first artifact, first part)
         // - All subsequent artifacts are completely ignored, causing data loss
-        // - This violates the A2A spec which explicitly allows multiple named artifacts
+        // - This violates the A2A spec which explicitly allows multiple artifacts with different artifactIds
         //
         // CORRECT BEHAVIOR NEEDED:
         // - Iterate through ALL artifacts in the array
-        // - Each artifact.name uniquely identifies its content
+        // - Each artifact.artifactId uniquely identifies its content
         // - Options for implementation:
-        //   1. Return object keyed by artifact name: { [name]: data }
+        //   1. Return object keyed by artifact ID: { [artifactId]: data }
         //   2. Return array of all artifact data parts: [data1, data2, ...]
         //   3. Merge all artifact data into single object (if structure compatible)
         //   4. Return metadata about which artifacts are available for caller to select
         //
         // IMPACT:
         // - Agents sending multi-modal responses (e.g., text + structured data)
-        // - Agents returning multiple result sets with different names
+        // - Agents returning multiple result sets with different artifactIds
         // - Any A2A agent using spec-compliant multiple artifacts will have data loss
         //
         // NEXT STEPS:
