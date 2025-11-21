@@ -177,9 +177,9 @@ export class ResponseValidator {
       warnings.push('A2A part missing data field');
     }
 
-    // Validate artifact metadata (per A2A spec, artifacts should have a name)
-    if (!firstArtifact.name) {
-      warnings.push('A2A artifact missing name field');
+    // Validate artifact metadata (per @a2a-js/sdk, artifacts should have an artifactId)
+    if (!firstArtifact.artifactId) {
+      warnings.push('A2A artifact missing artifactId field');
     }
   }
 
