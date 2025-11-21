@@ -48,11 +48,11 @@ export class ProtocolClient {
       const argsWithWebhook = pushNotificationConfig ? { ...args, push_notification_config: pushNotificationConfig } : args;
       return callMCPTool(agent.agent_uri, toolName, argsWithWebhook, authToken, debugLogs);
     } else if (agent.protocol === 'a2a') {
-      // For A2A, pass push_notification_config separately (not in parameters)
+      // For A2A, pass pushNotificationConfig separately (not in skill parameters)
       return callA2ATool(
         agent.agent_uri,
         toolName,
-        args, // DO NOT include push_notification_config here
+        args, // This maps to 'parameters' in callA2ATool
         authToken,
         debugLogs,
         pushNotificationConfig
