@@ -71,6 +71,9 @@ import { ProtocolClient } from "./src/lib/protocols";
 
 **🚨 CRITICAL: Webhook Configuration Differs Between Protocols**
 
+Both protocols use the AdCP `PushNotificationConfig` schema:
+https://adcontextprotocol.org/schemas/v1/core/push-notification-config.json
+
 - **A2A Protocol** (`@a2a-js/sdk`): Webhook config goes in `params.configuration.pushNotificationConfig` (camelCase)
   ```typescript
   // A2A JSON-RPC structure (handled by SDK)
@@ -79,7 +82,11 @@ import { ProtocolClient } from "./src/lib/protocols";
     configuration: {
       pushNotificationConfig: {
         url: webhookUrl,
-        authentication: { schemes: ['HMAC-SHA256'], credentials: secret }
+        token?: clientToken,  // Optional: min 16 chars for webhook validation
+        authentication: {
+          schemes: ['HMAC-SHA256'],
+          credentials: secret  // Required: min 32 chars
+        }
       }
     }
   });
@@ -93,7 +100,11 @@ import { ProtocolClient } from "./src/lib/protocols";
     packages: [...],
     push_notification_config: {  // ← In parameters
       url: webhookUrl,
-      authentication: { schemes: ['HMAC-SHA256'], credentials: secret }
+      token?: clientToken,  // Optional: min 16 chars for webhook validation
+      authentication: {
+        schemes: ['HMAC-SHA256'],
+        credentials: secret  // Required: min 32 chars
+      }
     }
   });
   ```

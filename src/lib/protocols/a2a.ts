@@ -14,9 +14,10 @@ export async function callA2ATool(
   debugLogs: any[] = [],
   pushNotificationConfig?: {
     url: string;
+    token?: string; // Optional: min 16 chars per AdCP schema
     authentication: {
-      schemes: string[];
-      credentials: string;
+      schemes: readonly string[];
+      credentials: string; // Required: min 32 chars per AdCP schema
     };
   }
 ): Promise<any> {
@@ -80,6 +81,7 @@ export async function callA2ATool(
 
   // Build request payload following A2A JSON-RPC spec
   // Per A2A SDK: pushNotificationConfig goes in params.configuration (camelCase)
+  // Schema: https://adcontextprotocol.org/schemas/v1/core/push-notification-config.json
   const requestPayload: any = {
     message: {
       messageId: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
