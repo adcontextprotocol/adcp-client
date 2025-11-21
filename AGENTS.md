@@ -69,45 +69,59 @@ import { ProtocolClient } from "./src/lib/protocols";
 // Routes to: callA2ATool() or callMCPTool() based on agent.protocol
 ```
 
-**🚨 CRITICAL: Webhook Configuration Differs Between Protocols**
+**🚨 CRITICAL: Two Types of Webhooks - Do Not Confuse!**
 
-Both protocols use the AdCP `PushNotificationConfig` schema:
-https://adcontextprotocol.org/schemas/v1/core/push-notification-config.json
+**1. `push_notification_config` - For Async Task Status Updates**
 
-- **A2A Protocol** (`@a2a-js/sdk`): Webhook config goes in `params.configuration.pushNotificationConfig` (camelCase)
+Used for receiving task completion/progress notifications. Placement differs by protocol:
+
+- **A2A Protocol**: Goes in `params.configuration.pushNotificationConfig` (camelCase)
   ```typescript
-  // A2A JSON-RPC structure (handled by SDK)
   await a2aClient.sendMessage({
     message: { /* task content */ },
     configuration: {
-      pushNotificationConfig: {
+      pushNotificationConfig: {  // ← For async task status
         url: webhookUrl,
-        token?: clientToken,  // Optional: min 16 chars for webhook validation
-        authentication: {
-          schemes: ['HMAC-SHA256'],
-          credentials: secret  // Required: min 32 chars
-        }
+        token?: clientToken,
+        authentication: { schemes: ['HMAC-SHA256'], credentials: secret }
       }
     }
   });
   ```
 
-- **MCP Protocol**: Webhook config goes in tool arguments as `push_notification_config` (snake_case)
+- **MCP Protocol**: Goes in tool arguments as `push_notification_config` (snake_case)
   ```typescript
-  // MCP tool invocation
   await mcpClient.callTool('create_media_buy', {
     buyer_ref: '...',
     packages: [...],
-    push_notification_config: {  // ← In parameters
+    push_notification_config: {  // ← For async task status
       url: webhookUrl,
-      token?: clientToken,  // Optional: min 16 chars for webhook validation
-      authentication: {
-        schemes: ['HMAC-SHA256'],
-        credentials: secret  // Required: min 32 chars
-      }
+      token?: clientToken,
+      authentication: { schemes: ['HMAC-SHA256'], credentials: secret }
     }
   });
   ```
+
+**2. `reporting_webhook` - For Reporting Data Delivery**
+
+Used for receiving periodic performance metrics. **Always stays in skill parameters** (both A2A and MCP):
+
+```typescript
+// Both protocols - reporting_webhook in skill parameters
+{
+  buyer_ref: '...',
+  packages: [...],
+  reporting_webhook: {  // ← Stays in parameters for BOTH protocols
+    url: reportingUrl,
+    token?: clientToken,
+    authentication: { schemes: ['HMAC-SHA256'], credentials: secret },
+    reporting_frequency: 'daily',  // Additional fields specific to reporting
+    requested_metrics: ['impressions', 'spend', 'clicks']
+  }
+}
+```
+
+Schema: https://adcontextprotocol.org/schemas/v1/core/push-notification-config.json
 
 The `ProtocolClient.callTool()` method in `src/lib/protocols/index.ts` handles this routing automatically.
 
