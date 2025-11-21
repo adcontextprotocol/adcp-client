@@ -1,23 +1,23 @@
 ---
-"@adcp/client": major
+"@adcp/client": minor
 ---
 
-Clean up SDK public API and return raw AdCP responses
+Clean up SDK public API and improve response handling
 
-BREAKING CHANGES:
+IMPROVEMENTS:
 
 1. Agent class methods now return raw AdCP responses matching schemas exactly
 2. Removed internal implementation details from public API exports
+3. Added response utilities: unwrapProtocolResponse, isAdcpError, isAdcpSuccess
 
-## Response Format Changes
+## What Changed
 
-Agent methods (e.g., createMediaBuy, updateMediaBuy) now return raw AdCP
-responses following discriminated union patterns instead of wrapped format.
-
-- Success responses have required fields per schema (packages, media_buy_id)
-- Error responses have errors array: { errors: [{ code, message }] }
+**Low-level Agent class** now returns raw AdCP responses matching the protocol specification:
+- Success responses have required fields per schema (packages, media_buy_id, buyer_ref)
+- Error responses follow discriminated union: `{ errors: [{ code, message }] }`
 - Errors returned as values, not thrown as exceptions
-- Added unwrapProtocolResponse utility for protocol wrapper extraction
+
+**High-level clients unchanged** - ADCPMultiAgentClient, AgentClient, and SingleAgentClient still return `TaskResult<T>` with status-based patterns. No migration needed for standard usage.
 
 ## API Export Cleanup
 
@@ -33,36 +33,28 @@ Public API now includes only user-facing features:
 - Validation utilities (validateAgentUrl, validateAdCPResponse)
 - Response utilities (unwrapProtocolResponse, isAdcpError, isAdcpSuccess)
 
-## Migration Guide
+## Migration Guide (Only if using low-level Agent class directly)
 
-### Response Format
+**Most users don't need to migrate** - if you're using ADCPMultiAgentClient, AgentClient, or SingleAgentClient, no changes needed.
+
+### If using Agent class directly:
 ```javascript
 // Before:
+const agent = new Agent(config, client);
 const result = await agent.createMediaBuy({...});
 if (result.success) {
   console.log(result.data.media_buy_id);
-} else {
-  console.error(result.error);
 }
 
 // After:
+const agent = new Agent(config, client);
 const result = await agent.createMediaBuy({...});
 if (result.errors) {
   console.error('Failed:', result.errors);
 } else {
-  console.log(result.media_buy_id);
+  console.log(result.media_buy_id, result.buyer_ref);
 }
 ```
 
-### Removed Exports
-If you were using internal protocol clients, use Agent class instead:
-```javascript
-// Before (internal API):
-import { ProtocolClient } from '@adcp/client';
-const response = await ProtocolClient.callTool(config, 'create_media_buy', params);
-
-// After (public API):
-import { Agent } from '@adcp/client';
-const agent = new Agent(config, client);
-const response = await agent.createMediaBuy(params);
-```
+### Removed Internal Exports
+If you were importing `ProtocolClient`, `CircuitBreaker`, or other internal utilities, use the public Agent class instead.
