@@ -116,7 +116,11 @@ const TOOL_TYPES = [
 
   // Performance tools
   'ProvidePerformanceFeedbackRequest',
+  'ProvidePerformanceFeedbackRequest1',
+  'ProvidePerformanceFeedbackRequest2',
   'ProvidePerformanceFeedbackResponse',
+  'MetricType',
+  'FeedbackSource',
 
   // Signals tools
   'GetSignalsRequest',
