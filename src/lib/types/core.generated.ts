@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas v2.4.0
-// Generated at: 2025-11-21T21:12:27.826Z
+// Generated at: 2025-11-21T21:49:17.905Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -415,19 +415,6 @@ export interface CreativeAsset {
 }
 /**
  * Format identifier specifying which format this creative conforms to
- */
-export interface FormatID {
-  /**
-   * URL of the agent that defines this format (e.g., 'https://creatives.adcontextprotocol.org' for standard formats, or 'https://publisher.com/.well-known/adcp/sales' for custom formats)
-   */
-  agent_url: string;
-  /**
-   * Format identifier within the agent's namespace (e.g., 'display_300x250', 'video_standard_30s')
-   */
-  id: string;
-}
-/**
- * Image asset with URL and dimensions
  */
 export interface ImageAsset {
   /**
@@ -904,7 +891,14 @@ export type PublisherPropertySelector =
        */
       property_tags: [PropertyTag, ...PropertyTag[]];
     };
-// Note: PropertyID and PropertyTag types are defined in the PROPERTY SCHEMA section below
+/**
+ * Identifier for a publisher property. Must be lowercase alphanumeric with underscores only.
+ */
+export type PropertyID = string;
+/**
+ * Tag for categorizing publisher properties. Must be lowercase alphanumeric with underscores only.
+ */
+export type PropertyTag = string;
 /**
  * Type of inventory delivery
  */
@@ -1042,19 +1036,6 @@ export interface Product {
 }
 /**
  * Structured format identifier with agent URL and format name
- */
-export interface FormatID {
-  /**
-   * URL of the agent that defines this format (e.g., 'https://creatives.adcontextprotocol.org' for standard formats, or 'https://publisher.com/.well-known/adcp/sales' for custom formats)
-   */
-  agent_url: string;
-  /**
-   * Format identifier within the agent's namespace (e.g., 'display_300x250', 'video_standard_30s')
-   */
-  id: string;
-}
-/**
- * Represents a specific ad placement within a product's inventory
  */
 export interface Placement {
   /**
@@ -1528,50 +1509,9 @@ export interface FormatID2 {
 /**
  * Optional geographic refinements for media buys. Most targeting should be expressed in the brief and handled by the publisher. These fields are primarily for geographic restrictions (RCT testing, regulatory compliance).
  */
-export interface TargetingOverlay {
-  /**
-   * Restrict delivery to specific countries (ISO codes). Use for regulatory compliance or RCT testing.
-   */
-  geo_country_any_of?: string[];
-  /**
-   * Restrict delivery to specific regions/states. Use for regulatory compliance or RCT testing.
-   */
-  geo_region_any_of?: string[];
-  /**
-   * Restrict delivery to specific metro areas (DMA codes). Use for regulatory compliance or RCT testing.
-   */
-  geo_metro_any_of?: string[];
-  /**
-   * Restrict delivery to specific postal/ZIP codes. Use for regulatory compliance or RCT testing.
-   */
-  geo_postal_code_any_of?: string[];
-  /**
-   * AXE segment ID to include for targeting
-   */
-  axe_include_segment?: string;
-  /**
-   * AXE segment ID to exclude from targeting
-   */
-  axe_exclude_segment?: string;
-  frequency_cap?: FrequencyCap;
-}
-/**
- * Frequency capping settings for package-level application
- */
-export interface FrequencyCap {
-  /**
-   * Minutes to suppress after impression
-   */
-  suppress_minutes: number;
-}
-
 // PROPERTY SCHEMA
 /**
  * Unique identifier for this property (optional). Enables referencing properties by ID instead of repeating full objects.
- */
-export type PropertyID = string;
-/**
- * Type of advertising property
  */
 export type PropertyType = 'website' | 'mobile_app' | 'ctv_app' | 'dooh' | 'podcast' | 'radio' | 'streaming_audio';
 /**
@@ -1599,11 +1539,6 @@ export type PropertyIdentifierTypes =
   | 'podcast_guid';
 /**
  * Tag for categorizing publisher properties. Must be lowercase alphanumeric with underscores only.
- */
-export type PropertyTag = string;
-
-/**
- * An advertising property that can be validated via adagents.json
  */
 export interface Property {
   property_id?: PropertyID;

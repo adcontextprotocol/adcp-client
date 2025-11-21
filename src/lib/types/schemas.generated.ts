@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2025-11-21T21:05:21.159Z
+// Generated at: 2025-11-21T21:49:18.499Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -274,16 +274,6 @@ export const CoBrandingRequirementSchema = z.union([z.literal("required"), z.lit
 
 export const LandingPageRequirementSchema = z.union([z.literal("any"), z.literal("retailer_site_only"), z.literal("must_include_retailer")]);
 
-export const TargetingOverlaySchema = z.object({
-    geo_country_any_of: z.array(z.string()).optional(),
-    geo_region_any_of: z.array(z.string()).optional(),
-    geo_metro_any_of: z.array(z.string()).optional(),
-    geo_postal_code_any_of: z.array(z.string()).optional(),
-    axe_include_segment: z.string().optional(),
-    axe_exclude_segment: z.string().optional(),
-    frequency_cap: FrequencyCapSchema.optional()
-});
-
 export const PropertyIdentifierTypesSchema = z.union([z.literal("domain"), z.literal("subdomain"), z.literal("network_id"), z.literal("ios_bundle"), z.literal("android_package"), z.literal("apple_app_store_id"), z.literal("google_play_id"), z.literal("roku_store_id"), z.literal("fire_tv_asin"), z.literal("samsung_app_id"), z.literal("apple_tv_bundle"), z.literal("bundle_id"), z.literal("venue_id"), z.literal("screen_id"), z.literal("openooh_venue_type"), z.literal("rss_url"), z.literal("apple_podcast_id"), z.literal("spotify_show_id"), z.literal("podcast_guid")]);
 
 export const PropertyIDSchema = z.string();
@@ -408,6 +398,16 @@ export const FormatID3Schema = z.object({
 export const BrandManifestReference1Schema = z.union([BrandManifestSchema, z.string()]);
 
 export const StartTimingSchema = z.union([z.literal("asap"), z.string()]);
+
+export const TargetingOverlaySchema = z.object({
+    geo_country_any_of: z.array(z.string()).optional(),
+    geo_region_any_of: z.array(z.string()).optional(),
+    geo_metro_any_of: z.array(z.string()).optional(),
+    geo_postal_code_any_of: z.array(z.string()).optional(),
+    axe_include_segment: z.string().optional(),
+    axe_exclude_segment: z.string().optional(),
+    frequency_cap: FrequencyCapSchema.optional()
+});
 
 export const JavaScriptAssetSchema = z.object({
     content: z.string(),

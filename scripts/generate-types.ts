@@ -680,6 +680,9 @@ async function generateTypes() {
     },
   };
 
+  // Track generated types across all core schemas to prevent duplicates
+  const generatedCoreTypes = new Set<string>();
+
   for (const schemaName of ADCP_CORE_SCHEMAS) {
     try {
       console.log(`📥 Loading ${schemaName} schema from cache...`);
@@ -703,7 +706,10 @@ async function generateTypes() {
           },
         });
 
-        coreTypes += `// ${schemaName.toUpperCase()} SCHEMA\n${types}\n`;
+        // Filter out duplicate type definitions across core schemas
+        const filteredTypes = filterDuplicateTypeDefinitions(types, generatedCoreTypes);
+
+        coreTypes += `// ${schemaName.toUpperCase()} SCHEMA\n${filteredTypes}\n`;
         console.log(`✅ Generated core types for ${schemaName}`);
       } else {
         console.warn(`⚠️  Skipping ${schemaName} - schema not found in cache`);
@@ -738,7 +744,10 @@ async function generateTypes() {
           },
         });
 
-        coreTypes += `// ${schemaName.toUpperCase()} SCHEMA\n${types}\n`;
+        // Filter out duplicate type definitions using the same tracking set
+        const filteredTypes = filterDuplicateTypeDefinitions(types, generatedCoreTypes);
+
+        coreTypes += `// ${schemaName.toUpperCase()} SCHEMA\n${filteredTypes}\n`;
         console.log(`✅ Generated standalone types for ${schemaName}`);
       } else {
         console.warn(`⚠️  Skipping ${schemaName} - schema not found in cache`);
