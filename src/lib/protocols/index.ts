@@ -5,6 +5,7 @@ export { callA2ATool } from './a2a';
 import { callMCPTool } from './mcp';
 import { callA2ATool } from './a2a';
 import type { AgentConfig } from '../types';
+import type { PushNotificationConfig } from '../types/tools.generated';
 import { getAuthToken } from '../auth';
 import { validateAgentUrl } from '../validation';
 
@@ -28,16 +29,16 @@ export class ProtocolClient {
 
     const authToken = getAuthToken(agent);
 
-    // Build push_notification_config per AdCP schema:
+    // Build PushNotificationConfig per AdCP schema:
     // https://adcontextprotocol.org/schemas/v1/core/push-notification-config.json
-    // This will be passed to protocol-specific implementations
-    const pushNotificationConfig = webhookUrl
+    // Uses generated type from tools.generated.ts
+    const pushNotificationConfig: PushNotificationConfig | undefined = webhookUrl
       ? {
           url: webhookUrl,
-          ...(webhookToken && { token: webhookToken }), // Optional: client token for webhook validation (min 16 chars)
+          ...(webhookToken && { token: webhookToken }),
           authentication: {
-            schemes: ['HMAC-SHA256'] as const,
-            credentials: webhookSecret || 'placeholder_secret_min_32_characters_required', // Required: min 32 chars
+            schemes: ['HMAC-SHA256'],
+            credentials: webhookSecret || 'placeholder_secret_min_32_characters_required',
           },
         }
       : undefined;
