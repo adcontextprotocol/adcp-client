@@ -39,13 +39,14 @@ export function unwrapProtocolResponse(protocolResponse: any): any {
   }
 
   // MCP protocol: extract from structuredContent
-  if (protocolResponse.structuredContent !== undefined) {
+  if (protocolResponse.structuredContent !== undefined && protocolResponse.structuredContent !== null) {
     return protocolResponse.structuredContent;
   }
 
   // A2A protocol: extract from result.artifacts[0].parts[0].data
-  if (protocolResponse.result?.artifacts?.[0]?.parts?.[0]?.data !== undefined) {
-    return protocolResponse.result.artifacts[0].parts[0].data;
+  const a2aData = protocolResponse.result?.artifacts?.[0]?.parts?.[0]?.data;
+  if (a2aData !== undefined && a2aData !== null) {
+    return a2aData;
   }
 
   // A2A error response: check for error field
@@ -129,7 +130,8 @@ export function isAdcpSuccess(response: any, taskName: string): boolean {
   // Task-specific validation based on AdCP schemas
   switch (taskName) {
     case 'create_media_buy':
-      return !!(response.packages && response.media_buy_id);
+      // Required fields per schema: media_buy_id, buyer_ref, packages
+      return !!(response.media_buy_id && response.buyer_ref && response.packages);
 
     case 'update_media_buy':
       return !!response.affected_packages;
@@ -145,6 +147,12 @@ export function isAdcpSuccess(response: any, taskName: string): boolean {
 
     case 'list_creatives':
       return Array.isArray(response.creatives);
+
+    case 'build_creative':
+      return !!response.creative;
+
+    case 'preview_creative':
+      return !!response.preview;
 
     case 'get_media_buy_delivery':
       return !!response.delivery;

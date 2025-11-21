@@ -148,7 +148,8 @@ describe('Response Unwrapper', () => {
     test('should validate create_media_buy success response', () => {
       const successResponse = {
         packages: [{ package_id: 'pkg1' }],
-        media_buy_id: 'mb123'
+        media_buy_id: 'mb123',
+        buyer_ref: 'buyer-ref-123'
       };
 
       assert.strictEqual(isAdcpSuccess(successResponse, 'create_media_buy'), true);
