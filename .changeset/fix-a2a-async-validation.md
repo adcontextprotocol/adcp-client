@@ -4,6 +4,7 @@
 
 Fixed A2A async task handling issues:
 - Fixed `pushNotificationConfig` placement for A2A protocol: Now correctly placed in `params.configuration.pushNotificationConfig` (per @a2a-js/sdk spec) instead of being injected into skill parameters
+- Fixed `pushNotificationConfig` structure: Now follows AdCP schema (https://adcontextprotocol.org/schemas/v1/core/push-notification-config.json) with optional `token` field and proper type annotations
 - Fixed schema validation for async responses: Client now correctly identifies `status.state = "working"` or `"submitted"` states and skips schema validation for async acknowledgments
 - Updated ProtocolResponseParser to detect nested status objects (`response.status.state`, `response.result.status.state`) used in A2A async task acknowledgments
 - Fixed A2A artifact validation: Now correctly checks for `artifactId` field (per @a2a-js/sdk Artifact interface)

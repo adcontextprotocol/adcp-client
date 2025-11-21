@@ -21,20 +21,23 @@ export class ProtocolClient {
     args: Record<string, any>,
     debugLogs: any[] = [],
     webhookUrl?: string,
-    webhookSecret?: string
+    webhookSecret?: string,
+    webhookToken?: string
   ): Promise<any> {
     validateAgentUrl(agent.agent_uri);
 
     const authToken = getAuthToken(agent);
 
-    // Build push_notification_config object if webhook URL is provided
+    // Build push_notification_config per AdCP schema:
+    // https://adcontextprotocol.org/schemas/v1/core/push-notification-config.json
     // This will be passed to protocol-specific implementations
     const pushNotificationConfig = webhookUrl
       ? {
           url: webhookUrl,
+          ...(webhookToken && { token: webhookToken }), // Optional: client token for webhook validation (min 16 chars)
           authentication: {
-            schemes: ['HMAC-SHA256'],
-            credentials: webhookSecret || 'placeholder_secret_min_32_characters_required',
+            schemes: ['HMAC-SHA256'] as const,
+            credentials: webhookSecret || 'placeholder_secret_min_32_characters_required', // Required: min 32 chars
           },
         }
       : undefined;
