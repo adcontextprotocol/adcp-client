@@ -2,36 +2,16 @@
 // A comprehensive type-safe client library for the AdContext Protocol
 
 // ====== PROPERTY DISCOVERY (AdCP v2.2.0) ======
-export {
-  PropertyIndex,
-  getPropertyIndex,
-  resetPropertyIndex,
-  type PropertyMatch,
-  type AgentAuthorization,
-} from './discovery/property-index';
+export { PropertyIndex, getPropertyIndex, resetPropertyIndex, type PropertyMatch, type AgentAuthorization } from './discovery/property-index';
 export { PropertyCrawler, type AgentInfo, type CrawlResult } from './discovery/property-crawler';
-export type {
-  Property,
-  PropertyIdentifier,
-  PropertyIdentifierType,
-  PropertyType,
-  AdAgentsJson,
-} from './discovery/types';
+export type { Property, PropertyIdentifier, PropertyIdentifierType, PropertyType, AdAgentsJson } from './discovery/types';
 
 // ====== CORE CONVERSATION-AWARE CLIENTS ======
-// Primary client for all use cases - single or multi-agent
-export { ADCPMultiAgentClient as AdCPClient, AgentCollection as NewAgentCollection } from './core/ADCPMultiAgentClient';
-export type { SingleAgentClientConfig as AdCPClientConfig } from './core/SingleAgentClient';
-
-/**
- * @deprecated Use AdCPClient instead. ADCPMultiAgentClient will be removed in v4.0.
- * @see AdCPClient
- */
-export { ADCPMultiAgentClient } from './core/ADCPMultiAgentClient';
-
-// NOTE: SingleAgentClient is intentionally NOT exported - it's an internal implementation detail.
-// All users should use AdCPClient (alias for ADCPMultiAgentClient) which supports both
-// single-agent operations via agent(id) and multi-agent operations via agents([ids]).
+// New conversation-aware clients with input handler pattern
+export { ADCPClient, createADCPClient } from './core/ADCPClient';
+export type { ADCPClientConfig } from './core/ADCPClient';
+export { AgentClient, type TaskResponseTypeMap, type AdcpTaskName } from './core/AgentClient';
+export { ADCPMultiAgentClient, createADCPMultiAgentClient } from './core/ADCPMultiAgentClient';
 export { ConfigurationManager } from './core/ConfigurationManager';
 export {
   CreativeAgentClient,
@@ -39,16 +19,11 @@ export {
   STANDARD_CREATIVE_AGENTS,
   type CreativeFormat,
   type CreativeFormatType,
-  type CreativeAgentClientConfig,
+  type CreativeAgentClientConfig
 } from './core/CreativeAgentClient';
 export { TaskExecutor } from './core/TaskExecutor';
 export { ProtocolResponseParser, responseParser, ADCP_STATUS, type ADCPStatus } from './core/ProtocolResponseParser';
-export {
-  ResponseValidator,
-  responseValidator,
-  type ValidationResult,
-  type ValidationOptions,
-} from './core/ResponseValidator';
+export { ResponseValidator, responseValidator, type ValidationResult, type ValidationOptions } from './core/ResponseValidator';
 // ====== CONVERSATION TYPES ======
 export type {
   Message,
@@ -60,7 +35,7 @@ export type {
   TaskResult,
   TaskState,
   TaskStatus,
-  ConversationConfig,
+  ConversationConfig
 } from './core/ConversationTypes';
 
 // ====== TASK EVENT TYPES ======
@@ -71,7 +46,7 @@ export type {
   TaskStatusEvent,
   ObjectEvent,
   TaskEvent,
-  TaskEventCallbacks,
+  TaskEventCallbacks
 } from './core/TaskEventTypes';
 export { createOperationId } from './core/TaskEventTypes';
 
@@ -82,7 +57,7 @@ export type {
   WebhookPayload,
   Activity,
   NotificationMetadata,
-  MediaBuyDeliveryNotification,
+  MediaBuyDeliveryNotification
 } from './core/AsyncHandler';
 export { AsyncHandler, createAsyncHandler } from './core/AsyncHandler';
 
@@ -99,7 +74,7 @@ export type {
   DeferredTaskState,
   StorageConfig,
   StorageFactory,
-  StorageMiddleware,
+  StorageMiddleware
 } from './storage/interfaces';
 export { MemoryStorage, createMemoryStorage, createMemoryStorageConfig } from './storage/MemoryStorage';
 
@@ -119,7 +94,7 @@ export {
   ConfigurationError,
   isADCPError,
   isErrorOfType,
-  extractErrorInfo,
+  extractErrorInfo
 } from './errors';
 export { InputRequiredError } from './core/TaskExecutor';
 
@@ -129,53 +104,101 @@ export * from './types';
 // ====== TOOL TYPES ======
 // All ADCP task request/response types
 export type {
-  GetProductsRequest,
-  GetProductsResponse,
-  ListCreativeFormatsRequest,
-  ListCreativeFormatsResponse,
-  CreateMediaBuyRequest,
-  CreateMediaBuyResponse,
-  UpdateMediaBuyRequest,
-  UpdateMediaBuyResponse,
-  SyncCreativesRequest,
-  SyncCreativesResponse,
-  ListCreativesRequest,
-  ListCreativesResponse,
-  GetMediaBuyDeliveryRequest,
-  GetMediaBuyDeliveryResponse,
-  ListAuthorizedPropertiesRequest,
-  ListAuthorizedPropertiesResponse,
-  ProvidePerformanceFeedbackRequest,
-  ProvidePerformanceFeedbackResponse,
-  GetSignalsRequest,
-  GetSignalsResponse,
-  ActivateSignalRequest,
-  ActivateSignalResponse,
+  GetProductsRequest, GetProductsResponse,
+  ListCreativeFormatsRequest, ListCreativeFormatsResponse,
+  CreateMediaBuyRequest, CreateMediaBuyResponse,
+  UpdateMediaBuyRequest, UpdateMediaBuyResponse,
+  SyncCreativesRequest, SyncCreativesResponse,
+  ListCreativesRequest, ListCreativesResponse,
+  GetMediaBuyDeliveryRequest, GetMediaBuyDeliveryResponse,
+  ListAuthorizedPropertiesRequest, ListAuthorizedPropertiesResponse,
+  ProvidePerformanceFeedbackRequest, ProvidePerformanceFeedbackResponse,
+  GetSignalsRequest, GetSignalsResponse,
+  ActivateSignalRequest, ActivateSignalResponse,
   // Core data structures
   Format,
   Product,
   PackageRequest,
   CreativeAsset,
-  CreativePolicy,
+  CreativePolicy
 } from './types/tools.generated';
 
-// ====== PROTOCOL CLIENTS ======
-export * from './protocols';
+// ====== ZOD SCHEMAS (for runtime validation) ======
+// Re-export all Zod schemas for user validation needs
+export * from './types/schemas.generated';
 
 // ====== AUTHENTICATION ======
-export * from './auth';
+// Auth utilities for custom integrations
+export { getAuthToken, createAdCPHeaders, createMCPAuthHeaders, createAuthenticatedFetch } from './auth';
 
 // ====== VALIDATION ======
-export * from './validation';
+// Schema validation for requests/responses
+export {
+  validateAgentUrl,
+  validateAdCPResponse,
+  getExpectedSchema,
+  handleAdCPResponse
+} from './validation';
 
-// ====== UTILITIES ======
-export * from './utils';
-export { getStandardFormats } from './utils';
-export { detectProtocol, detectProtocolWithTimeout } from './utils/protocol-detection';
+// ====== RESPONSE UTILITIES ======
+// Public utilities for working with AdCP responses
+export {
+  getStandardFormats,
+  unwrapProtocolResponse,
+  isAdcpError,
+  isAdcpSuccess
+} from './utils';
+export { REQUEST_TIMEOUT, MAX_CONCURRENT, STANDARD_FORMATS } from './utils';
 
-// ====== TEST HELPERS ======
-export * from './testing';
-
-// ====== LEGACY AGENT CLASSES ======
-// Keep existing generated agent classes for backward compatibility
+// ====== AGENT CLASSES ======
+// Primary agent interface - returns raw AdCP responses
 export { Agent, AgentCollection } from './agents/index.generated';
+
+// ====== BACKWARD COMPATIBILITY & ENVIRONMENT LOADING ======
+
+import type { AgentConfig } from './types';
+import { ADCPMultiAgentClient } from './core/ADCPMultiAgentClient';
+
+/**
+ * Legacy AdCPClient for backward compatibility - now redirects to ADCPMultiAgentClient
+ * @deprecated Use ADCPMultiAgentClient instead for new code
+ */
+export class AdCPClient {
+  private multiClient: ADCPMultiAgentClient;
+
+  constructor(agents?: AgentConfig[]) {
+    this.multiClient = new ADCPMultiAgentClient(agents || []);
+  }
+
+  agent(id: string) { return this.multiClient.agent(id); }
+  agents(ids: string[]) { return this.multiClient.agents(ids); }
+  allAgents() { return this.multiClient.allAgents(); }
+  addAgent(agent: AgentConfig) { this.multiClient.addAgent(agent); }
+  getAgents() { return this.multiClient.getAgentConfigs(); }
+  get agentCount() { return this.multiClient.agentCount; }
+  get agentIds() { return this.multiClient.getAgentIds(); }
+  
+  getStandardFormats() {
+    const { getStandardFormats } = require('./utils');
+    return getStandardFormats();
+  }
+}
+
+// Legacy configuration manager maintained for backward compatibility
+// The enhanced ConfigurationManager is exported above
+
+/**
+ * Legacy createAdCPClient function for backward compatibility
+ * @deprecated Use new ADCPMultiAgentClient constructor instead
+ */
+export function createAdCPClient(agents?: AgentConfig[]): AdCPClient {
+  return new AdCPClient(agents);
+}
+
+/**
+ * Load agents from environment and create multi-agent client
+ * @deprecated Use ADCPMultiAgentClient.fromEnv() instead
+ */
+export function createAdCPClientFromEnv(): ADCPMultiAgentClient {
+  return ADCPMultiAgentClient.fromEnv();
+}
