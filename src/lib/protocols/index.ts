@@ -27,30 +27,31 @@ export class ProtocolClient {
 
     const authToken = getAuthToken(agent);
 
-    // Include push_notification_config in args if provided (AdCP spec)
-    // Format: { url: string, authentication: { schemes: string[], credentials: string } }
-    const argsWithWebhook = webhookUrl
+    // Build push_notification_config object if webhook URL is provided
+    // This will be passed to protocol-specific implementations
+    const pushNotificationConfig = webhookUrl
       ? {
-          ...args,
-          push_notification_config: {
-            url: webhookUrl,
-            authentication: {
-              schemes: ['HMAC-SHA256'],
-              credentials: webhookSecret || 'placeholder_secret_min_32_characters_required',
-            },
+          url: webhookUrl,
+          authentication: {
+            schemes: ['HMAC-SHA256'],
+            credentials: webhookSecret || 'placeholder_secret_min_32_characters_required',
           },
         }
-      : args;
+      : undefined;
 
     if (agent.protocol === 'mcp') {
+      // For MCP, include push_notification_config in tool arguments (MCP spec)
+      const argsWithWebhook = pushNotificationConfig ? { ...args, push_notification_config: pushNotificationConfig } : args;
       return callMCPTool(agent.agent_uri, toolName, argsWithWebhook, authToken, debugLogs);
     } else if (agent.protocol === 'a2a') {
+      // For A2A, pass push_notification_config separately (not in parameters)
       return callA2ATool(
         agent.agent_uri,
         toolName,
-        argsWithWebhook, // This maps to 'parameters' in callA2ATool
+        args, // DO NOT include push_notification_config here
         authToken,
-        debugLogs
+        debugLogs,
+        pushNotificationConfig
       );
     } else {
       throw new Error(`Unsupported protocol: ${agent.protocol}`);
