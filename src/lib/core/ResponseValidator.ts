@@ -311,10 +311,15 @@ export class ResponseValidator {
   private getSchemaForTool(toolName: string): z.ZodSchema | null {
     // Only include schemas that exist in generated schemas
     const schemaMap: Partial<Record<string, z.ZodSchema>> = {
+      list_creative_formats: schemas.ListCreativeFormatsResponseSchema,
+      create_media_buy: schemas.CreateMediaBuyResponseSchema,
+      update_media_buy: schemas.UpdateMediaBuyResponseSchema,
       sync_creatives: schemas.SyncCreativesResponseSchema,
       get_media_buy_delivery: schemas.GetMediaBuyDeliveryResponseSchema,
       list_authorized_properties: schemas.ListAuthorizedPropertiesResponseSchema,
       provide_performance_feedback: schemas.ProvidePerformanceFeedbackResponseSchema,
+      get_signals: schemas.GetSignalsResponseSchema,
+      activate_signal: schemas.ActivateSignalResponseSchema,
       preview_creative: schemas.PreviewCreativeResponseSchema,
     };
 
