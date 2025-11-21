@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2025-11-21T19:38:45.921Z
+// Generated at: 2025-11-21T21:05:21.159Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -240,19 +240,6 @@ export const FlatRatePricingOptionSchema = z.object({
     min_spend_per_package: z.number().optional()
 });
 
-export const PublisherPropertySelectorSchema = z.union([z.object({
-        publisher_domain: z.string(),
-        selection_type: z.literal("all")
-    }), z.object({
-        publisher_domain: z.string(),
-        selection_type: z.literal("by_id"),
-        property_ids: z.tuple([z.string()]).rest(z.string())
-    }), z.object({
-        publisher_domain: z.string(),
-        selection_type: z.literal("by_tag"),
-        property_tags: z.tuple([z.string()]).rest(z.string())
-    })]);
-
 export const PlacementSchema = z.object({
     placement_id: z.string(),
     name: z.string(),
@@ -299,7 +286,11 @@ export const TargetingOverlaySchema = z.object({
 
 export const PropertyIdentifierTypesSchema = z.union([z.literal("domain"), z.literal("subdomain"), z.literal("network_id"), z.literal("ios_bundle"), z.literal("android_package"), z.literal("apple_app_store_id"), z.literal("google_play_id"), z.literal("roku_store_id"), z.literal("fire_tv_asin"), z.literal("samsung_app_id"), z.literal("apple_tv_bundle"), z.literal("bundle_id"), z.literal("venue_id"), z.literal("screen_id"), z.literal("openooh_venue_type"), z.literal("rss_url"), z.literal("apple_podcast_id"), z.literal("spotify_show_id"), z.literal("podcast_guid")]);
 
+export const PropertyIDSchema = z.string();
+
 export const PropertyTypeSchema = z.union([z.literal("website"), z.literal("mobile_app"), z.literal("ctv_app"), z.literal("dooh"), z.literal("podcast"), z.literal("radio"), z.literal("streaming_audio")]);
+
+export const PropertyTagSchema = z.string();
 
 export const BrandManifestSchema = z.object({
     url: z.string().optional(),
@@ -373,6 +364,19 @@ export const ErrorSchema = z.object({
     retry_after: z.number().optional(),
     details: z.record(z.string(), z.unknown()).optional()
 });
+
+export const PublisherPropertySelectorSchema = z.union([z.object({
+        publisher_domain: z.string(),
+        selection_type: z.literal("all")
+    }), z.object({
+        publisher_domain: z.string(),
+        selection_type: z.literal("by_id"),
+        property_ids: z.tuple([PropertyIDSchema]).rest(PropertyIDSchema)
+    }), z.object({
+        publisher_domain: z.string(),
+        selection_type: z.literal("by_tag"),
+        property_tags: z.tuple([PropertyTagSchema]).rest(PropertyTagSchema)
+    })]);
 
 export const ReportingCapabilitiesSchema = z.object({
     available_reporting_frequencies: z.tuple([ReportingFrequencySchema]).rest(ReportingFrequencySchema),
@@ -824,7 +828,7 @@ export const ProductSchema = z.object({
 });
 
 export const PropertySchema = z.object({
-    property_id: z.string().optional(),
+    property_id: PropertyIDSchema.optional(),
     property_type: PropertyTypeSchema,
     name: z.string(),
     identifiers: z.tuple([z.object({
@@ -834,7 +838,7 @@ export const PropertySchema = z.object({
         type: PropertyIdentifierTypesSchema,
         value: z.string()
     })),
-    tags: z.array(z.string()).optional(),
+    tags: z.array(PropertyTagSchema).optional(),
     publisher_domain: z.string().optional()
 });
 

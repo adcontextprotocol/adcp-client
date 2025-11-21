@@ -335,7 +335,7 @@ export type PublisherPropertySelector =
        *
        * @minItems 1
        */
-      property_ids: [string, ...string[]];
+      property_ids: [PropertyID, ...PropertyID[]];
     }
   | {
       /**
@@ -351,8 +351,16 @@ export type PublisherPropertySelector =
        *
        * @minItems 1
        */
-      property_tags: [string, ...string[]];
+      property_tags: [PropertyTag, ...PropertyTag[]];
     };
+/**
+ * Identifier for a publisher property. Must be lowercase alphanumeric with underscores only.
+ */
+export type PropertyID = string;
+/**
+ * Tag for categorizing publisher properties. Must be lowercase alphanumeric with underscores only.
+ */
+export type PropertyTag = string;
 /**
  * Type of inventory delivery
  */

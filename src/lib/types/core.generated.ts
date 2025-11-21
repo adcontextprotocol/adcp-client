@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas v2.4.0
-// Generated at: 2025-11-21T16:50:48.569Z
+// Generated at: 2025-11-21T21:12:27.826Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -886,7 +886,7 @@ export type PublisherPropertySelector =
        *
        * @minItems 1
        */
-      property_ids: [string, ...string[]];
+      property_ids: [PropertyID, ...PropertyID[]];
     }
   | {
       /**
@@ -902,8 +902,9 @@ export type PublisherPropertySelector =
        *
        * @minItems 1
        */
-      property_tags: [string, ...string[]];
+      property_tags: [PropertyTag, ...PropertyTag[]];
     };
+// Note: PropertyID and PropertyTag types are defined in the PROPERTY SCHEMA section below
 /**
  * Type of inventory delivery
  */
@@ -1566,6 +1567,10 @@ export interface FrequencyCap {
 
 // PROPERTY SCHEMA
 /**
+ * Unique identifier for this property (optional). Enables referencing properties by ID instead of repeating full objects.
+ */
+export type PropertyID = string;
+/**
  * Type of advertising property
  */
 export type PropertyType = 'website' | 'mobile_app' | 'ctv_app' | 'dooh' | 'podcast' | 'radio' | 'streaming_audio';
@@ -1592,15 +1597,16 @@ export type PropertyIdentifierTypes =
   | 'apple_podcast_id'
   | 'spotify_show_id'
   | 'podcast_guid';
+/**
+ * Tag for categorizing publisher properties. Must be lowercase alphanumeric with underscores only.
+ */
+export type PropertyTag = string;
 
 /**
  * An advertising property that can be validated via adagents.json
  */
 export interface Property {
-  /**
-   * Unique identifier for this property (optional). Enables referencing properties by ID instead of repeating full objects. Recommended format: lowercase with underscores (e.g., 'cnn_ctv_app', 'instagram_mobile')
-   */
-  property_id?: string;
+  property_id?: PropertyID;
   property_type: PropertyType;
   /**
    * Human-readable property name
@@ -1630,7 +1636,7 @@ export interface Property {
   /**
    * Tags for categorization and grouping (e.g., network membership, content categories)
    */
-  tags?: string[];
+  tags?: PropertyTag[];
   /**
    * Domain where adagents.json should be checked for authorization validation. Required for list_authorized_properties response. Optional in adagents.json (file location implies domain).
    */
