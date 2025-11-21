@@ -69,6 +69,37 @@ import { ProtocolClient } from "./src/lib/protocols";
 // Routes to: callA2ATool() or callMCPTool() based on agent.protocol
 ```
 
+**🚨 CRITICAL: Webhook Configuration Differs Between Protocols**
+
+- **A2A Protocol** (`@a2a-js/sdk`): Webhook config goes in `params.configuration.pushNotificationConfig` (camelCase)
+  ```typescript
+  // A2A JSON-RPC structure (handled by SDK)
+  await a2aClient.sendMessage({
+    message: { /* task content */ },
+    configuration: {
+      pushNotificationConfig: {
+        url: webhookUrl,
+        authentication: { schemes: ['HMAC-SHA256'], credentials: secret }
+      }
+    }
+  });
+  ```
+
+- **MCP Protocol**: Webhook config goes in tool arguments as `push_notification_config` (snake_case)
+  ```typescript
+  // MCP tool invocation
+  await mcpClient.callTool('create_media_buy', {
+    buyer_ref: '...',
+    packages: [...],
+    push_notification_config: {  // ← In parameters
+      url: webhookUrl,
+      authentication: { schemes: ['HMAC-SHA256'], credentials: secret }
+    }
+  });
+  ```
+
+The `ProtocolClient.callTool()` method in `src/lib/protocols/index.ts` handles this routing automatically.
+
 ### Async Operation Patterns (AdCP PR 78)
 
 All operations follow 5 status patterns based on agent response:

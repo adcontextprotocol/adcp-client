@@ -77,6 +77,11 @@ export class ProtocolResponseParser {
       return response.status as ADCPStatus;
     }
 
+    // Check nested status.state (A2A async task acknowledgments)
+    if (response?.status?.state && Object.values(ADCP_STATUS).includes(response.status.state)) {
+      return response.status.state as ADCPStatus;
+    }
+
     // Check MCP structuredContent.status
     if (response?.structuredContent?.status && Object.values(ADCP_STATUS).includes(response.structuredContent.status)) {
       return response.structuredContent.status as ADCPStatus;
@@ -85,6 +90,14 @@ export class ProtocolResponseParser {
     // Check for MCP error responses
     if (response?.isError === true) {
       return ADCP_STATUS.FAILED;
+    }
+
+    // Check A2A result.status or result.status.state (artifact responses)
+    if (response?.result?.status && Object.values(ADCP_STATUS).includes(response.result.status)) {
+      return response.result.status as ADCPStatus;
+    }
+    if (response?.result?.status?.state && Object.values(ADCP_STATUS).includes(response.result.status.state)) {
+      return response.result.status.state as ADCPStatus;
     }
 
     // If response has structuredContent or content, assume it's completed

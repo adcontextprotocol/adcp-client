@@ -11,7 +11,14 @@ export async function callA2ATool(
   toolName: string,
   parameters: Record<string, any>,
   authToken?: string,
-  debugLogs: any[] = []
+  debugLogs: any[] = [],
+  pushNotificationConfig?: {
+    url: string;
+    authentication: {
+      schemes: string[];
+      credentials: string;
+    };
+  }
 ): Promise<any> {
   // Create authenticated fetch that wraps native fetch
   // This ensures ALL requests (including agent card fetching) include auth headers
@@ -71,8 +78,9 @@ export async function callA2ATool(
     fetchImpl,
   });
 
-  // Build request payload following AdCP A2A spec
-  const requestPayload = {
+  // Build request payload following A2A JSON-RPC spec
+  // Per A2A SDK: pushNotificationConfig goes in params.configuration (camelCase)
+  const requestPayload: any = {
     message: {
       messageId: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
       role: 'user',
@@ -88,6 +96,13 @@ export async function callA2ATool(
       ],
     },
   };
+
+  // Add pushNotificationConfig in configuration object (A2A JSON-RPC spec)
+  if (pushNotificationConfig) {
+    requestPayload.configuration = {
+      pushNotificationConfig: pushNotificationConfig,
+    };
+  }
 
   // Add debug log for A2A call
   const payloadSize = JSON.stringify(requestPayload).length;
