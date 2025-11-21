@@ -171,7 +171,7 @@ export function isAdcpSuccess(response: any, taskName: string): boolean {
       return Array.isArray(response.properties);
 
     case 'provide_performance_feedback':
-      return response.status === 'received' || response.status === 'acknowledged';
+      return response.success === true;
 
     case 'get_signals':
       return Array.isArray(response.signals);
