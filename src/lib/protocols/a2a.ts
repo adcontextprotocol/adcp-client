@@ -13,6 +13,9 @@ export async function callA2ATool(
   authToken?: string,
   debugLogs: any[] = []
 ): Promise<any> {
+  const pushNotificationConfig = parameters['push_notification_config']
+  delete parameters['push_notification_config']
+
   // Create authenticated fetch that wraps native fetch
   // This ensures ALL requests (including agent card fetching) include auth headers
   const fetchImpl = async (url: string | URL | Request, options?: RequestInit) => {
@@ -87,6 +90,9 @@ export async function callA2ATool(
         },
       ],
     },
+    configuration: {
+      pushNotificationConfig
+    }
   };
 
   // Add debug log for A2A call
