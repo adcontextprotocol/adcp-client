@@ -128,6 +128,9 @@ const TOOL_TYPES = [
 
   // Supporting types
   'PackageRequest',
+  'CreativePolicy',
+  'PushNotificationConfig',
+  'CreativeFilters',
 ];
 
 // Write file only if content differs (excluding timestamp)
