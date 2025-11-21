@@ -20,7 +20,7 @@
  * // Returns: { packages: [...], media_buy_id: "..." }
  *
  * @example
- * // A2A response
+ * // A2A response (simple)
  * const a2aResponse = {
  *   result: {
  *     artifacts: [{
@@ -32,6 +32,22 @@
  * };
  * const adcpResponse = unwrapProtocolResponse(a2aResponse);
  * // Returns: { packages: [...], media_buy_id: "..." }
+ *
+ * @example
+ * // A2A response (HITL with multiple artifacts)
+ * const hitlResponse = {
+ *   result: {
+ *     artifacts: [
+ *       { artifactId: "start_of_hitl-...", parts: [{ data: { status: "pending_human", data: null }}]},
+ *       { artifactId: "end_of_hitl-...", parts: [
+ *         { kind: "text", text: "..." },
+ *         { kind: "data", data: { packages: [...], media_buy_id: "..." }}
+ *       ]}
+ *     ]
+ *   }
+ * };
+ * const adcpResponse = unwrapProtocolResponse(hitlResponse);
+ * // Returns: { packages: [...], media_buy_id: "..." } (from end_of_hitl artifact)
  */
 export function unwrapProtocolResponse(protocolResponse: any): any {
   if (!protocolResponse) {
@@ -43,10 +59,51 @@ export function unwrapProtocolResponse(protocolResponse: any): any {
     return protocolResponse.structuredContent;
   }
 
-  // A2A protocol: extract from result.artifacts[0].parts[0].data
-  const a2aData = protocolResponse.result?.artifacts?.[0]?.parts?.[0]?.data;
-  if (a2aData !== undefined && a2aData !== null) {
-    return a2aData;
+  // A2A protocol: extract from result.artifacts
+  // When multiple artifacts exist (e.g., HITL workflows), find the one with the AdCP response
+  const artifacts = protocolResponse.result?.artifacts;
+  if (Array.isArray(artifacts) && artifacts.length > 0) {
+    // Strategy: Look for the artifact with AdCP response data
+    // 1. Try artifacts with "end_of_" prefix (HITL completion artifact)
+    // 2. Try artifacts with data parts containing AdCP response fields
+    // 3. Fall back to first artifact's first data part
+
+    // First, try to find HITL completion artifact (end_of_hitl-)
+    for (const artifact of artifacts) {
+      if (artifact.artifactId?.startsWith('end_of_hitl-') || artifact.artifactId?.startsWith('end_of_')) {
+        // Look for data part with AdCP response structure
+        const dataPart = artifact.parts?.find((p: any) => p.kind === 'data' && p.data && typeof p.data === 'object');
+        if (dataPart?.data) {
+          // Verify it looks like an AdCP response (has typical AdCP fields)
+          const data = dataPart.data;
+          if (data.media_buy_id || data.buyer_ref || data.packages || data.products || data.formats || data.creatives) {
+            return data;
+          }
+        }
+      }
+    }
+
+    // Second, look for any artifact with data part containing AdCP response fields
+    for (const artifact of artifacts) {
+      const dataPart = artifact.parts?.find((p: any) => p.kind === 'data' && p.data && typeof p.data === 'object');
+      if (dataPart?.data) {
+        const data = dataPart.data;
+        // Skip HITL status artifacts (these have status: "pending_human" and data: null)
+        if (data.status === 'pending_human' && data.data === null) {
+          continue;
+        }
+        // Check if this looks like an AdCP response
+        if (data.media_buy_id || data.buyer_ref || data.packages || data.products || data.formats || data.creatives) {
+          return data;
+        }
+      }
+    }
+
+    // Fall back to first artifact's first data part
+    const a2aData = artifacts[0]?.parts?.[0]?.data;
+    if (a2aData !== undefined && a2aData !== null) {
+      return a2aData;
+    }
   }
 
   // A2A error response: check for error field

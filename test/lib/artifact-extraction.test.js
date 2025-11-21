@@ -179,6 +179,85 @@ describe('Artifact Extraction Tests', () => {
       assert.ok(fallbackLog, 'Should log fallback to result');
     });
 
+    it('should extract AdCP response from HITL multi-artifact structure', async () => {
+      // Real-world HITL response with 3 artifacts
+      const mockResponse = {
+        result: {
+          artifacts: [
+            {
+              artifactId: 'start_of_hitl-create_media_buy-ba544893-c44f-44dd-855d-d4484095586e',
+              parts: [
+                {
+                  kind: 'data',
+                  data: {
+                    status: 'pending_human',
+                    data: null,
+                  },
+                },
+              ],
+            },
+            {
+              artifactId: 'end_of_hitl-create_media_buy-ba544893-c44f-44dd-855d-d4484095586e',
+              parts: [
+                {
+                  kind: 'text',
+                  text: '✅ Media Buy Created Successfully',
+                },
+                {
+                  kind: 'data',
+                  data: {
+                    buyer_ref: 'harley-test-1763691443',
+                    media_buy_id: '123',
+                    packages: [
+                      { buyer_ref: 'harley-pkg-1-1763691443', package_id: '1' },
+                      { buyer_ref: 'harley-pkg-2-1763691443', package_id: '2' },
+                    ],
+                  },
+                },
+              ],
+            },
+            {
+              artifactId: '38610840-956b-4d78-a762-aeff2230ea5b',
+              parts: [
+                {
+                  kind: 'text',
+                  text: '✅ Media Buy Created Successfully',
+                },
+                {
+                  kind: 'data',
+                  data: {
+                    id: 'adk-c7f309cf-acfe-44b2-a253-3dd1d85562f7',
+                    name: 'create_media_buy',
+                    response: {
+                      buyer_ref: 'harley-test-1763691443',
+                      media_buy_id: '123',
+                      packages: [
+                        { buyer_ref: 'harley-pkg-1-1763691443', package_id: '1' },
+                        { buyer_ref: 'harley-pkg-2-1763691443', package_id: '2' },
+                      ],
+                    },
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      };
+
+      const debugLogs = [];
+      const extractedData = executor.extractResponseData(mockResponse, debugLogs);
+
+      // Should extract the AdCP response from end_of_hitl artifact
+      assert.ok(extractedData.media_buy_id, 'Should have media_buy_id');
+      assert.strictEqual(extractedData.media_buy_id, '123');
+      assert.ok(extractedData.packages, 'Should have packages');
+      assert.strictEqual(extractedData.packages.length, 2);
+      assert.strictEqual(extractedData.buyer_ref, 'harley-test-1763691443');
+
+      // Should NOT return the pending_human status from first artifact
+      assert.strictEqual(extractedData.status, undefined);
+    });
+
     it('should extract data from framework-wrapped responses (e.g., ADK FunctionResponse)', async () => {
       // Mock A2A response with ADK FunctionResponse wrapper
       // ADK wraps responses in { id, name, response: {...} } format
