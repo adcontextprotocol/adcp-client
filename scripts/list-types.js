@@ -6,7 +6,9 @@ console.log(`\n=== Total Exports: ${allExports.length} ===\n`);
 
 // Categorize exports
 const functions = allExports.filter(k => typeof lib[k] === 'function');
-const classes = allExports.filter(k => typeof lib[k] === 'function' && lib[k].prototype && lib[k].prototype.constructor === lib[k]);
+const classes = allExports.filter(
+  k => typeof lib[k] === 'function' && lib[k].prototype && lib[k].prototype.constructor === lib[k]
+);
 const objects = allExports.filter(k => typeof lib[k] === 'object' && lib[k] !== null);
 const zodSchemas = allExports.filter(k => k.endsWith('Schema'));
 

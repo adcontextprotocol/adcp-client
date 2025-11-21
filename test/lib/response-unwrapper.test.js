@@ -6,48 +6,45 @@ const assert = require('node:assert');
 const { unwrapProtocolResponse, isAdcpError, isAdcpSuccess } = require('../../dist/lib/utils/index.js');
 
 describe('Response Unwrapper', () => {
-
   describe('unwrapProtocolResponse', () => {
     test('should unwrap MCP structuredContent response', () => {
       const mcpResponse = {
         structuredContent: {
-          packages: [
-            { package_id: 'pkg1', budget: 10000 }
-          ],
-          media_buy_id: 'mb123'
+          packages: [{ package_id: 'pkg1', budget: 10000 }],
+          media_buy_id: 'mb123',
         },
-        content: [
-          { type: 'text', text: 'Media buy created successfully' }
-        ]
+        content: [{ type: 'text', text: 'Media buy created successfully' }],
       };
 
       const result = unwrapProtocolResponse(mcpResponse);
 
       assert.deepStrictEqual(result, {
         packages: [{ package_id: 'pkg1', budget: 10000 }],
-        media_buy_id: 'mb123'
+        media_buy_id: 'mb123',
       });
     });
 
     test('should unwrap A2A result.artifacts response', () => {
       const a2aResponse = {
         result: {
-          artifacts: [{
-            parts: [{
-              data: {
-                products: [
-                  { product_id: 'prod1', name: 'Test Product' }
-                ]
-              }
-            }]
-          }]
-        }
+          artifacts: [
+            {
+              parts: [
+                {
+                  data: {
+                    products: [{ product_id: 'prod1', name: 'Test Product' }],
+                  },
+                },
+              ],
+            },
+          ],
+        },
       };
 
       const result = unwrapProtocolResponse(a2aResponse);
 
       assert.deepStrictEqual(result, {
-        products: [{ product_id: 'prod1', name: 'Test Product' }]
+        products: [{ product_id: 'prod1', name: 'Test Product' }],
       });
     });
 
@@ -55,8 +52,8 @@ describe('Response Unwrapper', () => {
       const a2aErrorResponse = {
         error: {
           code: 400,
-          message: 'Invalid request parameters'
-        }
+          message: 'Invalid request parameters',
+        },
       };
 
       const result = unwrapProtocolResponse(a2aErrorResponse);
@@ -70,9 +67,7 @@ describe('Response Unwrapper', () => {
     test('should convert MCP error to AdCP error format', () => {
       const mcpErrorResponse = {
         isError: true,
-        content: [
-          { type: 'text', text: 'Tool execution failed' }
-        ]
+        content: [{ type: 'text', text: 'Tool execution failed' }],
       };
 
       const result = unwrapProtocolResponse(mcpErrorResponse);
@@ -85,16 +80,14 @@ describe('Response Unwrapper', () => {
 
     test('should parse stringified JSON in MCP text content', () => {
       const mcpResponse = {
-        content: [
-          { type: 'text', text: '{"packages":[{"package_id":"pkg1"}],"media_buy_id":"mb123"}' }
-        ]
+        content: [{ type: 'text', text: '{"packages":[{"package_id":"pkg1"}],"media_buy_id":"mb123"}' }],
       };
 
       const result = unwrapProtocolResponse(mcpResponse);
 
       assert.deepStrictEqual(result, {
         packages: [{ package_id: 'pkg1' }],
-        media_buy_id: 'mb123'
+        media_buy_id: 'mb123',
       });
     });
 
@@ -106,7 +99,7 @@ describe('Response Unwrapper', () => {
     test('should return plain object if already unwrapped', () => {
       const adcpResponse = {
         packages: [{ package_id: 'pkg1' }],
-        media_buy_id: 'mb123'
+        media_buy_id: 'mb123',
       };
 
       const result = unwrapProtocolResponse(adcpResponse);
@@ -118,9 +111,7 @@ describe('Response Unwrapper', () => {
   describe('isAdcpError', () => {
     test('should return true for error responses', () => {
       const errorResponse = {
-        errors: [
-          { code: 'invalid_request', message: 'Missing required field' }
-        ]
+        errors: [{ code: 'invalid_request', message: 'Missing required field' }],
       };
 
       assert.strictEqual(isAdcpError(errorResponse), true);
@@ -129,7 +120,7 @@ describe('Response Unwrapper', () => {
     test('should return false for success responses', () => {
       const successResponse = {
         packages: [{ package_id: 'pkg1' }],
-        media_buy_id: 'mb123'
+        media_buy_id: 'mb123',
       };
 
       assert.strictEqual(isAdcpError(successResponse), false);
@@ -137,7 +128,7 @@ describe('Response Unwrapper', () => {
 
     test('should return false for empty errors array', () => {
       const response = {
-        errors: []
+        errors: [],
       };
 
       assert.strictEqual(isAdcpError(response), false);
@@ -149,7 +140,7 @@ describe('Response Unwrapper', () => {
       const successResponse = {
         packages: [{ package_id: 'pkg1' }],
         media_buy_id: 'mb123',
-        buyer_ref: 'buyer-ref-123'
+        buyer_ref: 'buyer-ref-123',
       };
 
       assert.strictEqual(isAdcpSuccess(successResponse, 'create_media_buy'), true);
@@ -157,7 +148,7 @@ describe('Response Unwrapper', () => {
 
     test('should fail validation for create_media_buy without required fields', () => {
       const invalidResponse = {
-        packages: [{ package_id: 'pkg1' }]
+        packages: [{ package_id: 'pkg1' }],
         // Missing media_buy_id
       };
 
@@ -166,7 +157,7 @@ describe('Response Unwrapper', () => {
 
     test('should validate update_media_buy success response', () => {
       const successResponse = {
-        affected_packages: [{ package_id: 'pkg1' }]
+        affected_packages: [{ package_id: 'pkg1' }],
       };
 
       assert.strictEqual(isAdcpSuccess(successResponse, 'update_media_buy'), true);
@@ -174,7 +165,7 @@ describe('Response Unwrapper', () => {
 
     test('should fail validation for update_media_buy without required fields', () => {
       const invalidResponse = {
-        packages: [{ package_id: 'pkg1' }]
+        packages: [{ package_id: 'pkg1' }],
         // Missing affected_packages
       };
 
@@ -183,7 +174,7 @@ describe('Response Unwrapper', () => {
 
     test('should validate get_products success response', () => {
       const successResponse = {
-        products: [{ product_id: 'prod1' }]
+        products: [{ product_id: 'prod1' }],
       };
 
       assert.strictEqual(isAdcpSuccess(successResponse, 'get_products'), true);
@@ -191,7 +182,7 @@ describe('Response Unwrapper', () => {
 
     test('should fail validation for error responses', () => {
       const errorResponse = {
-        errors: [{ code: 'error', message: 'Something went wrong' }]
+        errors: [{ code: 'error', message: 'Something went wrong' }],
       };
 
       assert.strictEqual(isAdcpSuccess(errorResponse, 'get_products'), false);

@@ -54,11 +54,13 @@ export function unwrapProtocolResponse(protocolResponse: any): any {
     // Convert JSON-RPC error to AdCP error format
     // AdCP uses { errors: [...] } for error responses
     return {
-      errors: [{
-        code: protocolResponse.error.code?.toString() || 'unknown',
-        message: protocolResponse.error.message || 'Unknown error',
-        ...(protocolResponse.error.data && { data: protocolResponse.error.data })
-      }]
+      errors: [
+        {
+          code: protocolResponse.error.code?.toString() || 'unknown',
+          message: protocolResponse.error.message || 'Unknown error',
+          ...(protocolResponse.error.data && { data: protocolResponse.error.data }),
+        },
+      ],
     };
   }
 
@@ -69,10 +71,12 @@ export function unwrapProtocolResponse(protocolResponse: any): any {
       : protocolResponse.content?.text || 'Unknown error';
 
     return {
-      errors: [{
-        code: 'mcp_error',
-        message: errorContent || 'MCP tool call failed'
-      }]
+      errors: [
+        {
+          code: 'mcp_error',
+          message: errorContent || 'MCP tool call failed',
+        },
+      ],
     };
   }
 
@@ -87,10 +91,12 @@ export function unwrapProtocolResponse(protocolResponse: any): any {
       } catch {
         // Not JSON, return as error
         return {
-          errors: [{
-            code: 'invalid_response',
-            message: 'Response does not contain structured AdCP data'
-          }]
+          errors: [
+            {
+              code: 'invalid_response',
+              message: 'Response does not contain structured AdCP data',
+            },
+          ],
         };
       }
     }
@@ -98,7 +104,11 @@ export function unwrapProtocolResponse(protocolResponse: any): any {
 
   // If we can't find the data in expected locations, return the whole response
   // This allows for direct AdCP responses (when not wrapped in protocol)
-  if (typeof protocolResponse === 'object' && !('structuredContent' in protocolResponse) && !('result' in protocolResponse)) {
+  if (
+    typeof protocolResponse === 'object' &&
+    !('structuredContent' in protocolResponse) &&
+    !('result' in protocolResponse)
+  ) {
     return protocolResponse;
   }
 

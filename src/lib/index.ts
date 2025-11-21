@@ -2,9 +2,21 @@
 // A comprehensive type-safe client library for the AdContext Protocol
 
 // ====== PROPERTY DISCOVERY (AdCP v2.2.0) ======
-export { PropertyIndex, getPropertyIndex, resetPropertyIndex, type PropertyMatch, type AgentAuthorization } from './discovery/property-index';
+export {
+  PropertyIndex,
+  getPropertyIndex,
+  resetPropertyIndex,
+  type PropertyMatch,
+  type AgentAuthorization,
+} from './discovery/property-index';
 export { PropertyCrawler, type AgentInfo, type CrawlResult } from './discovery/property-crawler';
-export type { Property, PropertyIdentifier, PropertyIdentifierType, PropertyType, AdAgentsJson } from './discovery/types';
+export type {
+  Property,
+  PropertyIdentifier,
+  PropertyIdentifierType,
+  PropertyType,
+  AdAgentsJson,
+} from './discovery/types';
 
 // ====== CORE CONVERSATION-AWARE CLIENTS ======
 // New conversation-aware clients with input handler pattern
@@ -19,11 +31,16 @@ export {
   STANDARD_CREATIVE_AGENTS,
   type CreativeFormat,
   type CreativeFormatType,
-  type CreativeAgentClientConfig
+  type CreativeAgentClientConfig,
 } from './core/CreativeAgentClient';
 export { TaskExecutor } from './core/TaskExecutor';
 export { ProtocolResponseParser, responseParser, ADCP_STATUS, type ADCPStatus } from './core/ProtocolResponseParser';
-export { ResponseValidator, responseValidator, type ValidationResult, type ValidationOptions } from './core/ResponseValidator';
+export {
+  ResponseValidator,
+  responseValidator,
+  type ValidationResult,
+  type ValidationOptions,
+} from './core/ResponseValidator';
 // ====== CONVERSATION TYPES ======
 export type {
   Message,
@@ -35,7 +52,7 @@ export type {
   TaskResult,
   TaskState,
   TaskStatus,
-  ConversationConfig
+  ConversationConfig,
 } from './core/ConversationTypes';
 
 // ====== TASK EVENT TYPES ======
@@ -46,7 +63,7 @@ export type {
   TaskStatusEvent,
   ObjectEvent,
   TaskEvent,
-  TaskEventCallbacks
+  TaskEventCallbacks,
 } from './core/TaskEventTypes';
 export { createOperationId } from './core/TaskEventTypes';
 
@@ -57,7 +74,7 @@ export type {
   WebhookPayload,
   Activity,
   NotificationMetadata,
-  MediaBuyDeliveryNotification
+  MediaBuyDeliveryNotification,
 } from './core/AsyncHandler';
 export { AsyncHandler, createAsyncHandler } from './core/AsyncHandler';
 
@@ -74,7 +91,7 @@ export type {
   DeferredTaskState,
   StorageConfig,
   StorageFactory,
-  StorageMiddleware
+  StorageMiddleware,
 } from './storage/interfaces';
 export { MemoryStorage, createMemoryStorage, createMemoryStorageConfig } from './storage/MemoryStorage';
 
@@ -94,7 +111,7 @@ export {
   ConfigurationError,
   isADCPError,
   isErrorOfType,
-  extractErrorInfo
+  extractErrorInfo,
 } from './errors';
 export { InputRequiredError } from './core/TaskExecutor';
 
@@ -104,23 +121,34 @@ export * from './types';
 // ====== TOOL TYPES ======
 // All ADCP task request/response types
 export type {
-  GetProductsRequest, GetProductsResponse,
-  ListCreativeFormatsRequest, ListCreativeFormatsResponse,
-  CreateMediaBuyRequest, CreateMediaBuyResponse,
-  UpdateMediaBuyRequest, UpdateMediaBuyResponse,
-  SyncCreativesRequest, SyncCreativesResponse,
-  ListCreativesRequest, ListCreativesResponse,
-  GetMediaBuyDeliveryRequest, GetMediaBuyDeliveryResponse,
-  ListAuthorizedPropertiesRequest, ListAuthorizedPropertiesResponse,
-  ProvidePerformanceFeedbackRequest, ProvidePerformanceFeedbackResponse,
-  GetSignalsRequest, GetSignalsResponse,
-  ActivateSignalRequest, ActivateSignalResponse,
+  GetProductsRequest,
+  GetProductsResponse,
+  ListCreativeFormatsRequest,
+  ListCreativeFormatsResponse,
+  CreateMediaBuyRequest,
+  CreateMediaBuyResponse,
+  UpdateMediaBuyRequest,
+  UpdateMediaBuyResponse,
+  SyncCreativesRequest,
+  SyncCreativesResponse,
+  ListCreativesRequest,
+  ListCreativesResponse,
+  GetMediaBuyDeliveryRequest,
+  GetMediaBuyDeliveryResponse,
+  ListAuthorizedPropertiesRequest,
+  ListAuthorizedPropertiesResponse,
+  ProvidePerformanceFeedbackRequest,
+  ProvidePerformanceFeedbackResponse,
+  GetSignalsRequest,
+  GetSignalsResponse,
+  ActivateSignalRequest,
+  ActivateSignalResponse,
   // Core data structures
   Format,
   Product,
   PackageRequest,
   CreativeAsset,
-  CreativePolicy
+  CreativePolicy,
 } from './types/tools.generated';
 
 // ====== ZOD SCHEMAS (for runtime validation) ======
@@ -133,21 +161,11 @@ export { getAuthToken, createAdCPHeaders, createMCPAuthHeaders, createAuthentica
 
 // ====== VALIDATION ======
 // Schema validation for requests/responses
-export {
-  validateAgentUrl,
-  validateAdCPResponse,
-  getExpectedSchema,
-  handleAdCPResponse
-} from './validation';
+export { validateAgentUrl, validateAdCPResponse, getExpectedSchema, handleAdCPResponse } from './validation';
 
 // ====== RESPONSE UTILITIES ======
 // Public utilities for working with AdCP responses
-export {
-  getStandardFormats,
-  unwrapProtocolResponse,
-  isAdcpError,
-  isAdcpSuccess
-} from './utils';
+export { getStandardFormats, unwrapProtocolResponse, isAdcpError, isAdcpSuccess } from './utils';
 export { REQUEST_TIMEOUT, MAX_CONCURRENT, STANDARD_FORMATS } from './utils';
 
 // ====== AGENT CLASSES ======
@@ -170,15 +188,31 @@ export class AdCPClient {
     this.multiClient = new ADCPMultiAgentClient(agents || []);
   }
 
-  agent(id: string) { return this.multiClient.agent(id); }
-  agents(ids: string[]) { return this.multiClient.agents(ids); }
-  allAgents() { return this.multiClient.allAgents(); }
-  addAgent(agent: AgentConfig) { this.multiClient.addAgent(agent); }
-  getAgents() { return this.multiClient.getAgentConfigs(); }
-  getAgentConfigs() { return this.multiClient.getAgentConfigs(); } // Alias for compatibility
-  get agentCount() { return this.multiClient.agentCount; }
-  get agentIds() { return this.multiClient.getAgentIds(); }
-  
+  agent(id: string) {
+    return this.multiClient.agent(id);
+  }
+  agents(ids: string[]) {
+    return this.multiClient.agents(ids);
+  }
+  allAgents() {
+    return this.multiClient.allAgents();
+  }
+  addAgent(agent: AgentConfig) {
+    this.multiClient.addAgent(agent);
+  }
+  getAgents() {
+    return this.multiClient.getAgentConfigs();
+  }
+  getAgentConfigs() {
+    return this.multiClient.getAgentConfigs();
+  } // Alias for compatibility
+  get agentCount() {
+    return this.multiClient.agentCount;
+  }
+  get agentIds() {
+    return this.multiClient.getAgentIds();
+  }
+
   getStandardFormats() {
     const { getStandardFormats } = require('./utils');
     return getStandardFormats();

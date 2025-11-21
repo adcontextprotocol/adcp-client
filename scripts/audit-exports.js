@@ -5,7 +5,7 @@ const categories = {
   classes: [],
   functions: [],
   constants: [],
-  other: []
+  other: [],
 };
 
 for (const key in lib) {
@@ -35,13 +35,14 @@ for (const [category, items] of Object.entries(categories)) {
 }
 
 // Check for numbered objects or suspicious patterns
-const suspicious = Object.keys(lib).filter(key =>
-  /^\d/.test(key) || // starts with number
-  /_\d+$/.test(key) || // ends with underscore+number
-  /^[A-Z][a-z]+\d/.test(key) || // PascalCase with trailing number
-  key.includes('Internal') ||
-  key.includes('_private') ||
-  key.includes('__')
+const suspicious = Object.keys(lib).filter(
+  key =>
+    /^\d/.test(key) || // starts with number
+    /_\d+$/.test(key) || // ends with underscore+number
+    /^[A-Z][a-z]+\d/.test(key) || // PascalCase with trailing number
+    key.includes('Internal') ||
+    key.includes('_private') ||
+    key.includes('__')
 );
 
 if (suspicious.length > 0) {
