@@ -175,12 +175,20 @@ export class AdCPClient {
   allAgents() { return this.multiClient.allAgents(); }
   addAgent(agent: AgentConfig) { this.multiClient.addAgent(agent); }
   getAgents() { return this.multiClient.getAgentConfigs(); }
+  getAgentConfigs() { return this.multiClient.getAgentConfigs(); } // Alias for compatibility
   get agentCount() { return this.multiClient.agentCount; }
   get agentIds() { return this.multiClient.getAgentIds(); }
   
   getStandardFormats() {
     const { getStandardFormats } = require('./utils');
     return getStandardFormats();
+  }
+
+  static fromEnv(): AdCPClient {
+    const multiClient = ADCPMultiAgentClient.fromEnv();
+    const client = new AdCPClient();
+    client.multiClient = multiClient;
+    return client;
   }
 }
 
