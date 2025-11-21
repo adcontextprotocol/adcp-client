@@ -2,6 +2,8 @@
 const clientModule = require('@a2a-js/sdk/client');
 const A2AClient = clientModule.A2AClient;
 
+import type { PushNotificationConfig } from '../types/tools.generated';
+
 if (!A2AClient) {
   throw new Error('A2A SDK client is required. Please install @a2a-js/sdk');
 }
@@ -11,7 +13,8 @@ export async function callA2ATool(
   toolName: string,
   parameters: Record<string, any>,
   authToken?: string,
-  debugLogs: any[] = []
+  debugLogs: any[] = [],
+  pushNotificationConfig?: PushNotificationConfig
 ): Promise<any> {
   // Create authenticated fetch that wraps native fetch
   // This ensures ALL requests (including agent card fetching) include auth headers
@@ -71,8 +74,10 @@ export async function callA2ATool(
     fetchImpl,
   });
 
-  // Build request payload following AdCP A2A spec
-  const requestPayload = {
+  // Build request payload following A2A JSON-RPC spec
+  // Per A2A SDK: pushNotificationConfig goes in params.configuration (camelCase)
+  // Schema: https://adcontextprotocol.org/schemas/v1/core/push-notification-config.json
+  const requestPayload: any = {
     message: {
       messageId: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
       role: 'user',
@@ -88,6 +93,13 @@ export async function callA2ATool(
       ],
     },
   };
+
+  // Add pushNotificationConfig in configuration object (A2A JSON-RPC spec)
+  if (pushNotificationConfig) {
+    requestPayload.configuration = {
+      pushNotificationConfig: pushNotificationConfig,
+    };
+  }
 
   // Add debug log for A2A call
   const payloadSize = JSON.stringify(requestPayload).length;
