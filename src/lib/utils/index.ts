@@ -133,3 +133,6 @@ export function getCircuitBreaker(agentId: string): CircuitBreaker {
 export function getStandardFormats(): CreativeFormat[] {
   return STANDARD_FORMATS;
 }
+
+// Re-export response unwrapping utilities
+export { unwrapProtocolResponse, isAdcpError, isAdcpSuccess } from './response-unwrapper';

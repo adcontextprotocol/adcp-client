@@ -27,6 +27,10 @@ export type AssetContentType =
  * Type of inventory delivery
  */
 export type DeliveryType = 'guaranteed' | 'non_guaranteed';
+/**
+ * High-level categories for creative formats based on media type and delivery channel. Describes WHERE and HOW a creative displays, not what content it contains.
+ */
+export type FormatCategory = 'audio' | 'video' | 'display' | 'native' | 'dooh' | 'rich_media' | 'universal';
 
 /**
  * Request parameters for discovering available advertising products
@@ -37,38 +41,11 @@ export interface GetProductsRequest {
    */
   brief?: string;
   brand_manifest?: BrandManifestReference;
-  /**
-   * Structured filters for product discovery
-   */
-  filters?: {
-    delivery_type?: DeliveryType;
-    /**
-     * Filter for fixed price vs auction products
-     */
-    is_fixed_price?: boolean;
-    /**
-     * Filter by format types
-     */
-    format_types?: ('video' | 'display' | 'audio')[];
-    /**
-     * Filter by specific format IDs
-     */
-    format_ids?: FormatID[];
-    /**
-     * Only return products accepting IAB standard formats
-     */
-    standard_formats_only?: boolean;
-    /**
-     * Minimum exposures/impressions needed for measurement validity
-     */
-    min_exposures?: number;
-  };
+  filters?: ProductFilters;
   /**
    * Initiator-provided context included in the request payload. Agentsmust echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.
    */
-  context?: {
-    [k: string]: unknown;
-  };
+  context?: {};
 }
 /**
  * Inline brand manifest object
@@ -287,6 +264,32 @@ export interface BrandManifest {
   };
 }
 /**
+ * Structured filters for product discovery
+ */
+export interface ProductFilters {
+  delivery_type?: DeliveryType;
+  /**
+   * Filter for fixed price vs auction products
+   */
+  is_fixed_price?: boolean;
+  /**
+   * Filter by format types
+   */
+  format_types?: FormatCategory[];
+  /**
+   * Filter by specific format IDs
+   */
+  format_ids?: FormatID[];
+  /**
+   * Only return products accepting IAB standard formats
+   */
+  standard_formats_only?: boolean;
+  /**
+   * Minimum exposures/impressions needed for measurement validity
+   */
+  min_exposures?: number;
+}
+/**
  * Structured format identifier with agent URL and format name
  */
 export interface FormatID {
@@ -361,6 +364,31 @@ export type PricingOption =
   | CPVPricingOption
   | CPPPricingOption
   | FlatRatePricingOption;
+/**
+ * Available frequencies for delivery reports and metrics updates
+ */
+export type ReportingFrequency = 'hourly' | 'daily' | 'monthly';
+/**
+ * Standard delivery and performance metrics available for reporting
+ */
+export type AvailableMetric =
+  | 'impressions'
+  | 'spend'
+  | 'clicks'
+  | 'ctr'
+  | 'video_completions'
+  | 'completion_rate'
+  | 'conversions'
+  | 'viewability'
+  | 'engagement_rate';
+/**
+ * Co-branding requirement
+ */
+export type CoBrandingRequirement = 'required' | 'optional' | 'none';
+/**
+ * Landing page requirements
+ */
+export type LandingPageRequirement = 'any' | 'retailer_site_only' | 'must_include_retailer';
 
 /**
  * Response payload for get_products task
@@ -890,7 +918,7 @@ export interface ReportingCapabilities {
    *
    * @minItems 1
    */
-  available_reporting_frequencies: ['hourly' | 'daily' | 'monthly', ...('hourly' | 'daily' | 'monthly')[]];
+  available_reporting_frequencies: [ReportingFrequency, ...ReportingFrequency[]];
   /**
    * Expected delay in minutes before reporting data becomes available (e.g., 240 for 4-hour delay)
    */
@@ -906,30 +934,14 @@ export interface ReportingCapabilities {
   /**
    * Metrics available in reporting. Impressions and spend are always implicitly included.
    */
-  available_metrics: (
-    | 'impressions'
-    | 'spend'
-    | 'clicks'
-    | 'ctr'
-    | 'video_completions'
-    | 'completion_rate'
-    | 'conversions'
-    | 'viewability'
-    | 'engagement_rate'
-  )[];
+  available_metrics: AvailableMetric[];
 }
 /**
  * Creative requirements and restrictions for a product
  */
 export interface CreativePolicy {
-  /**
-   * Co-branding requirement
-   */
-  co_branding: 'required' | 'optional' | 'none';
-  /**
-   * Landing page requirements
-   */
-  landing_page: 'any' | 'retailer_site_only' | 'must_include_retailer';
+  co_branding: CoBrandingRequirement;
+  landing_page: LandingPageRequirement;
   /**
    * Whether creative templates are provided
    */
@@ -998,10 +1010,6 @@ export interface Error {
 /**
  * Filter by format type (technical categories with distinct requirements)
  */
-export type FormatCategory = 'audio' | 'video' | 'display' | 'native' | 'dooh' | 'rich_media' | 'universal';
-/**
- * Types of content that can be used as creative assets. Describes what KIND of content an asset contains (image, video, code, etc.), not where it displays.
- */
 export interface ListCreativeFormatsRequest {
   /**
    * Return only these specific format IDs (e.g., from get_products response)
@@ -1039,9 +1047,7 @@ export interface ListCreativeFormatsRequest {
   /**
    * Initiator-provided context included in the request payload. Agents must echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.
    */
-  context?: {
-    [k: string]: unknown;
-  };
+  context?: {};
 }
 /**
  * Structured format identifier with agent URL and format name
@@ -1050,6 +1056,10 @@ export interface ListCreativeFormatsRequest {
 // list_creative_formats response
 /**
  * Media type of this format - determines rendering method and asset requirements
+ */
+export type DimensionUnit = 'px' | 'dp' | 'inches' | 'cm';
+/**
+ * Type of asset
  */
 export type AssetContentType1 =
   | 'image'
@@ -1065,6 +1075,10 @@ export type AssetContentType1 =
   | 'promoted_offerings'
   | 'url'
   | 'webhook';
+/**
+ * Capabilities supported by creative agents for format handling
+ */
+export type CreativeAgentCapability = 'validation' | 'assembly' | 'generation' | 'preview';
 
 /**
  * Response payload for list_creative_formats task
@@ -1089,7 +1103,7 @@ export interface ListCreativeFormatsResponse {
     /**
      * Capabilities this creative agent provides
      */
-    capabilities?: ('validation' | 'assembly' | 'generation' | 'preview')[];
+    capabilities?: CreativeAgentCapability[];
   }[];
   /**
    * Task-specific errors and warnings (e.g., format availability issues)
@@ -1172,10 +1186,7 @@ export interface Format {
          * Fixed aspect ratio constraint (e.g., '16:9', '4:3', '1:1')
          */
         aspect_ratio?: string;
-        /**
-         * Unit of measurement for dimensions
-         */
-        unit: 'px' | 'dp' | 'inches' | 'cm';
+        unit: DimensionUnit;
       };
     },
     ...{
@@ -1222,10 +1233,7 @@ export interface Format {
          * Fixed aspect ratio constraint (e.g., '16:9', '4:3', '1:1')
          */
         aspect_ratio?: string;
-        /**
-         * Unit of measurement for dimensions
-         */
-        unit: 'px' | 'dp' | 'inches' | 'cm';
+        unit: DimensionUnit;
       };
     }[]
   ];
@@ -1363,6 +1371,10 @@ export interface FormatID3 {
  */
 export type Pacing = 'even' | 'asap' | 'front_loaded';
 /**
+ * JavaScript module type
+ */
+export type JavaScriptModuleType = 'esm' | 'commonjs' | 'script';
+/**
  * VAST (Video Ad Serving Template) tag for third-party video ad serving
  */
 export type VASTAsset =
@@ -1375,10 +1387,7 @@ export type VASTAsset =
        * URL endpoint that returns VAST XML
        */
       url: string;
-      /**
-       * VAST specification version
-       */
-      vast_version?: '2.0' | '3.0' | '4.0' | '4.1' | '4.2';
+      vast_version?: VASTVersion;
       /**
        * Whether VPAID (Video Player-Ad Interface Definition) is supported
        */
@@ -1390,24 +1399,7 @@ export type VASTAsset =
       /**
        * Tracking events supported by this VAST tag
        */
-      tracking_events?: (
-        | 'start'
-        | 'firstQuartile'
-        | 'midpoint'
-        | 'thirdQuartile'
-        | 'complete'
-        | 'impression'
-        | 'click'
-        | 'pause'
-        | 'resume'
-        | 'skip'
-        | 'mute'
-        | 'unmute'
-        | 'fullscreen'
-        | 'exitFullscreen'
-        | 'playerExpand'
-        | 'playerCollapse'
-      )[];
+      tracking_events?: VASTTrackingEvent[];
     }
   | {
       /**
@@ -1418,10 +1410,7 @@ export type VASTAsset =
        * Inline VAST XML content
        */
       content: string;
-      /**
-       * VAST specification version
-       */
-      vast_version?: '2.0' | '3.0' | '4.0' | '4.1' | '4.2';
+      vast_version?: VASTVersion1;
       /**
        * Whether VPAID (Video Player-Ad Interface Definition) is supported
        */
@@ -1433,25 +1422,36 @@ export type VASTAsset =
       /**
        * Tracking events supported by this VAST tag
        */
-      tracking_events?: (
-        | 'start'
-        | 'firstQuartile'
-        | 'midpoint'
-        | 'thirdQuartile'
-        | 'complete'
-        | 'impression'
-        | 'click'
-        | 'pause'
-        | 'resume'
-        | 'skip'
-        | 'mute'
-        | 'unmute'
-        | 'fullscreen'
-        | 'exitFullscreen'
-        | 'playerExpand'
-        | 'playerCollapse'
-      )[];
+      tracking_events?: VASTTrackingEvent[];
     };
+/**
+ * VAST specification version
+ */
+export type VASTVersion = '2.0' | '3.0' | '4.0' | '4.1' | '4.2';
+/**
+ * Standard VAST tracking events for video ad playback and interaction
+ */
+export type VASTTrackingEvent =
+  | 'start'
+  | 'firstQuartile'
+  | 'midpoint'
+  | 'thirdQuartile'
+  | 'complete'
+  | 'impression'
+  | 'click'
+  | 'pause'
+  | 'resume'
+  | 'skip'
+  | 'mute'
+  | 'unmute'
+  | 'fullscreen'
+  | 'exitFullscreen'
+  | 'playerExpand'
+  | 'playerCollapse';
+/**
+ * VAST specification version
+ */
+export type VASTVersion1 = '2.0' | '3.0' | '4.0' | '4.1' | '4.2';
 /**
  * DAAST (Digital Audio Ad Serving Template) tag for third-party audio ad serving
  */
@@ -1465,10 +1465,7 @@ export type DAASTAsset =
        * URL endpoint that returns DAAST XML
        */
       url: string;
-      /**
-       * DAAST specification version
-       */
-      daast_version?: '1.0' | '1.1';
+      daast_version?: DAASTVersion;
       /**
        * Expected audio duration in milliseconds (if known)
        */
@@ -1476,19 +1473,7 @@ export type DAASTAsset =
       /**
        * Tracking events supported by this DAAST tag
        */
-      tracking_events?: (
-        | 'start'
-        | 'firstQuartile'
-        | 'midpoint'
-        | 'thirdQuartile'
-        | 'complete'
-        | 'impression'
-        | 'pause'
-        | 'resume'
-        | 'skip'
-        | 'mute'
-        | 'unmute'
-      )[];
+      tracking_events?: DAASTTrackingEvent[];
       /**
        * Whether companion display ads are included
        */
@@ -1503,10 +1488,7 @@ export type DAASTAsset =
        * Inline DAAST XML content
        */
       content: string;
-      /**
-       * DAAST specification version
-       */
-      daast_version?: '1.0' | '1.1';
+      daast_version?: DAASTVersion1;
       /**
        * Expected audio duration in milliseconds (if known)
        */
@@ -1514,32 +1496,51 @@ export type DAASTAsset =
       /**
        * Tracking events supported by this DAAST tag
        */
-      tracking_events?: (
-        | 'start'
-        | 'firstQuartile'
-        | 'midpoint'
-        | 'thirdQuartile'
-        | 'complete'
-        | 'impression'
-        | 'pause'
-        | 'resume'
-        | 'skip'
-        | 'mute'
-        | 'unmute'
-      )[];
+      tracking_events?: DAASTTrackingEvent[];
       /**
        * Whether companion display ads are included
        */
       companion_ads?: boolean;
     };
 /**
+ * DAAST specification version
+ */
+export type DAASTVersion = '1.0' | '1.1';
+/**
+ * Standard DAAST tracking events for audio ad playback and interaction
+ */
+export type DAASTTrackingEvent =
+  | 'start'
+  | 'firstQuartile'
+  | 'midpoint'
+  | 'thirdQuartile'
+  | 'complete'
+  | 'impression'
+  | 'pause'
+  | 'resume'
+  | 'skip'
+  | 'mute'
+  | 'unmute';
+/**
+ * DAAST specification version
+ */
+export type DAASTVersion1 = '1.0' | '1.1';
+/**
  * Brand information manifest containing assets, themes, and guidelines. Can be provided inline or as a URL reference to a hosted manifest.
+ */
+export type URLAssetType = 'clickthrough' | 'tracker_pixel' | 'tracker_script';
+/**
+ * Brand information manifest serving as the namespace and identity for this media buy. Provides brand context, assets, and product catalog. Can be provided inline or as a URL reference to a hosted manifest. Can be cached and reused across multiple requests.
  */
 export type BrandManifestReference1 = BrandManifest | string;
 /**
  * Campaign start timing: 'asap' or ISO 8601 date-time
  */
 export type StartTiming = 'asap' | string;
+/**
+ * Authentication schemes for push notification endpoints
+ */
+export type AuthenticationScheme = 'Bearer' | 'HMAC-SHA256';
 
 /**
  * Request parameters for creating a media buy
@@ -1586,9 +1587,7 @@ export interface CreateMediaBuyRequest {
   /**
    * Initiator-provided context included in the request payload. Agentsmust echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.
    */
-  context?: {
-    [k: string]: unknown;
-  };
+  context?: {};
 }
 /**
  * Package configuration for media buy creation
@@ -1856,10 +1855,7 @@ export interface JavaScriptAsset {
    * JavaScript content
    */
   content: string;
-  /**
-   * JavaScript module type
-   */
-  module_type?: 'esm' | 'commonjs' | 'script';
+  module_type?: JavaScriptModuleType;
 }
 /**
  * Complete offering specification combining brand manifest, product selectors, and asset filters. Provides all context needed for creative generation about what is being promoted.
@@ -1945,10 +1941,7 @@ export interface URLAsset {
    * URL reference
    */
   url: string;
-  /**
-   * Type of URL asset: 'clickthrough' for user click destination (landing page), 'tracker_pixel' for impression/event tracking via HTTP request (fires GET, expects pixel/204 response), 'tracker_script' for measurement SDKs that must load as <script> tag (OMID verification, native event trackers using method:2)
-   */
-  url_type?: 'clickthrough' | 'tracker_pixel' | 'tracker_script';
+  url_type?: URLAssetType;
   /**
    * Description of what this URL points to
    */
@@ -1976,7 +1969,7 @@ export interface PushNotificationConfig {
      * @minItems 1
      * @maxItems 1
      */
-    schemes: ['Bearer' | 'HMAC-SHA256'];
+    schemes: [AuthenticationScheme];
     /**
      * Credentials for authentication. For Bearer: token sent in Authorization header. For HMAC-SHA256: shared secret used to generate signature. Minimum 32 characters. Exchanged out-of-band during onboarding.
      */
@@ -2098,7 +2091,11 @@ export interface CreativeAssignment {
 
 // sync_creatives parameters
 /**
- * VAST (Video Ad Serving Template) tag for third-party video ad serving
+ * JavaScript module type
+ */
+export type ValidationMode = 'strict' | 'lenient';
+/**
+ * Authentication schemes for push notification endpoints
  */
 export interface SyncCreativesRequest {
   /**
@@ -2131,17 +2128,12 @@ export interface SyncCreativesRequest {
    * When true, preview changes without applying them. Returns what would be created/updated/deleted.
    */
   dry_run?: boolean;
-  /**
-   * Validation strictness. 'strict' fails entire sync on any validation error. 'lenient' processes valid creatives and reports errors.
-   */
-  validation_mode?: 'strict' | 'lenient';
+  validation_mode?: ValidationMode;
   push_notification_config?: PushNotificationConfig;
   /**
    * Initiator-provided context included in the request payload. Agents must echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.
    */
-  context?: {
-    [k: string]: unknown;
-  };
+  context?: {};
 }
 /**
  * Creative asset for upload to library - supports static assets, generative formats, and third-party snippets
@@ -2165,10 +2157,7 @@ export type SyncCreativesResponse =
          * Creative ID from the request
          */
         creative_id: string;
-        /**
-         * Action taken for this creative
-         */
-        action: 'created' | 'updated' | 'unchanged' | 'failed' | 'deleted';
+        action: CreativeAction;
         /**
          * Platform-specific ID assigned to the creative
          */
@@ -2227,6 +2216,10 @@ export type SyncCreativesResponse =
        */
       context?: {};
     };
+/**
+ * Action taken for this creative
+ */
+export type CreativeAction = 'created' | 'updated' | 'unchanged' | 'failed' | 'deleted';
 
 /**
  * Standard error structure for task-specific errors and warnings
@@ -2241,91 +2234,32 @@ export type CreativeStatus = 'processing' | 'approved' | 'rejected' | 'pending_r
  * Status of a creative asset
  */
 export type CreativeStatus1 = 'processing' | 'approved' | 'rejected' | 'pending_review';
+/**
+ * Field to sort by
+ */
+export type CreativeSortField =
+  | 'created_date'
+  | 'updated_date'
+  | 'name'
+  | 'status'
+  | 'assignment_count'
+  | 'performance_score';
+/**
+ * Sort direction
+ */
+export type SortDirection = 'asc' | 'desc';
 
 /**
  * Request parameters for querying creative assets from the centralized library with filtering, sorting, and pagination
  */
 export interface ListCreativesRequest {
-  /**
-   * Filter criteria for querying creatives
-   */
-  filters?: {
-    /**
-     * Filter by creative format type (e.g., video, audio, display)
-     */
-    format?: string;
-    /**
-     * Filter by multiple creative format types
-     */
-    formats?: string[];
-    status?: CreativeStatus;
-    /**
-     * Filter by multiple creative statuses
-     */
-    statuses?: CreativeStatus1[];
-    /**
-     * Filter by creative tags (all tags must match)
-     */
-    tags?: string[];
-    /**
-     * Filter by creative tags (any tag must match)
-     */
-    tags_any?: string[];
-    /**
-     * Filter by creative names containing this text (case-insensitive)
-     */
-    name_contains?: string;
-    /**
-     * Filter by specific creative IDs
-     *
-     * @maxItems 100
-     */
-    creative_ids?: string[];
-    /**
-     * Filter creatives created after this date (ISO 8601)
-     */
-    created_after?: string;
-    /**
-     * Filter creatives created before this date (ISO 8601)
-     */
-    created_before?: string;
-    /**
-     * Filter creatives last updated after this date (ISO 8601)
-     */
-    updated_after?: string;
-    /**
-     * Filter creatives last updated before this date (ISO 8601)
-     */
-    updated_before?: string;
-    /**
-     * Filter creatives assigned to this specific package
-     */
-    assigned_to_package?: string;
-    /**
-     * Filter creatives assigned to any of these packages
-     */
-    assigned_to_packages?: string[];
-    /**
-     * Filter for unassigned creatives when true, assigned creatives when false
-     */
-    unassigned?: boolean;
-    /**
-     * Filter creatives that have performance data when true
-     */
-    has_performance_data?: boolean;
-  };
+  filters?: CreativeFilters;
   /**
    * Sorting parameters
    */
   sort?: {
-    /**
-     * Field to sort by
-     */
-    field?: 'created_date' | 'updated_date' | 'name' | 'status' | 'assignment_count' | 'performance_score';
-    /**
-     * Sort direction
-     */
-    direction?: 'asc' | 'desc';
+    field?: CreativeSortField;
+    direction?: SortDirection;
   };
   /**
    * Pagination parameters
@@ -2370,15 +2304,81 @@ export interface ListCreativesRequest {
   /**
    * Initiator-provided context included in the request payload. Agentsmust echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.
    */
-  context?: {
-    [k: string]: unknown;
-  };
+  context?: {};
+}
+/**
+ * Filter criteria for querying creative assets from the centralized library
+ */
+export interface CreativeFilters {
+  /**
+   * Filter by creative format type (e.g., video, audio, display)
+   */
+  format?: string;
+  /**
+   * Filter by multiple creative format types
+   */
+  formats?: string[];
+  status?: CreativeStatus;
+  /**
+   * Filter by multiple creative statuses
+   */
+  statuses?: CreativeStatus1[];
+  /**
+   * Filter by creative tags (all tags must match)
+   */
+  tags?: string[];
+  /**
+   * Filter by creative tags (any tag must match)
+   */
+  tags_any?: string[];
+  /**
+   * Filter by creative names containing this text (case-insensitive)
+   */
+  name_contains?: string;
+  /**
+   * Filter by specific creative IDs
+   *
+   * @maxItems 100
+   */
+  creative_ids?: string[];
+  /**
+   * Filter creatives created after this date (ISO 8601)
+   */
+  created_after?: string;
+  /**
+   * Filter creatives created before this date (ISO 8601)
+   */
+  created_before?: string;
+  /**
+   * Filter creatives last updated after this date (ISO 8601)
+   */
+  updated_after?: string;
+  /**
+   * Filter creatives last updated before this date (ISO 8601)
+   */
+  updated_before?: string;
+  /**
+   * Filter creatives assigned to this specific package
+   */
+  assigned_to_package?: string;
+  /**
+   * Filter creatives assigned to any of these packages
+   */
+  assigned_to_packages?: string[];
+  /**
+   * Filter for unassigned creatives when true, assigned creatives when false
+   */
+  unassigned?: boolean;
+  /**
+   * Filter creatives that have performance data when true
+   */
+  has_performance_data?: boolean;
 }
 
 
 // list_creatives response
 /**
- * Current approval status of the creative
+ * Sort direction for list queries
  */
 export type SubAsset =
   | {
@@ -2443,7 +2443,7 @@ export interface ListCreativesResponse {
      */
     sort_applied?: {
       field?: string;
-      direction?: 'asc' | 'desc';
+      direction?: SortDirection;
     };
   };
   /**
@@ -2669,9 +2669,7 @@ export interface UpdateMediaBuyRequest1 {
   /**
    * Initiator-provided context included in the request payload. Agents must echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.
    */
-  context?: {
-    [k: string]: unknown;
-  };
+  context?: {};
 }
 /**
  * Optional webhook configuration for async update notifications. Publisher will send webhook when update completes if operation takes longer than immediate response time.
@@ -2722,6 +2720,11 @@ export type UpdateMediaBuyResponse =
 
 // get_media_buy_delivery parameters
 /**
+ * Status of a media buy
+ */
+export type MediaBuyStatus = 'pending_activation' | 'active' | 'paused' | 'completed';
+
+/**
  * Request parameters for retrieving comprehensive delivery metrics
  */
 export interface GetMediaBuyDeliveryRequest {
@@ -2736,9 +2739,7 @@ export interface GetMediaBuyDeliveryRequest {
   /**
    * Filter by status. Can be a single status or array of statuses
    */
-  status_filter?:
-    | ('active' | 'pending' | 'paused' | 'completed' | 'failed' | 'all')
-    | ('active' | 'pending' | 'paused' | 'completed' | 'failed')[];
+  status_filter?: MediaBuyStatus | MediaBuyStatus[];
   /**
    * Start date for reporting period (YYYY-MM-DD)
    */
@@ -2750,9 +2751,7 @@ export interface GetMediaBuyDeliveryRequest {
   /**
    * Initiator-provided context included in the request payload. Agentsmust echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.
    */
-  context?: {
-    [k: string]: unknown;
-  };
+  context?: {};
 }
 
 
@@ -3063,9 +3062,7 @@ export interface ListAuthorizedPropertiesRequest {
   /**
    * Initiator-provided context included in the request payload. Agentsmust echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.
    */
-  context?: {
-    [k: string]: unknown;
-  };
+  context?: {};
 }
 
 
@@ -3135,15 +3132,44 @@ export interface ListAuthorizedPropertiesResponse {
 /**
  * Request payload for provide_performance_feedback task
  */
-export interface ProvidePerformanceFeedbackRequest {
+export type ProvidePerformanceFeedbackRequest = ProvidePerformanceFeedbackRequest1 & ProvidePerformanceFeedbackRequest2;
+/**
+ * The business metric being measured
+ */
+export type MetricType =
+  | 'overall_performance'
+  | 'conversion_rate'
+  | 'brand_lift'
+  | 'click_through_rate'
+  | 'completion_rate'
+  | 'viewability'
+  | 'brand_safety'
+  | 'cost_efficiency';
+/**
+ * Source of the performance data
+ */
+export type FeedbackSource =
+  | 'buyer_attribution'
+  | 'third_party_measurement'
+  | 'platform_analytics'
+  | 'verification_partner';
+export type ProvidePerformanceFeedbackRequest2 = {
+  [k: string]: unknown;
+};
+
+export interface ProvidePerformanceFeedbackRequest1 {
   /**
    * Publisher's media buy identifier
    */
-  media_buy_id: string;
+  media_buy_id?: string;
+  /**
+   * Buyer's reference for the media buy
+   */
+  buyer_ref?: string;
   /**
    * Time period for performance measurement
    */
-  measurement_period: {
+  measurement_period?: {
     /**
      * ISO 8601 start timestamp for measurement period
      */
@@ -3156,7 +3182,7 @@ export interface ProvidePerformanceFeedbackRequest {
   /**
    * Normalized performance score (0.0 = no value, 1.0 = expected, >1.0 = above expected)
    */
-  performance_index: number;
+  performance_index?: number;
   /**
    * Specific package within the media buy (if feedback is package-specific)
    */
@@ -3165,28 +3191,12 @@ export interface ProvidePerformanceFeedbackRequest {
    * Specific creative asset (if feedback is creative-specific)
    */
   creative_id?: string;
-  /**
-   * The business metric being measured
-   */
-  metric_type?:
-    | 'overall_performance'
-    | 'conversion_rate'
-    | 'brand_lift'
-    | 'click_through_rate'
-    | 'completion_rate'
-    | 'viewability'
-    | 'brand_safety'
-    | 'cost_efficiency';
-  /**
-   * Source of the performance data
-   */
-  feedback_source?: 'buyer_attribution' | 'third_party_measurement' | 'platform_analytics' | 'verification_partner';
+  metric_type?: MetricType;
+  feedback_source?: FeedbackSource;
   /**
    * Initiator-provided context included in the request payload. Agentsmust echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.
    */
-  context?: {
-    [k: string]: unknown;
-  };
+  context?: {};
 }
 
 
@@ -3226,6 +3236,18 @@ export type ProvidePerformanceFeedbackResponse =
 /**
  * VAST (Video Ad Serving Template) tag for third-party video ad serving
  */
+export type HTTPMethod = 'GET' | 'POST';
+/**
+ * Expected content type of webhook response
+ */
+export type WebhookResponseType = 'html' | 'json' | 'xml' | 'javascript';
+/**
+ * Authentication method
+ */
+export type WebhookSecurityMethod = 'hmac_sha256' | 'api_key' | 'none';
+/**
+ * DAAST (Digital Audio Ad Serving Template) tag for third-party audio ad serving
+ */
 export interface BuildCreativeRequest {
   /**
    * Natural language instructions for the transformation or generation. For pure generation, this is the creative brief. For transformation, this provides guidance on how to adapt the creative.
@@ -3236,9 +3258,7 @@ export interface BuildCreativeRequest {
   /**
    * Initiator-provided context included in the request payload. Agentsmust echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.
    */
-  context?: {
-    [k: string]: unknown;
-  };
+  context?: {};
 }
 /**
  * Creative manifest to transform or generate from. For pure generation, this should include the target format_id and any required input assets (e.g., promoted_offerings for generative formats). For transformation (e.g., resizing, reformatting), this is the complete creative to adapt.
@@ -3282,10 +3302,7 @@ export interface WebhookAsset {
    * Webhook URL to call for dynamic content
    */
   url: string;
-  /**
-   * HTTP method
-   */
-  method?: 'GET' | 'POST';
+  method?: HTTPMethod;
   /**
    * Maximum time to wait for response in milliseconds
    */
@@ -3298,18 +3315,12 @@ export interface WebhookAsset {
    * Universal macros that must be provided for webhook to function
    */
   required_macros?: string[];
-  /**
-   * Expected content type of webhook response
-   */
-  response_type: 'html' | 'json' | 'xml' | 'javascript';
+  response_type: WebhookResponseType;
   /**
    * Security configuration for webhook calls
    */
   security: {
-    /**
-     * Authentication method
-     */
-    method: 'hmac_sha256' | 'api_key' | 'none';
+    method: WebhookSecurityMethod;
     /**
      * Header name for HMAC signature (e.g., 'X-Signature')
      */
@@ -3387,16 +3398,11 @@ export type PreviewCreativeRequest =
        * Specific template ID for custom format rendering
        */
       template_id?: string;
-      /**
-       * Output format for previews. 'url' returns preview_url (iframe-embeddable URL), 'html' returns preview_html (raw HTML for direct embedding). Default: 'url' for backward compatibility.
-       */
-      output_format?: 'url' | 'html';
+      output_format?: PreviewOutputFormat;
       /**
        * Initiator-provided context included in the request payload. Agents must echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.
        */
-      context?: {
-        [k: string]: unknown;
-      };
+      context?: {};
     }
   | {
       /**
@@ -3436,10 +3442,7 @@ export type PreviewCreativeRequest =
            * Specific template ID for custom format rendering
            */
           template_id?: string;
-          /**
-           * Output format for this preview. 'url' returns preview_url, 'html' returns preview_html.
-           */
-          output_format?: 'url' | 'html';
+          output_format?: PreviewOutputFormat1;
         },
         ...{
           format_id: FormatID2;
@@ -3467,25 +3470,30 @@ export type PreviewCreativeRequest =
            * Specific template ID for custom format rendering
            */
           template_id?: string;
-          /**
-           * Output format for this preview. 'url' returns preview_url, 'html' returns preview_html.
-           */
-          output_format?: 'url' | 'html';
+          output_format?: PreviewOutputFormat1;
         }[]
       ];
-      /**
-       * Default output format for all requests in this batch. Individual requests can override this. 'url' returns preview_url (iframe-embeddable URL), 'html' returns preview_html (raw HTML for direct embedding).
-       */
-      output_format?: 'url' | 'html';
+      output_format?: PreviewOutputFormat2;
       /**
        * Initiator-provided context included in the request payload. Agents must echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.
        */
-      context?: {
-        [k: string]: unknown;
-      };
+      context?: {};
     };
 /**
  * VAST (Video Ad Serving Template) tag for third-party video ad serving
+ */
+export type PreviewOutputFormat = 'url' | 'html';
+/**
+ * Output format for this preview. 'url' returns preview_url, 'html' returns preview_html.
+ */
+export type PreviewOutputFormat1 = 'url' | 'html';
+/**
+ * Default output format for all requests in this batch. Individual requests can override this. 'url' returns preview_url (iframe-embeddable URL), 'html' returns preview_html (raw HTML for direct embedding).
+ */
+export type PreviewOutputFormat2 = 'url' | 'html';
+
+/**
+ * Format identifier for rendering the preview
  */
 export interface CreativeManifest1 {
   format_id: FormatID1;
@@ -3826,6 +3834,10 @@ export type Destination =
        */
       account?: string;
     };
+/**
+ * Types of signal catalogs available for audience targeting
+ */
+export type SignalCatalogType = 'marketplace' | 'custom' | 'owned';
 
 /**
  * Request parameters for discovering signals based on description
@@ -3850,27 +3862,7 @@ export interface GetSignalsRequest {
      */
     countries: string[];
   };
-  /**
-   * Filters to refine results
-   */
-  filters?: {
-    /**
-     * Filter by catalog type
-     */
-    catalog_types?: ('marketplace' | 'custom' | 'owned')[];
-    /**
-     * Filter by specific data providers
-     */
-    data_providers?: string[];
-    /**
-     * Maximum CPM price filter
-     */
-    max_cpm?: number;
-    /**
-     * Minimum coverage requirement
-     */
-    min_coverage_percentage?: number;
-  };
+  filters?: SignalFilters;
   /**
    * Maximum number of results to return
    */
@@ -3878,15 +3870,34 @@ export interface GetSignalsRequest {
   /**
    * Initiator-provided context included in the request payload. Agents must echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.
    */
-  context?: {
-    [k: string]: unknown;
-  };
+  context?: {};
+}
+/**
+ * Filters to refine signal discovery results
+ */
+export interface SignalFilters {
+  /**
+   * Filter by catalog type
+   */
+  catalog_types?: SignalCatalogType[];
+  /**
+   * Filter by specific data providers
+   */
+  data_providers?: string[];
+  /**
+   * Maximum CPM price filter
+   */
+  max_cpm?: number;
+  /**
+   * Minimum coverage requirement
+   */
+  min_coverage_percentage?: number;
 }
 
 
 // get_signals response
 /**
- * A signal deployment to a specific deployment target with activation status and key
+ * Type of signal
  */
 export type Deployment =
   | {
@@ -4020,10 +4031,7 @@ export interface GetSignalsResponse {
      * Detailed signal description
      */
     description: string;
-    /**
-     * Type of signal
-     */
-    signal_type: 'marketplace' | 'custom' | 'owned';
+    signal_type: SignalCatalogType;
     /**
      * Name of the data provider
      */
@@ -4081,9 +4089,7 @@ export interface ActivateSignalRequest {
   /**
    * Initiator-provided context included in the request payload. Agents must echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.
    */
-  context?: {
-    [k: string]: unknown;
-  };
+  context?: {};
 }
 
 

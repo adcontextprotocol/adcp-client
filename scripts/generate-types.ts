@@ -527,42 +527,16 @@ function generateAgentClasses(tools: ToolDefinition[]) {
 import type { AgentConfig } from '../types';
 import { ProtocolClient } from '../protocols';
 import { validateAgentUrl } from '../validation';
-import { getCircuitBreaker } from '../utils';
+import { getCircuitBreaker, unwrapProtocolResponse } from '../utils';
 import type {
   ${paramImports.join(',\n  ')}
 } from '../types/tools.generated';
 
-// Common response wrapper
-interface ToolResponse<T> {
-  success: true;
-  data: T;
-  agent: {
-    id: string;
-    name: string;
-    protocol: 'mcp' | 'a2a';
-  };
-  responseTimeMs: number;
-  timestamp: string;
-  debugLogs?: any[];
-}
-
-interface ToolError {
-  success: false;
-  error: string;
-  agent: {
-    id: string;
-    name: string;
-    protocol: 'mcp' | 'a2a';
-  };
-  responseTimeMs: number;
-  timestamp: string;
-  debugLogs?: any[];
-}
-
-type ToolResult<T> = ToolResponse<T> | ToolError;
-
 /**
  * Single agent operations with full type safety
+ *
+ * Returns raw AdCP responses matching schema exactly.
+ * No SDK wrapping - responses follow AdCP discriminated union patterns.
  */
 export class Agent {
   constructor(
@@ -570,44 +544,30 @@ export class Agent {
     private client: any // Will be AdCPClient
   ) {}
 
-  private async callTool<T>(toolName: string, params: any): Promise<ToolResult<T>> {
-    const startTime = Date.now();
+  private async callTool<T>(toolName: string, params: any): Promise<T> {
     const debugLogs: any[] = [];
 
     try {
       validateAgentUrl(this.config.agent_uri);
-      
+
       const circuitBreaker = getCircuitBreaker(this.config.id);
-      const result = await circuitBreaker.call(async () => {
+      const protocolResponse = await circuitBreaker.call(async () => {
         return await ProtocolClient.callTool(this.config, toolName, params, debugLogs);
       });
 
-      return {
-        success: true,
-        data: result,
-        agent: {
-          id: this.config.id,
-          name: this.config.name,
-          protocol: this.config.protocol
-        },
-        responseTimeMs: Date.now() - startTime,
-        timestamp: new Date().toISOString(),
-        debugLogs
-      };
+      // Unwrap protocol response to get raw AdCP data
+      const adcpResponse = unwrapProtocolResponse(protocolResponse);
+
+      return adcpResponse as T;
     } catch (error) {
+      // Convert exceptions to AdCP error format
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       return {
-        success: false,
-        error: errorMessage,
-        agent: {
-          id: this.config.id,
-          name: this.config.name,
-          protocol: this.config.protocol
-        },
-        responseTimeMs: Date.now() - startTime,
-        timestamp: new Date().toISOString(),
-        debugLogs
-      };
+        errors: [{
+          code: 'client_error',
+          message: errorMessage
+        }]
+      } as T;
     }
   }
 
@@ -629,7 +589,7 @@ export class Agent {
    * ${tool.description}
    * Official AdCP ${tool.name} tool schema
    */
-  async ${tool.methodName}(${paramDecl}): Promise<ToolResult<${responseType}>> {
+  async ${tool.methodName}(${paramDecl}): Promise<${responseType}> {
     return this.callTool<${responseType}>('${tool.name}', ${paramType === 'void' ? '{}' : 'params'});
   }
 
@@ -647,7 +607,7 @@ export class AgentCollection {
     private client: any // Will be AdCPClient
   ) {}
 
-  private async callToolOnAll<T>(toolName: string, params: any): Promise<ToolResult<T>[]> {
+  private async callToolOnAll<T>(toolName: string, params: any): Promise<T[]> {
     const agents = this.configs.map(config => new Agent(config, this.client));
     const promises = agents.map(agent => (agent as any).callTool(toolName, params));
     return Promise.all(promises);
@@ -673,7 +633,7 @@ export class AgentCollection {
    * ${tool.description} (across multiple agents)
    * Official AdCP ${tool.name} tool schema
    */
-  async ${tool.methodName}(${paramDecl}): Promise<ToolResult<${responseType}>[]> {
+  async ${tool.methodName}(${paramDecl}): Promise<${responseType}[]> {
     return this.callToolOnAll<${responseType}>('${tool.name}', ${paramType === 'void' ? '{}' : 'params'});
   }
 

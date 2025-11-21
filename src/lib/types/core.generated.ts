@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas v2.4.0
-// Generated at: 2025-11-20T15:07:36.193Z
+// Generated at: 2025-11-21T14:53:00.993Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -171,6 +171,10 @@ export interface FormatID {
 
 // CREATIVE-ASSET SCHEMA
 /**
+ * JavaScript module type
+ */
+export type JavaScriptModuleType = 'esm' | 'commonjs' | 'script';
+/**
  * VAST (Video Ad Serving Template) tag for third-party video ad serving
  */
 export type VASTAsset =
@@ -183,10 +187,7 @@ export type VASTAsset =
        * URL endpoint that returns VAST XML
        */
       url: string;
-      /**
-       * VAST specification version
-       */
-      vast_version?: '2.0' | '3.0' | '4.0' | '4.1' | '4.2';
+      vast_version?: VASTVersion;
       /**
        * Whether VPAID (Video Player-Ad Interface Definition) is supported
        */
@@ -198,24 +199,7 @@ export type VASTAsset =
       /**
        * Tracking events supported by this VAST tag
        */
-      tracking_events?: (
-        | 'start'
-        | 'firstQuartile'
-        | 'midpoint'
-        | 'thirdQuartile'
-        | 'complete'
-        | 'impression'
-        | 'click'
-        | 'pause'
-        | 'resume'
-        | 'skip'
-        | 'mute'
-        | 'unmute'
-        | 'fullscreen'
-        | 'exitFullscreen'
-        | 'playerExpand'
-        | 'playerCollapse'
-      )[];
+      tracking_events?: VASTTrackingEvent[];
     }
   | {
       /**
@@ -226,10 +210,7 @@ export type VASTAsset =
        * Inline VAST XML content
        */
       content: string;
-      /**
-       * VAST specification version
-       */
-      vast_version?: '2.0' | '3.0' | '4.0' | '4.1' | '4.2';
+      vast_version?: VASTVersion1;
       /**
        * Whether VPAID (Video Player-Ad Interface Definition) is supported
        */
@@ -241,25 +222,36 @@ export type VASTAsset =
       /**
        * Tracking events supported by this VAST tag
        */
-      tracking_events?: (
-        | 'start'
-        | 'firstQuartile'
-        | 'midpoint'
-        | 'thirdQuartile'
-        | 'complete'
-        | 'impression'
-        | 'click'
-        | 'pause'
-        | 'resume'
-        | 'skip'
-        | 'mute'
-        | 'unmute'
-        | 'fullscreen'
-        | 'exitFullscreen'
-        | 'playerExpand'
-        | 'playerCollapse'
-      )[];
+      tracking_events?: VASTTrackingEvent[];
     };
+/**
+ * VAST specification version
+ */
+export type VASTVersion = '2.0' | '3.0' | '4.0' | '4.1' | '4.2';
+/**
+ * Standard VAST tracking events for video ad playback and interaction
+ */
+export type VASTTrackingEvent =
+  | 'start'
+  | 'firstQuartile'
+  | 'midpoint'
+  | 'thirdQuartile'
+  | 'complete'
+  | 'impression'
+  | 'click'
+  | 'pause'
+  | 'resume'
+  | 'skip'
+  | 'mute'
+  | 'unmute'
+  | 'fullscreen'
+  | 'exitFullscreen'
+  | 'playerExpand'
+  | 'playerCollapse';
+/**
+ * VAST specification version
+ */
+export type VASTVersion1 = '2.0' | '3.0' | '4.0' | '4.1' | '4.2';
 /**
  * DAAST (Digital Audio Ad Serving Template) tag for third-party audio ad serving
  */
@@ -273,10 +265,7 @@ export type DAASTAsset =
        * URL endpoint that returns DAAST XML
        */
       url: string;
-      /**
-       * DAAST specification version
-       */
-      daast_version?: '1.0' | '1.1';
+      daast_version?: DAASTVersion;
       /**
        * Expected audio duration in milliseconds (if known)
        */
@@ -284,19 +273,7 @@ export type DAASTAsset =
       /**
        * Tracking events supported by this DAAST tag
        */
-      tracking_events?: (
-        | 'start'
-        | 'firstQuartile'
-        | 'midpoint'
-        | 'thirdQuartile'
-        | 'complete'
-        | 'impression'
-        | 'pause'
-        | 'resume'
-        | 'skip'
-        | 'mute'
-        | 'unmute'
-      )[];
+      tracking_events?: DAASTTrackingEvent[];
       /**
        * Whether companion display ads are included
        */
@@ -311,10 +288,7 @@ export type DAASTAsset =
        * Inline DAAST XML content
        */
       content: string;
-      /**
-       * DAAST specification version
-       */
-      daast_version?: '1.0' | '1.1';
+      daast_version?: DAASTVersion1;
       /**
        * Expected audio duration in milliseconds (if known)
        */
@@ -322,24 +296,35 @@ export type DAASTAsset =
       /**
        * Tracking events supported by this DAAST tag
        */
-      tracking_events?: (
-        | 'start'
-        | 'firstQuartile'
-        | 'midpoint'
-        | 'thirdQuartile'
-        | 'complete'
-        | 'impression'
-        | 'pause'
-        | 'resume'
-        | 'skip'
-        | 'mute'
-        | 'unmute'
-      )[];
+      tracking_events?: DAASTTrackingEvent[];
       /**
        * Whether companion display ads are included
        */
       companion_ads?: boolean;
     };
+/**
+ * DAAST specification version
+ */
+export type DAASTVersion = '1.0' | '1.1';
+/**
+ * Standard DAAST tracking events for audio ad playback and interaction
+ */
+export type DAASTTrackingEvent =
+  | 'start'
+  | 'firstQuartile'
+  | 'midpoint'
+  | 'thirdQuartile'
+  | 'complete'
+  | 'impression'
+  | 'pause'
+  | 'resume'
+  | 'skip'
+  | 'mute'
+  | 'unmute';
+/**
+ * DAAST specification version
+ */
+export type DAASTVersion1 = '1.0' | '1.1';
 /**
  * Brand information manifest containing assets, themes, and guidelines. Can be provided inline or as a URL reference to a hosted manifest.
  */
@@ -361,6 +346,10 @@ export type AssetContentType =
   | 'promoted_offerings'
   | 'url'
   | 'webhook';
+/**
+ * Type of URL asset: 'clickthrough' for user click destination (landing page), 'tracker_pixel' for impression/event tracking via HTTP request (fires GET, expects pixel/204 response), 'tracker_script' for measurement SDKs that must load as <script> tag (OMID verification, native event trackers using method:2)
+ */
+export type URLAssetType = 'clickthrough' | 'tracker_pixel' | 'tracker_script';
 
 /**
  * Creative asset for upload to library - supports static assets, generative formats, and third-party snippets
@@ -559,10 +548,7 @@ export interface JavaScriptAsset {
    * JavaScript content
    */
   content: string;
-  /**
-   * JavaScript module type
-   */
-  module_type?: 'esm' | 'commonjs' | 'script';
+  module_type?: JavaScriptModuleType;
 }
 /**
  * Complete offering specification combining brand manifest, product selectors, and asset filters. Provides all context needed for creative generation about what is being promoted.
@@ -864,10 +850,7 @@ export interface URLAsset {
    * URL reference
    */
   url: string;
-  /**
-   * Type of URL asset: 'clickthrough' for user click destination (landing page), 'tracker_pixel' for impression/event tracking via HTTP request (fires GET, expects pixel/204 response), 'tracker_script' for measurement SDKs that must load as <script> tag (OMID verification, native event trackers using method:2)
-   */
-  url_type?: 'clickthrough' | 'tracker_pixel' | 'tracker_script';
+  url_type?: URLAssetType;
   /**
    * Description of what this URL points to
    */
@@ -938,6 +921,31 @@ export type PricingOption =
   | CPVPricingOption
   | CPPPricingOption
   | FlatRatePricingOption;
+/**
+ * Available frequencies for delivery reports and metrics updates
+ */
+export type ReportingFrequency = 'hourly' | 'daily' | 'monthly';
+/**
+ * Standard delivery and performance metrics available for reporting
+ */
+export type AvailableMetric =
+  | 'impressions'
+  | 'spend'
+  | 'clicks'
+  | 'ctr'
+  | 'video_completions'
+  | 'completion_rate'
+  | 'conversions'
+  | 'viewability'
+  | 'engagement_rate';
+/**
+ * Co-branding requirement
+ */
+export type CoBrandingRequirement = 'required' | 'optional' | 'none';
+/**
+ * Landing page requirements
+ */
+export type LandingPageRequirement = 'any' | 'retailer_site_only' | 'must_include_retailer';
 
 /**
  * Represents available advertising inventory
@@ -1459,7 +1467,7 @@ export interface ReportingCapabilities {
    *
    * @minItems 1
    */
-  available_reporting_frequencies: ['hourly' | 'daily' | 'monthly', ...('hourly' | 'daily' | 'monthly')[]];
+  available_reporting_frequencies: [ReportingFrequency, ...ReportingFrequency[]];
   /**
    * Expected delay in minutes before reporting data becomes available (e.g., 240 for 4-hour delay)
    */
@@ -1475,30 +1483,14 @@ export interface ReportingCapabilities {
   /**
    * Metrics available in reporting. Impressions and spend are always implicitly included.
    */
-  available_metrics: (
-    | 'impressions'
-    | 'spend'
-    | 'clicks'
-    | 'ctr'
-    | 'video_completions'
-    | 'completion_rate'
-    | 'conversions'
-    | 'viewability'
-    | 'engagement_rate'
-  )[];
+  available_metrics: AvailableMetric[];
 }
 /**
  * Creative requirements and restrictions for a product
  */
 export interface CreativePolicy {
-  /**
-   * Co-branding requirement
-   */
-  co_branding: 'required' | 'optional' | 'none';
-  /**
-   * Landing page requirements
-   */
-  landing_page: 'any' | 'retailer_site_only' | 'must_include_retailer';
+  co_branding: CoBrandingRequirement;
+  landing_page: LandingPageRequirement;
   /**
    * Whether creative templates are provided
    */
@@ -1570,77 +1562,5 @@ export interface FrequencyCap {
    * Minutes to suppress after impression
    */
   suppress_minutes: number;
-}
-
-// PROPERTY SCHEMA
-/**
- * Type of identifier for this property
- */
-export type PropertyIdentifierTypes =
-  | 'domain'
-  | 'subdomain'
-  | 'network_id'
-  | 'ios_bundle'
-  | 'android_package'
-  | 'apple_app_store_id'
-  | 'google_play_id'
-  | 'roku_store_id'
-  | 'fire_tv_asin'
-  | 'samsung_app_id'
-  | 'apple_tv_bundle'
-  | 'bundle_id'
-  | 'venue_id'
-  | 'screen_id'
-  | 'openooh_venue_type'
-  | 'rss_url'
-  | 'apple_podcast_id'
-  | 'spotify_show_id'
-  | 'podcast_guid';
-
-/**
- * An advertising property that can be validated via adagents.json
- */
-export interface Property {
-  /**
-   * Unique identifier for this property (optional). Enables referencing properties by ID instead of repeating full objects. Recommended format: lowercase with underscores (e.g., 'cnn_ctv_app', 'instagram_mobile')
-   */
-  property_id?: string;
-  /**
-   * Type of advertising property
-   */
-  property_type: 'website' | 'mobile_app' | 'ctv_app' | 'dooh' | 'podcast' | 'radio' | 'streaming_audio';
-  /**
-   * Human-readable property name
-   */
-  name: string;
-  /**
-   * Array of identifiers for this property
-   *
-   * @minItems 1
-   */
-  identifiers: [
-    {
-      type: PropertyIdentifierTypes;
-      /**
-       * The identifier value. For domain type: 'example.com' matches base domain plus www and m subdomains; 'edition.example.com' matches that specific subdomain; '*.example.com' matches ALL subdomains but NOT base domain
-       */
-      value: string;
-    },
-    ...{
-      type: PropertyIdentifierTypes;
-      /**
-       * The identifier value. For domain type: 'example.com' matches base domain plus www and m subdomains; 'edition.example.com' matches that specific subdomain; '*.example.com' matches ALL subdomains but NOT base domain
-       */
-      value: string;
-    }[]
-  ];
-  /**
-   * Tags for categorization and grouping (e.g., network membership, content categories)
-   */
-  tags?: string[];
-  /**
-   * Domain where adagents.json should be checked for authorization validation. Required for list_authorized_properties response. Optional in adagents.json (file location implies domain).
-   */
-  publisher_domain?: string;
 }
 
