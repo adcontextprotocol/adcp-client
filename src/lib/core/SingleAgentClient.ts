@@ -1262,21 +1262,13 @@ export class SingleAgentClient {
    * Get request schema for a given task type
    */
   private getRequestSchema(taskType: string): z.ZodSchema | null {
-    // Only include schemas that exist (some may not be auto-generated)
+    // Only include schemas that exist in generated schemas
     const schemaMap: Partial<Record<string, z.ZodSchema>> = {
       list_creative_formats: schemas.ListCreativeFormatsRequestSchema,
-      list_creatives: schemas.ListCreativesRequestSchema,
-      sync_creatives: schemas.SyncCreativesRequestSchema,
-      create_media_buy: schemas.CreateMediaBuyRequestSchema,
-      build_creative: schemas.BuildCreativeRequestSchema,
-      get_products: schemas.GetProductsRequestSchema,
-      update_media_buy: schemas.UpdateMediaBuyRequestSchema,
       get_media_buy_delivery: schemas.GetMediaBuyDeliveryRequestSchema,
       list_authorized_properties: schemas.ListAuthorizedPropertiesRequestSchema,
-      provide_performance_feedback: schemas.ProvidePerformanceFeedbackRequestSchema,
       get_signals: schemas.GetSignalsRequestSchema,
       activate_signal: schemas.ActivateSignalRequestSchema,
-      preview_creative: schemas.PreviewCreativeRequestSchema,
     };
 
     return schemaMap[taskType] || null;

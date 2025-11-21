@@ -8,8 +8,8 @@ export type { Property, PropertyIdentifier, PropertyIdentifierType, PropertyType
 
 // ====== CORE CONVERSATION-AWARE CLIENTS ======
 // New conversation-aware clients with input handler pattern
-export { ADCPClient, createADCPClient } from './core/ADCPClient';
-export type { ADCPClientConfig } from './core/ADCPClient';
+export { SingleAgentClient, createSingleAgentClient } from './core/SingleAgentClient';
+export type { SingleAgentClientConfig } from './core/SingleAgentClient';
 export { AgentClient, type TaskResponseTypeMap, type AdcpTaskName } from './core/AgentClient';
 export { ADCPMultiAgentClient, createADCPMultiAgentClient } from './core/ADCPMultiAgentClient';
 export { ConfigurationManager } from './core/ConfigurationManager';
