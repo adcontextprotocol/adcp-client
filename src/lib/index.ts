@@ -184,8 +184,8 @@ import { ADCPMultiAgentClient } from './core/ADCPMultiAgentClient';
 export class AdCPClient {
   private multiClient: ADCPMultiAgentClient;
 
-  constructor(agents?: AgentConfig[]) {
-    this.multiClient = new ADCPMultiAgentClient(agents || []);
+  constructor(agents?: AgentConfig[], config?: any) {
+    this.multiClient = new ADCPMultiAgentClient(agents || [], config);
   }
 
   agent(id: string) {
