@@ -254,6 +254,10 @@ describe('Artifact Extraction Tests', () => {
       assert.strictEqual(extractedData.packages.length, 2);
       assert.strictEqual(extractedData.buyer_ref, 'harley-test-1763691443');
 
+      // Should include the human-readable message from text part
+      assert.ok(extractedData._message, 'Should have _message field');
+      assert.ok(extractedData._message.includes('Media Buy Created Successfully'), 'Message should contain success text');
+
       // Should NOT return the pending_human status from first artifact
       assert.strictEqual(extractedData.status, undefined);
     });

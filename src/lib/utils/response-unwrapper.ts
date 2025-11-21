@@ -68,16 +68,37 @@ export function unwrapProtocolResponse(protocolResponse: any): any {
     // 2. Try artifacts with data parts containing AdCP response fields
     // 3. Fall back to first artifact's first data part
 
+    // Helper to extract both text and data from an artifact
+    const extractFromArtifact = (artifact: any) => {
+      const textParts = artifact.parts
+        ?.filter((p: any) => p.kind === 'text' && p.text)
+        .map((p: any) => p.text) || [];
+
+      const dataPart = artifact.parts?.find((p: any) => p.kind === 'data' && p.data && typeof p.data === 'object');
+
+      if (dataPart?.data) {
+        const data = dataPart.data;
+        // If there are text messages, include them similar to MCP's content field
+        if (textParts.length > 0) {
+          return {
+            ...data,
+            _message: textParts.join('\n'), // Include human-readable message
+          };
+        }
+        return data;
+      }
+      return null;
+    };
+
     // First, try to find HITL completion artifact (end_of_hitl-)
     for (const artifact of artifacts) {
       if (artifact.artifactId?.startsWith('end_of_hitl-') || artifact.artifactId?.startsWith('end_of_')) {
-        // Look for data part with AdCP response structure
-        const dataPart = artifact.parts?.find((p: any) => p.kind === 'data' && p.data && typeof p.data === 'object');
-        if (dataPart?.data) {
+        const extracted = extractFromArtifact(artifact);
+        if (extracted) {
           // Verify it looks like an AdCP response (has typical AdCP fields)
-          const data = dataPart.data;
-          if (data.media_buy_id || data.buyer_ref || data.packages || data.products || data.formats || data.creatives) {
-            return data;
+          if (extracted.media_buy_id || extracted.buyer_ref || extracted.packages ||
+              extracted.products || extracted.formats || extracted.creatives) {
+            return extracted;
           }
         }
       }
@@ -85,21 +106,26 @@ export function unwrapProtocolResponse(protocolResponse: any): any {
 
     // Second, look for any artifact with data part containing AdCP response fields
     for (const artifact of artifacts) {
-      const dataPart = artifact.parts?.find((p: any) => p.kind === 'data' && p.data && typeof p.data === 'object');
-      if (dataPart?.data) {
-        const data = dataPart.data;
+      const extracted = extractFromArtifact(artifact);
+      if (extracted) {
         // Skip HITL status artifacts (these have status: "pending_human" and data: null)
-        if (data.status === 'pending_human' && data.data === null) {
+        if (extracted.status === 'pending_human' && extracted.data === null) {
           continue;
         }
         // Check if this looks like an AdCP response
-        if (data.media_buy_id || data.buyer_ref || data.packages || data.products || data.formats || data.creatives) {
-          return data;
+        if (extracted.media_buy_id || extracted.buyer_ref || extracted.packages ||
+            extracted.products || extracted.formats || extracted.creatives) {
+          return extracted;
         }
       }
     }
 
     // Fall back to first artifact's first data part
+    const fallback = extractFromArtifact(artifacts[0]);
+    if (fallback) {
+      return fallback;
+    }
+
     const a2aData = artifacts[0]?.parts?.[0]?.data;
     if (a2aData !== undefined && a2aData !== null) {
       return a2aData;
