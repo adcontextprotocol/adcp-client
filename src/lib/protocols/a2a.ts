@@ -2,6 +2,8 @@
 const clientModule = require('@a2a-js/sdk/client');
 const A2AClient = clientModule.A2AClient;
 
+import type { PushNotificationConfig } from '../types/tools.generated';
+
 if (!A2AClient) {
   throw new Error('A2A SDK client is required. Please install @a2a-js/sdk');
 }
@@ -12,14 +14,7 @@ export async function callA2ATool(
   parameters: Record<string, any>,
   authToken?: string,
   debugLogs: any[] = [],
-  pushNotificationConfig?: {
-    url: string;
-    token?: string; // Optional: min 16 chars per AdCP schema
-    authentication: {
-      schemes: readonly string[];
-      credentials: string; // Required: min 32 chars per AdCP schema
-    };
-  }
+  pushNotificationConfig?: PushNotificationConfig
 ): Promise<any> {
   // Create authenticated fetch that wraps native fetch
   // This ensures ALL requests (including agent card fetching) include auth headers
