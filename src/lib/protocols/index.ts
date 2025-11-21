@@ -15,6 +15,17 @@ import { validateAgentUrl } from '../validation';
 export class ProtocolClient {
   /**
    * Call a tool on an agent using the appropriate protocol
+   *
+   * @param agent - Agent configuration
+   * @param toolName - Name of the tool/skill to call
+   * @param args - Tool arguments (includes reporting_webhook if needed - NOT removed)
+   * @param debugLogs - Debug log array
+   * @param webhookUrl - Optional: URL for async task status notifications (push_notification_config)
+   * @param webhookSecret - Optional: Secret for push_notification_config authentication
+   * @param webhookToken - Optional: Token for push_notification_config validation
+   *
+   * IMPORTANT: webhookUrl/Secret/Token are for ASYNC TASK STATUS (push_notification_config).
+   * For reporting webhooks (reporting_webhook), include them directly in args - they stay in skill parameters.
    */
   static async callTool(
     agent: AgentConfig,
@@ -29,9 +40,9 @@ export class ProtocolClient {
 
     const authToken = getAuthToken(agent);
 
-    // Build PushNotificationConfig per AdCP schema:
-    // https://adcontextprotocol.org/schemas/v1/core/push-notification-config.json
-    // Uses generated type from tools.generated.ts
+    // Build push_notification_config for ASYNC TASK STATUS notifications
+    // (NOT for reporting_webhook - that stays in args)
+    // Schema: https://adcontextprotocol.org/schemas/v1/core/push-notification-config.json
     const pushNotificationConfig: PushNotificationConfig | undefined = webhookUrl
       ? {
           url: webhookUrl,
