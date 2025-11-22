@@ -87,6 +87,20 @@ export const VERSION_INFO = {
 } as const;
 
 /**
+ * Get the AdCP specification version this library is built for
+ */
+export function getAdcpVersion(): string {
+  return ADCP_VERSION;
+}
+
+/**
+ * Get the library version
+ */
+export function getLibraryVersion(): string {
+  return LIBRARY_VERSION;
+}
+
+/**
  * Check if this library version is compatible with a given AdCP version
  */
 export function isCompatibleWith(adcpVersion: string): boolean {
