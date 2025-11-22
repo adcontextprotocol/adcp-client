@@ -169,6 +169,16 @@ export { getStandardFormats, unwrapProtocolResponse, isAdcpError, isAdcpSuccess 
 export { REQUEST_TIMEOUT, MAX_CONCURRENT, STANDARD_FORMATS } from './utils';
 export { detectProtocol, detectProtocolWithTimeout } from './utils';
 
+// ====== VERSION INFORMATION ======
+export {
+  getAdcpVersion,
+  getLibraryVersion,
+  isCompatibleWith,
+  ADCP_VERSION,
+  LIBRARY_VERSION,
+  VERSION_INFO
+} from './version';
+
 // ====== AGENT CLASSES ======
 // Primary agent interface - returns raw AdCP responses
 export { Agent, AgentCollection } from './agents/index.generated';

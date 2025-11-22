@@ -2,6 +2,7 @@
 
 import { writeFileSync, mkdirSync, existsSync } from 'fs';
 import path from 'path';
+import { ADCP_VERSION } from '../src/lib/version';
 
 // AdCP Schema Configuration
 const ADCP_BASE_URL = 'https://adcontextprotocol.org';
@@ -28,9 +29,23 @@ async function fetchJson(url: string): Promise<any> {
 }
 
 // Download and cache a schema file
-async function downloadSchema(schemaRef: string, cacheDir: string): Promise<void> {
+async function downloadSchema(schemaRef: string, cacheDir: string, adcpVersion: string): Promise<void> {
   const url = `${ADCP_BASE_URL}${schemaRef}`;
-  const localPath = path.join(cacheDir, schemaRef.replace('/schemas/v1/', ''));
+
+  // Strip the version prefix from the schema path to get the local path
+  // e.g., /schemas/2.4.0/core/product.json -> core/product.json
+  const versionPrefix = `/schemas/${adcpVersion}/`;
+  const fallbackPrefix = '/schemas/v1/';
+
+  let localPath: string;
+  if (schemaRef.startsWith(versionPrefix)) {
+    localPath = path.join(cacheDir, schemaRef.replace(versionPrefix, ''));
+  } else if (schemaRef.startsWith(fallbackPrefix)) {
+    localPath = path.join(cacheDir, schemaRef.replace(fallbackPrefix, ''));
+  } else {
+    // Handle absolute paths like /schemas/v1/adagents.json
+    localPath = path.join(cacheDir, path.basename(schemaRef));
+  }
 
   // Create directory if it doesn't exist
   mkdirSync(path.dirname(localPath), { recursive: true });
@@ -49,7 +64,8 @@ async function downloadSchema(schemaRef: string, cacheDir: string): Promise<void
 function extractRefs(schema: any, refs: Set<string> = new Set()): Set<string> {
   if (typeof schema === 'object' && schema !== null) {
     if (schema.$ref && typeof schema.$ref === 'string') {
-      if (schema.$ref.startsWith('/schemas/v1/')) {
+      // Accept both versioned (/schemas/X.Y.Z/) and v1 (/schemas/v1/) paths
+      if (schema.$ref.startsWith('/schemas/')) {
         refs.add(schema.$ref);
       }
     }
@@ -66,12 +82,14 @@ function extractRefs(schema: any, refs: Set<string> = new Set()): Set<string> {
 async function syncSchemas(version?: string): Promise<void> {
   console.log('🔄 Syncing AdCP schemas...');
 
-  // Fetch the schema index
-  const indexUrl = `${ADCP_BASE_URL}/schemas/v1/index.json`;
+  // Use the ADCP_VERSION from version.ts as the source of truth
+  const adcpVersion = version || ADCP_VERSION;
+
+  // Fetch the schema index for the specified version
+  const indexUrl = `${ADCP_BASE_URL}/schemas/${adcpVersion}/index.json`;
   console.log(`📥 Fetching schema index from ${indexUrl}...`);
 
   const schemaIndex: SchemaIndex = await fetchJson(indexUrl);
-  const adcpVersion = version || schemaIndex.adcp_version;
 
   console.log(`📋 AdCP Version: ${adcpVersion}`);
   console.log(`🗂️  Caching schemas to: ${SCHEMA_CACHE_DIR}/${adcpVersion}/`);
@@ -131,7 +149,7 @@ async function syncSchemas(version?: string): Promise<void> {
   console.log(`📋 Found ${allRefs.size} schema references to download`);
 
   // Download all primary schemas
-  const downloadPromises = Array.from(allRefs).map(ref => downloadSchema(ref, versionCacheDir));
+  const downloadPromises = Array.from(allRefs).map(ref => downloadSchema(ref, versionCacheDir, adcpVersion));
 
   await Promise.allSettled(downloadPromises);
 
@@ -141,7 +159,19 @@ async function syncSchemas(version?: string): Promise<void> {
   const nestedRefs = new Set<string>();
   for (const ref of allRefs) {
     try {
-      const localPath = path.join(versionCacheDir, ref.replace('/schemas/v1/', ''));
+      // Use the same path extraction logic as downloadSchema
+      const versionPrefix = `/schemas/${adcpVersion}/`;
+      const fallbackPrefix = '/schemas/v1/';
+
+      let localPath: string;
+      if (ref.startsWith(versionPrefix)) {
+        localPath = path.join(versionCacheDir, ref.replace(versionPrefix, ''));
+      } else if (ref.startsWith(fallbackPrefix)) {
+        localPath = path.join(versionCacheDir, ref.replace(fallbackPrefix, ''));
+      } else {
+        localPath = path.join(versionCacheDir, path.basename(ref));
+      }
+
       if (existsSync(localPath)) {
         const schema = JSON.parse(require('fs').readFileSync(localPath, 'utf8'));
         const refs = extractRefs(schema);
@@ -157,7 +187,7 @@ async function syncSchemas(version?: string): Promise<void> {
 
   if (nestedRefs.size > 0) {
     console.log(`📋 Found ${nestedRefs.size} additional nested references`);
-    const nestedDownloadPromises = Array.from(nestedRefs).map(ref => downloadSchema(ref, versionCacheDir));
+    const nestedDownloadPromises = Array.from(nestedRefs).map(ref => downloadSchema(ref, versionCacheDir, adcpVersion));
     await Promise.allSettled(nestedDownloadPromises);
   }
 
