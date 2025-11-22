@@ -18,22 +18,8 @@ export const VERSION_INFO = {
   library: '3.1.0',
   adcp: '2.4.0',
   compatible: true,
-  generatedAt: '2025-11-22T04:17:22.587Z'
+  generatedAt: '2025-11-22T16:42:58.498Z'
 } as const;
-
-/**
- * Get the AdCP specification version this library is built for
- */
-export function getAdcpVersion(): string {
-  return ADCP_VERSION;
-}
-
-/**
- * Get the library version
- */
-export function getLibraryVersion(): string {
-  return LIBRARY_VERSION;
-}
 
 /**
  * Check if this library version is compatible with a given AdCP version

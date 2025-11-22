@@ -27,17 +27,20 @@ function writeFileIfChanged(filePath: string, newContent: string): boolean {
   return hasChanged;
 }
 
-// Get cached AdCP version
-function getCachedAdCPVersion(): string {
+// Get target AdCP version from ADCP_VERSION file (source of truth)
+function getTargetAdCPVersion(): string {
   try {
-    const indexPath = path.join(__dirname, '../schemas/cache/latest/index.json');
-    if (!existsSync(indexPath)) {
-      throw new Error('Schema index not found in cache. Please run "npm run sync-schemas" first.');
+    const versionFilePath = path.join(__dirname, '../ADCP_VERSION');
+    if (!existsSync(versionFilePath)) {
+      throw new Error('ADCP_VERSION file not found. This file defines which AdCP version to use.');
     }
-    const index = JSON.parse(readFileSync(indexPath, 'utf8'));
-    return index.adcp_version || '1.0.0';
+    const version = readFileSync(versionFilePath, 'utf8').trim();
+    if (!version) {
+      throw new Error('ADCP_VERSION file is empty');
+    }
+    return version;
   } catch (error) {
-    console.error(`❌ Failed to get cached AdCP version:`, error.message);
+    console.error(`❌ Failed to read ADCP_VERSION file:`, error.message);
     process.exit(1);
   }
 }
@@ -159,13 +162,13 @@ async function syncVersion(): Promise<void> {
   console.log('🔄 Syncing version with AdCP specification...');
 
   // Get current state
-  const adcpVersion = getCachedAdCPVersion();
+  const adcpVersion = getTargetAdCPVersion();
   const { version: currentLibraryVersion, adcpVersion: currentAdcpVersion } = getCurrentPackageVersion();
 
   console.log(`📋 Current state:`);
   console.log(`   📦 Library version: ${currentLibraryVersion}`);
   console.log(`   🏷️  Current AdCP version: ${currentAdcpVersion || 'not set'}`);
-  console.log(`   🎯 Target AdCP version: ${adcpVersion}`);
+  console.log(`   🎯 Target AdCP version: ${adcpVersion} (from ADCP_VERSION file)`);
 
   // Check command line arguments
   const args = process.argv.slice(2);
@@ -202,4 +205,4 @@ if (require.main === module) {
   });
 }
 
-export { syncVersion, getCachedAdCPVersion };
+export { syncVersion, getTargetAdCPVersion };

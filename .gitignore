@@ -130,4 +130,3 @@ playwright-report/
 data/
 *.db*
 AUTH_TOKEN_FLOW_TRACE.md
-ADCP_VERSION

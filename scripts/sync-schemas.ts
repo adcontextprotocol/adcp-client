@@ -1,12 +1,29 @@
 #!/usr/bin/env tsx
 
-import { writeFileSync, mkdirSync, existsSync } from 'fs';
+import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'fs';
 import path from 'path';
-import { ADCP_VERSION } from '../src/lib/version';
 
 // AdCP Schema Configuration
 const ADCP_BASE_URL = 'https://adcontextprotocol.org';
 const SCHEMA_CACHE_DIR = path.join(__dirname, '../schemas/cache');
+
+// Read target AdCP version from ADCP_VERSION file (source of truth)
+function getTargetAdCPVersion(): string {
+  try {
+    const versionFilePath = path.join(__dirname, '../ADCP_VERSION');
+    if (!existsSync(versionFilePath)) {
+      throw new Error('ADCP_VERSION file not found. This file defines which AdCP version to use.');
+    }
+    const version = readFileSync(versionFilePath, 'utf8').trim();
+    if (!version) {
+      throw new Error('ADCP_VERSION file is empty');
+    }
+    return version;
+  } catch (error) {
+    console.error(`❌ Failed to read ADCP_VERSION file:`, (error as Error).message);
+    process.exit(1);
+  }
+}
 
 interface SchemaIndex {
   adcp_version: string;
@@ -82,8 +99,9 @@ function extractRefs(schema: any, refs: Set<string> = new Set()): Set<string> {
 async function syncSchemas(version?: string): Promise<void> {
   console.log('🔄 Syncing AdCP schemas...');
 
-  // Use the ADCP_VERSION from version.ts as the source of truth
-  const adcpVersion = version || ADCP_VERSION;
+  // Use the ADCP_VERSION file as the source of truth
+  const adcpVersion = version || getTargetAdCPVersion();
+  console.log(`📋 Target AdCP version: ${adcpVersion} (from ADCP_VERSION file)`);
 
   // Fetch the schema index for the specified version
   const indexUrl = `${ADCP_BASE_URL}/schemas/${adcpVersion}/index.json`;
