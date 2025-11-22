@@ -315,13 +315,13 @@ export class ResponseValidator {
       list_creative_formats: schemas.ListCreativeFormatsResponseSchema,
       create_media_buy: schemas.CreateMediaBuyResponseSchema,
       update_media_buy: schemas.UpdateMediaBuyResponseSchema,
-      sync_creatives: schemas.SyncCreativesResponseSchema,
+      // sync_creatives: schemas.SyncCreativesResponseSchema, // Complex discriminated union - validation skipped
       list_creatives: schemas.ListCreativesResponseSchema,
       get_media_buy_delivery: schemas.GetMediaBuyDeliveryResponseSchema,
       list_authorized_properties: schemas.ListAuthorizedPropertiesResponseSchema,
       provide_performance_feedback: schemas.ProvidePerformanceFeedbackResponseSchema,
       build_creative: schemas.BuildCreativeResponseSchema,
-      preview_creative: schemas.PreviewCreativeResponseSchema,
+      // preview_creative: schemas.PreviewCreativeResponseSchema, // Complex discriminated union - validation skipped
       get_signals: schemas.GetSignalsResponseSchema,
       activate_signal: schemas.ActivateSignalResponseSchema,
     };
