@@ -9,6 +9,7 @@
  * Extract raw AdCP response from protocol wrapper
  *
  * @param protocolResponse - Raw response from MCP or A2A protocol
+ * @param toolName - Optional AdCP tool name for validation (e.g., 'get_products')
  * @returns Raw AdCP response data matching schema exactly
  *
  * @example
@@ -16,7 +17,7 @@
  * const mcpResponse = {
  *   structuredContent: { packages: [...], media_buy_id: "..." }
  * };
- * const adcpResponse = unwrapProtocolResponse(mcpResponse);
+ * const adcpResponse = unwrapProtocolResponse(mcpResponse, 'get_products');
  * // Returns: { packages: [...], media_buy_id: "..." }
  *
  * @example
@@ -30,7 +31,7 @@
  *     }]
  *   }
  * };
- * const adcpResponse = unwrapProtocolResponse(a2aResponse);
+ * const adcpResponse = unwrapProtocolResponse(a2aResponse, 'get_products');
  * // Returns: { packages: [...], media_buy_id: "..." }
  *
  * @example
@@ -46,10 +47,10 @@
  *     ]
  *   }
  * };
- * const adcpResponse = unwrapProtocolResponse(hitlResponse);
+ * const adcpResponse = unwrapProtocolResponse(hitlResponse, 'create_media_buy');
  * // Returns: { packages: [...], media_buy_id: "...", _message: "..." } (from first completed artifact)
  */
-export function unwrapProtocolResponse(protocolResponse: any): any {
+export function unwrapProtocolResponse(protocolResponse: any, toolName?: string): any {
   if (!protocolResponse) {
     throw new Error('Protocol response is null or undefined');
   }
@@ -89,7 +90,7 @@ export function unwrapProtocolResponse(protocolResponse: any): any {
     };
 
     // Helper to check if data looks like a completed AdCP response
-    const isAdcpResponse = (data: any): boolean => {
+    const isCompletedResponse = (data: any): boolean => {
       if (!data || typeof data !== 'object') return false;
 
       // Skip HITL status artifacts (these have status: "pending_human" and data: null)
@@ -97,21 +98,21 @@ export function unwrapProtocolResponse(protocolResponse: any): any {
         return false;
       }
 
-      // Check for typical AdCP response fields
-      return !!(
-        data.media_buy_id ||
-        data.buyer_ref ||
-        data.packages ||
-        data.products ||
-        data.formats ||
-        data.creatives
-      );
+      // Use proper schema validation with tool name
+      if (!toolName) {
+        throw new Error(
+          'Tool name is required to validate A2A artifacts. ' +
+            'Cannot distinguish between intermediate HITL artifacts and completed AdCP responses without knowing which tool was called.'
+        );
+      }
+
+      return isAdcpSuccess(data, toolName);
     };
 
     // Find first artifact with completed AdCP response
     for (const artifact of artifacts) {
       const extracted = extractFromArtifact(artifact);
-      if (extracted && isAdcpResponse(extracted)) {
+      if (extracted && isCompletedResponse(extracted)) {
         return extracted;
       }
     }

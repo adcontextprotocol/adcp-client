@@ -51,7 +51,7 @@ describe('Artifact Extraction Tests', () => {
       };
 
       // Test the extraction logic directly
-      const extractedData = executor.extractResponseData(mockResponse, []);
+      const extractedData = executor.extractResponseData(mockResponse, [], 'get_products');
 
       assert.ok(extractedData, 'Should extract data');
       assert.ok(extractedData.products, 'Should have products');
@@ -86,7 +86,7 @@ describe('Artifact Extraction Tests', () => {
       };
 
       const debugLogs = [];
-      const extractedData = executor.extractResponseData(mockResponse, debugLogs);
+      const extractedData = executor.extractResponseData(mockResponse, debugLogs, 'list_creatives');
 
       assert.ok(extractedData.creatives, 'Should have creatives');
       assert.strictEqual(extractedData.creatives.length, 2);
@@ -124,7 +124,7 @@ describe('Artifact Extraction Tests', () => {
         },
       };
 
-      const extractedData = executor.extractResponseData(mockResponse, []);
+      const extractedData = executor.extractResponseData(mockResponse, [], 'list_creative_formats');
 
       assert.ok(extractedData.formats, 'Should have formats');
       assert.strictEqual(extractedData.formats.length, 2);
@@ -154,7 +154,7 @@ describe('Artifact Extraction Tests', () => {
       };
 
       // Should extract from first part only
-      const extractedData = executor.extractResponseData(mockResponse, []);
+      const extractedData = executor.extractResponseData(mockResponse, [], 'get_products');
 
       assert.ok(extractedData.products, 'Should extract from first part');
       assert.strictEqual(extractedData.products.length, 1);
@@ -245,7 +245,7 @@ describe('Artifact Extraction Tests', () => {
       };
 
       const debugLogs = [];
-      const extractedData = executor.extractResponseData(mockResponse, debugLogs);
+      const extractedData = executor.extractResponseData(mockResponse, debugLogs, 'create_media_buy');
 
       // Should extract the AdCP response from end_of_hitl artifact
       assert.ok(extractedData.media_buy_id, 'Should have media_buy_id');
@@ -346,7 +346,7 @@ describe('Artifact Extraction Tests', () => {
       };
 
       const debugLogs = [];
-      const extractedData = executor.extractResponseData(realClientResponse, debugLogs);
+      const extractedData = executor.extractResponseData(realClientResponse, debugLogs, 'create_media_buy');
 
       // Should extract from the end_of_hitl artifact (Artifact 2), NOT the first or third
       assert.ok(extractedData.media_buy_id, 'Should have media_buy_id');
@@ -408,7 +408,7 @@ describe('Artifact Extraction Tests', () => {
       };
 
       const debugLogs = [];
-      const extractedData = executor.extractResponseData(mockResponse, debugLogs);
+      const extractedData = executor.extractResponseData(mockResponse, debugLogs, 'list_creative_formats');
 
       // Should extract the nested data from the 'response' field, not the wrapper
       assert.ok(extractedData.formats, 'Should have formats from nested response');
@@ -517,7 +517,7 @@ describe('Artifact Extraction Tests', () => {
         },
       };
 
-      const a2aData = executor.extractResponseData(a2aResponse, []);
+      const a2aData = executor.extractResponseData(a2aResponse, [], 'get_products');
       const mcpData = executor.extractResponseData(mcpResponse, []);
 
       // Both should extract the same products
@@ -593,7 +593,7 @@ describe('Artifact Extraction Tests', () => {
       };
 
       const debugLogs = [];
-      executor.extractResponseData(mockResponse, debugLogs);
+      executor.extractResponseData(mockResponse, debugLogs, 'get_products');
 
       const extractionLog = debugLogs[0];
       assert.ok(extractionLog.details);

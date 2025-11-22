@@ -276,7 +276,7 @@ export class TaskExecutor {
     switch (status) {
       case ADCP_STATUS.COMPLETED:
         // Task completed immediately
-        const completedData = this.extractResponseData(response, debugLogs);
+        const completedData = this.extractResponseData(response, debugLogs, taskName);
         this.updateTaskStatus(taskId, 'completed', completedData);
 
         // Check if the actual operation succeeded (not just the task)
@@ -354,7 +354,7 @@ export class TaskExecutor {
 
       default:
         // Unknown status - treat as completed if we have data
-        const defaultData = this.extractResponseData(response, debugLogs);
+        const defaultData = this.extractResponseData(response, debugLogs, taskName);
         if (
           defaultData &&
           (defaultData !== response || response.structuredContent || response.result || response.data)
@@ -401,7 +401,7 @@ export class TaskExecutor {
    *
    * @internal Exposed for testing purposes
    */
-  public extractResponseData(response: any, debugLogs?: any[]): any {
+  public extractResponseData(response: any, debugLogs?: any[], toolName?: string): any {
     // Note: MCP error responses (isError: true) are handled in mcp.ts and thrown as exceptions
     // They never reach this function - they're caught by the try/catch in executeTask
 
@@ -409,7 +409,7 @@ export class TaskExecutor {
     // This handles MCP structuredContent, A2A artifacts (including HITL multi-artifact responses),
     // and various edge cases consistently
     try {
-      const unwrapped = unwrapProtocolResponse(response);
+      const unwrapped = unwrapProtocolResponse(response, toolName);
 
       // Log what type of extraction was performed
       if (response?.structuredContent) {
