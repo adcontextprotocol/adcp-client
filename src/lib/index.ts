@@ -176,7 +176,7 @@ export {
   isCompatibleWith,
   ADCP_VERSION,
   LIBRARY_VERSION,
-  VERSION_INFO
+  VERSION_INFO,
 } from './version';
 
 // ====== AGENT CLASSES ======

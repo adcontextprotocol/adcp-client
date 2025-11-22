@@ -31,6 +31,19 @@ export type DeliveryType = 'guaranteed' | 'non_guaranteed';
  * High-level categories for creative formats based on media type and delivery channel. Describes WHERE and HOW a creative displays, not what content it contains.
  */
 export type FormatCategory = 'audio' | 'video' | 'display' | 'native' | 'dooh' | 'rich_media' | 'universal';
+/**
+ * Standard advertising channels supported by AdCP
+ */
+export type AdvertisingChannels =
+  | 'display'
+  | 'video'
+  | 'audio'
+  | 'native'
+  | 'dooh'
+  | 'ctv'
+  | 'podcast'
+  | 'retail'
+  | 'social';
 
 /**
  * Request parameters for discovering available advertising products
@@ -42,12 +55,8 @@ export interface GetProductsRequest {
   brief?: string;
   brand_manifest?: BrandManifestReference;
   filters?: ProductFilters;
-  /**
-   * Initiator-provided context included in the request payload. Agentsmust echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.
-   */
-  context?: {
-    [k: string]: unknown;
-  };
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 /**
  * Inline brand manifest object
@@ -290,6 +299,28 @@ export interface ProductFilters {
    * Minimum exposures/impressions needed for measurement validity
    */
   min_exposures?: number;
+  /**
+   * Campaign start date (ISO 8601 date format: YYYY-MM-DD) for availability checks
+   */
+  start_date?: string;
+  /**
+   * Campaign end date (ISO 8601 date format: YYYY-MM-DD) for availability checks
+   */
+  end_date?: string;
+  /**
+   * Budget range to filter appropriate products
+   */
+  budget_range?: {
+    [k: string]: unknown;
+  };
+  /**
+   * Filter by target countries using ISO 3166-1 alpha-2 country codes (e.g., ['US', 'CA', 'GB'])
+   */
+  countries?: string[];
+  /**
+   * Filter by advertising channels (e.g., ['display', 'video', 'dooh'])
+   */
+  channels?: AdvertisingChannels[];
 }
 /**
  * Structured format identifier with agent URL and format name
@@ -303,6 +334,18 @@ export interface FormatID {
    * Format identifier within the agent's namespace (e.g., 'display_300x250', 'video_standard_30s')
    */
   id: string;
+}
+/**
+ * Opaque correlation data that is echoed unchanged in responses. Used for internal tracking, UI session IDs, trace IDs, and other caller-specific identifiers that don't affect protocol behavior. Context data is never parsed by AdCP agents - it's simply preserved and returned.
+ */
+export interface ContextObject {
+  [k: string]: unknown;
+}
+/**
+ * Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.
+ */
+export interface ExtensionObject {
+  [k: string]: unknown;
 }
 
 
@@ -412,10 +455,8 @@ export interface GetProductsResponse {
    * Task-specific errors and warnings (e.g., product filtering issues)
    */
   errors?: Error[];
-  /**
-   * Initiator-provided context echoed inside the task payload. Opaque metadata such as UI/session hints, correlation tokens, or tracking identifiers.
-   */
-  context?: {};
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 /**
  * Represents available advertising inventory
@@ -512,6 +553,7 @@ export interface Product {
       [k: string]: unknown;
     };
   };
+  ext?: ExtensionObject;
 }
 /**
  * Structured format identifier with agent URL and format name
@@ -984,7 +1026,7 @@ export interface FormatID2 {
   id: string;
 }
 /**
- * Standard error structure for task-specific errors and warnings
+ * Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.
  */
 export interface Error {
   /**
@@ -1014,7 +1056,9 @@ export interface Error {
     [k: string]: unknown;
   };
 }
-
+/**
+ * Opaque correlation data that is echoed unchanged in responses. Used for internal tracking, UI session IDs, trace IDs, and other caller-specific identifiers that don't affect protocol behavior. Context data is never parsed by AdCP agents - it's simply preserved and returned.
+ */
 
 // list_creative_formats parameters
 /**
@@ -1054,12 +1098,8 @@ export interface ListCreativeFormatsRequest {
    * Search for formats by name (case-insensitive partial match)
    */
   name_search?: string;
-  /**
-   * Initiator-provided context included in the request payload. Agents must echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.
-   */
-  context?: {
-    [k: string]: unknown;
-  };
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 /**
  * Structured format identifier with agent URL and format name
@@ -1121,10 +1161,8 @@ export interface ListCreativeFormatsResponse {
    * Task-specific errors and warnings (e.g., format availability issues)
    */
   errors?: Error[];
-  /**
-   * Initiator-provided context echoed inside the task payload. Opaque metadata such as UI/session hints, correlation tokens, or tracking identifiers.
-   */
-  context?: {};
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 /**
  * Represents a creative format with its requirements
@@ -1596,12 +1634,8 @@ export interface CreateMediaBuyRequest {
       | 'engagement_rate'
     )[];
   };
-  /**
-   * Initiator-provided context included in the request payload. Agentsmust echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.
-   */
-  context?: {
-    [k: string]: unknown;
-  };
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 /**
  * Package configuration for media buy creation
@@ -1645,6 +1679,7 @@ export interface PackageRequest {
    * @maxItems 100
    */
   creatives?: CreativeAsset[];
+  ext?: ExtensionObject;
 }
 /**
  * Structured format identifier with agent URL and format name
@@ -1746,6 +1781,16 @@ export interface CreativeAsset {
    * For generative creatives: set to true to approve and finalize, false to request regeneration with updated assets/message. Omit for non-generative creatives.
    */
   approved?: boolean;
+  /**
+   * Optional delivery weight for creative rotation when uploading via create_media_buy or update_media_buy (0-100). If omitted, platform determines rotation. Only used during upload to media buy - not stored in creative library.
+   */
+  weight?: number;
+  /**
+   * Optional array of placement IDs where this creative should run when uploading via create_media_buy or update_media_buy. References placement_id values from the product's placements array. If omitted, creative runs on all placements. Only used during upload to media buy - not stored in creative library.
+   *
+   * @minItems 1
+   */
+  placement_ids?: [string, ...string[]];
 }
 /**
  * Structured format identifier with agent URL and format name
@@ -1962,7 +2007,7 @@ export interface URLAsset {
   description?: string;
 }
 /**
- * Webhook configuration for asynchronous task notifications. Uses A2A-compatible PushNotificationConfig structure. Supports Bearer tokens (simple) or HMAC signatures (production-recommended).
+ * Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.
  */
 export interface PushNotificationConfig {
   /**
@@ -1990,13 +2035,16 @@ export interface PushNotificationConfig {
     credentials: string;
   };
 }
-
+/**
+ * Opaque correlation data that is echoed unchanged in responses. Used for internal tracking, UI session IDs, trace IDs, and other caller-specific identifiers that don't affect protocol behavior. Context data is never parsed by AdCP agents - it's simply preserved and returned.
+ */
 
 // create_media_buy response
 /**
  * Response payload for create_media_buy task. Returns either complete success data OR error information, never both. This enforces atomic operation semantics - the media buy is either fully created or not created at all.
  */
-export type CreateMediaBuyResponse =
+export type CreateMediaBuyResponse = CreateMediaBuyResponse1 & CreateMediaBuyResponse2;
+export type CreateMediaBuyResponse2 =
   | {
       /**
        * Publisher's unique identifier for the created media buy
@@ -2014,10 +2062,7 @@ export type CreateMediaBuyResponse =
        * Array of created packages with complete state information
        */
       packages: Package[];
-      /**
-       * Initiator-provided context echoed inside the task payload. Opaque metadata such as UI/session hints, correlation tokens, or tracking identifiers.
-       */
-      context?: {};
+      context?: ContextObject;
     }
   | {
       /**
@@ -2026,18 +2071,16 @@ export type CreateMediaBuyResponse =
        * @minItems 1
        */
       errors: [Error, ...Error[]];
-      /**
-       * Initiator-provided context echoed inside the task payload. Opaque metadata such as UI/session hints, correlation tokens, or tracking identifiers.
-       */
-      context?: {};
+      context?: ContextObject;
     };
 /**
  * Budget pacing strategy
  */
-export type PackageStatus = 'draft' | 'active' | 'paused' | 'completed';
-
+export interface CreateMediaBuyResponse1 {
+  ext?: ExtensionObject;
+}
 /**
- * A specific product within a media buy (line item)
+ * Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.
  */
 export interface Package {
   /**
@@ -2078,7 +2121,11 @@ export interface Package {
    * Format IDs that creative assets will be provided for this package
    */
   format_ids_to_provide?: FormatID[];
-  status: PackageStatus;
+  /**
+   * Whether this package is paused by the buyer. Paused packages do not deliver impressions. Defaults to false.
+   */
+  paused?: boolean;
+  ext?: ExtensionObject;
 }
 /**
  * Optional geographic refinements for media buys. Most targeting should be expressed in the brief and handled by the publisher. These fields are primarily for geographic restrictions (RCT testing, regulatory compliance).
@@ -2119,9 +2166,11 @@ export interface SyncCreativesRequest {
    */
   creatives: CreativeAsset[];
   /**
-   * When true, only provided fields are updated (partial update). When false, entire creative is replaced (full upsert).
+   * Optional filter to limit sync scope to specific creative IDs. When provided, only these creatives will be created/updated. Other creatives in the library are unaffected. Useful for partial updates and error recovery.
+   *
+   * @maxItems 100
    */
-  patch?: boolean;
+  creative_ids?: string[];
   /**
    * Optional bulk assignment of creatives to packages
    */
@@ -2144,12 +2193,8 @@ export interface SyncCreativesRequest {
   dry_run?: boolean;
   validation_mode?: ValidationMode;
   push_notification_config?: PushNotificationConfig;
-  /**
-   * Initiator-provided context included in the request payload. Agents must echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.
-   */
-  context?: {
-    [k: string]: unknown;
-  };
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 /**
  * Creative asset for upload to library - supports static assets, generative formats, and third-party snippets
@@ -2159,7 +2204,8 @@ export interface SyncCreativesRequest {
 /**
  * Response from creative sync operation. Returns either per-creative results (best-effort processing) OR operation-level errors (complete failure). This enforces atomic semantics at the operation level while allowing per-item failures within successful operations.
  */
-export type SyncCreativesResponse =
+export type SyncCreativesResponse = SyncCreativesResponse1 & SyncCreativesResponse2;
+export type SyncCreativesResponse2 =
   | {
       /**
        * Whether this was a dry run (no actual changes made)
@@ -2215,10 +2261,7 @@ export type SyncCreativesResponse =
           [k: string]: string;
         };
       }[];
-      /**
-       * Initiator-provided context echoed inside the task payload. Opaque metadata such as UI/session hints, correlation tokens, or tracking identifiers.
-       */
-      context?: {};
+      context?: ContextObject;
     }
   | {
       /**
@@ -2227,18 +2270,18 @@ export type SyncCreativesResponse =
        * @minItems 1
        */
       errors: [Error, ...Error[]];
-      /**
-       * Initiator-provided context echoed inside the task payload. Opaque metadata such as UI/session hints, correlation tokens, or tracking identifiers.
-       */
-      context?: {};
+      context?: ContextObject;
     };
 /**
  * Action taken for this creative
  */
 export type CreativeAction = 'created' | 'updated' | 'unchanged' | 'failed' | 'deleted';
 
+export interface SyncCreativesResponse1 {
+  ext?: ExtensionObject;
+}
 /**
- * Standard error structure for task-specific errors and warnings
+ * Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.
  */
 
 // list_creatives parameters
@@ -2317,12 +2360,8 @@ export interface ListCreativesRequest {
     | 'performance'
     | 'sub_assets'
   )[];
-  /**
-   * Initiator-provided context included in the request payload. Agentsmust echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.
-   */
-  context?: {
-    [k: string]: unknown;
-  };
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 /**
  * Filter criteria for querying creative assets from the centralized library
@@ -2384,6 +2423,14 @@ export interface CreativeFilters {
    */
   assigned_to_packages?: string[];
   /**
+   * Filter creatives assigned to any of these media buys
+   */
+  media_buy_ids?: string[];
+  /**
+   * Filter creatives assigned to media buys with any of these buyer references
+   */
+  buyer_refs?: string[];
+  /**
    * Filter for unassigned creatives when true, assigned creatives when false
    */
   unassigned?: boolean;
@@ -2392,7 +2439,9 @@ export interface CreativeFilters {
    */
   has_performance_data?: boolean;
 }
-
+/**
+ * Opaque correlation data that is echoed unchanged in responses. Used for internal tracking, UI session IDs, trace IDs, and other caller-specific identifiers that don't affect protocol behavior. Context data is never parsed by AdCP agents - it's simply preserved and returned.
+ */
 
 // list_creatives response
 /**
@@ -2633,10 +2682,8 @@ export interface ListCreativesResponse {
      */
     archived?: number;
   };
-  /**
-   * Initiator-provided context echoed inside the task payload. Opaque metadata such as UI/session hints, correlation tokens, or tracking identifiers.
-   */
-  context?: {};
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 /**
  * Format identifier specifying which format this creative conforms to
@@ -2664,9 +2711,9 @@ export interface UpdateMediaBuyRequest1 {
    */
   buyer_ref?: string;
   /**
-   * Pause/resume the entire media buy
+   * Pause/resume the entire media buy (true = paused, false = active)
    */
-  active?: boolean;
+  paused?: boolean;
   start_time?: StartTiming;
   /**
    * New end date/time in ISO 8601 format
@@ -2684,12 +2731,8 @@ export interface UpdateMediaBuyRequest1 {
       }
   )[];
   push_notification_config?: PushNotificationConfig;
-  /**
-   * Initiator-provided context included in the request payload. Agents must echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.
-   */
-  context?: {
-    [k: string]: unknown;
-  };
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 /**
  * Optional webhook configuration for async update notifications. Publisher will send webhook when update completes if operation takes longer than immediate response time.
@@ -2699,7 +2742,8 @@ export interface UpdateMediaBuyRequest1 {
 /**
  * Response payload for update_media_buy task. Returns either complete success data OR error information, never both. This enforces atomic operation semantics - updates are either fully applied or not applied at all.
  */
-export type UpdateMediaBuyResponse =
+export type UpdateMediaBuyResponse = UpdateMediaBuyResponse1 & UpdateMediaBuyResponse2;
+export type UpdateMediaBuyResponse2 =
   | {
       /**
        * Publisher's identifier for the media buy
@@ -2717,10 +2761,7 @@ export type UpdateMediaBuyResponse =
        * Array of packages that were modified with complete state information
        */
       affected_packages?: Package[];
-      /**
-       * Initiator-provided context echoed inside the task payload. Opaque metadata such as UI/session hints, correlation tokens, or tracking identifiers.
-       */
-      context?: {};
+      context?: ContextObject;
     }
   | {
       /**
@@ -2729,13 +2770,16 @@ export type UpdateMediaBuyResponse =
        * @minItems 1
        */
       errors: [Error, ...Error[]];
-      /**
-       * Initiator-provided context echoed inside the task payload. Opaque metadata such as UI/session hints, correlation tokens, or tracking identifiers.
-       */
-      context?: {};
+      context?: ContextObject;
     };
 /**
  * Budget pacing strategy
+ */
+export interface UpdateMediaBuyResponse1 {
+  ext?: ExtensionObject;
+}
+/**
+ * Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.
  */
 
 // get_media_buy_delivery parameters
@@ -2768,14 +2812,12 @@ export interface GetMediaBuyDeliveryRequest {
    * End date for reporting period (YYYY-MM-DD)
    */
   end_date?: string;
-  /**
-   * Initiator-provided context included in the request payload. Agentsmust echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.
-   */
-  context?: {
-    [k: string]: unknown;
-  };
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
-
+/**
+ * Opaque correlation data that is echoed unchanged in responses. Used for internal tracking, UI session IDs, trace IDs, and other caller-specific identifiers that don't affect protocol behavior. Context data is never parsed by AdCP agents - it's simply preserved and returned.
+ */
 
 // get_media_buy_delivery response
 /**
@@ -2909,6 +2951,14 @@ export interface GetMediaBuyDeliveryResponse {
        * ISO 4217 currency code (e.g., USD, EUR, GBP) for this package's pricing. Indicates the currency in which the rate and spend values are denominated. Different packages can use different currencies when supported by the publisher.
        */
       currency: string;
+      /**
+       * System-reported operational state of this package. Reflects actual delivery state independent of buyer pause control.
+       */
+      delivery_status?: 'delivering' | 'completed' | 'budget_exhausted' | 'flight_ended' | 'goal_met';
+      /**
+       * Whether this package is currently paused by the buyer
+       */
+      paused?: boolean;
     })[];
     /**
      * Day-by-day delivery
@@ -2932,10 +2982,8 @@ export interface GetMediaBuyDeliveryResponse {
    * Task-specific errors and warnings (e.g., missing delivery data, reporting platform issues)
    */
   errors?: Error[];
-  /**
-   * Initiator-provided context echoed inside the task payload. Opaque metadata such as UI/session hints, correlation tokens, or tracking identifiers.
-   */
-  context?: {};
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 /**
  * Standard delivery metrics that can be reported at media buy, package, or creative level
@@ -3081,32 +3129,16 @@ export interface ListAuthorizedPropertiesRequest {
    * @minItems 1
    */
   publisher_domains?: [string, ...string[]];
-  /**
-   * Initiator-provided context included in the request payload. Agentsmust echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.
-   */
-  context?: {
-    [k: string]: unknown;
-  };
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
-
+/**
+ * Opaque correlation data that is echoed unchanged in responses. Used for internal tracking, UI session IDs, trace IDs, and other caller-specific identifiers that don't affect protocol behavior. Context data is never parsed by AdCP agents - it's simply preserved and returned.
+ */
 
 // list_authorized_properties response
 /**
  * Standard advertising channels supported by AdCP
- */
-export type AdvertisingChannels =
-  | 'display'
-  | 'video'
-  | 'audio'
-  | 'native'
-  | 'dooh'
-  | 'ctv'
-  | 'podcast'
-  | 'retail'
-  | 'social';
-
-/**
- * Response payload for list_authorized_properties task. Lists publisher domains and authorization scope (property_ids or property_tags). Buyers fetch actual property definitions from each publisher's canonical adagents.json file.
  */
 export interface ListAuthorizedPropertiesResponse {
   /**
@@ -3143,10 +3175,8 @@ export interface ListAuthorizedPropertiesResponse {
    * Task-specific errors and warnings (e.g., property availability issues)
    */
   errors?: Error[];
-  /**
-   * Initiator-provided context echoed inside the task payload. Opaque metadata such as UI/session hints, correlation tokens, or tracking identifiers.
-   */
-  context?: {};
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 /**
  * Standard error structure for task-specific errors and warnings
@@ -3217,29 +3247,26 @@ export interface ProvidePerformanceFeedbackRequest1 {
   creative_id?: string;
   metric_type?: MetricType;
   feedback_source?: FeedbackSource;
-  /**
-   * Initiator-provided context included in the request payload. Agentsmust echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.
-   */
-  context?: {
-    [k: string]: unknown;
-  };
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
-
+/**
+ * Opaque correlation data that is echoed unchanged in responses. Used for internal tracking, UI session IDs, trace IDs, and other caller-specific identifiers that don't affect protocol behavior. Context data is never parsed by AdCP agents - it's simply preserved and returned.
+ */
 
 // provide_performance_feedback response
 /**
  * Response payload for provide_performance_feedback task. Returns either success confirmation OR error information, never both.
  */
-export type ProvidePerformanceFeedbackResponse =
+export type ProvidePerformanceFeedbackResponse = ProvidePerformanceFeedbackResponse1 &
+  ProvidePerformanceFeedbackResponse2;
+export type ProvidePerformanceFeedbackResponse2 =
   | {
       /**
        * Whether the performance feedback was successfully received
        */
       success: true;
-      /**
-       * Initiator-provided context echoed inside the task payload. Opaque metadata such as UI/session hints, correlation tokens, or tracking identifiers.
-       */
-      context?: {};
+      context?: ContextObject;
     }
   | {
       /**
@@ -3248,14 +3275,14 @@ export type ProvidePerformanceFeedbackResponse =
        * @minItems 1
        */
       errors: [Error, ...Error[]];
-      /**
-       * Initiator-provided context echoed inside the task payload. Opaque metadata such as UI/session hints, correlation tokens, or tracking identifiers.
-       */
-      context?: {};
+      context?: ContextObject;
     };
 
+export interface ProvidePerformanceFeedbackResponse1 {
+  ext?: ExtensionObject;
+}
 /**
- * Standard error structure for task-specific errors and warnings
+ * Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.
  */
 
 // build_creative parameters
@@ -3281,12 +3308,8 @@ export interface BuildCreativeRequest {
   message?: string;
   creative_manifest?: CreativeManifest;
   target_format_id: FormatID1;
-  /**
-   * Initiator-provided context included in the request payload. Agentsmust echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.
-   */
-  context?: {
-    [k: string]: unknown;
-  };
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 /**
  * Creative manifest to transform or generate from. For pure generation, this should include the target format_id and any required input assets (e.g., promoted_offerings for generative formats). For transformation (e.g., resizing, reformatting), this is the complete creative to adapt.
@@ -3321,6 +3344,7 @@ export interface CreativeManifest {
       | DAASTAsset
       | PromotedOfferings;
   };
+  ext?: ExtensionObject;
 }
 /**
  * Format identifier this manifest is for
@@ -3367,13 +3391,11 @@ export interface WebhookAsset {
 /**
  * Response containing the transformed or generated creative manifest, ready for use with preview_creative or sync_creatives. Returns either the complete creative manifest OR error information, never both.
  */
-export type BuildCreativeResponse =
+export type BuildCreativeResponse = BuildCreativeResponse1 & BuildCreativeResponse2;
+export type BuildCreativeResponse2 =
   | {
       creative_manifest: CreativeManifest;
-      /**
-       * Initiator-provided context echoed inside the task payload. Opaque metadata such as UI/session hints, correlation tokens, or tracking identifiers.
-       */
-      context?: {};
+      context?: ContextObject;
     }
   | {
       /**
@@ -3382,20 +3404,24 @@ export type BuildCreativeResponse =
        * @minItems 1
        */
       errors: [Error, ...Error[]];
-      /**
-       * Initiator-provided context echoed inside the task payload. Opaque metadata such as UI/session hints, correlation tokens, or tracking identifiers.
-       */
-      context?: {};
+      context?: ContextObject;
     };
 /**
  * VAST (Video Ad Serving Template) tag for third-party video ad serving
+ */
+export interface BuildCreativeResponse1 {
+  ext?: ExtensionObject;
+}
+/**
+ * Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.
  */
 
 // preview_creative parameters
 /**
  * Request to generate previews of one or more creative manifests. Accepts either a single creative request or an array of requests for batch processing.
  */
-export type PreviewCreativeRequest =
+export type PreviewCreativeRequest = PreviewCreativeRequest1 & PreviewCreativeRequest2;
+export type PreviewCreativeRequest2 =
   | {
       /**
        * Discriminator indicating this is a single preview request
@@ -3427,12 +3453,7 @@ export type PreviewCreativeRequest =
        */
       template_id?: string;
       output_format?: PreviewOutputFormat;
-      /**
-       * Initiator-provided context included in the request payload. Agents must echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.
-       */
-      context?: {
-        [k: string]: unknown;
-      };
+      context?: ContextObject;
     }
   | {
       /**
@@ -3504,12 +3525,7 @@ export type PreviewCreativeRequest =
         }[]
       ];
       output_format?: PreviewOutputFormat2;
-      /**
-       * Initiator-provided context included in the request payload. Agents must echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.
-       */
-      context?: {
-        [k: string]: unknown;
-      };
+      context?: ContextObject;
     };
 /**
  * VAST (Video Ad Serving Template) tag for third-party video ad serving
@@ -3524,8 +3540,11 @@ export type PreviewOutputFormat1 = 'url' | 'html';
  */
 export type PreviewOutputFormat2 = 'url' | 'html';
 
+export interface PreviewCreativeRequest1 {
+  ext?: ExtensionObject;
+}
 /**
- * Format identifier for rendering the preview
+ * Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.
  */
 export interface CreativeManifest1 {
   format_id: FormatID1;
@@ -3557,6 +3576,7 @@ export interface CreativeManifest1 {
       | DAASTAsset
       | PromotedOfferings;
   };
+  ext?: ExtensionObject;
 }
 
 
@@ -3564,7 +3584,8 @@ export interface CreativeManifest1 {
 /**
  * Response containing preview links for one or more creatives. Format matches the request: single preview response for single requests, batch results for batch requests.
  */
-export type PreviewCreativeResponse =
+export type PreviewCreativeResponse = PreviewCreativeResponse1 & PreviewCreativeResponse2;
+export type PreviewCreativeResponse2 =
   | {
       /**
        * Discriminator indicating this is a single preview response
@@ -3647,10 +3668,7 @@ export type PreviewCreativeResponse =
        * ISO 8601 timestamp when preview links expire
        */
       expires_at: string;
-      /**
-       * Initiator-provided context echoed inside the preview payload. Opaque metadata such as UI/session hints, correlation tokens, or tracking identifiers.
-       */
-      context?: {};
+      context?: ContextObject;
     }
   | {
       /**
@@ -3680,10 +3698,7 @@ export type PreviewCreativeResponse =
             }
         )[]
       ];
-      /**
-       * Initiator-provided context echoed inside the preview payload. Opaque metadata such as UI/session hints, correlation tokens, or tracking identifiers.
-       */
-      context?: {};
+      context?: ContextObject;
     };
 /**
  * A single rendered piece of a creative preview with discriminated output format
@@ -3832,6 +3847,12 @@ export type PreviewRender =
       };
     };
 
+export interface PreviewCreativeResponse1 {
+  ext?: ExtensionObject;
+}
+/**
+ * Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.
+ */
 
 // get_signals parameters
 /**
@@ -3899,12 +3920,8 @@ export interface GetSignalsRequest {
    * Maximum number of results to return
    */
   max_results?: number;
-  /**
-   * Initiator-provided context included in the request payload. Agents must echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.
-   */
-  context?: {
-    [k: string]: unknown;
-  };
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 /**
  * Filters to refine signal discovery results
@@ -3927,7 +3944,9 @@ export interface SignalFilters {
    */
   min_coverage_percentage?: number;
 }
-
+/**
+ * Opaque correlation data that is echoed unchanged in responses. Used for internal tracking, UI session IDs, trace IDs, and other caller-specific identifiers that don't affect protocol behavior. Context data is never parsed by AdCP agents - it's simply preserved and returned.
+ */
 
 // get_signals response
 /**
@@ -4096,10 +4115,8 @@ export interface GetSignalsResponse {
    * Task-specific errors and warnings (e.g., signal discovery or pricing issues)
    */
   errors?: Error[];
-  /**
-   * Initiator-provided context echoed inside the task payload. Opaque metadata such as UI/session hints, correlation tokens, or tracking identifiers.
-   */
-  context?: {};
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 /**
  * Standard error structure for task-specific errors and warnings
@@ -4120,29 +4137,25 @@ export interface ActivateSignalRequest {
    * @minItems 1
    */
   deployments: [Destination, ...Destination[]];
-  /**
-   * Initiator-provided context included in the request payload. Agents must echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.
-   */
-  context?: {
-    [k: string]: unknown;
-  };
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
-
+/**
+ * Opaque correlation data that is echoed unchanged in responses. Used for internal tracking, UI session IDs, trace IDs, and other caller-specific identifiers that don't affect protocol behavior. Context data is never parsed by AdCP agents - it's simply preserved and returned.
+ */
 
 // activate_signal response
 /**
  * Response payload for activate_signal task. Returns either complete success data OR error information, never both. This enforces atomic operation semantics - the signal is either fully activated or not activated at all.
  */
-export type ActivateSignalResponse =
+export type ActivateSignalResponse = ActivateSignalResponse1 & ActivateSignalResponse2;
+export type ActivateSignalResponse2 =
   | {
       /**
        * Array of deployment results for each deployment target
        */
       deployments: Deployment[];
-      /**
-       * Initiator-provided context echoed inside the task payload. Opaque metadata such as UI/session hints, correlation tokens, or tracking identifiers.
-       */
-      context?: {};
+      context?: ContextObject;
     }
   | {
       /**
@@ -4151,11 +4164,14 @@ export type ActivateSignalResponse =
        * @minItems 1
        */
       errors: [Error, ...Error[]];
-      /**
-       * Initiator-provided context echoed inside the task payload. Opaque metadata such as UI/session hints, correlation tokens, or tracking identifiers.
-       */
-      context?: {};
+      context?: ContextObject;
     };
 /**
  * A signal deployment to a specific deployment target with activation status and key
+ */
+export interface ActivateSignalResponse1 {
+  ext?: ExtensionObject;
+}
+/**
+ * Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.
  */

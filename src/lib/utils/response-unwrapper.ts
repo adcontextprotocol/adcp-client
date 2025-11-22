@@ -149,16 +149,11 @@ export function unwrapProtocolResponse(
     if (schema) {
       // Create wrapper schema that preserves protocol metadata
       // We use z.intersection to combine the validated response with optional _message field
-      const wrapperSchema = z.intersection(
-        schema,
-        z.object({ _message: z.string().optional() })
-      );
+      const wrapperSchema = z.intersection(schema, z.object({ _message: z.string().optional() }));
 
       const result = wrapperSchema.safeParse(unwrapped);
       if (!result.success) {
-        throw new Error(
-          `Response validation failed for ${toolName}: ${result.error.message}`
-        );
+        throw new Error(`Response validation failed for ${toolName}: ${result.error.message}`);
       }
 
       return result.data;
@@ -236,9 +231,7 @@ function unwrapMCPResponse(response: any): AdCPResponse {
         return JSON.parse(textContent.text);
       } catch {
         // Include snippet of text for debugging (max 100 chars)
-        const snippet = textContent.text.length > 100
-          ? textContent.text.substring(0, 100) + '...'
-          : textContent.text;
+        const snippet = textContent.text.length > 100 ? textContent.text.substring(0, 100) + '...' : textContent.text;
 
         return {
           errors: [
@@ -272,7 +265,7 @@ function unwrapA2AResponse(response: any): AdCPResponse {
   if (response.result?.status?.state && response.result.status.state !== 'completed') {
     throw new Error(
       `Cannot unwrap A2A response with intermediate status: ${response.result.status.state}. ` +
-      'Only completed responses should be unwrapped.'
+        'Only completed responses should be unwrapped.'
     );
   }
   // A2A error response (JSON-RPC error)
@@ -318,9 +311,7 @@ function unwrapA2AResponse(response: any): AdCPResponse {
     throw new Error('A2A completed response must have a DataPart with AdCP data');
   }
 
-  const textParts = artifact.parts
-    .filter((p: any) => p.kind === 'text' && p.text)
-    .map((p: any) => p.text);
+  const textParts = artifact.parts.filter((p: any) => p.kind === 'text' && p.text).map((p: any) => p.text);
 
   // Return data with optional message
   if (textParts.length > 0) {

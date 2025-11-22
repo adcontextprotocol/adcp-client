@@ -41,10 +41,25 @@ const ADCP_CORE_SCHEMAS = ['media-buy', 'creative-asset', 'product', 'targeting'
 // The adagents schema re-declares types that are already in property schema
 const STANDALONE_SCHEMAS: string[] = []; // ['adagents']
 
-// Load schema from cache
+// Load schema from cache - handles both /schemas/v1/ and /schemas/X.Y.Z/ paths
 function loadCachedSchema(schemaRef: string): any {
   try {
-    const schemaPath = path.join(LATEST_CACHE_DIR, schemaRef.replace('/schemas/v1/', ''));
+    // Strip any /schemas/ prefix (versioned or v1) to get the relative path
+    // e.g., /schemas/2.4.0/core/product.json -> core/product.json
+    //       /schemas/v1/core/product.json -> core/product.json
+    let relativePath = schemaRef;
+    if (relativePath.startsWith('/schemas/')) {
+      // Remove /schemas/ prefix
+      relativePath = relativePath.substring('/schemas/'.length);
+      // Remove version segment (either v1 or X.Y.Z format)
+      const segments = relativePath.split('/');
+      if (segments[0].match(/^(v\d+|\d+\.\d+\.\d+)$/)) {
+        // First segment is a version, skip it
+        relativePath = segments.slice(1).join('/');
+      }
+    }
+
+    const schemaPath = path.join(LATEST_CACHE_DIR, relativePath);
     if (!existsSync(schemaPath)) {
       throw new Error(`Schema not found in cache: ${schemaPath}`);
     }
@@ -377,7 +392,8 @@ async function generateToolTypes(tools: ToolDefinition[]) {
     canRead: true,
     read: (file: { url: string }) => {
       const url = file.url;
-      if (url.startsWith('/schemas/v1/')) {
+      // Handle any /schemas/ path (versioned or v1)
+      if (url.startsWith('/schemas/')) {
         const schema = loadCachedSchema(url);
         if (schema) {
           return Promise.resolve(schema);
@@ -670,7 +686,8 @@ async function generateTypes() {
     canRead: true,
     read: (file: { url: string }) => {
       const url = file.url;
-      if (url.startsWith('/schemas/v1/')) {
+      // Handle any /schemas/ path (versioned or v1)
+      if (url.startsWith('/schemas/')) {
         const schema = loadCachedSchema(url);
         if (schema) {
           return Promise.resolve(schema);

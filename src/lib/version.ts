@@ -18,7 +18,7 @@ export const VERSION_INFO = {
   library: '3.1.0',
   adcp: '2.4.0',
   compatible: true,
-  generatedAt: '2025-11-22T16:46:23.906Z'
+  generatedAt: '2025-11-22T16:46:23.906Z',
 } as const;
 
 /**

@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas v2.4.0
-// Generated at: 2025-11-21T21:49:17.905Z
+// Generated at: 2025-11-22T16:56:39.471Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -10,10 +10,6 @@ export type MediaBuyStatus = 'pending_activation' | 'active' | 'paused' | 'compl
  * Budget pacing strategy
  */
 export type Pacing = 'even' | 'asap' | 'front_loaded';
-/**
- * Status of a package
- */
-export type PackageStatus = 'draft' | 'active' | 'paused' | 'completed';
 
 /**
  * Represents a purchased advertising campaign
@@ -52,6 +48,7 @@ export interface MediaBuy {
    * Last update timestamp
    */
   updated_at?: string;
+  ext?: ExtensionObject;
 }
 /**
  * A specific product within a media buy (line item)
@@ -95,7 +92,11 @@ export interface Package {
    * Format IDs that creative assets will be provided for this package
    */
   format_ids_to_provide?: FormatID[];
-  status: PackageStatus;
+  /**
+   * Whether this package is paused by the buyer. Paused packages do not deliver impressions. Defaults to false.
+   */
+  paused?: boolean;
+  ext?: ExtensionObject;
 }
 /**
  * Optional geographic refinements for media buys. Most targeting should be expressed in the brief and handled by the publisher. These fields are primarily for geographic restrictions (RCT testing, regulatory compliance).
@@ -167,6 +168,12 @@ export interface FormatID {
    * Format identifier within the agent's namespace (e.g., 'display_300x250', 'video_standard_30s')
    */
   id: string;
+}
+/**
+ * Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.
+ */
+export interface ExtensionObject {
+  [k: string]: unknown;
 }
 
 // CREATIVE-ASSET SCHEMA
@@ -412,6 +419,16 @@ export interface CreativeAsset {
    * For generative creatives: set to true to approve and finalize, false to request regeneration with updated assets/message. Omit for non-generative creatives.
    */
   approved?: boolean;
+  /**
+   * Optional delivery weight for creative rotation when uploading via create_media_buy or update_media_buy (0-100). If omitted, platform determines rotation. Only used during upload to media buy - not stored in creative library.
+   */
+  weight?: number;
+  /**
+   * Optional array of placement IDs where this creative should run when uploading via create_media_buy or update_media_buy. References placement_id values from the product's placements array. If omitted, creative runs on all placements. Only used during upload to media buy - not stored in creative library.
+   *
+   * @minItems 1
+   */
+  placement_ids?: [string, ...string[]];
 }
 /**
  * Format identifier specifying which format this creative conforms to
@@ -1033,6 +1050,7 @@ export interface Product {
      */
     manifest: {};
   };
+  ext?: ExtensionObject;
 }
 /**
  * Structured format identifier with agent URL and format name
@@ -1504,7 +1522,9 @@ export interface FormatID2 {
    */
   id: string;
 }
-
+/**
+ * Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.
+ */
 // TARGETING SCHEMA
 /**
  * Optional geographic refinements for media buys. Most targeting should be expressed in the brief and handled by the publisher. These fields are primarily for geographic restrictions (RCT testing, regulatory compliance).

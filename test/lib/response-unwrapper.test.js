@@ -36,9 +36,7 @@ describe('Response Unwrapper', () => {
                 {
                   kind: 'data',
                   data: {
-                    products: [
-                      createTestProduct({ product_id: 'prod1', name: 'Test Product' }),
-                    ],
+                    products: [createTestProduct({ product_id: 'prod1', name: 'Test Product' })],
                   },
                 },
               ],
@@ -108,10 +106,7 @@ describe('Response Unwrapper', () => {
         someField: 'value',
       };
 
-      assert.throws(
-        () => unwrapProtocolResponse(unknownFormat),
-        /Unable to extract AdCP response/
-      );
+      assert.throws(() => unwrapProtocolResponse(unknownFormat), /Unable to extract AdCP response/);
     });
 
     test('should extract text messages from A2A TextParts', () => {
@@ -127,10 +122,7 @@ describe('Response Unwrapper', () => {
                 {
                   kind: 'data',
                   data: {
-                    products: [
-                      createTestProduct({ product_id: 'p1' }),
-                      createTestProduct({ product_id: 'p2' }),
-                    ],
+                    products: [createTestProduct({ product_id: 'p1' }), createTestProduct({ product_id: 'p2' })],
                   },
                 },
               ],
@@ -154,9 +146,7 @@ describe('Response Unwrapper', () => {
           },
         ],
         structuredContent: {
-          products: [
-            createTestProduct({ product_id: 'p1' }),
-          ],
+          products: [createTestProduct({ product_id: 'p1' })],
         },
       };
 
@@ -218,10 +208,7 @@ describe('Response Unwrapper', () => {
         },
       };
 
-      assert.throws(
-        () => unwrapProtocolResponse(a2aResponse, 'get_products', 'a2a'),
-        /must have a DataPart/
-      );
+      assert.throws(() => unwrapProtocolResponse(a2aResponse, 'get_products', 'a2a'), /must have a DataPart/);
     });
 
     test('should throw error when A2A artifacts array is empty', () => {
