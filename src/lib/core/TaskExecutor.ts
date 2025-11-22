@@ -419,11 +419,15 @@ export class TaskExecutor {
         });
       } else if (response?.result?.artifacts) {
         const artifacts = response.result.artifacts;
-        this.logDebug(debugLogs, 'info', 'Extracting data from A2A artifact structure', {
-          artifactCount: artifacts.length,
-          extractedFrom: artifacts.length > 1 ? 'multi-artifact (HITL)' : 'single-artifact',
-          dataKeys: Object.keys(unwrapped || {}),
-        });
+        if (artifacts.length === 0) {
+          this.logDebug(debugLogs, 'info', 'Returning A2A result directly (empty artifacts array)');
+        } else {
+          this.logDebug(debugLogs, 'info', 'Extracting data from A2A artifact structure', {
+            artifactCount: artifacts.length,
+            extractedFrom: artifacts.length > 1 ? 'multi-artifact (HITL)' : 'single-artifact',
+            dataKeys: Object.keys(unwrapped || {}),
+          });
+        }
       } else if (response?.data) {
         this.logDebug(debugLogs, 'info', 'Extracting data from response.data field');
       } else {

@@ -66,7 +66,11 @@ export function unwrapProtocolResponse(protocolResponse: any, toolName?: string)
   // - Skip intermediate status artifacts (e.g., HITL pending_human status)
   // - Extract both text parts (human-readable messages) and data parts (structured response)
   const artifacts = protocolResponse.result?.artifacts;
-  if (Array.isArray(artifacts) && artifacts.length > 0) {
+  if (Array.isArray(artifacts)) {
+    // Handle empty artifacts array - return it directly as valid AdCP response
+    if (artifacts.length === 0) {
+      return { artifacts: [] };
+    }
     // Helper to extract both text and data from an artifact
     const extractFromArtifact = (artifact: any) => {
       const textParts = artifact.parts?.filter((p: any) => p.kind === 'text' && p.text).map((p: any) => p.text) || [];
