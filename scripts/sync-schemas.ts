@@ -218,9 +218,7 @@ async function syncSchemas(version?: string): Promise<void> {
     }
 
     console.log(`📋 Found ${nestedRefs.size} additional nested references at depth ${depth + 1}`);
-    const nestedDownloadPromises = Array.from(nestedRefs).map(ref =>
-      downloadSchema(ref, versionCacheDir, adcpVersion)
-    );
+    const nestedDownloadPromises = Array.from(nestedRefs).map(ref => downloadSchema(ref, versionCacheDir, adcpVersion));
     await Promise.allSettled(nestedDownloadPromises);
 
     // Add newly downloaded refs to the set
