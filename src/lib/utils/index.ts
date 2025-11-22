@@ -136,3 +136,6 @@ export function getStandardFormats(): CreativeFormat[] {
 
 // Re-export response unwrapping utilities
 export { unwrapProtocolResponse, isAdcpError, isAdcpSuccess } from './response-unwrapper';
+
+// Re-export protocol detection utilities
+export { detectProtocol, detectProtocolWithTimeout } from './protocol-detection';

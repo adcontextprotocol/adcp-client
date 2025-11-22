@@ -167,6 +167,7 @@ export { validateAgentUrl, validateAdCPResponse, getExpectedSchema, handleAdCPRe
 // Public utilities for working with AdCP responses
 export { getStandardFormats, unwrapProtocolResponse, isAdcpError, isAdcpSuccess } from './utils';
 export { REQUEST_TIMEOUT, MAX_CONCURRENT, STANDARD_FORMATS } from './utils';
+export { detectProtocol, detectProtocolWithTimeout } from './utils';
 
 // ====== AGENT CLASSES ======
 // Primary agent interface - returns raw AdCP responses
