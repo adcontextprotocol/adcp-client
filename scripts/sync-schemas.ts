@@ -51,16 +51,19 @@ async function downloadSchema(schemaRef: string, cacheDir: string, adcpVersion: 
 
   // Strip the version prefix from the schema path to get the local path
   // e.g., /schemas/2.4.0/core/product.json -> core/product.json
-  const versionPrefix = `/schemas/${adcpVersion}/`;
-  const fallbackPrefix = '/schemas/v1/';
-
+  // Note: When adcpVersion is "v2", schemas still use "2.4.0" in their $refs
   let localPath: string;
-  if (schemaRef.startsWith(versionPrefix)) {
-    localPath = path.join(cacheDir, schemaRef.replace(versionPrefix, ''));
-  } else if (schemaRef.startsWith(fallbackPrefix)) {
-    localPath = path.join(cacheDir, schemaRef.replace(fallbackPrefix, ''));
+  if (schemaRef.startsWith('/schemas/')) {
+    // Remove /schemas/ prefix
+    let relativePath = schemaRef.substring('/schemas/'.length);
+    // Remove version segment (e.g., "2.4.0/" or "v1/" or "v2/")
+    const firstSlash = relativePath.indexOf('/');
+    if (firstSlash > 0) {
+      relativePath = relativePath.substring(firstSlash + 1);
+    }
+    localPath = path.join(cacheDir, relativePath);
   } else {
-    // Handle absolute paths like /schemas/v1/adagents.json
+    // Fallback for paths without /schemas/ prefix
     localPath = path.join(cacheDir, path.basename(schemaRef));
   }
 
@@ -185,14 +188,16 @@ async function syncSchemas(version?: string): Promise<void> {
     for (const ref of downloadedRefs) {
       try {
         // Use the same path extraction logic as downloadSchema
-        const versionPrefix = `/schemas/${adcpVersion}/`;
-        const fallbackPrefix = '/schemas/v1/';
-
         let localPath: string;
-        if (ref.startsWith(versionPrefix)) {
-          localPath = path.join(versionCacheDir, ref.replace(versionPrefix, ''));
-        } else if (ref.startsWith(fallbackPrefix)) {
-          localPath = path.join(versionCacheDir, ref.replace(fallbackPrefix, ''));
+        if (ref.startsWith('/schemas/')) {
+          // Remove /schemas/ prefix
+          let relativePath = ref.substring('/schemas/'.length);
+          // Remove version segment (e.g., "2.4.0/" or "v1/" or "v2/")
+          const firstSlash = relativePath.indexOf('/');
+          if (firstSlash > 0) {
+            relativePath = relativePath.substring(firstSlash + 1);
+          }
+          localPath = path.join(versionCacheDir, relativePath);
         } else {
           localPath = path.join(versionCacheDir, path.basename(ref));
         }

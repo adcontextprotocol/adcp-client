@@ -9,16 +9,16 @@ export const LIBRARY_VERSION = '3.1.0';
 /**
  * AdCP specification version this library is compatible with
  */
-export const ADCP_VERSION = '2.4.0';
+export const ADCP_VERSION = 'v2';
 
 /**
  * Full version information
  */
 export const VERSION_INFO = {
   library: '3.1.0',
-  adcp: '2.4.0',
+  adcp: 'v2',
   compatible: true,
-  generatedAt: '2025-11-22T16:46:23.906Z',
+  generatedAt: '2025-11-22T20:45:12.341Z',
 } as const;
 
 /**

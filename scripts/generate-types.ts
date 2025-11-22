@@ -166,26 +166,45 @@ function enforceStrictSchema(schema: any): any {
 // Load AdCP tool schemas from cache
 function loadToolSchema(toolName: string, taskType: 'media-buy' | 'signals' | 'creative' = 'media-buy'): any {
   try {
-    const kebabName = toolName.replace(/_/g, '-');
-    let requestRef = `/schemas/v1/${taskType}/${kebabName}-request.json`;
-    let responseRef = `/schemas/v1/${taskType}/${kebabName}-response.json`;
-
     console.log(`📥 Loading ${toolName} schema from cache (${taskType})...`);
 
-    let requestSchema = loadCachedSchema(requestRef);
-    let responseSchema = loadCachedSchema(responseRef);
+    // Read refs from the index.json instead of hardcoding paths
+    const indexPath = path.join(LATEST_CACHE_DIR, 'index.json');
+    if (!existsSync(indexPath)) {
+      throw new Error('Schema index not found in cache');
+    }
+    const schemaIndex = JSON.parse(readFileSync(indexPath, 'utf8'));
 
-    // Fallback: Try media-buy namespace if creative namespace fails
-    if ((!requestSchema || !responseSchema) && taskType === 'creative') {
-      console.log(`   ↪️  Trying media-buy namespace for ${toolName}...`);
-      requestRef = `/schemas/v1/media-buy/${kebabName}-request.json`;
-      responseRef = `/schemas/v1/media-buy/${kebabName}-response.json`;
-      requestSchema = loadCachedSchema(requestRef);
-      responseSchema = loadCachedSchema(responseRef);
+    const kebabName = toolName.replace(/_/g, '-');
+    let requestRef: string | undefined;
+    let responseRef: string | undefined;
+
+    // Look up the task in the index to get actual $refs
+    if (schemaIndex.schemas?.[taskType]?.tasks?.[kebabName]) {
+      const task = schemaIndex.schemas[taskType].tasks[kebabName];
+      requestRef = task.request?.$ref;
+      responseRef = task.response?.$ref;
     }
 
+    // Fallback: Try media-buy namespace if creative namespace fails
+    if ((!requestRef || !responseRef) && taskType === 'creative') {
+      console.log(`   ↪️  Trying media-buy namespace for ${toolName}...`);
+      if (schemaIndex.schemas?.['media-buy']?.tasks?.[kebabName]) {
+        const task = schemaIndex.schemas['media-buy'].tasks[kebabName];
+        requestRef = task.request?.$ref;
+        responseRef = task.response?.$ref;
+      }
+    }
+
+    if (!requestRef || !responseRef) {
+      throw new Error(`Missing request or response $ref in index for ${toolName}`);
+    }
+
+    const requestSchema = loadCachedSchema(requestRef);
+    const responseSchema = loadCachedSchema(responseRef);
+
     if (!requestSchema || !responseSchema) {
-      throw new Error(`Missing request or response schema for ${toolName}`);
+      throw new Error(`Failed to load schemas for ${toolName}`);
     }
 
     // Combine into the expected format
@@ -377,8 +396,25 @@ function loadAdCPTools(): ToolDefinition[] {
 
 // Load schema from cache by name
 function loadCoreSchema(schemaName: string): any {
-  const schemaRef = `/schemas/v1/core/${schemaName}.json`;
-  return loadCachedSchema(schemaRef);
+  try {
+    // Read refs from the index.json instead of hardcoding paths
+    const indexPath = path.join(LATEST_CACHE_DIR, 'index.json');
+    if (!existsSync(indexPath)) {
+      throw new Error('Schema index not found in cache');
+    }
+    const schemaIndex = JSON.parse(readFileSync(indexPath, 'utf8'));
+
+    // Look up the schema in the index to get actual $ref
+    const schemaRef = schemaIndex.schemas?.core?.schemas?.[schemaName]?.$ref;
+    if (!schemaRef) {
+      throw new Error(`Schema ${schemaName} not found in index`);
+    }
+
+    return loadCachedSchema(schemaRef);
+  } catch (error) {
+    console.warn(`⚠️  Failed to load core schema ${schemaName}:`, error.message);
+    return null;
+  }
 }
 
 async function generateToolTypes(tools: ToolDefinition[]) {
@@ -740,7 +776,20 @@ async function generateTypes() {
   for (const schemaName of STANDALONE_SCHEMAS) {
     try {
       console.log(`📥 Loading ${schemaName} schema from cache...`);
-      const schemaRef = `/schemas/v1/${schemaName}.json`;
+
+      // Read refs from the index.json instead of hardcoding paths
+      const indexPath = path.join(SCHEMA_CACHE_DIR, 'latest', 'index.json');
+      if (!existsSync(indexPath)) {
+        throw new Error('Schema index not found in cache');
+      }
+      const schemaIndex = JSON.parse(readFileSync(indexPath, 'utf8'));
+
+      // Look up the schema in the index to get actual $ref
+      const schemaRef = schemaIndex.schemas?.[schemaName]?.$ref;
+      if (!schemaRef) {
+        throw new Error(`Schema ${schemaName} not found in index`);
+      }
+
       const schema = loadCachedSchema(schemaRef);
 
       if (schema) {
