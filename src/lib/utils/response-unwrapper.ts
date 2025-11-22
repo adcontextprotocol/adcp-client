@@ -75,7 +75,10 @@ export function unwrapProtocolResponse(protocolResponse: any, toolName?: string)
     const extractFromArtifact = (artifact: any) => {
       const textParts = artifact.parts?.filter((p: any) => p.kind === 'text' && p.text).map((p: any) => p.text) || [];
 
-      const dataPart = artifact.parts?.find((p: any) => p.kind === 'data' && p.data && typeof p.data === 'object');
+      // Find data part - kind field is optional, but if present must be 'data'
+      const dataPart = artifact.parts?.find(
+        (p: any) => (!p.kind || p.kind === 'data') && p.data && typeof p.data === 'object'
+      );
 
       if (dataPart?.data) {
         let data = dataPart.data;
@@ -201,12 +204,18 @@ export function unwrapProtocolResponse(protocolResponse: any, toolName?: string)
     }
   }
 
+  // Handle responses with a direct .data field
+  if (protocolResponse.data && typeof protocolResponse.data === 'object') {
+    return protocolResponse.data;
+  }
+
   // If we can't find the data in expected locations, return the whole response
   // This allows for direct AdCP responses (when not wrapped in protocol)
   if (
     typeof protocolResponse === 'object' &&
     !('structuredContent' in protocolResponse) &&
-    !('result' in protocolResponse)
+    !('result' in protocolResponse) &&
+    !('data' in protocolResponse)
   ) {
     return protocolResponse;
   }

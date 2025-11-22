@@ -445,7 +445,10 @@ export class TaskExecutor {
       } else if (response?.data) {
         this.logDebug(debugLogs, 'info', 'Extracting data from response.data field');
       } else {
-        this.logDebug(debugLogs, 'info', 'Using direct response (no wrapper)');
+        // No standard structure found - using direct response
+        this.logDebug(debugLogs, 'info', 'No standard data structure found, using direct response', {
+          responseKeys: Object.keys(response || {}),
+        });
       }
 
       // Clean up internal metadata fields before returning
