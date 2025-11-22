@@ -57,8 +57,25 @@ function createTestFormat(overrides = {}) {
   };
 }
 
+/**
+ * Create a minimal valid Package for testing
+ */
+function createTestPackage(overrides = {}) {
+  return {
+    package_id: 'test-package-1',
+    buyer_ref: 'test-buyer-ref',
+    product_id: 'test-product-1',
+    budget: 10000,
+    pricing_option_id: 'po-1',
+    impressions: 100000,
+    status: 'active', // Required by PackageSchema - must be: draft, active, paused, or completed
+    ...overrides,
+  };
+}
+
 module.exports = {
   createTestProduct,
   createTestCreative,
   createTestFormat,
+  createTestPackage,
 };

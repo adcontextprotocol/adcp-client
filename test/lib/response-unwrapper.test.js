@@ -4,7 +4,7 @@ const assert = require('node:assert');
 
 // Import the unwrapper utilities
 const { unwrapProtocolResponse, isAdcpError, isAdcpSuccess } = require('../../dist/lib/utils/index.js');
-const { createTestProduct, createTestCreative, createTestFormat } = require('./test-fixtures');
+const { createTestProduct, createTestCreative, createTestFormat, createTestPackage } = require('./test-fixtures');
 
 describe('Response Unwrapper', () => {
   describe('unwrapProtocolResponse', () => {
@@ -267,6 +267,393 @@ describe('Response Unwrapper', () => {
 
       assert.strictEqual(result._message, 'Line 1\nLine 2');
     });
+
+    test('should handle A2A artifacts without status field gracefully', () => {
+      // Per @a2a-js/sdk TypeScript definitions:
+      // - Artifact interface has fields: artifactId, description?, extensions?, metadata?, name?, parts[]
+      // - Task interface has status field (with state property)
+      // - Artifacts do NOT have a status field
+      //
+      // This test verifies that if an agent erroneously returns artifacts with status fields,
+      // the unwrapper handles it correctly by ignoring the status and extracting the data.
+      const a2aResponseWithStatus = {
+        result: {
+          artifacts: [
+            {
+              artifactId: 'art-1',
+              status: 'completed', // This should not exist per spec
+              parts: [
+                {
+                  kind: 'data',
+                  data: {
+                    products: [createTestProduct({ product_id: 'prod1', name: 'Test Product' })],
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      };
+
+      // Should not throw and should extract the data correctly
+      const result = unwrapProtocolResponse(a2aResponseWithStatus, 'get_products', 'a2a');
+
+      assert.ok(result.products);
+      assert.strictEqual(result.products.length, 1);
+      assert.strictEqual(result.products[0].product_id, 'prod1');
+      assert.strictEqual(result.products[0].name, 'Test Product');
+
+      // Status field should not affect the extraction
+      assert.strictEqual(result.status, undefined, 'Status should not be in the unwrapped result');
+    });
+
+    test('should correctly determine artifact completion from Task status, not artifact status', () => {
+      // This test verifies that we rely on Task.status.state, not hypothetical Artifact.status
+      const a2aCompletedTaskResponse = {
+        result: {
+          kind: 'task',
+          id: 'task-123',
+          contextId: 'ctx-456',
+          status: {
+            state: 'completed', // Task status indicates completion
+            timestamp: '2025-01-22T12:00:00Z',
+          },
+          artifacts: [
+            {
+              artifactId: 'art-1',
+              // No status field - artifacts don't have status per spec
+              parts: [
+                {
+                  kind: 'data',
+                  data: {
+                    products: [createTestProduct({ product_id: 'prod1', name: 'Test Product' })],
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      };
+
+      const result = unwrapProtocolResponse(a2aCompletedTaskResponse, 'get_products', 'a2a');
+
+      assert.ok(result.products);
+      assert.strictEqual(result.products.length, 1);
+      assert.strictEqual(result.products[0].product_id, 'prod1');
+
+      // The unwrapper should work regardless of Task status
+      // Task status indicates overall task state, not individual artifact state
+    });
+
+    test('should handle very large artifact arrays (performance test)', () => {
+      // Create 100+ artifacts to test performance
+      const largeArtifactArray = [];
+      for (let i = 0; i < 150; i++) {
+        largeArtifactArray.push({
+          artifactId: `art-${i}`,
+          parts: [
+            {
+              kind: 'data',
+              data: {
+                products: [createTestProduct({ product_id: `prod${i}`, name: `Product ${i}` })],
+              },
+            },
+          ],
+        });
+      }
+
+      const a2aResponse = {
+        result: {
+          artifacts: largeArtifactArray,
+        },
+      };
+
+      // Should take last artifact per conversational protocol
+      const result = unwrapProtocolResponse(a2aResponse, 'get_products', 'a2a');
+
+      assert.ok(result.products);
+      assert.strictEqual(result.products[0].product_id, 'prod149', 'Should take last artifact');
+      assert.strictEqual(result.products[0].name, 'Product 149');
+    });
+
+    test('should throw error for malformed DataParts (missing data field)', () => {
+      const a2aResponse = {
+        result: {
+          artifacts: [
+            {
+              parts: [
+                {
+                  kind: 'data',
+                  // Missing data field
+                },
+              ],
+            },
+          ],
+        },
+      };
+
+      assert.throws(
+        () => unwrapProtocolResponse(a2aResponse, 'get_products', 'a2a'),
+        /must have a DataPart with AdCP data/
+      );
+    });
+
+    test('should reject intermediate A2A status "working"', () => {
+      const a2aWorkingResponse = {
+        result: {
+          status: {
+            state: 'working',
+            timestamp: '2025-01-22T12:00:00Z',
+          },
+          artifacts: [
+            {
+              parts: [
+                {
+                  kind: 'data',
+                  data: {
+                    products: [createTestProduct({ product_id: 'prod1' })],
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      };
+
+      assert.throws(
+        () => unwrapProtocolResponse(a2aWorkingResponse, 'get_products', 'a2a'),
+        /Cannot unwrap A2A response with intermediate status: working/
+      );
+    });
+
+    test('should reject intermediate A2A status "submitted"', () => {
+      const a2aSubmittedResponse = {
+        result: {
+          status: {
+            state: 'submitted',
+            timestamp: '2025-01-22T12:00:00Z',
+          },
+          artifacts: [
+            {
+              parts: [
+                {
+                  kind: 'data',
+                  data: {
+                    products: [createTestProduct({ product_id: 'prod1' })],
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      };
+
+      assert.throws(
+        () => unwrapProtocolResponse(a2aSubmittedResponse, 'get_products', 'a2a'),
+        /Cannot unwrap A2A response with intermediate status: submitted/
+      );
+    });
+
+    test('should reject intermediate A2A status "input-required"', () => {
+      const a2aInputRequiredResponse = {
+        result: {
+          status: {
+            state: 'input-required',
+            timestamp: '2025-01-22T12:00:00Z',
+          },
+          artifacts: [
+            {
+              parts: [
+                {
+                  kind: 'data',
+                  data: {
+                    products: [createTestProduct({ product_id: 'prod1' })],
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      };
+
+      assert.throws(
+        () => unwrapProtocolResponse(a2aInputRequiredResponse, 'get_products', 'a2a'),
+        /Cannot unwrap A2A response with intermediate status: input-required/
+      );
+    });
+
+    test('should include text snippet in error for unparseable MCP JSON', () => {
+      const mcpResponse = {
+        content: [{ type: 'text', text: 'This is not JSON, just plain text that should be included in error' }],
+      };
+
+      const result = unwrapProtocolResponse(mcpResponse);
+
+      assert.ok(result.errors);
+      assert.strictEqual(result.errors.length, 1);
+      assert.ok(result.errors[0].message.includes('This is not JSON'));
+    });
+
+    test('should truncate long text snippet in error message', () => {
+      const longText = 'x'.repeat(200); // 200 character string
+      const mcpResponse = {
+        content: [{ type: 'text', text: longText }],
+      };
+
+      const result = unwrapProtocolResponse(mcpResponse);
+
+      assert.ok(result.errors);
+      assert.strictEqual(result.errors.length, 1);
+      // Should be truncated to 100 chars + "..."
+      assert.ok(result.errors[0].message.includes('...'));
+      assert.ok(result.errors[0].message.length < 200);
+    });
+
+    test('should fail Zod validation for invalid product data', () => {
+      const a2aResponse = {
+        result: {
+          artifacts: [
+            {
+              parts: [
+                {
+                  kind: 'data',
+                  data: {
+                    products: [
+                      {
+                        // Missing required fields like product_id, name, etc.
+                        invalid_field: 'should fail validation',
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      };
+
+      assert.throws(
+        () => unwrapProtocolResponse(a2aResponse, 'get_products', 'a2a'),
+        /Response validation failed for get_products/
+      );
+    });
+
+    test('should fail Zod validation for missing required create_media_buy fields', () => {
+      const a2aResponse = {
+        result: {
+          artifacts: [
+            {
+              parts: [
+                {
+                  kind: 'data',
+                  data: {
+                    packages: [createTestPackage({ package_id: 'pkg1' })],
+                    // Missing media_buy_id
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      };
+
+      assert.throws(
+        () => unwrapProtocolResponse(a2aResponse, 'create_media_buy', 'a2a'),
+        /Response validation failed for create_media_buy/
+      );
+    });
+  });
+
+  describe('Protocol Auto-Detection Edge Cases', () => {
+    test('should throw error for empty response object', () => {
+      const emptyResponse = {};
+
+      assert.throws(
+        () => unwrapProtocolResponse(emptyResponse),
+        /Unable to extract AdCP response from protocol wrapper/
+      );
+    });
+
+    test('should throw error for response with only unrelated fields', () => {
+      const unrelatedResponse = {
+        someField: 'value',
+        anotherField: 123,
+        randomData: { nested: 'object' },
+      };
+
+      assert.throws(
+        () => unwrapProtocolResponse(unrelatedResponse),
+        /Unable to extract AdCP response from protocol wrapper/
+      );
+    });
+
+    test('should prioritize MCP when response has both MCP and A2A fields (ambiguous)', () => {
+      // This is an ambiguous response with both protocol indicators
+      const ambiguousResponse = {
+        // MCP fields
+        structuredContent: {
+          products: [createTestProduct({ product_id: 'mcp-prod', name: 'MCP Product' })],
+        },
+        // A2A fields
+        result: {
+          artifacts: [
+            {
+              parts: [
+                {
+                  kind: 'data',
+                  data: {
+                    products: [createTestProduct({ product_id: 'a2a-prod', name: 'A2A Product' })],
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      };
+
+      const result = unwrapProtocolResponse(ambiguousResponse);
+
+      // Auto-detection should prioritize MCP (isMCPResponse is checked first)
+      assert.strictEqual(result.products[0].product_id, 'mcp-prod');
+      assert.strictEqual(result.products[0].name, 'MCP Product');
+    });
+
+    test('should detect A2A when only A2A fields present', () => {
+      const a2aOnlyResponse = {
+        result: {
+          artifacts: [
+            {
+              parts: [
+                {
+                  kind: 'data',
+                  data: {
+                    products: [createTestProduct({ product_id: 'a2a-only', name: 'A2A Only' })],
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      };
+
+      const result = unwrapProtocolResponse(a2aOnlyResponse);
+
+      assert.strictEqual(result.products[0].product_id, 'a2a-only');
+      assert.strictEqual(result.products[0].name, 'A2A Only');
+    });
+
+    test('should detect MCP when only MCP fields present', () => {
+      const mcpOnlyResponse = {
+        structuredContent: {
+          products: [createTestProduct({ product_id: 'mcp-only', name: 'MCP Only' })],
+        },
+      };
+
+      const result = unwrapProtocolResponse(mcpOnlyResponse);
+
+      assert.strictEqual(result.products[0].product_id, 'mcp-only');
+      assert.strictEqual(result.products[0].name, 'MCP Only');
+    });
   });
 
   describe('isAdcpError', () => {
@@ -299,7 +686,7 @@ describe('Response Unwrapper', () => {
   describe('isAdcpSuccess', () => {
     test('should validate create_media_buy success response', () => {
       const successResponse = {
-        packages: [{ package_id: 'pkg1' }],
+        packages: [createTestPackage({ package_id: 'pkg1' })],
         media_buy_id: 'mb123',
         buyer_ref: 'buyer-ref-123',
       };
@@ -309,7 +696,7 @@ describe('Response Unwrapper', () => {
 
     test('should fail validation for create_media_buy without required fields', () => {
       const invalidResponse = {
-        packages: [{ package_id: 'pkg1' }],
+        packages: [createTestPackage({ package_id: 'pkg1' })],
         // Missing media_buy_id
       };
 
@@ -318,7 +705,9 @@ describe('Response Unwrapper', () => {
 
     test('should validate update_media_buy success response', () => {
       const successResponse = {
-        affected_packages: [{ package_id: 'pkg1' }],
+        media_buy_id: 'mb123',
+        buyer_ref: 'buyer-ref-123',
+        affected_packages: [createTestPackage({ package_id: 'pkg1' })],
       };
 
       assert.strictEqual(isAdcpSuccess(successResponse, 'update_media_buy'), true);
@@ -326,7 +715,7 @@ describe('Response Unwrapper', () => {
 
     test('should fail validation for update_media_buy without required fields', () => {
       const invalidResponse = {
-        packages: [{ package_id: 'pkg1' }],
+        packages: [createTestPackage({ package_id: 'pkg1' })],
         // Missing affected_packages
       };
 
@@ -335,7 +724,7 @@ describe('Response Unwrapper', () => {
 
     test('should validate get_products success response', () => {
       const successResponse = {
-        products: [{ product_id: 'prod1' }],
+        products: [createTestProduct({ product_id: 'prod1' })],
       };
 
       assert.strictEqual(isAdcpSuccess(successResponse, 'get_products'), true);
