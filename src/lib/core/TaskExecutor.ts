@@ -422,16 +422,36 @@ export class TaskExecutor {
         if (artifacts.length === 0) {
           this.logDebug(debugLogs, 'info', 'Returning A2A result directly (empty artifacts array)');
         } else {
-          this.logDebug(debugLogs, 'info', 'Extracting data from A2A artifact structure', {
-            artifactCount: artifacts.length,
-            extractedFrom: artifacts.length > 1 ? 'multi-artifact (HITL)' : 'single-artifact',
-            dataKeys: Object.keys(unwrapped || {}),
-          });
+          // Check if this is a framework-wrapped response
+          if (unwrapped?._frameworkWrapper) {
+            const details: Record<string, any> = {
+              wrapperId: unwrapped._frameworkWrapper.id,
+              wrapperName: unwrapped._frameworkWrapper.name,
+            };
+            // Add format detection if present
+            if (unwrapped.formats && Array.isArray(unwrapped.formats)) {
+              details.hasFormats = true;
+              details.formatsCount = unwrapped.formats.length;
+            }
+            this.logDebug(debugLogs, 'info', 'Extracting data from framework wrapper', details);
+          } else {
+            this.logDebug(debugLogs, 'info', 'Extracting data from A2A artifact structure', {
+              artifactCount: artifacts.length,
+              extractedFrom: artifacts.length > 1 ? 'multi-artifact (HITL)' : 'single-artifact',
+              dataKeys: Object.keys(unwrapped || {}),
+            });
+          }
         }
       } else if (response?.data) {
         this.logDebug(debugLogs, 'info', 'Extracting data from response.data field');
       } else {
         this.logDebug(debugLogs, 'info', 'Using direct response (no wrapper)');
+      }
+
+      // Clean up internal metadata fields before returning
+      if (unwrapped && typeof unwrapped === 'object' && '_frameworkWrapper' in unwrapped) {
+        const { _frameworkWrapper, ...cleanData } = unwrapped;
+        return cleanData;
       }
 
       return unwrapped;

@@ -78,7 +78,25 @@ export function unwrapProtocolResponse(protocolResponse: any, toolName?: string)
       const dataPart = artifact.parts?.find((p: any) => p.kind === 'data' && p.data && typeof p.data === 'object');
 
       if (dataPart?.data) {
-        const data = dataPart.data;
+        let data = dataPart.data;
+
+        // Check for framework wrapper pattern (e.g., ADK FunctionResponse)
+        // Pattern: { id, name, response: {...} } where response contains actual AdCP data
+        if (
+          data &&
+          typeof data === 'object' &&
+          'id' in data &&
+          'name' in data &&
+          'response' in data &&
+          typeof data.response === 'object'
+        ) {
+          // Extract from nested response field, preserve wrapper metadata
+          data = {
+            ...data.response,
+            _frameworkWrapper: { id: data.id, name: data.name },
+          };
+        }
+
         // If there are text messages, include them similar to MCP's content field
         if (textParts.length > 0) {
           return {
