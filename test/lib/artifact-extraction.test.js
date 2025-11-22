@@ -256,7 +256,10 @@ describe('Artifact Extraction Tests', () => {
 
       // Should include the human-readable message from text part
       assert.ok(extractedData._message, 'Should have _message field');
-      assert.ok(extractedData._message.includes('Media Buy Created Successfully'), 'Message should contain success text');
+      assert.ok(
+        extractedData._message.includes('Media Buy Created Successfully'),
+        'Message should contain success text'
+      );
 
       // Should NOT return the pending_human status from first artifact
       assert.strictEqual(extractedData.status, undefined);

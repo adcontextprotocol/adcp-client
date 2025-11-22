@@ -69,9 +69,7 @@ export function unwrapProtocolResponse(protocolResponse: any, toolName?: string)
   if (Array.isArray(artifacts) && artifacts.length > 0) {
     // Helper to extract both text and data from an artifact
     const extractFromArtifact = (artifact: any) => {
-      const textParts = artifact.parts
-        ?.filter((p: any) => p.kind === 'text' && p.text)
-        .map((p: any) => p.text) || [];
+      const textParts = artifact.parts?.filter((p: any) => p.kind === 'text' && p.text).map((p: any) => p.text) || [];
 
       const dataPart = artifact.parts?.find((p: any) => p.kind === 'data' && p.data && typeof p.data === 'object');
 
