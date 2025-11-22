@@ -171,42 +171,65 @@ async function syncSchemas(version?: string): Promise<void> {
 
   await Promise.allSettled(downloadPromises);
 
-  // Now download any nested $ref dependencies
+  // Recursively download nested $ref dependencies
   console.log('🔗 Checking for nested $ref dependencies...');
 
-  const nestedRefs = new Set<string>();
-  for (const ref of allRefs) {
-    try {
-      // Use the same path extraction logic as downloadSchema
-      const versionPrefix = `/schemas/${adcpVersion}/`;
-      const fallbackPrefix = '/schemas/v1/';
+  const downloadedRefs = new Set<string>(allRefs);
+  let depth = 0;
+  const maxDepth = 10; // Prevent infinite loops
 
-      let localPath: string;
-      if (ref.startsWith(versionPrefix)) {
-        localPath = path.join(versionCacheDir, ref.replace(versionPrefix, ''));
-      } else if (ref.startsWith(fallbackPrefix)) {
-        localPath = path.join(versionCacheDir, ref.replace(fallbackPrefix, ''));
-      } else {
-        localPath = path.join(versionCacheDir, path.basename(ref));
-      }
+  while (depth < maxDepth) {
+    const nestedRefs = new Set<string>();
 
-      if (existsSync(localPath)) {
-        const schema = JSON.parse(require('fs').readFileSync(localPath, 'utf8'));
-        const refs = extractRefs(schema);
-        refs.forEach(r => nestedRefs.add(r));
+    // Check all downloaded schemas for nested refs
+    for (const ref of downloadedRefs) {
+      try {
+        // Use the same path extraction logic as downloadSchema
+        const versionPrefix = `/schemas/${adcpVersion}/`;
+        const fallbackPrefix = '/schemas/v1/';
+
+        let localPath: string;
+        if (ref.startsWith(versionPrefix)) {
+          localPath = path.join(versionCacheDir, ref.replace(versionPrefix, ''));
+        } else if (ref.startsWith(fallbackPrefix)) {
+          localPath = path.join(versionCacheDir, ref.replace(fallbackPrefix, ''));
+        } else {
+          localPath = path.join(versionCacheDir, path.basename(ref));
+        }
+
+        if (existsSync(localPath)) {
+          const schema = JSON.parse(require('fs').readFileSync(localPath, 'utf8'));
+          const refs = extractRefs(schema);
+          refs.forEach(r => {
+            // Only add refs we haven't downloaded yet
+            if (!downloadedRefs.has(r)) {
+              nestedRefs.add(r);
+            }
+          });
+        }
+      } catch (error) {
+        console.warn(`⚠️  Failed to parse ${ref} for nested refs:`, error.message);
       }
-    } catch (error) {
-      console.warn(`⚠️  Failed to parse ${ref} for nested refs:`, error.message);
     }
+
+    if (nestedRefs.size === 0) {
+      console.log(`✅ No more nested references found (depth ${depth})`);
+      break;
+    }
+
+    console.log(`📋 Found ${nestedRefs.size} additional nested references at depth ${depth + 1}`);
+    const nestedDownloadPromises = Array.from(nestedRefs).map(ref =>
+      downloadSchema(ref, versionCacheDir, adcpVersion)
+    );
+    await Promise.allSettled(nestedDownloadPromises);
+
+    // Add newly downloaded refs to the set
+    nestedRefs.forEach(r => downloadedRefs.add(r));
+    depth++;
   }
 
-  // Remove already downloaded refs
-  allRefs.forEach(ref => nestedRefs.delete(ref));
-
-  if (nestedRefs.size > 0) {
-    console.log(`📋 Found ${nestedRefs.size} additional nested references`);
-    const nestedDownloadPromises = Array.from(nestedRefs).map(ref => downloadSchema(ref, versionCacheDir, adcpVersion));
-    await Promise.allSettled(nestedDownloadPromises);
+  if (depth >= maxDepth) {
+    console.warn(`⚠️  Reached maximum recursion depth (${maxDepth})`);
   }
 
   // Create latest symlink
