@@ -313,15 +313,21 @@ function unwrapA2AResponse(response: any): AdCPResponse {
 
   const textParts = artifact.parts.filter((p: any) => p.kind === 'text' && p.text).map((p: any) => p.text);
 
+  // Unwrap nested response field if present (some agents wrap AdCP responses)
+  let data = dataPart.data;
+  if (data?.response && typeof data.response === 'object' && !Array.isArray(data.response)) {
+    data = data.response;
+  }
+
   // Return data with optional message
   if (textParts.length > 0) {
     return {
-      ...dataPart.data,
+      ...data,
       _message: textParts.join('\n'),
     };
   }
 
-  return dataPart.data;
+  return data;
 }
 
 /**

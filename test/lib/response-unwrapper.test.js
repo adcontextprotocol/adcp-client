@@ -53,6 +53,36 @@ describe('Response Unwrapper', () => {
       assert.strictEqual(result.products[0].name, 'Test Product');
     });
 
+    test('should unwrap nested response field in A2A data part', () => {
+      // Some agents wrap AdCP responses in an extra { response: { ... } } layer
+      const a2aResponse = {
+        result: {
+          artifacts: [
+            {
+              parts: [
+                {
+                  kind: 'data',
+                  data: {
+                    response: {
+                      products: [createTestProduct({ product_id: 'prod1', name: 'Test Product' })],
+                    },
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      };
+
+      const result = unwrapProtocolResponse(a2aResponse, 'get_products', 'a2a');
+
+      // Should unwrap the nested response field
+      assert.ok(result.products);
+      assert.strictEqual(result.products.length, 1);
+      assert.strictEqual(result.products[0].product_id, 'prod1');
+      assert.strictEqual(result.products[0].name, 'Test Product');
+    });
+
     test('should convert A2A error to AdCP error format', () => {
       const a2aErrorResponse = {
         error: {
