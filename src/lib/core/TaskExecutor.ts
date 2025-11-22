@@ -409,46 +409,65 @@ export class TaskExecutor {
     // This handles MCP structuredContent, A2A artifacts (including HITL multi-artifact responses),
     // and various edge cases consistently
     try {
-      const unwrapped = unwrapProtocolResponse(response, toolName);
-
-      // Log what type of extraction was performed
+      // Log what type of response we're processing BEFORE unwrapping
+      // This ensures we have debug visibility even if unwrapping fails
       if (response?.structuredContent) {
-        this.logDebug(debugLogs, 'info', 'Extracting data from MCP structuredContent', {
-          hasStructuredContent: true,
-          keys: Object.keys(unwrapped),
-        });
+        this.logDebug(debugLogs, 'info', 'Processing MCP structuredContent response');
       } else if (response?.result?.artifacts) {
         const artifacts = response.result.artifacts;
         if (artifacts.length === 0) {
-          this.logDebug(debugLogs, 'info', 'Returning A2A result directly (empty artifacts array)');
+          this.logDebug(debugLogs, 'info', 'Processing A2A response with empty artifacts array');
         } else {
-          // Check if this is a framework-wrapped response
-          if (unwrapped?._frameworkWrapper) {
-            const details: Record<string, any> = {
-              wrapperId: unwrapped._frameworkWrapper.id,
-              wrapperName: unwrapped._frameworkWrapper.name,
-            };
-            // Add format detection if present
-            if (unwrapped.formats && Array.isArray(unwrapped.formats)) {
-              details.hasFormats = true;
-              details.formatsCount = unwrapped.formats.length;
-            }
-            this.logDebug(debugLogs, 'info', 'Extracting data from framework wrapper', details);
-          } else {
-            this.logDebug(debugLogs, 'info', 'Extracting data from A2A artifact structure', {
-              artifactCount: artifacts.length,
-              extractedFrom: artifacts.length > 1 ? 'multi-artifact (HITL)' : 'single-artifact',
-              dataKeys: Object.keys(unwrapped || {}),
-            });
-          }
+          // Calculate total part count across all artifacts
+          const totalParts = artifacts.reduce((sum: number, artifact: any) => {
+            return sum + (artifact.parts?.length || 0);
+          }, 0);
+
+          // Extract data keys from first part for debugging
+          const firstPart = artifacts[0]?.parts?.[0];
+          const dataKeys = firstPart?.data ? Object.keys(firstPart.data) : [];
+
+          this.logDebug(debugLogs, 'info', 'Processing A2A artifact structure', {
+            artifactCount: artifacts.length,
+            partCount: totalParts,
+            extractedFrom: artifacts.length > 1 ? 'multi-artifact (HITL)' : 'single-artifact',
+            dataKeys,
+          });
         }
       } else if (response?.data) {
-        this.logDebug(debugLogs, 'info', 'Extracting data from response.data field');
+        this.logDebug(debugLogs, 'info', 'Processing response.data field');
       } else {
-        // No standard structure found - using direct response
-        this.logDebug(debugLogs, 'info', 'No standard data structure found, using direct response', {
+        this.logDebug(debugLogs, 'info', 'Processing response without standard structure', {
           responseKeys: Object.keys(response || {}),
         });
+      }
+
+      // Now unwrap the response
+      const unwrapped = unwrapProtocolResponse(response, toolName);
+
+      // Log successful extraction with result details
+      if (response?.structuredContent) {
+        this.logDebug(debugLogs, 'info', 'Successfully extracted MCP data', {
+          dataKeys: Object.keys(unwrapped || {}),
+        });
+      } else if (response?.result?.artifacts && response.result.artifacts.length > 0) {
+        // Check if this is a framework-wrapped response
+        if (unwrapped?._frameworkWrapper) {
+          const details: Record<string, any> = {
+            wrapperId: unwrapped._frameworkWrapper.id,
+            wrapperName: unwrapped._frameworkWrapper.name,
+          };
+          // Add format detection if present
+          if (unwrapped.formats && Array.isArray(unwrapped.formats)) {
+            details.hasFormats = true;
+            details.formatsCount = unwrapped.formats.length;
+          }
+          this.logDebug(debugLogs, 'info', 'Successfully extracted framework-wrapped data', details);
+        } else {
+          this.logDebug(debugLogs, 'info', 'Successfully extracted A2A data', {
+            dataKeys: Object.keys(unwrapped || {}),
+          });
+        }
       }
 
       // Clean up internal metadata fields before returning

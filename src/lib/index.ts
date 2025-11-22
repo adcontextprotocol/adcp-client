@@ -179,53 +179,10 @@ import type { AgentConfig } from './types';
 import { ADCPMultiAgentClient } from './core/ADCPMultiAgentClient';
 
 /**
- * Legacy AdCPClient for backward compatibility - now redirects to ADCPMultiAgentClient
+ * Legacy AdCPClient alias for backward compatibility
  * @deprecated Use ADCPMultiAgentClient instead for new code
  */
-export class AdCPClient {
-  private multiClient: ADCPMultiAgentClient;
-
-  constructor(agents?: AgentConfig[], config?: any) {
-    this.multiClient = new ADCPMultiAgentClient(agents || [], config);
-  }
-
-  agent(id: string) {
-    return this.multiClient.agent(id);
-  }
-  agents(ids: string[]) {
-    return this.multiClient.agents(ids);
-  }
-  allAgents() {
-    return this.multiClient.allAgents();
-  }
-  addAgent(agent: AgentConfig) {
-    this.multiClient.addAgent(agent);
-  }
-  getAgents() {
-    return this.multiClient.getAgentConfigs();
-  }
-  getAgentConfigs() {
-    return this.multiClient.getAgentConfigs();
-  } // Alias for compatibility
-  get agentCount() {
-    return this.multiClient.agentCount;
-  }
-  get agentIds() {
-    return this.multiClient.getAgentIds();
-  }
-
-  getStandardFormats() {
-    const { getStandardFormats } = require('./utils');
-    return getStandardFormats();
-  }
-
-  static fromEnv(): AdCPClient {
-    const multiClient = ADCPMultiAgentClient.fromEnv();
-    const client = new AdCPClient();
-    client.multiClient = multiClient;
-    return client;
-  }
-}
+export const AdCPClient = ADCPMultiAgentClient;
 
 // Legacy configuration manager maintained for backward compatibility
 // The enhanced ConfigurationManager is exported above
@@ -234,7 +191,7 @@ export class AdCPClient {
  * Legacy createAdCPClient function for backward compatibility
  * @deprecated Use new ADCPMultiAgentClient constructor instead
  */
-export function createAdCPClient(agents?: AgentConfig[]): AdCPClient {
+export function createAdCPClient(agents?: AgentConfig[]): ADCPMultiAgentClient {
   return new AdCPClient(agents);
 }
 
