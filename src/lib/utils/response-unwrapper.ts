@@ -2,175 +2,155 @@
  * Response Unwrapper
  *
  * Extracts raw AdCP responses from protocol wrappers (MCP/A2A).
- * This ensures SDK responses match AdCP schema exactly without wrapping.
+ * Follows canonical A2A response format per AdCP specification.
  */
+
+import { z } from 'zod';
+import * as schemas from '../types/schemas.generated';
+import type {
+  GetProductsResponse,
+  ListCreativeFormatsResponse,
+  CreateMediaBuyResponse,
+  SyncCreativesResponse,
+  ListCreativesResponse,
+  UpdateMediaBuyResponse,
+  GetMediaBuyDeliveryResponse,
+  ListAuthorizedPropertiesResponse,
+  ProvidePerformanceFeedbackResponse,
+  BuildCreativeResponse,
+  PreviewCreativeResponse,
+  GetSignalsResponse,
+  ActivateSignalResponse,
+} from '../types/tools.generated';
+
+/**
+ * Union type of all possible AdCP responses
+ * Each response type is a discriminated union of success | error
+ */
+export type AdCPResponse =
+  | GetProductsResponse
+  | ListCreativeFormatsResponse
+  | CreateMediaBuyResponse
+  | SyncCreativesResponse
+  | ListCreativesResponse
+  | UpdateMediaBuyResponse
+  | GetMediaBuyDeliveryResponse
+  | ListAuthorizedPropertiesResponse
+  | ProvidePerformanceFeedbackResponse
+  | BuildCreativeResponse
+  | PreviewCreativeResponse
+  | GetSignalsResponse
+  | ActivateSignalResponse;
+
+/**
+ * Map of AdCP tool names to their Zod response schemas
+ */
+const TOOL_RESPONSE_SCHEMAS: Record<string, z.ZodSchema<AdCPResponse>> = {
+  get_products: schemas.GetProductsResponseSchema as z.ZodSchema<AdCPResponse>,
+  list_creative_formats: schemas.ListCreativeFormatsResponseSchema as z.ZodSchema<AdCPResponse>,
+  create_media_buy: schemas.CreateMediaBuyResponseSchema as z.ZodSchema<AdCPResponse>,
+  update_media_buy: schemas.UpdateMediaBuyResponseSchema as z.ZodSchema<AdCPResponse>,
+  sync_creatives: schemas.SyncCreativesResponseSchema as z.ZodSchema<AdCPResponse>,
+  list_creatives: schemas.ListCreativesResponseSchema as z.ZodSchema<AdCPResponse>,
+  get_media_buy_delivery: schemas.GetMediaBuyDeliveryResponseSchema as z.ZodSchema<AdCPResponse>,
+  list_authorized_properties: schemas.ListAuthorizedPropertiesResponseSchema as z.ZodSchema<AdCPResponse>,
+  provide_performance_feedback: schemas.ProvidePerformanceFeedbackResponseSchema as z.ZodSchema<AdCPResponse>,
+  build_creative: schemas.BuildCreativeResponseSchema as z.ZodSchema<AdCPResponse>,
+  preview_creative: schemas.PreviewCreativeResponseSchema as z.ZodSchema<AdCPResponse>,
+  get_signals: schemas.GetSignalsResponseSchema as z.ZodSchema<AdCPResponse>,
+  activate_signal: schemas.ActivateSignalResponseSchema as z.ZodSchema<AdCPResponse>,
+};
 
 /**
  * Extract raw AdCP response from protocol wrapper
  *
  * @param protocolResponse - Raw response from MCP or A2A protocol
- * @param toolName - Optional AdCP tool name for validation (e.g., 'get_products')
+ * @param toolName - Optional AdCP tool name for validation
+ * @param protocol - Protocol type ('mcp' or 'a2a'), if known. If not provided, will auto-detect.
  * @returns Raw AdCP response data matching schema exactly
- *
- * @example
- * // MCP response
- * const mcpResponse = {
- *   structuredContent: { packages: [...], media_buy_id: "..." }
- * };
- * const adcpResponse = unwrapProtocolResponse(mcpResponse, 'get_products');
- * // Returns: { packages: [...], media_buy_id: "..." }
- *
- * @example
- * // A2A response (simple)
- * const a2aResponse = {
- *   result: {
- *     artifacts: [{
- *       parts: [{
- *         data: { packages: [...], media_buy_id: "..." }
- *       }]
- *     }]
- *   }
- * };
- * const adcpResponse = unwrapProtocolResponse(a2aResponse, 'get_products');
- * // Returns: { packages: [...], media_buy_id: "..." }
- *
- * @example
- * // A2A response (HITL with multiple artifacts)
- * const hitlResponse = {
- *   result: {
- *     artifacts: [
- *       { artifactId: "...", parts: [{ data: { status: "pending_human", data: null }}]},
- *       { artifactId: "...", parts: [
- *         { kind: "text", text: "..." },
- *         { kind: "data", data: { packages: [...], media_buy_id: "..." }}
- *       ]}
- *     ]
- *   }
- * };
- * const adcpResponse = unwrapProtocolResponse(hitlResponse, 'create_media_buy');
- * // Returns: { packages: [...], media_buy_id: "...", _message: "..." } (from first completed artifact)
+ * @throws {Error} If response doesn't match expected schema for the tool
  */
-export function unwrapProtocolResponse(protocolResponse: any, toolName?: string): any {
+export function unwrapProtocolResponse(
+  protocolResponse: any,
+  toolName?: string,
+  protocol?: 'mcp' | 'a2a'
+): AdCPResponse & { _message?: string } {
   if (!protocolResponse) {
     throw new Error('Protocol response is null or undefined');
   }
 
-  // MCP protocol: extract from structuredContent
-  if (protocolResponse.structuredContent !== undefined && protocolResponse.structuredContent !== null) {
-    return protocolResponse.structuredContent;
+  // Extract response from protocol wrapper
+  let unwrapped: any;
+  if (protocol === 'mcp') {
+    unwrapped = unwrapMCPResponse(protocolResponse);
+  } else if (protocol === 'a2a') {
+    unwrapped = unwrapA2AResponse(protocolResponse);
+  } else {
+    // Auto-detect protocol if not specified
+    if (isMCPResponse(protocolResponse)) {
+      unwrapped = unwrapMCPResponse(protocolResponse);
+    } else if (isA2AResponse(protocolResponse)) {
+      unwrapped = unwrapA2AResponse(protocolResponse);
+    } else {
+      throw new Error('Unable to extract AdCP response from protocol wrapper');
+    }
   }
 
-  // A2A protocol: extract from result.artifacts
-  // Strategy: Find the first completed artifact with AdCP response data
-  // - Completed artifacts have data parts with AdCP response fields
-  // - Skip intermediate status artifacts (e.g., HITL pending_human status)
-  // - Extract both text parts (human-readable messages) and data parts (structured response)
-  const artifacts = protocolResponse.result?.artifacts;
-  if (Array.isArray(artifacts)) {
-    // Handle empty artifacts array - return it directly as valid AdCP response
-    if (artifacts.length === 0) {
-      return { artifacts: [] };
-    }
-    // Helper to extract both text and data from an artifact
-    const extractFromArtifact = (artifact: any) => {
-      const textParts = artifact.parts?.filter((p: any) => p.kind === 'text' && p.text).map((p: any) => p.text) || [];
+  // Validate response against schema if tool name provided
+  if (toolName) {
+    const schema = TOOL_RESPONSE_SCHEMAS[toolName];
+    if (schema) {
+      // Extract protocol metadata before validation
+      const protocolMetadata = {
+        _message: unwrapped._message,
+      };
 
-      // Find data part - kind field is optional, but if present must be 'data'
-      const dataPart = artifact.parts?.find(
-        (p: any) => (!p.kind || p.kind === 'data') && p.data && typeof p.data === 'object'
-      );
-
-      if (dataPart?.data) {
-        let data = dataPart.data;
-
-        // Check for framework wrapper pattern (e.g., ADK FunctionResponse)
-        // Pattern: { id, name, response: {...} } where response contains actual AdCP data
-        if (
-          data &&
-          typeof data === 'object' &&
-          'id' in data &&
-          'name' in data &&
-          'response' in data &&
-          typeof data.response === 'object'
-        ) {
-          // Extract from nested response field, preserve wrapper metadata
-          data = {
-            ...data.response,
-            _frameworkWrapper: { id: data.id, name: data.name },
-          };
-        }
-
-        // If there are text messages, include them similar to MCP's content field
-        if (textParts.length > 0) {
-          return {
-            ...data,
-            _message: textParts.join('\n'), // Include human-readable message
-          };
-        }
-        return data;
-      }
-      return null;
-    };
-
-    // Helper to check if data looks like a completed AdCP response
-    const isCompletedResponse = (data: any): boolean => {
-      if (!data || typeof data !== 'object') return false;
-
-      // Skip HITL status artifacts (these have status: "pending_human" and data: null)
-      if (data.status === 'pending_human' && data.data === null) {
-        return false;
-      }
-
-      // Use proper schema validation with tool name
-      if (!toolName) {
+      const result = schema.safeParse(unwrapped);
+      if (!result.success) {
         throw new Error(
-          'Tool name is required to validate A2A artifacts. ' +
-            'Cannot distinguish between intermediate HITL artifacts and completed AdCP responses without knowing which tool was called.'
+          `Response validation failed for ${toolName}: ${result.error.message}`
         );
       }
 
-      return isAdcpSuccess(data, toolName);
-    };
-
-    // Find first artifact with completed AdCP response
-    for (const artifact of artifacts) {
-      const extracted = extractFromArtifact(artifact);
-      if (extracted && isCompletedResponse(extracted)) {
-        return extracted;
+      // Re-attach protocol metadata after validation (Zod strips unknown fields)
+      if (protocolMetadata._message) {
+        return {
+          ...result.data,
+          _message: protocolMetadata._message,
+        };
       }
+
+      return result.data;
     }
-
-    // If no completed artifacts found, throw error
-    // This indicates either:
-    // 1. The response structure doesn't match A2A protocol
-    // 2. The workflow hasn't completed yet (e.g., still pending HITL)
-    // 3. The response doesn't contain expected AdCP fields
-    throw new Error(
-      'No completed AdCP response found in A2A artifacts. ' +
-        'Response may be pending completion or missing expected AdCP fields.'
-    );
   }
 
-  // A2A error response: check for error field
-  if (protocolResponse.error) {
-    // Convert JSON-RPC error to AdCP error format
-    // AdCP uses { errors: [...] } for error responses
-    return {
-      errors: [
-        {
-          code: protocolResponse.error.code?.toString() || 'unknown',
-          message: protocolResponse.error.message || 'Unknown error',
-          ...(protocolResponse.error.data && { data: protocolResponse.error.data }),
-        },
-      ],
-    };
-  }
+  // Return unwrapped response (no validation)
+  return unwrapped;
+}
 
-  // MCP error response: check for isError
-  if (protocolResponse.isError === true) {
-    const errorContent = Array.isArray(protocolResponse.content)
-      ? protocolResponse.content.find((c: any) => c.type === 'text')?.text
-      : protocolResponse.content?.text || 'Unknown error';
+/**
+ * Check if response is MCP format
+ */
+function isMCPResponse(response: any): boolean {
+  return 'structuredContent' in response || 'isError' in response || 'content' in response;
+}
+
+/**
+ * Check if response is A2A format
+ */
+function isA2AResponse(response: any): boolean {
+  return 'result' in response || 'error' in response;
+}
+
+/**
+ * Unwrap MCP response - all MCP logic in one place
+ */
+function unwrapMCPResponse(response: any): AdCPResponse {
+  // MCP error response
+  if (response.isError === true) {
+    const errorContent = Array.isArray(response.content)
+      ? response.content.find((c: any) => c.type === 'text')?.text
+      : response.content?.text || 'Unknown error';
 
     return {
       errors: [
@@ -182,16 +162,38 @@ export function unwrapProtocolResponse(protocolResponse: any, toolName?: string)
     };
   }
 
-  // If response has content but no structuredContent, it might be a plain text response
-  if (protocolResponse.content && Array.isArray(protocolResponse.content)) {
-    const textContent = protocolResponse.content.find((c: any) => c.type === 'text');
+  // MCP success response with structuredContent
+  if (response.structuredContent !== undefined && response.structuredContent !== null) {
+    const data = response.structuredContent;
+
+    // Extract text messages from content field (parallel to A2A TextParts)
+    const textMessages: string[] = [];
+    if (response.content && Array.isArray(response.content)) {
+      for (const item of response.content) {
+        if (item.type === 'text' && item.text) {
+          textMessages.push(item.text);
+        }
+      }
+    }
+
+    // Include text messages if present (same pattern as A2A)
+    if (textMessages.length > 0) {
+      return {
+        ...data,
+        _message: textMessages.join('\n'),
+      };
+    }
+
+    return data;
+  }
+
+  // MCP text content fallback (try parsing as JSON)
+  if (response.content && Array.isArray(response.content)) {
+    const textContent = response.content.find((c: any) => c.type === 'text');
     if (textContent?.text) {
-      // Try to parse as JSON (some agents return stringified JSON in text content)
       try {
-        const parsed = JSON.parse(textContent.text);
-        return parsed;
+        return JSON.parse(textContent.text);
       } catch {
-        // Not JSON, return as error
         return {
           errors: [
             {
@@ -204,30 +206,79 @@ export function unwrapProtocolResponse(protocolResponse: any, toolName?: string)
     }
   }
 
-  // Handle responses with a direct .data field
-  if (protocolResponse.data && typeof protocolResponse.data === 'object') {
-    return protocolResponse.data;
+  throw new Error('Invalid MCP response format');
+}
+
+/**
+ * Unwrap A2A response
+ *
+ * NOTE: This function should only be called when status is "completed".
+ * Intermediate statuses ("working", "submitted", "input-required") are handled
+ * at the response level (not in artifacts) and should not reach this function.
+ *
+ * A2A response flow:
+ * - Intermediate: { status: "working", message: "..." } - NO artifacts yet
+ * - Completed: { status: "completed", result: { artifacts: [...] } } - Parse artifacts here
+ */
+function unwrapA2AResponse(response: any): AdCPResponse {
+  // A2A error response (JSON-RPC error)
+  if (response.error) {
+    return {
+      errors: [
+        {
+          code: response.error.code?.toString() || 'unknown',
+          message: response.error.message || 'Unknown error',
+          ...(response.error.data && { data: response.error.data }),
+        },
+      ],
+    };
   }
 
-  // If we can't find the data in expected locations, return the whole response
-  // This allows for direct AdCP responses (when not wrapped in protocol)
-  if (
-    typeof protocolResponse === 'object' &&
-    !('structuredContent' in protocolResponse) &&
-    !('result' in protocolResponse) &&
-    !('data' in protocolResponse)
-  ) {
-    return protocolResponse;
+  // A2A completed response - simple requirements per AdCP spec:
+  // - MUST have result.artifacts array with at least one completed artifact
+  // - Completed artifact MUST have at least one DataPart (kind: 'data') with the AdCP response
+  // - MAY have TextParts (kind: 'text') with optional messages
+
+  const artifacts = response.result?.artifacts;
+  if (!Array.isArray(artifacts) || artifacts.length === 0) {
+    throw new Error('A2A completed response must have at least one artifact');
   }
 
-  throw new Error('Unable to extract AdCP response from protocol wrapper');
+  // Take last artifact (conversational protocols append artifacts over time)
+  // Note: A2A artifacts don't have a status field - only Tasks have status.
+  // If the Task status is "completed", all artifacts in result.artifacts are completed.
+  const artifact = artifacts[artifacts.length - 1];
+  if (!artifact) {
+    throw new Error('A2A completed response must have at least one artifact');
+  }
+
+  if (!artifact.parts || !Array.isArray(artifact.parts)) {
+    throw new Error('A2A artifact missing parts array');
+  }
+
+  // Extract DataPart (required) and TextParts (optional)
+  const dataPart = artifact.parts.find((p: any) => p.kind === 'data');
+  if (!dataPart?.data) {
+    throw new Error('A2A completed response must have a DataPart with AdCP data');
+  }
+
+  const textParts = artifact.parts
+    .filter((p: any) => p.kind === 'text' && p.text)
+    .map((p: any) => p.text);
+
+  // Return data with optional message
+  if (textParts.length > 0) {
+    return {
+      ...dataPart.data,
+      _message: textParts.join('\n'),
+    };
+  }
+
+  return dataPart.data;
 }
 
 /**
  * Check if a response is an AdCP error response
- *
- * @param response - AdCP response to check
- * @returns true if response contains errors array
  */
 export function isAdcpError(response: any): boolean {
   return Array.isArray(response?.errors) && response.errors.length > 0;
@@ -236,9 +287,7 @@ export function isAdcpError(response: any): boolean {
 /**
  * Check if a response is an AdCP success response for a specific task
  *
- * @param response - AdCP response to check
- * @param taskName - Expected task name (e.g., 'create_media_buy', 'update_media_buy')
- * @returns true if response has required success fields for the task
+ * Note: This is a temporary helper. TODO: Use Zod schemas for validation instead.
  */
 export function isAdcpSuccess(response: any, taskName: string): boolean {
   if (isAdcpError(response)) {
@@ -246,9 +295,9 @@ export function isAdcpSuccess(response: any, taskName: string): boolean {
   }
 
   // Task-specific validation based on AdCP schemas
+  // TODO: Replace with Zod schema validation
   switch (taskName) {
     case 'create_media_buy':
-      // Required fields per schema: media_buy_id, buyer_ref, packages
       return !!(response.media_buy_id && response.buyer_ref && response.packages);
 
     case 'update_media_buy':

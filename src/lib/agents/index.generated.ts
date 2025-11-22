@@ -57,8 +57,8 @@ export class Agent {
         return await ProtocolClient.callTool(this.config, toolName, params, debugLogs);
       });
 
-      // Unwrap protocol response to get raw AdCP data
-      const adcpResponse = unwrapProtocolResponse(protocolResponse);
+      // Unwrap and validate protocol response using tool-specific Zod schema
+      const adcpResponse = unwrapProtocolResponse(protocolResponse, toolName, this.config.protocol);
 
       return adcpResponse as T;
     } catch (error) {

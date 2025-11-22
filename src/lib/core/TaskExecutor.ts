@@ -451,29 +451,9 @@ export class TaskExecutor {
           dataKeys: Object.keys(unwrapped || {}),
         });
       } else if (response?.result?.artifacts && response.result.artifacts.length > 0) {
-        // Check if this is a framework-wrapped response
-        if (unwrapped?._frameworkWrapper) {
-          const details: Record<string, any> = {
-            wrapperId: unwrapped._frameworkWrapper.id,
-            wrapperName: unwrapped._frameworkWrapper.name,
-          };
-          // Add format detection if present
-          if (unwrapped.formats && Array.isArray(unwrapped.formats)) {
-            details.hasFormats = true;
-            details.formatsCount = unwrapped.formats.length;
-          }
-          this.logDebug(debugLogs, 'info', 'Successfully extracted framework-wrapped data', details);
-        } else {
-          this.logDebug(debugLogs, 'info', 'Successfully extracted A2A data', {
-            dataKeys: Object.keys(unwrapped || {}),
-          });
-        }
-      }
-
-      // Clean up internal metadata fields before returning
-      if (unwrapped && typeof unwrapped === 'object' && '_frameworkWrapper' in unwrapped) {
-        const { _frameworkWrapper, ...cleanData } = unwrapped;
-        return cleanData;
+        this.logDebug(debugLogs, 'info', 'Successfully extracted A2A data', {
+          dataKeys: Object.keys(unwrapped || {}),
+        });
       }
 
       return unwrapped;
