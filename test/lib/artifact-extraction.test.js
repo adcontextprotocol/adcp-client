@@ -262,6 +262,119 @@ describe('Artifact Extraction Tests', () => {
       assert.strictEqual(extractedData.status, undefined);
     });
 
+    it('should extract AdCP response from real-world client HITL response', async () => {
+      // Real client response with 3 artifacts (from production HITL workflow)
+      const realClientResponse = {
+        result: {
+          artifacts: [
+            {
+              artifactId: 'start_of_hitl-create_media_buy-ba544893-c44f-44dd-855d-d4484095586e',
+              description: null,
+              extensions: null,
+              metadata: null,
+              name: null,
+              parts: [
+                {
+                  data: {
+                    status: 'pending_human',
+                    data: null,
+                  },
+                  kind: 'data',
+                  metadata: null,
+                },
+              ],
+            },
+            {
+              artifactId: 'end_of_hitl-create_media_buy-ba544893-c44f-44dd-855d-d4484095586e',
+              parts: [
+                {
+                  kind: 'text',
+                  text: '✅ **Media Buy Created Successfully**\n\n**Campaign:** harley-test-1763691443',
+                },
+                {
+                  data: {
+                    buyer_ref: 'harley-test-1763691443',
+                    context: null,
+                    creative_deadline: '2025-10-18T00:00:00Z',
+                    media_buy_id: '123',
+                    packages: [
+                      { buyer_ref: 'harley-pkg-1-1763691443', package_id: '1' },
+                      { buyer_ref: 'harley-pkg-2-1763691443', package_id: '2' },
+                      { buyer_ref: 'harley-pkg-3-1763691443', package_id: '3' },
+                      { buyer_ref: 'harley-pkg-4-1763691443', package_id: '4' },
+                      { buyer_ref: 'harley-pkg-5-1763691443', package_id: '5' },
+                    ],
+                  },
+                  kind: 'data',
+                },
+              ],
+            },
+            {
+              artifactId: '38610840-956b-4d78-a762-aeff2230ea5b',
+              parts: [
+                {
+                  kind: 'text',
+                  text: '✅ **Media Buy Created Successfully**\n\n**Campaign:** harley-test-1763691443',
+                },
+                {
+                  data: {
+                    id: 'adk-c7f309cf-acfe-44b2-a253-3dd1d85562f7',
+                    name: 'create_media_buy',
+                    response: {
+                      buyer_ref: 'harley-test-1763691443',
+                      context: null,
+                      creative_deadline: '2025-10-18T00:00:00Z',
+                      media_buy_id: '123',
+                      packages: [
+                        { buyer_ref: 'harley-pkg-1-1763691443', package_id: '1' },
+                        { buyer_ref: 'harley-pkg-2-1763691443', package_id: '2' },
+                        { buyer_ref: 'harley-pkg-3-1763691443', package_id: '3' },
+                        { buyer_ref: 'harley-pkg-4-1763691443', package_id: '4' },
+                        { buyer_ref: 'harley-pkg-5-1763691443', package_id: '5' },
+                      ],
+                    },
+                  },
+                  kind: 'data',
+                  metadata: {
+                    adk_type: 'function_response',
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      };
+
+      const debugLogs = [];
+      const extractedData = executor.extractResponseData(realClientResponse, debugLogs);
+
+      // Should extract from the end_of_hitl artifact (Artifact 2), NOT the first or third
+      assert.ok(extractedData.media_buy_id, 'Should have media_buy_id');
+      assert.strictEqual(extractedData.media_buy_id, '123');
+      assert.ok(extractedData.packages, 'Should have packages');
+      assert.strictEqual(extractedData.packages.length, 5, 'Should have all 5 packages');
+      assert.strictEqual(extractedData.buyer_ref, 'harley-test-1763691443');
+      assert.strictEqual(extractedData.creative_deadline, '2025-10-18T00:00:00Z');
+
+      // Should include the human-readable message from text part
+      assert.ok(extractedData._message, 'Should have _message field');
+      assert.ok(
+        extractedData._message.includes('Media Buy Created Successfully'),
+        'Message should contain success text'
+      );
+      assert.ok(extractedData._message.includes('harley-test-1763691443'), 'Message should contain campaign name');
+
+      // Should NOT return the pending_human status from first artifact
+      assert.strictEqual(extractedData.status, undefined, 'Should not have HITL status field');
+
+      // Should NOT return the ADK wrapper fields (id, name, response)
+      assert.strictEqual(extractedData.id, undefined, 'Should not have ADK wrapper id');
+      assert.strictEqual(extractedData.name, undefined, 'Should not have ADK wrapper name');
+
+      // Verify we got direct AdCP response, not wrapped
+      assert.ok(extractedData.packages[0].buyer_ref, 'Should have direct access to package fields');
+    });
+
     it('should extract data from framework-wrapped responses (e.g., ADK FunctionResponse)', async () => {
       // Mock A2A response with ADK FunctionResponse wrapper
       // ADK wraps responses in { id, name, response: {...} } format
