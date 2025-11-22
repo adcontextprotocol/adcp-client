@@ -19,19 +19,11 @@ export type {
 } from './discovery/types';
 
 // ====== CORE CONVERSATION-AWARE CLIENTS ======
-// Primary client for all use cases - single or multi-agent
-export { ADCPMultiAgentClient as AdCPClient, AgentCollection as NewAgentCollection } from './core/ADCPMultiAgentClient';
-export type { SingleAgentClientConfig as AdCPClientConfig } from './core/SingleAgentClient';
-
-/**
- * @deprecated Use AdCPClient instead. ADCPMultiAgentClient will be removed in v4.0.
- * @see AdCPClient
- */
-export { ADCPMultiAgentClient } from './core/ADCPMultiAgentClient';
-
-// NOTE: SingleAgentClient is intentionally NOT exported - it's an internal implementation detail.
-// All users should use AdCPClient (alias for ADCPMultiAgentClient) which supports both
-// single-agent operations via agent(id) and multi-agent operations via agents([ids]).
+// New conversation-aware clients with input handler pattern
+export { SingleAgentClient, createSingleAgentClient } from './core/SingleAgentClient';
+export type { SingleAgentClientConfig } from './core/SingleAgentClient';
+export { AgentClient, type TaskResponseTypeMap, type AdcpTaskName } from './core/AgentClient';
+export { ADCPMultiAgentClient, createADCPMultiAgentClient } from './core/ADCPMultiAgentClient';
 export { ConfigurationManager } from './core/ConfigurationManager';
 export {
   CreativeAgentClient,
@@ -159,23 +151,81 @@ export type {
   CreativePolicy,
 } from './types/tools.generated';
 
-// ====== PROTOCOL CLIENTS ======
-export * from './protocols';
+// ====== ZOD SCHEMAS (for runtime validation) ======
+// Re-export all Zod schemas for user validation needs
+export * from './types/schemas.generated';
 
 // ====== AUTHENTICATION ======
-export * from './auth';
+// Auth utilities for custom integrations
+export { getAuthToken, createAdCPHeaders, createMCPAuthHeaders, createAuthenticatedFetch } from './auth';
 
 // ====== VALIDATION ======
-export * from './validation';
+// Schema validation for requests/responses
+export { validateAgentUrl, validateAdCPResponse, getExpectedSchema, handleAdCPResponse } from './validation';
 
-// ====== UTILITIES ======
-export * from './utils';
-export { getStandardFormats } from './utils';
-export { detectProtocol, detectProtocolWithTimeout } from './utils/protocol-detection';
+// ====== RESPONSE UTILITIES ======
+// Public utilities for working with AdCP responses
+export { getStandardFormats, unwrapProtocolResponse, isAdcpError, isAdcpSuccess } from './utils';
+export { REQUEST_TIMEOUT, MAX_CONCURRENT, STANDARD_FORMATS } from './utils';
+export { detectProtocol, detectProtocolWithTimeout } from './utils';
+
+// ====== VERSION INFORMATION ======
+export {
+  getAdcpVersion,
+  getLibraryVersion,
+  isCompatibleWith,
+  ADCP_VERSION,
+  LIBRARY_VERSION,
+  VERSION_INFO,
+} from './version';
+
+// ====== AGENT CLASSES ======
+// Primary agent interface - returns raw AdCP responses
+export { Agent, AgentCollection } from './agents/index.generated';
+
+// ====== BACKWARD COMPATIBILITY & ENVIRONMENT LOADING ======
+
+import type { AgentConfig } from './types';
+import { ADCPMultiAgentClient } from './core/ADCPMultiAgentClient';
+
+/**
+ * Legacy AdCPClient alias for backward compatibility
+ * @deprecated Use ADCPMultiAgentClient instead for new code
+ */
+export const AdCPClient = ADCPMultiAgentClient;
+
+// Legacy configuration manager maintained for backward compatibility
+// The enhanced ConfigurationManager is exported above
+
+/**
+ * Legacy createAdCPClient function for backward compatibility
+ * @deprecated Use new ADCPMultiAgentClient constructor instead
+ */
+export function createAdCPClient(agents?: AgentConfig[]): ADCPMultiAgentClient {
+  return new AdCPClient(agents);
+}
+
+/**
+ * Load agents from environment and create multi-agent client
+ * @deprecated Use ADCPMultiAgentClient.fromEnv() instead
+ */
+export function createAdCPClientFromEnv(): ADCPMultiAgentClient {
+  return ADCPMultiAgentClient.fromEnv();
+}
 
 // ====== TEST HELPERS ======
-export * from './testing';
-
-// ====== LEGACY AGENT CLASSES ======
-// Keep existing generated agent classes for backward compatibility
-export { Agent, AgentCollection } from './agents/index.generated';
+// Re-export test helpers for convenience (also available via @adcp/client/testing)
+export {
+  testAgent,
+  testAgentA2A,
+  testAgentClient,
+  createTestAgent,
+  TEST_AGENT_TOKEN,
+  TEST_AGENT_MCP_CONFIG,
+  TEST_AGENT_A2A_CONFIG,
+  testAgentNoAuth,
+  testAgentNoAuthA2A,
+  TEST_AGENT_NO_AUTH_MCP_CONFIG,
+  TEST_AGENT_NO_AUTH_A2A_CONFIG,
+  creativeAgent,
+} from './testing/index';

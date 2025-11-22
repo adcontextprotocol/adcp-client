@@ -309,18 +309,21 @@ export class ResponseValidator {
    * Get Zod schema for a given tool
    */
   private getSchemaForTool(toolName: string): z.ZodSchema | null {
-    // Only include schemas that exist (some may not be auto-generated)
+    // All AdCP response schemas mapped by tool name
     const schemaMap: Partial<Record<string, z.ZodSchema>> = {
+      get_products: schemas.GetProductsResponseSchema,
       list_creative_formats: schemas.ListCreativeFormatsResponseSchema,
       create_media_buy: schemas.CreateMediaBuyResponseSchema,
       update_media_buy: schemas.UpdateMediaBuyResponseSchema,
       sync_creatives: schemas.SyncCreativesResponseSchema,
+      list_creatives: schemas.ListCreativesResponseSchema,
       get_media_buy_delivery: schemas.GetMediaBuyDeliveryResponseSchema,
       list_authorized_properties: schemas.ListAuthorizedPropertiesResponseSchema,
       provide_performance_feedback: schemas.ProvidePerformanceFeedbackResponseSchema,
+      build_creative: schemas.BuildCreativeResponseSchema,
+      preview_creative: schemas.PreviewCreativeResponseSchema,
       get_signals: schemas.GetSignalsResponseSchema,
       activate_signal: schemas.ActivateSignalResponseSchema,
-      preview_creative: schemas.PreviewCreativeResponseSchema,
     };
 
     return schemaMap[toolName] || null;

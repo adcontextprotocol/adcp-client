@@ -33,7 +33,9 @@ describe(
       const lib = require('../../dist/lib/index.js');
 
       TaskExecutor = lib.TaskExecutor;
-      ProtocolClient = lib.ProtocolClient;
+      // Import ProtocolClient from internal path (not part of public API)
+      const protocolsModule = require('../../dist/lib/protocols/index.js');
+      ProtocolClient = protocolsModule.ProtocolClient;
       createFieldHandler = lib.createFieldHandler;
       autoApproveHandler = lib.autoApproveHandler;
       deferAllHandler = lib.deferAllHandler;

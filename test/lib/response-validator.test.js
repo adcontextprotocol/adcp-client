@@ -12,11 +12,58 @@ const { ResponseValidator } = require('../../dist/lib/core/ResponseValidator');
 describe('ResponseValidator Tests', () => {
   const validator = new ResponseValidator();
 
+  // Helper function to create a valid Product object for tests
+  const createValidProduct = (overrides = {}) => ({
+    product_id: 'p1',
+    name: 'Test Product',
+    description: 'A test product for unit tests',
+    publisher_properties: [
+      {
+        publisher_domain: 'example.com',
+        selection_type: 'all',
+      },
+    ],
+    format_ids: [
+      {
+        agent_url: 'https://creatives.adcontextprotocol.org',
+        id: 'display_300x250',
+      },
+    ],
+    delivery_type: 'guaranteed',
+    pricing_options: [
+      {
+        pricing_option_id: 'cpm_usd',
+        pricing_model: 'cpm',
+        rate: 10.0,
+        currency: 'USD',
+        is_fixed: true,
+      },
+    ],
+    delivery_measurement: {
+      provider: 'Test Measurement Provider',
+    },
+    ...overrides,
+  });
+
+  // Helper function to create a valid Creative object for tests
+  const createValidCreative = (overrides = {}) => ({
+    creative_id: 'c1',
+    name: 'Test Creative',
+    format_id: {
+      agent_url: 'https://creatives.adcontextprotocol.org',
+      id: 'display_300x250',
+    },
+    status: 'approved',
+    created_date: '2025-01-01T00:00:00Z',
+    updated_date: '2025-01-01T00:00:00Z',
+    ...overrides,
+  });
+
   describe('MCP Response Validation', () => {
     it('should validate valid MCP response with structuredContent', () => {
       const response = {
         structuredContent: {
-          products: [{ product_id: 'p1' }],
+          products: [createValidProduct()],
         },
       };
 
@@ -72,7 +119,7 @@ describe('ResponseValidator Tests', () => {
               parts: [
                 {
                   kind: 'data',
-                  data: { products: [{ product_id: 'p1' }] },
+                  data: { products: [createValidProduct()] },
                 },
               ],
             },
@@ -157,7 +204,7 @@ describe('ResponseValidator Tests', () => {
     it('should validate expected fields in MCP response', () => {
       const response = {
         structuredContent: {
-          products: [{ product_id: 'p1' }],
+          products: [createValidProduct()],
         },
       };
 
@@ -227,7 +274,7 @@ describe('ResponseValidator Tests', () => {
     it('should validate get_products response', () => {
       const response = {
         structuredContent: {
-          products: [{ product_id: 'p1' }],
+          products: [createValidProduct()],
         },
       };
 
@@ -289,8 +336,18 @@ describe('ResponseValidator Tests', () => {
             {
               parts: [
                 {
+                  kind: 'data',
                   data: {
-                    creatives: [{ creative_id: 'c1' }],
+                    creatives: [createValidCreative()],
+                    query_summary: {
+                      total_matching: 1,
+                      returned: 1,
+                    },
+                    pagination: {
+                      limit: 50,
+                      offset: 0,
+                      has_more: false,
+                    },
                   },
                 },
               ],
@@ -354,7 +411,7 @@ describe('ResponseValidator Tests', () => {
     it('validateOrThrow should not throw on valid response', () => {
       const response = {
         structuredContent: {
-          products: [{ product_id: 'p1' }],
+          products: [createValidProduct()],
         },
       };
 

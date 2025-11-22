@@ -122,7 +122,11 @@ export class CreativeAgentClient {
   async findByDimensions(width: number, height: number): Promise<CreativeFormat[]> {
     const allFormats = await this.listFormats();
     return allFormats.filter(f =>
-      f.renders?.some(r => r.dimensions?.width === width && r.dimensions?.height === height)
+      f.renders?.some(r => {
+        if (!('dimensions' in r) || !r.dimensions) return false;
+        const dims = r.dimensions as { width?: number; height?: number };
+        return dims.width === width && dims.height === height;
+      })
     );
   }
 

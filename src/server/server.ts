@@ -10,8 +10,15 @@ import {
   getStandardFormats,
   type TaskResult,
   type InputHandler,
-  type AdCPClientConfig,
+  type SingleAgentClientConfig,
   type FormatID,
+  type Activity,
+  type NotificationMetadata,
+  type WebhookMetadata,
+  type GetProductsResponse,
+  type SyncCreativesResponse,
+  type CreateMediaBuyResponse,
+  type MediaBuyDeliveryNotification,
   ADCP_STATUS,
   InputRequiredError,
 } from '../lib';
@@ -109,8 +116,8 @@ function storeEvent(event: Omit<StoredEvent, 'id' | 'timestamp'>) {
   return storedEvent;
 }
 
-// AdCPClient configuration with in-memory event storage
-const clientConfig: AdCPClientConfig = {
+// ADCPMultiAgentClient configuration with in-memory event storage
+const clientConfig: SingleAgentClientConfig = {
   webhookUrlTemplate: WEBHOOK_URL_TEMPLATE,
   webhookSecret: WEBHOOK_SECRET,
 
@@ -121,7 +128,7 @@ const clientConfig: AdCPClientConfig = {
   },
 
   // Activity logging - store ALL events
-  onActivity: activity => {
+  onActivity: (activity: Activity) => {
     storeEvent({
       type: activity.type,
       operation_id: activity.operation_id,
@@ -143,7 +150,7 @@ const clientConfig: AdCPClientConfig = {
 
   // Status change handlers - called for ALL status changes (completed, failed, needs_input, working, etc)
   handlers: {
-    onGetProductsStatusChange: (response, metadata) => {
+    onGetProductsStatusChange: (response: GetProductsResponse, metadata: WebhookMetadata) => {
       const status = metadata.status || 'completed'; // Get actual status from webhook
       storeEvent({
         type: 'handler_called',
@@ -157,7 +164,7 @@ const clientConfig: AdCPClientConfig = {
       app.log.info(`[${status}] Products: ${response.products?.length || 0} for ${metadata.operation_id}`);
     },
 
-    onSyncCreativesStatusChange: (response, metadata) => {
+    onSyncCreativesStatusChange: (response: SyncCreativesResponse, metadata: WebhookMetadata) => {
       const status = metadata.status || 'completed';
       storeEvent({
         type: 'handler_called',
@@ -172,7 +179,7 @@ const clientConfig: AdCPClientConfig = {
       app.log.info(`[${status}] Creatives synced: ${creativesCount} for ${metadata.operation_id}`);
     },
 
-    onCreateMediaBuyStatusChange: (response, metadata) => {
+    onCreateMediaBuyStatusChange: (response: CreateMediaBuyResponse, metadata: WebhookMetadata) => {
       const status = metadata.status || 'completed';
       storeEvent({
         type: 'handler_called',
@@ -187,7 +194,7 @@ const clientConfig: AdCPClientConfig = {
       app.log.info(`[${status}] Media buy created: ${mediaBuyId} for ${metadata.operation_id}`);
     },
 
-    onMediaBuyDeliveryNotification: (notification, metadata) => {
+    onMediaBuyDeliveryNotification: (notification: MediaBuyDeliveryNotification, metadata: NotificationMetadata) => {
       storeEvent({
         type: 'notification_received',
         operation_id: metadata.operation_id,
