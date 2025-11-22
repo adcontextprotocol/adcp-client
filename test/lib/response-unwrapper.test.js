@@ -31,6 +31,7 @@ describe('Response Unwrapper', () => {
             {
               parts: [
                 {
+                  kind: 'data',
                   data: {
                     products: [{ product_id: 'prod1', name: 'Test Product' }],
                   },
