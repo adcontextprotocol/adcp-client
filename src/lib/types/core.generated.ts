@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas v2.4.0
-// Generated at: 2025-11-22T16:56:39.471Z
+// Generated at: 2025-11-22T19:53:48.742Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -157,7 +157,7 @@ export interface CreativeAssignment {
   placement_ids?: [string, ...string[]];
 }
 /**
- * Structured format identifier with agent URL and format name
+ * Structured format identifier with agent URL and format name. Can reference: (1) a concrete format with fixed dimensions (id only), (2) a template format without parameters (id only), or (3) a template format with parameters (id + dimensions/duration). Template formats accept parameters in format_id while concrete formats have fixed dimensions in their definition. Parameterized format IDs create unique, specific format variants.
  */
 export interface FormatID {
   /**
@@ -165,9 +165,21 @@ export interface FormatID {
    */
   agent_url: string;
   /**
-   * Format identifier within the agent's namespace (e.g., 'display_300x250', 'video_standard_30s')
+   * Format identifier within the agent's namespace (e.g., 'display_static', 'video_hosted', 'audio_standard'). When used alone, references a template format. When combined with dimension/duration fields, creates a parameterized format ID for a specific variant.
    */
   id: string;
+  /**
+   * Width in pixels for visual formats. When specified, height must also be specified. Both fields together create a parameterized format ID for dimension-specific variants.
+   */
+  width?: number;
+  /**
+   * Height in pixels for visual formats. When specified, width must also be specified. Both fields together create a parameterized format ID for dimension-specific variants.
+   */
+  height?: number;
+  /**
+   * Duration in milliseconds for time-based formats (video, audio). When specified, creates a parameterized format ID. Omit to reference a template format without parameters.
+   */
+  duration_ms?: number;
 }
 /**
  * Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.
@@ -177,6 +189,44 @@ export interface ExtensionObject {
 }
 
 // CREATIVE-ASSET SCHEMA
+/**
+ * Image asset with URL and dimensions
+ */
+export type ImageAsset = Dimensions & {
+  /**
+   * URL to the image asset
+   */
+  url: string;
+  /**
+   * Image file format (jpg, png, gif, webp, etc.)
+   */
+  format?: string;
+  /**
+   * Alternative text for accessibility
+   */
+  alt_text?: string;
+};
+/**
+ * Video asset with URL and specifications
+ */
+export type VideoAsset = Dimensions & {
+  /**
+   * URL to the video asset
+   */
+  url: string;
+  /**
+   * Video duration in milliseconds
+   */
+  duration_ms?: number;
+  /**
+   * Video file format (mp4, webm, mov, etc.)
+   */
+  format?: string;
+  /**
+   * Video bitrate in kilobits per second
+   */
+  bitrate_kbps?: number;
+};
 /**
  * JavaScript module type
  */
@@ -431,58 +481,17 @@ export interface CreativeAsset {
   placement_ids?: [string, ...string[]];
 }
 /**
- * Format identifier specifying which format this creative conforms to
+ * Format identifier specifying which format this creative conforms to. Can be: (1) concrete format_id referencing a format with fixed dimensions, (2) template format_id referencing a template format, or (3) parameterized format_id with dimensions/duration parameters for template formats.
  */
-export interface ImageAsset {
+export interface Dimensions {
   /**
-   * URL to the image asset
+   * Width in pixels
    */
-  url: string;
+  width: number;
   /**
-   * Image width in pixels
+   * Height in pixels
    */
-  width?: number;
-  /**
-   * Image height in pixels
-   */
-  height?: number;
-  /**
-   * Image file format (jpg, png, gif, webp, etc.)
-   */
-  format?: string;
-  /**
-   * Alternative text for accessibility
-   */
-  alt_text?: string;
-}
-/**
- * Video asset with URL and specifications
- */
-export interface VideoAsset {
-  /**
-   * URL to the video asset
-   */
-  url: string;
-  /**
-   * Video width in pixels
-   */
-  width?: number;
-  /**
-   * Video height in pixels
-   */
-  height?: number;
-  /**
-   * Video duration in milliseconds
-   */
-  duration_ms?: number;
-  /**
-   * Video file format (mp4, webm, mov, etc.)
-   */
-  format?: string;
-  /**
-   * Video bitrate in kilobits per second
-   */
-  bitrate_kbps?: number;
+  height: number;
 }
 /**
  * Audio asset with URL and specifications
@@ -1053,7 +1062,7 @@ export interface Product {
   ext?: ExtensionObject;
 }
 /**
- * Structured format identifier with agent URL and format name
+ * Structured format identifier with agent URL and format name. Can reference: (1) a concrete format with fixed dimensions (id only), (2) a template format without parameters (id only), or (3) a template format with parameters (id + dimensions/duration). Template formats accept parameters in format_id while concrete formats have fixed dimensions in their definition. Parameterized format IDs create unique, specific format variants.
  */
 export interface Placement {
   /**
@@ -1069,7 +1078,7 @@ export interface Placement {
    */
   description?: string;
   /**
-   * Format IDs supported by this specific placement (subset of product's formats)
+   * Format IDs supported by this specific placement. Can include: (1) concrete format_ids (fixed dimensions), (2) template format_ids without parameters (accepts any dimensions/duration), or (3) parameterized format_ids (specific dimension/duration constraints).
    *
    * @minItems 1
    */
@@ -1497,7 +1506,7 @@ export interface CreativePolicy {
   templates_available: boolean;
 }
 /**
- * Structured format identifier with agent URL and format name
+ * Structured format identifier with agent URL and format name. Can reference: (1) a concrete format with fixed dimensions (id only), (2) a template format without parameters (id only), or (3) a template format with parameters (id + dimensions/duration). Template formats accept parameters in format_id while concrete formats have fixed dimensions in their definition. Parameterized format IDs create unique, specific format variants.
  */
 export interface FormatID1 {
   /**
@@ -1505,12 +1514,24 @@ export interface FormatID1 {
    */
   agent_url: string;
   /**
-   * Format identifier within the agent's namespace (e.g., 'display_300x250', 'video_standard_30s')
+   * Format identifier within the agent's namespace (e.g., 'display_static', 'video_hosted', 'audio_standard'). When used alone, references a template format. When combined with dimension/duration fields, creates a parameterized format ID for a specific variant.
    */
   id: string;
+  /**
+   * Width in pixels for visual formats. When specified, height must also be specified. Both fields together create a parameterized format ID for dimension-specific variants.
+   */
+  width?: number;
+  /**
+   * Height in pixels for visual formats. When specified, width must also be specified. Both fields together create a parameterized format ID for dimension-specific variants.
+   */
+  height?: number;
+  /**
+   * Duration in milliseconds for time-based formats (video, audio). When specified, creates a parameterized format ID. Omit to reference a template format without parameters.
+   */
+  duration_ms?: number;
 }
 /**
- * Structured format identifier with agent URL and format name
+ * Structured format identifier with agent URL and format name. Can reference: (1) a concrete format with fixed dimensions (id only), (2) a template format without parameters (id only), or (3) a template format with parameters (id + dimensions/duration). Template formats accept parameters in format_id while concrete formats have fixed dimensions in their definition. Parameterized format IDs create unique, specific format variants.
  */
 export interface FormatID2 {
   /**
@@ -1518,9 +1539,21 @@ export interface FormatID2 {
    */
   agent_url: string;
   /**
-   * Format identifier within the agent's namespace (e.g., 'display_300x250', 'video_standard_30s')
+   * Format identifier within the agent's namespace (e.g., 'display_static', 'video_hosted', 'audio_standard'). When used alone, references a template format. When combined with dimension/duration fields, creates a parameterized format ID for a specific variant.
    */
   id: string;
+  /**
+   * Width in pixels for visual formats. When specified, height must also be specified. Both fields together create a parameterized format ID for dimension-specific variants.
+   */
+  width?: number;
+  /**
+   * Height in pixels for visual formats. When specified, width must also be specified. Both fields together create a parameterized format ID for dimension-specific variants.
+   */
+  height?: number;
+  /**
+   * Duration in milliseconds for time-based formats (video, audio). When specified, creates a parameterized format ID. Omit to reference a template format without parameters.
+   */
+  duration_ms?: number;
 }
 /**
  * Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.

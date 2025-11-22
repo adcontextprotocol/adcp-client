@@ -323,7 +323,7 @@ export interface ProductFilters {
   channels?: AdvertisingChannels[];
 }
 /**
- * Structured format identifier with agent URL and format name
+ * Structured format identifier with agent URL and format name. Can reference: (1) a concrete format with fixed dimensions (id only), (2) a template format without parameters (id only), or (3) a template format with parameters (id + dimensions/duration). Template formats accept parameters in format_id while concrete formats have fixed dimensions in their definition. Parameterized format IDs create unique, specific format variants.
  */
 export interface FormatID {
   /**
@@ -331,9 +331,21 @@ export interface FormatID {
    */
   agent_url: string;
   /**
-   * Format identifier within the agent's namespace (e.g., 'display_300x250', 'video_standard_30s')
+   * Format identifier within the agent's namespace (e.g., 'display_static', 'video_hosted', 'audio_standard'). When used alone, references a template format. When combined with dimension/duration fields, creates a parameterized format ID for a specific variant.
    */
   id: string;
+  /**
+   * Width in pixels for visual formats. When specified, height must also be specified. Both fields together create a parameterized format ID for dimension-specific variants.
+   */
+  width?: number;
+  /**
+   * Height in pixels for visual formats. When specified, width must also be specified. Both fields together create a parameterized format ID for dimension-specific variants.
+   */
+  height?: number;
+  /**
+   * Duration in milliseconds for time-based formats (video, audio). When specified, creates a parameterized format ID. Omit to reference a template format without parameters.
+   */
+  duration_ms?: number;
 }
 /**
  * Opaque correlation data that is echoed unchanged in responses. Used for internal tracking, UI session IDs, trace IDs, and other caller-specific identifiers that don't affect protocol behavior. Context data is never parsed by AdCP agents - it's simply preserved and returned.
@@ -556,7 +568,7 @@ export interface Product {
   ext?: ExtensionObject;
 }
 /**
- * Structured format identifier with agent URL and format name
+ * Structured format identifier with agent URL and format name. Can reference: (1) a concrete format with fixed dimensions (id only), (2) a template format without parameters (id only), or (3) a template format with parameters (id + dimensions/duration). Template formats accept parameters in format_id while concrete formats have fixed dimensions in their definition. Parameterized format IDs create unique, specific format variants.
  */
 export interface Placement {
   /**
@@ -572,7 +584,7 @@ export interface Placement {
    */
   description?: string;
   /**
-   * Format IDs supported by this specific placement (subset of product's formats)
+   * Format IDs supported by this specific placement. Can include: (1) concrete format_ids (fixed dimensions), (2) template format_ids without parameters (accepts any dimensions/duration), or (3) parameterized format_ids (specific dimension/duration constraints).
    *
    * @minItems 1
    */
@@ -1000,7 +1012,7 @@ export interface CreativePolicy {
   templates_available: boolean;
 }
 /**
- * Structured format identifier with agent URL and format name
+ * Structured format identifier with agent URL and format name. Can reference: (1) a concrete format with fixed dimensions (id only), (2) a template format without parameters (id only), or (3) a template format with parameters (id + dimensions/duration). Template formats accept parameters in format_id while concrete formats have fixed dimensions in their definition. Parameterized format IDs create unique, specific format variants.
  */
 export interface FormatID1 {
   /**
@@ -1008,12 +1020,24 @@ export interface FormatID1 {
    */
   agent_url: string;
   /**
-   * Format identifier within the agent's namespace (e.g., 'display_300x250', 'video_standard_30s')
+   * Format identifier within the agent's namespace (e.g., 'display_static', 'video_hosted', 'audio_standard'). When used alone, references a template format. When combined with dimension/duration fields, creates a parameterized format ID for a specific variant.
    */
   id: string;
+  /**
+   * Width in pixels for visual formats. When specified, height must also be specified. Both fields together create a parameterized format ID for dimension-specific variants.
+   */
+  width?: number;
+  /**
+   * Height in pixels for visual formats. When specified, width must also be specified. Both fields together create a parameterized format ID for dimension-specific variants.
+   */
+  height?: number;
+  /**
+   * Duration in milliseconds for time-based formats (video, audio). When specified, creates a parameterized format ID. Omit to reference a template format without parameters.
+   */
+  duration_ms?: number;
 }
 /**
- * Structured format identifier with agent URL and format name
+ * Structured format identifier with agent URL and format name. Can reference: (1) a concrete format with fixed dimensions (id only), (2) a template format without parameters (id only), or (3) a template format with parameters (id + dimensions/duration). Template formats accept parameters in format_id while concrete formats have fixed dimensions in their definition. Parameterized format IDs create unique, specific format variants.
  */
 export interface FormatID2 {
   /**
@@ -1021,9 +1045,21 @@ export interface FormatID2 {
    */
   agent_url: string;
   /**
-   * Format identifier within the agent's namespace (e.g., 'display_300x250', 'video_standard_30s')
+   * Format identifier within the agent's namespace (e.g., 'display_static', 'video_hosted', 'audio_standard'). When used alone, references a template format. When combined with dimension/duration fields, creates a parameterized format ID for a specific variant.
    */
   id: string;
+  /**
+   * Width in pixels for visual formats. When specified, height must also be specified. Both fields together create a parameterized format ID for dimension-specific variants.
+   */
+  width?: number;
+  /**
+   * Height in pixels for visual formats. When specified, width must also be specified. Both fields together create a parameterized format ID for dimension-specific variants.
+   */
+  height?: number;
+  /**
+   * Duration in milliseconds for time-based formats (video, audio). When specified, creates a parameterized format ID. Omit to reference a template format without parameters.
+   */
+  duration_ms?: number;
 }
 /**
  * Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.
@@ -1102,14 +1138,14 @@ export interface ListCreativeFormatsRequest {
   ext?: ExtensionObject;
 }
 /**
- * Structured format identifier with agent URL and format name
+ * Structured format identifier with agent URL and format name. Can reference: (1) a concrete format with fixed dimensions (id only), (2) a template format without parameters (id only), or (3) a template format with parameters (id + dimensions/duration). Template formats accept parameters in format_id while concrete formats have fixed dimensions in their definition. Parameterized format IDs create unique, specific format variants.
  */
 
 // list_creative_formats response
 /**
  * Media type of this format - determines rendering method and asset requirements
  */
-export type DimensionUnit = 'px' | 'dp' | 'inches' | 'cm';
+export type FormatIDParameter = 'dimensions' | 'duration';
 /**
  * Type of asset
  */
@@ -1187,105 +1223,31 @@ export interface Format {
   example_url?: string;
   type: FormatCategory;
   /**
+   * List of parameters this format accepts in format_id. Template formats define which parameters (dimensions, duration, etc.) can be specified when instantiating the format. Empty or omitted means this is a concrete format with fixed parameters.
+   */
+  accepts_parameters?: FormatIDParameter[];
+  /**
    * Specification of rendered pieces for this format. Most formats produce a single render. Companion ad formats (video + banner), adaptive formats, and multi-placement formats produce multiple renders. Each render specifies its role and dimensions.
    *
    * @minItems 1
    */
   renders?: [
-    {
-      /**
-       * Semantic role of this rendered piece (e.g., 'primary', 'companion', 'mobile_variant')
-       */
-      role: string;
-      /**
-       * Dimensions for this rendered piece
-       */
-      dimensions: {
-        /**
-         * Fixed width in specified units
-         */
-        width?: number;
-        /**
-         * Fixed height in specified units
-         */
-        height?: number;
-        /**
-         * Minimum width for responsive renders
-         */
-        min_width?: number;
-        /**
-         * Minimum height for responsive renders
-         */
-        min_height?: number;
-        /**
-         * Maximum width for responsive renders
-         */
-        max_width?: number;
-        /**
-         * Maximum height for responsive renders
-         */
-        max_height?: number;
-        /**
-         * Indicates which dimensions are responsive/fluid
-         */
-        responsive?: {
-          width: boolean;
-          height: boolean;
-        };
-        /**
-         * Fixed aspect ratio constraint (e.g., '16:9', '4:3', '1:1')
-         */
-        aspect_ratio?: string;
-        unit: DimensionUnit;
-      };
-    },
-    ...{
-      /**
-       * Semantic role of this rendered piece (e.g., 'primary', 'companion', 'mobile_variant')
-       */
-      role: string;
-      /**
-       * Dimensions for this rendered piece
-       */
-      dimensions: {
-        /**
-         * Fixed width in specified units
-         */
-        width?: number;
-        /**
-         * Fixed height in specified units
-         */
-        height?: number;
-        /**
-         * Minimum width for responsive renders
-         */
-        min_width?: number;
-        /**
-         * Minimum height for responsive renders
-         */
-        min_height?: number;
-        /**
-         * Maximum width for responsive renders
-         */
-        max_width?: number;
-        /**
-         * Maximum height for responsive renders
-         */
-        max_height?: number;
-        /**
-         * Indicates which dimensions are responsive/fluid
-         */
-        responsive?: {
-          width: boolean;
-          height: boolean;
-        };
-        /**
-         * Fixed aspect ratio constraint (e.g., '16:9', '4:3', '1:1')
-         */
-        aspect_ratio?: string;
-        unit: DimensionUnit;
-      };
-    }[]
+    (
+      | {
+          [k: string]: unknown;
+        }
+      | {
+          parameters_from_format_id: true;
+        }
+    ),
+    ...(
+      | {
+          [k: string]: unknown;
+        }
+      | {
+          parameters_from_format_id: true;
+        }
+    )[]
   ];
   /**
    * Array of required assets or asset groups for this format. Each asset is identified by its asset_id, which must be used as the key in creative manifests. Can contain individual assets or repeatable asset sequences (e.g., carousel products, slideshow frames).
@@ -1310,7 +1272,7 @@ export interface Format {
          */
         required?: boolean;
         /**
-         * Technical requirements for this asset (dimensions, file size, duration, etc.)
+         * Technical requirements for this asset (dimensions, file size, duration, etc.). For template formats, use parameters_from_format_id: true to indicate asset parameters must match the format_id parameters (width/height/unit and/or duration_ms).
          */
         requirements?: {
           [k: string]: unknown;
@@ -1351,7 +1313,7 @@ export interface Format {
            */
           required?: boolean;
           /**
-           * Technical requirements for this asset
+           * Technical requirements for this asset. For template formats, use parameters_from_format_id: true to indicate asset parameters must match the format_id parameters (width/height/unit and/or duration_ms).
            */
           requirements?: {
             [k: string]: unknown;
@@ -1407,9 +1369,21 @@ export interface FormatID3 {
    */
   agent_url: string;
   /**
-   * Format identifier within the agent's namespace (e.g., 'display_300x250', 'video_standard_30s')
+   * Format identifier within the agent's namespace (e.g., 'display_static', 'video_hosted', 'audio_standard'). When used alone, references a template format. When combined with dimension/duration fields, creates a parameterized format ID for a specific variant.
    */
   id: string;
+  /**
+   * Width in pixels for visual formats. When specified, height must also be specified. Both fields together create a parameterized format ID for dimension-specific variants.
+   */
+  width?: number;
+  /**
+   * Height in pixels for visual formats. When specified, width must also be specified. Both fields together create a parameterized format ID for dimension-specific variants.
+   */
+  height?: number;
+  /**
+   * Duration in milliseconds for time-based formats (video, audio). When specified, creates a parameterized format ID. Omit to reference a template format without parameters.
+   */
+  duration_ms?: number;
 }
 /**
  * Standard error structure for task-specific errors and warnings
@@ -1420,6 +1394,44 @@ export interface FormatID3 {
  * Budget pacing strategy
  */
 export type Pacing = 'even' | 'asap' | 'front_loaded';
+/**
+ * Image asset with URL and dimensions
+ */
+export type ImageAsset = Dimensions & {
+  /**
+   * URL to the image asset
+   */
+  url: string;
+  /**
+   * Image file format (jpg, png, gif, webp, etc.)
+   */
+  format?: string;
+  /**
+   * Alternative text for accessibility
+   */
+  alt_text?: string;
+};
+/**
+ * Video asset with URL and specifications
+ */
+export type VideoAsset = Dimensions & {
+  /**
+   * URL to the video asset
+   */
+  url: string;
+  /**
+   * Video duration in milliseconds
+   */
+  duration_ms?: number;
+  /**
+   * Video file format (mp4, webm, mov, etc.)
+   */
+  format?: string;
+  /**
+   * Video bitrate in kilobits per second
+   */
+  bitrate_kbps?: number;
+};
 /**
  * JavaScript module type
  */
@@ -1682,7 +1694,7 @@ export interface PackageRequest {
   ext?: ExtensionObject;
 }
 /**
- * Structured format identifier with agent URL and format name
+ * Structured format identifier with agent URL and format name. Can reference: (1) a concrete format with fixed dimensions (id only), (2) a template format without parameters (id only), or (3) a template format with parameters (id + dimensions/duration). Template formats accept parameters in format_id while concrete formats have fixed dimensions in their definition. Parameterized format IDs create unique, specific format variants.
  */
 export interface TargetingOverlay {
   /**
@@ -1793,58 +1805,17 @@ export interface CreativeAsset {
   placement_ids?: [string, ...string[]];
 }
 /**
- * Structured format identifier with agent URL and format name
+ * Structured format identifier with agent URL and format name. Can reference: (1) a concrete format with fixed dimensions (id only), (2) a template format without parameters (id only), or (3) a template format with parameters (id + dimensions/duration). Template formats accept parameters in format_id while concrete formats have fixed dimensions in their definition. Parameterized format IDs create unique, specific format variants.
  */
-export interface ImageAsset {
+export interface Dimensions {
   /**
-   * URL to the image asset
+   * Width in pixels
    */
-  url: string;
+  width: number;
   /**
-   * Image width in pixels
+   * Height in pixels
    */
-  width?: number;
-  /**
-   * Image height in pixels
-   */
-  height?: number;
-  /**
-   * Image file format (jpg, png, gif, webp, etc.)
-   */
-  format?: string;
-  /**
-   * Alternative text for accessibility
-   */
-  alt_text?: string;
-}
-/**
- * Video asset with URL and specifications
- */
-export interface VideoAsset {
-  /**
-   * URL to the video asset
-   */
-  url: string;
-  /**
-   * Video width in pixels
-   */
-  width?: number;
-  /**
-   * Video height in pixels
-   */
-  height?: number;
-  /**
-   * Video duration in milliseconds
-   */
-  duration_ms?: number;
-  /**
-   * Video file format (mp4, webm, mov, etc.)
-   */
-  format?: string;
-  /**
-   * Video bitrate in kilobits per second
-   */
-  bitrate_kbps?: number;
+  height: number;
 }
 /**
  * Audio asset with URL and specifications
@@ -2043,8 +2014,7 @@ export interface PushNotificationConfig {
 /**
  * Response payload for create_media_buy task. Returns either complete success data OR error information, never both. This enforces atomic operation semantics - the media buy is either fully created or not created at all.
  */
-export type CreateMediaBuyResponse = CreateMediaBuyResponse1 & CreateMediaBuyResponse2;
-export type CreateMediaBuyResponse2 =
+export type CreateMediaBuyResponse =
   | {
       /**
        * Publisher's unique identifier for the created media buy
@@ -2063,6 +2033,7 @@ export type CreateMediaBuyResponse2 =
        */
       packages: Package[];
       context?: ContextObject;
+      ext?: ExtensionObject;
     }
   | {
       /**
@@ -2072,15 +2043,10 @@ export type CreateMediaBuyResponse2 =
        */
       errors: [Error, ...Error[]];
       context?: ContextObject;
+      ext?: ExtensionObject;
     };
 /**
  * Budget pacing strategy
- */
-export interface CreateMediaBuyResponse1 {
-  ext?: ExtensionObject;
-}
-/**
- * Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.
  */
 export interface Package {
   /**
@@ -2147,12 +2113,12 @@ export interface CreativeAssignment {
   placement_ids?: [string, ...string[]];
 }
 /**
- * Structured format identifier with agent URL and format name
+ * Structured format identifier with agent URL and format name. Can reference: (1) a concrete format with fixed dimensions (id only), (2) a template format without parameters (id only), or (3) a template format with parameters (id + dimensions/duration). Template formats accept parameters in format_id while concrete formats have fixed dimensions in their definition. Parameterized format IDs create unique, specific format variants.
  */
 
 // sync_creatives parameters
 /**
- * JavaScript module type
+ * Image asset with URL and dimensions
  */
 export type ValidationMode = 'strict' | 'lenient';
 /**
@@ -2204,8 +2170,7 @@ export interface SyncCreativesRequest {
 /**
  * Response from creative sync operation. Returns either per-creative results (best-effort processing) OR operation-level errors (complete failure). This enforces atomic semantics at the operation level while allowing per-item failures within successful operations.
  */
-export type SyncCreativesResponse = SyncCreativesResponse1 & SyncCreativesResponse2;
-export type SyncCreativesResponse2 =
+export type SyncCreativesResponse =
   | {
       /**
        * Whether this was a dry run (no actual changes made)
@@ -2262,6 +2227,7 @@ export type SyncCreativesResponse2 =
         };
       }[];
       context?: ContextObject;
+      ext?: ExtensionObject;
     }
   | {
       /**
@@ -2271,17 +2237,15 @@ export type SyncCreativesResponse2 =
        */
       errors: [Error, ...Error[]];
       context?: ContextObject;
+      ext?: ExtensionObject;
     };
 /**
  * Action taken for this creative
  */
 export type CreativeAction = 'created' | 'updated' | 'unchanged' | 'failed' | 'deleted';
 
-export interface SyncCreativesResponse1 {
-  ext?: ExtensionObject;
-}
 /**
- * Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.
+ * Opaque correlation data that is echoed unchanged in responses. Used for internal tracking, UI session IDs, trace IDs, and other caller-specific identifiers that don't affect protocol behavior. Context data is never parsed by AdCP agents - it's simply preserved and returned.
  */
 
 // list_creatives parameters
@@ -2742,8 +2706,7 @@ export interface UpdateMediaBuyRequest1 {
 /**
  * Response payload for update_media_buy task. Returns either complete success data OR error information, never both. This enforces atomic operation semantics - updates are either fully applied or not applied at all.
  */
-export type UpdateMediaBuyResponse = UpdateMediaBuyResponse1 & UpdateMediaBuyResponse2;
-export type UpdateMediaBuyResponse2 =
+export type UpdateMediaBuyResponse =
   | {
       /**
        * Publisher's identifier for the media buy
@@ -2762,6 +2725,7 @@ export type UpdateMediaBuyResponse2 =
        */
       affected_packages?: Package[];
       context?: ContextObject;
+      ext?: ExtensionObject;
     }
   | {
       /**
@@ -2771,15 +2735,10 @@ export type UpdateMediaBuyResponse2 =
        */
       errors: [Error, ...Error[]];
       context?: ContextObject;
+      ext?: ExtensionObject;
     };
 /**
  * Budget pacing strategy
- */
-export interface UpdateMediaBuyResponse1 {
-  ext?: ExtensionObject;
-}
-/**
- * Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.
  */
 
 // get_media_buy_delivery parameters
@@ -3258,15 +3217,14 @@ export interface ProvidePerformanceFeedbackRequest1 {
 /**
  * Response payload for provide_performance_feedback task. Returns either success confirmation OR error information, never both.
  */
-export type ProvidePerformanceFeedbackResponse = ProvidePerformanceFeedbackResponse1 &
-  ProvidePerformanceFeedbackResponse2;
-export type ProvidePerformanceFeedbackResponse2 =
+export type ProvidePerformanceFeedbackResponse =
   | {
       /**
        * Whether the performance feedback was successfully received
        */
       success: true;
       context?: ContextObject;
+      ext?: ExtensionObject;
     }
   | {
       /**
@@ -3276,18 +3234,16 @@ export type ProvidePerformanceFeedbackResponse2 =
        */
       errors: [Error, ...Error[]];
       context?: ContextObject;
+      ext?: ExtensionObject;
     };
 
-export interface ProvidePerformanceFeedbackResponse1 {
-  ext?: ExtensionObject;
-}
 /**
- * Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.
+ * Opaque correlation data that is echoed unchanged in responses. Used for internal tracking, UI session IDs, trace IDs, and other caller-specific identifiers that don't affect protocol behavior. Context data is never parsed by AdCP agents - it's simply preserved and returned.
  */
 
 // build_creative parameters
 /**
- * VAST (Video Ad Serving Template) tag for third-party video ad serving
+ * Image asset with URL and dimensions
  */
 export type HTTPMethod = 'GET' | 'POST';
 /**
@@ -3347,7 +3303,7 @@ export interface CreativeManifest {
   ext?: ExtensionObject;
 }
 /**
- * Format identifier this manifest is for
+ * Format identifier this manifest is for. Can be a template format (id only) or a deterministic format (id + dimensions/duration). For dimension-specific creatives, include width/height/unit in the format_id to create a unique identifier (e.g., {id: 'display_static', width: 300, height: 250, unit: 'px'}).
  */
 export interface WebhookAsset {
   /**
@@ -3391,11 +3347,11 @@ export interface WebhookAsset {
 /**
  * Response containing the transformed or generated creative manifest, ready for use with preview_creative or sync_creatives. Returns either the complete creative manifest OR error information, never both.
  */
-export type BuildCreativeResponse = BuildCreativeResponse1 & BuildCreativeResponse2;
-export type BuildCreativeResponse2 =
+export type BuildCreativeResponse =
   | {
       creative_manifest: CreativeManifest;
       context?: ContextObject;
+      ext?: ExtensionObject;
     }
   | {
       /**
@@ -3405,23 +3361,17 @@ export type BuildCreativeResponse2 =
        */
       errors: [Error, ...Error[]];
       context?: ContextObject;
+      ext?: ExtensionObject;
     };
 /**
- * VAST (Video Ad Serving Template) tag for third-party video ad serving
- */
-export interface BuildCreativeResponse1 {
-  ext?: ExtensionObject;
-}
-/**
- * Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.
+ * Image asset with URL and dimensions
  */
 
 // preview_creative parameters
 /**
  * Request to generate previews of one or more creative manifests. Accepts either a single creative request or an array of requests for batch processing.
  */
-export type PreviewCreativeRequest = PreviewCreativeRequest1 & PreviewCreativeRequest2;
-export type PreviewCreativeRequest2 =
+export type PreviewCreativeRequest =
   | {
       /**
        * Discriminator indicating this is a single preview request
@@ -3454,6 +3404,7 @@ export type PreviewCreativeRequest2 =
       template_id?: string;
       output_format?: PreviewOutputFormat;
       context?: ContextObject;
+      ext?: ExtensionObject;
     }
   | {
       /**
@@ -3526,9 +3477,10 @@ export type PreviewCreativeRequest2 =
       ];
       output_format?: PreviewOutputFormat2;
       context?: ContextObject;
+      ext?: ExtensionObject;
     };
 /**
- * VAST (Video Ad Serving Template) tag for third-party video ad serving
+ * Image asset with URL and dimensions
  */
 export type PreviewOutputFormat = 'url' | 'html';
 /**
@@ -3540,11 +3492,8 @@ export type PreviewOutputFormat1 = 'url' | 'html';
  */
 export type PreviewOutputFormat2 = 'url' | 'html';
 
-export interface PreviewCreativeRequest1 {
-  ext?: ExtensionObject;
-}
 /**
- * Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.
+ * Format identifier for rendering the preview
  */
 export interface CreativeManifest1 {
   format_id: FormatID1;
@@ -3584,8 +3533,7 @@ export interface CreativeManifest1 {
 /**
  * Response containing preview links for one or more creatives. Format matches the request: single preview response for single requests, batch results for batch requests.
  */
-export type PreviewCreativeResponse = PreviewCreativeResponse1 & PreviewCreativeResponse2;
-export type PreviewCreativeResponse2 =
+export type PreviewCreativeResponse =
   | {
       /**
        * Discriminator indicating this is a single preview response
@@ -3669,6 +3617,7 @@ export type PreviewCreativeResponse2 =
        */
       expires_at: string;
       context?: ContextObject;
+      ext?: ExtensionObject;
     }
   | {
       /**
@@ -3699,6 +3648,7 @@ export type PreviewCreativeResponse2 =
         )[]
       ];
       context?: ContextObject;
+      ext?: ExtensionObject;
     };
 /**
  * A single rendered piece of a creative preview with discriminated output format
@@ -3847,11 +3797,8 @@ export type PreviewRender =
       };
     };
 
-export interface PreviewCreativeResponse1 {
-  ext?: ExtensionObject;
-}
 /**
- * Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.
+ * Opaque correlation data that is echoed unchanged in responses. Used for internal tracking, UI session IDs, trace IDs, and other caller-specific identifiers that don't affect protocol behavior. Context data is never parsed by AdCP agents - it's simply preserved and returned.
  */
 
 // get_signals parameters
@@ -4148,14 +4095,14 @@ export interface ActivateSignalRequest {
 /**
  * Response payload for activate_signal task. Returns either complete success data OR error information, never both. This enforces atomic operation semantics - the signal is either fully activated or not activated at all.
  */
-export type ActivateSignalResponse = ActivateSignalResponse1 & ActivateSignalResponse2;
-export type ActivateSignalResponse2 =
+export type ActivateSignalResponse =
   | {
       /**
        * Array of deployment results for each deployment target
        */
       deployments: Deployment[];
       context?: ContextObject;
+      ext?: ExtensionObject;
     }
   | {
       /**
@@ -4165,13 +4112,8 @@ export type ActivateSignalResponse2 =
        */
       errors: [Error, ...Error[]];
       context?: ContextObject;
+      ext?: ExtensionObject;
     };
 /**
  * A signal deployment to a specific deployment target with activation status and key
- */
-export interface ActivateSignalResponse1 {
-  ext?: ExtensionObject;
-}
-/**
- * Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.
  */
