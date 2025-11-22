@@ -41,7 +41,7 @@ describe('Response Unwrapper', () => {
         },
       };
 
-      const result = unwrapProtocolResponse(a2aResponse);
+      const result = unwrapProtocolResponse(a2aResponse, 'get_products');
 
       assert.deepStrictEqual(result, {
         products: [{ product_id: 'prod1', name: 'Test Product' }],
