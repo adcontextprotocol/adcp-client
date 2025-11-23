@@ -71,38 +71,9 @@ import { ProtocolClient } from "./src/lib/protocols";
 
 **🚨 CRITICAL: A2A Protocol Implementation Requirements**
 
-The A2A protocol has specific implementation requirements that differ from MCP. Getting these wrong breaks async task handling:
+The A2A protocol has specific implementation requirements that differ from MCP:
 
-**1. Status Detection (ProtocolResponseParser.ts)**
-
-A2A uses **nested status formats** that must be detected correctly:
-- Async acknowledgments: `{ status: { state: "working" } }` or `{ status: { state: "submitted" } }`
-- Artifact responses: `{ result: { status: { state: "completed" } } }`
-
-If you only check flat `response.status`, async tasks will fail because:
-- "working" responses get treated as completed → premature validation failures
-- "submitted" responses aren't detected → webhook setup never happens
-- Tasks route to wrong handlers → incorrect behavior
-
-**Always check BOTH flat and nested formats:**
-```typescript
-// Check flat status
-if (response?.status && Object.values(ADCP_STATUS).includes(response.status)) {
-  return response.status as ADCPStatus;
-}
-
-// Check nested status.state (A2A async acknowledgments)
-if (response?.status?.state && Object.values(ADCP_STATUS).includes(response.status.state)) {
-  return response.status.state as ADCPStatus;
-}
-
-// Check nested result.status.state (A2A artifact responses)
-if (response?.result?.status?.state && Object.values(ADCP_STATUS).includes(response.result.status.state)) {
-  return response.result.status.state as ADCPStatus;
-}
-```
-
-**2. Artifact Field Names**
+**1. Artifact Field Names**
 
 A2A artifacts use `artifactId` per @a2a-js/sdk Artifact interface, NOT `name`:
 ```typescript
@@ -115,7 +86,7 @@ if (!artifact.artifactId) {
 if (!artifact.name) { ... }
 ```
 
-**🚨 CRITICAL: Two Types of Webhooks - Do Not Confuse!**
+**2. Two Types of Webhooks - Do Not Confuse!**
 
 **1. `push_notification_config` - For Async Task Status Updates**
 
