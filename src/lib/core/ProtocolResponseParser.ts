@@ -72,14 +72,35 @@ export class ProtocolResponseParser {
    * Get ADCP status from response
    */
   getStatus(response: any): ADCPStatus | null {
-    // Check top-level status first (A2A and direct responses)
+    // Check top-level status first (flat format - legacy or direct status)
     if (response?.status && Object.values(ADCP_STATUS).includes(response.status)) {
       return response.status as ADCPStatus;
     }
 
-    // Check nested status.state (A2A async task acknowledgments)
-    if (response?.status?.state && Object.values(ADCP_STATUS).includes(response.status.state)) {
+    // Check A2A Task.status.state (when Task object passed directly)
+    // A2A Task objects have kind='task' and status.state field
+    if (
+      response?.kind === 'task' &&
+      response?.status?.state &&
+      Object.values(ADCP_STATUS).includes(response.status.state)
+    ) {
       return response.status.state as ADCPStatus;
+    }
+
+    // Check A2A JSON-RPC response with Task result
+    // SendMessageSuccessResponse has result which can be Task | Message
+    if (
+      response?.result?.kind === 'task' &&
+      response?.result?.status?.state &&
+      Object.values(ADCP_STATUS).includes(response.result.status.state)
+    ) {
+      return response.result.status.state as ADCPStatus;
+    }
+
+    // Check A2A JSON-RPC response with Message result (completed synchronously)
+    // If result is a Message, the task completed immediately
+    if (response?.result?.kind === 'message') {
+      return ADCP_STATUS.COMPLETED;
     }
 
     // Check MCP structuredContent.status
@@ -90,14 +111,6 @@ export class ProtocolResponseParser {
     // Check for MCP error responses
     if (response?.isError === true) {
       return ADCP_STATUS.FAILED;
-    }
-
-    // Check A2A result.status or result.status.state (artifact responses)
-    if (response?.result?.status && Object.values(ADCP_STATUS).includes(response.result.status)) {
-      return response.result.status as ADCPStatus;
-    }
-    if (response?.result?.status?.state && Object.values(ADCP_STATUS).includes(response.result.status.state)) {
-      return response.result.status.state as ADCPStatus;
     }
 
     // If response has structuredContent or content, assume it's completed
