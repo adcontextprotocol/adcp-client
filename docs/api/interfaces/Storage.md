@@ -1,12 +1,12 @@
-[**@adcp/client API Reference v2.0.0**](../README.md)
+[**@adcp/client API Reference v3.1.0**](../README.md)
 
 ***
 
-[@adcp/client API Reference](../README.md) / Storage
+[@adcp/client API Reference](../globals.md) / Storage
 
 # Interface: Storage\<T\>
 
-Defined in: [src/lib/storage/interfaces.ts:10](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/storage/interfaces.ts#L10)
+Defined in: [src/lib/storage/interfaces.ts:10](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/storage/interfaces.ts#L10)
 
 Generic storage interface for caching and persistence
 
@@ -30,7 +30,7 @@ The library provides a default in-memory implementation
 
 > **get**(`key`): `Promise`\<`undefined` \| `T`\>
 
-Defined in: [src/lib/storage/interfaces.ts:16](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/storage/interfaces.ts#L16)
+Defined in: [src/lib/storage/interfaces.ts:16](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/storage/interfaces.ts#L16)
 
 Get a value by key
 
@@ -54,7 +54,7 @@ Value or undefined if not found
 
 > **set**(`key`, `value`, `ttl?`): `Promise`\<`void`\>
 
-Defined in: [src/lib/storage/interfaces.ts:24](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/storage/interfaces.ts#L24)
+Defined in: [src/lib/storage/interfaces.ts:24](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/storage/interfaces.ts#L24)
 
 Set a value with optional TTL
 
@@ -88,7 +88,7 @@ Time to live in seconds (optional)
 
 > **delete**(`key`): `Promise`\<`void`\>
 
-Defined in: [src/lib/storage/interfaces.ts:30](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/storage/interfaces.ts#L30)
+Defined in: [src/lib/storage/interfaces.ts:30](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/storage/interfaces.ts#L30)
 
 Delete a value by key
 
@@ -110,7 +110,7 @@ Storage key
 
 > **has**(`key`): `Promise`\<`boolean`\>
 
-Defined in: [src/lib/storage/interfaces.ts:36](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/storage/interfaces.ts#L36)
+Defined in: [src/lib/storage/interfaces.ts:36](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/storage/interfaces.ts#L36)
 
 Check if a key exists
 
@@ -132,7 +132,7 @@ Storage key
 
 > `optional` **clear**(): `Promise`\<`void`\>
 
-Defined in: [src/lib/storage/interfaces.ts:41](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/storage/interfaces.ts#L41)
+Defined in: [src/lib/storage/interfaces.ts:41](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/storage/interfaces.ts#L41)
 
 Clear all stored values (optional)
 
@@ -146,7 +146,7 @@ Clear all stored values (optional)
 
 > `optional` **keys**(): `Promise`\<`string`[]\>
 
-Defined in: [src/lib/storage/interfaces.ts:46](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/storage/interfaces.ts#L46)
+Defined in: [src/lib/storage/interfaces.ts:46](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/storage/interfaces.ts#L46)
 
 Get all keys (optional, for debugging)
 
@@ -160,7 +160,7 @@ Get all keys (optional, for debugging)
 
 > `optional` **size**(): `Promise`\<`number`\>
 
-Defined in: [src/lib/storage/interfaces.ts:51](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/storage/interfaces.ts#L51)
+Defined in: [src/lib/storage/interfaces.ts:51](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/storage/interfaces.ts#L51)
 
 Get storage size/count (optional, for monitoring)
 

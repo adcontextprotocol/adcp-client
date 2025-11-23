@@ -1,169 +1,306 @@
-**@adcp/client API Reference v2.0.0**
+**@adcp/client API Reference v3.1.0**
 
 ***
 
-# @adcp/client API Reference v2.0.0
+# @adcp/client API Reference
 
-## Classes
+Complete TypeScript API documentation for the **@adcp/client** library - the official client for the Ad Context Protocol (AdCP).
 
-- [Agent](classes/Agent.md)
-- [AgentCollection](classes/AgentCollection.md)
-- [AdCPClient](classes/AdCPClient.md)
-- [NewAgentCollection](classes/NewAgentCollection.md)
-- [ADCPMultiAgentClient](classes/ADCPMultiAgentClient.md)
-- [AgentClient](classes/AgentClient.md)
-- [ConfigurationManager](classes/ConfigurationManager.md)
-- [ProtocolResponseParser](classes/ProtocolResponseParser.md)
-- [InputRequiredError](classes/InputRequiredError.md)
-- [TaskExecutor](classes/TaskExecutor.md)
-- [ADCPError](classes/ADCPError.md)
-- [TaskTimeoutError](classes/TaskTimeoutError.md)
-- [MaxClarificationError](classes/MaxClarificationError.md)
-- [DeferredTaskError](classes/DeferredTaskError.md)
-- [TaskAbortedError](classes/TaskAbortedError.md)
-- [AgentNotFoundError](classes/AgentNotFoundError.md)
-- [UnsupportedTaskError](classes/UnsupportedTaskError.md)
-- [ProtocolError](classes/ProtocolError.md)
-- [ADCPValidationError](classes/ADCPValidationError.md)
-- [MissingInputHandlerError](classes/MissingInputHandlerError.md)
-- [InvalidContextError](classes/InvalidContextError.md)
-- [ConfigurationError](classes/ConfigurationError.md)
-- [~~AdCPClient~~](classes/AdCPClient-1.md)
-- [ProtocolClient](classes/ProtocolClient.md)
-- [MemoryStorage](classes/MemoryStorage.md)
-- [CircuitBreaker](classes/CircuitBreaker.md)
+## Overview
 
-## Interfaces
+The @adcp/client library provides a comprehensive, type-safe interface for interacting with AdCP agents supporting both **MCP** (Model Context Protocol) and **A2A** (Agent-to-Agent) protocols. Whether you're working with a single agent or orchestrating operations across multiple agents, this library provides the tools you need.
 
-- [AdCPClientConfig](interfaces/AdCPClientConfig.md)
-- [Message](interfaces/Message.md)
-- [InputRequest](interfaces/InputRequest.md)
-- [ConversationContext](interfaces/ConversationContext.md)
-- [TaskOptions](interfaces/TaskOptions.md)
-- [TaskState](interfaces/TaskState.md)
-- [TaskResult](interfaces/TaskResult.md)
-- [ConversationConfig](interfaces/ConversationConfig.md)
-- [FieldHandlerConfig](interfaces/FieldHandlerConfig.md)
-- [Storage](interfaces/Storage.md)
-- [AgentCapabilities](interfaces/AgentCapabilities.md)
-- [ConversationState](interfaces/ConversationState.md)
-- [DeferredTaskState](interfaces/DeferredTaskState.md)
-- [StorageConfig](interfaces/StorageConfig.md)
-- [StorageFactory](interfaces/StorageFactory.md)
-- [BatchStorage](interfaces/BatchStorage.md)
-- [PatternStorage](interfaces/PatternStorage.md)
-- [MediaBuy](interfaces/MediaBuy.md)
-- [Budget](interfaces/Budget.md)
-- [CreativeAsset](interfaces/CreativeAsset.md)
-- [CreativeSubAsset](interfaces/CreativeSubAsset.md)
-- [AdvertisingProduct](interfaces/AdvertisingProduct.md)
-- [CreativeFormat](interfaces/CreativeFormat.md)
-- [InventoryDetails](interfaces/InventoryDetails.md)
-- [Targeting](interfaces/Targeting.md)
-- [GeographicTargeting](interfaces/GeographicTargeting.md)
-- [DemographicTargeting](interfaces/DemographicTargeting.md)
-- [BehavioralTargeting](interfaces/BehavioralTargeting.md)
-- [ContextualTargeting](interfaces/ContextualTargeting.md)
-- [DeviceTargeting](interfaces/DeviceTargeting.md)
-- [FrequencyCap](interfaces/FrequencyCap.md)
-- [DeliverySchedule](interfaces/DeliverySchedule.md)
-- [DayParting](interfaces/DayParting.md)
-- [AgentConfig](interfaces/AgentConfig.md)
-- [TestRequest](interfaces/TestRequest.md)
-- [TestResult](interfaces/TestResult.md)
-- [ApiResponse](interfaces/ApiResponse.md)
-- [AgentListResponse](interfaces/AgentListResponse.md)
-- [TestResponse](interfaces/TestResponse.md)
-- [CreativeLibraryItem](interfaces/CreativeLibraryItem.md)
-- [CreativePerformanceMetrics](interfaces/CreativePerformanceMetrics.md)
-- [CreativeComplianceData](interfaces/CreativeComplianceData.md)
-- [ManageCreativeAssetsRequest](interfaces/ManageCreativeAssetsRequest.md)
-- [CreativeFilters](interfaces/CreativeFilters.md)
-- [PaginationOptions](interfaces/PaginationOptions.md)
-- [ManageCreativeAssetsResponse](interfaces/ManageCreativeAssetsResponse.md)
-- [AdAgentsJson](interfaces/AdAgentsJson.md)
-- [AuthorizedAgent](interfaces/AuthorizedAgent.md)
-- [AdAgentsValidationResult](interfaces/AdAgentsValidationResult.md)
-- [ValidationError](interfaces/ValidationError.md)
-- [ValidationWarning](interfaces/ValidationWarning.md)
-- [AgentCardValidationResult](interfaces/AgentCardValidationResult.md)
-- [ValidateAdAgentsRequest](interfaces/ValidateAdAgentsRequest.md)
-- [ValidateAdAgentsResponse](interfaces/ValidateAdAgentsResponse.md)
-- [CreateAdAgentsRequest](interfaces/CreateAdAgentsRequest.md)
-- [CreateAdAgentsResponse](interfaces/CreateAdAgentsResponse.md)
-- [GetProductsRequest](interfaces/GetProductsRequest.md)
-- [GetProductsResponse](interfaces/GetProductsResponse.md)
-- [ListCreativeFormatsRequest](interfaces/ListCreativeFormatsRequest.md)
-- [ListCreativeFormatsResponse](interfaces/ListCreativeFormatsResponse.md)
-- [CreateMediaBuyRequest](interfaces/CreateMediaBuyRequest.md)
-- [CreateMediaBuyResponse](interfaces/CreateMediaBuyResponse.md)
-- [SyncCreativesRequest](interfaces/SyncCreativesRequest.md)
-- [SyncCreativesResponse](interfaces/SyncCreativesResponse.md)
-- [ListCreativesRequest](interfaces/ListCreativesRequest.md)
-- [ListCreativesResponse](interfaces/ListCreativesResponse.md)
-- [UpdateMediaBuyResponse](interfaces/UpdateMediaBuyResponse.md)
-- [GetMediaBuyDeliveryRequest](interfaces/GetMediaBuyDeliveryRequest.md)
-- [GetMediaBuyDeliveryResponse](interfaces/GetMediaBuyDeliveryResponse.md)
-- [ListAuthorizedPropertiesRequest](interfaces/ListAuthorizedPropertiesRequest.md)
-- [ListAuthorizedPropertiesResponse](interfaces/ListAuthorizedPropertiesResponse.md)
-- [ProvidePerformanceFeedbackRequest](interfaces/ProvidePerformanceFeedbackRequest.md)
-- [ProvidePerformanceFeedbackResponse](interfaces/ProvidePerformanceFeedbackResponse.md)
-- [GetSignalsRequest](interfaces/GetSignalsRequest.md)
-- [GetSignalsResponse](interfaces/GetSignalsResponse.md)
-- [ActivateSignalRequest](interfaces/ActivateSignalRequest.md)
-- [ActivateSignalResponse](interfaces/ActivateSignalResponse.md)
+## Quick Start
 
-## Type Aliases
+```typescript
+import { ADCPMultiAgentClient } from '@adcp/client';
 
-- [InputHandlerResponse](type-aliases/InputHandlerResponse.md)
-- [InputHandler](type-aliases/InputHandler.md)
-- [TaskStatus](type-aliases/TaskStatus.md)
-- [ADCPStatus](type-aliases/ADCPStatus.md)
-- [StorageMiddleware](type-aliases/StorageMiddleware.md)
-- [UpdateMediaBuyRequest](type-aliases/UpdateMediaBuyRequest.md)
+// Configure agents
+const client = new ADCPMultiAgentClient([
+  { id: 'agent1', agent_uri: 'https://agent1.com', protocol: 'mcp' },
+  { id: 'agent2', agent_uri: 'https://agent2.com', protocol: 'a2a' }
+]);
 
-## Variables
+// Execute operation
+const result = await client.agent('agent1').getProducts({
+  brief: 'Premium coffee brands for millennial audience'
+});
 
-- [ADCP\_STATUS](variables/ADCP_STATUS.md)
-- [responseParser](variables/responseParser.md)
-- [autoApproveHandler](variables/autoApproveHandler.md)
-- [deferAllHandler](variables/deferAllHandler.md)
-- [REQUEST\_TIMEOUT](variables/REQUEST_TIMEOUT.md)
-- [MAX\_CONCURRENT](variables/MAX_CONCURRENT.md)
-- [STANDARD\_FORMATS](variables/STANDARD_FORMATS.md)
+if (result.status === 'completed') {
+  console.log('Products:', result.data.products);
+}
+```
 
-## Functions
+## Core Concepts
 
-- [generateUUID](functions/generateUUID.md)
-- [getAuthToken](functions/getAuthToken.md)
-- [createAdCPHeaders](functions/createAdCPHeaders.md)
-- [createAuthenticatedFetch](functions/createAuthenticatedFetch.md)
-- [createMCPAuthHeaders](functions/createMCPAuthHeaders.md)
-- [createAdCPClient](functions/createAdCPClient.md)
-- [createADCPMultiAgentClient](functions/createADCPMultiAgentClient.md)
-- [isADCPError](functions/isADCPError.md)
-- [isErrorOfType](functions/isErrorOfType.md)
-- [extractErrorInfo](functions/extractErrorInfo.md)
-- [createFieldHandler](functions/createFieldHandler.md)
-- [createConditionalHandler](functions/createConditionalHandler.md)
-- [createRetryHandler](functions/createRetryHandler.md)
-- [createSuggestionHandler](functions/createSuggestionHandler.md)
-- [createValidatedHandler](functions/createValidatedHandler.md)
-- [combineHandlers](functions/combineHandlers.md)
-- [isDeferResponse](functions/isDeferResponse.md)
-- [isAbortResponse](functions/isAbortResponse.md)
-- [normalizeHandlerResponse](functions/normalizeHandlerResponse.md)
-- [~~createAdCPClient~~](functions/createAdCPClient-1.md)
-- [~~createAdCPClientFromEnv~~](functions/createAdCPClientFromEnv.md)
-- [callA2ATool](functions/callA2ATool.md)
-- [createMCPClient](functions/createMCPClient.md)
-- [createA2AClient](functions/createA2AClient.md)
-- [callMCPTool](functions/callMCPTool.md)
-- [createMemoryStorage](functions/createMemoryStorage.md)
-- [createMemoryStorageConfig](functions/createMemoryStorageConfig.md)
-- [getCircuitBreaker](functions/getCircuitBreaker.md)
-- [getStandardFormats](functions/getStandardFormats.md)
-- [getExpectedSchema](functions/getExpectedSchema.md)
-- [validateAgentUrl](functions/validateAgentUrl.md)
-- [validateAdCPResponse](functions/validateAdCPResponse.md)
-- [handleAdCPResponse](functions/handleAdCPResponse.md)
+### 🎯 Client Classes
+
+The library provides flexible client patterns for different use cases:
+
+- **[`ADCPMultiAgentClient`](./classes/ADCPMultiAgentClient.md)** - Main entry point supporting single and multi-agent operations
+- **[`AgentClient`](./classes/AgentClient.md)** - Individual agent operations with full AdCP method support
+- **[`AgentCollection`](./classes/AgentCollection.md)** - Parallel operations across multiple agents
+
+### 📦 Request/Response Types
+
+All AdCP operations have strongly-typed request and response interfaces:
+
+**Product Discovery:**
+- [`GetProductsRequest`](./interfaces/GetProductsRequest.md) / [`GetProductsResponse`](./interfaces/GetProductsResponse.md)
+- [`ListCreativeFormatsRequest`](./interfaces/ListCreativeFormatsRequest.md) / [`ListCreativeFormatsResponse`](./interfaces/ListCreativeFormatsResponse.md)
+
+**Media Buy Lifecycle:**
+- [`CreateMediaBuyRequest`](./interfaces/CreateMediaBuyRequest.md) / [`CreateMediaBuyResponse`](./interfaces/CreateMediaBuyResponse.md)
+- [`UpdateMediaBuyRequest`](./type-aliases/UpdateMediaBuyRequest.md) / [`UpdateMediaBuyResponse`](./interfaces/UpdateMediaBuyResponse.md)
+- [`SyncCreativesRequest`](./interfaces/SyncCreativesRequest.md) / [`SyncCreativesResponse`](./interfaces/SyncCreativesResponse.md)
+
+**Targeting & Signals:**
+- [`GetSignalsRequest`](./interfaces/GetSignalsRequest.md) / [`GetSignalsResponse`](./interfaces/GetSignalsResponse.md)
+- [`ActivateSignalRequest`](./interfaces/ActivateSignalRequest.md) / [`ActivateSignalResponse`](./interfaces/ActivateSignalResponse.md)
+
+[View all request/response types →](_media/README.md#interfaces)
+
+### 🔄 Task Results
+
+All operations return a [`TaskResult<T>`](./interfaces/TaskResult.md) with status tracking:
+
+```typescript
+type TaskStatus = 'completed' | 'submitted' | 'needs_input' | 'failed' | 'aborted';
+
+interface TaskResult<T> {
+  status: TaskStatus;
+  data?: T;              // Present when status === 'completed'
+  error?: Error;         // Present when status === 'failed'
+  needs_input?: {...};   // Present when status === 'needs_input'
+  submitted?: {...};     // Present when status === 'submitted'
+}
+```
+
+### 🔐 Configuration
+
+Multiple ways to configure agents:
+
+```typescript
+// 1. Direct construction
+const client = new ADCPMultiAgentClient([...agents]);
+
+// 2. Auto-discover from environment/config
+const client = ADCPMultiAgentClient.fromConfig();
+
+// 3. Environment variables only
+const client = ADCPMultiAgentClient.fromEnv();
+
+// 4. Specific config file
+const client = ADCPMultiAgentClient.fromFile('./agents.json');
+
+// 5. Simple single-agent setup
+const client = ADCPMultiAgentClient.simple('https://agent.example.com');
+```
+
+See [`ConfigurationManager`](./classes/ConfigurationManager.md) for configuration file formats and environment variable names.
+
+## Usage Patterns
+
+### Single Agent Operations
+
+```typescript
+// Get agent and execute
+const agent = client.agent('sales_agent');
+const products = await agent.getProducts({ brief: 'Coffee brands' });
+
+// Continue conversation if clarification needed
+if (products.status === 'needs_input') {
+  const refined = await agent.continueConversation('Premium brands only');
+}
+```
+
+### Multi-Agent Parallel Execution
+
+```typescript
+// Execute across specific agents
+const results = await client.agents(['agent1', 'agent2']).getProducts({
+  brief: 'Coffee brands'
+});
+
+// Or across all agents
+const allResults = await client.allAgents().getProducts({
+  brief: 'Coffee brands'
+});
+
+// Process results
+allResults.forEach((result, i) => {
+  if (result.status === 'completed') {
+    console.log(`Agent ${i}: ${result.data.products.length} products`);
+  }
+});
+```
+
+### Property Discovery (AdCP v2.2.0+)
+
+Build agent registries by discovering what properties agents can sell:
+
+```typescript
+import { PropertyCrawler, getPropertyIndex } from '@adcp/client';
+
+// Crawl agents
+const crawler = new PropertyCrawler();
+await crawler.crawlAgents([
+  { agent_url: 'https://agent1.com' },
+  { agent_url: 'https://agent2.com' }
+]);
+
+// Query index
+const index = getPropertyIndex();
+const matches = index.findAgentsForProperty('domain', 'cnn.com');
+```
+
+See [`PropertyCrawler`](./classes/PropertyCrawler.md) and [`PropertyIndex`](./classes/PropertyIndex.md) for details.
+
+## Error Handling
+
+The library provides specific error types for different failure modes:
+
+- [`ADCPError`](./classes/ADCPError.md) - Base error class
+- [`ProtocolError`](./classes/ProtocolError.md) - Protocol-level failures
+- [`TaskTimeoutError`](./classes/TaskTimeoutError.md) - Operation timeouts
+- [`AgentNotFoundError`](./classes/AgentNotFoundError.md) - Invalid agent ID
+- [`ValidationError`](./classes/ADCPValidationError.md) - Schema validation failures
+
+```typescript
+import { isADCPError, isErrorOfType, TaskTimeoutError } from '@adcp/client';
+
+try {
+  const result = await agent.getProducts(params);
+} catch (error) {
+  if (isErrorOfType(error, TaskTimeoutError)) {
+    console.error('Operation timed out');
+  } else if (isADCPError(error)) {
+    console.error('AdCP error:', error.message);
+  }
+}
+```
+
+## Type Safety
+
+All types are automatically generated from the AdCP JSON schemas, ensuring perfect alignment with the protocol specification:
+
+```typescript
+import type {
+  GetProductsRequest,
+  GetProductsResponse,
+  BrandManifest,
+  Product,
+  Format
+} from '@adcp/client';
+
+// Full IntelliSense support
+const request: GetProductsRequest = {
+  brand_manifest: { name: 'Acme Corp' },
+  brief: 'Coffee products'
+};
+```
+
+## Validation
+
+Runtime validation using Zod schemas:
+
+```typescript
+import {
+  GetProductsRequestSchema,
+  GetProductsResponseSchema
+} from '@adcp/client';
+
+// Validate request
+const validRequest = GetProductsRequestSchema.parse(requestData);
+
+// Validate response
+const validResponse = GetProductsResponseSchema.parse(responseData);
+```
+
+See [`schemas.generated`](_media/README.md#type-aliases) for all available Zod schemas.
+
+## Advanced Features
+
+### Async Handlers & Webhooks
+
+Handle asynchronous operations with automatic webhook management:
+
+```typescript
+const client = new ADCPMultiAgentClient(agents, {
+  webhookUrlTemplate: 'https://myapp.com/webhook/{task_type}/{agent_id}/{operation_id}',
+  handlers: {
+    onGetProductsStatusChange: (response, metadata) => {
+      console.log(`Status: ${metadata.status}`);
+      if (metadata.status === 'completed') {
+        saveProducts(response.products);
+      }
+    }
+  }
+});
+```
+
+See [`AsyncHandler`](./classes/AsyncHandler.md) for webhook configuration.
+
+### Creative Agent Integration
+
+Work with creative generation agents:
+
+```typescript
+import { CreativeAgentClient, STANDARD_CREATIVE_AGENTS } from '@adcp/client';
+
+const creativeClient = new CreativeAgentClient({
+  agents: STANDARD_CREATIVE_AGENTS
+});
+
+const creative = await creativeClient.generateCreative({
+  format: 'banner_300x250',
+  brand_manifest: { name: 'Acme' },
+  targeting: { demographics: { age_ranges: ['25-34'] } }
+});
+```
+
+See [`CreativeAgentClient`](./classes/CreativeAgentClient.md) for details.
+
+## Protocol Support
+
+The library seamlessly supports both protocols:
+
+- **MCP (Model Context Protocol)** - SSE-based streaming protocol
+- **A2A (Agent-to-Agent)** - REST-based protocol
+
+Protocol is specified per-agent in configuration. All operations work identically regardless of protocol.
+
+## Version Information
+
+Check library and protocol versions:
+
+```typescript
+import {
+  LIBRARY_VERSION,
+  ADCP_VERSION,
+  isCompatibleWith
+} from '@adcp/client';
+
+console.log(`Library: ${LIBRARY_VERSION}`);
+console.log(`AdCP Protocol: ${ADCP_VERSION}`);
+
+if (isCompatibleWith('2.4.0')) {
+  console.log('Compatible with AdCP 2.4.0');
+}
+```
+
+## Additional Resources
+
+- **Main README**: [Getting Started Guide](_media/README-1.md)
+- **Protocol Spec**: [AdCP Specification](https://github.com/adcontextprotocol/adcp)
+- **Full Documentation**: [docs.adcontextprotocol.org](https://docs.adcontextprotocol.org)
+- **npm Package**: [@adcp/client](https://www.npmjs.com/package/@adcp/client)
+- **GitHub**: [adcontextprotocol/adcp-client](https://github.com/adcontextprotocol/adcp-client)
+
+## Browse the API
+
+Use the navigation below to explore all classes, interfaces, types, and utilities in the library.
+
+---
+
+**📚 Generated from source code with TypeDoc** • [View on GitHub](https://github.com/adcontextprotocol/adcp-client)

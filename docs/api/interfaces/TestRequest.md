@@ -1,12 +1,12 @@
-[**@adcp/client API Reference v2.0.0**](../README.md)
+[**@adcp/client API Reference v3.1.0**](../README.md)
 
 ***
 
-[@adcp/client API Reference](../README.md) / TestRequest
+[@adcp/client API Reference](../globals.md) / TestRequest
 
 # Interface: TestRequest
 
-Defined in: [src/lib/types/adcp.ts:175](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L175)
+Defined in: [src/lib/types/adcp.ts:176](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/adcp.ts#L176)
 
 ## Properties
 
@@ -14,7 +14,7 @@ Defined in: [src/lib/types/adcp.ts:175](https://github.com/adcontextprotocol/adc
 
 > **agents**: [`AgentConfig`](AgentConfig.md)[]
 
-Defined in: [src/lib/types/adcp.ts:176](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L176)
+Defined in: [src/lib/types/adcp.ts:177](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/adcp.ts#L177)
 
 ***
 
@@ -22,15 +22,15 @@ Defined in: [src/lib/types/adcp.ts:176](https://github.com/adcontextprotocol/adc
 
 > **brief**: `string`
 
-Defined in: [src/lib/types/adcp.ts:177](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L177)
+Defined in: [src/lib/types/adcp.ts:178](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/adcp.ts#L178)
 
 ***
 
-### promoted\_offering?
+### brand\_manifest?
 
-> `optional` **promoted\_offering**: `string`
+> `optional` **brand\_manifest**: `string`
 
-Defined in: [src/lib/types/adcp.ts:178](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L178)
+Defined in: [src/lib/types/adcp.ts:179](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/adcp.ts#L179)
 
 ***
 
@@ -38,4 +38,4 @@ Defined in: [src/lib/types/adcp.ts:178](https://github.com/adcontextprotocol/adc
 
 > `optional` **tool\_name**: `string`
 
-Defined in: [src/lib/types/adcp.ts:179](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L179)
+Defined in: [src/lib/types/adcp.ts:180](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/adcp.ts#L180)

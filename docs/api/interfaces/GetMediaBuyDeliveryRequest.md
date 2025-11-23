@@ -1,32 +1,22 @@
-[**@adcp/client API Reference v2.0.0**](../README.md)
+[**@adcp/client API Reference v3.1.0**](../README.md)
 
 ***
 
-[@adcp/client API Reference](../README.md) / GetMediaBuyDeliveryRequest
+[@adcp/client API Reference](../globals.md) / GetMediaBuyDeliveryRequest
 
 # Interface: GetMediaBuyDeliveryRequest
 
-Defined in: [src/lib/types/tools.generated.ts:1262](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L1262)
+Defined in: [src/lib/types/tools.generated.ts:2712](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/tools.generated.ts#L2712)
 
 Request parameters for retrieving comprehensive delivery metrics
 
 ## Properties
 
-### adcp\_version?
-
-> `optional` **adcp\_version**: `string`
-
-Defined in: [src/lib/types/tools.generated.ts:1266](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L1266)
-
-AdCP schema version for this request
-
-***
-
 ### media\_buy\_ids?
 
 > `optional` **media\_buy\_ids**: `string`[]
 
-Defined in: [src/lib/types/tools.generated.ts:1270](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L1270)
+Defined in: [src/lib/types/tools.generated.ts:2716](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/tools.generated.ts#L2716)
 
 Array of publisher media buy IDs to get delivery data for
 
@@ -36,7 +26,7 @@ Array of publisher media buy IDs to get delivery data for
 
 > `optional` **buyer\_refs**: `string`[]
 
-Defined in: [src/lib/types/tools.generated.ts:1274](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L1274)
+Defined in: [src/lib/types/tools.generated.ts:2720](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/tools.generated.ts#L2720)
 
 Array of buyer reference IDs to get delivery data for
 
@@ -44,9 +34,9 @@ Array of buyer reference IDs to get delivery data for
 
 ### status\_filter?
 
-> `optional` **status\_filter**: `"active"` \| `"paused"` \| `"completed"` \| `"pending"` \| `"failed"` \| `"all"` \| (`"active"` \| `"paused"` \| `"completed"` \| `"pending"` \| `"failed"`)[]
+> `optional` **status\_filter**: `"active"` \| `"paused"` \| `"completed"` \| `"all"` \| `"pending"` \| `"failed"` \| (`"active"` \| `"paused"` \| `"completed"` \| `"pending"` \| `"failed"`)[]
 
-Defined in: [src/lib/types/tools.generated.ts:1278](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L1278)
+Defined in: [src/lib/types/tools.generated.ts:2724](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/tools.generated.ts#L2724)
 
 Filter by status. Can be a single status or array of statuses
 
@@ -56,7 +46,7 @@ Filter by status. Can be a single status or array of statuses
 
 > `optional` **start\_date**: `string`
 
-Defined in: [src/lib/types/tools.generated.ts:1284](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L1284)
+Defined in: [src/lib/types/tools.generated.ts:2730](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/tools.generated.ts#L2730)
 
 Start date for reporting period (YYYY-MM-DD)
 
@@ -66,6 +56,16 @@ Start date for reporting period (YYYY-MM-DD)
 
 > `optional` **end\_date**: `string`
 
-Defined in: [src/lib/types/tools.generated.ts:1288](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L1288)
+Defined in: [src/lib/types/tools.generated.ts:2734](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/tools.generated.ts#L2734)
 
 End date for reporting period (YYYY-MM-DD)
+
+***
+
+### context?
+
+> `optional` **context**: `object`
+
+Defined in: [src/lib/types/tools.generated.ts:2738](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/tools.generated.ts#L2738)
+
+Initiator-provided context included in the request payload. Agentsmust echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.

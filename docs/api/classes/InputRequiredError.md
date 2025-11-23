@@ -1,12 +1,12 @@
-[**@adcp/client API Reference v2.0.0**](../README.md)
+[**@adcp/client API Reference v3.1.0**](../README.md)
 
 ***
 
-[@adcp/client API Reference](../README.md) / InputRequiredError
+[@adcp/client API Reference](../globals.md) / InputRequiredError
 
 # Class: InputRequiredError
 
-Defined in: [src/lib/core/TaskExecutor.ts:47](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/core/TaskExecutor.ts#L47)
+Defined in: [src/lib/core/TaskExecutor.ts:50](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/core/TaskExecutor.ts#L50)
 
 ## Extends
 
@@ -18,7 +18,7 @@ Defined in: [src/lib/core/TaskExecutor.ts:47](https://github.com/adcontextprotoc
 
 > **new InputRequiredError**(`question`): `InputRequiredError`
 
-Defined in: [src/lib/core/TaskExecutor.ts:48](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/core/TaskExecutor.ts#L48)
+Defined in: [src/lib/core/TaskExecutor.ts:51](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/core/TaskExecutor.ts#L51)
 
 #### Parameters
 

@@ -1,12 +1,12 @@
-[**@adcp/client API Reference v2.0.0**](../README.md)
+[**@adcp/client API Reference v3.1.0**](../README.md)
 
 ***
 
-[@adcp/client API Reference](../README.md) / ConversationState
+[@adcp/client API Reference](../globals.md) / ConversationState
 
 # Interface: ConversationState
 
-Defined in: [src/lib/storage/interfaces.ts:80](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/storage/interfaces.ts#L80)
+Defined in: [src/lib/storage/interfaces.ts:80](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/storage/interfaces.ts#L80)
 
 Conversation state for persistence
 
@@ -16,7 +16,7 @@ Conversation state for persistence
 
 > **conversationId**: `string`
 
-Defined in: [src/lib/storage/interfaces.ts:82](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/storage/interfaces.ts#L82)
+Defined in: [src/lib/storage/interfaces.ts:82](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/storage/interfaces.ts#L82)
 
 Conversation ID
 
@@ -26,7 +26,7 @@ Conversation ID
 
 > **agentId**: `string`
 
-Defined in: [src/lib/storage/interfaces.ts:84](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/storage/interfaces.ts#L84)
+Defined in: [src/lib/storage/interfaces.ts:84](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/storage/interfaces.ts#L84)
 
 Agent ID
 
@@ -36,7 +36,7 @@ Agent ID
 
 > **messages**: `object`[]
 
-Defined in: [src/lib/storage/interfaces.ts:86](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/storage/interfaces.ts#L86)
+Defined in: [src/lib/storage/interfaces.ts:86](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/storage/interfaces.ts#L86)
 
 Message history
 
@@ -46,7 +46,7 @@ Message history
 
 #### role
 
-> **role**: `"user"` \| `"agent"` \| `"system"`
+> **role**: `"agent"` \| `"user"` \| `"system"`
 
 #### content
 
@@ -66,7 +66,7 @@ Message history
 
 > `optional` **currentTask**: `object`
 
-Defined in: [src/lib/storage/interfaces.ts:94](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/storage/interfaces.ts#L94)
+Defined in: [src/lib/storage/interfaces.ts:94](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/storage/interfaces.ts#L94)
 
 Current task information
 
@@ -92,7 +92,7 @@ Current task information
 
 > **createdAt**: `string`
 
-Defined in: [src/lib/storage/interfaces.ts:101](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/storage/interfaces.ts#L101)
+Defined in: [src/lib/storage/interfaces.ts:101](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/storage/interfaces.ts#L101)
 
 When conversation was created
 
@@ -102,7 +102,7 @@ When conversation was created
 
 > **updatedAt**: `string`
 
-Defined in: [src/lib/storage/interfaces.ts:103](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/storage/interfaces.ts#L103)
+Defined in: [src/lib/storage/interfaces.ts:103](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/storage/interfaces.ts#L103)
 
 When conversation was last updated
 
@@ -112,6 +112,6 @@ When conversation was last updated
 
 > `optional` **metadata**: `Record`\<`string`, `any`\>
 
-Defined in: [src/lib/storage/interfaces.ts:105](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/storage/interfaces.ts#L105)
+Defined in: [src/lib/storage/interfaces.ts:105](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/storage/interfaces.ts#L105)
 
 Additional metadata

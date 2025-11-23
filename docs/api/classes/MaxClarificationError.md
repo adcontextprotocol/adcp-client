@@ -1,12 +1,12 @@
-[**@adcp/client API Reference v2.0.0**](../README.md)
+[**@adcp/client API Reference v3.1.0**](../README.md)
 
 ***
 
-[@adcp/client API Reference](../README.md) / MaxClarificationError
+[@adcp/client API Reference](../globals.md) / MaxClarificationError
 
 # Class: MaxClarificationError
 
-Defined in: [src/lib/errors/index.ts:32](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/errors/index.ts#L32)
+Defined in: [src/lib/errors/index.ts:35](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/errors/index.ts#L35)
 
 Error thrown when maximum clarification attempts are exceeded
 
@@ -20,7 +20,7 @@ Error thrown when maximum clarification attempts are exceeded
 
 > **new MaxClarificationError**(`taskId`, `maxAttempts`): `MaxClarificationError`
 
-Defined in: [src/lib/errors/index.ts:35](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/errors/index.ts#L35)
+Defined in: [src/lib/errors/index.ts:38](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/errors/index.ts#L38)
 
 #### Parameters
 
@@ -46,7 +46,7 @@ Defined in: [src/lib/errors/index.ts:35](https://github.com/adcontextprotocol/ad
 
 > `optional` **details**: `any`
 
-Defined in: [src/lib/errors/index.ts:9](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/errors/index.ts#L9)
+Defined in: [src/lib/errors/index.ts:11](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/errors/index.ts#L11)
 
 #### Inherited from
 
@@ -58,7 +58,7 @@ Defined in: [src/lib/errors/index.ts:9](https://github.com/adcontextprotocol/adc
 
 > `readonly` **code**: `"MAX_CLARIFICATIONS"` = `'MAX_CLARIFICATIONS'`
 
-Defined in: [src/lib/errors/index.ts:33](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/errors/index.ts#L33)
+Defined in: [src/lib/errors/index.ts:36](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/errors/index.ts#L36)
 
 #### Overrides
 
@@ -70,7 +70,7 @@ Defined in: [src/lib/errors/index.ts:33](https://github.com/adcontextprotocol/ad
 
 > `readonly` **taskId**: `string`
 
-Defined in: [src/lib/errors/index.ts:36](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/errors/index.ts#L36)
+Defined in: [src/lib/errors/index.ts:39](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/errors/index.ts#L39)
 
 ***
 
@@ -78,7 +78,7 @@ Defined in: [src/lib/errors/index.ts:36](https://github.com/adcontextprotocol/ad
 
 > `readonly` **maxAttempts**: `number`
 
-Defined in: [src/lib/errors/index.ts:37](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/errors/index.ts#L37)
+Defined in: [src/lib/errors/index.ts:40](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/errors/index.ts#L40)
 
 ***
 

@@ -1,12 +1,12 @@
-[**@adcp/client API Reference v2.0.0**](../README.md)
+[**@adcp/client API Reference v3.1.0**](../README.md)
 
 ***
 
-[@adcp/client API Reference](../README.md) / CreativeComplianceData
+[@adcp/client API Reference](../globals.md) / CreativeComplianceData
 
 # Interface: CreativeComplianceData
 
-Defined in: [src/lib/types/adcp.ts:257](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L257)
+Defined in: [src/lib/types/adcp.ts:258](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/adcp.ts#L258)
 
 ## Properties
 
@@ -14,7 +14,7 @@ Defined in: [src/lib/types/adcp.ts:257](https://github.com/adcontextprotocol/adc
 
 > **brand\_safety\_status**: `"approved"` \| `"rejected"` \| `"flagged"` \| `"pending"`
 
-Defined in: [src/lib/types/adcp.ts:258](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L258)
+Defined in: [src/lib/types/adcp.ts:259](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/adcp.ts#L259)
 
 ***
 
@@ -22,7 +22,7 @@ Defined in: [src/lib/types/adcp.ts:258](https://github.com/adcontextprotocol/adc
 
 > `optional` **policy\_violations**: `string`[]
 
-Defined in: [src/lib/types/adcp.ts:259](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L259)
+Defined in: [src/lib/types/adcp.ts:260](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/adcp.ts#L260)
 
 ***
 
@@ -30,7 +30,7 @@ Defined in: [src/lib/types/adcp.ts:259](https://github.com/adcontextprotocol/adc
 
 > **last\_reviewed**: `string`
 
-Defined in: [src/lib/types/adcp.ts:260](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L260)
+Defined in: [src/lib/types/adcp.ts:261](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/adcp.ts#L261)
 
 ***
 
@@ -38,4 +38,4 @@ Defined in: [src/lib/types/adcp.ts:260](https://github.com/adcontextprotocol/adc
 
 > `optional` **reviewer\_notes**: `string`
 
-Defined in: [src/lib/types/adcp.ts:261](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L261)
+Defined in: [src/lib/types/adcp.ts:262](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/adcp.ts#L262)

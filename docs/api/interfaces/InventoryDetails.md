@@ -1,12 +1,12 @@
-[**@adcp/client API Reference v2.0.0**](../README.md)
+[**@adcp/client API Reference v3.1.0**](../README.md)
 
 ***
 
-[@adcp/client API Reference](../README.md) / InventoryDetails
+[@adcp/client API Reference](../globals.md) / InventoryDetails
 
 # Interface: InventoryDetails
 
-Defined in: [src/lib/types/adcp.ts:88](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L88)
+Defined in: [src/lib/types/adcp.ts:86](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/adcp.ts#L86)
 
 ## Properties
 
@@ -14,7 +14,7 @@ Defined in: [src/lib/types/adcp.ts:88](https://github.com/adcontextprotocol/adcp
 
 > **sources**: `string`[]
 
-Defined in: [src/lib/types/adcp.ts:89](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L89)
+Defined in: [src/lib/types/adcp.ts:87](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/adcp.ts#L87)
 
 ***
 
@@ -22,7 +22,7 @@ Defined in: [src/lib/types/adcp.ts:89](https://github.com/adcontextprotocol/adcp
 
 > `optional` **quality\_score**: `number`
 
-Defined in: [src/lib/types/adcp.ts:90](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L90)
+Defined in: [src/lib/types/adcp.ts:88](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/adcp.ts#L88)
 
 ***
 
@@ -30,7 +30,7 @@ Defined in: [src/lib/types/adcp.ts:90](https://github.com/adcontextprotocol/adcp
 
 > `optional` **brand\_safety\_level**: `"high"` \| `"medium"` \| `"low"`
 
-Defined in: [src/lib/types/adcp.ts:91](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L91)
+Defined in: [src/lib/types/adcp.ts:89](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/adcp.ts#L89)
 
 ***
 
@@ -38,7 +38,7 @@ Defined in: [src/lib/types/adcp.ts:91](https://github.com/adcontextprotocol/adcp
 
 > `optional` **viewability\_rate**: `number`
 
-Defined in: [src/lib/types/adcp.ts:92](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L92)
+Defined in: [src/lib/types/adcp.ts:90](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/adcp.ts#L90)
 
 ***
 
@@ -46,4 +46,4 @@ Defined in: [src/lib/types/adcp.ts:92](https://github.com/adcontextprotocol/adcp
 
 > **geographic\_coverage**: `string`[]
 
-Defined in: [src/lib/types/adcp.ts:93](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L93)
+Defined in: [src/lib/types/adcp.ts:91](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/adcp.ts#L91)

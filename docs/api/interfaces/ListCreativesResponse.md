@@ -1,52 +1,22 @@
-[**@adcp/client API Reference v2.0.0**](../README.md)
+[**@adcp/client API Reference v3.1.0**](../README.md)
 
 ***
 
-[@adcp/client API Reference](../README.md) / ListCreativesResponse
+[@adcp/client API Reference](../globals.md) / ListCreativesResponse
 
 # Interface: ListCreativesResponse
 
-Defined in: [src/lib/types/tools.generated.ts:945](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L945)
+Defined in: [src/lib/types/tools.generated.ts:2401](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/tools.generated.ts#L2401)
 
-Current approval status of the creative
+Response from creative library query with filtered results, metadata, and optional enriched data
 
 ## Properties
-
-### adcp\_version
-
-> **adcp\_version**: `string`
-
-Defined in: [src/lib/types/tools.generated.ts:949](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L949)
-
-AdCP schema version used for this response
-
-***
-
-### message
-
-> **message**: `string`
-
-Defined in: [src/lib/types/tools.generated.ts:953](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L953)
-
-Human-readable result message
-
-***
-
-### context\_id?
-
-> `optional` **context\_id**: `string`
-
-Defined in: [src/lib/types/tools.generated.ts:957](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L957)
-
-Context ID for tracking related operations
-
-***
 
 ### query\_summary
 
 > **query\_summary**: `object`
 
-Defined in: [src/lib/types/tools.generated.ts:961](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L961)
+Defined in: [src/lib/types/tools.generated.ts:2405](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/tools.generated.ts#L2405)
 
 Summary of the query that was executed
 
@@ -74,10 +44,6 @@ List of filters that were applied to the query
 
 Sort order that was applied
 
-##### Index Signature
-
-\[`k`: `string`\]: `unknown`
-
 ##### sort\_applied.field?
 
 > `optional` **field**: `string`
@@ -92,7 +58,7 @@ Sort order that was applied
 
 > **pagination**: `object`
 
-Defined in: [src/lib/types/tools.generated.ts:986](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L986)
+Defined in: [src/lib/types/tools.generated.ts:2429](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/tools.generated.ts#L2429)
 
 Pagination information for navigating results
 
@@ -132,7 +98,7 @@ Current page number (1-based)
 
 > **creatives**: `object`[]
 
-Defined in: [src/lib/types/tools.generated.ts:1011](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L1011)
+Defined in: [src/lib/types/tools.generated.ts:2454](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/tools.generated.ts#L2454)
 
 Array of creative assets matching the query
 
@@ -148,11 +114,9 @@ Unique identifier for the creative
 
 Human-readable creative name
 
-#### format
+#### format\_id
 
-> **format**: `string`
-
-Creative format type
+> **format\_id**: `FormatID`
 
 #### status
 
@@ -170,45 +134,18 @@ When the creative was uploaded to the library
 
 When the creative was last modified
 
-#### media\_url?
+#### assets?
 
-> `optional` **media\_url**: `string`
+> `optional` **assets**: `object`
 
-URL of the creative file (for hosted assets)
+Assets for this creative, keyed by asset_role
 
-#### snippet?
+##### Index Signature
 
-> `optional` **snippet**: `string`
+\[`k`: `string`\]: `VASTAsset` \| `DAASTAsset` \| `ImageAsset` \| `VideoAsset` \| `AudioAsset` \| `TextAsset` \| `HTMLAsset` \| `CSSAsset` \| `JavaScriptAsset` \| `PromotedOfferings` \| `URLAsset`
 
-Third-party tag, VAST XML, or code snippet (for third-party assets)
-
-#### snippet\_type?
-
-> `optional` **snippet\_type**: `SnippetType`
-
-#### click\_url?
-
-> `optional` **click\_url**: `string`
-
-Landing page URL for the creative
-
-#### duration?
-
-> `optional` **duration**: `number`
-
-Duration in milliseconds (for video/audio)
-
-#### width?
-
-> `optional` **width**: `number`
-
-Width in pixels (for video/display)
-
-#### height?
-
-> `optional` **height**: `number`
-
-Height in pixels (for video/display)
+This interface was referenced by `undefined`'s JSON-Schema definition
+via the `patternProperty` "^[a-zA-Z0-9_-]+$".
 
 #### tags?
 
@@ -288,7 +225,7 @@ Sub-assets for multi-asset formats (included when include_sub_assets=true)
 
 > `optional` **format\_summary**: `object`
 
-Defined in: [src/lib/types/tools.generated.ts:1129](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L1129)
+Defined in: [src/lib/types/tools.generated.ts:2565](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/tools.generated.ts#L2565)
 
 Breakdown of creatives by format type
 
@@ -307,7 +244,7 @@ via the `patternProperty` "^[a-zA-Z0-9_-]+$".
 
 > `optional` **status\_summary**: `object`
 
-Defined in: [src/lib/types/tools.generated.ts:1141](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L1141)
+Defined in: [src/lib/types/tools.generated.ts:2577](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/tools.generated.ts#L2577)
 
 Breakdown of creatives by status
 
@@ -334,3 +271,13 @@ Number of rejected creatives
 > `optional` **archived**: `number`
 
 Number of archived creatives
+
+***
+
+### context?
+
+> `optional` **context**: `object`
+
+Defined in: [src/lib/types/tools.generated.ts:2598](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/tools.generated.ts#L2598)
+
+Initiator-provided context echoed inside the task payload. Opaque metadata such as UI/session hints, correlation tokens, or tracking identifiers.

@@ -1,16 +1,22 @@
-[**@adcp/client API Reference v2.0.0**](../README.md)
+[**@adcp/client API Reference v3.1.0**](../README.md)
 
 ***
 
-[@adcp/client API Reference](../README.md) / getAuthToken
+[@adcp/client API Reference](../globals.md) / getAuthToken
 
 # Function: getAuthToken()
 
 > **getAuthToken**(`agent`): `undefined` \| `string`
 
-Defined in: [src/lib/auth/index.ts:17](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/auth/index.ts#L17)
+Defined in: [src/lib/auth/index.ts:26](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/auth/index.ts#L26)
 
 Get authentication token for an agent
+
+Supports two explicit authentication methods:
+1. auth_token: Direct token value, used as-is
+2. auth_token_env: Environment variable name, looked up in process.env
+
+Priority: auth_token takes precedence if both are provided
 
 ## Parameters
 
@@ -18,6 +24,10 @@ Get authentication token for an agent
 
 [`AgentConfig`](../interfaces/AgentConfig.md)
 
+Agent configuration
+
 ## Returns
 
 `undefined` \| `string`
+
+Authentication token string or undefined if not configured/required

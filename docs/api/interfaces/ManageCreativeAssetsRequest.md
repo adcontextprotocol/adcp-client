@@ -1,12 +1,12 @@
-[**@adcp/client API Reference v2.0.0**](../README.md)
+[**@adcp/client API Reference v3.1.0**](../README.md)
 
 ***
 
-[@adcp/client API Reference](../README.md) / ManageCreativeAssetsRequest
+[@adcp/client API Reference](../globals.md) / ManageCreativeAssetsRequest
 
 # Interface: ManageCreativeAssetsRequest
 
-Defined in: [src/lib/types/adcp.ts:265](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L265)
+Defined in: [src/lib/types/adcp.ts:266](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/adcp.ts#L266)
 
 ## Properties
 
@@ -14,7 +14,7 @@ Defined in: [src/lib/types/adcp.ts:265](https://github.com/adcontextprotocol/adc
 
 > **action**: `"upload"` \| `"list"` \| `"update"` \| `"assign"` \| `"unassign"` \| `"delete"`
 
-Defined in: [src/lib/types/adcp.ts:266](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L266)
+Defined in: [src/lib/types/adcp.ts:267](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/adcp.ts#L267)
 
 ***
 
@@ -22,15 +22,15 @@ Defined in: [src/lib/types/adcp.ts:266](https://github.com/adcontextprotocol/adc
 
 > `optional` **adcp\_version**: `string`
 
-Defined in: [src/lib/types/adcp.ts:267](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L267)
+Defined in: [src/lib/types/adcp.ts:268](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/adcp.ts#L268)
 
 ***
 
 ### assets?
 
-> `optional` **assets**: [`CreativeAsset`](CreativeAsset.md)[]
+> `optional` **assets**: `CreativeAsset`[]
 
-Defined in: [src/lib/types/adcp.ts:269](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L269)
+Defined in: [src/lib/types/adcp.ts:270](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/adcp.ts#L270)
 
 ***
 
@@ -38,7 +38,7 @@ Defined in: [src/lib/types/adcp.ts:269](https://github.com/adcontextprotocol/adc
 
 > `optional` **filters**: [`CreativeFilters`](CreativeFilters.md)
 
-Defined in: [src/lib/types/adcp.ts:270](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L270)
+Defined in: [src/lib/types/adcp.ts:271](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/adcp.ts#L271)
 
 ***
 
@@ -46,7 +46,7 @@ Defined in: [src/lib/types/adcp.ts:270](https://github.com/adcontextprotocol/adc
 
 > `optional` **pagination**: [`PaginationOptions`](PaginationOptions.md)
 
-Defined in: [src/lib/types/adcp.ts:271](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L271)
+Defined in: [src/lib/types/adcp.ts:272](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/adcp.ts#L272)
 
 ***
 
@@ -54,15 +54,15 @@ Defined in: [src/lib/types/adcp.ts:271](https://github.com/adcontextprotocol/adc
 
 > `optional` **creative\_id**: `string`
 
-Defined in: [src/lib/types/adcp.ts:272](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L272)
+Defined in: [src/lib/types/adcp.ts:273](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/adcp.ts#L273)
 
 ***
 
 ### updates?
 
-> `optional` **updates**: `Partial`\<[`CreativeAsset`](CreativeAsset.md)\>
+> `optional` **updates**: `Partial`\<`CreativeAsset`\>
 
-Defined in: [src/lib/types/adcp.ts:273](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L273)
+Defined in: [src/lib/types/adcp.ts:274](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/adcp.ts#L274)
 
 ***
 
@@ -70,7 +70,7 @@ Defined in: [src/lib/types/adcp.ts:273](https://github.com/adcontextprotocol/adc
 
 > `optional` **creative\_ids**: `string`[]
 
-Defined in: [src/lib/types/adcp.ts:274](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L274)
+Defined in: [src/lib/types/adcp.ts:275](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/adcp.ts#L275)
 
 ***
 
@@ -78,7 +78,7 @@ Defined in: [src/lib/types/adcp.ts:274](https://github.com/adcontextprotocol/adc
 
 > `optional` **media\_buy\_id**: `string`
 
-Defined in: [src/lib/types/adcp.ts:275](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L275)
+Defined in: [src/lib/types/adcp.ts:276](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/adcp.ts#L276)
 
 ***
 
@@ -86,7 +86,7 @@ Defined in: [src/lib/types/adcp.ts:275](https://github.com/adcontextprotocol/adc
 
 > `optional` **buyer\_ref**: `string`
 
-Defined in: [src/lib/types/adcp.ts:276](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L276)
+Defined in: [src/lib/types/adcp.ts:277](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/adcp.ts#L277)
 
 ***
 
@@ -94,7 +94,7 @@ Defined in: [src/lib/types/adcp.ts:276](https://github.com/adcontextprotocol/adc
 
 > `optional` **package\_assignments**: `object`
 
-Defined in: [src/lib/types/adcp.ts:277](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L277)
+Defined in: [src/lib/types/adcp.ts:278](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/adcp.ts#L278)
 
 #### Index Signature
 
@@ -106,7 +106,7 @@ Defined in: [src/lib/types/adcp.ts:277](https://github.com/adcontextprotocol/adc
 
 > `optional` **package\_ids**: `string`[]
 
-Defined in: [src/lib/types/adcp.ts:278](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L278)
+Defined in: [src/lib/types/adcp.ts:279](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/adcp.ts#L279)
 
 ***
 
@@ -114,4 +114,4 @@ Defined in: [src/lib/types/adcp.ts:278](https://github.com/adcontextprotocol/adc
 
 > `optional` **archive**: `boolean`
 
-Defined in: [src/lib/types/adcp.ts:279](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L279)
+Defined in: [src/lib/types/adcp.ts:280](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/adcp.ts#L280)

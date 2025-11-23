@@ -1,20 +1,24 @@
-[**@adcp/client API Reference v2.0.0**](../README.md)
+[**@adcp/client API Reference v3.1.0**](../README.md)
 
 ***
 
-[@adcp/client API Reference](../README.md) / CreativeAsset
+[@adcp/client API Reference](../globals.md) / CreativeAsset
 
 # Interface: CreativeAsset
 
-Defined in: [src/lib/types/adcp.ts:23](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L23)
+Defined in: [src/lib/types/tools.generated.ts:1717](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/tools.generated.ts#L1717)
+
+Creative asset for upload to library - supports static assets, generative formats, and third-party snippets
 
 ## Properties
 
-### id
+### creative\_id
 
-> **id**: `string`
+> **creative\_id**: `string`
 
-Defined in: [src/lib/types/adcp.ts:24](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L24)
+Defined in: [src/lib/types/tools.generated.ts:1721](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/tools.generated.ts#L1721)
+
+Unique identifier for the creative
 
 ***
 
@@ -22,95 +26,66 @@ Defined in: [src/lib/types/adcp.ts:24](https://github.com/adcontextprotocol/adcp
 
 > **name**: `string`
 
-Defined in: [src/lib/types/adcp.ts:25](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L25)
+Defined in: [src/lib/types/tools.generated.ts:1725](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/tools.generated.ts#L1725)
+
+Human-readable creative name
 
 ***
 
-### type
+### format\_id
 
-> **type**: `"image"` \| `"video"` \| `"html"` \| `"native"`
+> **format\_id**: `FormatID1`
 
-Defined in: [src/lib/types/adcp.ts:26](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L26)
-
-***
-
-### format
-
-> **format**: `string`
-
-Defined in: [src/lib/types/adcp.ts:27](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L27)
+Defined in: [src/lib/types/tools.generated.ts:1726](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/tools.generated.ts#L1726)
 
 ***
 
-### dimensions
+### assets
 
-> **dimensions**: `object`
+> **assets**: `object`
 
-Defined in: [src/lib/types/adcp.ts:28](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L28)
+Defined in: [src/lib/types/tools.generated.ts:1730](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/tools.generated.ts#L1730)
 
-#### width
+Assets required by the format, keyed by asset_role
 
-> **width**: `number`
+#### Index Signature
 
-#### height
+\[`k`: `string`\]: `VASTAsset` \| `DAASTAsset` \| `ImageAsset` \| `VideoAsset` \| `AudioAsset` \| `TextAsset` \| `HTMLAsset` \| `CSSAsset` \| `JavaScriptAsset` \| `PromotedOfferings` \| `URLAsset`
 
-> **height**: `number`
-
-***
-
-### url?
-
-> `optional` **url**: `string`
-
-Defined in: [src/lib/types/adcp.ts:33](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L33)
+This interface was referenced by `undefined`'s JSON-Schema definition
+via the `patternProperty` "^[a-zA-Z0-9_-]+$".
 
 ***
 
-### media\_url?
+### inputs?
 
-> `optional` **media\_url**: `string`
+> `optional` **inputs**: `object`[]
 
-Defined in: [src/lib/types/adcp.ts:34](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L34)
+Defined in: [src/lib/types/tools.generated.ts:1751](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/tools.generated.ts#L1751)
 
-***
+Preview contexts for generative formats - defines what scenarios to generate previews for
 
-### snippet?
+#### name
 
-> `optional` **snippet**: `string`
+> **name**: `string`
 
-Defined in: [src/lib/types/adcp.ts:35](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L35)
+Human-readable name for this preview variant
 
-***
+#### macros?
 
-### snippet\_type?
+> `optional` **macros**: `object`
 
-> `optional` **snippet\_type**: `"html"` \| `"javascript"` \| `"amp"`
+Macro values to apply for this preview
 
-Defined in: [src/lib/types/adcp.ts:36](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L36)
+##### Index Signature
 
-***
+\[`k`: `string`\]: `string`
 
-### status
+#### context\_description?
 
-> **status**: `"active"` \| `"inactive"` \| `"pending_review"` \| `"approved"` \| `"rejected"`
+> `optional` **context\_description**: `string`
 
-Defined in: [src/lib/types/adcp.ts:37](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L37)
-
-***
-
-### file\_size?
-
-> `optional` **file\_size**: `number`
-
-Defined in: [src/lib/types/adcp.ts:38](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L38)
-
-***
-
-### duration?
-
-> `optional` **duration**: `number`
-
-Defined in: [src/lib/types/adcp.ts:39](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L39)
+Natural language description of the context for AI-generated content
 
 ***
 
@@ -118,28 +93,16 @@ Defined in: [src/lib/types/adcp.ts:39](https://github.com/adcontextprotocol/adcp
 
 > `optional` **tags**: `string`[]
 
-Defined in: [src/lib/types/adcp.ts:41](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L41)
+Defined in: [src/lib/types/tools.generated.ts:1770](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/tools.generated.ts#L1770)
+
+User-defined tags for organization and searchability
 
 ***
 
-### sub\_assets?
+### approved?
 
-> `optional` **sub\_assets**: [`CreativeSubAsset`](CreativeSubAsset.md)[]
+> `optional` **approved**: `boolean`
 
-Defined in: [src/lib/types/adcp.ts:42](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L42)
+Defined in: [src/lib/types/tools.generated.ts:1774](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/tools.generated.ts#L1774)
 
-***
-
-### created\_at?
-
-> `optional` **created\_at**: `string`
-
-Defined in: [src/lib/types/adcp.ts:43](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L43)
-
-***
-
-### updated\_at?
-
-> `optional` **updated\_at**: `string`
-
-Defined in: [src/lib/types/adcp.ts:44](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L44)
+For generative creatives: set to true to approve and finalize, false to request regeneration with updated assets/message. Omit for non-generative creatives.

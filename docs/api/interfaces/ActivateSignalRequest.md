@@ -1,51 +1,45 @@
-[**@adcp/client API Reference v2.0.0**](../README.md)
+[**@adcp/client API Reference v3.1.0**](../README.md)
 
 ***
 
-[@adcp/client API Reference](../README.md) / ActivateSignalRequest
+[@adcp/client API Reference](../globals.md) / ActivateSignalRequest
 
 # Interface: ActivateSignalRequest
 
-Defined in: [src/lib/types/tools.generated.ts:1744](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L1744)
+Defined in: [src/lib/types/tools.generated.ts:4041](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/tools.generated.ts#L4041)
 
-Request parameters for activating a signal on a specific platform/account
+A destination platform where signals can be activated (DSP, sales agent, etc.)
 
 ## Properties
-
-### adcp\_version?
-
-> `optional` **adcp\_version**: `string`
-
-Defined in: [src/lib/types/tools.generated.ts:1748](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L1748)
-
-AdCP schema version for this request
-
-***
 
 ### signal\_agent\_segment\_id
 
 > **signal\_agent\_segment\_id**: `string`
 
-Defined in: [src/lib/types/tools.generated.ts:1752](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L1752)
+Defined in: [src/lib/types/tools.generated.ts:4045](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/tools.generated.ts#L4045)
 
 The universal identifier for the signal to activate
 
 ***
 
-### platform
+### destinations
 
-> **platform**: `string`
+> **destinations**: \[`Destination`, `...Destination[]`\]
 
-Defined in: [src/lib/types/tools.generated.ts:1756](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L1756)
+Defined in: [src/lib/types/tools.generated.ts:4051](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/tools.generated.ts#L4051)
 
-The target platform for activation
+Target destination(s) for activation. If the authenticated caller matches one of these destinations, activation keys will be included in the response.
+
+#### Min Items
+
+1
 
 ***
 
-### account?
+### context?
 
-> `optional` **account**: `string`
+> `optional` **context**: `object`
 
-Defined in: [src/lib/types/tools.generated.ts:1760](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L1760)
+Defined in: [src/lib/types/tools.generated.ts:4055](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/tools.generated.ts#L4055)
 
-Account identifier (required for account-specific activation)
+Initiator-provided context included in the request payload. Agents must echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.

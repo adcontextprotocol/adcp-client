@@ -1,12 +1,12 @@
-[**@adcp/client API Reference v2.0.0**](../README.md)
+[**@adcp/client API Reference v3.1.0**](../README.md)
 
 ***
 
-[@adcp/client API Reference](../README.md) / TestResponse
+[@adcp/client API Reference](../globals.md) / TestResponse
 
 # Interface: TestResponse
 
-Defined in: [src/lib/types/adcp.ts:207](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L207)
+Defined in: [src/lib/types/adcp.ts:208](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/adcp.ts#L208)
 
 ## Properties
 
@@ -14,7 +14,7 @@ Defined in: [src/lib/types/adcp.ts:207](https://github.com/adcontextprotocol/adc
 
 > **test\_id**: `string`
 
-Defined in: [src/lib/types/adcp.ts:208](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L208)
+Defined in: [src/lib/types/adcp.ts:209](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/adcp.ts#L209)
 
 ***
 
@@ -22,7 +22,7 @@ Defined in: [src/lib/types/adcp.ts:208](https://github.com/adcontextprotocol/adc
 
 > **results**: [`TestResult`](TestResult.md)[]
 
-Defined in: [src/lib/types/adcp.ts:209](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L209)
+Defined in: [src/lib/types/adcp.ts:210](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/adcp.ts#L210)
 
 ***
 
@@ -30,7 +30,7 @@ Defined in: [src/lib/types/adcp.ts:209](https://github.com/adcontextprotocol/adc
 
 > **summary**: `object`
 
-Defined in: [src/lib/types/adcp.ts:210](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L210)
+Defined in: [src/lib/types/adcp.ts:211](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/adcp.ts#L211)
 
 #### total\_agents
 

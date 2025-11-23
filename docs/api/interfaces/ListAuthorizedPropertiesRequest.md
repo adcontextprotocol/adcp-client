@@ -1,31 +1,35 @@
-[**@adcp/client API Reference v2.0.0**](../README.md)
+[**@adcp/client API Reference v3.1.0**](../README.md)
 
 ***
 
-[@adcp/client API Reference](../README.md) / ListAuthorizedPropertiesRequest
+[@adcp/client API Reference](../globals.md) / ListAuthorizedPropertiesRequest
 
 # Interface: ListAuthorizedPropertiesRequest
 
-Defined in: [src/lib/types/tools.generated.ts:1452](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L1452)
+Defined in: [src/lib/types/tools.generated.ts:3039](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/tools.generated.ts#L3039)
 
-Request parameters for discovering all properties this agent is authorized to represent
+Request parameters for discovering which publishers this agent is authorized to represent
 
 ## Properties
 
-### adcp\_version?
+### publisher\_domains?
 
-> `optional` **adcp\_version**: `string`
+> `optional` **publisher\_domains**: \[`string`, `...string[]`\]
 
-Defined in: [src/lib/types/tools.generated.ts:1456](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L1456)
+Defined in: [src/lib/types/tools.generated.ts:3045](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/tools.generated.ts#L3045)
 
-AdCP schema version for this request
+Filter to specific publisher domains (optional). If omitted, returns all publishers this agent represents.
+
+#### Min Items
+
+1
 
 ***
 
-### tags?
+### context?
 
-> `optional` **tags**: `string`[]
+> `optional` **context**: `object`
 
-Defined in: [src/lib/types/tools.generated.ts:1460](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L1460)
+Defined in: [src/lib/types/tools.generated.ts:3049](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/tools.generated.ts#L3049)
 
-Filter properties by specific tags (optional)
+Initiator-provided context included in the request payload. Agentsmust echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.

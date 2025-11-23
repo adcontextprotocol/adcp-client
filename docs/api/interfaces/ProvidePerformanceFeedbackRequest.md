@@ -1,32 +1,22 @@
-[**@adcp/client API Reference v2.0.0**](../README.md)
+[**@adcp/client API Reference v3.1.0**](../README.md)
 
 ***
 
-[@adcp/client API Reference](../README.md) / ProvidePerformanceFeedbackRequest
+[@adcp/client API Reference](../globals.md) / ProvidePerformanceFeedbackRequest
 
 # Interface: ProvidePerformanceFeedbackRequest
 
-Defined in: [src/lib/types/tools.generated.ts:1505](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L1505)
+Defined in: [src/lib/types/tools.generated.ts:3119](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/tools.generated.ts#L3119)
 
 Request payload for provide_performance_feedback task
 
 ## Properties
 
-### adcp\_version?
-
-> `optional` **adcp\_version**: `string`
-
-Defined in: [src/lib/types/tools.generated.ts:1509](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L1509)
-
-AdCP schema version for this request
-
-***
-
 ### media\_buy\_id
 
 > **media\_buy\_id**: `string`
 
-Defined in: [src/lib/types/tools.generated.ts:1513](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L1513)
+Defined in: [src/lib/types/tools.generated.ts:3123](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/tools.generated.ts#L3123)
 
 Publisher's media buy identifier
 
@@ -36,7 +26,7 @@ Publisher's media buy identifier
 
 > **measurement\_period**: `object`
 
-Defined in: [src/lib/types/tools.generated.ts:1517](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L1517)
+Defined in: [src/lib/types/tools.generated.ts:3127](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/tools.generated.ts#L3127)
 
 Time period for performance measurement
 
@@ -58,7 +48,7 @@ ISO 8601 end timestamp for measurement period
 
 > **performance\_index**: `number`
 
-Defined in: [src/lib/types/tools.generated.ts:1530](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L1530)
+Defined in: [src/lib/types/tools.generated.ts:3140](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/tools.generated.ts#L3140)
 
 Normalized performance score (0.0 = no value, 1.0 = expected, >1.0 = above expected)
 
@@ -68,7 +58,7 @@ Normalized performance score (0.0 = no value, 1.0 = expected, >1.0 = above expec
 
 > `optional` **package\_id**: `string`
 
-Defined in: [src/lib/types/tools.generated.ts:1534](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L1534)
+Defined in: [src/lib/types/tools.generated.ts:3144](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/tools.generated.ts#L3144)
 
 Specific package within the media buy (if feedback is package-specific)
 
@@ -78,7 +68,7 @@ Specific package within the media buy (if feedback is package-specific)
 
 > `optional` **creative\_id**: `string`
 
-Defined in: [src/lib/types/tools.generated.ts:1538](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L1538)
+Defined in: [src/lib/types/tools.generated.ts:3148](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/tools.generated.ts#L3148)
 
 Specific creative asset (if feedback is creative-specific)
 
@@ -86,9 +76,9 @@ Specific creative asset (if feedback is creative-specific)
 
 ### metric\_type?
 
-> `optional` **metric\_type**: `"overall_performance"` \| `"conversion_rate"` \| `"brand_lift"` \| `"click_through_rate"` \| `"completion_rate"` \| `"viewability"` \| `"brand_safety"` \| `"cost_efficiency"`
+> `optional` **metric\_type**: `"completion_rate"` \| `"viewability"` \| `"conversion_rate"` \| `"overall_performance"` \| `"brand_lift"` \| `"click_through_rate"` \| `"brand_safety"` \| `"cost_efficiency"`
 
-Defined in: [src/lib/types/tools.generated.ts:1542](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L1542)
+Defined in: [src/lib/types/tools.generated.ts:3152](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/tools.generated.ts#L3152)
 
 The business metric being measured
 
@@ -98,6 +88,16 @@ The business metric being measured
 
 > `optional` **feedback\_source**: `"buyer_attribution"` \| `"third_party_measurement"` \| `"platform_analytics"` \| `"verification_partner"`
 
-Defined in: [src/lib/types/tools.generated.ts:1554](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L1554)
+Defined in: [src/lib/types/tools.generated.ts:3164](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/tools.generated.ts#L3164)
 
 Source of the performance data
+
+***
+
+### context?
+
+> `optional` **context**: `object`
+
+Defined in: [src/lib/types/tools.generated.ts:3168](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/tools.generated.ts#L3168)
+
+Initiator-provided context included in the request payload. Agentsmust echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.

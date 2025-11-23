@@ -1,12 +1,12 @@
-[**@adcp/client API Reference v2.0.0**](../README.md)
+[**@adcp/client API Reference v3.1.0**](../README.md)
 
 ***
 
-[@adcp/client API Reference](../README.md) / TaskState
+[@adcp/client API Reference](../globals.md) / TaskState
 
 # Interface: TaskState
 
-Defined in: [src/lib/core/ConversationTypes.ts:128](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/core/ConversationTypes.ts#L128)
+Defined in: [src/lib/core/ConversationTypes.ts:136](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/core/ConversationTypes.ts#L136)
 
 Internal task state for tracking execution
 
@@ -16,7 +16,7 @@ Internal task state for tracking execution
 
 > **taskId**: `string`
 
-Defined in: [src/lib/core/ConversationTypes.ts:130](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/core/ConversationTypes.ts#L130)
+Defined in: [src/lib/core/ConversationTypes.ts:138](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/core/ConversationTypes.ts#L138)
 
 Unique task identifier
 
@@ -26,7 +26,7 @@ Unique task identifier
 
 > **taskName**: `string`
 
-Defined in: [src/lib/core/ConversationTypes.ts:132](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/core/ConversationTypes.ts#L132)
+Defined in: [src/lib/core/ConversationTypes.ts:140](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/core/ConversationTypes.ts#L140)
 
 Task name (tool name)
 
@@ -36,7 +36,7 @@ Task name (tool name)
 
 > **params**: `any`
 
-Defined in: [src/lib/core/ConversationTypes.ts:134](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/core/ConversationTypes.ts#L134)
+Defined in: [src/lib/core/ConversationTypes.ts:142](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/core/ConversationTypes.ts#L142)
 
 Original parameters
 
@@ -46,7 +46,7 @@ Original parameters
 
 > **status**: [`TaskStatus`](../type-aliases/TaskStatus.md)
 
-Defined in: [src/lib/core/ConversationTypes.ts:136](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/core/ConversationTypes.ts#L136)
+Defined in: [src/lib/core/ConversationTypes.ts:144](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/core/ConversationTypes.ts#L144)
 
 Current status
 
@@ -56,7 +56,7 @@ Current status
 
 > **messages**: [`Message`](Message.md)[]
 
-Defined in: [src/lib/core/ConversationTypes.ts:138](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/core/ConversationTypes.ts#L138)
+Defined in: [src/lib/core/ConversationTypes.ts:146](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/core/ConversationTypes.ts#L146)
 
 Message history
 
@@ -66,7 +66,7 @@ Message history
 
 > `optional` **pendingInput**: [`InputRequest`](InputRequest.md)
 
-Defined in: [src/lib/core/ConversationTypes.ts:140](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/core/ConversationTypes.ts#L140)
+Defined in: [src/lib/core/ConversationTypes.ts:148](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/core/ConversationTypes.ts#L148)
 
 Current input request (if waiting for input)
 
@@ -76,7 +76,7 @@ Current input request (if waiting for input)
 
 > **startTime**: `number`
 
-Defined in: [src/lib/core/ConversationTypes.ts:142](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/core/ConversationTypes.ts#L142)
+Defined in: [src/lib/core/ConversationTypes.ts:150](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/core/ConversationTypes.ts#L150)
 
 Start time
 
@@ -86,7 +86,7 @@ Start time
 
 > **attempt**: `number`
 
-Defined in: [src/lib/core/ConversationTypes.ts:144](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/core/ConversationTypes.ts#L144)
+Defined in: [src/lib/core/ConversationTypes.ts:152](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/core/ConversationTypes.ts#L152)
 
 Current attempt number
 
@@ -96,7 +96,7 @@ Current attempt number
 
 > **maxAttempts**: `number`
 
-Defined in: [src/lib/core/ConversationTypes.ts:146](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/core/ConversationTypes.ts#L146)
+Defined in: [src/lib/core/ConversationTypes.ts:154](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/core/ConversationTypes.ts#L154)
 
 Maximum attempts allowed
 
@@ -106,7 +106,7 @@ Maximum attempts allowed
 
 > **options**: [`TaskOptions`](TaskOptions.md)
 
-Defined in: [src/lib/core/ConversationTypes.ts:148](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/core/ConversationTypes.ts#L148)
+Defined in: [src/lib/core/ConversationTypes.ts:156](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/core/ConversationTypes.ts#L156)
 
 Task options
 
@@ -116,7 +116,7 @@ Task options
 
 > **agent**: `object`
 
-Defined in: [src/lib/core/ConversationTypes.ts:150](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/core/ConversationTypes.ts#L150)
+Defined in: [src/lib/core/ConversationTypes.ts:158](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/core/ConversationTypes.ts#L158)
 
 Agent configuration
 

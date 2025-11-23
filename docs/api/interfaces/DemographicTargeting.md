@@ -1,12 +1,12 @@
-[**@adcp/client API Reference v2.0.0**](../README.md)
+[**@adcp/client API Reference v3.1.0**](../README.md)
 
 ***
 
-[@adcp/client API Reference](../README.md) / DemographicTargeting
+[@adcp/client API Reference](../globals.md) / DemographicTargeting
 
 # Interface: DemographicTargeting
 
-Defined in: [src/lib/types/adcp.ts:112](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L112)
+Defined in: [src/lib/types/adcp.ts:110](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/adcp.ts#L110)
 
 ## Properties
 
@@ -14,7 +14,7 @@ Defined in: [src/lib/types/adcp.ts:112](https://github.com/adcontextprotocol/adc
 
 > `optional` **age\_ranges**: `object`[]
 
-Defined in: [src/lib/types/adcp.ts:113](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L113)
+Defined in: [src/lib/types/adcp.ts:111](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/adcp.ts#L111)
 
 #### min
 
@@ -30,7 +30,7 @@ Defined in: [src/lib/types/adcp.ts:113](https://github.com/adcontextprotocol/adc
 
 > `optional` **genders**: (`"male"` \| `"female"` \| `"other"`)[]
 
-Defined in: [src/lib/types/adcp.ts:117](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L117)
+Defined in: [src/lib/types/adcp.ts:115](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/adcp.ts#L115)
 
 ***
 
@@ -38,7 +38,7 @@ Defined in: [src/lib/types/adcp.ts:117](https://github.com/adcontextprotocol/adc
 
 > `optional` **income\_ranges**: `object`[]
 
-Defined in: [src/lib/types/adcp.ts:118](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L118)
+Defined in: [src/lib/types/adcp.ts:116](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/adcp.ts#L116)
 
 #### min
 

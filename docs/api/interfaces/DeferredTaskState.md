@@ -1,12 +1,12 @@
-[**@adcp/client API Reference v2.0.0**](../README.md)
+[**@adcp/client API Reference v3.1.0**](../README.md)
 
 ***
 
-[@adcp/client API Reference](../README.md) / DeferredTaskState
+[@adcp/client API Reference](../globals.md) / DeferredTaskState
 
 # Interface: DeferredTaskState
 
-Defined in: [src/lib/storage/interfaces.ts:111](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/storage/interfaces.ts#L111)
+Defined in: [src/lib/storage/interfaces.ts:111](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/storage/interfaces.ts#L111)
 
 Deferred task state for resumption
 
@@ -16,7 +16,7 @@ Deferred task state for resumption
 
 > **token**: `string`
 
-Defined in: [src/lib/storage/interfaces.ts:113](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/storage/interfaces.ts#L113)
+Defined in: [src/lib/storage/interfaces.ts:113](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/storage/interfaces.ts#L113)
 
 Unique token for this deferred task
 
@@ -26,7 +26,7 @@ Unique token for this deferred task
 
 > **taskId**: `string`
 
-Defined in: [src/lib/storage/interfaces.ts:115](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/storage/interfaces.ts#L115)
+Defined in: [src/lib/storage/interfaces.ts:115](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/storage/interfaces.ts#L115)
 
 Task ID
 
@@ -36,7 +36,7 @@ Task ID
 
 > **taskName**: `string`
 
-Defined in: [src/lib/storage/interfaces.ts:117](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/storage/interfaces.ts#L117)
+Defined in: [src/lib/storage/interfaces.ts:117](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/storage/interfaces.ts#L117)
 
 Task name
 
@@ -46,7 +46,7 @@ Task name
 
 > **agentId**: `string`
 
-Defined in: [src/lib/storage/interfaces.ts:119](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/storage/interfaces.ts#L119)
+Defined in: [src/lib/storage/interfaces.ts:119](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/storage/interfaces.ts#L119)
 
 Agent ID
 
@@ -56,7 +56,7 @@ Agent ID
 
 > **params**: `any`
 
-Defined in: [src/lib/storage/interfaces.ts:121](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/storage/interfaces.ts#L121)
+Defined in: [src/lib/storage/interfaces.ts:121](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/storage/interfaces.ts#L121)
 
 Task parameters
 
@@ -66,7 +66,7 @@ Task parameters
 
 > **messages**: `object`[]
 
-Defined in: [src/lib/storage/interfaces.ts:123](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/storage/interfaces.ts#L123)
+Defined in: [src/lib/storage/interfaces.ts:123](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/storage/interfaces.ts#L123)
 
 Message history up to deferral point
 
@@ -76,7 +76,7 @@ Message history up to deferral point
 
 #### role
 
-> **role**: `"user"` \| `"agent"` \| `"system"`
+> **role**: `"agent"` \| `"user"` \| `"system"`
 
 #### content
 
@@ -96,7 +96,7 @@ Message history up to deferral point
 
 > `optional` **pendingInput**: `object`
 
-Defined in: [src/lib/storage/interfaces.ts:131](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/storage/interfaces.ts#L131)
+Defined in: [src/lib/storage/interfaces.ts:131](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/storage/interfaces.ts#L131)
 
 Pending input request that caused deferral
 
@@ -126,7 +126,7 @@ Pending input request that caused deferral
 
 > **deferredAt**: `string`
 
-Defined in: [src/lib/storage/interfaces.ts:139](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/storage/interfaces.ts#L139)
+Defined in: [src/lib/storage/interfaces.ts:139](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/storage/interfaces.ts#L139)
 
 When task was deferred
 
@@ -136,7 +136,7 @@ When task was deferred
 
 > **expiresAt**: `string`
 
-Defined in: [src/lib/storage/interfaces.ts:141](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/storage/interfaces.ts#L141)
+Defined in: [src/lib/storage/interfaces.ts:141](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/storage/interfaces.ts#L141)
 
 When token expires
 
@@ -146,6 +146,6 @@ When token expires
 
 > `optional` **metadata**: `Record`\<`string`, `any`\>
 
-Defined in: [src/lib/storage/interfaces.ts:143](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/storage/interfaces.ts#L143)
+Defined in: [src/lib/storage/interfaces.ts:143](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/storage/interfaces.ts#L143)
 
 Additional metadata

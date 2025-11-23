@@ -1,12 +1,12 @@
-[**@adcp/client API Reference v2.0.0**](../README.md)
+[**@adcp/client API Reference v3.1.0**](../README.md)
 
 ***
 
-[@adcp/client API Reference](../README.md) / ContextualTargeting
+[@adcp/client API Reference](../globals.md) / ContextualTargeting
 
 # Interface: ContextualTargeting
 
-Defined in: [src/lib/types/adcp.ts:131](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L131)
+Defined in: [src/lib/types/adcp.ts:129](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/adcp.ts#L129)
 
 ## Properties
 
@@ -14,7 +14,7 @@ Defined in: [src/lib/types/adcp.ts:131](https://github.com/adcontextprotocol/adc
 
 > `optional` **keywords**: `string`[]
 
-Defined in: [src/lib/types/adcp.ts:132](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L132)
+Defined in: [src/lib/types/adcp.ts:130](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/adcp.ts#L130)
 
 ***
 
@@ -22,7 +22,7 @@ Defined in: [src/lib/types/adcp.ts:132](https://github.com/adcontextprotocol/adc
 
 > `optional` **topics**: `string`[]
 
-Defined in: [src/lib/types/adcp.ts:133](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L133)
+Defined in: [src/lib/types/adcp.ts:131](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/adcp.ts#L131)
 
 ***
 
@@ -30,7 +30,7 @@ Defined in: [src/lib/types/adcp.ts:133](https://github.com/adcontextprotocol/adc
 
 > `optional` **content\_categories**: `string`[]
 
-Defined in: [src/lib/types/adcp.ts:134](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L134)
+Defined in: [src/lib/types/adcp.ts:132](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/adcp.ts#L132)
 
 ***
 
@@ -38,4 +38,4 @@ Defined in: [src/lib/types/adcp.ts:134](https://github.com/adcontextprotocol/adc
 
 > `optional` **website\_categories**: `string`[]
 
-Defined in: [src/lib/types/adcp.ts:135](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L135)
+Defined in: [src/lib/types/adcp.ts:133](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/adcp.ts#L133)

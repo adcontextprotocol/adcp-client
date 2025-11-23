@@ -1,32 +1,22 @@
-[**@adcp/client API Reference v2.0.0**](../README.md)
+[**@adcp/client API Reference v3.1.0**](../README.md)
 
 ***
 
-[@adcp/client API Reference](../README.md) / ListCreativesRequest
+[@adcp/client API Reference](../globals.md) / ListCreativesRequest
 
 # Interface: ListCreativesRequest
 
-Defined in: [src/lib/types/tools.generated.ts:811](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L811)
+Defined in: [src/lib/types/tools.generated.ts:2227](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/tools.generated.ts#L2227)
 
-Filter by third-party snippet type
+Request parameters for querying creative assets from the centralized library with filtering, sorting, and pagination
 
 ## Properties
-
-### adcp\_version?
-
-> `optional` **adcp\_version**: `string`
-
-Defined in: [src/lib/types/tools.generated.ts:815](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L815)
-
-AdCP schema version for this request
-
-***
 
 ### filters?
 
 > `optional` **filters**: `object`
 
-Defined in: [src/lib/types/tools.generated.ts:819](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L819)
+Defined in: [src/lib/types/tools.generated.ts:2231](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/tools.generated.ts#L2231)
 
 Filter criteria for querying creatives
 
@@ -122,10 +112,6 @@ Filter creatives assigned to any of these packages
 
 Filter for unassigned creatives when true, assigned creatives when false
 
-#### snippet\_type?
-
-> `optional` **snippet\_type**: `SnippetType`
-
 #### has\_performance\_data?
 
 > `optional` **has\_performance\_data**: `boolean`
@@ -138,13 +124,13 @@ Filter creatives that have performance data when true
 
 > `optional` **sort**: `object`
 
-Defined in: [src/lib/types/tools.generated.ts:888](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L888)
+Defined in: [src/lib/types/tools.generated.ts:2299](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/tools.generated.ts#L2299)
 
 Sorting parameters
 
 #### field?
 
-> `optional` **field**: `"created_date"` \| `"updated_date"` \| `"name"` \| `"status"` \| `"assignment_count"` \| `"performance_score"`
+> `optional` **field**: `"name"` \| `"created_date"` \| `"updated_date"` \| `"status"` \| `"assignment_count"` \| `"performance_score"`
 
 Field to sort by
 
@@ -160,7 +146,7 @@ Sort direction
 
 > `optional` **pagination**: `object`
 
-Defined in: [src/lib/types/tools.generated.ts:901](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L901)
+Defined in: [src/lib/types/tools.generated.ts:2312](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/tools.generated.ts#L2312)
 
 Pagination parameters
 
@@ -182,7 +168,7 @@ Number of creatives to skip
 
 > `optional` **include\_assignments**: `boolean`
 
-Defined in: [src/lib/types/tools.generated.ts:914](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L914)
+Defined in: [src/lib/types/tools.generated.ts:2325](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/tools.generated.ts#L2325)
 
 Include package assignment information in response
 
@@ -192,7 +178,7 @@ Include package assignment information in response
 
 > `optional` **include\_performance**: `boolean`
 
-Defined in: [src/lib/types/tools.generated.ts:918](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L918)
+Defined in: [src/lib/types/tools.generated.ts:2329](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/tools.generated.ts#L2329)
 
 Include aggregated performance metrics in response
 
@@ -202,7 +188,7 @@ Include aggregated performance metrics in response
 
 > `optional` **include\_sub\_assets**: `boolean`
 
-Defined in: [src/lib/types/tools.generated.ts:922](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L922)
+Defined in: [src/lib/types/tools.generated.ts:2333](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/tools.generated.ts#L2333)
 
 Include sub-assets (for carousel/native formats) in response
 
@@ -210,8 +196,18 @@ Include sub-assets (for carousel/native formats) in response
 
 ### fields?
 
-> `optional` **fields**: (`"created_date"` \| `"updated_date"` \| `"name"` \| `"status"` \| `"creative_id"` \| `"format"` \| `"tags"` \| `"assignments"` \| `"performance"` \| `"sub_assets"`)[]
+> `optional` **fields**: (`"creative_id"` \| `"format"` \| `"name"` \| `"tags"` \| `"created_date"` \| `"updated_date"` \| `"status"` \| `"assignments"` \| `"performance"` \| `"sub_assets"`)[]
 
-Defined in: [src/lib/types/tools.generated.ts:926](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L926)
+Defined in: [src/lib/types/tools.generated.ts:2337](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/tools.generated.ts#L2337)
 
 Specific fields to include in response (omit for all fields)
+
+***
+
+### context?
+
+> `optional` **context**: `object`
+
+Defined in: [src/lib/types/tools.generated.ts:2352](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/tools.generated.ts#L2352)
+
+Initiator-provided context included in the request payload. Agentsmust echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.

@@ -1,12 +1,14 @@
-[**@adcp/client API Reference v2.0.0**](../README.md)
+[**@adcp/client API Reference v3.1.0**](../README.md)
 
 ***
 
-[@adcp/client API Reference](../README.md) / AdAgentsJson
+[@adcp/client API Reference](../globals.md) / AdAgentsJson
 
 # Interface: AdAgentsJson
 
-Defined in: [src/lib/types/adcp.ts:389](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L389)
+Defined in: [src/lib/discovery/types.ts:54](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/discovery/types.ts#L54)
+
+adagents.json structure
 
 ## Properties
 
@@ -14,15 +16,23 @@ Defined in: [src/lib/types/adcp.ts:389](https://github.com/adcontextprotocol/adc
 
 > `optional` **$schema**: `string`
 
-Defined in: [src/lib/types/adcp.ts:390](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L390)
+Defined in: [src/lib/discovery/types.ts:55](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/discovery/types.ts#L55)
 
 ***
 
 ### authorized\_agents
 
-> **authorized\_agents**: [`AuthorizedAgent`](AuthorizedAgent.md)[]
+> **authorized\_agents**: `AuthorizedAgent`[]
 
-Defined in: [src/lib/types/adcp.ts:391](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L391)
+Defined in: [src/lib/discovery/types.ts:56](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/discovery/types.ts#L56)
+
+***
+
+### properties?
+
+> `optional` **properties**: [`Property`](Property.md)[]
+
+Defined in: [src/lib/discovery/types.ts:57](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/discovery/types.ts#L57)
 
 ***
 
@@ -30,4 +40,4 @@ Defined in: [src/lib/types/adcp.ts:391](https://github.com/adcontextprotocol/adc
 
 > `optional` **last\_updated**: `string`
 
-Defined in: [src/lib/types/adcp.ts:392](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L392)
+Defined in: [src/lib/discovery/types.ts:58](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/discovery/types.ts#L58)

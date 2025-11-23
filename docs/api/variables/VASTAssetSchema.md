@@ -1,0 +1,11 @@
+[**@adcp/client API Reference v3.1.0**](../README.md)
+
+***
+
+[@adcp/client API Reference](../globals.md) / VASTAssetSchema
+
+# Variable: VASTAssetSchema
+
+> `const` **VASTAssetSchema**: `ZodUnion`\<readonly \[`ZodObject`\<\{ `delivery_type`: `ZodLiteral`\<`"url"`\>; `url`: `ZodString`; `vast_version`: `ZodOptional`\<`ZodUnion`\<readonly \[`ZodLiteral`\<`"2.0"`\>, `ZodLiteral`\<`"3.0"`\>, `ZodLiteral`\<`"4.0"`\>, `ZodLiteral`\<`"4.1"`\>, `ZodLiteral`\<`"4.2"`\>\]\>\>; `vpaid_enabled`: `ZodOptional`\<`ZodBoolean`\>; `duration_ms`: `ZodOptional`\<`ZodNumber`\>; `tracking_events`: `ZodOptional`\<`ZodArray`\<`ZodUnion`\<readonly \[`ZodLiteral`\<`"start"`\>, `ZodLiteral`\<`"firstQuartile"`\>, `ZodLiteral`\<`"midpoint"`\>, `ZodLiteral`\<`"thirdQuartile"`\>, `ZodLiteral`\<`"complete"`\>, `ZodLiteral`\<`"impression"`\>, `ZodLiteral`\<`"click"`\>, `ZodLiteral`\<`"pause"`\>, `ZodLiteral`\<`"resume"`\>, `ZodLiteral`\<`"skip"`\>, `ZodLiteral`\<`"mute"`\>, `ZodLiteral`\<`"unmute"`\>, `ZodLiteral`\<`"fullscreen"`\>, `ZodLiteral`\<`"exitFullscreen"`\>, `ZodLiteral`\<`"playerExpand"`\>, `ZodLiteral`\<`"playerCollapse"`\>\]\>\>\>; \}, `$strip`\>, `ZodObject`\<\{ `delivery_type`: `ZodLiteral`\<`"inline"`\>; `content`: `ZodString`; `vast_version`: `ZodOptional`\<`ZodUnion`\<readonly \[`ZodLiteral`\<`"2.0"`\>, `ZodLiteral`\<`"3.0"`\>, `ZodLiteral`\<`"4.0"`\>, `ZodLiteral`\<`"4.1"`\>, `ZodLiteral`\<`"4.2"`\>\]\>\>; `vpaid_enabled`: `ZodOptional`\<`ZodBoolean`\>; `duration_ms`: `ZodOptional`\<`ZodNumber`\>; `tracking_events`: `ZodOptional`\<`ZodArray`\<`ZodUnion`\<readonly \[`ZodLiteral`\<`"start"`\>, `ZodLiteral`\<`"firstQuartile"`\>, `ZodLiteral`\<`"midpoint"`\>, `ZodLiteral`\<`"thirdQuartile"`\>, `ZodLiteral`\<`"complete"`\>, `ZodLiteral`\<`"impression"`\>, `ZodLiteral`\<`"click"`\>, `ZodLiteral`\<`"pause"`\>, `ZodLiteral`\<`"resume"`\>, `ZodLiteral`\<`"skip"`\>, `ZodLiteral`\<`"mute"`\>, `ZodLiteral`\<`"unmute"`\>, `ZodLiteral`\<`"fullscreen"`\>, `ZodLiteral`\<`"exitFullscreen"`\>, `ZodLiteral`\<`"playerExpand"`\>, `ZodLiteral`\<`"playerCollapse"`\>\]\>\>\>; \}, `$strip`\>\]\>
+
+Defined in: [src/lib/types/schemas.generated.ts:34](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/schemas.generated.ts#L34)

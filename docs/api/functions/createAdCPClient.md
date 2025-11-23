@@ -1,33 +1,27 @@
-[**@adcp/client API Reference v2.0.0**](../README.md)
+[**@adcp/client API Reference v3.1.0**](../README.md)
 
 ***
 
-[@adcp/client API Reference](../README.md) / createAdCPClient
+[@adcp/client API Reference](../globals.md) / createAdCPClient
 
-# Function: createAdCPClient()
+# ~~Function: createAdCPClient()~~
 
-> **createAdCPClient**(`agent`, `config?`): [`AdCPClient`](../classes/AdCPClient.md)
+> **createAdCPClient**(`agents?`): [`ADCPMultiAgentClient`](../classes/ADCPMultiAgentClient.md)
 
-Defined in: [src/lib/core/AdCPClient.ts:489](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/core/AdCPClient.ts#L489)
+Defined in: [src/lib/index.ts:206](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/index.ts#L206)
 
-Factory function to create an ADCP client
+Legacy createAdCPClient function for backward compatibility
 
 ## Parameters
 
-### agent
+### agents?
 
-[`AgentConfig`](../interfaces/AgentConfig.md)
-
-Agent configuration
-
-### config?
-
-[`AdCPClientConfig`](../interfaces/AdCPClientConfig.md)
-
-Client configuration
+[`AgentConfig`](../interfaces/AgentConfig.md)[]
 
 ## Returns
 
-[`AdCPClient`](../classes/AdCPClient.md)
+[`ADCPMultiAgentClient`](../classes/ADCPMultiAgentClient.md)
 
-Configured AdCPClient instance
+## Deprecated
+
+Use new ADCPMultiAgentClient constructor instead

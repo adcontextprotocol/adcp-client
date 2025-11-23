@@ -1,32 +1,22 @@
-[**@adcp/client API Reference v2.0.0**](../README.md)
+[**@adcp/client API Reference v3.1.0**](../README.md)
 
 ***
 
-[@adcp/client API Reference](../README.md) / CreateMediaBuyRequest
+[@adcp/client API Reference](../globals.md) / CreateMediaBuyRequest
 
 # Interface: CreateMediaBuyRequest
 
-Defined in: [src/lib/types/tools.generated.ts:492](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L492)
+Defined in: [src/lib/types/tools.generated.ts:1588](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/tools.generated.ts#L1588)
 
 Request parameters for creating a media buy
 
 ## Properties
 
-### adcp\_version?
-
-> `optional` **adcp\_version**: `string`
-
-Defined in: [src/lib/types/tools.generated.ts:496](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L496)
-
-AdCP schema version for this request
-
-***
-
 ### buyer\_ref
 
 > **buyer\_ref**: `string`
 
-Defined in: [src/lib/types/tools.generated.ts:500](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L500)
+Defined in: [src/lib/types/tools.generated.ts:1592](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/tools.generated.ts#L1592)
 
 Buyer's reference identifier for this media buy
 
@@ -34,21 +24,19 @@ Buyer's reference identifier for this media buy
 
 ### packages
 
-> **packages**: (\{\[`k`: `string`\]: `unknown`; \} \| \{\[`k`: `string`\]: `unknown`; \})[]
+> **packages**: [`PackageRequest`](PackageRequest.md)[]
 
-Defined in: [src/lib/types/tools.generated.ts:504](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L504)
+Defined in: [src/lib/types/tools.generated.ts:1596](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/tools.generated.ts#L1596)
 
 Array of package configurations
 
 ***
 
-### promoted\_offering
+### brand\_manifest
 
-> **promoted\_offering**: `string`
+> **brand\_manifest**: `BrandManifestReference1`
 
-Defined in: [src/lib/types/tools.generated.ts:515](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L515)
-
-Description of advertiser and what is being promoted
+Defined in: [src/lib/types/tools.generated.ts:1597](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/tools.generated.ts#L1597)
 
 ***
 
@@ -56,7 +44,7 @@ Description of advertiser and what is being promoted
 
 > `optional` **po\_number**: `string`
 
-Defined in: [src/lib/types/tools.generated.ts:519](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L519)
+Defined in: [src/lib/types/tools.generated.ts:1601](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/tools.generated.ts#L1601)
 
 Purchase order number for tracking
 
@@ -66,9 +54,7 @@ Purchase order number for tracking
 
 > **start\_time**: `string`
 
-Defined in: [src/lib/types/tools.generated.ts:523](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L523)
-
-Campaign start date/time in ISO 8601 format
+Defined in: [src/lib/types/tools.generated.ts:1602](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/tools.generated.ts#L1602)
 
 ***
 
@@ -76,14 +62,38 @@ Campaign start date/time in ISO 8601 format
 
 > **end\_time**: `string`
 
-Defined in: [src/lib/types/tools.generated.ts:527](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L527)
+Defined in: [src/lib/types/tools.generated.ts:1606](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/tools.generated.ts#L1606)
 
 Campaign end date/time in ISO 8601 format
 
 ***
 
-### budget
+### reporting\_webhook?
 
-> **budget**: `Budget`
+> `optional` **reporting\_webhook**: `PushNotificationConfig` & `object`
 
-Defined in: [src/lib/types/tools.generated.ts:528](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L528)
+Defined in: [src/lib/types/tools.generated.ts:1607](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/tools.generated.ts#L1607)
+
+#### Type Declaration
+
+##### reporting\_frequency
+
+> **reporting\_frequency**: `"hourly"` \| `"daily"` \| `"monthly"`
+
+Frequency for automated reporting delivery. Must be supported by all products in the media buy.
+
+##### requested\_metrics?
+
+> `optional` **requested\_metrics**: (`"impressions"` \| `"spend"` \| `"clicks"` \| `"ctr"` \| `"video_completions"` \| `"completion_rate"` \| `"conversions"` \| `"viewability"` \| `"engagement_rate"`)[]
+
+Optional list of metrics to include in webhook notifications. If omitted, all available metrics are included. Must be subset of product's available_metrics.
+
+***
+
+### context?
+
+> `optional` **context**: `object`
+
+Defined in: [src/lib/types/tools.generated.ts:1630](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/tools.generated.ts#L1630)
+
+Initiator-provided context included in the request payload. Agentsmust echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.

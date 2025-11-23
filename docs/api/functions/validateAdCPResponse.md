@@ -1,14 +1,14 @@
-[**@adcp/client API Reference v2.0.0**](../README.md)
+[**@adcp/client API Reference v3.1.0**](../README.md)
 
 ***
 
-[@adcp/client API Reference](../README.md) / validateAdCPResponse
+[@adcp/client API Reference](../globals.md) / validateAdCPResponse
 
 # Function: validateAdCPResponse()
 
 > **validateAdCPResponse**(`response`, `expectedSchema`): `object`
 
-Defined in: [src/lib/validation/index.ts:92](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/validation/index.ts#L92)
+Defined in: [src/lib/validation/index.ts:94](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/validation/index.ts#L94)
 
 Validate AdCP response format and content
 

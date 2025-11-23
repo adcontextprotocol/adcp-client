@@ -1,14 +1,14 @@
-[**@adcp/client API Reference v2.0.0**](../README.md)
+[**@adcp/client API Reference v3.1.0**](../README.md)
 
 ***
 
-[@adcp/client API Reference](../README.md) / createMCPAuthHeaders
+[@adcp/client API Reference](../globals.md) / createMCPAuthHeaders
 
 # Function: createMCPAuthHeaders()
 
 > **createMCPAuthHeaders**(`authToken?`): `Record`\<`string`, `string`\>
 
-Defined in: [src/lib/auth/index.ts:66](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/auth/index.ts#L66)
+Defined in: [src/lib/auth/index.ts:92](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/auth/index.ts#L92)
 
 Create MCP authentication headers
 

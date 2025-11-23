@@ -1,12 +1,12 @@
-[**@adcp/client API Reference v2.0.0**](../README.md)
+[**@adcp/client API Reference v3.1.0**](../README.md)
 
 ***
 
-[@adcp/client API Reference](../README.md) / ConfigurationError
+[@adcp/client API Reference](../globals.md) / ConfigurationError
 
 # Class: ConfigurationError
 
-Defined in: [src/lib/errors/index.ts:162](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/errors/index.ts#L162)
+Defined in: [src/lib/errors/index.ts:165](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/errors/index.ts#L165)
 
 Error thrown when configuration is invalid
 
@@ -20,7 +20,7 @@ Error thrown when configuration is invalid
 
 > **new ConfigurationError**(`message`, `configField?`): `ConfigurationError`
 
-Defined in: [src/lib/errors/index.ts:165](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/errors/index.ts#L165)
+Defined in: [src/lib/errors/index.ts:168](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/errors/index.ts#L168)
 
 #### Parameters
 
@@ -46,7 +46,7 @@ Defined in: [src/lib/errors/index.ts:165](https://github.com/adcontextprotocol/a
 
 > `optional` **details**: `any`
 
-Defined in: [src/lib/errors/index.ts:9](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/errors/index.ts#L9)
+Defined in: [src/lib/errors/index.ts:11](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/errors/index.ts#L11)
 
 #### Inherited from
 
@@ -58,7 +58,7 @@ Defined in: [src/lib/errors/index.ts:9](https://github.com/adcontextprotocol/adc
 
 > `readonly` **code**: `"CONFIGURATION_ERROR"` = `'CONFIGURATION_ERROR'`
 
-Defined in: [src/lib/errors/index.ts:163](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/errors/index.ts#L163)
+Defined in: [src/lib/errors/index.ts:166](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/errors/index.ts#L166)
 
 #### Overrides
 
@@ -70,7 +70,7 @@ Defined in: [src/lib/errors/index.ts:163](https://github.com/adcontextprotocol/a
 
 > `readonly` `optional` **configField**: `string`
 
-Defined in: [src/lib/errors/index.ts:165](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/errors/index.ts#L165)
+Defined in: [src/lib/errors/index.ts:170](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/errors/index.ts#L170)
 
 ***
 

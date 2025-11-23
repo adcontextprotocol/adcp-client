@@ -1,12 +1,12 @@
-[**@adcp/client API Reference v2.0.0**](../README.md)
+[**@adcp/client API Reference v3.1.0**](../README.md)
 
 ***
 
-[@adcp/client API Reference](../README.md) / BatchStorage
+[@adcp/client API Reference](../globals.md) / BatchStorage
 
 # Interface: BatchStorage\<T\>
 
-Defined in: [src/lib/storage/interfaces.ts:186](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/storage/interfaces.ts#L186)
+Defined in: [src/lib/storage/interfaces.ts:184](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/storage/interfaces.ts#L184)
 
 Helper interface for batch operations
 
@@ -26,7 +26,7 @@ Helper interface for batch operations
 
 > **get**(`key`): `Promise`\<`undefined` \| `T`\>
 
-Defined in: [src/lib/storage/interfaces.ts:16](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/storage/interfaces.ts#L16)
+Defined in: [src/lib/storage/interfaces.ts:16](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/storage/interfaces.ts#L16)
 
 Get a value by key
 
@@ -54,7 +54,7 @@ Value or undefined if not found
 
 > **set**(`key`, `value`, `ttl?`): `Promise`\<`void`\>
 
-Defined in: [src/lib/storage/interfaces.ts:24](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/storage/interfaces.ts#L24)
+Defined in: [src/lib/storage/interfaces.ts:24](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/storage/interfaces.ts#L24)
 
 Set a value with optional TTL
 
@@ -92,7 +92,7 @@ Time to live in seconds (optional)
 
 > **delete**(`key`): `Promise`\<`void`\>
 
-Defined in: [src/lib/storage/interfaces.ts:30](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/storage/interfaces.ts#L30)
+Defined in: [src/lib/storage/interfaces.ts:30](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/storage/interfaces.ts#L30)
 
 Delete a value by key
 
@@ -118,7 +118,7 @@ Storage key
 
 > **has**(`key`): `Promise`\<`boolean`\>
 
-Defined in: [src/lib/storage/interfaces.ts:36](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/storage/interfaces.ts#L36)
+Defined in: [src/lib/storage/interfaces.ts:36](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/storage/interfaces.ts#L36)
 
 Check if a key exists
 
@@ -144,7 +144,7 @@ Storage key
 
 > `optional` **clear**(): `Promise`\<`void`\>
 
-Defined in: [src/lib/storage/interfaces.ts:41](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/storage/interfaces.ts#L41)
+Defined in: [src/lib/storage/interfaces.ts:41](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/storage/interfaces.ts#L41)
 
 Clear all stored values (optional)
 
@@ -162,7 +162,7 @@ Clear all stored values (optional)
 
 > `optional` **keys**(): `Promise`\<`string`[]\>
 
-Defined in: [src/lib/storage/interfaces.ts:46](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/storage/interfaces.ts#L46)
+Defined in: [src/lib/storage/interfaces.ts:46](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/storage/interfaces.ts#L46)
 
 Get all keys (optional, for debugging)
 
@@ -180,7 +180,7 @@ Get all keys (optional, for debugging)
 
 > `optional` **size**(): `Promise`\<`number`\>
 
-Defined in: [src/lib/storage/interfaces.ts:51](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/storage/interfaces.ts#L51)
+Defined in: [src/lib/storage/interfaces.ts:51](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/storage/interfaces.ts#L51)
 
 Get storage size/count (optional, for monitoring)
 
@@ -198,7 +198,7 @@ Get storage size/count (optional, for monitoring)
 
 > **mget**(`keys`): `Promise`\<(`undefined` \| `T`)[]\>
 
-Defined in: [src/lib/storage/interfaces.ts:190](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/storage/interfaces.ts#L190)
+Defined in: [src/lib/storage/interfaces.ts:188](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/storage/interfaces.ts#L188)
 
 Get multiple values at once
 
@@ -218,7 +218,7 @@ Get multiple values at once
 
 > **mset**(`entries`): `Promise`\<`void`\>
 
-Defined in: [src/lib/storage/interfaces.ts:195](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/storage/interfaces.ts#L195)
+Defined in: [src/lib/storage/interfaces.ts:193](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/storage/interfaces.ts#L193)
 
 Set multiple values at once
 
@@ -238,7 +238,7 @@ Set multiple values at once
 
 > **mdel**(`keys`): `Promise`\<`number`\>
 
-Defined in: [src/lib/storage/interfaces.ts:200](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/storage/interfaces.ts#L200)
+Defined in: [src/lib/storage/interfaces.ts:198](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/storage/interfaces.ts#L198)
 
 Delete multiple keys at once
 

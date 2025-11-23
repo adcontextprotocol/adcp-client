@@ -1,14 +1,14 @@
-[**@adcp/client API Reference v2.0.0**](../README.md)
+[**@adcp/client API Reference v3.1.0**](../README.md)
 
 ***
 
-[@adcp/client API Reference](../README.md) / isADCPError
+[@adcp/client API Reference](../globals.md) / isADCPError
 
 # Function: isADCPError()
 
 > **isADCPError**(`error`): `error is ADCPError`
 
-Defined in: [src/lib/errors/index.ts:174](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/errors/index.ts#L174)
+Defined in: [src/lib/errors/index.ts:180](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/errors/index.ts#L180)
 
 Type guard to check if an error is an ADCP error
 

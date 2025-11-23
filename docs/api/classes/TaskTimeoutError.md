@@ -1,12 +1,12 @@
-[**@adcp/client API Reference v2.0.0**](../README.md)
+[**@adcp/client API Reference v3.1.0**](../README.md)
 
 ***
 
-[@adcp/client API Reference](../README.md) / TaskTimeoutError
+[@adcp/client API Reference](../globals.md) / TaskTimeoutError
 
 # Class: TaskTimeoutError
 
-Defined in: [src/lib/errors/index.ts:18](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/errors/index.ts#L18)
+Defined in: [src/lib/errors/index.ts:21](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/errors/index.ts#L21)
 
 Error thrown when a task times out
 
@@ -20,7 +20,7 @@ Error thrown when a task times out
 
 > **new TaskTimeoutError**(`taskId`, `timeout`): `TaskTimeoutError`
 
-Defined in: [src/lib/errors/index.ts:21](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/errors/index.ts#L21)
+Defined in: [src/lib/errors/index.ts:24](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/errors/index.ts#L24)
 
 #### Parameters
 
@@ -46,7 +46,7 @@ Defined in: [src/lib/errors/index.ts:21](https://github.com/adcontextprotocol/ad
 
 > `optional` **details**: `any`
 
-Defined in: [src/lib/errors/index.ts:9](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/errors/index.ts#L9)
+Defined in: [src/lib/errors/index.ts:11](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/errors/index.ts#L11)
 
 #### Inherited from
 
@@ -58,7 +58,7 @@ Defined in: [src/lib/errors/index.ts:9](https://github.com/adcontextprotocol/adc
 
 > `readonly` **code**: `"TASK_TIMEOUT"` = `'TASK_TIMEOUT'`
 
-Defined in: [src/lib/errors/index.ts:19](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/errors/index.ts#L19)
+Defined in: [src/lib/errors/index.ts:22](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/errors/index.ts#L22)
 
 #### Overrides
 
@@ -70,7 +70,7 @@ Defined in: [src/lib/errors/index.ts:19](https://github.com/adcontextprotocol/ad
 
 > `readonly` **taskId**: `string`
 
-Defined in: [src/lib/errors/index.ts:22](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/errors/index.ts#L22)
+Defined in: [src/lib/errors/index.ts:25](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/errors/index.ts#L25)
 
 ***
 
@@ -78,7 +78,7 @@ Defined in: [src/lib/errors/index.ts:22](https://github.com/adcontextprotocol/ad
 
 > `readonly` **timeout**: `number`
 
-Defined in: [src/lib/errors/index.ts:23](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/errors/index.ts#L23)
+Defined in: [src/lib/errors/index.ts:26](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/errors/index.ts#L26)
 
 ***
 

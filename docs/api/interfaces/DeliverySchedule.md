@@ -1,12 +1,12 @@
-[**@adcp/client API Reference v2.0.0**](../README.md)
+[**@adcp/client API Reference v3.1.0**](../README.md)
 
 ***
 
-[@adcp/client API Reference](../README.md) / DeliverySchedule
+[@adcp/client API Reference](../globals.md) / DeliverySchedule
 
 # Interface: DeliverySchedule
 
-Defined in: [src/lib/types/adcp.ts:149](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L149)
+Defined in: [src/lib/types/adcp.ts:147](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/adcp.ts#L147)
 
 ## Properties
 
@@ -14,7 +14,7 @@ Defined in: [src/lib/types/adcp.ts:149](https://github.com/adcontextprotocol/adc
 
 > **start\_date**: `string`
 
-Defined in: [src/lib/types/adcp.ts:150](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L150)
+Defined in: [src/lib/types/adcp.ts:148](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/adcp.ts#L148)
 
 ***
 
@@ -22,7 +22,7 @@ Defined in: [src/lib/types/adcp.ts:150](https://github.com/adcontextprotocol/adc
 
 > `optional` **end\_date**: `string`
 
-Defined in: [src/lib/types/adcp.ts:151](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L151)
+Defined in: [src/lib/types/adcp.ts:149](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/adcp.ts#L149)
 
 ***
 
@@ -30,7 +30,7 @@ Defined in: [src/lib/types/adcp.ts:151](https://github.com/adcontextprotocol/adc
 
 > **time\_zone**: `string`
 
-Defined in: [src/lib/types/adcp.ts:152](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L152)
+Defined in: [src/lib/types/adcp.ts:150](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/adcp.ts#L150)
 
 ***
 
@@ -38,4 +38,4 @@ Defined in: [src/lib/types/adcp.ts:152](https://github.com/adcontextprotocol/adc
 
 > `optional` **day\_parting**: [`DayParting`](DayParting.md)[]
 
-Defined in: [src/lib/types/adcp.ts:153](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L153)
+Defined in: [src/lib/types/adcp.ts:151](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/adcp.ts#L151)

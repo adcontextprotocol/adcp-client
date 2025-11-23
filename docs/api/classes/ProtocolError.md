@@ -1,12 +1,12 @@
-[**@adcp/client API Reference v2.0.0**](../README.md)
+[**@adcp/client API Reference v3.1.0**](../README.md)
 
 ***
 
-[@adcp/client API Reference](../README.md) / ProtocolError
+[@adcp/client API Reference](../globals.md) / ProtocolError
 
 # Class: ProtocolError
 
-Defined in: [src/lib/errors/index.ts:102](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/errors/index.ts#L102)
+Defined in: [src/lib/errors/index.ts:105](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/errors/index.ts#L105)
 
 Error thrown when protocol communication fails
 
@@ -20,7 +20,7 @@ Error thrown when protocol communication fails
 
 > **new ProtocolError**(`protocol`, `message`, `originalError?`): `ProtocolError`
 
-Defined in: [src/lib/errors/index.ts:105](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/errors/index.ts#L105)
+Defined in: [src/lib/errors/index.ts:108](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/errors/index.ts#L108)
 
 #### Parameters
 
@@ -50,7 +50,7 @@ Defined in: [src/lib/errors/index.ts:105](https://github.com/adcontextprotocol/a
 
 > `optional` **details**: `any`
 
-Defined in: [src/lib/errors/index.ts:9](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/errors/index.ts#L9)
+Defined in: [src/lib/errors/index.ts:11](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/errors/index.ts#L11)
 
 #### Inherited from
 
@@ -62,7 +62,7 @@ Defined in: [src/lib/errors/index.ts:9](https://github.com/adcontextprotocol/adc
 
 > `readonly` **code**: `"PROTOCOL_ERROR"` = `'PROTOCOL_ERROR'`
 
-Defined in: [src/lib/errors/index.ts:103](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/errors/index.ts#L103)
+Defined in: [src/lib/errors/index.ts:106](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/errors/index.ts#L106)
 
 #### Overrides
 
@@ -74,7 +74,7 @@ Defined in: [src/lib/errors/index.ts:103](https://github.com/adcontextprotocol/a
 
 > `readonly` **protocol**: `"mcp"` \| `"a2a"`
 
-Defined in: [src/lib/errors/index.ts:106](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/errors/index.ts#L106)
+Defined in: [src/lib/errors/index.ts:109](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/errors/index.ts#L109)
 
 ***
 
@@ -82,7 +82,7 @@ Defined in: [src/lib/errors/index.ts:106](https://github.com/adcontextprotocol/a
 
 > `readonly` `optional` **originalError**: `Error`
 
-Defined in: [src/lib/errors/index.ts:108](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/errors/index.ts#L108)
+Defined in: [src/lib/errors/index.ts:111](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/errors/index.ts#L111)
 
 ***
 

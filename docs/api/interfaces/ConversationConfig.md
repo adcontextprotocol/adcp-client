@@ -1,18 +1,18 @@
-[**@adcp/client API Reference v2.0.0**](../README.md)
+[**@adcp/client API Reference v3.1.0**](../README.md)
 
 ***
 
-[@adcp/client API Reference](../README.md) / ConversationConfig
+[@adcp/client API Reference](../globals.md) / ConversationConfig
 
 # Interface: ConversationConfig
 
-Defined in: [src/lib/core/ConversationTypes.ts:248](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/core/ConversationTypes.ts#L248)
+Defined in: [src/lib/core/ConversationTypes.ts:256](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/core/ConversationTypes.ts#L256)
 
 Configuration for conversation management
 
 ## Extended by
 
-- [`AdCPClientConfig`](AdCPClientConfig.md)
+- [`SingleAgentClientConfig`](SingleAgentClientConfig.md)
 
 ## Properties
 
@@ -20,7 +20,7 @@ Configuration for conversation management
 
 > `optional` **maxHistorySize**: `number`
 
-Defined in: [src/lib/core/ConversationTypes.ts:250](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/core/ConversationTypes.ts#L250)
+Defined in: [src/lib/core/ConversationTypes.ts:258](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/core/ConversationTypes.ts#L258)
 
 Maximum messages to keep in history
 
@@ -30,7 +30,7 @@ Maximum messages to keep in history
 
 > `optional` **persistConversations**: `boolean`
 
-Defined in: [src/lib/core/ConversationTypes.ts:252](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/core/ConversationTypes.ts#L252)
+Defined in: [src/lib/core/ConversationTypes.ts:260](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/core/ConversationTypes.ts#L260)
 
 Whether to persist conversations
 
@@ -40,7 +40,7 @@ Whether to persist conversations
 
 > `optional` **workingTimeout**: `number`
 
-Defined in: [src/lib/core/ConversationTypes.ts:254](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/core/ConversationTypes.ts#L254)
+Defined in: [src/lib/core/ConversationTypes.ts:262](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/core/ConversationTypes.ts#L262)
 
 Timeout for 'working' status (max 120s per PR #78)
 
@@ -50,6 +50,6 @@ Timeout for 'working' status (max 120s per PR #78)
 
 > `optional` **defaultMaxClarifications**: `number`
 
-Defined in: [src/lib/core/ConversationTypes.ts:256](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/core/ConversationTypes.ts#L256)
+Defined in: [src/lib/core/ConversationTypes.ts:264](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/core/ConversationTypes.ts#L264)
 
 Default max clarifications

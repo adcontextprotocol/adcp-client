@@ -1,5 +1,5 @@
-// Generated AdCP core types from official schemas v2.5.0
-// Generated at: 2025-11-22T21:44:33.534Z
+// Generated AdCP core types from official schemas v2.4.0
+// Generated at: 2025-11-18T05:29:38.154Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -10,6 +10,10 @@ export type MediaBuyStatus = 'pending_activation' | 'active' | 'paused' | 'compl
  * Budget pacing strategy
  */
 export type Pacing = 'even' | 'asap' | 'front_loaded';
+/**
+ * Status of a package
+ */
+export type PackageStatus = 'draft' | 'active' | 'paused' | 'completed';
 
 /**
  * Represents a purchased advertising campaign
@@ -48,7 +52,6 @@ export interface MediaBuy {
    * Last update timestamp
    */
   updated_at?: string;
-  ext?: ExtensionObject;
 }
 /**
  * A specific product within a media buy (line item)
@@ -92,11 +95,7 @@ export interface Package {
    * Format IDs that creative assets will be provided for this package
    */
   format_ids_to_provide?: FormatID[];
-  /**
-   * Whether this package is paused by the buyer. Paused packages do not deliver impressions. Defaults to false.
-   */
-  paused?: boolean;
-  ext?: ExtensionObject;
+  status: PackageStatus;
 }
 /**
  * Optional geographic refinements for media buys. Most targeting should be expressed in the brief and handled by the publisher. These fields are primarily for geographic restrictions (RCT testing, regulatory compliance).
@@ -157,7 +156,7 @@ export interface CreativeAssignment {
   placement_ids?: [string, ...string[]];
 }
 /**
- * Structured format identifier with agent URL and format name. Can reference: (1) a concrete format with fixed dimensions (id only), (2) a template format without parameters (id only), or (3) a template format with parameters (id + dimensions/duration). Template formats accept parameters in format_id while concrete formats have fixed dimensions in their definition. Parameterized format IDs create unique, specific format variants.
+ * Structured format identifier with agent URL and format name
  */
 export interface FormatID {
   /**
@@ -165,72 +164,12 @@ export interface FormatID {
    */
   agent_url: string;
   /**
-   * Format identifier within the agent's namespace (e.g., 'display_static', 'video_hosted', 'audio_standard'). When used alone, references a template format. When combined with dimension/duration fields, creates a parameterized format ID for a specific variant.
+   * Format identifier within the agent's namespace (e.g., 'display_300x250', 'video_standard_30s')
    */
   id: string;
-  /**
-   * Width in pixels for visual formats. When specified, height must also be specified. Both fields together create a parameterized format ID for dimension-specific variants.
-   */
-  width?: number;
-  /**
-   * Height in pixels for visual formats. When specified, width must also be specified. Both fields together create a parameterized format ID for dimension-specific variants.
-   */
-  height?: number;
-  /**
-   * Duration in milliseconds for time-based formats (video, audio). When specified, creates a parameterized format ID. Omit to reference a template format without parameters.
-   */
-  duration_ms?: number;
-}
-/**
- * Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.
- */
-export interface ExtensionObject {
-  [k: string]: unknown;
 }
 
 // CREATIVE-ASSET SCHEMA
-/**
- * Image asset with URL and dimensions
- */
-export type ImageAsset = Dimensions & {
-  /**
-   * URL to the image asset
-   */
-  url: string;
-  /**
-   * Image file format (jpg, png, gif, webp, etc.)
-   */
-  format?: string;
-  /**
-   * Alternative text for accessibility
-   */
-  alt_text?: string;
-};
-/**
- * Video asset with URL and specifications
- */
-export type VideoAsset = Dimensions & {
-  /**
-   * URL to the video asset
-   */
-  url: string;
-  /**
-   * Video duration in milliseconds
-   */
-  duration_ms?: number;
-  /**
-   * Video file format (mp4, webm, mov, etc.)
-   */
-  format?: string;
-  /**
-   * Video bitrate in kilobits per second
-   */
-  bitrate_kbps?: number;
-};
-/**
- * JavaScript module type
- */
-export type JavaScriptModuleType = 'esm' | 'commonjs' | 'script';
 /**
  * VAST (Video Ad Serving Template) tag for third-party video ad serving
  */
@@ -244,7 +183,10 @@ export type VASTAsset =
        * URL endpoint that returns VAST XML
        */
       url: string;
-      vast_version?: VASTVersion;
+      /**
+       * VAST specification version
+       */
+      vast_version?: '2.0' | '3.0' | '4.0' | '4.1' | '4.2';
       /**
        * Whether VPAID (Video Player-Ad Interface Definition) is supported
        */
@@ -256,7 +198,24 @@ export type VASTAsset =
       /**
        * Tracking events supported by this VAST tag
        */
-      tracking_events?: VASTTrackingEvent[];
+      tracking_events?: (
+        | 'start'
+        | 'firstQuartile'
+        | 'midpoint'
+        | 'thirdQuartile'
+        | 'complete'
+        | 'impression'
+        | 'click'
+        | 'pause'
+        | 'resume'
+        | 'skip'
+        | 'mute'
+        | 'unmute'
+        | 'fullscreen'
+        | 'exitFullscreen'
+        | 'playerExpand'
+        | 'playerCollapse'
+      )[];
     }
   | {
       /**
@@ -267,7 +226,10 @@ export type VASTAsset =
        * Inline VAST XML content
        */
       content: string;
-      vast_version?: VASTVersion1;
+      /**
+       * VAST specification version
+       */
+      vast_version?: '2.0' | '3.0' | '4.0' | '4.1' | '4.2';
       /**
        * Whether VPAID (Video Player-Ad Interface Definition) is supported
        */
@@ -279,36 +241,25 @@ export type VASTAsset =
       /**
        * Tracking events supported by this VAST tag
        */
-      tracking_events?: VASTTrackingEvent[];
+      tracking_events?: (
+        | 'start'
+        | 'firstQuartile'
+        | 'midpoint'
+        | 'thirdQuartile'
+        | 'complete'
+        | 'impression'
+        | 'click'
+        | 'pause'
+        | 'resume'
+        | 'skip'
+        | 'mute'
+        | 'unmute'
+        | 'fullscreen'
+        | 'exitFullscreen'
+        | 'playerExpand'
+        | 'playerCollapse'
+      )[];
     };
-/**
- * VAST specification version
- */
-export type VASTVersion = '2.0' | '3.0' | '4.0' | '4.1' | '4.2';
-/**
- * Standard VAST tracking events for video ad playback and interaction
- */
-export type VASTTrackingEvent =
-  | 'start'
-  | 'firstQuartile'
-  | 'midpoint'
-  | 'thirdQuartile'
-  | 'complete'
-  | 'impression'
-  | 'click'
-  | 'pause'
-  | 'resume'
-  | 'skip'
-  | 'mute'
-  | 'unmute'
-  | 'fullscreen'
-  | 'exitFullscreen'
-  | 'playerExpand'
-  | 'playerCollapse';
-/**
- * VAST specification version
- */
-export type VASTVersion1 = '2.0' | '3.0' | '4.0' | '4.1' | '4.2';
 /**
  * DAAST (Digital Audio Ad Serving Template) tag for third-party audio ad serving
  */
@@ -322,7 +273,10 @@ export type DAASTAsset =
        * URL endpoint that returns DAAST XML
        */
       url: string;
-      daast_version?: DAASTVersion;
+      /**
+       * DAAST specification version
+       */
+      daast_version?: '1.0' | '1.1';
       /**
        * Expected audio duration in milliseconds (if known)
        */
@@ -330,7 +284,19 @@ export type DAASTAsset =
       /**
        * Tracking events supported by this DAAST tag
        */
-      tracking_events?: DAASTTrackingEvent[];
+      tracking_events?: (
+        | 'start'
+        | 'firstQuartile'
+        | 'midpoint'
+        | 'thirdQuartile'
+        | 'complete'
+        | 'impression'
+        | 'pause'
+        | 'resume'
+        | 'skip'
+        | 'mute'
+        | 'unmute'
+      )[];
       /**
        * Whether companion display ads are included
        */
@@ -345,7 +311,10 @@ export type DAASTAsset =
        * Inline DAAST XML content
        */
       content: string;
-      daast_version?: DAASTVersion1;
+      /**
+       * DAAST specification version
+       */
+      daast_version?: '1.0' | '1.1';
       /**
        * Expected audio duration in milliseconds (if known)
        */
@@ -353,60 +322,28 @@ export type DAASTAsset =
       /**
        * Tracking events supported by this DAAST tag
        */
-      tracking_events?: DAASTTrackingEvent[];
+      tracking_events?: (
+        | 'start'
+        | 'firstQuartile'
+        | 'midpoint'
+        | 'thirdQuartile'
+        | 'complete'
+        | 'impression'
+        | 'pause'
+        | 'resume'
+        | 'skip'
+        | 'mute'
+        | 'unmute'
+      )[];
       /**
        * Whether companion display ads are included
        */
       companion_ads?: boolean;
     };
 /**
- * DAAST specification version
- */
-export type DAASTVersion = '1.0' | '1.1';
-/**
- * Standard DAAST tracking events for audio ad playback and interaction
- */
-export type DAASTTrackingEvent =
-  | 'start'
-  | 'firstQuartile'
-  | 'midpoint'
-  | 'thirdQuartile'
-  | 'complete'
-  | 'impression'
-  | 'pause'
-  | 'resume'
-  | 'skip'
-  | 'mute'
-  | 'unmute';
-/**
- * DAAST specification version
- */
-export type DAASTVersion1 = '1.0' | '1.1';
-/**
  * Brand information manifest containing assets, themes, and guidelines. Can be provided inline or as a URL reference to a hosted manifest.
  */
 export type BrandManifestReference = BrandManifest | string;
-/**
- * Type of asset. Note: Brand manifests typically contain basic media assets (image, video, audio, text). Code assets (html, javascript, css) and ad markup (vast, daast) are usually not part of brand asset libraries.
- */
-export type AssetContentType =
-  | 'image'
-  | 'video'
-  | 'audio'
-  | 'text'
-  | 'markdown'
-  | 'html'
-  | 'css'
-  | 'javascript'
-  | 'vast'
-  | 'daast'
-  | 'promoted_offerings'
-  | 'url'
-  | 'webhook';
-/**
- * Type of URL asset: 'clickthrough' for user click destination (landing page), 'tracker_pixel' for impression/event tracking via HTTP request (fires GET, expects pixel/204 response), 'tracker_script' for measurement SDKs that must load as <script> tag (OMID verification, native event trackers using method:2)
- */
-export type URLAssetType = 'clickthrough' | 'tracker_pixel' | 'tracker_script';
 
 /**
  * Creative asset for upload to library - supports static assets, generative formats, and third-party snippets
@@ -469,29 +406,73 @@ export interface CreativeAsset {
    * For generative creatives: set to true to approve and finalize, false to request regeneration with updated assets/message. Omit for non-generative creatives.
    */
   approved?: boolean;
-  /**
-   * Optional delivery weight for creative rotation when uploading via create_media_buy or update_media_buy (0-100). If omitted, platform determines rotation. Only used during upload to media buy - not stored in creative library.
-   */
-  weight?: number;
-  /**
-   * Optional array of placement IDs where this creative should run when uploading via create_media_buy or update_media_buy. References placement_id values from the product's placements array. If omitted, creative runs on all placements. Only used during upload to media buy - not stored in creative library.
-   *
-   * @minItems 1
-   */
-  placement_ids?: [string, ...string[]];
 }
 /**
- * Format identifier specifying which format this creative conforms to. Can be: (1) concrete format_id referencing a format with fixed dimensions, (2) template format_id referencing a template format, or (3) parameterized format_id with dimensions/duration parameters for template formats.
+ * Format identifier specifying which format this creative conforms to
  */
-export interface Dimensions {
+export interface FormatID {
   /**
-   * Width in pixels
+   * URL of the agent that defines this format (e.g., 'https://creatives.adcontextprotocol.org' for standard formats, or 'https://publisher.com/.well-known/adcp/sales' for custom formats)
    */
-  width: number;
+  agent_url: string;
   /**
-   * Height in pixels
+   * Format identifier within the agent's namespace (e.g., 'display_300x250', 'video_standard_30s')
    */
-  height: number;
+  id: string;
+}
+/**
+ * Image asset with URL and dimensions
+ */
+export interface ImageAsset {
+  /**
+   * URL to the image asset
+   */
+  url: string;
+  /**
+   * Image width in pixels
+   */
+  width?: number;
+  /**
+   * Image height in pixels
+   */
+  height?: number;
+  /**
+   * Image file format (jpg, png, gif, webp, etc.)
+   */
+  format?: string;
+  /**
+   * Alternative text for accessibility
+   */
+  alt_text?: string;
+}
+/**
+ * Video asset with URL and specifications
+ */
+export interface VideoAsset {
+  /**
+   * URL to the video asset
+   */
+  url: string;
+  /**
+   * Video width in pixels
+   */
+  width?: number;
+  /**
+   * Video height in pixels
+   */
+  height?: number;
+  /**
+   * Video duration in milliseconds
+   */
+  duration_ms?: number;
+  /**
+   * Video file format (mp4, webm, mov, etc.)
+   */
+  format?: string;
+  /**
+   * Video bitrate in kilobits per second
+   */
+  bitrate_kbps?: number;
 }
 /**
  * Audio asset with URL and specifications
@@ -561,7 +542,10 @@ export interface JavaScriptAsset {
    * JavaScript content
    */
   content: string;
-  module_type?: JavaScriptModuleType;
+  /**
+   * JavaScript module type
+   */
+  module_type?: 'esm' | 'commonjs' | 'script';
 }
 /**
  * Complete offering specification combining brand manifest, product selectors, and asset filters. Provides all context needed for creative generation about what is being promoted.
@@ -709,7 +693,10 @@ export interface BrandManifest {
      * Unique identifier for this asset
      */
     asset_id: string;
-    asset_type: AssetContentType;
+    /**
+     * Type of asset
+     */
+    asset_type: 'image' | 'video' | 'audio' | 'text';
     /**
      * URL to CDN-hosted asset file
      */
@@ -863,7 +850,10 @@ export interface URLAsset {
    * URL reference
    */
   url: string;
-  url_type?: URLAssetType;
+  /**
+   * Type of URL asset: 'clickthrough' for user click destination (landing page), 'tracker_pixel' for impression/event tracking via HTTP request (fires GET, expects pixel/204 response), 'tracker_script' for measurement SDKs that must load as <script> tag (OMID verification, native event trackers using method:2)
+   */
+  url_type?: 'clickthrough' | 'tracker_pixel' | 'tracker_script';
   /**
    * Description of what this URL points to
    */
@@ -871,60 +861,6 @@ export interface URLAsset {
 }
 
 // PRODUCT SCHEMA
-/**
- * Selects properties from a publisher's adagents.json. Used for both product definitions and agent authorization. Supports three selection patterns: all properties, specific IDs, or by tags.
- */
-export type PublisherPropertySelector =
-  | {
-      /**
-       * Domain where publisher's adagents.json is hosted (e.g., 'cnn.com')
-       */
-      publisher_domain: string;
-      /**
-       * Discriminator indicating all properties from this publisher are included
-       */
-      selection_type: 'all';
-    }
-  | {
-      /**
-       * Domain where publisher's adagents.json is hosted (e.g., 'cnn.com')
-       */
-      publisher_domain: string;
-      /**
-       * Discriminator indicating selection by specific property IDs
-       */
-      selection_type: 'by_id';
-      /**
-       * Specific property IDs from the publisher's adagents.json
-       *
-       * @minItems 1
-       */
-      property_ids: [PropertyID, ...PropertyID[]];
-    }
-  | {
-      /**
-       * Domain where publisher's adagents.json is hosted (e.g., 'cnn.com')
-       */
-      publisher_domain: string;
-      /**
-       * Discriminator indicating selection by property tags
-       */
-      selection_type: 'by_tag';
-      /**
-       * Property tags from the publisher's adagents.json. Selector covers all properties with these tags
-       *
-       * @minItems 1
-       */
-      property_tags: [PropertyTag, ...PropertyTag[]];
-    };
-/**
- * Identifier for a publisher property. Must be lowercase alphanumeric with underscores only.
- */
-export type PropertyID = string;
-/**
- * Tag for categorizing publisher properties. Must be lowercase alphanumeric with underscores only.
- */
-export type PropertyTag = string;
 /**
  * Type of inventory delivery
  */
@@ -942,31 +878,6 @@ export type PricingOption =
   | CPVPricingOption
   | CPPPricingOption
   | FlatRatePricingOption;
-/**
- * Available frequencies for delivery reports and metrics updates
- */
-export type ReportingFrequency = 'hourly' | 'daily' | 'monthly';
-/**
- * Standard delivery and performance metrics available for reporting
- */
-export type AvailableMetric =
-  | 'impressions'
-  | 'spend'
-  | 'clicks'
-  | 'ctr'
-  | 'video_completions'
-  | 'completion_rate'
-  | 'conversions'
-  | 'viewability'
-  | 'engagement_rate';
-/**
- * Co-branding requirement
- */
-export type CoBrandingRequirement = 'required' | 'optional' | 'none';
-/**
- * Landing page requirements
- */
-export type LandingPageRequirement = 'any' | 'retailer_site_only' | 'must_include_retailer';
 
 /**
  * Represents available advertising inventory
@@ -989,7 +900,96 @@ export interface Product {
    *
    * @minItems 1
    */
-  publisher_properties: [PublisherPropertySelector, ...PublisherPropertySelector[]];
+  publisher_properties: [
+    (
+      | {
+          /**
+           * Domain where publisher's adagents.json is hosted (e.g., 'cnn.com')
+           */
+          publisher_domain: string;
+          /**
+           * Discriminator indicating all properties from this publisher are included
+           */
+          selection_type: 'all';
+        }
+      | {
+          /**
+           * Domain where publisher's adagents.json is hosted (e.g., 'cnn.com')
+           */
+          publisher_domain: string;
+          /**
+           * Discriminator indicating selection by specific property IDs
+           */
+          selection_type: 'by_id';
+          /**
+           * Specific property IDs from the publisher's adagents.json
+           *
+           * @minItems 1
+           */
+          property_ids: [string, ...string[]];
+        }
+      | {
+          /**
+           * Domain where publisher's adagents.json is hosted (e.g., 'cnn.com')
+           */
+          publisher_domain: string;
+          /**
+           * Discriminator indicating selection by property tags
+           */
+          selection_type: 'by_tag';
+          /**
+           * Property tags from the publisher's adagents.json. Product covers all properties with these tags
+           *
+           * @minItems 1
+           */
+          property_tags: [string, ...string[]];
+        }
+    ),
+    ...(
+      | {
+          /**
+           * Domain where publisher's adagents.json is hosted (e.g., 'cnn.com')
+           */
+          publisher_domain: string;
+          /**
+           * Discriminator indicating all properties from this publisher are included
+           */
+          selection_type: 'all';
+        }
+      | {
+          /**
+           * Domain where publisher's adagents.json is hosted (e.g., 'cnn.com')
+           */
+          publisher_domain: string;
+          /**
+           * Discriminator indicating selection by specific property IDs
+           */
+          selection_type: 'by_id';
+          /**
+           * Specific property IDs from the publisher's adagents.json
+           *
+           * @minItems 1
+           */
+          property_ids: [string, ...string[]];
+        }
+      | {
+          /**
+           * Domain where publisher's adagents.json is hosted (e.g., 'cnn.com')
+           */
+          publisher_domain: string;
+          /**
+           * Discriminator indicating selection by property tags
+           */
+          selection_type: 'by_tag';
+          /**
+           * Property tags from the publisher's adagents.json. Product covers all properties with these tags
+           *
+           * @minItems 1
+           */
+          property_tags: [string, ...string[]];
+        }
+    )[]
+  ];
   /**
    * Array of supported creative format IDs - structured format_id objects with agent_url and id
    */
@@ -1059,10 +1059,22 @@ export interface Product {
      */
     manifest: {};
   };
-  ext?: ExtensionObject;
 }
 /**
- * Structured format identifier with agent URL and format name. Can reference: (1) a concrete format with fixed dimensions (id only), (2) a template format without parameters (id only), or (3) a template format with parameters (id + dimensions/duration). Template formats accept parameters in format_id while concrete formats have fixed dimensions in their definition. Parameterized format IDs create unique, specific format variants.
+ * Structured format identifier with agent URL and format name
+ */
+export interface FormatID {
+  /**
+   * URL of the agent that defines this format (e.g., 'https://creatives.adcontextprotocol.org' for standard formats, or 'https://publisher.com/.well-known/adcp/sales' for custom formats)
+   */
+  agent_url: string;
+  /**
+   * Format identifier within the agent's namespace (e.g., 'display_300x250', 'video_standard_30s')
+   */
+  id: string;
+}
+/**
+ * Represents a specific ad placement within a product's inventory
  */
 export interface Placement {
   /**
@@ -1078,7 +1090,7 @@ export interface Placement {
    */
   description?: string;
   /**
-   * Format IDs supported by this specific placement. Can include: (1) concrete format_ids (fixed dimensions), (2) template format_ids without parameters (accepts any dimensions/duration), or (3) parameterized format_ids (specific dimension/duration constraints).
+   * Format IDs supported by this specific placement (subset of product's formats)
    *
    * @minItems 1
    */
@@ -1476,7 +1488,7 @@ export interface ReportingCapabilities {
    *
    * @minItems 1
    */
-  available_reporting_frequencies: [ReportingFrequency, ...ReportingFrequency[]];
+  available_reporting_frequencies: ['hourly' | 'daily' | 'monthly', ...('hourly' | 'daily' | 'monthly')[]];
   /**
    * Expected delay in minutes before reporting data becomes available (e.g., 240 for 4-hour delay)
    */
@@ -1492,21 +1504,37 @@ export interface ReportingCapabilities {
   /**
    * Metrics available in reporting. Impressions and spend are always implicitly included.
    */
-  available_metrics: AvailableMetric[];
+  available_metrics: (
+    | 'impressions'
+    | 'spend'
+    | 'clicks'
+    | 'ctr'
+    | 'video_completions'
+    | 'completion_rate'
+    | 'conversions'
+    | 'viewability'
+    | 'engagement_rate'
+  )[];
 }
 /**
  * Creative requirements and restrictions for a product
  */
 export interface CreativePolicy {
-  co_branding: CoBrandingRequirement;
-  landing_page: LandingPageRequirement;
+  /**
+   * Co-branding requirement
+   */
+  co_branding: 'required' | 'optional' | 'none';
+  /**
+   * Landing page requirements
+   */
+  landing_page: 'any' | 'retailer_site_only' | 'must_include_retailer';
   /**
    * Whether creative templates are provided
    */
   templates_available: boolean;
 }
 /**
- * Structured format identifier with agent URL and format name. Can reference: (1) a concrete format with fixed dimensions (id only), (2) a template format without parameters (id only), or (3) a template format with parameters (id + dimensions/duration). Template formats accept parameters in format_id while concrete formats have fixed dimensions in their definition. Parameterized format IDs create unique, specific format variants.
+ * Structured format identifier with agent URL and format name
  */
 export interface FormatID1 {
   /**
@@ -1514,24 +1542,12 @@ export interface FormatID1 {
    */
   agent_url: string;
   /**
-   * Format identifier within the agent's namespace (e.g., 'display_static', 'video_hosted', 'audio_standard'). When used alone, references a template format. When combined with dimension/duration fields, creates a parameterized format ID for a specific variant.
+   * Format identifier within the agent's namespace (e.g., 'display_300x250', 'video_standard_30s')
    */
   id: string;
-  /**
-   * Width in pixels for visual formats. When specified, height must also be specified. Both fields together create a parameterized format ID for dimension-specific variants.
-   */
-  width?: number;
-  /**
-   * Height in pixels for visual formats. When specified, width must also be specified. Both fields together create a parameterized format ID for dimension-specific variants.
-   */
-  height?: number;
-  /**
-   * Duration in milliseconds for time-based formats (video, audio). When specified, creates a parameterized format ID. Omit to reference a template format without parameters.
-   */
-  duration_ms?: number;
 }
 /**
- * Structured format identifier with agent URL and format name. Can reference: (1) a concrete format with fixed dimensions (id only), (2) a template format without parameters (id only), or (3) a template format with parameters (id + dimensions/duration). Template formats accept parameters in format_id while concrete formats have fixed dimensions in their definition. Parameterized format IDs create unique, specific format variants.
+ * Structured format identifier with agent URL and format name
  */
 export interface FormatID2 {
   /**
@@ -1539,34 +1555,53 @@ export interface FormatID2 {
    */
   agent_url: string;
   /**
-   * Format identifier within the agent's namespace (e.g., 'display_static', 'video_hosted', 'audio_standard'). When used alone, references a template format. When combined with dimension/duration fields, creates a parameterized format ID for a specific variant.
+   * Format identifier within the agent's namespace (e.g., 'display_300x250', 'video_standard_30s')
    */
   id: string;
-  /**
-   * Width in pixels for visual formats. When specified, height must also be specified. Both fields together create a parameterized format ID for dimension-specific variants.
-   */
-  width?: number;
-  /**
-   * Height in pixels for visual formats. When specified, width must also be specified. Both fields together create a parameterized format ID for dimension-specific variants.
-   */
-  height?: number;
-  /**
-   * Duration in milliseconds for time-based formats (video, audio). When specified, creates a parameterized format ID. Omit to reference a template format without parameters.
-   */
-  duration_ms?: number;
 }
-/**
- * Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.
- */
+
 // TARGETING SCHEMA
 /**
  * Optional geographic refinements for media buys. Most targeting should be expressed in the brief and handled by the publisher. These fields are primarily for geographic restrictions (RCT testing, regulatory compliance).
  */
-// PROPERTY SCHEMA
+export interface TargetingOverlay {
+  /**
+   * Restrict delivery to specific countries (ISO codes). Use for regulatory compliance or RCT testing.
+   */
+  geo_country_any_of?: string[];
+  /**
+   * Restrict delivery to specific regions/states. Use for regulatory compliance or RCT testing.
+   */
+  geo_region_any_of?: string[];
+  /**
+   * Restrict delivery to specific metro areas (DMA codes). Use for regulatory compliance or RCT testing.
+   */
+  geo_metro_any_of?: string[];
+  /**
+   * Restrict delivery to specific postal/ZIP codes. Use for regulatory compliance or RCT testing.
+   */
+  geo_postal_code_any_of?: string[];
+  /**
+   * AXE segment ID to include for targeting
+   */
+  axe_include_segment?: string;
+  /**
+   * AXE segment ID to exclude from targeting
+   */
+  axe_exclude_segment?: string;
+  frequency_cap?: FrequencyCap;
+}
 /**
- * Unique identifier for this property (optional). Enables referencing properties by ID instead of repeating full objects.
+ * Frequency capping settings for package-level application
  */
-export type PropertyType = 'website' | 'mobile_app' | 'ctv_app' | 'dooh' | 'podcast' | 'radio' | 'streaming_audio';
+export interface FrequencyCap {
+  /**
+   * Minutes to suppress after impression
+   */
+  suppress_minutes: number;
+}
+
+// PROPERTY SCHEMA
 /**
  * Type of identifier for this property
  */
@@ -1590,12 +1625,19 @@ export type PropertyIdentifierTypes =
   | 'apple_podcast_id'
   | 'spotify_show_id'
   | 'podcast_guid';
+
 /**
- * Tag for categorizing publisher properties. Must be lowercase alphanumeric with underscores only.
+ * An advertising property that can be validated via adagents.json
  */
 export interface Property {
-  property_id?: PropertyID;
-  property_type: PropertyType;
+  /**
+   * Unique identifier for this property (optional). Enables referencing properties by ID instead of repeating full objects. Recommended format: lowercase with underscores (e.g., 'cnn_ctv_app', 'instagram_mobile')
+   */
+  property_id?: string;
+  /**
+   * Type of advertising property
+   */
+  property_type: 'website' | 'mobile_app' | 'ctv_app' | 'dooh' | 'podcast' | 'radio' | 'streaming_audio';
   /**
    * Human-readable property name
    */
@@ -1624,7 +1666,7 @@ export interface Property {
   /**
    * Tags for categorization and grouping (e.g., network membership, content categories)
    */
-  tags?: PropertyTag[];
+  tags?: string[];
   /**
    * Domain where adagents.json should be checked for authorization validation. Required for list_authorized_properties response. Optional in adagents.json (file location implies domain).
    */

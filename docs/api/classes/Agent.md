@@ -1,14 +1,17 @@
-[**@adcp/client API Reference v2.0.0**](../README.md)
+[**@adcp/client API Reference v3.1.0**](../README.md)
 
 ***
 
-[@adcp/client API Reference](../README.md) / Agent
+[@adcp/client API Reference](../globals.md) / Agent
 
 # Class: Agent
 
-Defined in: [src/lib/agents/index.generated.ts:65](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/agents/index.generated.ts#L65)
+Defined in: [src/lib/agents/index.generated.ts:43](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/agents/index.generated.ts#L43)
 
 Single agent operations with full type safety
+
+Returns raw AdCP responses matching schema exactly.
+No SDK wrapping - responses follow AdCP discriminated union patterns.
 
 ## Constructors
 
@@ -16,7 +19,7 @@ Single agent operations with full type safety
 
 > **new Agent**(`config`, `client`): `Agent`
 
-Defined in: [src/lib/agents/index.generated.ts:66](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/agents/index.generated.ts#L66)
+Defined in: [src/lib/agents/index.generated.ts:44](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/agents/index.generated.ts#L44)
 
 #### Parameters
 
@@ -36,9 +39,9 @@ Defined in: [src/lib/agents/index.generated.ts:66](https://github.com/adcontextp
 
 ### getProducts()
 
-> **getProducts**(`params`): `Promise`\<`ToolResult`\<[`GetProductsResponse`](../interfaces/GetProductsResponse.md)\>\>
+> **getProducts**(`params`): `Promise`\<[`GetProductsResponse`](../interfaces/GetProductsResponse.md)\>
 
-Defined in: [src/lib/agents/index.generated.ts:116](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/agents/index.generated.ts#L116)
+Defined in: [src/lib/agents/index.generated.ts:80](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/agents/index.generated.ts#L80)
 
 Official AdCP get_products tool schema
 Official AdCP get_products tool schema
@@ -51,15 +54,15 @@ Official AdCP get_products tool schema
 
 #### Returns
 
-`Promise`\<`ToolResult`\<[`GetProductsResponse`](../interfaces/GetProductsResponse.md)\>\>
+`Promise`\<[`GetProductsResponse`](../interfaces/GetProductsResponse.md)\>
 
 ***
 
 ### listCreativeFormats()
 
-> **listCreativeFormats**(`params`): `Promise`\<`ToolResult`\<[`ListCreativeFormatsResponse`](../interfaces/ListCreativeFormatsResponse.md)\>\>
+> **listCreativeFormats**(`params`): `Promise`\<[`ListCreativeFormatsResponse`](../interfaces/ListCreativeFormatsResponse.md)\>
 
-Defined in: [src/lib/agents/index.generated.ts:124](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/agents/index.generated.ts#L124)
+Defined in: [src/lib/agents/index.generated.ts:88](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/agents/index.generated.ts#L88)
 
 Official AdCP list_creative_formats tool schema
 Official AdCP list_creative_formats tool schema
@@ -72,15 +75,15 @@ Official AdCP list_creative_formats tool schema
 
 #### Returns
 
-`Promise`\<`ToolResult`\<[`ListCreativeFormatsResponse`](../interfaces/ListCreativeFormatsResponse.md)\>\>
+`Promise`\<[`ListCreativeFormatsResponse`](../interfaces/ListCreativeFormatsResponse.md)\>
 
 ***
 
 ### createMediaBuy()
 
-> **createMediaBuy**(`params`): `Promise`\<`ToolResult`\<[`CreateMediaBuyResponse`](../interfaces/CreateMediaBuyResponse.md)\>\>
+> **createMediaBuy**(`params`): `Promise`\<[`CreateMediaBuyResponse`](../type-aliases/CreateMediaBuyResponse.md)\>
 
-Defined in: [src/lib/agents/index.generated.ts:132](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/agents/index.generated.ts#L132)
+Defined in: [src/lib/agents/index.generated.ts:96](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/agents/index.generated.ts#L96)
 
 Official AdCP create_media_buy tool schema
 Official AdCP create_media_buy tool schema
@@ -93,15 +96,15 @@ Official AdCP create_media_buy tool schema
 
 #### Returns
 
-`Promise`\<`ToolResult`\<[`CreateMediaBuyResponse`](../interfaces/CreateMediaBuyResponse.md)\>\>
+`Promise`\<[`CreateMediaBuyResponse`](../type-aliases/CreateMediaBuyResponse.md)\>
 
 ***
 
 ### syncCreatives()
 
-> **syncCreatives**(`params`): `Promise`\<`ToolResult`\<[`SyncCreativesResponse`](../interfaces/SyncCreativesResponse.md)\>\>
+> **syncCreatives**(`params`): `Promise`\<[`SyncCreativesResponse`](../type-aliases/SyncCreativesResponse.md)\>
 
-Defined in: [src/lib/agents/index.generated.ts:140](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/agents/index.generated.ts#L140)
+Defined in: [src/lib/agents/index.generated.ts:104](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/agents/index.generated.ts#L104)
 
 Official AdCP sync_creatives tool schema
 Official AdCP sync_creatives tool schema
@@ -114,15 +117,15 @@ Official AdCP sync_creatives tool schema
 
 #### Returns
 
-`Promise`\<`ToolResult`\<[`SyncCreativesResponse`](../interfaces/SyncCreativesResponse.md)\>\>
+`Promise`\<[`SyncCreativesResponse`](../type-aliases/SyncCreativesResponse.md)\>
 
 ***
 
 ### listCreatives()
 
-> **listCreatives**(`params`): `Promise`\<`ToolResult`\<[`ListCreativesResponse`](../interfaces/ListCreativesResponse.md)\>\>
+> **listCreatives**(`params`): `Promise`\<[`ListCreativesResponse`](../interfaces/ListCreativesResponse.md)\>
 
-Defined in: [src/lib/agents/index.generated.ts:148](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/agents/index.generated.ts#L148)
+Defined in: [src/lib/agents/index.generated.ts:112](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/agents/index.generated.ts#L112)
 
 Official AdCP list_creatives tool schema
 Official AdCP list_creatives tool schema
@@ -135,15 +138,15 @@ Official AdCP list_creatives tool schema
 
 #### Returns
 
-`Promise`\<`ToolResult`\<[`ListCreativesResponse`](../interfaces/ListCreativesResponse.md)\>\>
+`Promise`\<[`ListCreativesResponse`](../interfaces/ListCreativesResponse.md)\>
 
 ***
 
 ### updateMediaBuy()
 
-> **updateMediaBuy**(`params`): `Promise`\<`ToolResult`\<[`UpdateMediaBuyResponse`](../interfaces/UpdateMediaBuyResponse.md)\>\>
+> **updateMediaBuy**(`params`): `Promise`\<[`UpdateMediaBuyResponse`](../type-aliases/UpdateMediaBuyResponse.md)\>
 
-Defined in: [src/lib/agents/index.generated.ts:156](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/agents/index.generated.ts#L156)
+Defined in: [src/lib/agents/index.generated.ts:120](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/agents/index.generated.ts#L120)
 
 Official AdCP update_media_buy tool schema
 Official AdCP update_media_buy tool schema
@@ -156,15 +159,15 @@ Official AdCP update_media_buy tool schema
 
 #### Returns
 
-`Promise`\<`ToolResult`\<[`UpdateMediaBuyResponse`](../interfaces/UpdateMediaBuyResponse.md)\>\>
+`Promise`\<[`UpdateMediaBuyResponse`](../type-aliases/UpdateMediaBuyResponse.md)\>
 
 ***
 
 ### getMediaBuyDelivery()
 
-> **getMediaBuyDelivery**(`params`): `Promise`\<`ToolResult`\<[`GetMediaBuyDeliveryResponse`](../interfaces/GetMediaBuyDeliveryResponse.md)\>\>
+> **getMediaBuyDelivery**(`params`): `Promise`\<[`GetMediaBuyDeliveryResponse`](../interfaces/GetMediaBuyDeliveryResponse.md)\>
 
-Defined in: [src/lib/agents/index.generated.ts:164](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/agents/index.generated.ts#L164)
+Defined in: [src/lib/agents/index.generated.ts:128](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/agents/index.generated.ts#L128)
 
 Official AdCP get_media_buy_delivery tool schema
 Official AdCP get_media_buy_delivery tool schema
@@ -177,15 +180,15 @@ Official AdCP get_media_buy_delivery tool schema
 
 #### Returns
 
-`Promise`\<`ToolResult`\<[`GetMediaBuyDeliveryResponse`](../interfaces/GetMediaBuyDeliveryResponse.md)\>\>
+`Promise`\<[`GetMediaBuyDeliveryResponse`](../interfaces/GetMediaBuyDeliveryResponse.md)\>
 
 ***
 
 ### listAuthorizedProperties()
 
-> **listAuthorizedProperties**(`params`): `Promise`\<`ToolResult`\<[`ListAuthorizedPropertiesResponse`](../interfaces/ListAuthorizedPropertiesResponse.md)\>\>
+> **listAuthorizedProperties**(`params`): `Promise`\<[`ListAuthorizedPropertiesResponse`](../interfaces/ListAuthorizedPropertiesResponse.md)\>
 
-Defined in: [src/lib/agents/index.generated.ts:172](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/agents/index.generated.ts#L172)
+Defined in: [src/lib/agents/index.generated.ts:136](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/agents/index.generated.ts#L136)
 
 Official AdCP list_authorized_properties tool schema
 Official AdCP list_authorized_properties tool schema
@@ -198,15 +201,15 @@ Official AdCP list_authorized_properties tool schema
 
 #### Returns
 
-`Promise`\<`ToolResult`\<[`ListAuthorizedPropertiesResponse`](../interfaces/ListAuthorizedPropertiesResponse.md)\>\>
+`Promise`\<[`ListAuthorizedPropertiesResponse`](../interfaces/ListAuthorizedPropertiesResponse.md)\>
 
 ***
 
 ### providePerformanceFeedback()
 
-> **providePerformanceFeedback**(`params`): `Promise`\<`ToolResult`\<[`ProvidePerformanceFeedbackResponse`](../interfaces/ProvidePerformanceFeedbackResponse.md)\>\>
+> **providePerformanceFeedback**(`params`): `Promise`\<[`ProvidePerformanceFeedbackResponse`](../type-aliases/ProvidePerformanceFeedbackResponse.md)\>
 
-Defined in: [src/lib/agents/index.generated.ts:180](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/agents/index.generated.ts#L180)
+Defined in: [src/lib/agents/index.generated.ts:144](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/agents/index.generated.ts#L144)
 
 Official AdCP provide_performance_feedback tool schema
 Official AdCP provide_performance_feedback tool schema
@@ -219,15 +222,57 @@ Official AdCP provide_performance_feedback tool schema
 
 #### Returns
 
-`Promise`\<`ToolResult`\<[`ProvidePerformanceFeedbackResponse`](../interfaces/ProvidePerformanceFeedbackResponse.md)\>\>
+`Promise`\<[`ProvidePerformanceFeedbackResponse`](../type-aliases/ProvidePerformanceFeedbackResponse.md)\>
+
+***
+
+### buildCreative()
+
+> **buildCreative**(`params`): `Promise`\<`BuildCreativeResponse`\>
+
+Defined in: [src/lib/agents/index.generated.ts:152](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/agents/index.generated.ts#L152)
+
+Official AdCP build_creative tool schema
+Official AdCP build_creative tool schema
+
+#### Parameters
+
+##### params
+
+`BuildCreativeRequest`
+
+#### Returns
+
+`Promise`\<`BuildCreativeResponse`\>
+
+***
+
+### previewCreative()
+
+> **previewCreative**(`params`): `Promise`\<`PreviewCreativeResponse`\>
+
+Defined in: [src/lib/agents/index.generated.ts:160](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/agents/index.generated.ts#L160)
+
+Official AdCP preview_creative tool schema
+Official AdCP preview_creative tool schema
+
+#### Parameters
+
+##### params
+
+`PreviewCreativeRequest`
+
+#### Returns
+
+`Promise`\<`PreviewCreativeResponse`\>
 
 ***
 
 ### getSignals()
 
-> **getSignals**(`params`): `Promise`\<`ToolResult`\<[`GetSignalsResponse`](../interfaces/GetSignalsResponse.md)\>\>
+> **getSignals**(`params`): `Promise`\<[`GetSignalsResponse`](../interfaces/GetSignalsResponse.md)\>
 
-Defined in: [src/lib/agents/index.generated.ts:188](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/agents/index.generated.ts#L188)
+Defined in: [src/lib/agents/index.generated.ts:168](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/agents/index.generated.ts#L168)
 
 Official AdCP get_signals tool schema
 Official AdCP get_signals tool schema
@@ -240,15 +285,15 @@ Official AdCP get_signals tool schema
 
 #### Returns
 
-`Promise`\<`ToolResult`\<[`GetSignalsResponse`](../interfaces/GetSignalsResponse.md)\>\>
+`Promise`\<[`GetSignalsResponse`](../interfaces/GetSignalsResponse.md)\>
 
 ***
 
 ### activateSignal()
 
-> **activateSignal**(`params`): `Promise`\<`ToolResult`\<[`ActivateSignalResponse`](../interfaces/ActivateSignalResponse.md)\>\>
+> **activateSignal**(`params`): `Promise`\<[`ActivateSignalResponse`](../type-aliases/ActivateSignalResponse.md)\>
 
-Defined in: [src/lib/agents/index.generated.ts:196](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/agents/index.generated.ts#L196)
+Defined in: [src/lib/agents/index.generated.ts:176](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/agents/index.generated.ts#L176)
 
 Official AdCP activate_signal tool schema
 Official AdCP activate_signal tool schema
@@ -261,4 +306,4 @@ Official AdCP activate_signal tool schema
 
 #### Returns
 
-`Promise`\<`ToolResult`\<[`ActivateSignalResponse`](../interfaces/ActivateSignalResponse.md)\>\>
+`Promise`\<[`ActivateSignalResponse`](../type-aliases/ActivateSignalResponse.md)\>

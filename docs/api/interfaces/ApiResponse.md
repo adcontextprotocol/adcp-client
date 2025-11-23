@@ -1,12 +1,12 @@
-[**@adcp/client API Reference v2.0.0**](../README.md)
+[**@adcp/client API Reference v3.1.0**](../README.md)
 
 ***
 
-[@adcp/client API Reference](../README.md) / ApiResponse
+[@adcp/client API Reference](../globals.md) / ApiResponse
 
 # Interface: ApiResponse\<T\>
 
-Defined in: [src/lib/types/adcp.ts:195](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L195)
+Defined in: [src/lib/types/adcp.ts:196](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/adcp.ts#L196)
 
 ## Type Parameters
 
@@ -20,7 +20,7 @@ Defined in: [src/lib/types/adcp.ts:195](https://github.com/adcontextprotocol/adc
 
 > **success**: `boolean`
 
-Defined in: [src/lib/types/adcp.ts:196](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L196)
+Defined in: [src/lib/types/adcp.ts:197](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/adcp.ts#L197)
 
 ***
 
@@ -28,7 +28,7 @@ Defined in: [src/lib/types/adcp.ts:196](https://github.com/adcontextprotocol/adc
 
 > `optional` **data**: `T`
 
-Defined in: [src/lib/types/adcp.ts:197](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L197)
+Defined in: [src/lib/types/adcp.ts:198](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/adcp.ts#L198)
 
 ***
 
@@ -36,7 +36,7 @@ Defined in: [src/lib/types/adcp.ts:197](https://github.com/adcontextprotocol/adc
 
 > `optional` **error**: `string`
 
-Defined in: [src/lib/types/adcp.ts:198](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L198)
+Defined in: [src/lib/types/adcp.ts:199](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/adcp.ts#L199)
 
 ***
 
@@ -44,4 +44,4 @@ Defined in: [src/lib/types/adcp.ts:198](https://github.com/adcontextprotocol/adc
 
 > **timestamp**: `string`
 
-Defined in: [src/lib/types/adcp.ts:199](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L199)
+Defined in: [src/lib/types/adcp.ts:200](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/adcp.ts#L200)

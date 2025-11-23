@@ -1,12 +1,12 @@
-[**@adcp/client API Reference v2.0.0**](../README.md)
+[**@adcp/client API Reference v3.1.0**](../README.md)
 
 ***
 
-[@adcp/client API Reference](../README.md) / DeferredTaskError
+[@adcp/client API Reference](../globals.md) / DeferredTaskError
 
 # Class: DeferredTaskError
 
-Defined in: [src/lib/errors/index.ts:47](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/errors/index.ts#L47)
+Defined in: [src/lib/errors/index.ts:50](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/errors/index.ts#L50)
 
 Error thrown when a task is deferred to human
 Contains the token needed to resume the task
@@ -21,7 +21,7 @@ Contains the token needed to resume the task
 
 > **new DeferredTaskError**(`token`): `DeferredTaskError`
 
-Defined in: [src/lib/errors/index.ts:50](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/errors/index.ts#L50)
+Defined in: [src/lib/errors/index.ts:53](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/errors/index.ts#L53)
 
 #### Parameters
 
@@ -43,7 +43,7 @@ Defined in: [src/lib/errors/index.ts:50](https://github.com/adcontextprotocol/ad
 
 > `optional` **details**: `any`
 
-Defined in: [src/lib/errors/index.ts:9](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/errors/index.ts#L9)
+Defined in: [src/lib/errors/index.ts:11](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/errors/index.ts#L11)
 
 #### Inherited from
 
@@ -55,7 +55,7 @@ Defined in: [src/lib/errors/index.ts:9](https://github.com/adcontextprotocol/adc
 
 > `readonly` **code**: `"TASK_DEFERRED"` = `'TASK_DEFERRED'`
 
-Defined in: [src/lib/errors/index.ts:48](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/errors/index.ts#L48)
+Defined in: [src/lib/errors/index.ts:51](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/errors/index.ts#L51)
 
 #### Overrides
 
@@ -67,7 +67,7 @@ Defined in: [src/lib/errors/index.ts:48](https://github.com/adcontextprotocol/ad
 
 > `readonly` **token**: `string`
 
-Defined in: [src/lib/errors/index.ts:50](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/errors/index.ts#L50)
+Defined in: [src/lib/errors/index.ts:53](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/errors/index.ts#L53)
 
 ***
 

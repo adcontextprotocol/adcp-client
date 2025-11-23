@@ -1,12 +1,12 @@
-[**@adcp/client API Reference v2.0.0**](../README.md)
+[**@adcp/client API Reference v3.1.0**](../README.md)
 
 ***
 
-[@adcp/client API Reference](../README.md) / TaskAbortedError
+[@adcp/client API Reference](../globals.md) / TaskAbortedError
 
 # Class: TaskAbortedError
 
-Defined in: [src/lib/errors/index.ts:58](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/errors/index.ts#L58)
+Defined in: [src/lib/errors/index.ts:61](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/errors/index.ts#L61)
 
 Error thrown when a task is aborted
 
@@ -20,7 +20,7 @@ Error thrown when a task is aborted
 
 > **new TaskAbortedError**(`taskId`, `reason?`): `TaskAbortedError`
 
-Defined in: [src/lib/errors/index.ts:61](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/errors/index.ts#L61)
+Defined in: [src/lib/errors/index.ts:64](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/errors/index.ts#L64)
 
 #### Parameters
 
@@ -46,7 +46,7 @@ Defined in: [src/lib/errors/index.ts:61](https://github.com/adcontextprotocol/ad
 
 > `optional` **details**: `any`
 
-Defined in: [src/lib/errors/index.ts:9](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/errors/index.ts#L9)
+Defined in: [src/lib/errors/index.ts:11](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/errors/index.ts#L11)
 
 #### Inherited from
 
@@ -58,7 +58,7 @@ Defined in: [src/lib/errors/index.ts:9](https://github.com/adcontextprotocol/adc
 
 > `readonly` **code**: `"TASK_ABORTED"` = `'TASK_ABORTED'`
 
-Defined in: [src/lib/errors/index.ts:59](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/errors/index.ts#L59)
+Defined in: [src/lib/errors/index.ts:62](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/errors/index.ts#L62)
 
 #### Overrides
 
@@ -70,7 +70,7 @@ Defined in: [src/lib/errors/index.ts:59](https://github.com/adcontextprotocol/ad
 
 > `readonly` **taskId**: `string`
 
-Defined in: [src/lib/errors/index.ts:62](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/errors/index.ts#L62)
+Defined in: [src/lib/errors/index.ts:65](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/errors/index.ts#L65)
 
 ***
 
@@ -78,7 +78,7 @@ Defined in: [src/lib/errors/index.ts:62](https://github.com/adcontextprotocol/ad
 
 > `readonly` `optional` **reason**: `string`
 
-Defined in: [src/lib/errors/index.ts:63](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/errors/index.ts#L63)
+Defined in: [src/lib/errors/index.ts:66](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/errors/index.ts#L66)
 
 ***
 

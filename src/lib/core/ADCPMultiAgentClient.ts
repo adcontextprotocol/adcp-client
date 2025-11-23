@@ -33,7 +33,26 @@ import type {
 } from '../types/tools.generated';
 
 /**
- * Collection of agent clients for parallel operations
+ * Collection of agent clients for parallel operations across multiple AdCP agents.
+ *
+ * Provides methods to execute AdCP operations (get_products, create_media_buy, etc.)
+ * across multiple agents simultaneously using Promise.all().
+ *
+ * @example
+ * ```typescript
+ * const collection = new AgentCollection([
+ *   { id: 'agent1', agent_uri: 'https://agent1.com', protocol: 'a2a' },
+ *   { id: 'agent2', agent_uri: 'https://agent2.com/mcp/', protocol: 'mcp' }
+ * ]);
+ *
+ * // Execute getProducts across all agents
+ * const results = await collection.getProducts({ brief: 'Coffee brands' });
+ * results.forEach((result, i) => {
+ *   console.log(`Agent ${i}: ${result.status}`);
+ * });
+ * ```
+ *
+ * @public
  */
 export class AgentCollection {
   private clients: Map<string, AgentClient> = new Map();
@@ -260,30 +279,92 @@ export class AgentCollection {
 }
 
 /**
- * Main multi-agent ADCP client providing simple, intuitive API
+ * Main multi-agent AdCP client providing unified access to multiple advertising protocol agents.
  *
- * This is the primary entry point for most users. It provides:
- * - Single agent access via agent(id)
- * - Multi-agent access via agents([ids])
- * - Broadcast access via allAgents()
- * - Simple parallel execution using Promise.all()
+ * This is the **primary entry point** for the @adcp/client library. It provides flexible
+ * access patterns for working with one or multiple AdCP agents (MCP or A2A protocols).
  *
- * @example Basic usage
+ * ## Key Features
+ *
+ * - **Single agent access** via `agent(id)` - for individual operations
+ * - **Multi-agent access** via `agents([ids])` - for parallel execution across specific agents
+ * - **Broadcast access** via `allAgents()` - for parallel execution across all configured agents
+ * - **Auto-configuration** via static factory methods (`fromConfig()`, `fromEnv()`, `fromFile()`)
+ * - **Full type safety** - all AdCP request/response types are strongly typed
+ * - **Protocol agnostic** - works seamlessly with both MCP and A2A agents
+ *
+ * ## Basic Usage
+ *
+ * @example Single agent operation
  * ```typescript
  * const client = new ADCPMultiAgentClient([
- *   { id: 'agent1', name: 'Agent 1', agent_uri: 'https://agent1.com', protocol: 'mcp' },
- *   { id: 'agent2', name: 'Agent 2', agent_uri: 'https://agent2.com', protocol: 'a2a' }
+ *   { id: 'agent1', agent_uri: 'https://agent1.com', protocol: 'mcp' },
+ *   { id: 'agent2', agent_uri: 'https://agent2.com', protocol: 'a2a' }
  * ]);
  *
- * // Single agent
- * const result = await client.agent('agent1').getProducts(params, handler);
+ * // Execute operation on single agent
+ * const result = await client.agent('agent1').getProducts({
+ *   brief: 'Coffee brands for premium audience'
+ * });
  *
- * // Multiple specific agents
- * const results = await client.agents(['agent1', 'agent2']).getProducts(params, handler);
- *
- * // All agents
- * const allResults = await client.allAgents().getProducts(params, handler);
+ * if (result.status === 'completed') {
+ *   console.log('Products:', result.data.products);
+ * }
  * ```
+ *
+ * @example Multi-agent parallel execution
+ * ```typescript
+ * // Execute across specific agents
+ * const results = await client.agents(['agent1', 'agent2']).getProducts({
+ *   brief: 'Coffee brands'
+ * });
+ *
+ * // Execute across all agents
+ * const allResults = await client.allAgents().getProducts({
+ *   brief: 'Coffee brands'
+ * });
+ *
+ * // Process results from all agents
+ * allResults.forEach((result, i) => {
+ *   console.log(`Agent ${client.agentIds[i]}: ${result.status}`);
+ *   if (result.status === 'completed') {
+ *     console.log(`  Products: ${result.data.products.length}`);
+ *   }
+ * });
+ * ```
+ *
+ * @example Auto-configuration from environment
+ * ```typescript
+ * // Load agents from environment variables or config files
+ * const client = ADCPMultiAgentClient.fromConfig();
+ *
+ * // Or from environment only
+ * const client = ADCPMultiAgentClient.fromEnv();
+ *
+ * // Or from specific file
+ * const client = ADCPMultiAgentClient.fromFile('./my-agents.json');
+ * ```
+ *
+ * ## Available Operations
+ *
+ * All standard AdCP operations are available:
+ * - `getProducts()` - Discover advertising products
+ * - `listCreativeFormats()` - Get supported creative formats
+ * - `createMediaBuy()` - Create new media buy
+ * - `updateMediaBuy()` - Update existing media buy
+ * - `syncCreatives()` - Upload/sync creative assets
+ * - `listCreatives()` - List creative assets
+ * - `getMediaBuyDelivery()` - Get delivery performance
+ * - `listAuthorizedProperties()` - Get authorized properties
+ * - `getSignals()` - Get audience signals
+ * - `activateSignal()` - Activate audience signals
+ * - `providePerformanceFeedback()` - Send performance feedback
+ *
+ * @see {@link AgentClient} for single-agent operations
+ * @see {@link AgentCollection} for multi-agent parallel operations
+ * @see {@link SingleAgentClientConfig} for configuration options
+ *
+ * @public
  */
 export class ADCPMultiAgentClient {
   private agentClients: Map<string, AgentClient> = new Map();
@@ -450,18 +531,27 @@ export class ADCPMultiAgentClient {
   // ====== SINGLE AGENT ACCESS ======
 
   /**
-   * Get a single agent for operations
+   * Get a single agent client for individual operations.
    *
-   * @param agentId - ID of the agent to get
-   * @returns AgentClient for the specified agent
-   * @throws Error if agent not found
+   * This is the primary method for executing operations on a specific agent.
+   * Returns an {@link AgentClient} instance that provides all AdCP operations.
+   *
+   * @param agentId - The unique identifier of the agent to retrieve
+   * @returns Agent client instance for the specified agent
+   * @throws {Error} If agent ID is not found in configuration
    *
    * @example
    * ```typescript
-   * const agent = client.agent('premium-agent');
-   * const products = await agent.getProducts({ brief: 'Coffee brands' }, handler);
-   * const refined = await agent.continueConversation('Focus on premium brands');
+   * const client = new ADCPMultiAgentClient([
+   *   { id: 'sales_agent', agent_uri: 'https://sales.example.com', protocol: 'a2a' }
+   * ]);
+   *
+   * // Get specific agent and execute operation
+   * const agent = client.agent('sales_agent');
+   * const result = await agent.getProducts({ brief: 'Premium coffee brands' });
    * ```
+   *
+   * @see {@link AgentClient} for available operations
    */
   agent(agentId: string): AgentClient {
     const agent = this.agentClients.get(agentId);
@@ -474,24 +564,32 @@ export class ADCPMultiAgentClient {
   // ====== MULTI-AGENT ACCESS ======
 
   /**
-   * Get multiple specific agents for parallel operations
+   * Get multiple specific agents for parallel operations.
    *
-   * @param agentIds - Array of agent IDs
-   * @returns AgentCollection for parallel operations
-   * @throws Error if any agent not found
+   * Returns an {@link AgentCollection} that executes operations across the specified
+   * agents in parallel using Promise.all(). Useful when you want to query specific
+   * agents simultaneously and compare results.
+   *
+   * @param agentIds - Array of agent IDs to include in the collection
+   * @returns Agent collection for parallel operations across specified agents
+   * @throws {Error} If any agent ID is not found in configuration
    *
    * @example
    * ```typescript
-   * const agents = client.agents(['agent1', 'agent2']);
-   * const results = await agents.getProducts({ brief: 'Coffee brands' }, handler);
+   * // Execute across specific agents
+   * const results = await client.agents(['sales_agent_1', 'sales_agent_2']).getProducts({
+   *   brief: 'Premium coffee brands'
+   * });
    *
-   * // Process results
-   * results.forEach(result => {
-   *   if (result.success) {
-   *     console.log(`${result.metadata.agent.name}: ${result.data.products.length} products`);
+   * // Process parallel results
+   * results.forEach((result, i) => {
+   *   if (result.status === 'completed') {
+   *     console.log(`Agent ${i + 1}: ${result.data.products.length} products`);
    *   }
    * });
    * ```
+   *
+   * @see {@link AgentCollection} for available parallel operations
    */
   agents(agentIds: string[]): AgentCollection {
     const agentConfigs: AgentConfig[] = [];
@@ -508,22 +606,33 @@ export class ADCPMultiAgentClient {
   }
 
   /**
-   * Get all configured agents for broadcast operations
+   * Get all configured agents for broadcast operations.
    *
-   * @returns AgentCollection containing all agents
+   * Returns an {@link AgentCollection} containing all agents in the client configuration.
+   * Executes operations across all agents in parallel, useful for market research,
+   * price comparison, or discovering capabilities across your entire agent network.
+   *
+   * @returns Agent collection for parallel operations across all configured agents
    *
    * @example
    * ```typescript
+   * const client = new ADCPMultiAgentClient([
+   *   { id: 'agent1', agent_uri: 'https://agent1.com', protocol: 'a2a' },
+   *   { id: 'agent2', agent_uri: 'https://agent2.com', protocol: 'mcp' },
+   *   { id: 'agent3', agent_uri: 'https://agent3.com', protocol: 'a2a' }
+   * ]);
+   *
+   * // Query all agents simultaneously
    * const allResults = await client.allAgents().getProducts({
    *   brief: 'Premium coffee brands'
-   * }, handler);
+   * });
    *
-   * // Find best result
-   * const successful = allResults.filter(r => r.success);
-   * const bestResult = successful.sort((a, b) =>
-   *   b.data.products.length - a.data.products.length
-   * )[0];
+   * // Find best options across all agents
+   * const successfulResults = allResults.filter(r => r.status === 'completed');
+   * console.log(`Got products from ${successfulResults.length} agents`);
    * ```
+   *
+   * @see {@link AgentCollection} for available parallel operations
    */
   allAgents(): AgentCollection {
     if (this.agentClients.size === 0) {

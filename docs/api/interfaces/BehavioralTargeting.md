@@ -1,12 +1,12 @@
-[**@adcp/client API Reference v2.0.0**](../README.md)
+[**@adcp/client API Reference v3.1.0**](../README.md)
 
 ***
 
-[@adcp/client API Reference](../README.md) / BehavioralTargeting
+[@adcp/client API Reference](../globals.md) / BehavioralTargeting
 
 # Interface: BehavioralTargeting
 
-Defined in: [src/lib/types/adcp.ts:125](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L125)
+Defined in: [src/lib/types/adcp.ts:123](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/adcp.ts#L123)
 
 ## Properties
 
@@ -14,7 +14,7 @@ Defined in: [src/lib/types/adcp.ts:125](https://github.com/adcontextprotocol/adc
 
 > `optional` **interests**: `string`[]
 
-Defined in: [src/lib/types/adcp.ts:126](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L126)
+Defined in: [src/lib/types/adcp.ts:124](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/adcp.ts#L124)
 
 ***
 
@@ -22,7 +22,7 @@ Defined in: [src/lib/types/adcp.ts:126](https://github.com/adcontextprotocol/adc
 
 > `optional` **purchase\_intent**: `string`[]
 
-Defined in: [src/lib/types/adcp.ts:127](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L127)
+Defined in: [src/lib/types/adcp.ts:125](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/adcp.ts#L125)
 
 ***
 
@@ -30,4 +30,4 @@ Defined in: [src/lib/types/adcp.ts:127](https://github.com/adcontextprotocol/adc
 
 > `optional` **life\_events**: `string`[]
 
-Defined in: [src/lib/types/adcp.ts:128](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/adcp.ts#L128)
+Defined in: [src/lib/types/adcp.ts:126](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/adcp.ts#L126)

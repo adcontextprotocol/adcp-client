@@ -1,14 +1,14 @@
-[**@adcp/client API Reference v2.0.0**](../README.md)
+[**@adcp/client API Reference v3.1.0**](../README.md)
 
 ***
 
-[@adcp/client API Reference](../README.md) / createAuthenticatedFetch
+[@adcp/client API Reference](../globals.md) / createAuthenticatedFetch
 
 # Function: createAuthenticatedFetch()
 
 > **createAuthenticatedFetch**(`authToken`): (`url`, `options?`) => `Promise`\<`Response`\>
 
-Defined in: [src/lib/auth/index.ts:49](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/auth/index.ts#L49)
+Defined in: [src/lib/auth/index.ts:75](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/auth/index.ts#L75)
 
 Create an authenticated fetch function for A2A client
 

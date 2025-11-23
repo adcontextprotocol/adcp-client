@@ -1,32 +1,22 @@
-[**@adcp/client API Reference v2.0.0**](../README.md)
+[**@adcp/client API Reference v3.1.0**](../README.md)
 
 ***
 
-[@adcp/client API Reference](../README.md) / GetSignalsResponse
+[@adcp/client API Reference](../globals.md) / GetSignalsResponse
 
 # Interface: GetSignalsResponse
 
-Defined in: [src/lib/types/tools.generated.ts:1655](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L1655)
+Defined in: [src/lib/types/tools.generated.ts:3977](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/tools.generated.ts#L3977)
 
 Response payload for get_signals task
 
 ## Properties
 
-### adcp\_version
-
-> **adcp\_version**: `string`
-
-Defined in: [src/lib/types/tools.generated.ts:1659](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L1659)
-
-AdCP schema version used for this response
-
-***
-
 ### signals
 
 > **signals**: `object`[]
 
-Defined in: [src/lib/types/tools.generated.ts:1663](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L1663)
+Defined in: [src/lib/types/tools.generated.ts:3981](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/tools.generated.ts#L3981)
 
 Array of matching signals
 
@@ -68,9 +58,9 @@ Percentage of audience coverage
 
 #### deployments
 
-> **deployments**: `object`[]
+> **deployments**: `Deployment`[]
 
-Array of platform deployments
+Array of destination deployments
 
 #### pricing
 
@@ -96,6 +86,16 @@ Currency code
 
 > `optional` **errors**: `Error`[]
 
-Defined in: [src/lib/types/tools.generated.ts:1734](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L1734)
+Defined in: [src/lib/types/tools.generated.ts:4027](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/tools.generated.ts#L4027)
 
 Task-specific errors and warnings (e.g., signal discovery or pricing issues)
+
+***
+
+### context?
+
+> `optional` **context**: `object`
+
+Defined in: [src/lib/types/tools.generated.ts:4031](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/tools.generated.ts#L4031)
+
+Initiator-provided context echoed inside the task payload. Opaque metadata such as UI/session hints, correlation tokens, or tracking identifiers.

@@ -1,32 +1,22 @@
-[**@adcp/client API Reference v2.0.0**](../README.md)
+[**@adcp/client API Reference v3.1.0**](../README.md)
 
 ***
 
-[@adcp/client API Reference](../README.md) / SyncCreativesRequest
+[@adcp/client API Reference](../globals.md) / SyncCreativesRequest
 
 # Interface: SyncCreativesRequest
 
-Defined in: [src/lib/types/tools.generated.ts:594](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L594)
+Defined in: [src/lib/types/tools.generated.ts:2084](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/tools.generated.ts#L2084)
 
-Creative asset for upload to library - supports both hosted assets and third-party snippets
+VAST (Video Ad Serving Template) tag for third-party video ad serving
 
 ## Properties
 
-### adcp\_version?
-
-> `optional` **adcp\_version**: `string`
-
-Defined in: [src/lib/types/tools.generated.ts:598](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L598)
-
-AdCP schema version for this request
-
-***
-
 ### creatives
 
-> **creatives**: `CreativeAsset`[]
+> **creatives**: [`CreativeAsset`](CreativeAsset.md)[]
 
-Defined in: [src/lib/types/tools.generated.ts:604](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L604)
+Defined in: [src/lib/types/tools.generated.ts:2090](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/tools.generated.ts#L2090)
 
 Array of creative assets to sync (create or update)
 
@@ -40,7 +30,7 @@ Array of creative assets to sync (create or update)
 
 > `optional` **patch**: `boolean`
 
-Defined in: [src/lib/types/tools.generated.ts:608](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L608)
+Defined in: [src/lib/types/tools.generated.ts:2094](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/tools.generated.ts#L2094)
 
 When true, only provided fields are updated (partial update). When false, entire creative is replaced (full upsert).
 
@@ -50,7 +40,7 @@ When true, only provided fields are updated (partial update). When false, entire
 
 > `optional` **assignments**: `object`
 
-Defined in: [src/lib/types/tools.generated.ts:612](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L612)
+Defined in: [src/lib/types/tools.generated.ts:2098](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/tools.generated.ts#L2098)
 
 Optional bulk assignment of creatives to packages
 
@@ -69,7 +59,7 @@ via the `patternProperty` "^[a-zA-Z0-9_-]+$".
 
 > `optional` **delete\_missing**: `boolean`
 
-Defined in: [src/lib/types/tools.generated.ts:624](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L624)
+Defined in: [src/lib/types/tools.generated.ts:2110](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/tools.generated.ts#L2110)
 
 When true, creatives not included in this sync will be archived. Use with caution for full library replacement.
 
@@ -79,7 +69,7 @@ When true, creatives not included in this sync will be archived. Use with cautio
 
 > `optional` **dry\_run**: `boolean`
 
-Defined in: [src/lib/types/tools.generated.ts:628](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L628)
+Defined in: [src/lib/types/tools.generated.ts:2114](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/tools.generated.ts#L2114)
 
 When true, preview changes without applying them. Returns what would be created/updated/deleted.
 
@@ -89,6 +79,24 @@ When true, preview changes without applying them. Returns what would be created/
 
 > `optional` **validation\_mode**: `"strict"` \| `"lenient"`
 
-Defined in: [src/lib/types/tools.generated.ts:632](https://github.com/adcontextprotocol/adcp-client/blob/add23254eadaef025ae9fbe49b40948f459b98ff/src/lib/types/tools.generated.ts#L632)
+Defined in: [src/lib/types/tools.generated.ts:2118](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/tools.generated.ts#L2118)
 
 Validation strictness. 'strict' fails entire sync on any validation error. 'lenient' processes valid creatives and reports errors.
+
+***
+
+### push\_notification\_config?
+
+> `optional` **push\_notification\_config**: `PushNotificationConfig`
+
+Defined in: [src/lib/types/tools.generated.ts:2119](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/tools.generated.ts#L2119)
+
+***
+
+### context?
+
+> `optional` **context**: `object`
+
+Defined in: [src/lib/types/tools.generated.ts:2123](https://github.com/adcontextprotocol/adcp-client/blob/8b051702996bea03f2cc34f765f78723a45db572/src/lib/types/tools.generated.ts#L2123)
+
+Initiator-provided context included in the request payload. Agents must echo this value back unchanged in responses and webhooks. Use for UI/session hints, correlation tokens, or tracking metadata.
