@@ -1,100 +1,601 @@
-<!DOCTYPE html><html class="default" lang="en" data-base="./"><head><meta charset="utf-8"/><meta http-equiv="x-ua-compatible" content="IE=edge"/><title>@adcp/client API Reference - v3.1.0</title><meta name="description" content="Documentation for @adcp/client API Reference"/><meta name="viewport" content="width=device-width, initial-scale=1"/><link rel="stylesheet" href="assets/style.css"/><link rel="stylesheet" href="assets/highlight.css"/><script defer src="assets/main.js"></script><script async src="assets/icons.js" id="tsd-icons-script"></script><script async src="assets/search.js" id="tsd-search-script"></script><script async src="assets/navigation.js" id="tsd-nav-script"></script><script async src="assets/hierarchy.js" id="tsd-hierarchy-script"></script></head><body><script>document.documentElement.dataset.theme = localStorage.getItem("tsd-theme") || "os";document.body.style.display="none";setTimeout(() => window.app?app.showPage():document.body.style.removeProperty("display"),500)</script><header class="tsd-page-toolbar"><div class="tsd-toolbar-contents container"><a href="index.html" class="title">@adcp/client API Reference - v3.1.0</a><div id="tsd-toolbar-links"><a href="https://docs.adcontextprotocol.org">Documentation</a><a href="https://github.com/adcontextprotocol/adcp-client">GitHub</a><a href="https://www.npmjs.com/package/@adcp/client">npm</a></div><button id="tsd-search-trigger" class="tsd-widget" aria-label="Search"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><use href="assets/icons.svg#icon-search"></use></svg></button><dialog id="tsd-search" aria-label="Search"><input role="combobox" id="tsd-search-input" aria-controls="tsd-search-results" aria-autocomplete="list" aria-expanded="true" autocapitalize="off" autocomplete="off" placeholder="Search the docs" maxLength="100"/><ul role="listbox" id="tsd-search-results"></ul><div id="tsd-search-status" aria-live="polite" aria-atomic="true"><div>Preparing search index...</div></div></dialog><a href="#" class="tsd-widget menu" id="tsd-toolbar-menu-trigger" data-toggle="menu" aria-label="Menu"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><use href="assets/icons.svg#icon-menu"></use></svg></a></div></header><div class="container container-main"><div class="col-content"><div class="tsd-page-title"><h1>@adcp/client API Reference - v3.1.0</h1></div><div class="tsd-panel tsd-typography"><h1 id="adcpclient-api-reference" class="tsd-anchor-link">@adcp/client API Reference<a href="#adcpclient-api-reference" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h1><p>Complete TypeScript API documentation for the <strong>@adcp/client</strong> library - the official client for the Ad Context Protocol (AdCP).</p>
-<h2 id="overview" class="tsd-anchor-link">Overview<a href="#overview" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2><p>The @adcp/client library provides a comprehensive, type-safe interface for interacting with AdCP agents supporting both <strong>MCP</strong> (Model Context Protocol) and <strong>A2A</strong> (Agent-to-Agent) protocols. Whether you're working with a single agent or orchestrating operations across multiple agents, this library provides the tools you need.</p>
-<h2 id="quick-start" class="tsd-anchor-link">Quick Start<a href="#quick-start" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2><pre><code class="typescript"><span class="hl-0">import</span><span class="hl-1"> { </span><span class="hl-2">ADCPMultiAgentClient</span><span class="hl-1"> } </span><span class="hl-0">from</span><span class="hl-1"> </span><span class="hl-3">&#39;@adcp/client&#39;</span><span class="hl-1">;</span><br/><br/><span class="hl-4">// Configure agents</span><br/><span class="hl-5">const</span><span class="hl-1"> </span><span class="hl-6">client</span><span class="hl-1"> = </span><span class="hl-5">new</span><span class="hl-1"> </span><span class="hl-7">ADCPMultiAgentClient</span><span class="hl-1">([</span><br/><span class="hl-1">  { </span><span class="hl-2">id:</span><span class="hl-1"> </span><span class="hl-3">&#39;agent1&#39;</span><span class="hl-1">, </span><span class="hl-2">agent_uri:</span><span class="hl-1"> </span><span class="hl-3">&#39;https://agent1.com&#39;</span><span class="hl-1">, </span><span class="hl-2">protocol:</span><span class="hl-1"> </span><span class="hl-3">&#39;mcp&#39;</span><span class="hl-1"> },</span><br/><span class="hl-1">  { </span><span class="hl-2">id:</span><span class="hl-1"> </span><span class="hl-3">&#39;agent2&#39;</span><span class="hl-1">, </span><span class="hl-2">agent_uri:</span><span class="hl-1"> </span><span class="hl-3">&#39;https://agent2.com&#39;</span><span class="hl-1">, </span><span class="hl-2">protocol:</span><span class="hl-1"> </span><span class="hl-3">&#39;a2a&#39;</span><span class="hl-1"> }</span><br/><span class="hl-1">]);</span><br/><br/><span class="hl-4">// Execute operation</span><br/><span class="hl-5">const</span><span class="hl-1"> </span><span class="hl-6">result</span><span class="hl-1"> = </span><span class="hl-0">await</span><span class="hl-1"> </span><span class="hl-2">client</span><span class="hl-1">.</span><span class="hl-7">agent</span><span class="hl-1">(</span><span class="hl-3">&#39;agent1&#39;</span><span class="hl-1">).</span><span class="hl-7">getProducts</span><span class="hl-1">({</span><br/><span class="hl-1">  </span><span class="hl-2">brief:</span><span class="hl-1"> </span><span class="hl-3">&#39;Premium coffee brands for millennial audience&#39;</span><br/><span class="hl-1">});</span><br/><br/><span class="hl-0">if</span><span class="hl-1"> (</span><span class="hl-2">result</span><span class="hl-1">.</span><span class="hl-2">status</span><span class="hl-1"> === </span><span class="hl-3">&#39;completed&#39;</span><span class="hl-1">) {</span><br/><span class="hl-1">  </span><span class="hl-2">console</span><span class="hl-1">.</span><span class="hl-7">log</span><span class="hl-1">(</span><span class="hl-3">&#39;Products:&#39;</span><span class="hl-1">, </span><span class="hl-2">result</span><span class="hl-1">.</span><span class="hl-2">data</span><span class="hl-1">.</span><span class="hl-2">products</span><span class="hl-1">);</span><br/><span class="hl-1">}</span>
+<!doctype html>
+<html class="default" lang="en" data-base="./">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="x-ua-compatible" content="IE=edge" />
+    <title>@adcp/client API Reference - v3.1.0</title>
+    <meta name="description" content="Documentation for @adcp/client API Reference" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="stylesheet" href="assets/style.css" />
+    <link rel="stylesheet" href="assets/highlight.css" />
+    <script defer src="assets/main.js"></script>
+    <script async src="assets/icons.js" id="tsd-icons-script"></script>
+    <script async src="assets/search.js" id="tsd-search-script"></script>
+    <script async src="assets/navigation.js" id="tsd-nav-script"></script>
+    <script async src="assets/hierarchy.js" id="tsd-hierarchy-script"></script>
+  </head>
+  <body>
+    <script>
+      document.documentElement.dataset.theme = localStorage.getItem('tsd-theme') || 'os';
+      document.body.style.display = 'none';
+      setTimeout(() => (window.app ? app.showPage() : document.body.style.removeProperty('display')), 500);
+    </script>
+    <header class="tsd-page-toolbar">
+      <div class="tsd-toolbar-contents container">
+        <a href="index.html" class="title">@adcp/client API Reference - v3.1.0</a>
+        <div id="tsd-toolbar-links">
+          <a href="https://docs.adcontextprotocol.org">Documentation</a
+          ><a href="https://github.com/adcontextprotocol/adcp-client">GitHub</a
+          ><a href="https://www.npmjs.com/package/@adcp/client">npm</a>
+        </div>
+        <button id="tsd-search-trigger" class="tsd-widget" aria-label="Search">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <use href="assets/icons.svg#icon-search"></use>
+          </svg>
+        </button>
+        <dialog id="tsd-search" aria-label="Search">
+          <input
+            role="combobox"
+            id="tsd-search-input"
+            aria-controls="tsd-search-results"
+            aria-autocomplete="list"
+            aria-expanded="true"
+            autocapitalize="off"
+            autocomplete="off"
+            placeholder="Search the docs"
+            maxlength="100"
+          />
+          <ul role="listbox" id="tsd-search-results"></ul>
+          <div id="tsd-search-status" aria-live="polite" aria-atomic="true"><div>Preparing search index...</div></div>
+        </dialog>
+        <a href="#" class="tsd-widget menu" id="tsd-toolbar-menu-trigger" data-toggle="menu" aria-label="Menu"
+          ><svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <use href="assets/icons.svg#icon-menu"></use></svg
+        ></a>
+      </div>
+    </header>
+    <div class="container container-main">
+      <div class="col-content">
+        <div class="tsd-page-title"><h1>@adcp/client API Reference - v3.1.0</h1></div>
+        <div class="tsd-panel tsd-typography">
+          <h1 id="adcpclient-api-reference" class="tsd-anchor-link">
+            @adcp/client API Reference<a href="#adcpclient-api-reference" aria-label="Permalink" class="tsd-anchor-icon"
+              ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg
+            ></a>
+          </h1>
+          <p>
+            Complete TypeScript API documentation for the <strong>@adcp/client</strong> library - the official client
+            for the Ad Context Protocol (AdCP).
+          </p>
+          <h2 id="overview" class="tsd-anchor-link">
+            Overview<a href="#overview" aria-label="Permalink" class="tsd-anchor-icon"
+              ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg
+            ></a>
+          </h2>
+          <p>
+            The @adcp/client library provides a comprehensive, type-safe interface for interacting with AdCP agents
+            supporting both <strong>MCP</strong> (Model Context Protocol) and <strong>A2A</strong> (Agent-to-Agent)
+            protocols. Whether you're working with a single agent or orchestrating operations across multiple agents,
+            this library provides the tools you need.
+          </p>
+          <h2 id="quick-start" class="tsd-anchor-link">
+            Quick Start<a href="#quick-start" aria-label="Permalink" class="tsd-anchor-icon"
+              ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg
+            ></a>
+          </h2>
+          <pre><code class="typescript"><span class="hl-0">import</span><span class="hl-1"> { </span><span class="hl-2">ADCPMultiAgentClient</span><span class="hl-1"> } </span><span class="hl-0">from</span><span class="hl-1"> </span><span class="hl-3">&#39;@adcp/client&#39;</span><span class="hl-1">;</span><br/><br/><span class="hl-4">// Configure agents</span><br/><span class="hl-5">const</span><span class="hl-1"> </span><span class="hl-6">client</span><span class="hl-1"> = </span><span class="hl-5">new</span><span class="hl-1"> </span><span class="hl-7">ADCPMultiAgentClient</span><span class="hl-1">([</span><br/><span class="hl-1">  { </span><span class="hl-2">id:</span><span class="hl-1"> </span><span class="hl-3">&#39;agent1&#39;</span><span class="hl-1">, </span><span class="hl-2">agent_uri:</span><span class="hl-1"> </span><span class="hl-3">&#39;https://agent1.com&#39;</span><span class="hl-1">, </span><span class="hl-2">protocol:</span><span class="hl-1"> </span><span class="hl-3">&#39;mcp&#39;</span><span class="hl-1"> },</span><br/><span class="hl-1">  { </span><span class="hl-2">id:</span><span class="hl-1"> </span><span class="hl-3">&#39;agent2&#39;</span><span class="hl-1">, </span><span class="hl-2">agent_uri:</span><span class="hl-1"> </span><span class="hl-3">&#39;https://agent2.com&#39;</span><span class="hl-1">, </span><span class="hl-2">protocol:</span><span class="hl-1"> </span><span class="hl-3">&#39;a2a&#39;</span><span class="hl-1"> }</span><br/><span class="hl-1">]);</span><br/><br/><span class="hl-4">// Execute operation</span><br/><span class="hl-5">const</span><span class="hl-1"> </span><span class="hl-6">result</span><span class="hl-1"> = </span><span class="hl-0">await</span><span class="hl-1"> </span><span class="hl-2">client</span><span class="hl-1">.</span><span class="hl-7">agent</span><span class="hl-1">(</span><span class="hl-3">&#39;agent1&#39;</span><span class="hl-1">).</span><span class="hl-7">getProducts</span><span class="hl-1">({</span><br/><span class="hl-1">  </span><span class="hl-2">brief:</span><span class="hl-1"> </span><span class="hl-3">&#39;Premium coffee brands for millennial audience&#39;</span><br/><span class="hl-1">});</span><br/><br/><span class="hl-0">if</span><span class="hl-1"> (</span><span class="hl-2">result</span><span class="hl-1">.</span><span class="hl-2">status</span><span class="hl-1"> === </span><span class="hl-3">&#39;completed&#39;</span><span class="hl-1">) {</span><br/><span class="hl-1">  </span><span class="hl-2">console</span><span class="hl-1">.</span><span class="hl-7">log</span><span class="hl-1">(</span><span class="hl-3">&#39;Products:&#39;</span><span class="hl-1">, </span><span class="hl-2">result</span><span class="hl-1">.</span><span class="hl-2">data</span><span class="hl-1">.</span><span class="hl-2">products</span><span class="hl-1">);</span><br/><span class="hl-1">}</span>
 </code><button type="button">Copy</button></pre>
 
-<h2 id="core-concepts" class="tsd-anchor-link">Core Concepts<a href="#core-concepts" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2><h3 id="🎯-client-classes" class="tsd-anchor-link">🎯 Client Classes<a href="#🎯-client-classes" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3><p>The library provides flexible client patterns for different use cases:</p>
-<ul>
-<li><strong><a href="./classes/ADCPMultiAgentClient.md"><code>ADCPMultiAgentClient</code></a></strong> - Main entry point supporting single and multi-agent operations</li>
-<li><strong><a href="./classes/AgentClient.md"><code>AgentClient</code></a></strong> - Individual agent operations with full AdCP method support</li>
-<li><strong><a href="./classes/AgentCollection.md"><code>AgentCollection</code></a></strong> - Parallel operations across multiple agents</li>
-</ul>
-<h3 id="📦-requestresponse-types" class="tsd-anchor-link">📦 Request/Response Types<a href="#📦-requestresponse-types" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3><p>All AdCP operations have strongly-typed request and response interfaces:</p>
-<p><strong>Product Discovery:</strong></p>
-<ul>
-<li><a href="./interfaces/GetProductsRequest.md"><code>GetProductsRequest</code></a> / <a href="./interfaces/GetProductsResponse.md"><code>GetProductsResponse</code></a></li>
-<li><a href="./interfaces/ListCreativeFormatsRequest.md"><code>ListCreativeFormatsRequest</code></a> / <a href="./interfaces/ListCreativeFormatsResponse.md"><code>ListCreativeFormatsResponse</code></a></li>
-</ul>
-<p><strong>Media Buy Lifecycle:</strong></p>
-<ul>
-<li><a href="./interfaces/CreateMediaBuyRequest.md"><code>CreateMediaBuyRequest</code></a> / <a href="./interfaces/CreateMediaBuyResponse.md"><code>CreateMediaBuyResponse</code></a></li>
-<li><a href="./type-aliases/UpdateMediaBuyRequest.md"><code>UpdateMediaBuyRequest</code></a> / <a href="./interfaces/UpdateMediaBuyResponse.md"><code>UpdateMediaBuyResponse</code></a></li>
-<li><a href="./interfaces/SyncCreativesRequest.md"><code>SyncCreativesRequest</code></a> / <a href="./interfaces/SyncCreativesResponse.md"><code>SyncCreativesResponse</code></a></li>
-</ul>
-<p><strong>Targeting &amp; Signals:</strong></p>
-<ul>
-<li><a href="./interfaces/GetSignalsRequest.md"><code>GetSignalsRequest</code></a> / <a href="./interfaces/GetSignalsResponse.md"><code>GetSignalsResponse</code></a></li>
-<li><a href="./interfaces/ActivateSignalRequest.md"><code>ActivateSignalRequest</code></a> / <a href="./interfaces/ActivateSignalResponse.md"><code>ActivateSignalResponse</code></a></li>
-</ul>
-<p><a href="media/README.md#interfaces">View all request/response types →</a></p>
-<h3 id="🔄-task-results" class="tsd-anchor-link">🔄 Task Results<a href="#🔄-task-results" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3><p>All operations return a <a href="./interfaces/TaskResult.md"><code>TaskResult&lt;T&gt;</code></a> with status tracking:</p>
-<pre><code class="typescript"><span class="hl-5">type</span><span class="hl-1"> </span><span class="hl-8">TaskStatus</span><span class="hl-1"> = </span><span class="hl-3">&#39;completed&#39;</span><span class="hl-1"> | </span><span class="hl-3">&#39;submitted&#39;</span><span class="hl-1"> | </span><span class="hl-3">&#39;needs_input&#39;</span><span class="hl-1"> | </span><span class="hl-3">&#39;failed&#39;</span><span class="hl-1"> | </span><span class="hl-3">&#39;aborted&#39;</span><span class="hl-1">;</span><br/><br/><span class="hl-5">interface</span><span class="hl-1"> </span><span class="hl-8">TaskResult</span><span class="hl-1">&lt;</span><span class="hl-8">T</span><span class="hl-1">&gt; {</span><br/><span class="hl-1">  </span><span class="hl-2">status</span><span class="hl-1">: </span><span class="hl-8">TaskStatus</span><span class="hl-1">;</span><br/><span class="hl-1">  </span><span class="hl-2">data</span><span class="hl-1">?: </span><span class="hl-8">T</span><span class="hl-1">;              </span><span class="hl-4">// Present when status === &#39;completed&#39;</span><br/><span class="hl-1">  </span><span class="hl-2">error</span><span class="hl-1">?: </span><span class="hl-8">Error</span><span class="hl-1">;         </span><span class="hl-4">// Present when status === &#39;failed&#39;</span><br/><span class="hl-1">  </span><span class="hl-2">needs_input</span><span class="hl-1">?: {...};   </span><span class="hl-4">// Present when status === &#39;needs_input&#39;</span><br/><span class="hl-1">  </span><span class="hl-2">submitted</span><span class="hl-1">?: {...};     </span><span class="hl-4">// Present when status === &#39;submitted&#39;</span><br/><span class="hl-1">}</span>
+          <h2 id="core-concepts" class="tsd-anchor-link">
+            Core Concepts<a href="#core-concepts" aria-label="Permalink" class="tsd-anchor-icon"
+              ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg
+            ></a>
+          </h2>
+          <h3 id="🎯-client-classes" class="tsd-anchor-link">
+            🎯 Client Classes<a href="#🎯-client-classes" aria-label="Permalink" class="tsd-anchor-icon"
+              ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg
+            ></a>
+          </h3>
+          <p>The library provides flexible client patterns for different use cases:</p>
+          <ul>
+            <li>
+              <strong
+                ><a href="./classes/ADCPMultiAgentClient.md"><code>ADCPMultiAgentClient</code></a></strong
+              >
+              - Main entry point supporting single and multi-agent operations
+            </li>
+            <li>
+              <strong
+                ><a href="./classes/AgentClient.md"><code>AgentClient</code></a></strong
+              >
+              - Individual agent operations with full AdCP method support
+            </li>
+            <li>
+              <strong
+                ><a href="./classes/AgentCollection.md"><code>AgentCollection</code></a></strong
+              >
+              - Parallel operations across multiple agents
+            </li>
+          </ul>
+          <h3 id="📦-requestresponse-types" class="tsd-anchor-link">
+            📦 Request/Response Types<a href="#📦-requestresponse-types" aria-label="Permalink" class="tsd-anchor-icon"
+              ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg
+            ></a>
+          </h3>
+          <p>All AdCP operations have strongly-typed request and response interfaces:</p>
+          <p><strong>Product Discovery:</strong></p>
+          <ul>
+            <li>
+              <a href="./interfaces/GetProductsRequest.md"><code>GetProductsRequest</code></a> /
+              <a href="./interfaces/GetProductsResponse.md"><code>GetProductsResponse</code></a>
+            </li>
+            <li>
+              <a href="./interfaces/ListCreativeFormatsRequest.md"><code>ListCreativeFormatsRequest</code></a> /
+              <a href="./interfaces/ListCreativeFormatsResponse.md"><code>ListCreativeFormatsResponse</code></a>
+            </li>
+          </ul>
+          <p><strong>Media Buy Lifecycle:</strong></p>
+          <ul>
+            <li>
+              <a href="./interfaces/CreateMediaBuyRequest.md"><code>CreateMediaBuyRequest</code></a> /
+              <a href="./interfaces/CreateMediaBuyResponse.md"><code>CreateMediaBuyResponse</code></a>
+            </li>
+            <li>
+              <a href="./type-aliases/UpdateMediaBuyRequest.md"><code>UpdateMediaBuyRequest</code></a> /
+              <a href="./interfaces/UpdateMediaBuyResponse.md"><code>UpdateMediaBuyResponse</code></a>
+            </li>
+            <li>
+              <a href="./interfaces/SyncCreativesRequest.md"><code>SyncCreativesRequest</code></a> /
+              <a href="./interfaces/SyncCreativesResponse.md"><code>SyncCreativesResponse</code></a>
+            </li>
+          </ul>
+          <p><strong>Targeting &amp; Signals:</strong></p>
+          <ul>
+            <li>
+              <a href="./interfaces/GetSignalsRequest.md"><code>GetSignalsRequest</code></a> /
+              <a href="./interfaces/GetSignalsResponse.md"><code>GetSignalsResponse</code></a>
+            </li>
+            <li>
+              <a href="./interfaces/ActivateSignalRequest.md"><code>ActivateSignalRequest</code></a> /
+              <a href="./interfaces/ActivateSignalResponse.md"><code>ActivateSignalResponse</code></a>
+            </li>
+          </ul>
+          <p><a href="media/README.md#interfaces">View all request/response types →</a></p>
+          <h3 id="🔄-task-results" class="tsd-anchor-link">
+            🔄 Task Results<a href="#🔄-task-results" aria-label="Permalink" class="tsd-anchor-icon"
+              ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg
+            ></a>
+          </h3>
+          <p>
+            All operations return a <a href="./interfaces/TaskResult.md"><code>TaskResult&lt;T&gt;</code></a> with
+            status tracking:
+          </p>
+          <pre><code class="typescript"><span class="hl-5">type</span><span class="hl-1"> </span><span class="hl-8">TaskStatus</span><span class="hl-1"> = </span><span class="hl-3">&#39;completed&#39;</span><span class="hl-1"> | </span><span class="hl-3">&#39;submitted&#39;</span><span class="hl-1"> | </span><span class="hl-3">&#39;needs_input&#39;</span><span class="hl-1"> | </span><span class="hl-3">&#39;failed&#39;</span><span class="hl-1"> | </span><span class="hl-3">&#39;aborted&#39;</span><span class="hl-1">;</span><br/><br/><span class="hl-5">interface</span><span class="hl-1"> </span><span class="hl-8">TaskResult</span><span class="hl-1">&lt;</span><span class="hl-8">T</span><span class="hl-1">&gt; {</span><br/><span class="hl-1">  </span><span class="hl-2">status</span><span class="hl-1">: </span><span class="hl-8">TaskStatus</span><span class="hl-1">;</span><br/><span class="hl-1">  </span><span class="hl-2">data</span><span class="hl-1">?: </span><span class="hl-8">T</span><span class="hl-1">;              </span><span class="hl-4">// Present when status === &#39;completed&#39;</span><br/><span class="hl-1">  </span><span class="hl-2">error</span><span class="hl-1">?: </span><span class="hl-8">Error</span><span class="hl-1">;         </span><span class="hl-4">// Present when status === &#39;failed&#39;</span><br/><span class="hl-1">  </span><span class="hl-2">needs_input</span><span class="hl-1">?: {...};   </span><span class="hl-4">// Present when status === &#39;needs_input&#39;</span><br/><span class="hl-1">  </span><span class="hl-2">submitted</span><span class="hl-1">?: {...};     </span><span class="hl-4">// Present when status === &#39;submitted&#39;</span><br/><span class="hl-1">}</span>
 </code><button type="button">Copy</button></pre>
 
-<h3 id="🔐-configuration" class="tsd-anchor-link">🔐 Configuration<a href="#🔐-configuration" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3><p>Multiple ways to configure agents:</p>
-<pre><code class="typescript"><span class="hl-4">// 1. Direct construction</span><br/><span class="hl-5">const</span><span class="hl-1"> </span><span class="hl-6">client</span><span class="hl-1"> = </span><span class="hl-5">new</span><span class="hl-1"> </span><span class="hl-7">ADCPMultiAgentClient</span><span class="hl-1">([...</span><span class="hl-2">agents</span><span class="hl-1">]);</span><br/><br/><span class="hl-4">// 2. Auto-discover from environment/config</span><br/><span class="hl-5">const</span><span class="hl-1"> </span><span class="hl-6">client</span><span class="hl-1"> = </span><span class="hl-2">ADCPMultiAgentClient</span><span class="hl-1">.</span><span class="hl-7">fromConfig</span><span class="hl-1">();</span><br/><br/><span class="hl-4">// 3. Environment variables only</span><br/><span class="hl-5">const</span><span class="hl-1"> </span><span class="hl-6">client</span><span class="hl-1"> = </span><span class="hl-2">ADCPMultiAgentClient</span><span class="hl-1">.</span><span class="hl-7">fromEnv</span><span class="hl-1">();</span><br/><br/><span class="hl-4">// 4. Specific config file</span><br/><span class="hl-5">const</span><span class="hl-1"> </span><span class="hl-6">client</span><span class="hl-1"> = </span><span class="hl-2">ADCPMultiAgentClient</span><span class="hl-1">.</span><span class="hl-7">fromFile</span><span class="hl-1">(</span><span class="hl-3">&#39;./agents.json&#39;</span><span class="hl-1">);</span><br/><br/><span class="hl-4">// 5. Simple single-agent setup</span><br/><span class="hl-5">const</span><span class="hl-1"> </span><span class="hl-6">client</span><span class="hl-1"> = </span><span class="hl-2">ADCPMultiAgentClient</span><span class="hl-1">.</span><span class="hl-7">simple</span><span class="hl-1">(</span><span class="hl-3">&#39;https://agent.example.com&#39;</span><span class="hl-1">);</span>
+          <h3 id="🔐-configuration" class="tsd-anchor-link">
+            🔐 Configuration<a href="#🔐-configuration" aria-label="Permalink" class="tsd-anchor-icon"
+              ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg
+            ></a>
+          </h3>
+          <p>Multiple ways to configure agents:</p>
+          <pre><code class="typescript"><span class="hl-4">// 1. Direct construction</span><br/><span class="hl-5">const</span><span class="hl-1"> </span><span class="hl-6">client</span><span class="hl-1"> = </span><span class="hl-5">new</span><span class="hl-1"> </span><span class="hl-7">ADCPMultiAgentClient</span><span class="hl-1">([...</span><span class="hl-2">agents</span><span class="hl-1">]);</span><br/><br/><span class="hl-4">// 2. Auto-discover from environment/config</span><br/><span class="hl-5">const</span><span class="hl-1"> </span><span class="hl-6">client</span><span class="hl-1"> = </span><span class="hl-2">ADCPMultiAgentClient</span><span class="hl-1">.</span><span class="hl-7">fromConfig</span><span class="hl-1">();</span><br/><br/><span class="hl-4">// 3. Environment variables only</span><br/><span class="hl-5">const</span><span class="hl-1"> </span><span class="hl-6">client</span><span class="hl-1"> = </span><span class="hl-2">ADCPMultiAgentClient</span><span class="hl-1">.</span><span class="hl-7">fromEnv</span><span class="hl-1">();</span><br/><br/><span class="hl-4">// 4. Specific config file</span><br/><span class="hl-5">const</span><span class="hl-1"> </span><span class="hl-6">client</span><span class="hl-1"> = </span><span class="hl-2">ADCPMultiAgentClient</span><span class="hl-1">.</span><span class="hl-7">fromFile</span><span class="hl-1">(</span><span class="hl-3">&#39;./agents.json&#39;</span><span class="hl-1">);</span><br/><br/><span class="hl-4">// 5. Simple single-agent setup</span><br/><span class="hl-5">const</span><span class="hl-1"> </span><span class="hl-6">client</span><span class="hl-1"> = </span><span class="hl-2">ADCPMultiAgentClient</span><span class="hl-1">.</span><span class="hl-7">simple</span><span class="hl-1">(</span><span class="hl-3">&#39;https://agent.example.com&#39;</span><span class="hl-1">);</span>
 </code><button type="button">Copy</button></pre>
 
-<p>See <a href="./classes/ConfigurationManager.md"><code>ConfigurationManager</code></a> for configuration file formats and environment variable names.</p>
-<h2 id="usage-patterns" class="tsd-anchor-link">Usage Patterns<a href="#usage-patterns" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2><h3 id="single-agent-operations" class="tsd-anchor-link">Single Agent Operations<a href="#single-agent-operations" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3><pre><code class="typescript"><span class="hl-4">// Get agent and execute</span><br/><span class="hl-5">const</span><span class="hl-1"> </span><span class="hl-6">agent</span><span class="hl-1"> = </span><span class="hl-2">client</span><span class="hl-1">.</span><span class="hl-7">agent</span><span class="hl-1">(</span><span class="hl-3">&#39;sales_agent&#39;</span><span class="hl-1">);</span><br/><span class="hl-5">const</span><span class="hl-1"> </span><span class="hl-6">products</span><span class="hl-1"> = </span><span class="hl-0">await</span><span class="hl-1"> </span><span class="hl-2">agent</span><span class="hl-1">.</span><span class="hl-7">getProducts</span><span class="hl-1">({ </span><span class="hl-2">brief:</span><span class="hl-1"> </span><span class="hl-3">&#39;Coffee brands&#39;</span><span class="hl-1"> });</span><br/><br/><span class="hl-4">// Continue conversation if clarification needed</span><br/><span class="hl-0">if</span><span class="hl-1"> (</span><span class="hl-2">products</span><span class="hl-1">.</span><span class="hl-2">status</span><span class="hl-1"> === </span><span class="hl-3">&#39;needs_input&#39;</span><span class="hl-1">) {</span><br/><span class="hl-1">  </span><span class="hl-5">const</span><span class="hl-1"> </span><span class="hl-6">refined</span><span class="hl-1"> = </span><span class="hl-0">await</span><span class="hl-1"> </span><span class="hl-2">agent</span><span class="hl-1">.</span><span class="hl-7">continueConversation</span><span class="hl-1">(</span><span class="hl-3">&#39;Premium brands only&#39;</span><span class="hl-1">);</span><br/><span class="hl-1">}</span>
+          <p>
+            See <a href="./classes/ConfigurationManager.md"><code>ConfigurationManager</code></a> for configuration file
+            formats and environment variable names.
+          </p>
+          <h2 id="usage-patterns" class="tsd-anchor-link">
+            Usage Patterns<a href="#usage-patterns" aria-label="Permalink" class="tsd-anchor-icon"
+              ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg
+            ></a>
+          </h2>
+          <h3 id="single-agent-operations" class="tsd-anchor-link">
+            Single Agent Operations<a href="#single-agent-operations" aria-label="Permalink" class="tsd-anchor-icon"
+              ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg
+            ></a>
+          </h3>
+          <pre><code class="typescript"><span class="hl-4">// Get agent and execute</span><br/><span class="hl-5">const</span><span class="hl-1"> </span><span class="hl-6">agent</span><span class="hl-1"> = </span><span class="hl-2">client</span><span class="hl-1">.</span><span class="hl-7">agent</span><span class="hl-1">(</span><span class="hl-3">&#39;sales_agent&#39;</span><span class="hl-1">);</span><br/><span class="hl-5">const</span><span class="hl-1"> </span><span class="hl-6">products</span><span class="hl-1"> = </span><span class="hl-0">await</span><span class="hl-1"> </span><span class="hl-2">agent</span><span class="hl-1">.</span><span class="hl-7">getProducts</span><span class="hl-1">({ </span><span class="hl-2">brief:</span><span class="hl-1"> </span><span class="hl-3">&#39;Coffee brands&#39;</span><span class="hl-1"> });</span><br/><br/><span class="hl-4">// Continue conversation if clarification needed</span><br/><span class="hl-0">if</span><span class="hl-1"> (</span><span class="hl-2">products</span><span class="hl-1">.</span><span class="hl-2">status</span><span class="hl-1"> === </span><span class="hl-3">&#39;needs_input&#39;</span><span class="hl-1">) {</span><br/><span class="hl-1">  </span><span class="hl-5">const</span><span class="hl-1"> </span><span class="hl-6">refined</span><span class="hl-1"> = </span><span class="hl-0">await</span><span class="hl-1"> </span><span class="hl-2">agent</span><span class="hl-1">.</span><span class="hl-7">continueConversation</span><span class="hl-1">(</span><span class="hl-3">&#39;Premium brands only&#39;</span><span class="hl-1">);</span><br/><span class="hl-1">}</span>
 </code><button type="button">Copy</button></pre>
 
-<h3 id="multi-agent-parallel-execution" class="tsd-anchor-link">Multi-Agent Parallel Execution<a href="#multi-agent-parallel-execution" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3><pre><code class="typescript"><span class="hl-4">// Execute across specific agents</span><br/><span class="hl-5">const</span><span class="hl-1"> </span><span class="hl-6">results</span><span class="hl-1"> = </span><span class="hl-0">await</span><span class="hl-1"> </span><span class="hl-2">client</span><span class="hl-1">.</span><span class="hl-7">agents</span><span class="hl-1">([</span><span class="hl-3">&#39;agent1&#39;</span><span class="hl-1">, </span><span class="hl-3">&#39;agent2&#39;</span><span class="hl-1">]).</span><span class="hl-7">getProducts</span><span class="hl-1">({</span><br/><span class="hl-1">  </span><span class="hl-2">brief:</span><span class="hl-1"> </span><span class="hl-3">&#39;Coffee brands&#39;</span><br/><span class="hl-1">});</span><br/><br/><span class="hl-4">// Or across all agents</span><br/><span class="hl-5">const</span><span class="hl-1"> </span><span class="hl-6">allResults</span><span class="hl-1"> = </span><span class="hl-0">await</span><span class="hl-1"> </span><span class="hl-2">client</span><span class="hl-1">.</span><span class="hl-7">allAgents</span><span class="hl-1">().</span><span class="hl-7">getProducts</span><span class="hl-1">({</span><br/><span class="hl-1">  </span><span class="hl-2">brief:</span><span class="hl-1"> </span><span class="hl-3">&#39;Coffee brands&#39;</span><br/><span class="hl-1">});</span><br/><br/><span class="hl-4">// Process results</span><br/><span class="hl-2">allResults</span><span class="hl-1">.</span><span class="hl-7">forEach</span><span class="hl-1">((</span><span class="hl-2">result</span><span class="hl-1">, </span><span class="hl-2">i</span><span class="hl-1">) </span><span class="hl-5">=&gt;</span><span class="hl-1"> {</span><br/><span class="hl-1">  </span><span class="hl-0">if</span><span class="hl-1"> (</span><span class="hl-2">result</span><span class="hl-1">.</span><span class="hl-2">status</span><span class="hl-1"> === </span><span class="hl-3">&#39;completed&#39;</span><span class="hl-1">) {</span><br/><span class="hl-1">    </span><span class="hl-2">console</span><span class="hl-1">.</span><span class="hl-7">log</span><span class="hl-1">(</span><span class="hl-3">`Agent </span><span class="hl-5">${</span><span class="hl-2">i</span><span class="hl-5">}</span><span class="hl-3">: </span><span class="hl-5">${</span><span class="hl-2">result</span><span class="hl-9">.</span><span class="hl-2">data</span><span class="hl-9">.</span><span class="hl-2">products</span><span class="hl-9">.</span><span class="hl-2">length</span><span class="hl-5">}</span><span class="hl-3"> products`</span><span class="hl-1">);</span><br/><span class="hl-1">  }</span><br/><span class="hl-1">});</span>
+          <h3 id="multi-agent-parallel-execution" class="tsd-anchor-link">
+            Multi-Agent Parallel Execution<a
+              href="#multi-agent-parallel-execution"
+              aria-label="Permalink"
+              class="tsd-anchor-icon"
+              ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg
+            ></a>
+          </h3>
+          <pre><code class="typescript"><span class="hl-4">// Execute across specific agents</span><br/><span class="hl-5">const</span><span class="hl-1"> </span><span class="hl-6">results</span><span class="hl-1"> = </span><span class="hl-0">await</span><span class="hl-1"> </span><span class="hl-2">client</span><span class="hl-1">.</span><span class="hl-7">agents</span><span class="hl-1">([</span><span class="hl-3">&#39;agent1&#39;</span><span class="hl-1">, </span><span class="hl-3">&#39;agent2&#39;</span><span class="hl-1">]).</span><span class="hl-7">getProducts</span><span class="hl-1">({</span><br/><span class="hl-1">  </span><span class="hl-2">brief:</span><span class="hl-1"> </span><span class="hl-3">&#39;Coffee brands&#39;</span><br/><span class="hl-1">});</span><br/><br/><span class="hl-4">// Or across all agents</span><br/><span class="hl-5">const</span><span class="hl-1"> </span><span class="hl-6">allResults</span><span class="hl-1"> = </span><span class="hl-0">await</span><span class="hl-1"> </span><span class="hl-2">client</span><span class="hl-1">.</span><span class="hl-7">allAgents</span><span class="hl-1">().</span><span class="hl-7">getProducts</span><span class="hl-1">({</span><br/><span class="hl-1">  </span><span class="hl-2">brief:</span><span class="hl-1"> </span><span class="hl-3">&#39;Coffee brands&#39;</span><br/><span class="hl-1">});</span><br/><br/><span class="hl-4">// Process results</span><br/><span class="hl-2">allResults</span><span class="hl-1">.</span><span class="hl-7">forEach</span><span class="hl-1">((</span><span class="hl-2">result</span><span class="hl-1">, </span><span class="hl-2">i</span><span class="hl-1">) </span><span class="hl-5">=&gt;</span><span class="hl-1"> {</span><br/><span class="hl-1">  </span><span class="hl-0">if</span><span class="hl-1"> (</span><span class="hl-2">result</span><span class="hl-1">.</span><span class="hl-2">status</span><span class="hl-1"> === </span><span class="hl-3">&#39;completed&#39;</span><span class="hl-1">) {</span><br/><span class="hl-1">    </span><span class="hl-2">console</span><span class="hl-1">.</span><span class="hl-7">log</span><span class="hl-1">(</span><span class="hl-3">`Agent </span><span class="hl-5">${</span><span class="hl-2">i</span><span class="hl-5">}</span><span class="hl-3">: </span><span class="hl-5">${</span><span class="hl-2">result</span><span class="hl-9">.</span><span class="hl-2">data</span><span class="hl-9">.</span><span class="hl-2">products</span><span class="hl-9">.</span><span class="hl-2">length</span><span class="hl-5">}</span><span class="hl-3"> products`</span><span class="hl-1">);</span><br/><span class="hl-1">  }</span><br/><span class="hl-1">});</span>
 </code><button type="button">Copy</button></pre>
 
-<h3 id="property-discovery-adcp-v220" class="tsd-anchor-link">Property Discovery (AdCP v2.2.0+)<a href="#property-discovery-adcp-v220" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3><p>Build agent registries by discovering what properties agents can sell:</p>
-<pre><code class="typescript"><span class="hl-0">import</span><span class="hl-1"> { </span><span class="hl-2">PropertyCrawler</span><span class="hl-1">, </span><span class="hl-2">getPropertyIndex</span><span class="hl-1"> } </span><span class="hl-0">from</span><span class="hl-1"> </span><span class="hl-3">&#39;@adcp/client&#39;</span><span class="hl-1">;</span><br/><br/><span class="hl-4">// Crawl agents</span><br/><span class="hl-5">const</span><span class="hl-1"> </span><span class="hl-6">crawler</span><span class="hl-1"> = </span><span class="hl-5">new</span><span class="hl-1"> </span><span class="hl-7">PropertyCrawler</span><span class="hl-1">();</span><br/><span class="hl-0">await</span><span class="hl-1"> </span><span class="hl-2">crawler</span><span class="hl-1">.</span><span class="hl-7">crawlAgents</span><span class="hl-1">([</span><br/><span class="hl-1">  { </span><span class="hl-2">agent_url:</span><span class="hl-1"> </span><span class="hl-3">&#39;https://agent1.com&#39;</span><span class="hl-1"> },</span><br/><span class="hl-1">  { </span><span class="hl-2">agent_url:</span><span class="hl-1"> </span><span class="hl-3">&#39;https://agent2.com&#39;</span><span class="hl-1"> }</span><br/><span class="hl-1">]);</span><br/><br/><span class="hl-4">// Query index</span><br/><span class="hl-5">const</span><span class="hl-1"> </span><span class="hl-6">index</span><span class="hl-1"> = </span><span class="hl-7">getPropertyIndex</span><span class="hl-1">();</span><br/><span class="hl-5">const</span><span class="hl-1"> </span><span class="hl-6">matches</span><span class="hl-1"> = </span><span class="hl-2">index</span><span class="hl-1">.</span><span class="hl-7">findAgentsForProperty</span><span class="hl-1">(</span><span class="hl-3">&#39;domain&#39;</span><span class="hl-1">, </span><span class="hl-3">&#39;cnn.com&#39;</span><span class="hl-1">);</span>
+          <h3 id="property-discovery-adcp-v220" class="tsd-anchor-link">
+            Property Discovery (AdCP v2.2.0+)<a
+              href="#property-discovery-adcp-v220"
+              aria-label="Permalink"
+              class="tsd-anchor-icon"
+              ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg
+            ></a>
+          </h3>
+          <p>Build agent registries by discovering what properties agents can sell:</p>
+          <pre><code class="typescript"><span class="hl-0">import</span><span class="hl-1"> { </span><span class="hl-2">PropertyCrawler</span><span class="hl-1">, </span><span class="hl-2">getPropertyIndex</span><span class="hl-1"> } </span><span class="hl-0">from</span><span class="hl-1"> </span><span class="hl-3">&#39;@adcp/client&#39;</span><span class="hl-1">;</span><br/><br/><span class="hl-4">// Crawl agents</span><br/><span class="hl-5">const</span><span class="hl-1"> </span><span class="hl-6">crawler</span><span class="hl-1"> = </span><span class="hl-5">new</span><span class="hl-1"> </span><span class="hl-7">PropertyCrawler</span><span class="hl-1">();</span><br/><span class="hl-0">await</span><span class="hl-1"> </span><span class="hl-2">crawler</span><span class="hl-1">.</span><span class="hl-7">crawlAgents</span><span class="hl-1">([</span><br/><span class="hl-1">  { </span><span class="hl-2">agent_url:</span><span class="hl-1"> </span><span class="hl-3">&#39;https://agent1.com&#39;</span><span class="hl-1"> },</span><br/><span class="hl-1">  { </span><span class="hl-2">agent_url:</span><span class="hl-1"> </span><span class="hl-3">&#39;https://agent2.com&#39;</span><span class="hl-1"> }</span><br/><span class="hl-1">]);</span><br/><br/><span class="hl-4">// Query index</span><br/><span class="hl-5">const</span><span class="hl-1"> </span><span class="hl-6">index</span><span class="hl-1"> = </span><span class="hl-7">getPropertyIndex</span><span class="hl-1">();</span><br/><span class="hl-5">const</span><span class="hl-1"> </span><span class="hl-6">matches</span><span class="hl-1"> = </span><span class="hl-2">index</span><span class="hl-1">.</span><span class="hl-7">findAgentsForProperty</span><span class="hl-1">(</span><span class="hl-3">&#39;domain&#39;</span><span class="hl-1">, </span><span class="hl-3">&#39;cnn.com&#39;</span><span class="hl-1">);</span>
 </code><button type="button">Copy</button></pre>
 
-<p>See <a href="./classes/PropertyCrawler.md"><code>PropertyCrawler</code></a> and <a href="./classes/PropertyIndex.md"><code>PropertyIndex</code></a> for details.</p>
-<h2 id="error-handling" class="tsd-anchor-link">Error Handling<a href="#error-handling" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2><p>The library provides specific error types for different failure modes:</p>
-<ul>
-<li><a href="./classes/ADCPError.md"><code>ADCPError</code></a> - Base error class</li>
-<li><a href="./classes/ProtocolError.md"><code>ProtocolError</code></a> - Protocol-level failures</li>
-<li><a href="./classes/TaskTimeoutError.md"><code>TaskTimeoutError</code></a> - Operation timeouts</li>
-<li><a href="./classes/AgentNotFoundError.md"><code>AgentNotFoundError</code></a> - Invalid agent ID</li>
-<li><a href="./classes/ADCPValidationError.md"><code>ValidationError</code></a> - Schema validation failures</li>
-</ul>
-<pre><code class="typescript"><span class="hl-0">import</span><span class="hl-1"> { </span><span class="hl-2">isADCPError</span><span class="hl-1">, </span><span class="hl-2">isErrorOfType</span><span class="hl-1">, </span><span class="hl-2">TaskTimeoutError</span><span class="hl-1"> } </span><span class="hl-0">from</span><span class="hl-1"> </span><span class="hl-3">&#39;@adcp/client&#39;</span><span class="hl-1">;</span><br/><br/><span class="hl-0">try</span><span class="hl-1"> {</span><br/><span class="hl-1">  </span><span class="hl-5">const</span><span class="hl-1"> </span><span class="hl-6">result</span><span class="hl-1"> = </span><span class="hl-0">await</span><span class="hl-1"> </span><span class="hl-2">agent</span><span class="hl-1">.</span><span class="hl-7">getProducts</span><span class="hl-1">(</span><span class="hl-2">params</span><span class="hl-1">);</span><br/><span class="hl-1">} </span><span class="hl-0">catch</span><span class="hl-1"> (</span><span class="hl-2">error</span><span class="hl-1">) {</span><br/><span class="hl-1">  </span><span class="hl-0">if</span><span class="hl-1"> (</span><span class="hl-7">isErrorOfType</span><span class="hl-1">(</span><span class="hl-2">error</span><span class="hl-1">, </span><span class="hl-2">TaskTimeoutError</span><span class="hl-1">)) {</span><br/><span class="hl-1">    </span><span class="hl-2">console</span><span class="hl-1">.</span><span class="hl-7">error</span><span class="hl-1">(</span><span class="hl-3">&#39;Operation timed out&#39;</span><span class="hl-1">);</span><br/><span class="hl-1">  } </span><span class="hl-0">else</span><span class="hl-1"> </span><span class="hl-0">if</span><span class="hl-1"> (</span><span class="hl-7">isADCPError</span><span class="hl-1">(</span><span class="hl-2">error</span><span class="hl-1">)) {</span><br/><span class="hl-1">    </span><span class="hl-2">console</span><span class="hl-1">.</span><span class="hl-7">error</span><span class="hl-1">(</span><span class="hl-3">&#39;AdCP error:&#39;</span><span class="hl-1">, </span><span class="hl-2">error</span><span class="hl-1">.</span><span class="hl-2">message</span><span class="hl-1">);</span><br/><span class="hl-1">  }</span><br/><span class="hl-1">}</span>
+          <p>
+            See <a href="./classes/PropertyCrawler.md"><code>PropertyCrawler</code></a> and
+            <a href="./classes/PropertyIndex.md"><code>PropertyIndex</code></a> for details.
+          </p>
+          <h2 id="error-handling" class="tsd-anchor-link">
+            Error Handling<a href="#error-handling" aria-label="Permalink" class="tsd-anchor-icon"
+              ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg
+            ></a>
+          </h2>
+          <p>The library provides specific error types for different failure modes:</p>
+          <ul>
+            <li>
+              <a href="./classes/ADCPError.md"><code>ADCPError</code></a> - Base error class
+            </li>
+            <li>
+              <a href="./classes/ProtocolError.md"><code>ProtocolError</code></a> - Protocol-level failures
+            </li>
+            <li>
+              <a href="./classes/TaskTimeoutError.md"><code>TaskTimeoutError</code></a> - Operation timeouts
+            </li>
+            <li>
+              <a href="./classes/AgentNotFoundError.md"><code>AgentNotFoundError</code></a> - Invalid agent ID
+            </li>
+            <li>
+              <a href="./classes/ADCPValidationError.md"><code>ValidationError</code></a> - Schema validation failures
+            </li>
+          </ul>
+          <pre><code class="typescript"><span class="hl-0">import</span><span class="hl-1"> { </span><span class="hl-2">isADCPError</span><span class="hl-1">, </span><span class="hl-2">isErrorOfType</span><span class="hl-1">, </span><span class="hl-2">TaskTimeoutError</span><span class="hl-1"> } </span><span class="hl-0">from</span><span class="hl-1"> </span><span class="hl-3">&#39;@adcp/client&#39;</span><span class="hl-1">;</span><br/><br/><span class="hl-0">try</span><span class="hl-1"> {</span><br/><span class="hl-1">  </span><span class="hl-5">const</span><span class="hl-1"> </span><span class="hl-6">result</span><span class="hl-1"> = </span><span class="hl-0">await</span><span class="hl-1"> </span><span class="hl-2">agent</span><span class="hl-1">.</span><span class="hl-7">getProducts</span><span class="hl-1">(</span><span class="hl-2">params</span><span class="hl-1">);</span><br/><span class="hl-1">} </span><span class="hl-0">catch</span><span class="hl-1"> (</span><span class="hl-2">error</span><span class="hl-1">) {</span><br/><span class="hl-1">  </span><span class="hl-0">if</span><span class="hl-1"> (</span><span class="hl-7">isErrorOfType</span><span class="hl-1">(</span><span class="hl-2">error</span><span class="hl-1">, </span><span class="hl-2">TaskTimeoutError</span><span class="hl-1">)) {</span><br/><span class="hl-1">    </span><span class="hl-2">console</span><span class="hl-1">.</span><span class="hl-7">error</span><span class="hl-1">(</span><span class="hl-3">&#39;Operation timed out&#39;</span><span class="hl-1">);</span><br/><span class="hl-1">  } </span><span class="hl-0">else</span><span class="hl-1"> </span><span class="hl-0">if</span><span class="hl-1"> (</span><span class="hl-7">isADCPError</span><span class="hl-1">(</span><span class="hl-2">error</span><span class="hl-1">)) {</span><br/><span class="hl-1">    </span><span class="hl-2">console</span><span class="hl-1">.</span><span class="hl-7">error</span><span class="hl-1">(</span><span class="hl-3">&#39;AdCP error:&#39;</span><span class="hl-1">, </span><span class="hl-2">error</span><span class="hl-1">.</span><span class="hl-2">message</span><span class="hl-1">);</span><br/><span class="hl-1">  }</span><br/><span class="hl-1">}</span>
 </code><button type="button">Copy</button></pre>
 
-<h2 id="type-safety" class="tsd-anchor-link">Type Safety<a href="#type-safety" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2><p>All types are automatically generated from the AdCP JSON schemas, ensuring perfect alignment with the protocol specification:</p>
-<pre><code class="typescript"><span class="hl-0">import</span><span class="hl-1"> </span><span class="hl-0">type</span><span class="hl-1"> {</span><br/><span class="hl-1">  </span><span class="hl-2">GetProductsRequest</span><span class="hl-1">,</span><br/><span class="hl-1">  </span><span class="hl-2">GetProductsResponse</span><span class="hl-1">,</span><br/><span class="hl-1">  </span><span class="hl-2">BrandManifest</span><span class="hl-1">,</span><br/><span class="hl-1">  </span><span class="hl-2">Product</span><span class="hl-1">,</span><br/><span class="hl-1">  </span><span class="hl-2">Format</span><br/><span class="hl-1">} </span><span class="hl-0">from</span><span class="hl-1"> </span><span class="hl-3">&#39;@adcp/client&#39;</span><span class="hl-1">;</span><br/><br/><span class="hl-4">// Full IntelliSense support</span><br/><span class="hl-5">const</span><span class="hl-1"> </span><span class="hl-6">request</span><span class="hl-1">: </span><span class="hl-8">GetProductsRequest</span><span class="hl-1"> = {</span><br/><span class="hl-1">  </span><span class="hl-2">brand_manifest:</span><span class="hl-1"> { </span><span class="hl-2">name:</span><span class="hl-1"> </span><span class="hl-3">&#39;Acme Corp&#39;</span><span class="hl-1"> },</span><br/><span class="hl-1">  </span><span class="hl-2">brief:</span><span class="hl-1"> </span><span class="hl-3">&#39;Coffee products&#39;</span><br/><span class="hl-1">};</span>
+          <h2 id="type-safety" class="tsd-anchor-link">
+            Type Safety<a href="#type-safety" aria-label="Permalink" class="tsd-anchor-icon"
+              ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg
+            ></a>
+          </h2>
+          <p>
+            All types are automatically generated from the AdCP JSON schemas, ensuring perfect alignment with the
+            protocol specification:
+          </p>
+          <pre><code class="typescript"><span class="hl-0">import</span><span class="hl-1"> </span><span class="hl-0">type</span><span class="hl-1"> {</span><br/><span class="hl-1">  </span><span class="hl-2">GetProductsRequest</span><span class="hl-1">,</span><br/><span class="hl-1">  </span><span class="hl-2">GetProductsResponse</span><span class="hl-1">,</span><br/><span class="hl-1">  </span><span class="hl-2">BrandManifest</span><span class="hl-1">,</span><br/><span class="hl-1">  </span><span class="hl-2">Product</span><span class="hl-1">,</span><br/><span class="hl-1">  </span><span class="hl-2">Format</span><br/><span class="hl-1">} </span><span class="hl-0">from</span><span class="hl-1"> </span><span class="hl-3">&#39;@adcp/client&#39;</span><span class="hl-1">;</span><br/><br/><span class="hl-4">// Full IntelliSense support</span><br/><span class="hl-5">const</span><span class="hl-1"> </span><span class="hl-6">request</span><span class="hl-1">: </span><span class="hl-8">GetProductsRequest</span><span class="hl-1"> = {</span><br/><span class="hl-1">  </span><span class="hl-2">brand_manifest:</span><span class="hl-1"> { </span><span class="hl-2">name:</span><span class="hl-1"> </span><span class="hl-3">&#39;Acme Corp&#39;</span><span class="hl-1"> },</span><br/><span class="hl-1">  </span><span class="hl-2">brief:</span><span class="hl-1"> </span><span class="hl-3">&#39;Coffee products&#39;</span><br/><span class="hl-1">};</span>
 </code><button type="button">Copy</button></pre>
 
-<h2 id="validation" class="tsd-anchor-link">Validation<a href="#validation" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2><p>Runtime validation using Zod schemas:</p>
-<pre><code class="typescript"><span class="hl-0">import</span><span class="hl-1"> {</span><br/><span class="hl-1">  </span><span class="hl-2">GetProductsRequestSchema</span><span class="hl-1">,</span><br/><span class="hl-1">  </span><span class="hl-2">GetProductsResponseSchema</span><br/><span class="hl-1">} </span><span class="hl-0">from</span><span class="hl-1"> </span><span class="hl-3">&#39;@adcp/client&#39;</span><span class="hl-1">;</span><br/><br/><span class="hl-4">// Validate request</span><br/><span class="hl-5">const</span><span class="hl-1"> </span><span class="hl-6">validRequest</span><span class="hl-1"> = </span><span class="hl-2">GetProductsRequestSchema</span><span class="hl-1">.</span><span class="hl-7">parse</span><span class="hl-1">(</span><span class="hl-2">requestData</span><span class="hl-1">);</span><br/><br/><span class="hl-4">// Validate response</span><br/><span class="hl-5">const</span><span class="hl-1"> </span><span class="hl-6">validResponse</span><span class="hl-1"> = </span><span class="hl-2">GetProductsResponseSchema</span><span class="hl-1">.</span><span class="hl-7">parse</span><span class="hl-1">(</span><span class="hl-2">responseData</span><span class="hl-1">);</span>
+          <h2 id="validation" class="tsd-anchor-link">
+            Validation<a href="#validation" aria-label="Permalink" class="tsd-anchor-icon"
+              ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg
+            ></a>
+          </h2>
+          <p>Runtime validation using Zod schemas:</p>
+          <pre><code class="typescript"><span class="hl-0">import</span><span class="hl-1"> {</span><br/><span class="hl-1">  </span><span class="hl-2">GetProductsRequestSchema</span><span class="hl-1">,</span><br/><span class="hl-1">  </span><span class="hl-2">GetProductsResponseSchema</span><br/><span class="hl-1">} </span><span class="hl-0">from</span><span class="hl-1"> </span><span class="hl-3">&#39;@adcp/client&#39;</span><span class="hl-1">;</span><br/><br/><span class="hl-4">// Validate request</span><br/><span class="hl-5">const</span><span class="hl-1"> </span><span class="hl-6">validRequest</span><span class="hl-1"> = </span><span class="hl-2">GetProductsRequestSchema</span><span class="hl-1">.</span><span class="hl-7">parse</span><span class="hl-1">(</span><span class="hl-2">requestData</span><span class="hl-1">);</span><br/><br/><span class="hl-4">// Validate response</span><br/><span class="hl-5">const</span><span class="hl-1"> </span><span class="hl-6">validResponse</span><span class="hl-1"> = </span><span class="hl-2">GetProductsResponseSchema</span><span class="hl-1">.</span><span class="hl-7">parse</span><span class="hl-1">(</span><span class="hl-2">responseData</span><span class="hl-1">);</span>
 </code><button type="button">Copy</button></pre>
 
-<p>See <a href="media/README.md#type-aliases"><code>schemas.generated</code></a> for all available Zod schemas.</p>
-<h2 id="advanced-features" class="tsd-anchor-link">Advanced Features<a href="#advanced-features" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2><h3 id="async-handlers--webhooks" class="tsd-anchor-link">Async Handlers &amp; Webhooks<a href="#async-handlers--webhooks" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3><p>Handle asynchronous operations with automatic webhook management:</p>
-<pre><code class="typescript"><span class="hl-5">const</span><span class="hl-1"> </span><span class="hl-6">client</span><span class="hl-1"> = </span><span class="hl-5">new</span><span class="hl-1"> </span><span class="hl-7">ADCPMultiAgentClient</span><span class="hl-1">(</span><span class="hl-2">agents</span><span class="hl-1">, {</span><br/><span class="hl-1">  </span><span class="hl-2">webhookUrlTemplate:</span><span class="hl-1"> </span><span class="hl-3">&#39;https://myapp.com/webhook/{task_type}/{agent_id}/{operation_id}&#39;</span><span class="hl-1">,</span><br/><span class="hl-1">  </span><span class="hl-2">handlers:</span><span class="hl-1"> {</span><br/><span class="hl-1">    </span><span class="hl-7">onGetProductsStatusChange</span><span class="hl-2">:</span><span class="hl-1"> (</span><span class="hl-2">response</span><span class="hl-1">, </span><span class="hl-2">metadata</span><span class="hl-1">) </span><span class="hl-5">=&gt;</span><span class="hl-1"> {</span><br/><span class="hl-1">      </span><span class="hl-2">console</span><span class="hl-1">.</span><span class="hl-7">log</span><span class="hl-1">(</span><span class="hl-3">`Status: </span><span class="hl-5">${</span><span class="hl-2">metadata</span><span class="hl-9">.</span><span class="hl-2">status</span><span class="hl-5">}</span><span class="hl-3">`</span><span class="hl-1">);</span><br/><span class="hl-1">      </span><span class="hl-0">if</span><span class="hl-1"> (</span><span class="hl-2">metadata</span><span class="hl-1">.</span><span class="hl-2">status</span><span class="hl-1"> === </span><span class="hl-3">&#39;completed&#39;</span><span class="hl-1">) {</span><br/><span class="hl-1">        </span><span class="hl-7">saveProducts</span><span class="hl-1">(</span><span class="hl-2">response</span><span class="hl-1">.</span><span class="hl-2">products</span><span class="hl-1">);</span><br/><span class="hl-1">      }</span><br/><span class="hl-1">    }</span><br/><span class="hl-1">  }</span><br/><span class="hl-1">});</span>
+          <p>
+            See <a href="media/README.md#type-aliases"><code>schemas.generated</code></a> for all available Zod schemas.
+          </p>
+          <h2 id="advanced-features" class="tsd-anchor-link">
+            Advanced Features<a href="#advanced-features" aria-label="Permalink" class="tsd-anchor-icon"
+              ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg
+            ></a>
+          </h2>
+          <h3 id="async-handlers--webhooks" class="tsd-anchor-link">
+            Async Handlers &amp; Webhooks<a
+              href="#async-handlers--webhooks"
+              aria-label="Permalink"
+              class="tsd-anchor-icon"
+              ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg
+            ></a>
+          </h3>
+          <p>Handle asynchronous operations with automatic webhook management:</p>
+          <pre><code class="typescript"><span class="hl-5">const</span><span class="hl-1"> </span><span class="hl-6">client</span><span class="hl-1"> = </span><span class="hl-5">new</span><span class="hl-1"> </span><span class="hl-7">ADCPMultiAgentClient</span><span class="hl-1">(</span><span class="hl-2">agents</span><span class="hl-1">, {</span><br/><span class="hl-1">  </span><span class="hl-2">webhookUrlTemplate:</span><span class="hl-1"> </span><span class="hl-3">&#39;https://myapp.com/webhook/{task_type}/{agent_id}/{operation_id}&#39;</span><span class="hl-1">,</span><br/><span class="hl-1">  </span><span class="hl-2">handlers:</span><span class="hl-1"> {</span><br/><span class="hl-1">    </span><span class="hl-7">onGetProductsStatusChange</span><span class="hl-2">:</span><span class="hl-1"> (</span><span class="hl-2">response</span><span class="hl-1">, </span><span class="hl-2">metadata</span><span class="hl-1">) </span><span class="hl-5">=&gt;</span><span class="hl-1"> {</span><br/><span class="hl-1">      </span><span class="hl-2">console</span><span class="hl-1">.</span><span class="hl-7">log</span><span class="hl-1">(</span><span class="hl-3">`Status: </span><span class="hl-5">${</span><span class="hl-2">metadata</span><span class="hl-9">.</span><span class="hl-2">status</span><span class="hl-5">}</span><span class="hl-3">`</span><span class="hl-1">);</span><br/><span class="hl-1">      </span><span class="hl-0">if</span><span class="hl-1"> (</span><span class="hl-2">metadata</span><span class="hl-1">.</span><span class="hl-2">status</span><span class="hl-1"> === </span><span class="hl-3">&#39;completed&#39;</span><span class="hl-1">) {</span><br/><span class="hl-1">        </span><span class="hl-7">saveProducts</span><span class="hl-1">(</span><span class="hl-2">response</span><span class="hl-1">.</span><span class="hl-2">products</span><span class="hl-1">);</span><br/><span class="hl-1">      }</span><br/><span class="hl-1">    }</span><br/><span class="hl-1">  }</span><br/><span class="hl-1">});</span>
 </code><button type="button">Copy</button></pre>
 
-<p>See <a href="./classes/AsyncHandler.md"><code>AsyncHandler</code></a> for webhook configuration.</p>
-<h3 id="creative-agent-integration" class="tsd-anchor-link">Creative Agent Integration<a href="#creative-agent-integration" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3><p>Work with creative generation agents:</p>
-<pre><code class="typescript"><span class="hl-0">import</span><span class="hl-1"> { </span><span class="hl-2">CreativeAgentClient</span><span class="hl-1">, </span><span class="hl-2">STANDARD_CREATIVE_AGENTS</span><span class="hl-1"> } </span><span class="hl-0">from</span><span class="hl-1"> </span><span class="hl-3">&#39;@adcp/client&#39;</span><span class="hl-1">;</span><br/><br/><span class="hl-5">const</span><span class="hl-1"> </span><span class="hl-6">creativeClient</span><span class="hl-1"> = </span><span class="hl-5">new</span><span class="hl-1"> </span><span class="hl-7">CreativeAgentClient</span><span class="hl-1">({</span><br/><span class="hl-1">  </span><span class="hl-2">agents:</span><span class="hl-1"> </span><span class="hl-6">STANDARD_CREATIVE_AGENTS</span><br/><span class="hl-1">});</span><br/><br/><span class="hl-5">const</span><span class="hl-1"> </span><span class="hl-6">creative</span><span class="hl-1"> = </span><span class="hl-0">await</span><span class="hl-1"> </span><span class="hl-2">creativeClient</span><span class="hl-1">.</span><span class="hl-7">generateCreative</span><span class="hl-1">({</span><br/><span class="hl-1">  </span><span class="hl-2">format:</span><span class="hl-1"> </span><span class="hl-3">&#39;banner_300x250&#39;</span><span class="hl-1">,</span><br/><span class="hl-1">  </span><span class="hl-2">brand_manifest:</span><span class="hl-1"> { </span><span class="hl-2">name:</span><span class="hl-1"> </span><span class="hl-3">&#39;Acme&#39;</span><span class="hl-1"> },</span><br/><span class="hl-1">  </span><span class="hl-2">targeting:</span><span class="hl-1"> { </span><span class="hl-2">demographics:</span><span class="hl-1"> { </span><span class="hl-2">age_ranges:</span><span class="hl-1"> [</span><span class="hl-3">&#39;25-34&#39;</span><span class="hl-1">] } }</span><br/><span class="hl-1">});</span>
+          <p>
+            See <a href="./classes/AsyncHandler.md"><code>AsyncHandler</code></a> for webhook configuration.
+          </p>
+          <h3 id="creative-agent-integration" class="tsd-anchor-link">
+            Creative Agent Integration<a
+              href="#creative-agent-integration"
+              aria-label="Permalink"
+              class="tsd-anchor-icon"
+              ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg
+            ></a>
+          </h3>
+          <p>Work with creative generation agents:</p>
+          <pre><code class="typescript"><span class="hl-0">import</span><span class="hl-1"> { </span><span class="hl-2">CreativeAgentClient</span><span class="hl-1">, </span><span class="hl-2">STANDARD_CREATIVE_AGENTS</span><span class="hl-1"> } </span><span class="hl-0">from</span><span class="hl-1"> </span><span class="hl-3">&#39;@adcp/client&#39;</span><span class="hl-1">;</span><br/><br/><span class="hl-5">const</span><span class="hl-1"> </span><span class="hl-6">creativeClient</span><span class="hl-1"> = </span><span class="hl-5">new</span><span class="hl-1"> </span><span class="hl-7">CreativeAgentClient</span><span class="hl-1">({</span><br/><span class="hl-1">  </span><span class="hl-2">agents:</span><span class="hl-1"> </span><span class="hl-6">STANDARD_CREATIVE_AGENTS</span><br/><span class="hl-1">});</span><br/><br/><span class="hl-5">const</span><span class="hl-1"> </span><span class="hl-6">creative</span><span class="hl-1"> = </span><span class="hl-0">await</span><span class="hl-1"> </span><span class="hl-2">creativeClient</span><span class="hl-1">.</span><span class="hl-7">generateCreative</span><span class="hl-1">({</span><br/><span class="hl-1">  </span><span class="hl-2">format:</span><span class="hl-1"> </span><span class="hl-3">&#39;banner_300x250&#39;</span><span class="hl-1">,</span><br/><span class="hl-1">  </span><span class="hl-2">brand_manifest:</span><span class="hl-1"> { </span><span class="hl-2">name:</span><span class="hl-1"> </span><span class="hl-3">&#39;Acme&#39;</span><span class="hl-1"> },</span><br/><span class="hl-1">  </span><span class="hl-2">targeting:</span><span class="hl-1"> { </span><span class="hl-2">demographics:</span><span class="hl-1"> { </span><span class="hl-2">age_ranges:</span><span class="hl-1"> [</span><span class="hl-3">&#39;25-34&#39;</span><span class="hl-1">] } }</span><br/><span class="hl-1">});</span>
 </code><button type="button">Copy</button></pre>
 
-<p>See <a href="./classes/CreativeAgentClient.md"><code>CreativeAgentClient</code></a> for details.</p>
-<h2 id="protocol-support" class="tsd-anchor-link">Protocol Support<a href="#protocol-support" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2><p>The library seamlessly supports both protocols:</p>
-<ul>
-<li><strong>MCP (Model Context Protocol)</strong> - SSE-based streaming protocol</li>
-<li><strong>A2A (Agent-to-Agent)</strong> - REST-based protocol</li>
-</ul>
-<p>Protocol is specified per-agent in configuration. All operations work identically regardless of protocol.</p>
-<h2 id="version-information" class="tsd-anchor-link">Version Information<a href="#version-information" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2><p>Check library and protocol versions:</p>
-<pre><code class="typescript"><span class="hl-0">import</span><span class="hl-1"> {</span><br/><span class="hl-1">  </span><span class="hl-2">LIBRARY_VERSION</span><span class="hl-1">,</span><br/><span class="hl-1">  </span><span class="hl-2">ADCP_VERSION</span><span class="hl-1">,</span><br/><span class="hl-1">  </span><span class="hl-2">isCompatibleWith</span><br/><span class="hl-1">} </span><span class="hl-0">from</span><span class="hl-1"> </span><span class="hl-3">&#39;@adcp/client&#39;</span><span class="hl-1">;</span><br/><br/><span class="hl-2">console</span><span class="hl-1">.</span><span class="hl-7">log</span><span class="hl-1">(</span><span class="hl-3">`Library: </span><span class="hl-5">${</span><span class="hl-6">LIBRARY_VERSION</span><span class="hl-5">}</span><span class="hl-3">`</span><span class="hl-1">);</span><br/><span class="hl-2">console</span><span class="hl-1">.</span><span class="hl-7">log</span><span class="hl-1">(</span><span class="hl-3">`AdCP Protocol: </span><span class="hl-5">${</span><span class="hl-6">ADCP_VERSION</span><span class="hl-5">}</span><span class="hl-3">`</span><span class="hl-1">);</span><br/><br/><span class="hl-0">if</span><span class="hl-1"> (</span><span class="hl-7">isCompatibleWith</span><span class="hl-1">(</span><span class="hl-3">&#39;2.4.0&#39;</span><span class="hl-1">)) {</span><br/><span class="hl-1">  </span><span class="hl-2">console</span><span class="hl-1">.</span><span class="hl-7">log</span><span class="hl-1">(</span><span class="hl-3">&#39;Compatible with AdCP 2.4.0&#39;</span><span class="hl-1">);</span><br/><span class="hl-1">}</span>
+          <p>
+            See <a href="./classes/CreativeAgentClient.md"><code>CreativeAgentClient</code></a> for details.
+          </p>
+          <h2 id="protocol-support" class="tsd-anchor-link">
+            Protocol Support<a href="#protocol-support" aria-label="Permalink" class="tsd-anchor-icon"
+              ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg
+            ></a>
+          </h2>
+          <p>The library seamlessly supports both protocols:</p>
+          <ul>
+            <li><strong>MCP (Model Context Protocol)</strong> - SSE-based streaming protocol</li>
+            <li><strong>A2A (Agent-to-Agent)</strong> - REST-based protocol</li>
+          </ul>
+          <p>
+            Protocol is specified per-agent in configuration. All operations work identically regardless of protocol.
+          </p>
+          <h2 id="version-information" class="tsd-anchor-link">
+            Version Information<a href="#version-information" aria-label="Permalink" class="tsd-anchor-icon"
+              ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg
+            ></a>
+          </h2>
+          <p>Check library and protocol versions:</p>
+          <pre><code class="typescript"><span class="hl-0">import</span><span class="hl-1"> {</span><br/><span class="hl-1">  </span><span class="hl-2">LIBRARY_VERSION</span><span class="hl-1">,</span><br/><span class="hl-1">  </span><span class="hl-2">ADCP_VERSION</span><span class="hl-1">,</span><br/><span class="hl-1">  </span><span class="hl-2">isCompatibleWith</span><br/><span class="hl-1">} </span><span class="hl-0">from</span><span class="hl-1"> </span><span class="hl-3">&#39;@adcp/client&#39;</span><span class="hl-1">;</span><br/><br/><span class="hl-2">console</span><span class="hl-1">.</span><span class="hl-7">log</span><span class="hl-1">(</span><span class="hl-3">`Library: </span><span class="hl-5">${</span><span class="hl-6">LIBRARY_VERSION</span><span class="hl-5">}</span><span class="hl-3">`</span><span class="hl-1">);</span><br/><span class="hl-2">console</span><span class="hl-1">.</span><span class="hl-7">log</span><span class="hl-1">(</span><span class="hl-3">`AdCP Protocol: </span><span class="hl-5">${</span><span class="hl-6">ADCP_VERSION</span><span class="hl-5">}</span><span class="hl-3">`</span><span class="hl-1">);</span><br/><br/><span class="hl-0">if</span><span class="hl-1"> (</span><span class="hl-7">isCompatibleWith</span><span class="hl-1">(</span><span class="hl-3">&#39;2.4.0&#39;</span><span class="hl-1">)) {</span><br/><span class="hl-1">  </span><span class="hl-2">console</span><span class="hl-1">.</span><span class="hl-7">log</span><span class="hl-1">(</span><span class="hl-3">&#39;Compatible with AdCP 2.4.0&#39;</span><span class="hl-1">);</span><br/><span class="hl-1">}</span>
 </code><button type="button">Copy</button></pre>
 
-<h2 id="additional-resources" class="tsd-anchor-link">Additional Resources<a href="#additional-resources" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2><ul>
-<li><strong>Main README</strong>: <a href="media/README-1.md">Getting Started Guide</a></li>
-<li><strong>Protocol Spec</strong>: <a href="https://github.com/adcontextprotocol/adcp">AdCP Specification</a></li>
-<li><strong>Full Documentation</strong>: <a href="https://docs.adcontextprotocol.org">docs.adcontextprotocol.org</a></li>
-<li><strong>npm Package</strong>: <a href="https://www.npmjs.com/package/@adcp/client">@adcp/client</a></li>
-<li><strong>GitHub</strong>: <a href="https://github.com/adcontextprotocol/adcp-client">adcontextprotocol/adcp-client</a></li>
-</ul>
-<h2 id="browse-the-api" class="tsd-anchor-link">Browse the API<a href="#browse-the-api" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2><p>Use the navigation below to explore all classes, interfaces, types, and utilities in the library.</p>
-<hr>
-<p><strong>📚 Generated from source code with TypeDoc</strong> • <a href="https://github.com/adcontextprotocol/adcp-client">View on GitHub</a></p>
-</div></div><div class="col-sidebar"><div class="page-menu"><div class="tsd-navigation settings"><details class="tsd-accordion"><summary class="tsd-accordion-summary"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="assets/icons.svg#icon-chevronDown"></use></svg><h3>Settings</h3></summary><div class="tsd-accordion-details"><div class="tsd-filter-visibility"><span class="settings-label">Member Visibility</span><ul id="tsd-filter-options"><li class="tsd-filter-item"><label class="tsd-filter-input"><input type="checkbox" id="tsd-filter-inherited" name="inherited" checked/><svg width="32" height="32" viewBox="0 0 32 32" aria-hidden="true"><rect class="tsd-checkbox-background" width="30" height="30" x="1" y="1" rx="6" fill="none"></rect><path class="tsd-checkbox-checkmark" d="M8.35422 16.8214L13.2143 21.75L24.6458 10.25" stroke="none" stroke-width="3.5" stroke-linejoin="round" fill="none"></path></svg><span>Inherited</span></label></li><li class="tsd-filter-item"><label class="tsd-filter-input"><input type="checkbox" id="tsd-filter-external" name="external"/><svg width="32" height="32" viewBox="0 0 32 32" aria-hidden="true"><rect class="tsd-checkbox-background" width="30" height="30" x="1" y="1" rx="6" fill="none"></rect><path class="tsd-checkbox-checkmark" d="M8.35422 16.8214L13.2143 21.75L24.6458 10.25" stroke="none" stroke-width="3.5" stroke-linejoin="round" fill="none"></path></svg><span>External</span></label></li></ul></div><div class="tsd-theme-toggle"><label class="settings-label" for="tsd-theme">Theme</label><select id="tsd-theme"><option value="os">OS</option><option value="light">Light</option><option value="dark">Dark</option></select></div></div></details></div><details open class="tsd-accordion tsd-page-navigation"><summary class="tsd-accordion-summary"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="assets/icons.svg#icon-chevronDown"></use></svg><h3>On This Page</h3></summary><div class="tsd-accordion-details"><a href="#adcpclient-api-reference"><span>@adcp/client <wbr/>API <wbr/>Reference</span></a><ul><li><a href="#overview"><span>Overview</span></a></li><li><a href="#quick-start"><span>Quick <wbr/>Start</span></a></li><li><a href="#core-concepts"><span>Core <wbr/>Concepts</span></a></li><li><ul><li><a href="#🎯-client-classes"><span>🎯 <wbr/>Client <wbr/>Classes</span></a></li><li><a href="#📦-requestresponse-types"><span>📦 <wbr/>Request/<wbr/>Response <wbr/>Types</span></a></li><li><a href="#🔄-task-results"><span>🔄 <wbr/>Task <wbr/>Results</span></a></li><li><a href="#🔐-configuration"><span>🔐 <wbr/>Configuration</span></a></li></ul></li><li><a href="#usage-patterns"><span>Usage <wbr/>Patterns</span></a></li><li><ul><li><a href="#single-agent-operations"><span>Single <wbr/>Agent <wbr/>Operations</span></a></li><li><a href="#multi-agent-parallel-execution"><span>Multi-<wbr/>Agent <wbr/>Parallel <wbr/>Execution</span></a></li><li><a href="#property-discovery-adcp-v220"><span>Property <wbr/>Discovery (<wbr/>Ad<wbr/>CP v2.2.0+)</span></a></li></ul></li><li><a href="#error-handling"><span>Error <wbr/>Handling</span></a></li><li><a href="#type-safety"><span>Type <wbr/>Safety</span></a></li><li><a href="#validation"><span>Validation</span></a></li><li><a href="#advanced-features"><span>Advanced <wbr/>Features</span></a></li><li><ul><li><a href="#async-handlers--webhooks"><span>Async <wbr/>Handlers &amp; <wbr/>Webhooks</span></a></li><li><a href="#creative-agent-integration"><span>Creative <wbr/>Agent <wbr/>Integration</span></a></li></ul></li><li><a href="#protocol-support"><span>Protocol <wbr/>Support</span></a></li><li><a href="#version-information"><span>Version <wbr/>Information</span></a></li><li><a href="#additional-resources"><span>Additional <wbr/>Resources</span></a></li><li><a href="#browse-the-api"><span>Browse the <wbr/>API</span></a></li></ul></div></details></div><div class="site-menu"><nav id="tsd-sidebar-links" class="tsd-navigation"><a href="https://docs.adcontextprotocol.org" class="tsd-nav-link">Documentation</a><a href="https://github.com/adcontextprotocol/adcp-client" class="tsd-nav-link">GitHub</a><a href="https://www.npmjs.com/package/@adcp/client" class="tsd-nav-link">npm</a></nav><nav class="tsd-navigation"><a href="modules.html">@adcp/client API Reference - v3.1.0</a><ul class="tsd-small-nested-navigation" id="tsd-nav-container"><li>Loading...</li></ul></nav></div></div></div><footer><p class="tsd-generator">Generated using <a href="https://typedoc.org/" target="_blank">TypeDoc</a></p></footer><div class="overlay"></div></body></html>
+          <h2 id="additional-resources" class="tsd-anchor-link">
+            Additional Resources<a href="#additional-resources" aria-label="Permalink" class="tsd-anchor-icon"
+              ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg
+            ></a>
+          </h2>
+          <ul>
+            <li><strong>Main README</strong>: <a href="media/README-1.md">Getting Started Guide</a></li>
+            <li>
+              <strong>Protocol Spec</strong>: <a href="https://github.com/adcontextprotocol/adcp">AdCP Specification</a>
+            </li>
+            <li>
+              <strong>Full Documentation</strong>:
+              <a href="https://docs.adcontextprotocol.org">docs.adcontextprotocol.org</a>
+            </li>
+            <li><strong>npm Package</strong>: <a href="https://www.npmjs.com/package/@adcp/client">@adcp/client</a></li>
+            <li>
+              <strong>GitHub</strong>:
+              <a href="https://github.com/adcontextprotocol/adcp-client">adcontextprotocol/adcp-client</a>
+            </li>
+          </ul>
+          <h2 id="browse-the-api" class="tsd-anchor-link">
+            Browse the API<a href="#browse-the-api" aria-label="Permalink" class="tsd-anchor-icon"
+              ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg
+            ></a>
+          </h2>
+          <p>Use the navigation below to explore all classes, interfaces, types, and utilities in the library.</p>
+          <hr />
+          <p>
+            <strong>📚 Generated from source code with TypeDoc</strong> •
+            <a href="https://github.com/adcontextprotocol/adcp-client">View on GitHub</a>
+          </p>
+        </div>
+      </div>
+      <div class="col-sidebar">
+        <div class="page-menu">
+          <div class="tsd-navigation settings">
+            <details class="tsd-accordion">
+              <summary class="tsd-accordion-summary">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <use href="assets/icons.svg#icon-chevronDown"></use>
+                </svg>
+                <h3>Settings</h3>
+              </summary>
+              <div class="tsd-accordion-details">
+                <div class="tsd-filter-visibility">
+                  <span class="settings-label">Member Visibility</span>
+                  <ul id="tsd-filter-options">
+                    <li class="tsd-filter-item">
+                      <label class="tsd-filter-input"
+                        ><input type="checkbox" id="tsd-filter-inherited" name="inherited" checked /><svg
+                          width="32"
+                          height="32"
+                          viewBox="0 0 32 32"
+                          aria-hidden="true"
+                        >
+                          <rect
+                            class="tsd-checkbox-background"
+                            width="30"
+                            height="30"
+                            x="1"
+                            y="1"
+                            rx="6"
+                            fill="none"
+                          ></rect>
+                          <path
+                            class="tsd-checkbox-checkmark"
+                            d="M8.35422 16.8214L13.2143 21.75L24.6458 10.25"
+                            stroke="none"
+                            stroke-width="3.5"
+                            stroke-linejoin="round"
+                            fill="none"
+                          ></path></svg
+                        ><span>Inherited</span></label
+                      >
+                    </li>
+                    <li class="tsd-filter-item">
+                      <label class="tsd-filter-input"
+                        ><input type="checkbox" id="tsd-filter-external" name="external" /><svg
+                          width="32"
+                          height="32"
+                          viewBox="0 0 32 32"
+                          aria-hidden="true"
+                        >
+                          <rect
+                            class="tsd-checkbox-background"
+                            width="30"
+                            height="30"
+                            x="1"
+                            y="1"
+                            rx="6"
+                            fill="none"
+                          ></rect>
+                          <path
+                            class="tsd-checkbox-checkmark"
+                            d="M8.35422 16.8214L13.2143 21.75L24.6458 10.25"
+                            stroke="none"
+                            stroke-width="3.5"
+                            stroke-linejoin="round"
+                            fill="none"
+                          ></path></svg
+                        ><span>External</span></label
+                      >
+                    </li>
+                  </ul>
+                </div>
+                <div class="tsd-theme-toggle">
+                  <label class="settings-label" for="tsd-theme">Theme</label
+                  ><select id="tsd-theme">
+                    <option value="os">OS</option>
+                    <option value="light">Light</option>
+                    <option value="dark">Dark</option>
+                  </select>
+                </div>
+              </div>
+            </details>
+          </div>
+          <details open class="tsd-accordion tsd-page-navigation">
+            <summary class="tsd-accordion-summary">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <use href="assets/icons.svg#icon-chevronDown"></use>
+              </svg>
+              <h3>On This Page</h3>
+            </summary>
+            <div class="tsd-accordion-details">
+              <a href="#adcpclient-api-reference"
+                ><span>@adcp/client <wbr />API <wbr />Reference</span></a
+              >
+              <ul>
+                <li>
+                  <a href="#overview"><span>Overview</span></a>
+                </li>
+                <li>
+                  <a href="#quick-start"
+                    ><span>Quick <wbr />Start</span></a
+                  >
+                </li>
+                <li>
+                  <a href="#core-concepts"
+                    ><span>Core <wbr />Concepts</span></a
+                  >
+                </li>
+                <li>
+                  <ul>
+                    <li>
+                      <a href="#🎯-client-classes"
+                        ><span>🎯 <wbr />Client <wbr />Classes</span></a
+                      >
+                    </li>
+                    <li>
+                      <a href="#📦-requestresponse-types"
+                        ><span>📦 <wbr />Request/<wbr />Response <wbr />Types</span></a
+                      >
+                    </li>
+                    <li>
+                      <a href="#🔄-task-results"
+                        ><span>🔄 <wbr />Task <wbr />Results</span></a
+                      >
+                    </li>
+                    <li>
+                      <a href="#🔐-configuration"
+                        ><span>🔐 <wbr />Configuration</span></a
+                      >
+                    </li>
+                  </ul>
+                </li>
+                <li>
+                  <a href="#usage-patterns"
+                    ><span>Usage <wbr />Patterns</span></a
+                  >
+                </li>
+                <li>
+                  <ul>
+                    <li>
+                      <a href="#single-agent-operations"
+                        ><span>Single <wbr />Agent <wbr />Operations</span></a
+                      >
+                    </li>
+                    <li>
+                      <a href="#multi-agent-parallel-execution"
+                        ><span>Multi-<wbr />Agent <wbr />Parallel <wbr />Execution</span></a
+                      >
+                    </li>
+                    <li>
+                      <a href="#property-discovery-adcp-v220"
+                        ><span>Property <wbr />Discovery (<wbr />Ad<wbr />CP v2.2.0+)</span></a
+                      >
+                    </li>
+                  </ul>
+                </li>
+                <li>
+                  <a href="#error-handling"
+                    ><span>Error <wbr />Handling</span></a
+                  >
+                </li>
+                <li>
+                  <a href="#type-safety"
+                    ><span>Type <wbr />Safety</span></a
+                  >
+                </li>
+                <li>
+                  <a href="#validation"><span>Validation</span></a>
+                </li>
+                <li>
+                  <a href="#advanced-features"
+                    ><span>Advanced <wbr />Features</span></a
+                  >
+                </li>
+                <li>
+                  <ul>
+                    <li>
+                      <a href="#async-handlers--webhooks"
+                        ><span>Async <wbr />Handlers &amp; <wbr />Webhooks</span></a
+                      >
+                    </li>
+                    <li>
+                      <a href="#creative-agent-integration"
+                        ><span>Creative <wbr />Agent <wbr />Integration</span></a
+                      >
+                    </li>
+                  </ul>
+                </li>
+                <li>
+                  <a href="#protocol-support"
+                    ><span>Protocol <wbr />Support</span></a
+                  >
+                </li>
+                <li>
+                  <a href="#version-information"
+                    ><span>Version <wbr />Information</span></a
+                  >
+                </li>
+                <li>
+                  <a href="#additional-resources"
+                    ><span>Additional <wbr />Resources</span></a
+                  >
+                </li>
+                <li>
+                  <a href="#browse-the-api"
+                    ><span>Browse the <wbr />API</span></a
+                  >
+                </li>
+              </ul>
+            </div>
+          </details>
+        </div>
+        <div class="site-menu">
+          <nav id="tsd-sidebar-links" class="tsd-navigation">
+            <a href="https://docs.adcontextprotocol.org" class="tsd-nav-link">Documentation</a
+            ><a href="https://github.com/adcontextprotocol/adcp-client" class="tsd-nav-link">GitHub</a
+            ><a href="https://www.npmjs.com/package/@adcp/client" class="tsd-nav-link">npm</a>
+          </nav>
+          <nav class="tsd-navigation">
+            <a href="modules.html">@adcp/client API Reference - v3.1.0</a>
+            <ul class="tsd-small-nested-navigation" id="tsd-nav-container">
+              <li>Loading...</li>
+            </ul>
+          </nav>
+        </div>
+      </div>
+    </div>
+    <footer>
+      <p class="tsd-generator">Generated using <a href="https://typedoc.org/" target="_blank">TypeDoc</a></p>
+    </footer>
+    <div class="overlay"></div>
+  </body>
+</html>

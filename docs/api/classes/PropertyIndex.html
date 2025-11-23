@@ -1,17 +1,758 @@
-<!DOCTYPE html><html class="default" lang="en" data-base="../"><head><meta charset="utf-8"/><meta http-equiv="x-ua-compatible" content="IE=edge"/><title>PropertyIndex | @adcp/client API Reference - v3.1.0</title><meta name="description" content="Documentation for @adcp/client API Reference"/><meta name="viewport" content="width=device-width, initial-scale=1"/><link rel="stylesheet" href="../assets/style.css"/><link rel="stylesheet" href="../assets/highlight.css"/><script defer src="../assets/main.js"></script><script async src="../assets/icons.js" id="tsd-icons-script"></script><script async src="../assets/search.js" id="tsd-search-script"></script><script async src="../assets/navigation.js" id="tsd-nav-script"></script><script async src="../assets/hierarchy.js" id="tsd-hierarchy-script"></script></head><body><script>document.documentElement.dataset.theme = localStorage.getItem("tsd-theme") || "os";document.body.style.display="none";setTimeout(() => window.app?app.showPage():document.body.style.removeProperty("display"),500)</script><header class="tsd-page-toolbar"><div class="tsd-toolbar-contents container"><a href="../index.html" class="title">@adcp/client API Reference - v3.1.0</a><div id="tsd-toolbar-links"><a href="https://docs.adcontextprotocol.org">Documentation</a><a href="https://github.com/adcontextprotocol/adcp-client">GitHub</a><a href="https://www.npmjs.com/package/@adcp/client">npm</a></div><button id="tsd-search-trigger" class="tsd-widget" aria-label="Search"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-search"></use></svg></button><dialog id="tsd-search" aria-label="Search"><input role="combobox" id="tsd-search-input" aria-controls="tsd-search-results" aria-autocomplete="list" aria-expanded="true" autocapitalize="off" autocomplete="off" placeholder="Search the docs" maxLength="100"/><ul role="listbox" id="tsd-search-results"></ul><div id="tsd-search-status" aria-live="polite" aria-atomic="true"><div>Preparing search index...</div></div></dialog><a href="#" class="tsd-widget menu" id="tsd-toolbar-menu-trigger" data-toggle="menu" aria-label="Menu"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-menu"></use></svg></a></div></header><div class="container container-main"><div class="col-content"><div class="tsd-page-title"><ul class="tsd-breadcrumb" aria-label="Breadcrumb"><li><a href="" aria-current="page">PropertyIndex</a></li></ul><h1>Class PropertyIndex</h1></div><section class="tsd-panel tsd-comment"><div class="tsd-comment tsd-typography"><p>Singleton in-memory property index</p>
-</div></section><aside class="tsd-sources"><ul><li>Defined in <a href="https://github.com/adcontextprotocol/adcp-client/blob/f019701d35957263620cbc63b0e73eb94547b8ea/src/lib/discovery/property-index.ts#L27">src/lib/discovery/property-index.ts:27</a></li></ul></aside><section class="tsd-panel-group tsd-index-group"><section class="tsd-panel tsd-index-panel"><details class="tsd-index-content tsd-accordion" open><summary class="tsd-accordion-summary tsd-index-summary"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg><h5 class="tsd-index-heading uppercase">Index</h5></summary><div class="tsd-accordion-details"><section class="tsd-index-section"><h3 class="tsd-index-heading">Constructors</h3><div class="tsd-index-list"><a href="#constructor" class="tsd-index-link"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Constructor"><use href="../assets/icons.svg#icon-512"></use></svg><span>constructor</span></a>
-</div></section><section class="tsd-index-section"><h3 class="tsd-index-heading">Methods</h3><div class="tsd-index-list"><a href="#findagentsforproperty" class="tsd-index-link"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method"><use href="../assets/icons.svg#icon-2048"></use></svg><span>find<wbr/>Agents<wbr/>For<wbr/>Property</span></a>
-<a href="#getagentauthorizations" class="tsd-index-link"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method"><use href="../assets/icons.svg#icon-2048"></use></svg><span>get<wbr/>Agent<wbr/>Authorizations</span></a>
-<a href="#findagentsbypropertytags" class="tsd-index-link"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method"><use href="../assets/icons.svg#icon-2048"></use></svg><span>find<wbr/>Agents<wbr/>By<wbr/>Property<wbr/>Tags</span></a>
-<a href="#addproperty" class="tsd-index-link"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method"><use href="../assets/icons.svg#icon-2048"></use></svg><span>add<wbr/>Property</span></a>
-<a href="#addagentauthorization" class="tsd-index-link"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method"><use href="../assets/icons.svg#icon-2048"></use></svg><span>add<wbr/>Agent<wbr/>Authorization</span></a>
-<a href="#clear" class="tsd-index-link"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method"><use href="../assets/icons.svg#icon-2048"></use></svg><span>clear</span></a>
-<a href="#getstats" class="tsd-index-link"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method"><use href="../assets/icons.svg#icon-2048"></use></svg><span>get<wbr/>Stats</span></a>
-</div></section></div></details></section></section><details class="tsd-panel-group tsd-member-group tsd-accordion" open><summary class="tsd-accordion-summary" data-key="section-Constructors"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg><h2>Constructors</h2></summary><section><section class="tsd-panel tsd-member"><h3 class="tsd-anchor-link" id="constructor"><span>constructor</span><a href="#constructor" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3><ul class="tsd-signatures"><li class=""><div class="tsd-signature tsd-anchor-link" id="constructorpropertyindex"><span class="tsd-signature-keyword">new</span> <span class="tsd-kind-constructor-signature">PropertyIndex</span><span class="tsd-signature-symbol">()</span><span class="tsd-signature-symbol">:</span> <a href="" class="tsd-signature-type tsd-kind-class">PropertyIndex</a><a href="#constructorpropertyindex" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></div><div class="tsd-description"><h4 class="tsd-returns-title">Returns <a href="" class="tsd-signature-type tsd-kind-class">PropertyIndex</a></h4></div></li></ul></section></section></details><details class="tsd-panel-group tsd-member-group tsd-accordion" open><summary class="tsd-accordion-summary" data-key="section-Methods"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg><h2>Methods</h2></summary><section><section class="tsd-panel tsd-member"><h3 class="tsd-anchor-link" id="findagentsforproperty"><span>find<wbr/>Agents<wbr/>For<wbr/>Property</span><a href="#findagentsforproperty" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3><ul class="tsd-signatures"><li class=""><div class="tsd-signature tsd-anchor-link" id="findagentsforproperty-1"><span class="tsd-kind-call-signature">findAgentsForProperty</span><span class="tsd-signature-symbol">(</span><br/>    <span class="tsd-kind-parameter">identifierType</span><span class="tsd-signature-symbol">:</span> <a href="../types/PropertyIdentifierType.html" class="tsd-signature-type tsd-kind-type-alias">PropertyIdentifierType</a><span class="tsd-signature-symbol">,</span><br/>    <span class="tsd-kind-parameter">identifierValue</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">,</span><br/><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">:</span> <a href="../interfaces/PropertyMatch.html" class="tsd-signature-type tsd-kind-interface">PropertyMatch</a><span class="tsd-signature-symbol">[]</span><a href="#findagentsforproperty-1" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></div><div class="tsd-description"><div class="tsd-comment tsd-typography"><p>Query 1: Find agents that can sell a specific property</p>
-</div><div class="tsd-parameters"><h4 class="tsd-parameters-title">Parameters</h4><ul class="tsd-parameter-list"><li><span><span class="tsd-kind-parameter">identifierType</span>: <a href="../types/PropertyIdentifierType.html" class="tsd-signature-type tsd-kind-type-alias">PropertyIdentifierType</a></span></li><li><span><span class="tsd-kind-parameter">identifierValue</span>: <span class="tsd-signature-type">string</span></span></li></ul></div><h4 class="tsd-returns-title">Returns <a href="../interfaces/PropertyMatch.html" class="tsd-signature-type tsd-kind-interface">PropertyMatch</a><span class="tsd-signature-symbol">[]</span></h4><aside class="tsd-sources"><ul><li>Defined in <a href="https://github.com/adcontextprotocol/adcp-client/blob/f019701d35957263620cbc63b0e73eb94547b8ea/src/lib/discovery/property-index.ts#L37">src/lib/discovery/property-index.ts:37</a></li></ul></aside></div></li></ul></section><section class="tsd-panel tsd-member"><h3 class="tsd-anchor-link" id="getagentauthorizations"><span>get<wbr/>Agent<wbr/>Authorizations</span><a href="#getagentauthorizations" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3><ul class="tsd-signatures"><li class=""><div class="tsd-signature tsd-anchor-link" id="getagentauthorizations-1"><span class="tsd-kind-call-signature">getAgentAuthorizations</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">agentUrl</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">null</span> <span class="tsd-signature-symbol">|</span> <a href="../interfaces/AgentAuthorization.html" class="tsd-signature-type tsd-kind-interface">AgentAuthorization</a><a href="#getagentauthorizations-1" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></div><div class="tsd-description"><div class="tsd-comment tsd-typography"><p>Query 2: Get all properties an agent can sell</p>
-</div><div class="tsd-parameters"><h4 class="tsd-parameters-title">Parameters</h4><ul class="tsd-parameter-list"><li><span><span class="tsd-kind-parameter">agentUrl</span>: <span class="tsd-signature-type">string</span></span></li></ul></div><h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">null</span> <span class="tsd-signature-symbol">|</span> <a href="../interfaces/AgentAuthorization.html" class="tsd-signature-type tsd-kind-interface">AgentAuthorization</a></h4><aside class="tsd-sources"><ul><li>Defined in <a href="https://github.com/adcontextprotocol/adcp-client/blob/f019701d35957263620cbc63b0e73eb94547b8ea/src/lib/discovery/property-index.ts#L45">src/lib/discovery/property-index.ts:45</a></li></ul></aside></div></li></ul></section><section class="tsd-panel tsd-member"><h3 class="tsd-anchor-link" id="findagentsbypropertytags"><span>find<wbr/>Agents<wbr/>By<wbr/>Property<wbr/>Tags</span><a href="#findagentsbypropertytags" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3><ul class="tsd-signatures"><li class=""><div class="tsd-signature tsd-anchor-link" id="findagentsbypropertytags-1"><span class="tsd-kind-call-signature">findAgentsByPropertyTags</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">tags</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">[]</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">:</span> <a href="../interfaces/PropertyMatch.html" class="tsd-signature-type tsd-kind-interface">PropertyMatch</a><span class="tsd-signature-symbol">[]</span><a href="#findagentsbypropertytags-1" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></div><div class="tsd-description"><div class="tsd-comment tsd-typography"><p>Query 3: Find agents by property tags</p>
-</div><div class="tsd-parameters"><h4 class="tsd-parameters-title">Parameters</h4><ul class="tsd-parameter-list"><li><span><span class="tsd-kind-parameter">tags</span>: <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">[]</span></span></li></ul></div><h4 class="tsd-returns-title">Returns <a href="../interfaces/PropertyMatch.html" class="tsd-signature-type tsd-kind-interface">PropertyMatch</a><span class="tsd-signature-symbol">[]</span></h4><aside class="tsd-sources"><ul><li>Defined in <a href="https://github.com/adcontextprotocol/adcp-client/blob/f019701d35957263620cbc63b0e73eb94547b8ea/src/lib/discovery/property-index.ts#L52">src/lib/discovery/property-index.ts:52</a></li></ul></aside></div></li></ul></section><section class="tsd-panel tsd-member"><h3 class="tsd-anchor-link" id="addproperty"><span>add<wbr/>Property</span><a href="#addproperty" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3><ul class="tsd-signatures"><li class=""><div class="tsd-signature tsd-anchor-link" id="addproperty-1"><span class="tsd-kind-call-signature">addProperty</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">property</span><span class="tsd-signature-symbol">:</span> <a href="../interfaces/Property.html" class="tsd-signature-type tsd-kind-interface">Property</a><span class="tsd-signature-symbol">,</span> <span class="tsd-kind-parameter">agentUrl</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">,</span> <span class="tsd-kind-parameter">publisherDomain</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">void</span><a href="#addproperty-1" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></div><div class="tsd-description"><div class="tsd-comment tsd-typography"><p>Add a property to the index</p>
-</div><div class="tsd-parameters"><h4 class="tsd-parameters-title">Parameters</h4><ul class="tsd-parameter-list"><li><span><span class="tsd-kind-parameter">property</span>: <a href="../interfaces/Property.html" class="tsd-signature-type tsd-kind-interface">Property</a></span></li><li><span><span class="tsd-kind-parameter">agentUrl</span>: <span class="tsd-signature-type">string</span></span></li><li><span><span class="tsd-kind-parameter">publisherDomain</span>: <span class="tsd-signature-type">string</span></span></li></ul></div><h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">void</span></h4><aside class="tsd-sources"><ul><li>Defined in <a href="https://github.com/adcontextprotocol/adcp-client/blob/f019701d35957263620cbc63b0e73eb94547b8ea/src/lib/discovery/property-index.ts#L82">src/lib/discovery/property-index.ts:82</a></li></ul></aside></div></li></ul></section><section class="tsd-panel tsd-member"><h3 class="tsd-anchor-link" id="addagentauthorization"><span>add<wbr/>Agent<wbr/>Authorization</span><a href="#addagentauthorization" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3><ul class="tsd-signatures"><li class=""><div class="tsd-signature tsd-anchor-link" id="addagentauthorization-1"><span class="tsd-kind-call-signature">addAgentAuthorization</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">agentUrl</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">,</span> <span class="tsd-kind-parameter">publisherDomains</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">[]</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">void</span><a href="#addagentauthorization-1" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></div><div class="tsd-description"><div class="tsd-comment tsd-typography"><p>Add agent → publisher_domains authorization</p>
-</div><div class="tsd-parameters"><h4 class="tsd-parameters-title">Parameters</h4><ul class="tsd-parameter-list"><li><span><span class="tsd-kind-parameter">agentUrl</span>: <span class="tsd-signature-type">string</span></span></li><li><span><span class="tsd-kind-parameter">publisherDomains</span>: <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">[]</span></span></li></ul></div><h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">void</span></h4><aside class="tsd-sources"><ul><li>Defined in <a href="https://github.com/adcontextprotocol/adcp-client/blob/f019701d35957263620cbc63b0e73eb94547b8ea/src/lib/discovery/property-index.ts#L118">src/lib/discovery/property-index.ts:118</a></li></ul></aside></div></li></ul></section><section class="tsd-panel tsd-member"><h3 class="tsd-anchor-link" id="clear"><span>clear</span><a href="#clear" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3><ul class="tsd-signatures"><li class=""><div class="tsd-signature tsd-anchor-link" id="clear-1"><span class="tsd-kind-call-signature">clear</span><span class="tsd-signature-symbol">()</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">void</span><a href="#clear-1" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></div><div class="tsd-description"><div class="tsd-comment tsd-typography"><p>Clear all data from the index</p>
-</div><h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">void</span></h4><aside class="tsd-sources"><ul><li>Defined in <a href="https://github.com/adcontextprotocol/adcp-client/blob/f019701d35957263620cbc63b0e73eb94547b8ea/src/lib/discovery/property-index.ts#L139">src/lib/discovery/property-index.ts:139</a></li></ul></aside></div></li></ul></section><section class="tsd-panel tsd-member"><h3 class="tsd-anchor-link" id="getstats"><span>get<wbr/>Stats</span><a href="#getstats" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3><ul class="tsd-signatures"><li class=""><div class="tsd-signature tsd-anchor-link" id="getstats-1"><span class="tsd-kind-call-signature">getStats</span><span class="tsd-signature-symbol">()</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-symbol">{</span><br/>    <span class="tsd-kind-property">totalIdentifiers</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <span class="tsd-kind-property">totalAgents</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <span class="tsd-kind-property">totalProperties</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/><span class="tsd-signature-symbol">}</span><a href="#getstats-1" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></div><div class="tsd-description"><div class="tsd-comment tsd-typography"><p>Get statistics about the index</p>
-</div><h4 class="tsd-returns-title">Returns <span class="tsd-signature-symbol">{</span> <span class="tsd-kind-property">totalIdentifiers</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span> <span class="tsd-kind-property">totalAgents</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span> <span class="tsd-kind-property">totalProperties</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span> <span class="tsd-signature-symbol">}</span></h4><aside class="tsd-sources"><ul><li>Defined in <a href="https://github.com/adcontextprotocol/adcp-client/blob/f019701d35957263620cbc63b0e73eb94547b8ea/src/lib/discovery/property-index.ts#L147">src/lib/discovery/property-index.ts:147</a></li></ul></aside></div></li></ul></section></section></details></div><div class="col-sidebar"><div class="page-menu"><div class="tsd-navigation settings"><details class="tsd-accordion"><summary class="tsd-accordion-summary"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg><h3>Settings</h3></summary><div class="tsd-accordion-details"><div class="tsd-filter-visibility"><span class="settings-label">Member Visibility</span><ul id="tsd-filter-options"><li class="tsd-filter-item"><label class="tsd-filter-input"><input type="checkbox" id="tsd-filter-inherited" name="inherited" checked/><svg width="32" height="32" viewBox="0 0 32 32" aria-hidden="true"><rect class="tsd-checkbox-background" width="30" height="30" x="1" y="1" rx="6" fill="none"></rect><path class="tsd-checkbox-checkmark" d="M8.35422 16.8214L13.2143 21.75L24.6458 10.25" stroke="none" stroke-width="3.5" stroke-linejoin="round" fill="none"></path></svg><span>Inherited</span></label></li><li class="tsd-filter-item"><label class="tsd-filter-input"><input type="checkbox" id="tsd-filter-external" name="external"/><svg width="32" height="32" viewBox="0 0 32 32" aria-hidden="true"><rect class="tsd-checkbox-background" width="30" height="30" x="1" y="1" rx="6" fill="none"></rect><path class="tsd-checkbox-checkmark" d="M8.35422 16.8214L13.2143 21.75L24.6458 10.25" stroke="none" stroke-width="3.5" stroke-linejoin="round" fill="none"></path></svg><span>External</span></label></li></ul></div><div class="tsd-theme-toggle"><label class="settings-label" for="tsd-theme">Theme</label><select id="tsd-theme"><option value="os">OS</option><option value="light">Light</option><option value="dark">Dark</option></select></div></div></details></div><details open class="tsd-accordion tsd-page-navigation"><summary class="tsd-accordion-summary"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg><h3>On This Page</h3></summary><div class="tsd-accordion-details"><details open class="tsd-accordion tsd-page-navigation-section"><summary class="tsd-accordion-summary" data-key="section-Constructors"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg>Constructors</summary><div><a href="#constructor"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Constructor"><use href="../assets/icons.svg#icon-512"></use></svg><span>constructor</span></a></div></details><details open class="tsd-accordion tsd-page-navigation-section"><summary class="tsd-accordion-summary" data-key="section-Methods"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg>Methods</summary><div><a href="#findagentsforproperty"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method"><use href="../assets/icons.svg#icon-2048"></use></svg><span>find<wbr/>Agents<wbr/>For<wbr/>Property</span></a><a href="#getagentauthorizations"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method"><use href="../assets/icons.svg#icon-2048"></use></svg><span>get<wbr/>Agent<wbr/>Authorizations</span></a><a href="#findagentsbypropertytags"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method"><use href="../assets/icons.svg#icon-2048"></use></svg><span>find<wbr/>Agents<wbr/>By<wbr/>Property<wbr/>Tags</span></a><a href="#addproperty"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method"><use href="../assets/icons.svg#icon-2048"></use></svg><span>add<wbr/>Property</span></a><a href="#addagentauthorization"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method"><use href="../assets/icons.svg#icon-2048"></use></svg><span>add<wbr/>Agent<wbr/>Authorization</span></a><a href="#clear"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method"><use href="../assets/icons.svg#icon-2048"></use></svg><span>clear</span></a><a href="#getstats"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method"><use href="../assets/icons.svg#icon-2048"></use></svg><span>get<wbr/>Stats</span></a></div></details></div></details></div><div class="site-menu"><nav id="tsd-sidebar-links" class="tsd-navigation"><a href="https://docs.adcontextprotocol.org" class="tsd-nav-link">Documentation</a><a href="https://github.com/adcontextprotocol/adcp-client" class="tsd-nav-link">GitHub</a><a href="https://www.npmjs.com/package/@adcp/client" class="tsd-nav-link">npm</a></nav><nav class="tsd-navigation"><a href="../modules.html">@adcp/client API Reference - v3.1.0</a><ul class="tsd-small-nested-navigation" id="tsd-nav-container"><li>Loading...</li></ul></nav></div></div></div><footer><p class="tsd-generator">Generated using <a href="https://typedoc.org/" target="_blank">TypeDoc</a></p></footer><div class="overlay"></div></body></html>
+<!doctype html>
+<html class="default" lang="en" data-base="../">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="x-ua-compatible" content="IE=edge" />
+    <title>PropertyIndex | @adcp/client API Reference - v3.1.0</title>
+    <meta name="description" content="Documentation for @adcp/client API Reference" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="stylesheet" href="../assets/style.css" />
+    <link rel="stylesheet" href="../assets/highlight.css" />
+    <script defer src="../assets/main.js"></script>
+    <script async src="../assets/icons.js" id="tsd-icons-script"></script>
+    <script async src="../assets/search.js" id="tsd-search-script"></script>
+    <script async src="../assets/navigation.js" id="tsd-nav-script"></script>
+    <script async src="../assets/hierarchy.js" id="tsd-hierarchy-script"></script>
+  </head>
+  <body>
+    <script>
+      document.documentElement.dataset.theme = localStorage.getItem('tsd-theme') || 'os';
+      document.body.style.display = 'none';
+      setTimeout(() => (window.app ? app.showPage() : document.body.style.removeProperty('display')), 500);
+    </script>
+    <header class="tsd-page-toolbar">
+      <div class="tsd-toolbar-contents container">
+        <a href="../index.html" class="title">@adcp/client API Reference - v3.1.0</a>
+        <div id="tsd-toolbar-links">
+          <a href="https://docs.adcontextprotocol.org">Documentation</a
+          ><a href="https://github.com/adcontextprotocol/adcp-client">GitHub</a
+          ><a href="https://www.npmjs.com/package/@adcp/client">npm</a>
+        </div>
+        <button id="tsd-search-trigger" class="tsd-widget" aria-label="Search">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <use href="../assets/icons.svg#icon-search"></use>
+          </svg>
+        </button>
+        <dialog id="tsd-search" aria-label="Search">
+          <input
+            role="combobox"
+            id="tsd-search-input"
+            aria-controls="tsd-search-results"
+            aria-autocomplete="list"
+            aria-expanded="true"
+            autocapitalize="off"
+            autocomplete="off"
+            placeholder="Search the docs"
+            maxlength="100"
+          />
+          <ul role="listbox" id="tsd-search-results"></ul>
+          <div id="tsd-search-status" aria-live="polite" aria-atomic="true"><div>Preparing search index...</div></div>
+        </dialog>
+        <a href="#" class="tsd-widget menu" id="tsd-toolbar-menu-trigger" data-toggle="menu" aria-label="Menu"
+          ><svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <use href="../assets/icons.svg#icon-menu"></use></svg
+        ></a>
+      </div>
+    </header>
+    <div class="container container-main">
+      <div class="col-content">
+        <div class="tsd-page-title">
+          <ul class="tsd-breadcrumb" aria-label="Breadcrumb">
+            <li><a href="" aria-current="page">PropertyIndex</a></li>
+          </ul>
+          <h1>Class PropertyIndex</h1>
+        </div>
+        <section class="tsd-panel tsd-comment">
+          <div class="tsd-comment tsd-typography"><p>Singleton in-memory property index</p></div>
+        </section>
+        <aside class="tsd-sources">
+          <ul>
+            <li>
+              Defined in
+              <a
+                href="https://github.com/adcontextprotocol/adcp-client/blob/f019701d35957263620cbc63b0e73eb94547b8ea/src/lib/discovery/property-index.ts#L27"
+                >src/lib/discovery/property-index.ts:27</a
+              >
+            </li>
+          </ul>
+        </aside>
+        <section class="tsd-panel-group tsd-index-group">
+          <section class="tsd-panel tsd-index-panel">
+            <details class="tsd-index-content tsd-accordion" open>
+              <summary class="tsd-accordion-summary tsd-index-summary">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <use href="../assets/icons.svg#icon-chevronDown"></use>
+                </svg>
+                <h5 class="tsd-index-heading uppercase">Index</h5>
+              </summary>
+              <div class="tsd-accordion-details">
+                <section class="tsd-index-section">
+                  <h3 class="tsd-index-heading">Constructors</h3>
+                  <div class="tsd-index-list">
+                    <a href="#constructor" class="tsd-index-link"
+                      ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Constructor">
+                        <use href="../assets/icons.svg#icon-512"></use></svg
+                      ><span>constructor</span></a
+                    >
+                  </div>
+                </section>
+                <section class="tsd-index-section">
+                  <h3 class="tsd-index-heading">Methods</h3>
+                  <div class="tsd-index-list">
+                    <a href="#findagentsforproperty" class="tsd-index-link"
+                      ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method">
+                        <use href="../assets/icons.svg#icon-2048"></use></svg
+                      ><span>find<wbr />Agents<wbr />For<wbr />Property</span></a
+                    >
+                    <a href="#getagentauthorizations" class="tsd-index-link"
+                      ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method">
+                        <use href="../assets/icons.svg#icon-2048"></use></svg
+                      ><span>get<wbr />Agent<wbr />Authorizations</span></a
+                    >
+                    <a href="#findagentsbypropertytags" class="tsd-index-link"
+                      ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method">
+                        <use href="../assets/icons.svg#icon-2048"></use></svg
+                      ><span>find<wbr />Agents<wbr />By<wbr />Property<wbr />Tags</span></a
+                    >
+                    <a href="#addproperty" class="tsd-index-link"
+                      ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method">
+                        <use href="../assets/icons.svg#icon-2048"></use></svg
+                      ><span>add<wbr />Property</span></a
+                    >
+                    <a href="#addagentauthorization" class="tsd-index-link"
+                      ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method">
+                        <use href="../assets/icons.svg#icon-2048"></use></svg
+                      ><span>add<wbr />Agent<wbr />Authorization</span></a
+                    >
+                    <a href="#clear" class="tsd-index-link"
+                      ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method">
+                        <use href="../assets/icons.svg#icon-2048"></use></svg
+                      ><span>clear</span></a
+                    >
+                    <a href="#getstats" class="tsd-index-link"
+                      ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method">
+                        <use href="../assets/icons.svg#icon-2048"></use></svg
+                      ><span>get<wbr />Stats</span></a
+                    >
+                  </div>
+                </section>
+              </div>
+            </details>
+          </section>
+        </section>
+        <details class="tsd-panel-group tsd-member-group tsd-accordion" open>
+          <summary class="tsd-accordion-summary" data-key="section-Constructors">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <use href="../assets/icons.svg#icon-chevronDown"></use>
+            </svg>
+            <h2>Constructors</h2>
+          </summary>
+          <section>
+            <section class="tsd-panel tsd-member">
+              <h3 class="tsd-anchor-link" id="constructor">
+                <span>constructor</span
+                ><a href="#constructor" aria-label="Permalink" class="tsd-anchor-icon"
+                  ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg
+                ></a>
+              </h3>
+              <ul class="tsd-signatures">
+                <li class="">
+                  <div class="tsd-signature tsd-anchor-link" id="constructorpropertyindex">
+                    <span class="tsd-signature-keyword">new</span>
+                    <span class="tsd-kind-constructor-signature">PropertyIndex</span
+                    ><span class="tsd-signature-symbol">()</span><span class="tsd-signature-symbol">:</span>
+                    <a href="" class="tsd-signature-type tsd-kind-class">PropertyIndex</a
+                    ><a href="#constructorpropertyindex" aria-label="Permalink" class="tsd-anchor-icon"
+                      ><svg viewBox="0 0 24 24" aria-hidden="true">
+                        <use href="../assets/icons.svg#icon-anchor"></use></svg
+                    ></a>
+                  </div>
+                  <div class="tsd-description">
+                    <h4 class="tsd-returns-title">
+                      Returns <a href="" class="tsd-signature-type tsd-kind-class">PropertyIndex</a>
+                    </h4>
+                  </div>
+                </li>
+              </ul>
+            </section>
+          </section>
+        </details>
+        <details class="tsd-panel-group tsd-member-group tsd-accordion" open>
+          <summary class="tsd-accordion-summary" data-key="section-Methods">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <use href="../assets/icons.svg#icon-chevronDown"></use>
+            </svg>
+            <h2>Methods</h2>
+          </summary>
+          <section>
+            <section class="tsd-panel tsd-member">
+              <h3 class="tsd-anchor-link" id="findagentsforproperty">
+                <span>find<wbr />Agents<wbr />For<wbr />Property</span
+                ><a href="#findagentsforproperty" aria-label="Permalink" class="tsd-anchor-icon"
+                  ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg
+                ></a>
+              </h3>
+              <ul class="tsd-signatures">
+                <li class="">
+                  <div class="tsd-signature tsd-anchor-link" id="findagentsforproperty-1">
+                    <span class="tsd-kind-call-signature">findAgentsForProperty</span
+                    ><span class="tsd-signature-symbol">(</span><br />    <span class="tsd-kind-parameter"
+                      >identifierType</span
+                    ><span class="tsd-signature-symbol">:</span>
+                    <a href="../types/PropertyIdentifierType.html" class="tsd-signature-type tsd-kind-type-alias"
+                      >PropertyIdentifierType</a
+                    ><span class="tsd-signature-symbol">,</span><br />    <span class="tsd-kind-parameter"
+                      >identifierValue</span
+                    ><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span
+                    ><span class="tsd-signature-symbol">,</span><br /><span class="tsd-signature-symbol">)</span
+                    ><span class="tsd-signature-symbol">:</span>
+                    <a href="../interfaces/PropertyMatch.html" class="tsd-signature-type tsd-kind-interface"
+                      >PropertyMatch</a
+                    ><span class="tsd-signature-symbol">[]</span
+                    ><a href="#findagentsforproperty-1" aria-label="Permalink" class="tsd-anchor-icon"
+                      ><svg viewBox="0 0 24 24" aria-hidden="true">
+                        <use href="../assets/icons.svg#icon-anchor"></use></svg
+                    ></a>
+                  </div>
+                  <div class="tsd-description">
+                    <div class="tsd-comment tsd-typography">
+                      <p>Query 1: Find agents that can sell a specific property</p>
+                    </div>
+                    <div class="tsd-parameters">
+                      <h4 class="tsd-parameters-title">Parameters</h4>
+                      <ul class="tsd-parameter-list">
+                        <li>
+                          <span
+                            ><span class="tsd-kind-parameter">identifierType</span>:
+                            <a
+                              href="../types/PropertyIdentifierType.html"
+                              class="tsd-signature-type tsd-kind-type-alias"
+                              >PropertyIdentifierType</a
+                            ></span
+                          >
+                        </li>
+                        <li>
+                          <span
+                            ><span class="tsd-kind-parameter">identifierValue</span>:
+                            <span class="tsd-signature-type">string</span></span
+                          >
+                        </li>
+                      </ul>
+                    </div>
+                    <h4 class="tsd-returns-title">
+                      Returns
+                      <a href="../interfaces/PropertyMatch.html" class="tsd-signature-type tsd-kind-interface"
+                        >PropertyMatch</a
+                      ><span class="tsd-signature-symbol">[]</span>
+                    </h4>
+                    <aside class="tsd-sources">
+                      <ul>
+                        <li>
+                          Defined in
+                          <a
+                            href="https://github.com/adcontextprotocol/adcp-client/blob/f019701d35957263620cbc63b0e73eb94547b8ea/src/lib/discovery/property-index.ts#L37"
+                            >src/lib/discovery/property-index.ts:37</a
+                          >
+                        </li>
+                      </ul>
+                    </aside>
+                  </div>
+                </li>
+              </ul>
+            </section>
+            <section class="tsd-panel tsd-member">
+              <h3 class="tsd-anchor-link" id="getagentauthorizations">
+                <span>get<wbr />Agent<wbr />Authorizations</span
+                ><a href="#getagentauthorizations" aria-label="Permalink" class="tsd-anchor-icon"
+                  ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg
+                ></a>
+              </h3>
+              <ul class="tsd-signatures">
+                <li class="">
+                  <div class="tsd-signature tsd-anchor-link" id="getagentauthorizations-1">
+                    <span class="tsd-kind-call-signature">getAgentAuthorizations</span
+                    ><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">agentUrl</span
+                    ><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span
+                    ><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">:</span>
+                    <span class="tsd-signature-type">null</span> <span class="tsd-signature-symbol">|</span>
+                    <a href="../interfaces/AgentAuthorization.html" class="tsd-signature-type tsd-kind-interface"
+                      >AgentAuthorization</a
+                    ><a href="#getagentauthorizations-1" aria-label="Permalink" class="tsd-anchor-icon"
+                      ><svg viewBox="0 0 24 24" aria-hidden="true">
+                        <use href="../assets/icons.svg#icon-anchor"></use></svg
+                    ></a>
+                  </div>
+                  <div class="tsd-description">
+                    <div class="tsd-comment tsd-typography"><p>Query 2: Get all properties an agent can sell</p></div>
+                    <div class="tsd-parameters">
+                      <h4 class="tsd-parameters-title">Parameters</h4>
+                      <ul class="tsd-parameter-list">
+                        <li>
+                          <span
+                            ><span class="tsd-kind-parameter">agentUrl</span>:
+                            <span class="tsd-signature-type">string</span></span
+                          >
+                        </li>
+                      </ul>
+                    </div>
+                    <h4 class="tsd-returns-title">
+                      Returns <span class="tsd-signature-type">null</span> <span class="tsd-signature-symbol">|</span>
+                      <a href="../interfaces/AgentAuthorization.html" class="tsd-signature-type tsd-kind-interface"
+                        >AgentAuthorization</a
+                      >
+                    </h4>
+                    <aside class="tsd-sources">
+                      <ul>
+                        <li>
+                          Defined in
+                          <a
+                            href="https://github.com/adcontextprotocol/adcp-client/blob/f019701d35957263620cbc63b0e73eb94547b8ea/src/lib/discovery/property-index.ts#L45"
+                            >src/lib/discovery/property-index.ts:45</a
+                          >
+                        </li>
+                      </ul>
+                    </aside>
+                  </div>
+                </li>
+              </ul>
+            </section>
+            <section class="tsd-panel tsd-member">
+              <h3 class="tsd-anchor-link" id="findagentsbypropertytags">
+                <span>find<wbr />Agents<wbr />By<wbr />Property<wbr />Tags</span
+                ><a href="#findagentsbypropertytags" aria-label="Permalink" class="tsd-anchor-icon"
+                  ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg
+                ></a>
+              </h3>
+              <ul class="tsd-signatures">
+                <li class="">
+                  <div class="tsd-signature tsd-anchor-link" id="findagentsbypropertytags-1">
+                    <span class="tsd-kind-call-signature">findAgentsByPropertyTags</span
+                    ><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">tags</span
+                    ><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span
+                    ><span class="tsd-signature-symbol">[]</span><span class="tsd-signature-symbol">)</span
+                    ><span class="tsd-signature-symbol">:</span>
+                    <a href="../interfaces/PropertyMatch.html" class="tsd-signature-type tsd-kind-interface"
+                      >PropertyMatch</a
+                    ><span class="tsd-signature-symbol">[]</span
+                    ><a href="#findagentsbypropertytags-1" aria-label="Permalink" class="tsd-anchor-icon"
+                      ><svg viewBox="0 0 24 24" aria-hidden="true">
+                        <use href="../assets/icons.svg#icon-anchor"></use></svg
+                    ></a>
+                  </div>
+                  <div class="tsd-description">
+                    <div class="tsd-comment tsd-typography"><p>Query 3: Find agents by property tags</p></div>
+                    <div class="tsd-parameters">
+                      <h4 class="tsd-parameters-title">Parameters</h4>
+                      <ul class="tsd-parameter-list">
+                        <li>
+                          <span
+                            ><span class="tsd-kind-parameter">tags</span>: <span class="tsd-signature-type">string</span
+                            ><span class="tsd-signature-symbol">[]</span></span
+                          >
+                        </li>
+                      </ul>
+                    </div>
+                    <h4 class="tsd-returns-title">
+                      Returns
+                      <a href="../interfaces/PropertyMatch.html" class="tsd-signature-type tsd-kind-interface"
+                        >PropertyMatch</a
+                      ><span class="tsd-signature-symbol">[]</span>
+                    </h4>
+                    <aside class="tsd-sources">
+                      <ul>
+                        <li>
+                          Defined in
+                          <a
+                            href="https://github.com/adcontextprotocol/adcp-client/blob/f019701d35957263620cbc63b0e73eb94547b8ea/src/lib/discovery/property-index.ts#L52"
+                            >src/lib/discovery/property-index.ts:52</a
+                          >
+                        </li>
+                      </ul>
+                    </aside>
+                  </div>
+                </li>
+              </ul>
+            </section>
+            <section class="tsd-panel tsd-member">
+              <h3 class="tsd-anchor-link" id="addproperty">
+                <span>add<wbr />Property</span
+                ><a href="#addproperty" aria-label="Permalink" class="tsd-anchor-icon"
+                  ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg
+                ></a>
+              </h3>
+              <ul class="tsd-signatures">
+                <li class="">
+                  <div class="tsd-signature tsd-anchor-link" id="addproperty-1">
+                    <span class="tsd-kind-call-signature">addProperty</span><span class="tsd-signature-symbol">(</span
+                    ><span class="tsd-kind-parameter">property</span><span class="tsd-signature-symbol">:</span>
+                    <a href="../interfaces/Property.html" class="tsd-signature-type tsd-kind-interface">Property</a
+                    ><span class="tsd-signature-symbol">,</span> <span class="tsd-kind-parameter">agentUrl</span
+                    ><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span
+                    ><span class="tsd-signature-symbol">,</span> <span class="tsd-kind-parameter">publisherDomain</span
+                    ><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span
+                    ><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">:</span>
+                    <span class="tsd-signature-type">void</span
+                    ><a href="#addproperty-1" aria-label="Permalink" class="tsd-anchor-icon"
+                      ><svg viewBox="0 0 24 24" aria-hidden="true">
+                        <use href="../assets/icons.svg#icon-anchor"></use></svg
+                    ></a>
+                  </div>
+                  <div class="tsd-description">
+                    <div class="tsd-comment tsd-typography"><p>Add a property to the index</p></div>
+                    <div class="tsd-parameters">
+                      <h4 class="tsd-parameters-title">Parameters</h4>
+                      <ul class="tsd-parameter-list">
+                        <li>
+                          <span
+                            ><span class="tsd-kind-parameter">property</span>:
+                            <a href="../interfaces/Property.html" class="tsd-signature-type tsd-kind-interface"
+                              >Property</a
+                            ></span
+                          >
+                        </li>
+                        <li>
+                          <span
+                            ><span class="tsd-kind-parameter">agentUrl</span>:
+                            <span class="tsd-signature-type">string</span></span
+                          >
+                        </li>
+                        <li>
+                          <span
+                            ><span class="tsd-kind-parameter">publisherDomain</span>:
+                            <span class="tsd-signature-type">string</span></span
+                          >
+                        </li>
+                      </ul>
+                    </div>
+                    <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">void</span></h4>
+                    <aside class="tsd-sources">
+                      <ul>
+                        <li>
+                          Defined in
+                          <a
+                            href="https://github.com/adcontextprotocol/adcp-client/blob/f019701d35957263620cbc63b0e73eb94547b8ea/src/lib/discovery/property-index.ts#L82"
+                            >src/lib/discovery/property-index.ts:82</a
+                          >
+                        </li>
+                      </ul>
+                    </aside>
+                  </div>
+                </li>
+              </ul>
+            </section>
+            <section class="tsd-panel tsd-member">
+              <h3 class="tsd-anchor-link" id="addagentauthorization">
+                <span>add<wbr />Agent<wbr />Authorization</span
+                ><a href="#addagentauthorization" aria-label="Permalink" class="tsd-anchor-icon"
+                  ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg
+                ></a>
+              </h3>
+              <ul class="tsd-signatures">
+                <li class="">
+                  <div class="tsd-signature tsd-anchor-link" id="addagentauthorization-1">
+                    <span class="tsd-kind-call-signature">addAgentAuthorization</span
+                    ><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">agentUrl</span
+                    ><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span
+                    ><span class="tsd-signature-symbol">,</span> <span class="tsd-kind-parameter">publisherDomains</span
+                    ><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span
+                    ><span class="tsd-signature-symbol">[]</span><span class="tsd-signature-symbol">)</span
+                    ><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">void</span
+                    ><a href="#addagentauthorization-1" aria-label="Permalink" class="tsd-anchor-icon"
+                      ><svg viewBox="0 0 24 24" aria-hidden="true">
+                        <use href="../assets/icons.svg#icon-anchor"></use></svg
+                    ></a>
+                  </div>
+                  <div class="tsd-description">
+                    <div class="tsd-comment tsd-typography"><p>Add agent → publisher_domains authorization</p></div>
+                    <div class="tsd-parameters">
+                      <h4 class="tsd-parameters-title">Parameters</h4>
+                      <ul class="tsd-parameter-list">
+                        <li>
+                          <span
+                            ><span class="tsd-kind-parameter">agentUrl</span>:
+                            <span class="tsd-signature-type">string</span></span
+                          >
+                        </li>
+                        <li>
+                          <span
+                            ><span class="tsd-kind-parameter">publisherDomains</span>:
+                            <span class="tsd-signature-type">string</span
+                            ><span class="tsd-signature-symbol">[]</span></span
+                          >
+                        </li>
+                      </ul>
+                    </div>
+                    <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">void</span></h4>
+                    <aside class="tsd-sources">
+                      <ul>
+                        <li>
+                          Defined in
+                          <a
+                            href="https://github.com/adcontextprotocol/adcp-client/blob/f019701d35957263620cbc63b0e73eb94547b8ea/src/lib/discovery/property-index.ts#L118"
+                            >src/lib/discovery/property-index.ts:118</a
+                          >
+                        </li>
+                      </ul>
+                    </aside>
+                  </div>
+                </li>
+              </ul>
+            </section>
+            <section class="tsd-panel tsd-member">
+              <h3 class="tsd-anchor-link" id="clear">
+                <span>clear</span
+                ><a href="#clear" aria-label="Permalink" class="tsd-anchor-icon"
+                  ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg
+                ></a>
+              </h3>
+              <ul class="tsd-signatures">
+                <li class="">
+                  <div class="tsd-signature tsd-anchor-link" id="clear-1">
+                    <span class="tsd-kind-call-signature">clear</span><span class="tsd-signature-symbol">()</span
+                    ><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">void</span
+                    ><a href="#clear-1" aria-label="Permalink" class="tsd-anchor-icon"
+                      ><svg viewBox="0 0 24 24" aria-hidden="true">
+                        <use href="../assets/icons.svg#icon-anchor"></use></svg
+                    ></a>
+                  </div>
+                  <div class="tsd-description">
+                    <div class="tsd-comment tsd-typography"><p>Clear all data from the index</p></div>
+                    <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">void</span></h4>
+                    <aside class="tsd-sources">
+                      <ul>
+                        <li>
+                          Defined in
+                          <a
+                            href="https://github.com/adcontextprotocol/adcp-client/blob/f019701d35957263620cbc63b0e73eb94547b8ea/src/lib/discovery/property-index.ts#L139"
+                            >src/lib/discovery/property-index.ts:139</a
+                          >
+                        </li>
+                      </ul>
+                    </aside>
+                  </div>
+                </li>
+              </ul>
+            </section>
+            <section class="tsd-panel tsd-member">
+              <h3 class="tsd-anchor-link" id="getstats">
+                <span>get<wbr />Stats</span
+                ><a href="#getstats" aria-label="Permalink" class="tsd-anchor-icon"
+                  ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg
+                ></a>
+              </h3>
+              <ul class="tsd-signatures">
+                <li class="">
+                  <div class="tsd-signature tsd-anchor-link" id="getstats-1">
+                    <span class="tsd-kind-call-signature">getStats</span><span class="tsd-signature-symbol">()</span
+                    ><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-symbol">{</span
+                    ><br />    <span class="tsd-kind-property">totalIdentifiers</span
+                    ><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span
+                    ><span class="tsd-signature-symbol">;</span><br />    <span class="tsd-kind-property"
+                      >totalAgents</span
+                    ><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span
+                    ><span class="tsd-signature-symbol">;</span><br />    <span class="tsd-kind-property"
+                      >totalProperties</span
+                    ><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span
+                    ><span class="tsd-signature-symbol">;</span><br /><span class="tsd-signature-symbol">}</span
+                    ><a href="#getstats-1" aria-label="Permalink" class="tsd-anchor-icon"
+                      ><svg viewBox="0 0 24 24" aria-hidden="true">
+                        <use href="../assets/icons.svg#icon-anchor"></use></svg
+                    ></a>
+                  </div>
+                  <div class="tsd-description">
+                    <div class="tsd-comment tsd-typography"><p>Get statistics about the index</p></div>
+                    <h4 class="tsd-returns-title">
+                      Returns <span class="tsd-signature-symbol">{</span>
+                      <span class="tsd-kind-property">totalIdentifiers</span
+                      ><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span
+                      ><span class="tsd-signature-symbol">;</span> <span class="tsd-kind-property">totalAgents</span
+                      ><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span
+                      ><span class="tsd-signature-symbol">;</span> <span class="tsd-kind-property">totalProperties</span
+                      ><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span>
+                      <span class="tsd-signature-symbol">}</span>
+                    </h4>
+                    <aside class="tsd-sources">
+                      <ul>
+                        <li>
+                          Defined in
+                          <a
+                            href="https://github.com/adcontextprotocol/adcp-client/blob/f019701d35957263620cbc63b0e73eb94547b8ea/src/lib/discovery/property-index.ts#L147"
+                            >src/lib/discovery/property-index.ts:147</a
+                          >
+                        </li>
+                      </ul>
+                    </aside>
+                  </div>
+                </li>
+              </ul>
+            </section>
+          </section>
+        </details>
+      </div>
+      <div class="col-sidebar">
+        <div class="page-menu">
+          <div class="tsd-navigation settings">
+            <details class="tsd-accordion">
+              <summary class="tsd-accordion-summary">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <use href="../assets/icons.svg#icon-chevronDown"></use>
+                </svg>
+                <h3>Settings</h3>
+              </summary>
+              <div class="tsd-accordion-details">
+                <div class="tsd-filter-visibility">
+                  <span class="settings-label">Member Visibility</span>
+                  <ul id="tsd-filter-options">
+                    <li class="tsd-filter-item">
+                      <label class="tsd-filter-input"
+                        ><input type="checkbox" id="tsd-filter-inherited" name="inherited" checked /><svg
+                          width="32"
+                          height="32"
+                          viewBox="0 0 32 32"
+                          aria-hidden="true"
+                        >
+                          <rect
+                            class="tsd-checkbox-background"
+                            width="30"
+                            height="30"
+                            x="1"
+                            y="1"
+                            rx="6"
+                            fill="none"
+                          ></rect>
+                          <path
+                            class="tsd-checkbox-checkmark"
+                            d="M8.35422 16.8214L13.2143 21.75L24.6458 10.25"
+                            stroke="none"
+                            stroke-width="3.5"
+                            stroke-linejoin="round"
+                            fill="none"
+                          ></path></svg
+                        ><span>Inherited</span></label
+                      >
+                    </li>
+                    <li class="tsd-filter-item">
+                      <label class="tsd-filter-input"
+                        ><input type="checkbox" id="tsd-filter-external" name="external" /><svg
+                          width="32"
+                          height="32"
+                          viewBox="0 0 32 32"
+                          aria-hidden="true"
+                        >
+                          <rect
+                            class="tsd-checkbox-background"
+                            width="30"
+                            height="30"
+                            x="1"
+                            y="1"
+                            rx="6"
+                            fill="none"
+                          ></rect>
+                          <path
+                            class="tsd-checkbox-checkmark"
+                            d="M8.35422 16.8214L13.2143 21.75L24.6458 10.25"
+                            stroke="none"
+                            stroke-width="3.5"
+                            stroke-linejoin="round"
+                            fill="none"
+                          ></path></svg
+                        ><span>External</span></label
+                      >
+                    </li>
+                  </ul>
+                </div>
+                <div class="tsd-theme-toggle">
+                  <label class="settings-label" for="tsd-theme">Theme</label
+                  ><select id="tsd-theme">
+                    <option value="os">OS</option>
+                    <option value="light">Light</option>
+                    <option value="dark">Dark</option>
+                  </select>
+                </div>
+              </div>
+            </details>
+          </div>
+          <details open class="tsd-accordion tsd-page-navigation">
+            <summary class="tsd-accordion-summary">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <use href="../assets/icons.svg#icon-chevronDown"></use>
+              </svg>
+              <h3>On This Page</h3>
+            </summary>
+            <div class="tsd-accordion-details">
+              <details open class="tsd-accordion tsd-page-navigation-section">
+                <summary class="tsd-accordion-summary" data-key="section-Constructors">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <use href="../assets/icons.svg#icon-chevronDown"></use></svg
+                  >Constructors
+                </summary>
+                <div>
+                  <a href="#constructor"
+                    ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Constructor">
+                      <use href="../assets/icons.svg#icon-512"></use></svg
+                    ><span>constructor</span></a
+                  >
+                </div>
+              </details>
+              <details open class="tsd-accordion tsd-page-navigation-section">
+                <summary class="tsd-accordion-summary" data-key="section-Methods">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <use href="../assets/icons.svg#icon-chevronDown"></use></svg
+                  >Methods
+                </summary>
+                <div>
+                  <a href="#findagentsforproperty"
+                    ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method">
+                      <use href="../assets/icons.svg#icon-2048"></use></svg
+                    ><span>find<wbr />Agents<wbr />For<wbr />Property</span></a
+                  ><a href="#getagentauthorizations"
+                    ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method">
+                      <use href="../assets/icons.svg#icon-2048"></use></svg
+                    ><span>get<wbr />Agent<wbr />Authorizations</span></a
+                  ><a href="#findagentsbypropertytags"
+                    ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method">
+                      <use href="../assets/icons.svg#icon-2048"></use></svg
+                    ><span>find<wbr />Agents<wbr />By<wbr />Property<wbr />Tags</span></a
+                  ><a href="#addproperty"
+                    ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method">
+                      <use href="../assets/icons.svg#icon-2048"></use></svg
+                    ><span>add<wbr />Property</span></a
+                  ><a href="#addagentauthorization"
+                    ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method">
+                      <use href="../assets/icons.svg#icon-2048"></use></svg
+                    ><span>add<wbr />Agent<wbr />Authorization</span></a
+                  ><a href="#clear"
+                    ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method">
+                      <use href="../assets/icons.svg#icon-2048"></use></svg
+                    ><span>clear</span></a
+                  ><a href="#getstats"
+                    ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method">
+                      <use href="../assets/icons.svg#icon-2048"></use></svg
+                    ><span>get<wbr />Stats</span></a
+                  >
+                </div>
+              </details>
+            </div>
+          </details>
+        </div>
+        <div class="site-menu">
+          <nav id="tsd-sidebar-links" class="tsd-navigation">
+            <a href="https://docs.adcontextprotocol.org" class="tsd-nav-link">Documentation</a
+            ><a href="https://github.com/adcontextprotocol/adcp-client" class="tsd-nav-link">GitHub</a
+            ><a href="https://www.npmjs.com/package/@adcp/client" class="tsd-nav-link">npm</a>
+          </nav>
+          <nav class="tsd-navigation">
+            <a href="../modules.html">@adcp/client API Reference - v3.1.0</a>
+            <ul class="tsd-small-nested-navigation" id="tsd-nav-container">
+              <li>Loading...</li>
+            </ul>
+          </nav>
+        </div>
+      </div>
+    </div>
+    <footer>
+      <p class="tsd-generator">Generated using <a href="https://typedoc.org/" target="_blank">TypeDoc</a></p>
+    </footer>
+    <div class="overlay"></div>
+  </body>
+</html>
