@@ -72,35 +72,9 @@ export class ProtocolResponseParser {
    * Get ADCP status from response
    */
   getStatus(response: any): ADCPStatus | null {
-    // Check top-level status first (flat format - legacy or direct status)
+    // Check top-level status first (A2A and direct responses)
     if (response?.status && Object.values(ADCP_STATUS).includes(response.status)) {
       return response.status as ADCPStatus;
-    }
-
-    // Check A2A Task.status.state (when Task object passed directly)
-    // A2A Task objects have kind='task' and status.state field
-    if (
-      response?.kind === 'task' &&
-      response?.status?.state &&
-      Object.values(ADCP_STATUS).includes(response.status.state)
-    ) {
-      return response.status.state as ADCPStatus;
-    }
-
-    // Check A2A JSON-RPC response with Task result
-    // SendMessageSuccessResponse has result which can be Task | Message
-    if (
-      response?.result?.kind === 'task' &&
-      response?.result?.status?.state &&
-      Object.values(ADCP_STATUS).includes(response.result.status.state)
-    ) {
-      return response.result.status.state as ADCPStatus;
-    }
-
-    // Check A2A JSON-RPC response with Message result (completed synchronously)
-    // If result is a Message, the task completed immediately
-    if (response?.result?.kind === 'message') {
-      return ADCP_STATUS.COMPLETED;
     }
 
     // Check MCP structuredContent.status
