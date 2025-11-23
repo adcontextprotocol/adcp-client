@@ -31,7 +31,9 @@ describe('TaskExecutor Error Scenarios', { skip: process.env.CI ? 'Slow tests - 
     const lib = require('../../dist/lib/index.js');
 
     TaskExecutor = lib.TaskExecutor;
-    ProtocolClient = lib.ProtocolClient;
+    // Import ProtocolClient from internal path (not part of public API)
+    const protocolsModule = require('../../dist/lib/protocols/index.js');
+    ProtocolClient = protocolsModule.ProtocolClient;
     TaskTimeoutError = lib.TaskTimeoutError;
     InputRequiredError = lib.InputRequiredError;
     DeferredTaskError = lib.DeferredTaskError;

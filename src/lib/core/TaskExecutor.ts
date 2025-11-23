@@ -6,6 +6,7 @@ import type { AgentConfig } from '../types';
 import { ProtocolClient } from '../protocols';
 import type { Storage } from '../storage/interfaces';
 import { responseValidator } from './ResponseValidator';
+import { unwrapProtocolResponse } from '../utils/response-unwrapper';
 import type {
   Message,
   InputRequest,
@@ -275,7 +276,7 @@ export class TaskExecutor {
     switch (status) {
       case ADCP_STATUS.COMPLETED:
         // Task completed immediately
-        const completedData = this.extractResponseData(response, debugLogs);
+        const completedData = this.extractResponseData(response, debugLogs, taskName);
         this.updateTaskStatus(taskId, 'completed', completedData);
 
         // Check if the actual operation succeeded (not just the task)
@@ -353,7 +354,7 @@ export class TaskExecutor {
 
       default:
         // Unknown status - treat as completed if we have data
-        const defaultData = this.extractResponseData(response, debugLogs);
+        const defaultData = this.extractResponseData(response, debugLogs, taskName);
         if (
           defaultData &&
           (defaultData !== response || response.structuredContent || response.result || response.data)
@@ -400,79 +401,72 @@ export class TaskExecutor {
    *
    * @internal Exposed for testing purposes
    */
-  public extractResponseData(response: any, debugLogs?: any[]): any {
+  public extractResponseData(response: any, debugLogs?: any[], toolName?: string): any {
     // Note: MCP error responses (isError: true) are handled in mcp.ts and thrown as exceptions
     // They never reach this function - they're caught by the try/catch in executeTask
 
-    // MCP responses have structuredContent
-    if (response?.structuredContent) {
-      this.logDebug(debugLogs, 'info', 'Extracting data from MCP structuredContent', {
-        hasStructuredContent: true,
-        keys: Object.keys(response.structuredContent),
-      });
-      return response.structuredContent;
-    }
-
-    // A2A responses typically have result with artifacts
-    if (response?.result) {
-      // Check if this is an A2A artifact structure
-      if (response.result.artifacts && Array.isArray(response.result.artifacts)) {
-        // Extract data from the first artifact's first part
+    // Use the shared response unwrapper utility
+    // This handles MCP structuredContent, A2A artifacts (including HITL multi-artifact responses),
+    // and various edge cases consistently
+    try {
+      // Log what type of response we're processing BEFORE unwrapping
+      // This ensures we have debug visibility even if unwrapping fails
+      if (response?.structuredContent) {
+        this.logDebug(debugLogs, 'info', 'Processing MCP structuredContent response');
+      } else if (response?.result?.artifacts) {
         const artifacts = response.result.artifacts;
-        if (artifacts.length > 0 && artifacts[0].parts && Array.isArray(artifacts[0].parts)) {
-          const firstPart = artifacts[0].parts[0];
-          if (firstPart?.data) {
-            const extractedData = firstPart.data;
+        if (artifacts.length === 0) {
+          this.logDebug(debugLogs, 'info', 'Processing A2A response with empty artifacts array');
+        } else {
+          // Calculate total part count across all artifacts
+          const totalParts = artifacts.reduce((sum: number, artifact: any) => {
+            return sum + (artifact.parts?.length || 0);
+          }, 0);
 
-            // Check if this is a framework-wrapped response (e.g., ADK FunctionResponse)
-            // Framework wrappers typically have: { id, name, response: { actual data } }
-            // This is protocol-agnostic - works for any framework that uses this pattern
-            if (extractedData.response && typeof extractedData.response === 'object') {
-              this.logDebug(debugLogs, 'info', 'Extracting data from framework wrapper', {
-                artifactCount: artifacts.length,
-                partCount: artifacts[0].parts.length,
-                wrapperId: extractedData.id,
-                wrapperName: extractedData.name,
-                responseKeys: Object.keys(extractedData.response || {}),
-                hasFormats: !!extractedData.response?.formats,
-                formatsCount: extractedData.response?.formats?.length,
-              });
-              return extractedData.response;
-            }
+          // Extract data keys from first part for debugging
+          const firstPart = artifacts[0]?.parts?.[0];
+          const dataKeys = firstPart?.data ? Object.keys(firstPart.data) : [];
 
-            // Otherwise return data as-is (direct response, no wrapper)
-            this.logDebug(debugLogs, 'info', 'Extracting data from A2A artifact structure', {
-              artifactCount: artifacts.length,
-              partCount: artifacts[0].parts.length,
-              dataKeys: Object.keys(extractedData || {}),
-              hasFormats: !!extractedData?.formats,
-              formatsCount: extractedData?.formats?.length,
-            });
-            return extractedData;
-          }
+          this.logDebug(debugLogs, 'info', 'Processing A2A artifact structure', {
+            artifactCount: artifacts.length,
+            partCount: totalParts,
+            extractedFrom: artifacts.length > 1 ? 'multi-artifact (HITL)' : 'single-artifact',
+            dataKeys,
+          });
         }
-        this.logDebug(debugLogs, 'warning', 'A2A artifacts found but no data extracted', {
-          artifactCount: artifacts.length,
-          hasFirstPart: !!artifacts[0]?.parts?.[0],
+      } else if (response?.data) {
+        this.logDebug(debugLogs, 'info', 'Processing response.data field');
+      } else {
+        this.logDebug(debugLogs, 'info', 'Processing response without standard structure', {
+          responseKeys: Object.keys(response || {}),
         });
       }
-      // Otherwise return the result as-is
-      this.logDebug(debugLogs, 'info', 'Returning A2A result directly (no artifacts)', {
-        hasArtifacts: !!response.result.artifacts,
+
+      // Now unwrap the response
+      const unwrapped = unwrapProtocolResponse(response, toolName);
+
+      // Log successful extraction with result details
+      if (response?.structuredContent) {
+        this.logDebug(debugLogs, 'info', 'Successfully extracted MCP data', {
+          dataKeys: Object.keys(unwrapped || {}),
+        });
+      } else if (response?.result?.artifacts && response.result.artifacts.length > 0) {
+        this.logDebug(debugLogs, 'info', 'Successfully extracted A2A data', {
+          dataKeys: Object.keys(unwrapped || {}),
+        });
+      }
+
+      return unwrapped;
+    } catch (error) {
+      // If unwrapper fails, log and try fallback
+      this.logDebug(debugLogs, 'warning', 'Response unwrapper failed, using fallback', {
+        error: error instanceof Error ? error.message : String(error),
+        responseKeys: Object.keys(response || {}),
       });
-      return response.result;
-    }
 
-    if (response?.data) {
-      this.logDebug(debugLogs, 'info', 'Extracting data from response.data field');
-      return response.data;
+      // Fallback to full response
+      return response;
     }
-
-    // Fallback to full response
-    this.logDebug(debugLogs, 'warning', 'No standard data structure found, returning full response', {
-      responseKeys: Object.keys(response || {}),
-    });
-    return response;
   }
 
   /**

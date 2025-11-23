@@ -39,14 +39,20 @@ test('generated types maintain strict schema enforcement', () => {
   // - These are protocol-mandated for distributed tracing and request correlation
   // - Context fields use z.record(z.string(), z.unknown()) which creates index signatures
   //
-  // Breakdown of 28 signatures:
-  // - 14 context fields (protocol-mandated, cannot be strict)
+  // Updated from 28 to 29 for AdCP v2.4.0 schema changes:
+  // - Added provide_performance_feedback tool with context field
+  // - New ProvidePerformanceFeedbackRequest2 type with arbitrary context properties
+  // - Context field uses [k: string]: unknown for protocol-mandated echo behavior
+  // - Also added PropertyID/PropertyTag types (properly deduplicated, no extra signatures)
+  //
+  // Breakdown of 29 signatures:
+  // - 15 context fields (protocol-mandated, cannot be strict) - increased from 14 in v2.4.0
   // - 14 other intentional flexible schemas:
   //   * Asset metadata/requirements objects (format-specific)
   //   * Asset manifests (format-defined structures)
   //   * Error details (task-specific information)
   //   * BrandManifest intersections (inherited from allOf pattern)
-  const MAX_ALLOWED = 28;
+  const MAX_ALLOWED = 29;
 
   console.log(`📊 Type strictness metrics:`);
   console.log(`   Index signatures found: ${count}`);
