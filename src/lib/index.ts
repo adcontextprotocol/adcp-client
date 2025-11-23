@@ -149,6 +149,8 @@ export type {
   PackageRequest,
   CreativeAsset,
   CreativePolicy,
+  BrandManifest,
+  BrandManifestReference,
 } from './types/tools.generated';
 
 // ====== ZOD SCHEMAS (for runtime validation) ======

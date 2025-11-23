@@ -10,14 +10,19 @@
   },
   "includeVersion": true,
   "categorizeByGroup": true,
-  "plugin": ["typedoc-plugin-markdown"],
   "githubPages": true,
-  "readme": "none",
+  "readme": "docs/API_README.md",
   "excludePrivate": true,
   "excludeProtected": true,
   "excludeInternal": true,
   "disableSources": false,
   "searchInComments": true,
+  "hideGenerator": false,
+  "validation": {
+    "notExported": true,
+    "invalidLink": true,
+    "notDocumented": false
+  },
   "blockTags": [
     "@alpha",
     "@beta",
@@ -39,12 +44,30 @@
     "@throws",
     "@virtual"
   ],
-  "categoryOrder": ["Client Classes", "Configuration", "Types", "Async Patterns", "Utilities", "*"],
-  "sort": ["source-order"],
+  "categoryOrder": [
+    "Client Classes",
+    "Agent Classes",
+    "Configuration",
+    "Request/Response Types",
+    "Core Types",
+    "Task & Conversation Types",
+    "Async & Event Types",
+    "Error Classes",
+    "Utilities",
+    "Discovery",
+    "*"
+  ],
+  "sort": ["source-order", "required-first"],
   "visibilityFilters": {
     "protected": false,
     "private": false,
     "inherited": true,
     "external": false
-  }
+  },
+  "navigation": {
+    "includeCategories": true,
+    "includeGroups": true
+  },
+  "searchInComments": true,
+  "searchInDocuments": true
 }

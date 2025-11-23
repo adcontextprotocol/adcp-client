@@ -1,0 +1,3147 @@
+<!doctype html>
+<html class="default" lang="en" data-base="../">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="x-ua-compatible" content="IE=edge" />
+    <title>AgentClient | @adcp/client API Reference - v3.1.0</title>
+    <meta name="description" content="Documentation for @adcp/client API Reference" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="stylesheet" href="../assets/style.css" />
+    <link rel="stylesheet" href="../assets/highlight.css" />
+    <script defer src="../assets/main.js"></script>
+    <script async src="../assets/icons.js" id="tsd-icons-script"></script>
+    <script async src="../assets/search.js" id="tsd-search-script"></script>
+    <script async src="../assets/navigation.js" id="tsd-nav-script"></script>
+    <script async src="../assets/hierarchy.js" id="tsd-hierarchy-script"></script>
+  </head>
+  <body>
+    <script>
+      document.documentElement.dataset.theme = localStorage.getItem('tsd-theme') || 'os';
+      document.body.style.display = 'none';
+      setTimeout(() => (window.app ? app.showPage() : document.body.style.removeProperty('display')), 500);
+    </script>
+    <header class="tsd-page-toolbar">
+      <div class="tsd-toolbar-contents container">
+        <a href="../index.html" class="title">@adcp/client API Reference - v3.1.0</a>
+        <div id="tsd-toolbar-links">
+          <a href="https://docs.adcontextprotocol.org">Documentation</a
+          ><a href="https://github.com/adcontextprotocol/adcp-client">GitHub</a
+          ><a href="https://www.npmjs.com/package/@adcp/client">npm</a>
+        </div>
+        <button id="tsd-search-trigger" class="tsd-widget" aria-label="Search">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <use href="../assets/icons.svg#icon-search"></use>
+          </svg>
+        </button>
+        <dialog id="tsd-search" aria-label="Search">
+          <input
+            role="combobox"
+            id="tsd-search-input"
+            aria-controls="tsd-search-results"
+            aria-autocomplete="list"
+            aria-expanded="true"
+            autocapitalize="off"
+            autocomplete="off"
+            placeholder="Search the docs"
+            maxlength="100"
+          />
+          <ul role="listbox" id="tsd-search-results"></ul>
+          <div id="tsd-search-status" aria-live="polite" aria-atomic="true"><div>Preparing search index...</div></div>
+        </dialog>
+        <a href="#" class="tsd-widget menu" id="tsd-toolbar-menu-trigger" data-toggle="menu" aria-label="Menu"
+          ><svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <use href="../assets/icons.svg#icon-menu"></use></svg
+        ></a>
+      </div>
+    </header>
+    <div class="container container-main">
+      <div class="col-content">
+        <div class="tsd-page-title">
+          <ul class="tsd-breadcrumb" aria-label="Breadcrumb">
+            <li><a href="" aria-current="page">AgentClient</a></li>
+          </ul>
+          <h1>Class AgentClient</h1>
+        </div>
+        <section class="tsd-panel tsd-comment">
+          <div class="tsd-comment tsd-typography">
+            <p>Per-agent client that maintains conversation context across calls</p>
+            <p>
+              This wrapper provides a persistent conversation context for a single agent, making it easy to have
+              multi-turn conversations and maintain state.
+            </p>
+          </div>
+        </section>
+        <aside class="tsd-sources">
+          <ul>
+            <li>
+              Defined in
+              <a
+                href="https://github.com/adcontextprotocol/adcp-client/blob/f019701d35957263620cbc63b0e73eb94547b8ea/src/lib/core/AgentClient.ts#L60"
+                >src/lib/core/AgentClient.ts:60</a
+              >
+            </li>
+          </ul>
+        </aside>
+        <section class="tsd-panel-group tsd-index-group">
+          <section class="tsd-panel tsd-index-panel">
+            <details class="tsd-index-content tsd-accordion" open>
+              <summary class="tsd-accordion-summary tsd-index-summary">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <use href="../assets/icons.svg#icon-chevronDown"></use>
+                </svg>
+                <h5 class="tsd-index-heading uppercase">Index</h5>
+              </summary>
+              <div class="tsd-accordion-details">
+                <section class="tsd-index-section">
+                  <h3 class="tsd-index-heading">Constructors</h3>
+                  <div class="tsd-index-list">
+                    <a href="#constructor" class="tsd-index-link"
+                      ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Constructor">
+                        <use href="../assets/icons.svg#icon-512"></use></svg
+                      ><span>constructor</span></a
+                    >
+                  </div>
+                </section>
+                <section class="tsd-index-section">
+                  <h3 class="tsd-index-heading">Methods</h3>
+                  <div class="tsd-index-list">
+                    <a href="#handlewebhook" class="tsd-index-link"
+                      ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method">
+                        <use href="../assets/icons.svg#icon-2048"></use></svg
+                      ><span>handle<wbr />Webhook</span></a
+                    >
+                    <a href="#getwebhookurl" class="tsd-index-link"
+                      ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method">
+                        <use href="../assets/icons.svg#icon-2048"></use></svg
+                      ><span>get<wbr />Webhook<wbr />Url</span></a
+                    >
+                    <a href="#verifywebhooksignature" class="tsd-index-link"
+                      ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method">
+                        <use href="../assets/icons.svg#icon-2048"></use></svg
+                      ><span>verify<wbr />Webhook<wbr />Signature</span></a
+                    >
+                    <a href="#getproducts" class="tsd-index-link"
+                      ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method">
+                        <use href="../assets/icons.svg#icon-2048"></use></svg
+                      ><span>get<wbr />Products</span></a
+                    >
+                    <a href="#listcreativeformats" class="tsd-index-link"
+                      ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method">
+                        <use href="../assets/icons.svg#icon-2048"></use></svg
+                      ><span>list<wbr />Creative<wbr />Formats</span></a
+                    >
+                    <a href="#createmediabuy" class="tsd-index-link"
+                      ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method">
+                        <use href="../assets/icons.svg#icon-2048"></use></svg
+                      ><span>create<wbr />Media<wbr />Buy</span></a
+                    >
+                    <a href="#updatemediabuy" class="tsd-index-link"
+                      ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method">
+                        <use href="../assets/icons.svg#icon-2048"></use></svg
+                      ><span>update<wbr />Media<wbr />Buy</span></a
+                    >
+                    <a href="#synccreatives" class="tsd-index-link"
+                      ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method">
+                        <use href="../assets/icons.svg#icon-2048"></use></svg
+                      ><span>sync<wbr />Creatives</span></a
+                    >
+                    <a href="#listcreatives" class="tsd-index-link"
+                      ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method">
+                        <use href="../assets/icons.svg#icon-2048"></use></svg
+                      ><span>list<wbr />Creatives</span></a
+                    >
+                    <a href="#getmediabuydelivery" class="tsd-index-link"
+                      ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method">
+                        <use href="../assets/icons.svg#icon-2048"></use></svg
+                      ><span>get<wbr />Media<wbr />Buy<wbr />Delivery</span></a
+                    >
+                    <a href="#listauthorizedproperties" class="tsd-index-link"
+                      ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method">
+                        <use href="../assets/icons.svg#icon-2048"></use></svg
+                      ><span>list<wbr />Authorized<wbr />Properties</span></a
+                    >
+                    <a href="#provideperformancefeedback" class="tsd-index-link"
+                      ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method">
+                        <use href="../assets/icons.svg#icon-2048"></use></svg
+                      ><span>provide<wbr />Performance<wbr />Feedback</span></a
+                    >
+                    <a href="#getsignals" class="tsd-index-link"
+                      ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method">
+                        <use href="../assets/icons.svg#icon-2048"></use></svg
+                      ><span>get<wbr />Signals</span></a
+                    >
+                    <a href="#activatesignal" class="tsd-index-link"
+                      ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method">
+                        <use href="../assets/icons.svg#icon-2048"></use></svg
+                      ><span>activate<wbr />Signal</span></a
+                    >
+                    <a href="#continueconversation" class="tsd-index-link"
+                      ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method">
+                        <use href="../assets/icons.svg#icon-2048"></use></svg
+                      ><span>continue<wbr />Conversation</span></a
+                    >
+                    <a href="#gethistory" class="tsd-index-link"
+                      ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method">
+                        <use href="../assets/icons.svg#icon-2048"></use></svg
+                      ><span>get<wbr />History</span></a
+                    >
+                    <a href="#clearcontext" class="tsd-index-link"
+                      ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method">
+                        <use href="../assets/icons.svg#icon-2048"></use></svg
+                      ><span>clear<wbr />Context</span></a
+                    >
+                    <a href="#getcontextid" class="tsd-index-link"
+                      ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method">
+                        <use href="../assets/icons.svg#icon-2048"></use></svg
+                      ><span>get<wbr />Context<wbr />Id</span></a
+                    >
+                    <a href="#setcontextid" class="tsd-index-link"
+                      ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method">
+                        <use href="../assets/icons.svg#icon-2048"></use></svg
+                      ><span>set<wbr />Context<wbr />Id</span></a
+                    >
+                    <a href="#getagent" class="tsd-index-link"
+                      ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method">
+                        <use href="../assets/icons.svg#icon-2048"></use></svg
+                      ><span>get<wbr />Agent</span></a
+                    >
+                    <a href="#getagentid" class="tsd-index-link"
+                      ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method">
+                        <use href="../assets/icons.svg#icon-2048"></use></svg
+                      ><span>get<wbr />Agent<wbr />Id</span></a
+                    >
+                    <a href="#getagentname" class="tsd-index-link"
+                      ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method">
+                        <use href="../assets/icons.svg#icon-2048"></use></svg
+                      ><span>get<wbr />Agent<wbr />Name</span></a
+                    >
+                    <a href="#getprotocol" class="tsd-index-link"
+                      ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method">
+                        <use href="../assets/icons.svg#icon-2048"></use></svg
+                      ><span>get<wbr />Protocol</span></a
+                    >
+                    <a href="#getagentinfo" class="tsd-index-link"
+                      ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method">
+                        <use href="../assets/icons.svg#icon-2048"></use></svg
+                      ><span>get<wbr />Agent<wbr />Info</span></a
+                    >
+                    <a href="#hasactiveconversation" class="tsd-index-link"
+                      ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method">
+                        <use href="../assets/icons.svg#icon-2048"></use></svg
+                      ><span>has<wbr />Active<wbr />Conversation</span></a
+                    >
+                    <a href="#getactivetasks" class="tsd-index-link"
+                      ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method">
+                        <use href="../assets/icons.svg#icon-2048"></use></svg
+                      ><span>get<wbr />Active<wbr />Tasks</span></a
+                    >
+                    <a href="#executetask" class="tsd-index-link"
+                      ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method">
+                        <use href="../assets/icons.svg#icon-2048"></use></svg
+                      ><span>execute<wbr />Task</span></a
+                    >
+                    <a href="#listtasks" class="tsd-index-link"
+                      ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method">
+                        <use href="../assets/icons.svg#icon-2048"></use></svg
+                      ><span>list<wbr />Tasks</span></a
+                    >
+                    <a href="#gettaskinfo" class="tsd-index-link"
+                      ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method">
+                        <use href="../assets/icons.svg#icon-2048"></use></svg
+                      ><span>get<wbr />Task<wbr />Info</span></a
+                    >
+                    <a href="#ontaskupdate" class="tsd-index-link"
+                      ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method">
+                        <use href="../assets/icons.svg#icon-2048"></use></svg
+                      ><span>on<wbr />Task<wbr />Update</span></a
+                    >
+                    <a href="#ontaskevents" class="tsd-index-link"
+                      ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method">
+                        <use href="../assets/icons.svg#icon-2048"></use></svg
+                      ><span>on<wbr />Task<wbr />Events</span></a
+                    >
+                    <a href="#registerwebhook" class="tsd-index-link"
+                      ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method">
+                        <use href="../assets/icons.svg#icon-2048"></use></svg
+                      ><span>register<wbr />Webhook</span></a
+                    >
+                    <a href="#unregisterwebhook" class="tsd-index-link"
+                      ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method">
+                        <use href="../assets/icons.svg#icon-2048"></use></svg
+                      ><span>unregister<wbr />Webhook</span></a
+                    >
+                  </div>
+                </section>
+              </div>
+            </details>
+          </section>
+        </section>
+        <details class="tsd-panel-group tsd-member-group tsd-accordion" open>
+          <summary class="tsd-accordion-summary" data-key="section-Constructors">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <use href="../assets/icons.svg#icon-chevronDown"></use>
+            </svg>
+            <h2>Constructors</h2>
+          </summary>
+          <section>
+            <section class="tsd-panel tsd-member">
+              <h3 class="tsd-anchor-link" id="constructor">
+                <span>constructor</span
+                ><a href="#constructor" aria-label="Permalink" class="tsd-anchor-icon"
+                  ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg
+                ></a>
+              </h3>
+              <ul class="tsd-signatures">
+                <li class="">
+                  <div class="tsd-signature tsd-anchor-link" id="constructoragentclient">
+                    <span class="tsd-signature-keyword">new</span>
+                    <span class="tsd-kind-constructor-signature">AgentClient</span
+                    ><span class="tsd-signature-symbol">(</span><br />    <span class="tsd-kind-parameter">agent</span
+                    ><span class="tsd-signature-symbol">:</span>
+                    <a href="../interfaces/AgentConfig.html" class="tsd-signature-type tsd-kind-interface"
+                      >AgentConfig</a
+                    ><span class="tsd-signature-symbol">,</span><br />    <span class="tsd-kind-parameter">config</span
+                    ><span class="tsd-signature-symbol">?:</span>
+                    <a href="../interfaces/SingleAgentClientConfig.html" class="tsd-signature-type tsd-kind-interface"
+                      >SingleAgentClientConfig</a
+                    ><span class="tsd-signature-symbol">,</span><br /><span class="tsd-signature-symbol">)</span
+                    ><span class="tsd-signature-symbol">:</span>
+                    <a href="" class="tsd-signature-type tsd-kind-class">AgentClient</a
+                    ><a href="#constructoragentclient" aria-label="Permalink" class="tsd-anchor-icon"
+                      ><svg viewBox="0 0 24 24" aria-hidden="true">
+                        <use href="../assets/icons.svg#icon-anchor"></use></svg
+                    ></a>
+                  </div>
+                  <div class="tsd-description">
+                    <div class="tsd-parameters">
+                      <h4 class="tsd-parameters-title">Parameters</h4>
+                      <ul class="tsd-parameter-list">
+                        <li>
+                          <span
+                            ><span class="tsd-kind-parameter">agent</span>:
+                            <a href="../interfaces/AgentConfig.html" class="tsd-signature-type tsd-kind-interface"
+                              >AgentConfig</a
+                            ></span
+                          >
+                        </li>
+                        <li>
+                          <span
+                            ><span class="tsd-kind-parameter">config</span>:
+                            <a
+                              href="../interfaces/SingleAgentClientConfig.html"
+                              class="tsd-signature-type tsd-kind-interface"
+                              >SingleAgentClientConfig</a
+                            ><span class="tsd-signature-symbol"> = {}</span></span
+                          >
+                        </li>
+                      </ul>
+                    </div>
+                    <h4 class="tsd-returns-title">
+                      Returns <a href="" class="tsd-signature-type tsd-kind-class">AgentClient</a>
+                    </h4>
+                    <aside class="tsd-sources">
+                      <ul>
+                        <li>
+                          Defined in
+                          <a
+                            href="https://github.com/adcontextprotocol/adcp-client/blob/f019701d35957263620cbc63b0e73eb94547b8ea/src/lib/core/AgentClient.ts#L64"
+                            >src/lib/core/AgentClient.ts:64</a
+                          >
+                        </li>
+                      </ul>
+                    </aside>
+                  </div>
+                </li>
+              </ul>
+            </section>
+          </section>
+        </details>
+        <details class="tsd-panel-group tsd-member-group tsd-accordion" open>
+          <summary class="tsd-accordion-summary" data-key="section-Methods">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <use href="../assets/icons.svg#icon-chevronDown"></use>
+            </svg>
+            <h2>Methods</h2>
+          </summary>
+          <section>
+            <section class="tsd-panel tsd-member">
+              <h3 class="tsd-anchor-link" id="handlewebhook">
+                <span>handle<wbr />Webhook</span
+                ><a href="#handlewebhook" aria-label="Permalink" class="tsd-anchor-icon"
+                  ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg
+                ></a>
+              </h3>
+              <ul class="tsd-signatures">
+                <li class="">
+                  <div class="tsd-signature tsd-anchor-link" id="handlewebhook-1">
+                    <span class="tsd-kind-call-signature">handleWebhook</span><span class="tsd-signature-symbol">(</span
+                    ><br />    <span class="tsd-kind-parameter">payload</span
+                    ><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">any</span
+                    ><span class="tsd-signature-symbol">,</span><br />    <span class="tsd-kind-parameter"
+                      >signature</span
+                    ><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span
+                    ><span class="tsd-signature-symbol">,</span><br />    <span class="tsd-kind-parameter"
+                      >timestamp</span
+                    ><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span>
+                    <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">number</span
+                    ><span class="tsd-signature-symbol">,</span><br /><span class="tsd-signature-symbol">)</span
+                    ><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">Promise</span
+                    ><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">boolean</span
+                    ><span class="tsd-signature-symbol">&gt;</span
+                    ><a href="#handlewebhook-1" aria-label="Permalink" class="tsd-anchor-icon"
+                      ><svg viewBox="0 0 24 24" aria-hidden="true">
+                        <use href="../assets/icons.svg#icon-anchor"></use></svg
+                    ></a>
+                  </div>
+                  <div class="tsd-description">
+                    <div class="tsd-comment tsd-typography">
+                      <p>Handle webhook from agent (async task completion or notifications)</p>
+                    </div>
+                    <div class="tsd-parameters">
+                      <h4 class="tsd-parameters-title">Parameters</h4>
+                      <ul class="tsd-parameter-list">
+                        <li>
+                          <span
+                            ><span class="tsd-kind-parameter">payload</span>:
+                            <span class="tsd-signature-type">any</span></span
+                          >
+                          <div class="tsd-comment tsd-typography"><p>Webhook payload from agent</p></div>
+                        </li>
+                        <li>
+                          <span
+                            ><code class="tsd-tag">Optional</code><span class="tsd-kind-parameter">signature</span>:
+                            <span class="tsd-signature-type">string</span></span
+                          >
+                          <div class="tsd-comment tsd-typography">
+                            <p>Optional signature for verification (X-ADCP-Signature)</p>
+                          </div>
+                        </li>
+                        <li>
+                          <span
+                            ><code class="tsd-tag">Optional</code><span class="tsd-kind-parameter">timestamp</span>:
+                            <span class="tsd-signature-type">string</span> <span class="tsd-signature-symbol">|</span>
+                            <span class="tsd-signature-type">number</span></span
+                          >
+                          <div class="tsd-comment tsd-typography">
+                            <p>Optional timestamp for verification (X-ADCP-Timestamp)</p>
+                          </div>
+                        </li>
+                      </ul>
+                    </div>
+                    <h4 class="tsd-returns-title">
+                      Returns <span class="tsd-signature-type">Promise</span
+                      ><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">boolean</span
+                      ><span class="tsd-signature-symbol">&gt;</span>
+                    </h4>
+                    <p>Whether webhook was handled successfully</p>
+                    <aside class="tsd-sources">
+                      <ul>
+                        <li>
+                          Defined in
+                          <a
+                            href="https://github.com/adcontextprotocol/adcp-client/blob/f019701d35957263620cbc63b0e73eb94547b8ea/src/lib/core/AgentClient.ts#L79"
+                            >src/lib/core/AgentClient.ts:79</a
+                          >
+                        </li>
+                      </ul>
+                    </aside>
+                  </div>
+                </li>
+              </ul>
+            </section>
+            <section class="tsd-panel tsd-member">
+              <h3 class="tsd-anchor-link" id="getwebhookurl">
+                <span>get<wbr />Webhook<wbr />Url</span
+                ><a href="#getwebhookurl" aria-label="Permalink" class="tsd-anchor-icon"
+                  ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg
+                ></a>
+              </h3>
+              <ul class="tsd-signatures">
+                <li class="">
+                  <div class="tsd-signature tsd-anchor-link" id="getwebhookurl-1">
+                    <span class="tsd-kind-call-signature">getWebhookUrl</span><span class="tsd-signature-symbol">(</span
+                    ><span class="tsd-kind-parameter">taskType</span><span class="tsd-signature-symbol">:</span>
+                    <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">,</span>
+                    <span class="tsd-kind-parameter">operationId</span><span class="tsd-signature-symbol">:</span>
+                    <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">)</span
+                    ><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span
+                    ><a href="#getwebhookurl-1" aria-label="Permalink" class="tsd-anchor-icon"
+                      ><svg viewBox="0 0 24 24" aria-hidden="true">
+                        <use href="../assets/icons.svg#icon-anchor"></use></svg
+                    ></a>
+                  </div>
+                  <div class="tsd-description">
+                    <div class="tsd-comment tsd-typography">
+                      <p>Generate webhook URL for a specific task and operation</p>
+                    </div>
+                    <div class="tsd-parameters">
+                      <h4 class="tsd-parameters-title">Parameters</h4>
+                      <ul class="tsd-parameter-list">
+                        <li>
+                          <span
+                            ><span class="tsd-kind-parameter">taskType</span>:
+                            <span class="tsd-signature-type">string</span></span
+                          >
+                          <div class="tsd-comment tsd-typography">
+                            <p>Type of task (e.g., 'get_products', 'media_buy_delivery')</p>
+                          </div>
+                        </li>
+                        <li>
+                          <span
+                            ><span class="tsd-kind-parameter">operationId</span>:
+                            <span class="tsd-signature-type">string</span></span
+                          >
+                          <div class="tsd-comment tsd-typography"><p>Operation ID for this request</p></div>
+                        </li>
+                      </ul>
+                    </div>
+                    <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">string</span></h4>
+                    <p>Full webhook URL</p>
+                    <aside class="tsd-sources">
+                      <ul>
+                        <li>
+                          Defined in
+                          <a
+                            href="https://github.com/adcontextprotocol/adcp-client/blob/f019701d35957263620cbc63b0e73eb94547b8ea/src/lib/core/AgentClient.ts#L90"
+                            >src/lib/core/AgentClient.ts:90</a
+                          >
+                        </li>
+                      </ul>
+                    </aside>
+                  </div>
+                </li>
+              </ul>
+            </section>
+            <section class="tsd-panel tsd-member">
+              <h3 class="tsd-anchor-link" id="verifywebhooksignature">
+                <span>verify<wbr />Webhook<wbr />Signature</span
+                ><a href="#verifywebhooksignature" aria-label="Permalink" class="tsd-anchor-icon"
+                  ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg
+                ></a>
+              </h3>
+              <ul class="tsd-signatures">
+                <li class="">
+                  <div class="tsd-signature tsd-anchor-link" id="verifywebhooksignature-1">
+                    <span class="tsd-kind-call-signature">verifyWebhookSignature</span
+                    ><span class="tsd-signature-symbol">(</span><br />    <span class="tsd-kind-parameter">payload</span
+                    ><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">any</span
+                    ><span class="tsd-signature-symbol">,</span><br />    <span class="tsd-kind-parameter"
+                      >signature</span
+                    ><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span
+                    ><span class="tsd-signature-symbol">,</span><br />    <span class="tsd-kind-parameter"
+                      >timestamp</span
+                    ><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span>
+                    <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">number</span
+                    ><span class="tsd-signature-symbol">,</span><br /><span class="tsd-signature-symbol">)</span
+                    ><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">boolean</span
+                    ><a href="#verifywebhooksignature-1" aria-label="Permalink" class="tsd-anchor-icon"
+                      ><svg viewBox="0 0 24 24" aria-hidden="true">
+                        <use href="../assets/icons.svg#icon-anchor"></use></svg
+                    ></a>
+                  </div>
+                  <div class="tsd-description">
+                    <div class="tsd-comment tsd-typography">
+                      <p>Verify webhook signature using HMAC-SHA256 per AdCP PR #86 spec</p>
+                    </div>
+                    <div class="tsd-parameters">
+                      <h4 class="tsd-parameters-title">Parameters</h4>
+                      <ul class="tsd-parameter-list">
+                        <li>
+                          <span
+                            ><span class="tsd-kind-parameter">payload</span>:
+                            <span class="tsd-signature-type">any</span></span
+                          >
+                          <div class="tsd-comment tsd-typography"><p>Webhook payload object</p></div>
+                        </li>
+                        <li>
+                          <span
+                            ><span class="tsd-kind-parameter">signature</span>:
+                            <span class="tsd-signature-type">string</span></span
+                          >
+                          <div class="tsd-comment tsd-typography">
+                            <p>X-ADCP-Signature header value (format: &quot;sha256=...&quot;)</p>
+                          </div>
+                        </li>
+                        <li>
+                          <span
+                            ><span class="tsd-kind-parameter">timestamp</span>:
+                            <span class="tsd-signature-type">string</span> <span class="tsd-signature-symbol">|</span>
+                            <span class="tsd-signature-type">number</span></span
+                          >
+                          <div class="tsd-comment tsd-typography">
+                            <p>X-ADCP-Timestamp header value (Unix timestamp)</p>
+                          </div>
+                        </li>
+                      </ul>
+                    </div>
+                    <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">boolean</span></h4>
+                    <p>true if signature is valid</p>
+                    <aside class="tsd-sources">
+                      <ul>
+                        <li>
+                          Defined in
+                          <a
+                            href="https://github.com/adcontextprotocol/adcp-client/blob/f019701d35957263620cbc63b0e73eb94547b8ea/src/lib/core/AgentClient.ts#L102"
+                            >src/lib/core/AgentClient.ts:102</a
+                          >
+                        </li>
+                      </ul>
+                    </aside>
+                  </div>
+                </li>
+              </ul>
+            </section>
+            <section class="tsd-panel tsd-member">
+              <h3 class="tsd-anchor-link" id="getproducts">
+                <span>get<wbr />Products</span
+                ><a href="#getproducts" aria-label="Permalink" class="tsd-anchor-icon"
+                  ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg
+                ></a>
+              </h3>
+              <ul class="tsd-signatures">
+                <li class="">
+                  <div class="tsd-signature tsd-anchor-link" id="getproducts-1">
+                    <span class="tsd-kind-call-signature">getProducts</span><span class="tsd-signature-symbol">(</span
+                    ><br />    <span class="tsd-kind-parameter">params</span
+                    ><span class="tsd-signature-symbol">:</span>
+                    <a href="../interfaces/GetProductsRequest.html" class="tsd-signature-type tsd-kind-interface"
+                      >GetProductsRequest</a
+                    ><span class="tsd-signature-symbol">,</span><br />    <span class="tsd-kind-parameter"
+                      >inputHandler</span
+                    ><span class="tsd-signature-symbol">?:</span>
+                    <a href="../types/InputHandler.html" class="tsd-signature-type tsd-kind-type-alias">InputHandler</a
+                    ><span class="tsd-signature-symbol">,</span><br />    <span class="tsd-kind-parameter">options</span
+                    ><span class="tsd-signature-symbol">?:</span>
+                    <a href="../interfaces/TaskOptions.html" class="tsd-signature-type tsd-kind-interface"
+                      >TaskOptions</a
+                    ><span class="tsd-signature-symbol">,</span><br /><span class="tsd-signature-symbol">)</span
+                    ><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">Promise</span
+                    ><span class="tsd-signature-symbol">&lt;</span
+                    ><a href="../interfaces/TaskResult.html" class="tsd-signature-type tsd-kind-interface">TaskResult</a
+                    ><span class="tsd-signature-symbol">&lt;</span
+                    ><a href="../interfaces/GetProductsResponse.html" class="tsd-signature-type tsd-kind-interface"
+                      >GetProductsResponse</a
+                    ><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">&gt;</span
+                    ><a href="#getproducts-1" aria-label="Permalink" class="tsd-anchor-icon"
+                      ><svg viewBox="0 0 24 24" aria-hidden="true">
+                        <use href="../assets/icons.svg#icon-anchor"></use></svg
+                    ></a>
+                  </div>
+                  <div class="tsd-description">
+                    <div class="tsd-comment tsd-typography"><p>Discover available advertising products</p></div>
+                    <div class="tsd-parameters">
+                      <h4 class="tsd-parameters-title">Parameters</h4>
+                      <ul class="tsd-parameter-list">
+                        <li>
+                          <span
+                            ><span class="tsd-kind-parameter">params</span>:
+                            <a
+                              href="../interfaces/GetProductsRequest.html"
+                              class="tsd-signature-type tsd-kind-interface"
+                              >GetProductsRequest</a
+                            ></span
+                          >
+                        </li>
+                        <li>
+                          <span
+                            ><code class="tsd-tag">Optional</code><span class="tsd-kind-parameter">inputHandler</span>:
+                            <a href="../types/InputHandler.html" class="tsd-signature-type tsd-kind-type-alias"
+                              >InputHandler</a
+                            ></span
+                          >
+                        </li>
+                        <li>
+                          <span
+                            ><code class="tsd-tag">Optional</code><span class="tsd-kind-parameter">options</span>:
+                            <a href="../interfaces/TaskOptions.html" class="tsd-signature-type tsd-kind-interface"
+                              >TaskOptions</a
+                            ></span
+                          >
+                        </li>
+                      </ul>
+                    </div>
+                    <h4 class="tsd-returns-title">
+                      Returns <span class="tsd-signature-type">Promise</span
+                      ><span class="tsd-signature-symbol">&lt;</span
+                      ><a href="../interfaces/TaskResult.html" class="tsd-signature-type tsd-kind-interface"
+                        >TaskResult</a
+                      ><span class="tsd-signature-symbol">&lt;</span
+                      ><a href="../interfaces/GetProductsResponse.html" class="tsd-signature-type tsd-kind-interface"
+                        >GetProductsResponse</a
+                      ><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">&gt;</span>
+                    </h4>
+                    <aside class="tsd-sources">
+                      <ul>
+                        <li>
+                          Defined in
+                          <a
+                            href="https://github.com/adcontextprotocol/adcp-client/blob/f019701d35957263620cbc63b0e73eb94547b8ea/src/lib/core/AgentClient.ts#L111"
+                            >src/lib/core/AgentClient.ts:111</a
+                          >
+                        </li>
+                      </ul>
+                    </aside>
+                  </div>
+                </li>
+              </ul>
+            </section>
+            <section class="tsd-panel tsd-member">
+              <h3 class="tsd-anchor-link" id="listcreativeformats">
+                <span>list<wbr />Creative<wbr />Formats</span
+                ><a href="#listcreativeformats" aria-label="Permalink" class="tsd-anchor-icon"
+                  ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg
+                ></a>
+              </h3>
+              <ul class="tsd-signatures">
+                <li class="">
+                  <div class="tsd-signature tsd-anchor-link" id="listcreativeformats-1">
+                    <span class="tsd-kind-call-signature">listCreativeFormats</span
+                    ><span class="tsd-signature-symbol">(</span><br />    <span class="tsd-kind-parameter">params</span
+                    ><span class="tsd-signature-symbol">:</span>
+                    <a
+                      href="../interfaces/ListCreativeFormatsRequest.html"
+                      class="tsd-signature-type tsd-kind-interface"
+                      >ListCreativeFormatsRequest</a
+                    ><span class="tsd-signature-symbol">,</span><br />    <span class="tsd-kind-parameter"
+                      >inputHandler</span
+                    ><span class="tsd-signature-symbol">?:</span>
+                    <a href="../types/InputHandler.html" class="tsd-signature-type tsd-kind-type-alias">InputHandler</a
+                    ><span class="tsd-signature-symbol">,</span><br />    <span class="tsd-kind-parameter">options</span
+                    ><span class="tsd-signature-symbol">?:</span>
+                    <a href="../interfaces/TaskOptions.html" class="tsd-signature-type tsd-kind-interface"
+                      >TaskOptions</a
+                    ><span class="tsd-signature-symbol">,</span><br /><span class="tsd-signature-symbol">)</span
+                    ><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">Promise</span
+                    ><span class="tsd-signature-symbol">&lt;</span
+                    ><a href="../interfaces/TaskResult.html" class="tsd-signature-type tsd-kind-interface">TaskResult</a
+                    ><span class="tsd-signature-symbol">&lt;</span
+                    ><a
+                      href="../interfaces/ListCreativeFormatsResponse.html"
+                      class="tsd-signature-type tsd-kind-interface"
+                      >ListCreativeFormatsResponse</a
+                    ><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">&gt;</span
+                    ><a href="#listcreativeformats-1" aria-label="Permalink" class="tsd-anchor-icon"
+                      ><svg viewBox="0 0 24 24" aria-hidden="true">
+                        <use href="../assets/icons.svg#icon-anchor"></use></svg
+                    ></a>
+                  </div>
+                  <div class="tsd-description">
+                    <div class="tsd-comment tsd-typography"><p>List available creative formats</p></div>
+                    <div class="tsd-parameters">
+                      <h4 class="tsd-parameters-title">Parameters</h4>
+                      <ul class="tsd-parameter-list">
+                        <li>
+                          <span
+                            ><span class="tsd-kind-parameter">params</span>:
+                            <a
+                              href="../interfaces/ListCreativeFormatsRequest.html"
+                              class="tsd-signature-type tsd-kind-interface"
+                              >ListCreativeFormatsRequest</a
+                            ></span
+                          >
+                        </li>
+                        <li>
+                          <span
+                            ><code class="tsd-tag">Optional</code><span class="tsd-kind-parameter">inputHandler</span>:
+                            <a href="../types/InputHandler.html" class="tsd-signature-type tsd-kind-type-alias"
+                              >InputHandler</a
+                            ></span
+                          >
+                        </li>
+                        <li>
+                          <span
+                            ><code class="tsd-tag">Optional</code><span class="tsd-kind-parameter">options</span>:
+                            <a href="../interfaces/TaskOptions.html" class="tsd-signature-type tsd-kind-interface"
+                              >TaskOptions</a
+                            ></span
+                          >
+                        </li>
+                      </ul>
+                    </div>
+                    <h4 class="tsd-returns-title">
+                      Returns <span class="tsd-signature-type">Promise</span
+                      ><span class="tsd-signature-symbol">&lt;</span
+                      ><a href="../interfaces/TaskResult.html" class="tsd-signature-type tsd-kind-interface"
+                        >TaskResult</a
+                      ><span class="tsd-signature-symbol">&lt;</span
+                      ><a
+                        href="../interfaces/ListCreativeFormatsResponse.html"
+                        class="tsd-signature-type tsd-kind-interface"
+                        >ListCreativeFormatsResponse</a
+                      ><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">&gt;</span>
+                    </h4>
+                    <aside class="tsd-sources">
+                      <ul>
+                        <li>
+                          Defined in
+                          <a
+                            href="https://github.com/adcontextprotocol/adcp-client/blob/f019701d35957263620cbc63b0e73eb94547b8ea/src/lib/core/AgentClient.ts#L131"
+                            >src/lib/core/AgentClient.ts:131</a
+                          >
+                        </li>
+                      </ul>
+                    </aside>
+                  </div>
+                </li>
+              </ul>
+            </section>
+            <section class="tsd-panel tsd-member">
+              <h3 class="tsd-anchor-link" id="createmediabuy">
+                <span>create<wbr />Media<wbr />Buy</span
+                ><a href="#createmediabuy" aria-label="Permalink" class="tsd-anchor-icon"
+                  ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg
+                ></a>
+              </h3>
+              <ul class="tsd-signatures">
+                <li class="">
+                  <div class="tsd-signature tsd-anchor-link" id="createmediabuy-1">
+                    <span class="tsd-kind-call-signature">createMediaBuy</span
+                    ><span class="tsd-signature-symbol">(</span><br />    <span class="tsd-kind-parameter">params</span
+                    ><span class="tsd-signature-symbol">:</span>
+                    <a href="../interfaces/CreateMediaBuyRequest.html" class="tsd-signature-type tsd-kind-interface"
+                      >CreateMediaBuyRequest</a
+                    ><span class="tsd-signature-symbol">,</span><br />    <span class="tsd-kind-parameter"
+                      >inputHandler</span
+                    ><span class="tsd-signature-symbol">?:</span>
+                    <a href="../types/InputHandler.html" class="tsd-signature-type tsd-kind-type-alias">InputHandler</a
+                    ><span class="tsd-signature-symbol">,</span><br />    <span class="tsd-kind-parameter">options</span
+                    ><span class="tsd-signature-symbol">?:</span>
+                    <a href="../interfaces/TaskOptions.html" class="tsd-signature-type tsd-kind-interface"
+                      >TaskOptions</a
+                    ><span class="tsd-signature-symbol">,</span><br /><span class="tsd-signature-symbol">)</span
+                    ><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">Promise</span
+                    ><span class="tsd-signature-symbol">&lt;</span
+                    ><a href="../interfaces/TaskResult.html" class="tsd-signature-type tsd-kind-interface">TaskResult</a
+                    ><span class="tsd-signature-symbol">&lt;</span
+                    ><a href="../types/CreateMediaBuyResponse.html" class="tsd-signature-type tsd-kind-type-alias"
+                      >CreateMediaBuyResponse</a
+                    ><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">&gt;</span
+                    ><a href="#createmediabuy-1" aria-label="Permalink" class="tsd-anchor-icon"
+                      ><svg viewBox="0 0 24 24" aria-hidden="true">
+                        <use href="../assets/icons.svg#icon-anchor"></use></svg
+                    ></a>
+                  </div>
+                  <div class="tsd-description">
+                    <div class="tsd-comment tsd-typography"><p>Create a new media buy</p></div>
+                    <div class="tsd-parameters">
+                      <h4 class="tsd-parameters-title">Parameters</h4>
+                      <ul class="tsd-parameter-list">
+                        <li>
+                          <span
+                            ><span class="tsd-kind-parameter">params</span>:
+                            <a
+                              href="../interfaces/CreateMediaBuyRequest.html"
+                              class="tsd-signature-type tsd-kind-interface"
+                              >CreateMediaBuyRequest</a
+                            ></span
+                          >
+                        </li>
+                        <li>
+                          <span
+                            ><code class="tsd-tag">Optional</code><span class="tsd-kind-parameter">inputHandler</span>:
+                            <a href="../types/InputHandler.html" class="tsd-signature-type tsd-kind-type-alias"
+                              >InputHandler</a
+                            ></span
+                          >
+                        </li>
+                        <li>
+                          <span
+                            ><code class="tsd-tag">Optional</code><span class="tsd-kind-parameter">options</span>:
+                            <a href="../interfaces/TaskOptions.html" class="tsd-signature-type tsd-kind-interface"
+                              >TaskOptions</a
+                            ></span
+                          >
+                        </li>
+                      </ul>
+                    </div>
+                    <h4 class="tsd-returns-title">
+                      Returns <span class="tsd-signature-type">Promise</span
+                      ><span class="tsd-signature-symbol">&lt;</span
+                      ><a href="../interfaces/TaskResult.html" class="tsd-signature-type tsd-kind-interface"
+                        >TaskResult</a
+                      ><span class="tsd-signature-symbol">&lt;</span
+                      ><a href="../types/CreateMediaBuyResponse.html" class="tsd-signature-type tsd-kind-type-alias"
+                        >CreateMediaBuyResponse</a
+                      ><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">&gt;</span>
+                    </h4>
+                    <aside class="tsd-sources">
+                      <ul>
+                        <li>
+                          Defined in
+                          <a
+                            href="https://github.com/adcontextprotocol/adcp-client/blob/f019701d35957263620cbc63b0e73eb94547b8ea/src/lib/core/AgentClient.ts#L151"
+                            >src/lib/core/AgentClient.ts:151</a
+                          >
+                        </li>
+                      </ul>
+                    </aside>
+                  </div>
+                </li>
+              </ul>
+            </section>
+            <section class="tsd-panel tsd-member">
+              <h3 class="tsd-anchor-link" id="updatemediabuy">
+                <span>update<wbr />Media<wbr />Buy</span
+                ><a href="#updatemediabuy" aria-label="Permalink" class="tsd-anchor-icon"
+                  ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg
+                ></a>
+              </h3>
+              <ul class="tsd-signatures">
+                <li class="">
+                  <div class="tsd-signature tsd-anchor-link" id="updatemediabuy-1">
+                    <span class="tsd-kind-call-signature">updateMediaBuy</span
+                    ><span class="tsd-signature-symbol">(</span><br />    <span class="tsd-kind-parameter">params</span
+                    ><span class="tsd-signature-symbol">:</span>
+                    <a href="../types/UpdateMediaBuyRequest.html" class="tsd-signature-type tsd-kind-type-alias"
+                      >UpdateMediaBuyRequest</a
+                    ><span class="tsd-signature-symbol">,</span><br />    <span class="tsd-kind-parameter"
+                      >inputHandler</span
+                    ><span class="tsd-signature-symbol">?:</span>
+                    <a href="../types/InputHandler.html" class="tsd-signature-type tsd-kind-type-alias">InputHandler</a
+                    ><span class="tsd-signature-symbol">,</span><br />    <span class="tsd-kind-parameter">options</span
+                    ><span class="tsd-signature-symbol">?:</span>
+                    <a href="../interfaces/TaskOptions.html" class="tsd-signature-type tsd-kind-interface"
+                      >TaskOptions</a
+                    ><span class="tsd-signature-symbol">,</span><br /><span class="tsd-signature-symbol">)</span
+                    ><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">Promise</span
+                    ><span class="tsd-signature-symbol">&lt;</span
+                    ><a href="../interfaces/TaskResult.html" class="tsd-signature-type tsd-kind-interface">TaskResult</a
+                    ><span class="tsd-signature-symbol">&lt;</span
+                    ><a href="../types/UpdateMediaBuyResponse.html" class="tsd-signature-type tsd-kind-type-alias"
+                      >UpdateMediaBuyResponse</a
+                    ><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">&gt;</span
+                    ><a href="#updatemediabuy-1" aria-label="Permalink" class="tsd-anchor-icon"
+                      ><svg viewBox="0 0 24 24" aria-hidden="true">
+                        <use href="../assets/icons.svg#icon-anchor"></use></svg
+                    ></a>
+                  </div>
+                  <div class="tsd-description">
+                    <div class="tsd-comment tsd-typography"><p>Update an existing media buy</p></div>
+                    <div class="tsd-parameters">
+                      <h4 class="tsd-parameters-title">Parameters</h4>
+                      <ul class="tsd-parameter-list">
+                        <li>
+                          <span
+                            ><span class="tsd-kind-parameter">params</span>:
+                            <a href="../types/UpdateMediaBuyRequest.html" class="tsd-signature-type tsd-kind-type-alias"
+                              >UpdateMediaBuyRequest</a
+                            ></span
+                          >
+                        </li>
+                        <li>
+                          <span
+                            ><code class="tsd-tag">Optional</code><span class="tsd-kind-parameter">inputHandler</span>:
+                            <a href="../types/InputHandler.html" class="tsd-signature-type tsd-kind-type-alias"
+                              >InputHandler</a
+                            ></span
+                          >
+                        </li>
+                        <li>
+                          <span
+                            ><code class="tsd-tag">Optional</code><span class="tsd-kind-parameter">options</span>:
+                            <a href="../interfaces/TaskOptions.html" class="tsd-signature-type tsd-kind-interface"
+                              >TaskOptions</a
+                            ></span
+                          >
+                        </li>
+                      </ul>
+                    </div>
+                    <h4 class="tsd-returns-title">
+                      Returns <span class="tsd-signature-type">Promise</span
+                      ><span class="tsd-signature-symbol">&lt;</span
+                      ><a href="../interfaces/TaskResult.html" class="tsd-signature-type tsd-kind-interface"
+                        >TaskResult</a
+                      ><span class="tsd-signature-symbol">&lt;</span
+                      ><a href="../types/UpdateMediaBuyResponse.html" class="tsd-signature-type tsd-kind-type-alias"
+                        >UpdateMediaBuyResponse</a
+                      ><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">&gt;</span>
+                    </h4>
+                    <aside class="tsd-sources">
+                      <ul>
+                        <li>
+                          Defined in
+                          <a
+                            href="https://github.com/adcontextprotocol/adcp-client/blob/f019701d35957263620cbc63b0e73eb94547b8ea/src/lib/core/AgentClient.ts#L171"
+                            >src/lib/core/AgentClient.ts:171</a
+                          >
+                        </li>
+                      </ul>
+                    </aside>
+                  </div>
+                </li>
+              </ul>
+            </section>
+            <section class="tsd-panel tsd-member">
+              <h3 class="tsd-anchor-link" id="synccreatives">
+                <span>sync<wbr />Creatives</span
+                ><a href="#synccreatives" aria-label="Permalink" class="tsd-anchor-icon"
+                  ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg
+                ></a>
+              </h3>
+              <ul class="tsd-signatures">
+                <li class="">
+                  <div class="tsd-signature tsd-anchor-link" id="synccreatives-1">
+                    <span class="tsd-kind-call-signature">syncCreatives</span><span class="tsd-signature-symbol">(</span
+                    ><br />    <span class="tsd-kind-parameter">params</span
+                    ><span class="tsd-signature-symbol">:</span>
+                    <a href="../interfaces/SyncCreativesRequest.html" class="tsd-signature-type tsd-kind-interface"
+                      >SyncCreativesRequest</a
+                    ><span class="tsd-signature-symbol">,</span><br />    <span class="tsd-kind-parameter"
+                      >inputHandler</span
+                    ><span class="tsd-signature-symbol">?:</span>
+                    <a href="../types/InputHandler.html" class="tsd-signature-type tsd-kind-type-alias">InputHandler</a
+                    ><span class="tsd-signature-symbol">,</span><br />    <span class="tsd-kind-parameter">options</span
+                    ><span class="tsd-signature-symbol">?:</span>
+                    <a href="../interfaces/TaskOptions.html" class="tsd-signature-type tsd-kind-interface"
+                      >TaskOptions</a
+                    ><span class="tsd-signature-symbol">,</span><br /><span class="tsd-signature-symbol">)</span
+                    ><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">Promise</span
+                    ><span class="tsd-signature-symbol">&lt;</span
+                    ><a href="../interfaces/TaskResult.html" class="tsd-signature-type tsd-kind-interface">TaskResult</a
+                    ><span class="tsd-signature-symbol">&lt;</span
+                    ><a href="../types/SyncCreativesResponse.html" class="tsd-signature-type tsd-kind-type-alias"
+                      >SyncCreativesResponse</a
+                    ><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">&gt;</span
+                    ><a href="#synccreatives-1" aria-label="Permalink" class="tsd-anchor-icon"
+                      ><svg viewBox="0 0 24 24" aria-hidden="true">
+                        <use href="../assets/icons.svg#icon-anchor"></use></svg
+                    ></a>
+                  </div>
+                  <div class="tsd-description">
+                    <div class="tsd-comment tsd-typography"><p>Sync creative assets</p></div>
+                    <div class="tsd-parameters">
+                      <h4 class="tsd-parameters-title">Parameters</h4>
+                      <ul class="tsd-parameter-list">
+                        <li>
+                          <span
+                            ><span class="tsd-kind-parameter">params</span>:
+                            <a
+                              href="../interfaces/SyncCreativesRequest.html"
+                              class="tsd-signature-type tsd-kind-interface"
+                              >SyncCreativesRequest</a
+                            ></span
+                          >
+                        </li>
+                        <li>
+                          <span
+                            ><code class="tsd-tag">Optional</code><span class="tsd-kind-parameter">inputHandler</span>:
+                            <a href="../types/InputHandler.html" class="tsd-signature-type tsd-kind-type-alias"
+                              >InputHandler</a
+                            ></span
+                          >
+                        </li>
+                        <li>
+                          <span
+                            ><code class="tsd-tag">Optional</code><span class="tsd-kind-parameter">options</span>:
+                            <a href="../interfaces/TaskOptions.html" class="tsd-signature-type tsd-kind-interface"
+                              >TaskOptions</a
+                            ></span
+                          >
+                        </li>
+                      </ul>
+                    </div>
+                    <h4 class="tsd-returns-title">
+                      Returns <span class="tsd-signature-type">Promise</span
+                      ><span class="tsd-signature-symbol">&lt;</span
+                      ><a href="../interfaces/TaskResult.html" class="tsd-signature-type tsd-kind-interface"
+                        >TaskResult</a
+                      ><span class="tsd-signature-symbol">&lt;</span
+                      ><a href="../types/SyncCreativesResponse.html" class="tsd-signature-type tsd-kind-type-alias"
+                        >SyncCreativesResponse</a
+                      ><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">&gt;</span>
+                    </h4>
+                    <aside class="tsd-sources">
+                      <ul>
+                        <li>
+                          Defined in
+                          <a
+                            href="https://github.com/adcontextprotocol/adcp-client/blob/f019701d35957263620cbc63b0e73eb94547b8ea/src/lib/core/AgentClient.ts#L191"
+                            >src/lib/core/AgentClient.ts:191</a
+                          >
+                        </li>
+                      </ul>
+                    </aside>
+                  </div>
+                </li>
+              </ul>
+            </section>
+            <section class="tsd-panel tsd-member">
+              <h3 class="tsd-anchor-link" id="listcreatives">
+                <span>list<wbr />Creatives</span
+                ><a href="#listcreatives" aria-label="Permalink" class="tsd-anchor-icon"
+                  ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg
+                ></a>
+              </h3>
+              <ul class="tsd-signatures">
+                <li class="">
+                  <div class="tsd-signature tsd-anchor-link" id="listcreatives-1">
+                    <span class="tsd-kind-call-signature">listCreatives</span><span class="tsd-signature-symbol">(</span
+                    ><br />    <span class="tsd-kind-parameter">params</span
+                    ><span class="tsd-signature-symbol">:</span>
+                    <a href="../interfaces/ListCreativesRequest.html" class="tsd-signature-type tsd-kind-interface"
+                      >ListCreativesRequest</a
+                    ><span class="tsd-signature-symbol">,</span><br />    <span class="tsd-kind-parameter"
+                      >inputHandler</span
+                    ><span class="tsd-signature-symbol">?:</span>
+                    <a href="../types/InputHandler.html" class="tsd-signature-type tsd-kind-type-alias">InputHandler</a
+                    ><span class="tsd-signature-symbol">,</span><br />    <span class="tsd-kind-parameter">options</span
+                    ><span class="tsd-signature-symbol">?:</span>
+                    <a href="../interfaces/TaskOptions.html" class="tsd-signature-type tsd-kind-interface"
+                      >TaskOptions</a
+                    ><span class="tsd-signature-symbol">,</span><br /><span class="tsd-signature-symbol">)</span
+                    ><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">Promise</span
+                    ><span class="tsd-signature-symbol">&lt;</span
+                    ><a href="../interfaces/TaskResult.html" class="tsd-signature-type tsd-kind-interface">TaskResult</a
+                    ><span class="tsd-signature-symbol">&lt;</span
+                    ><a href="../interfaces/ListCreativesResponse.html" class="tsd-signature-type tsd-kind-interface"
+                      >ListCreativesResponse</a
+                    ><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">&gt;</span
+                    ><a href="#listcreatives-1" aria-label="Permalink" class="tsd-anchor-icon"
+                      ><svg viewBox="0 0 24 24" aria-hidden="true">
+                        <use href="../assets/icons.svg#icon-anchor"></use></svg
+                    ></a>
+                  </div>
+                  <div class="tsd-description">
+                    <div class="tsd-comment tsd-typography"><p>List creative assets</p></div>
+                    <div class="tsd-parameters">
+                      <h4 class="tsd-parameters-title">Parameters</h4>
+                      <ul class="tsd-parameter-list">
+                        <li>
+                          <span
+                            ><span class="tsd-kind-parameter">params</span>:
+                            <a
+                              href="../interfaces/ListCreativesRequest.html"
+                              class="tsd-signature-type tsd-kind-interface"
+                              >ListCreativesRequest</a
+                            ></span
+                          >
+                        </li>
+                        <li>
+                          <span
+                            ><code class="tsd-tag">Optional</code><span class="tsd-kind-parameter">inputHandler</span>:
+                            <a href="../types/InputHandler.html" class="tsd-signature-type tsd-kind-type-alias"
+                              >InputHandler</a
+                            ></span
+                          >
+                        </li>
+                        <li>
+                          <span
+                            ><code class="tsd-tag">Optional</code><span class="tsd-kind-parameter">options</span>:
+                            <a href="../interfaces/TaskOptions.html" class="tsd-signature-type tsd-kind-interface"
+                              >TaskOptions</a
+                            ></span
+                          >
+                        </li>
+                      </ul>
+                    </div>
+                    <h4 class="tsd-returns-title">
+                      Returns <span class="tsd-signature-type">Promise</span
+                      ><span class="tsd-signature-symbol">&lt;</span
+                      ><a href="../interfaces/TaskResult.html" class="tsd-signature-type tsd-kind-interface"
+                        >TaskResult</a
+                      ><span class="tsd-signature-symbol">&lt;</span
+                      ><a href="../interfaces/ListCreativesResponse.html" class="tsd-signature-type tsd-kind-interface"
+                        >ListCreativesResponse</a
+                      ><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">&gt;</span>
+                    </h4>
+                    <aside class="tsd-sources">
+                      <ul>
+                        <li>
+                          Defined in
+                          <a
+                            href="https://github.com/adcontextprotocol/adcp-client/blob/f019701d35957263620cbc63b0e73eb94547b8ea/src/lib/core/AgentClient.ts#L211"
+                            >src/lib/core/AgentClient.ts:211</a
+                          >
+                        </li>
+                      </ul>
+                    </aside>
+                  </div>
+                </li>
+              </ul>
+            </section>
+            <section class="tsd-panel tsd-member">
+              <h3 class="tsd-anchor-link" id="getmediabuydelivery">
+                <span>get<wbr />Media<wbr />Buy<wbr />Delivery</span
+                ><a href="#getmediabuydelivery" aria-label="Permalink" class="tsd-anchor-icon"
+                  ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg
+                ></a>
+              </h3>
+              <ul class="tsd-signatures">
+                <li class="">
+                  <div class="tsd-signature tsd-anchor-link" id="getmediabuydelivery-1">
+                    <span class="tsd-kind-call-signature">getMediaBuyDelivery</span
+                    ><span class="tsd-signature-symbol">(</span><br />    <span class="tsd-kind-parameter">params</span
+                    ><span class="tsd-signature-symbol">:</span>
+                    <a
+                      href="../interfaces/GetMediaBuyDeliveryRequest.html"
+                      class="tsd-signature-type tsd-kind-interface"
+                      >GetMediaBuyDeliveryRequest</a
+                    ><span class="tsd-signature-symbol">,</span><br />    <span class="tsd-kind-parameter"
+                      >inputHandler</span
+                    ><span class="tsd-signature-symbol">?:</span>
+                    <a href="../types/InputHandler.html" class="tsd-signature-type tsd-kind-type-alias">InputHandler</a
+                    ><span class="tsd-signature-symbol">,</span><br />    <span class="tsd-kind-parameter">options</span
+                    ><span class="tsd-signature-symbol">?:</span>
+                    <a href="../interfaces/TaskOptions.html" class="tsd-signature-type tsd-kind-interface"
+                      >TaskOptions</a
+                    ><span class="tsd-signature-symbol">,</span><br /><span class="tsd-signature-symbol">)</span
+                    ><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">Promise</span
+                    ><span class="tsd-signature-symbol">&lt;</span
+                    ><a href="../interfaces/TaskResult.html" class="tsd-signature-type tsd-kind-interface">TaskResult</a
+                    ><span class="tsd-signature-symbol">&lt;</span
+                    ><a
+                      href="../interfaces/GetMediaBuyDeliveryResponse.html"
+                      class="tsd-signature-type tsd-kind-interface"
+                      >GetMediaBuyDeliveryResponse</a
+                    ><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">&gt;</span
+                    ><a href="#getmediabuydelivery-1" aria-label="Permalink" class="tsd-anchor-icon"
+                      ><svg viewBox="0 0 24 24" aria-hidden="true">
+                        <use href="../assets/icons.svg#icon-anchor"></use></svg
+                    ></a>
+                  </div>
+                  <div class="tsd-description">
+                    <div class="tsd-comment tsd-typography"><p>Get media buy delivery information</p></div>
+                    <div class="tsd-parameters">
+                      <h4 class="tsd-parameters-title">Parameters</h4>
+                      <ul class="tsd-parameter-list">
+                        <li>
+                          <span
+                            ><span class="tsd-kind-parameter">params</span>:
+                            <a
+                              href="../interfaces/GetMediaBuyDeliveryRequest.html"
+                              class="tsd-signature-type tsd-kind-interface"
+                              >GetMediaBuyDeliveryRequest</a
+                            ></span
+                          >
+                        </li>
+                        <li>
+                          <span
+                            ><code class="tsd-tag">Optional</code><span class="tsd-kind-parameter">inputHandler</span>:
+                            <a href="../types/InputHandler.html" class="tsd-signature-type tsd-kind-type-alias"
+                              >InputHandler</a
+                            ></span
+                          >
+                        </li>
+                        <li>
+                          <span
+                            ><code class="tsd-tag">Optional</code><span class="tsd-kind-parameter">options</span>:
+                            <a href="../interfaces/TaskOptions.html" class="tsd-signature-type tsd-kind-interface"
+                              >TaskOptions</a
+                            ></span
+                          >
+                        </li>
+                      </ul>
+                    </div>
+                    <h4 class="tsd-returns-title">
+                      Returns <span class="tsd-signature-type">Promise</span
+                      ><span class="tsd-signature-symbol">&lt;</span
+                      ><a href="../interfaces/TaskResult.html" class="tsd-signature-type tsd-kind-interface"
+                        >TaskResult</a
+                      ><span class="tsd-signature-symbol">&lt;</span
+                      ><a
+                        href="../interfaces/GetMediaBuyDeliveryResponse.html"
+                        class="tsd-signature-type tsd-kind-interface"
+                        >GetMediaBuyDeliveryResponse</a
+                      ><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">&gt;</span>
+                    </h4>
+                    <aside class="tsd-sources">
+                      <ul>
+                        <li>
+                          Defined in
+                          <a
+                            href="https://github.com/adcontextprotocol/adcp-client/blob/f019701d35957263620cbc63b0e73eb94547b8ea/src/lib/core/AgentClient.ts#L231"
+                            >src/lib/core/AgentClient.ts:231</a
+                          >
+                        </li>
+                      </ul>
+                    </aside>
+                  </div>
+                </li>
+              </ul>
+            </section>
+            <section class="tsd-panel tsd-member">
+              <h3 class="tsd-anchor-link" id="listauthorizedproperties">
+                <span>list<wbr />Authorized<wbr />Properties</span
+                ><a href="#listauthorizedproperties" aria-label="Permalink" class="tsd-anchor-icon"
+                  ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg
+                ></a>
+              </h3>
+              <ul class="tsd-signatures">
+                <li class="">
+                  <div class="tsd-signature tsd-anchor-link" id="listauthorizedproperties-1">
+                    <span class="tsd-kind-call-signature">listAuthorizedProperties</span
+                    ><span class="tsd-signature-symbol">(</span><br />    <span class="tsd-kind-parameter">params</span
+                    ><span class="tsd-signature-symbol">:</span>
+                    <a
+                      href="../interfaces/ListAuthorizedPropertiesRequest.html"
+                      class="tsd-signature-type tsd-kind-interface"
+                      >ListAuthorizedPropertiesRequest</a
+                    ><span class="tsd-signature-symbol">,</span><br />    <span class="tsd-kind-parameter"
+                      >inputHandler</span
+                    ><span class="tsd-signature-symbol">?:</span>
+                    <a href="../types/InputHandler.html" class="tsd-signature-type tsd-kind-type-alias">InputHandler</a
+                    ><span class="tsd-signature-symbol">,</span><br />    <span class="tsd-kind-parameter">options</span
+                    ><span class="tsd-signature-symbol">?:</span>
+                    <a href="../interfaces/TaskOptions.html" class="tsd-signature-type tsd-kind-interface"
+                      >TaskOptions</a
+                    ><span class="tsd-signature-symbol">,</span><br /><span class="tsd-signature-symbol">)</span
+                    ><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">Promise</span
+                    ><span class="tsd-signature-symbol">&lt;</span
+                    ><a href="../interfaces/TaskResult.html" class="tsd-signature-type tsd-kind-interface">TaskResult</a
+                    ><span class="tsd-signature-symbol">&lt;</span
+                    ><a
+                      href="../interfaces/ListAuthorizedPropertiesResponse.html"
+                      class="tsd-signature-type tsd-kind-interface"
+                      >ListAuthorizedPropertiesResponse</a
+                    ><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">&gt;</span
+                    ><a href="#listauthorizedproperties-1" aria-label="Permalink" class="tsd-anchor-icon"
+                      ><svg viewBox="0 0 24 24" aria-hidden="true">
+                        <use href="../assets/icons.svg#icon-anchor"></use></svg
+                    ></a>
+                  </div>
+                  <div class="tsd-description">
+                    <div class="tsd-comment tsd-typography"><p>List authorized properties</p></div>
+                    <div class="tsd-parameters">
+                      <h4 class="tsd-parameters-title">Parameters</h4>
+                      <ul class="tsd-parameter-list">
+                        <li>
+                          <span
+                            ><span class="tsd-kind-parameter">params</span>:
+                            <a
+                              href="../interfaces/ListAuthorizedPropertiesRequest.html"
+                              class="tsd-signature-type tsd-kind-interface"
+                              >ListAuthorizedPropertiesRequest</a
+                            ></span
+                          >
+                        </li>
+                        <li>
+                          <span
+                            ><code class="tsd-tag">Optional</code><span class="tsd-kind-parameter">inputHandler</span>:
+                            <a href="../types/InputHandler.html" class="tsd-signature-type tsd-kind-type-alias"
+                              >InputHandler</a
+                            ></span
+                          >
+                        </li>
+                        <li>
+                          <span
+                            ><code class="tsd-tag">Optional</code><span class="tsd-kind-parameter">options</span>:
+                            <a href="../interfaces/TaskOptions.html" class="tsd-signature-type tsd-kind-interface"
+                              >TaskOptions</a
+                            ></span
+                          >
+                        </li>
+                      </ul>
+                    </div>
+                    <h4 class="tsd-returns-title">
+                      Returns <span class="tsd-signature-type">Promise</span
+                      ><span class="tsd-signature-symbol">&lt;</span
+                      ><a href="../interfaces/TaskResult.html" class="tsd-signature-type tsd-kind-interface"
+                        >TaskResult</a
+                      ><span class="tsd-signature-symbol">&lt;</span
+                      ><a
+                        href="../interfaces/ListAuthorizedPropertiesResponse.html"
+                        class="tsd-signature-type tsd-kind-interface"
+                        >ListAuthorizedPropertiesResponse</a
+                      ><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">&gt;</span>
+                    </h4>
+                    <aside class="tsd-sources">
+                      <ul>
+                        <li>
+                          Defined in
+                          <a
+                            href="https://github.com/adcontextprotocol/adcp-client/blob/f019701d35957263620cbc63b0e73eb94547b8ea/src/lib/core/AgentClient.ts#L251"
+                            >src/lib/core/AgentClient.ts:251</a
+                          >
+                        </li>
+                      </ul>
+                    </aside>
+                  </div>
+                </li>
+              </ul>
+            </section>
+            <section class="tsd-panel tsd-member">
+              <h3 class="tsd-anchor-link" id="provideperformancefeedback">
+                <span>provide<wbr />Performance<wbr />Feedback</span
+                ><a href="#provideperformancefeedback" aria-label="Permalink" class="tsd-anchor-icon"
+                  ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg
+                ></a>
+              </h3>
+              <ul class="tsd-signatures">
+                <li class="">
+                  <div class="tsd-signature tsd-anchor-link" id="provideperformancefeedback-1">
+                    <span class="tsd-kind-call-signature">providePerformanceFeedback</span
+                    ><span class="tsd-signature-symbol">(</span><br />    <span class="tsd-kind-parameter">params</span
+                    ><span class="tsd-signature-symbol">:</span>
+                    <a
+                      href="../interfaces/ProvidePerformanceFeedbackRequest.html"
+                      class="tsd-signature-type tsd-kind-interface"
+                      >ProvidePerformanceFeedbackRequest</a
+                    ><span class="tsd-signature-symbol">,</span><br />    <span class="tsd-kind-parameter"
+                      >inputHandler</span
+                    ><span class="tsd-signature-symbol">?:</span>
+                    <a href="../types/InputHandler.html" class="tsd-signature-type tsd-kind-type-alias">InputHandler</a
+                    ><span class="tsd-signature-symbol">,</span><br />    <span class="tsd-kind-parameter">options</span
+                    ><span class="tsd-signature-symbol">?:</span>
+                    <a href="../interfaces/TaskOptions.html" class="tsd-signature-type tsd-kind-interface"
+                      >TaskOptions</a
+                    ><span class="tsd-signature-symbol">,</span><br /><span class="tsd-signature-symbol">)</span
+                    ><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">Promise</span
+                    ><span class="tsd-signature-symbol">&lt;</span
+                    ><a href="../interfaces/TaskResult.html" class="tsd-signature-type tsd-kind-interface">TaskResult</a
+                    ><span class="tsd-signature-symbol">&lt;</span
+                    ><a
+                      href="../types/ProvidePerformanceFeedbackResponse.html"
+                      class="tsd-signature-type tsd-kind-type-alias"
+                      >ProvidePerformanceFeedbackResponse</a
+                    ><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">&gt;</span
+                    ><a href="#provideperformancefeedback-1" aria-label="Permalink" class="tsd-anchor-icon"
+                      ><svg viewBox="0 0 24 24" aria-hidden="true">
+                        <use href="../assets/icons.svg#icon-anchor"></use></svg
+                    ></a>
+                  </div>
+                  <div class="tsd-description">
+                    <div class="tsd-comment tsd-typography"><p>Provide performance feedback</p></div>
+                    <div class="tsd-parameters">
+                      <h4 class="tsd-parameters-title">Parameters</h4>
+                      <ul class="tsd-parameter-list">
+                        <li>
+                          <span
+                            ><span class="tsd-kind-parameter">params</span>:
+                            <a
+                              href="../interfaces/ProvidePerformanceFeedbackRequest.html"
+                              class="tsd-signature-type tsd-kind-interface"
+                              >ProvidePerformanceFeedbackRequest</a
+                            ></span
+                          >
+                        </li>
+                        <li>
+                          <span
+                            ><code class="tsd-tag">Optional</code><span class="tsd-kind-parameter">inputHandler</span>:
+                            <a href="../types/InputHandler.html" class="tsd-signature-type tsd-kind-type-alias"
+                              >InputHandler</a
+                            ></span
+                          >
+                        </li>
+                        <li>
+                          <span
+                            ><code class="tsd-tag">Optional</code><span class="tsd-kind-parameter">options</span>:
+                            <a href="../interfaces/TaskOptions.html" class="tsd-signature-type tsd-kind-interface"
+                              >TaskOptions</a
+                            ></span
+                          >
+                        </li>
+                      </ul>
+                    </div>
+                    <h4 class="tsd-returns-title">
+                      Returns <span class="tsd-signature-type">Promise</span
+                      ><span class="tsd-signature-symbol">&lt;</span
+                      ><a href="../interfaces/TaskResult.html" class="tsd-signature-type tsd-kind-interface"
+                        >TaskResult</a
+                      ><span class="tsd-signature-symbol">&lt;</span
+                      ><a
+                        href="../types/ProvidePerformanceFeedbackResponse.html"
+                        class="tsd-signature-type tsd-kind-type-alias"
+                        >ProvidePerformanceFeedbackResponse</a
+                      ><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">&gt;</span>
+                    </h4>
+                    <aside class="tsd-sources">
+                      <ul>
+                        <li>
+                          Defined in
+                          <a
+                            href="https://github.com/adcontextprotocol/adcp-client/blob/f019701d35957263620cbc63b0e73eb94547b8ea/src/lib/core/AgentClient.ts#L271"
+                            >src/lib/core/AgentClient.ts:271</a
+                          >
+                        </li>
+                      </ul>
+                    </aside>
+                  </div>
+                </li>
+              </ul>
+            </section>
+            <section class="tsd-panel tsd-member">
+              <h3 class="tsd-anchor-link" id="getsignals">
+                <span>get<wbr />Signals</span
+                ><a href="#getsignals" aria-label="Permalink" class="tsd-anchor-icon"
+                  ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg
+                ></a>
+              </h3>
+              <ul class="tsd-signatures">
+                <li class="">
+                  <div class="tsd-signature tsd-anchor-link" id="getsignals-1">
+                    <span class="tsd-kind-call-signature">getSignals</span><span class="tsd-signature-symbol">(</span
+                    ><br />    <span class="tsd-kind-parameter">params</span
+                    ><span class="tsd-signature-symbol">:</span>
+                    <a href="../interfaces/GetSignalsRequest.html" class="tsd-signature-type tsd-kind-interface"
+                      >GetSignalsRequest</a
+                    ><span class="tsd-signature-symbol">,</span><br />    <span class="tsd-kind-parameter"
+                      >inputHandler</span
+                    ><span class="tsd-signature-symbol">?:</span>
+                    <a href="../types/InputHandler.html" class="tsd-signature-type tsd-kind-type-alias">InputHandler</a
+                    ><span class="tsd-signature-symbol">,</span><br />    <span class="tsd-kind-parameter">options</span
+                    ><span class="tsd-signature-symbol">?:</span>
+                    <a href="../interfaces/TaskOptions.html" class="tsd-signature-type tsd-kind-interface"
+                      >TaskOptions</a
+                    ><span class="tsd-signature-symbol">,</span><br /><span class="tsd-signature-symbol">)</span
+                    ><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">Promise</span
+                    ><span class="tsd-signature-symbol">&lt;</span
+                    ><a href="../interfaces/TaskResult.html" class="tsd-signature-type tsd-kind-interface">TaskResult</a
+                    ><span class="tsd-signature-symbol">&lt;</span
+                    ><a href="../interfaces/GetSignalsResponse.html" class="tsd-signature-type tsd-kind-interface"
+                      >GetSignalsResponse</a
+                    ><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">&gt;</span
+                    ><a href="#getsignals-1" aria-label="Permalink" class="tsd-anchor-icon"
+                      ><svg viewBox="0 0 24 24" aria-hidden="true">
+                        <use href="../assets/icons.svg#icon-anchor"></use></svg
+                    ></a>
+                  </div>
+                  <div class="tsd-description">
+                    <div class="tsd-comment tsd-typography"><p>Get audience signals</p></div>
+                    <div class="tsd-parameters">
+                      <h4 class="tsd-parameters-title">Parameters</h4>
+                      <ul class="tsd-parameter-list">
+                        <li>
+                          <span
+                            ><span class="tsd-kind-parameter">params</span>:
+                            <a href="../interfaces/GetSignalsRequest.html" class="tsd-signature-type tsd-kind-interface"
+                              >GetSignalsRequest</a
+                            ></span
+                          >
+                        </li>
+                        <li>
+                          <span
+                            ><code class="tsd-tag">Optional</code><span class="tsd-kind-parameter">inputHandler</span>:
+                            <a href="../types/InputHandler.html" class="tsd-signature-type tsd-kind-type-alias"
+                              >InputHandler</a
+                            ></span
+                          >
+                        </li>
+                        <li>
+                          <span
+                            ><code class="tsd-tag">Optional</code><span class="tsd-kind-parameter">options</span>:
+                            <a href="../interfaces/TaskOptions.html" class="tsd-signature-type tsd-kind-interface"
+                              >TaskOptions</a
+                            ></span
+                          >
+                        </li>
+                      </ul>
+                    </div>
+                    <h4 class="tsd-returns-title">
+                      Returns <span class="tsd-signature-type">Promise</span
+                      ><span class="tsd-signature-symbol">&lt;</span
+                      ><a href="../interfaces/TaskResult.html" class="tsd-signature-type tsd-kind-interface"
+                        >TaskResult</a
+                      ><span class="tsd-signature-symbol">&lt;</span
+                      ><a href="../interfaces/GetSignalsResponse.html" class="tsd-signature-type tsd-kind-interface"
+                        >GetSignalsResponse</a
+                      ><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">&gt;</span>
+                    </h4>
+                    <aside class="tsd-sources">
+                      <ul>
+                        <li>
+                          Defined in
+                          <a
+                            href="https://github.com/adcontextprotocol/adcp-client/blob/f019701d35957263620cbc63b0e73eb94547b8ea/src/lib/core/AgentClient.ts#L293"
+                            >src/lib/core/AgentClient.ts:293</a
+                          >
+                        </li>
+                      </ul>
+                    </aside>
+                  </div>
+                </li>
+              </ul>
+            </section>
+            <section class="tsd-panel tsd-member">
+              <h3 class="tsd-anchor-link" id="activatesignal">
+                <span>activate<wbr />Signal</span
+                ><a href="#activatesignal" aria-label="Permalink" class="tsd-anchor-icon"
+                  ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg
+                ></a>
+              </h3>
+              <ul class="tsd-signatures">
+                <li class="">
+                  <div class="tsd-signature tsd-anchor-link" id="activatesignal-1">
+                    <span class="tsd-kind-call-signature">activateSignal</span
+                    ><span class="tsd-signature-symbol">(</span><br />    <span class="tsd-kind-parameter">params</span
+                    ><span class="tsd-signature-symbol">:</span>
+                    <a href="../interfaces/ActivateSignalRequest.html" class="tsd-signature-type tsd-kind-interface"
+                      >ActivateSignalRequest</a
+                    ><span class="tsd-signature-symbol">,</span><br />    <span class="tsd-kind-parameter"
+                      >inputHandler</span
+                    ><span class="tsd-signature-symbol">?:</span>
+                    <a href="../types/InputHandler.html" class="tsd-signature-type tsd-kind-type-alias">InputHandler</a
+                    ><span class="tsd-signature-symbol">,</span><br />    <span class="tsd-kind-parameter">options</span
+                    ><span class="tsd-signature-symbol">?:</span>
+                    <a href="../interfaces/TaskOptions.html" class="tsd-signature-type tsd-kind-interface"
+                      >TaskOptions</a
+                    ><span class="tsd-signature-symbol">,</span><br /><span class="tsd-signature-symbol">)</span
+                    ><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">Promise</span
+                    ><span class="tsd-signature-symbol">&lt;</span
+                    ><a href="../interfaces/TaskResult.html" class="tsd-signature-type tsd-kind-interface">TaskResult</a
+                    ><span class="tsd-signature-symbol">&lt;</span
+                    ><a href="../types/ActivateSignalResponse.html" class="tsd-signature-type tsd-kind-type-alias"
+                      >ActivateSignalResponse</a
+                    ><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">&gt;</span
+                    ><a href="#activatesignal-1" aria-label="Permalink" class="tsd-anchor-icon"
+                      ><svg viewBox="0 0 24 24" aria-hidden="true">
+                        <use href="../assets/icons.svg#icon-anchor"></use></svg
+                    ></a>
+                  </div>
+                  <div class="tsd-description">
+                    <div class="tsd-comment tsd-typography"><p>Activate audience signals</p></div>
+                    <div class="tsd-parameters">
+                      <h4 class="tsd-parameters-title">Parameters</h4>
+                      <ul class="tsd-parameter-list">
+                        <li>
+                          <span
+                            ><span class="tsd-kind-parameter">params</span>:
+                            <a
+                              href="../interfaces/ActivateSignalRequest.html"
+                              class="tsd-signature-type tsd-kind-interface"
+                              >ActivateSignalRequest</a
+                            ></span
+                          >
+                        </li>
+                        <li>
+                          <span
+                            ><code class="tsd-tag">Optional</code><span class="tsd-kind-parameter">inputHandler</span>:
+                            <a href="../types/InputHandler.html" class="tsd-signature-type tsd-kind-type-alias"
+                              >InputHandler</a
+                            ></span
+                          >
+                        </li>
+                        <li>
+                          <span
+                            ><code class="tsd-tag">Optional</code><span class="tsd-kind-parameter">options</span>:
+                            <a href="../interfaces/TaskOptions.html" class="tsd-signature-type tsd-kind-interface"
+                              >TaskOptions</a
+                            ></span
+                          >
+                        </li>
+                      </ul>
+                    </div>
+                    <h4 class="tsd-returns-title">
+                      Returns <span class="tsd-signature-type">Promise</span
+                      ><span class="tsd-signature-symbol">&lt;</span
+                      ><a href="../interfaces/TaskResult.html" class="tsd-signature-type tsd-kind-interface"
+                        >TaskResult</a
+                      ><span class="tsd-signature-symbol">&lt;</span
+                      ><a href="../types/ActivateSignalResponse.html" class="tsd-signature-type tsd-kind-type-alias"
+                        >ActivateSignalResponse</a
+                      ><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">&gt;</span>
+                    </h4>
+                    <aside class="tsd-sources">
+                      <ul>
+                        <li>
+                          Defined in
+                          <a
+                            href="https://github.com/adcontextprotocol/adcp-client/blob/f019701d35957263620cbc63b0e73eb94547b8ea/src/lib/core/AgentClient.ts#L310"
+                            >src/lib/core/AgentClient.ts:310</a
+                          >
+                        </li>
+                      </ul>
+                    </aside>
+                  </div>
+                </li>
+              </ul>
+            </section>
+            <section class="tsd-panel tsd-member">
+              <h3 class="tsd-anchor-link" id="continueconversation">
+                <span>continue<wbr />Conversation</span
+                ><a href="#continueconversation" aria-label="Permalink" class="tsd-anchor-icon"
+                  ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg
+                ></a>
+              </h3>
+              <ul class="tsd-signatures">
+                <li class="">
+                  <div class="tsd-signature tsd-anchor-link" id="continueconversation-1">
+                    <span class="tsd-kind-call-signature">continueConversation</span
+                    ><span class="tsd-signature-symbol">&lt;</span
+                    ><a class="tsd-signature-type tsd-kind-type-parameter" href="#continueconversationt">T</a>
+                    <span class="tsd-signature-symbol">=</span> <span class="tsd-signature-type">any</span
+                    ><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">(</span
+                    ><br />    <span class="tsd-kind-parameter">message</span
+                    ><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span
+                    ><span class="tsd-signature-symbol">,</span><br />    <span class="tsd-kind-parameter"
+                      >inputHandler</span
+                    ><span class="tsd-signature-symbol">?:</span>
+                    <a href="../types/InputHandler.html" class="tsd-signature-type tsd-kind-type-alias">InputHandler</a
+                    ><span class="tsd-signature-symbol">,</span><br />    <span class="tsd-kind-parameter">options</span
+                    ><span class="tsd-signature-symbol">?:</span>
+                    <a href="../interfaces/TaskOptions.html" class="tsd-signature-type tsd-kind-interface"
+                      >TaskOptions</a
+                    ><span class="tsd-signature-symbol">,</span><br /><span class="tsd-signature-symbol">)</span
+                    ><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">Promise</span
+                    ><span class="tsd-signature-symbol">&lt;</span
+                    ><a href="../interfaces/TaskResult.html" class="tsd-signature-type tsd-kind-interface">TaskResult</a
+                    ><span class="tsd-signature-symbol">&lt;</span
+                    ><a class="tsd-signature-type tsd-kind-type-parameter" href="#continueconversationt">T</a
+                    ><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">&gt;</span
+                    ><a href="#continueconversation-1" aria-label="Permalink" class="tsd-anchor-icon"
+                      ><svg viewBox="0 0 24 24" aria-hidden="true">
+                        <use href="../assets/icons.svg#icon-anchor"></use></svg
+                    ></a>
+                  </div>
+                  <div class="tsd-description">
+                    <div class="tsd-comment tsd-typography">
+                      <p>Continue the conversation with a natural language message</p>
+                    </div>
+                    <section class="tsd-panel">
+                      <h4>Type Parameters</h4>
+                      <ul class="tsd-type-parameter-list">
+                        <li>
+                          <span id="continueconversationt"
+                            ><span class="tsd-kind-type-parameter">T</span> =
+                            <span class="tsd-signature-type">any</span></span
+                          >
+                        </li>
+                      </ul>
+                    </section>
+                    <div class="tsd-parameters">
+                      <h4 class="tsd-parameters-title">Parameters</h4>
+                      <ul class="tsd-parameter-list">
+                        <li>
+                          <span
+                            ><span class="tsd-kind-parameter">message</span>:
+                            <span class="tsd-signature-type">string</span></span
+                          >
+                          <div class="tsd-comment tsd-typography">
+                            <p>Natural language message to send to the agent</p>
+                          </div>
+                        </li>
+                        <li>
+                          <span
+                            ><code class="tsd-tag">Optional</code><span class="tsd-kind-parameter">inputHandler</span>:
+                            <a href="../types/InputHandler.html" class="tsd-signature-type tsd-kind-type-alias"
+                              >InputHandler</a
+                            ></span
+                          >
+                          <div class="tsd-comment tsd-typography"><p>Handler for any clarification requests</p></div>
+                        </li>
+                        <li>
+                          <span
+                            ><code class="tsd-tag">Optional</code><span class="tsd-kind-parameter">options</span>:
+                            <a href="../interfaces/TaskOptions.html" class="tsd-signature-type tsd-kind-interface"
+                              >TaskOptions</a
+                            ></span
+                          >
+                        </li>
+                      </ul>
+                    </div>
+                    <h4 class="tsd-returns-title">
+                      Returns <span class="tsd-signature-type">Promise</span
+                      ><span class="tsd-signature-symbol">&lt;</span
+                      ><a href="../interfaces/TaskResult.html" class="tsd-signature-type tsd-kind-interface"
+                        >TaskResult</a
+                      ><span class="tsd-signature-symbol">&lt;</span
+                      ><a class="tsd-signature-type tsd-kind-type-parameter" href="#continueconversationt">T</a
+                      ><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">&gt;</span>
+                    </h4>
+                    <div class="tsd-comment tsd-typography">
+                      <div class="tsd-tag-example">
+                        <h4 class="tsd-anchor-link" id="example">
+                          Example<a href="#example" aria-label="Permalink" class="tsd-anchor-icon"
+                            ><svg viewBox="0 0 24 24" aria-hidden="true">
+                              <use href="../assets/icons.svg#icon-anchor"></use></svg
+                          ></a>
+                        </h4>
+                        <pre><code class="typescript"><span class="hl-5">const</span><span class="hl-1"> </span><span class="hl-6">agent</span><span class="hl-1"> = </span><span class="hl-2">multiClient</span><span class="hl-1">.</span><span class="hl-7">agent</span><span class="hl-1">(</span><span class="hl-3">&#39;my-agent&#39;</span><span class="hl-1">);</span><br/><span class="hl-0">await</span><span class="hl-1"> </span><span class="hl-2">agent</span><span class="hl-1">.</span><span class="hl-7">getProducts</span><span class="hl-1">({ </span><span class="hl-2">brief:</span><span class="hl-1"> </span><span class="hl-3">&#39;Tech products&#39;</span><span class="hl-1"> });</span><br/><br/><span class="hl-4">// Continue the conversation</span><br/><span class="hl-5">const</span><span class="hl-1"> </span><span class="hl-6">refined</span><span class="hl-1"> = </span><span class="hl-0">await</span><span class="hl-1"> </span><span class="hl-2">agent</span><span class="hl-1">.</span><span class="hl-7">continueConversation</span><span class="hl-1">(</span><br/><span class="hl-1">  </span><span class="hl-3">&#39;Focus only on laptops under $1000&#39;</span><br/><span class="hl-1">);</span>
+</code><button type="button">Copy</button></pre>
+                      </div>
+                    </div>
+                    <aside class="tsd-sources">
+                      <ul>
+                        <li>
+                          Defined in
+                          <a
+                            href="https://github.com/adcontextprotocol/adcp-client/blob/f019701d35957263620cbc63b0e73eb94547b8ea/src/lib/core/AgentClient.ts#L346"
+                            >src/lib/core/AgentClient.ts:346</a
+                          >
+                        </li>
+                      </ul>
+                    </aside>
+                  </div>
+                </li>
+              </ul>
+            </section>
+            <section class="tsd-panel tsd-member">
+              <h3 class="tsd-anchor-link" id="gethistory">
+                <span>get<wbr />History</span
+                ><a href="#gethistory" aria-label="Permalink" class="tsd-anchor-icon"
+                  ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg
+                ></a>
+              </h3>
+              <ul class="tsd-signatures">
+                <li class="">
+                  <div class="tsd-signature tsd-anchor-link" id="gethistory-1">
+                    <span class="tsd-kind-call-signature">getHistory</span><span class="tsd-signature-symbol">()</span
+                    ><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">undefined</span>
+                    <span class="tsd-signature-symbol">|</span>
+                    <a href="../interfaces/Message.html" class="tsd-signature-type tsd-kind-interface">Message</a
+                    ><span class="tsd-signature-symbol">[]</span
+                    ><a href="#gethistory-1" aria-label="Permalink" class="tsd-anchor-icon"
+                      ><svg viewBox="0 0 24 24" aria-hidden="true">
+                        <use href="../assets/icons.svg#icon-anchor"></use></svg
+                    ></a>
+                  </div>
+                  <div class="tsd-description">
+                    <div class="tsd-comment tsd-typography"><p>Get the full conversation history</p></div>
+                    <h4 class="tsd-returns-title">
+                      Returns <span class="tsd-signature-type">undefined</span>
+                      <span class="tsd-signature-symbol">|</span>
+                      <a href="../interfaces/Message.html" class="tsd-signature-type tsd-kind-interface">Message</a
+                      ><span class="tsd-signature-symbol">[]</span>
+                    </h4>
+                    <aside class="tsd-sources">
+                      <ul>
+                        <li>
+                          Defined in
+                          <a
+                            href="https://github.com/adcontextprotocol/adcp-client/blob/f019701d35957263620cbc63b0e73eb94547b8ea/src/lib/core/AgentClient.ts#L367"
+                            >src/lib/core/AgentClient.ts:367</a
+                          >
+                        </li>
+                      </ul>
+                    </aside>
+                  </div>
+                </li>
+              </ul>
+            </section>
+            <section class="tsd-panel tsd-member">
+              <h3 class="tsd-anchor-link" id="clearcontext">
+                <span>clear<wbr />Context</span
+                ><a href="#clearcontext" aria-label="Permalink" class="tsd-anchor-icon"
+                  ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg
+                ></a>
+              </h3>
+              <ul class="tsd-signatures">
+                <li class="">
+                  <div class="tsd-signature tsd-anchor-link" id="clearcontext-1">
+                    <span class="tsd-kind-call-signature">clearContext</span><span class="tsd-signature-symbol">()</span
+                    ><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">void</span
+                    ><a href="#clearcontext-1" aria-label="Permalink" class="tsd-anchor-icon"
+                      ><svg viewBox="0 0 24 24" aria-hidden="true">
+                        <use href="../assets/icons.svg#icon-anchor"></use></svg
+                    ></a>
+                  </div>
+                  <div class="tsd-description">
+                    <div class="tsd-comment tsd-typography"><p>Clear the conversation context (start fresh)</p></div>
+                    <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">void</span></h4>
+                    <aside class="tsd-sources">
+                      <ul>
+                        <li>
+                          Defined in
+                          <a
+                            href="https://github.com/adcontextprotocol/adcp-client/blob/f019701d35957263620cbc63b0e73eb94547b8ea/src/lib/core/AgentClient.ts#L377"
+                            >src/lib/core/AgentClient.ts:377</a
+                          >
+                        </li>
+                      </ul>
+                    </aside>
+                  </div>
+                </li>
+              </ul>
+            </section>
+            <section class="tsd-panel tsd-member">
+              <h3 class="tsd-anchor-link" id="getcontextid">
+                <span>get<wbr />Context<wbr />Id</span
+                ><a href="#getcontextid" aria-label="Permalink" class="tsd-anchor-icon"
+                  ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg
+                ></a>
+              </h3>
+              <ul class="tsd-signatures">
+                <li class="">
+                  <div class="tsd-signature tsd-anchor-link" id="getcontextid-1">
+                    <span class="tsd-kind-call-signature">getContextId</span><span class="tsd-signature-symbol">()</span
+                    ><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">undefined</span>
+                    <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">string</span
+                    ><a href="#getcontextid-1" aria-label="Permalink" class="tsd-anchor-icon"
+                      ><svg viewBox="0 0 24 24" aria-hidden="true">
+                        <use href="../assets/icons.svg#icon-anchor"></use></svg
+                    ></a>
+                  </div>
+                  <div class="tsd-description">
+                    <div class="tsd-comment tsd-typography"><p>Get the current conversation context ID</p></div>
+                    <h4 class="tsd-returns-title">
+                      Returns <span class="tsd-signature-type">undefined</span>
+                      <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">string</span>
+                    </h4>
+                    <aside class="tsd-sources">
+                      <ul>
+                        <li>
+                          Defined in
+                          <a
+                            href="https://github.com/adcontextprotocol/adcp-client/blob/f019701d35957263620cbc63b0e73eb94547b8ea/src/lib/core/AgentClient.ts#L387"
+                            >src/lib/core/AgentClient.ts:387</a
+                          >
+                        </li>
+                      </ul>
+                    </aside>
+                  </div>
+                </li>
+              </ul>
+            </section>
+            <section class="tsd-panel tsd-member">
+              <h3 class="tsd-anchor-link" id="setcontextid">
+                <span>set<wbr />Context<wbr />Id</span
+                ><a href="#setcontextid" aria-label="Permalink" class="tsd-anchor-icon"
+                  ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg
+                ></a>
+              </h3>
+              <ul class="tsd-signatures">
+                <li class="">
+                  <div class="tsd-signature tsd-anchor-link" id="setcontextid-1">
+                    <span class="tsd-kind-call-signature">setContextId</span><span class="tsd-signature-symbol">(</span
+                    ><span class="tsd-kind-parameter">contextId</span><span class="tsd-signature-symbol">:</span>
+                    <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">)</span
+                    ><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">void</span
+                    ><a href="#setcontextid-1" aria-label="Permalink" class="tsd-anchor-icon"
+                      ><svg viewBox="0 0 24 24" aria-hidden="true">
+                        <use href="../assets/icons.svg#icon-anchor"></use></svg
+                    ></a>
+                  </div>
+                  <div class="tsd-description">
+                    <div class="tsd-comment tsd-typography"><p>Set a specific conversation context ID</p></div>
+                    <div class="tsd-parameters">
+                      <h4 class="tsd-parameters-title">Parameters</h4>
+                      <ul class="tsd-parameter-list">
+                        <li>
+                          <span
+                            ><span class="tsd-kind-parameter">contextId</span>:
+                            <span class="tsd-signature-type">string</span></span
+                          >
+                        </li>
+                      </ul>
+                    </div>
+                    <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">void</span></h4>
+                    <aside class="tsd-sources">
+                      <ul>
+                        <li>
+                          Defined in
+                          <a
+                            href="https://github.com/adcontextprotocol/adcp-client/blob/f019701d35957263620cbc63b0e73eb94547b8ea/src/lib/core/AgentClient.ts#L394"
+                            >src/lib/core/AgentClient.ts:394</a
+                          >
+                        </li>
+                      </ul>
+                    </aside>
+                  </div>
+                </li>
+              </ul>
+            </section>
+            <section class="tsd-panel tsd-member">
+              <h3 class="tsd-anchor-link" id="getagent">
+                <span>get<wbr />Agent</span
+                ><a href="#getagent" aria-label="Permalink" class="tsd-anchor-icon"
+                  ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg
+                ></a>
+              </h3>
+              <ul class="tsd-signatures">
+                <li class="">
+                  <div class="tsd-signature tsd-anchor-link" id="getagent-1">
+                    <span class="tsd-kind-call-signature">getAgent</span><span class="tsd-signature-symbol">()</span
+                    ><span class="tsd-signature-symbol">:</span>
+                    <a href="../interfaces/AgentConfig.html" class="tsd-signature-type tsd-kind-interface"
+                      >AgentConfig</a
+                    ><a href="#getagent-1" aria-label="Permalink" class="tsd-anchor-icon"
+                      ><svg viewBox="0 0 24 24" aria-hidden="true">
+                        <use href="../assets/icons.svg#icon-anchor"></use></svg
+                    ></a>
+                  </div>
+                  <div class="tsd-description">
+                    <div class="tsd-comment tsd-typography"><p>Get the agent configuration</p></div>
+                    <h4 class="tsd-returns-title">
+                      Returns
+                      <a href="../interfaces/AgentConfig.html" class="tsd-signature-type tsd-kind-interface"
+                        >AgentConfig</a
+                      >
+                    </h4>
+                    <aside class="tsd-sources">
+                      <ul>
+                        <li>
+                          Defined in
+                          <a
+                            href="https://github.com/adcontextprotocol/adcp-client/blob/f019701d35957263620cbc63b0e73eb94547b8ea/src/lib/core/AgentClient.ts#L403"
+                            >src/lib/core/AgentClient.ts:403</a
+                          >
+                        </li>
+                      </ul>
+                    </aside>
+                  </div>
+                </li>
+              </ul>
+            </section>
+            <section class="tsd-panel tsd-member">
+              <h3 class="tsd-anchor-link" id="getagentid">
+                <span>get<wbr />Agent<wbr />Id</span
+                ><a href="#getagentid" aria-label="Permalink" class="tsd-anchor-icon"
+                  ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg
+                ></a>
+              </h3>
+              <ul class="tsd-signatures">
+                <li class="">
+                  <div class="tsd-signature tsd-anchor-link" id="getagentid-1">
+                    <span class="tsd-kind-call-signature">getAgentId</span><span class="tsd-signature-symbol">()</span
+                    ><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span
+                    ><a href="#getagentid-1" aria-label="Permalink" class="tsd-anchor-icon"
+                      ><svg viewBox="0 0 24 24" aria-hidden="true">
+                        <use href="../assets/icons.svg#icon-anchor"></use></svg
+                    ></a>
+                  </div>
+                  <div class="tsd-description">
+                    <div class="tsd-comment tsd-typography"><p>Get the agent ID</p></div>
+                    <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">string</span></h4>
+                    <aside class="tsd-sources">
+                      <ul>
+                        <li>
+                          Defined in
+                          <a
+                            href="https://github.com/adcontextprotocol/adcp-client/blob/f019701d35957263620cbc63b0e73eb94547b8ea/src/lib/core/AgentClient.ts#L410"
+                            >src/lib/core/AgentClient.ts:410</a
+                          >
+                        </li>
+                      </ul>
+                    </aside>
+                  </div>
+                </li>
+              </ul>
+            </section>
+            <section class="tsd-panel tsd-member">
+              <h3 class="tsd-anchor-link" id="getagentname">
+                <span>get<wbr />Agent<wbr />Name</span
+                ><a href="#getagentname" aria-label="Permalink" class="tsd-anchor-icon"
+                  ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg
+                ></a>
+              </h3>
+              <ul class="tsd-signatures">
+                <li class="">
+                  <div class="tsd-signature tsd-anchor-link" id="getagentname-1">
+                    <span class="tsd-kind-call-signature">getAgentName</span><span class="tsd-signature-symbol">()</span
+                    ><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span
+                    ><a href="#getagentname-1" aria-label="Permalink" class="tsd-anchor-icon"
+                      ><svg viewBox="0 0 24 24" aria-hidden="true">
+                        <use href="../assets/icons.svg#icon-anchor"></use></svg
+                    ></a>
+                  </div>
+                  <div class="tsd-description">
+                    <div class="tsd-comment tsd-typography"><p>Get the agent name</p></div>
+                    <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">string</span></h4>
+                    <aside class="tsd-sources">
+                      <ul>
+                        <li>
+                          Defined in
+                          <a
+                            href="https://github.com/adcontextprotocol/adcp-client/blob/f019701d35957263620cbc63b0e73eb94547b8ea/src/lib/core/AgentClient.ts#L417"
+                            >src/lib/core/AgentClient.ts:417</a
+                          >
+                        </li>
+                      </ul>
+                    </aside>
+                  </div>
+                </li>
+              </ul>
+            </section>
+            <section class="tsd-panel tsd-member">
+              <h3 class="tsd-anchor-link" id="getprotocol">
+                <span>get<wbr />Protocol</span
+                ><a href="#getprotocol" aria-label="Permalink" class="tsd-anchor-icon"
+                  ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg
+                ></a>
+              </h3>
+              <ul class="tsd-signatures">
+                <li class="">
+                  <div class="tsd-signature tsd-anchor-link" id="getprotocol-1">
+                    <span class="tsd-kind-call-signature">getProtocol</span><span class="tsd-signature-symbol">()</span
+                    ><span class="tsd-signature-symbol">:</span>
+                    <span class="tsd-signature-type">&quot;mcp&quot;</span> <span class="tsd-signature-symbol">|</span>
+                    <span class="tsd-signature-type">&quot;a2a&quot;</span
+                    ><a href="#getprotocol-1" aria-label="Permalink" class="tsd-anchor-icon"
+                      ><svg viewBox="0 0 24 24" aria-hidden="true">
+                        <use href="../assets/icons.svg#icon-anchor"></use></svg
+                    ></a>
+                  </div>
+                  <div class="tsd-description">
+                    <div class="tsd-comment tsd-typography"><p>Get the agent protocol</p></div>
+                    <h4 class="tsd-returns-title">
+                      Returns <span class="tsd-signature-type">&quot;mcp&quot;</span>
+                      <span class="tsd-signature-symbol">|</span>
+                      <span class="tsd-signature-type">&quot;a2a&quot;</span>
+                    </h4>
+                    <aside class="tsd-sources">
+                      <ul>
+                        <li>
+                          Defined in
+                          <a
+                            href="https://github.com/adcontextprotocol/adcp-client/blob/f019701d35957263620cbc63b0e73eb94547b8ea/src/lib/core/AgentClient.ts#L424"
+                            >src/lib/core/AgentClient.ts:424</a
+                          >
+                        </li>
+                      </ul>
+                    </aside>
+                  </div>
+                </li>
+              </ul>
+            </section>
+            <section class="tsd-panel tsd-member">
+              <h3 class="tsd-anchor-link" id="getagentinfo">
+                <span>get<wbr />Agent<wbr />Info</span
+                ><a href="#getagentinfo" aria-label="Permalink" class="tsd-anchor-icon"
+                  ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg
+                ></a>
+              </h3>
+              <ul class="tsd-signatures">
+                <li class="">
+                  <div class="tsd-signature tsd-anchor-link" id="getagentinfo-1">
+                    <span class="tsd-kind-call-signature">getAgentInfo</span><span class="tsd-signature-symbol">()</span
+                    ><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">Promise</span
+                    ><span class="tsd-signature-symbol">&lt;</span><br />    <span class="tsd-signature-symbol">{</span
+                    ><br />        <span class="tsd-kind-property">name</span
+                    ><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span
+                    ><span class="tsd-signature-symbol">;</span><br />        <span class="tsd-kind-property"
+                      >description</span
+                    ><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span
+                    ><span class="tsd-signature-symbol">;</span><br />        <span class="tsd-kind-property"
+                      >protocol</span
+                    ><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">&quot;mcp&quot;</span
+                    ><br />        <span class="tsd-signature-symbol">|</span>
+                    <span class="tsd-signature-type">&quot;a2a&quot;</span><span class="tsd-signature-symbol">;</span
+                    ><br />        <span class="tsd-kind-property">url</span
+                    ><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span
+                    ><span class="tsd-signature-symbol">;</span><br />        <span class="tsd-kind-property"
+                      >tools</span
+                    ><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-symbol">{</span
+                    ><br />            <span class="tsd-kind-property">name</span
+                    ><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span
+                    ><span class="tsd-signature-symbol">;</span><br />            <span class="tsd-kind-property"
+                      >description</span
+                    ><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span
+                    ><span class="tsd-signature-symbol">;</span><br />            <span class="tsd-kind-property"
+                      >inputSchema</span
+                    ><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">any</span
+                    ><span class="tsd-signature-symbol">;</span><br />            <span class="tsd-kind-property"
+                      >parameters</span
+                    ><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span
+                    ><span class="tsd-signature-symbol">[]</span><span class="tsd-signature-symbol">;</span
+                    ><br />        <span class="tsd-signature-symbol">}</span
+                    ><span class="tsd-signature-symbol">[]</span><span class="tsd-signature-symbol">;</span
+                    ><br />    <span class="tsd-signature-symbol">}</span><span class="tsd-signature-symbol">,</span
+                    ><br /><span class="tsd-signature-symbol">&gt;</span
+                    ><a href="#getagentinfo-1" aria-label="Permalink" class="tsd-anchor-icon"
+                      ><svg viewBox="0 0 24 24" aria-hidden="true">
+                        <use href="../assets/icons.svg#icon-anchor"></use></svg
+                    ></a>
+                  </div>
+                  <div class="tsd-description">
+                    <div class="tsd-comment tsd-typography"><p>Get agent information including capabilities</p></div>
+                    <h4 class="tsd-returns-title">
+                      Returns <span class="tsd-signature-type">Promise</span
+                      ><span class="tsd-signature-symbol">&lt;</span><br />    <span class="tsd-signature-symbol"
+                        >{</span
+                      ><br />        <span class="tsd-kind-property">name</span
+                      ><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span
+                      ><span class="tsd-signature-symbol">;</span><br />        <span class="tsd-kind-property"
+                        >description</span
+                      ><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span
+                      ><span class="tsd-signature-symbol">;</span><br />        <span class="tsd-kind-property"
+                        >protocol</span
+                      ><span class="tsd-signature-symbol">:</span>
+                      <span class="tsd-signature-type">&quot;mcp&quot;</span><br />        <span
+                        class="tsd-signature-symbol"
+                        >|</span
+                      >
+                      <span class="tsd-signature-type">&quot;a2a&quot;</span><span class="tsd-signature-symbol">;</span
+                      ><br />        <span class="tsd-kind-property">url</span
+                      ><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span
+                      ><span class="tsd-signature-symbol">;</span><br />        <span class="tsd-kind-property"
+                        >tools</span
+                      ><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-symbol">{</span
+                      ><br />            <span class="tsd-kind-property">name</span
+                      ><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span
+                      ><span class="tsd-signature-symbol">;</span><br />            <span class="tsd-kind-property"
+                        >description</span
+                      ><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span
+                      ><span class="tsd-signature-symbol">;</span><br />            <span class="tsd-kind-property"
+                        >inputSchema</span
+                      ><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">any</span
+                      ><span class="tsd-signature-symbol">;</span><br />            <span class="tsd-kind-property"
+                        >parameters</span
+                      ><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span
+                      ><span class="tsd-signature-symbol">[]</span><span class="tsd-signature-symbol">;</span
+                      ><br />        <span class="tsd-signature-symbol">}</span
+                      ><span class="tsd-signature-symbol">[]</span><span class="tsd-signature-symbol">;</span
+                      ><br />    <span class="tsd-signature-symbol">}</span><span class="tsd-signature-symbol">,</span
+                      ><br /><span class="tsd-signature-symbol">&gt;</span>
+                    </h4>
+                    <aside class="tsd-sources">
+                      <ul>
+                        <li>
+                          Defined in
+                          <a
+                            href="https://github.com/adcontextprotocol/adcp-client/blob/f019701d35957263620cbc63b0e73eb94547b8ea/src/lib/core/AgentClient.ts#L431"
+                            >src/lib/core/AgentClient.ts:431</a
+                          >
+                        </li>
+                      </ul>
+                    </aside>
+                  </div>
+                </li>
+              </ul>
+            </section>
+            <section class="tsd-panel tsd-member">
+              <h3 class="tsd-anchor-link" id="hasactiveconversation">
+                <span>has<wbr />Active<wbr />Conversation</span
+                ><a href="#hasactiveconversation" aria-label="Permalink" class="tsd-anchor-icon"
+                  ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg
+                ></a>
+              </h3>
+              <ul class="tsd-signatures">
+                <li class="">
+                  <div class="tsd-signature tsd-anchor-link" id="hasactiveconversation-1">
+                    <span class="tsd-kind-call-signature">hasActiveConversation</span
+                    ><span class="tsd-signature-symbol">()</span><span class="tsd-signature-symbol">:</span>
+                    <span class="tsd-signature-type">boolean</span
+                    ><a href="#hasactiveconversation-1" aria-label="Permalink" class="tsd-anchor-icon"
+                      ><svg viewBox="0 0 24 24" aria-hidden="true">
+                        <use href="../assets/icons.svg#icon-anchor"></use></svg
+                    ></a>
+                  </div>
+                  <div class="tsd-description">
+                    <div class="tsd-comment tsd-typography"><p>Check if there's an active conversation</p></div>
+                    <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">boolean</span></h4>
+                    <aside class="tsd-sources">
+                      <ul>
+                        <li>
+                          Defined in
+                          <a
+                            href="https://github.com/adcontextprotocol/adcp-client/blob/f019701d35957263620cbc63b0e73eb94547b8ea/src/lib/core/AgentClient.ts#L438"
+                            >src/lib/core/AgentClient.ts:438</a
+                          >
+                        </li>
+                      </ul>
+                    </aside>
+                  </div>
+                </li>
+              </ul>
+            </section>
+            <section class="tsd-panel tsd-member">
+              <h3 class="tsd-anchor-link" id="getactivetasks">
+                <span>get<wbr />Active<wbr />Tasks</span
+                ><a href="#getactivetasks" aria-label="Permalink" class="tsd-anchor-icon"
+                  ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg
+                ></a>
+              </h3>
+              <ul class="tsd-signatures">
+                <li class="">
+                  <div class="tsd-signature tsd-anchor-link" id="getactivetasks-1">
+                    <span class="tsd-kind-call-signature">getActiveTasks</span
+                    ><span class="tsd-signature-symbol">()</span><span class="tsd-signature-symbol">:</span>
+                    <a href="../interfaces/TaskState.html" class="tsd-signature-type tsd-kind-interface">TaskState</a
+                    ><span class="tsd-signature-symbol">[]</span
+                    ><a href="#getactivetasks-1" aria-label="Permalink" class="tsd-anchor-icon"
+                      ><svg viewBox="0 0 24 24" aria-hidden="true">
+                        <use href="../assets/icons.svg#icon-anchor"></use></svg
+                    ></a>
+                  </div>
+                  <div class="tsd-description">
+                    <div class="tsd-comment tsd-typography"><p>Get active tasks for this agent</p></div>
+                    <h4 class="tsd-returns-title">
+                      Returns
+                      <a href="../interfaces/TaskState.html" class="tsd-signature-type tsd-kind-interface">TaskState</a
+                      ><span class="tsd-signature-symbol">[]</span>
+                    </h4>
+                    <aside class="tsd-sources">
+                      <ul>
+                        <li>
+                          Defined in
+                          <a
+                            href="https://github.com/adcontextprotocol/adcp-client/blob/f019701d35957263620cbc63b0e73eb94547b8ea/src/lib/core/AgentClient.ts#L445"
+                            >src/lib/core/AgentClient.ts:445</a
+                          >
+                        </li>
+                      </ul>
+                    </aside>
+                  </div>
+                </li>
+              </ul>
+            </section>
+            <section class="tsd-panel tsd-member">
+              <h3 class="tsd-anchor-link" id="executetask">
+                <span>execute<wbr />Task</span
+                ><a href="#executetask" aria-label="Permalink" class="tsd-anchor-icon"
+                  ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg
+                ></a>
+              </h3>
+              <ul class="tsd-signatures">
+                <li class="">
+                  <div class="tsd-signature tsd-anchor-link" id="executetask-1">
+                    <span class="tsd-kind-call-signature">executeTask</span
+                    ><span class="tsd-signature-symbol">&lt;</span
+                    ><a class="tsd-signature-type tsd-kind-type-parameter" href="#executetaskk">K</a>
+                    <span class="tsd-signature-keyword">extends</span> <span class="tsd-signature-keyword">keyof</span>
+                    <a href="../types/TaskResponseTypeMap.html" class="tsd-signature-type tsd-kind-type-alias"
+                      >TaskResponseTypeMap</a
+                    ><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">(</span
+                    ><br />    <span class="tsd-kind-parameter">taskName</span
+                    ><span class="tsd-signature-symbol">:</span>
+                    <a class="tsd-signature-type tsd-kind-type-parameter" href="#executetaskk">K</a
+                    ><span class="tsd-signature-symbol">,</span><br />    <span class="tsd-kind-parameter">params</span
+                    ><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">any</span
+                    ><span class="tsd-signature-symbol">,</span><br />    <span class="tsd-kind-parameter"
+                      >inputHandler</span
+                    ><span class="tsd-signature-symbol">?:</span>
+                    <a href="../types/InputHandler.html" class="tsd-signature-type tsd-kind-type-alias">InputHandler</a
+                    ><span class="tsd-signature-symbol">,</span><br />    <span class="tsd-kind-parameter">options</span
+                    ><span class="tsd-signature-symbol">?:</span>
+                    <a href="../interfaces/TaskOptions.html" class="tsd-signature-type tsd-kind-interface"
+                      >TaskOptions</a
+                    ><span class="tsd-signature-symbol">,</span><br /><span class="tsd-signature-symbol">)</span
+                    ><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">Promise</span
+                    ><span class="tsd-signature-symbol">&lt;</span
+                    ><a href="../interfaces/TaskResult.html" class="tsd-signature-type tsd-kind-interface">TaskResult</a
+                    ><span class="tsd-signature-symbol">&lt;</span
+                    ><a href="../types/TaskResponseTypeMap.html" class="tsd-signature-type tsd-kind-type-alias"
+                      >TaskResponseTypeMap</a
+                    ><span class="tsd-signature-symbol">[</span
+                    ><a class="tsd-signature-type tsd-kind-type-parameter" href="#executetaskk">K</a
+                    ><span class="tsd-signature-symbol">]</span><span class="tsd-signature-symbol">&gt;</span
+                    ><span class="tsd-signature-symbol">&gt;</span
+                    ><a href="#executetask-1" aria-label="Permalink" class="tsd-anchor-icon"
+                      ><svg viewBox="0 0 24 24" aria-hidden="true">
+                        <use href="../assets/icons.svg#icon-anchor"></use></svg
+                    ></a>
+                  </div>
+                  <div class="tsd-description">
+                    <div class="tsd-comment tsd-typography">
+                      <p>Execute any ADCP task by name with full type safety</p>
+                    </div>
+                    <section class="tsd-panel">
+                      <h4>Type Parameters</h4>
+                      <ul class="tsd-type-parameter-list">
+                        <li>
+                          <span id="executetaskk"
+                            ><span class="tsd-kind-type-parameter">K</span>
+                            <span class="tsd-signature-keyword">extends</span>
+                            <span class="tsd-signature-keyword">keyof</span>
+                            <a href="../types/TaskResponseTypeMap.html" class="tsd-signature-type tsd-kind-type-alias"
+                              >TaskResponseTypeMap</a
+                            ></span
+                          >
+                        </li>
+                      </ul>
+                    </section>
+                    <div class="tsd-parameters">
+                      <h4 class="tsd-parameters-title">Parameters</h4>
+                      <ul class="tsd-parameter-list">
+                        <li>
+                          <span
+                            ><span class="tsd-kind-parameter">taskName</span>:
+                            <a class="tsd-signature-type tsd-kind-type-parameter" href="#executetaskk">K</a></span
+                          >
+                        </li>
+                        <li>
+                          <span
+                            ><span class="tsd-kind-parameter">params</span>:
+                            <span class="tsd-signature-type">any</span></span
+                          >
+                        </li>
+                        <li>
+                          <span
+                            ><code class="tsd-tag">Optional</code><span class="tsd-kind-parameter">inputHandler</span>:
+                            <a href="../types/InputHandler.html" class="tsd-signature-type tsd-kind-type-alias"
+                              >InputHandler</a
+                            ></span
+                          >
+                        </li>
+                        <li>
+                          <span
+                            ><code class="tsd-tag">Optional</code><span class="tsd-kind-parameter">options</span>:
+                            <a href="../interfaces/TaskOptions.html" class="tsd-signature-type tsd-kind-interface"
+                              >TaskOptions</a
+                            ></span
+                          >
+                        </li>
+                      </ul>
+                    </div>
+                    <h4 class="tsd-returns-title">
+                      Returns <span class="tsd-signature-type">Promise</span
+                      ><span class="tsd-signature-symbol">&lt;</span
+                      ><a href="../interfaces/TaskResult.html" class="tsd-signature-type tsd-kind-interface"
+                        >TaskResult</a
+                      ><span class="tsd-signature-symbol">&lt;</span
+                      ><a href="../types/TaskResponseTypeMap.html" class="tsd-signature-type tsd-kind-type-alias"
+                        >TaskResponseTypeMap</a
+                      ><span class="tsd-signature-symbol">[</span
+                      ><a class="tsd-signature-type tsd-kind-type-parameter" href="#executetaskk">K</a
+                      ><span class="tsd-signature-symbol">]</span><span class="tsd-signature-symbol">&gt;</span
+                      ><span class="tsd-signature-symbol">&gt;</span>
+                    </h4>
+                    <div class="tsd-comment tsd-typography">
+                      <div class="tsd-tag-example">
+                        <h4 class="tsd-anchor-link" id="example-1">
+                          Example<a href="#example-1" aria-label="Permalink" class="tsd-anchor-icon"
+                            ><svg viewBox="0 0 24 24" aria-hidden="true">
+                              <use href="../assets/icons.svg#icon-anchor"></use></svg
+                          ></a>
+                        </h4>
+                        <pre><code class="typescript"><span class="hl-4">// ✅ TYPE-SAFE: Automatic response type inference</span><br/><span class="hl-5">const</span><span class="hl-1"> </span><span class="hl-6">result</span><span class="hl-1"> = </span><span class="hl-0">await</span><span class="hl-1"> </span><span class="hl-2">agent</span><span class="hl-1">.</span><span class="hl-7">executeTask</span><span class="hl-1">(</span><span class="hl-3">&#39;get_products&#39;</span><span class="hl-1">, </span><span class="hl-2">params</span><span class="hl-1">);</span><br/><span class="hl-4">// result is TaskResult&lt;GetProductsResponse&gt; - no casting needed!</span><br/><br/><span class="hl-4">// ✅ CUSTOM TYPES: For non-standard tasks</span><br/><span class="hl-5">const</span><span class="hl-1"> </span><span class="hl-6">customResult</span><span class="hl-1"> = </span><span class="hl-0">await</span><span class="hl-1"> </span><span class="hl-2">agent</span><span class="hl-1">.</span><span class="hl-7">executeTask</span><span class="hl-1">&lt;</span><span class="hl-8">MyCustomResponse</span><span class="hl-1">&gt;(</span><span class="hl-3">&#39;custom_task&#39;</span><span class="hl-1">, </span><span class="hl-2">params</span><span class="hl-1">);</span>
+</code><button type="button">Copy</button></pre>
+                      </div>
+                    </div>
+                    <aside class="tsd-sources">
+                      <ul>
+                        <li>
+                          Defined in
+                          <a
+                            href="https://github.com/adcontextprotocol/adcp-client/blob/f019701d35957263620cbc63b0e73eb94547b8ea/src/lib/core/AgentClient.ts#L464"
+                            >src/lib/core/AgentClient.ts:464</a
+                          >
+                        </li>
+                      </ul>
+                    </aside>
+                  </div>
+                </li>
+                <li class="">
+                  <div class="tsd-signature tsd-anchor-link" id="executetask-2">
+                    <span class="tsd-kind-call-signature">executeTask</span
+                    ><span class="tsd-signature-symbol">&lt;</span
+                    ><a class="tsd-signature-type tsd-kind-type-parameter" href="#executetaskt">T</a>
+                    <span class="tsd-signature-symbol">=</span> <span class="tsd-signature-type">any</span
+                    ><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">(</span
+                    ><br />    <span class="tsd-kind-parameter">taskName</span
+                    ><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span
+                    ><span class="tsd-signature-symbol">,</span><br />    <span class="tsd-kind-parameter">params</span
+                    ><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">any</span
+                    ><span class="tsd-signature-symbol">,</span><br />    <span class="tsd-kind-parameter"
+                      >inputHandler</span
+                    ><span class="tsd-signature-symbol">?:</span>
+                    <a href="../types/InputHandler.html" class="tsd-signature-type tsd-kind-type-alias">InputHandler</a
+                    ><span class="tsd-signature-symbol">,</span><br />    <span class="tsd-kind-parameter">options</span
+                    ><span class="tsd-signature-symbol">?:</span>
+                    <a href="../interfaces/TaskOptions.html" class="tsd-signature-type tsd-kind-interface"
+                      >TaskOptions</a
+                    ><span class="tsd-signature-symbol">,</span><br /><span class="tsd-signature-symbol">)</span
+                    ><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">Promise</span
+                    ><span class="tsd-signature-symbol">&lt;</span
+                    ><a href="../interfaces/TaskResult.html" class="tsd-signature-type tsd-kind-interface">TaskResult</a
+                    ><span class="tsd-signature-symbol">&lt;</span
+                    ><a class="tsd-signature-type tsd-kind-type-parameter" href="#executetaskt">T</a
+                    ><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">&gt;</span
+                    ><a href="#executetask-2" aria-label="Permalink" class="tsd-anchor-icon"
+                      ><svg viewBox="0 0 24 24" aria-hidden="true">
+                        <use href="../assets/icons.svg#icon-anchor"></use></svg
+                    ></a>
+                  </div>
+                  <div class="tsd-description">
+                    <div class="tsd-comment tsd-typography">
+                      <p>Execute any task by name with custom response type</p>
+                    </div>
+                    <section class="tsd-panel">
+                      <h4>Type Parameters</h4>
+                      <ul class="tsd-type-parameter-list">
+                        <li>
+                          <span id="executetaskt"
+                            ><span class="tsd-kind-type-parameter">T</span> =
+                            <span class="tsd-signature-type">any</span></span
+                          >
+                        </li>
+                      </ul>
+                    </section>
+                    <div class="tsd-parameters">
+                      <h4 class="tsd-parameters-title">Parameters</h4>
+                      <ul class="tsd-parameter-list">
+                        <li>
+                          <span
+                            ><span class="tsd-kind-parameter">taskName</span>:
+                            <span class="tsd-signature-type">string</span></span
+                          >
+                        </li>
+                        <li>
+                          <span
+                            ><span class="tsd-kind-parameter">params</span>:
+                            <span class="tsd-signature-type">any</span></span
+                          >
+                        </li>
+                        <li>
+                          <span
+                            ><code class="tsd-tag">Optional</code><span class="tsd-kind-parameter">inputHandler</span>:
+                            <a href="../types/InputHandler.html" class="tsd-signature-type tsd-kind-type-alias"
+                              >InputHandler</a
+                            ></span
+                          >
+                        </li>
+                        <li>
+                          <span
+                            ><code class="tsd-tag">Optional</code><span class="tsd-kind-parameter">options</span>:
+                            <a href="../interfaces/TaskOptions.html" class="tsd-signature-type tsd-kind-interface"
+                              >TaskOptions</a
+                            ></span
+                          >
+                        </li>
+                      </ul>
+                    </div>
+                    <h4 class="tsd-returns-title">
+                      Returns <span class="tsd-signature-type">Promise</span
+                      ><span class="tsd-signature-symbol">&lt;</span
+                      ><a href="../interfaces/TaskResult.html" class="tsd-signature-type tsd-kind-interface"
+                        >TaskResult</a
+                      ><span class="tsd-signature-symbol">&lt;</span
+                      ><a class="tsd-signature-type tsd-kind-type-parameter" href="#executetaskt">T</a
+                      ><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">&gt;</span>
+                    </h4>
+                    <aside class="tsd-sources">
+                      <ul>
+                        <li>
+                          Defined in
+                          <a
+                            href="https://github.com/adcontextprotocol/adcp-client/blob/f019701d35957263620cbc63b0e73eb94547b8ea/src/lib/core/AgentClient.ts#L474"
+                            >src/lib/core/AgentClient.ts:474</a
+                          >
+                        </li>
+                      </ul>
+                    </aside>
+                  </div>
+                </li>
+              </ul>
+            </section>
+            <section class="tsd-panel tsd-member">
+              <h3 class="tsd-anchor-link" id="listtasks">
+                <span>list<wbr />Tasks</span
+                ><a href="#listtasks" aria-label="Permalink" class="tsd-anchor-icon"
+                  ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg
+                ></a>
+              </h3>
+              <ul class="tsd-signatures">
+                <li class="">
+                  <div class="tsd-signature tsd-anchor-link" id="listtasks-1">
+                    <span class="tsd-kind-call-signature">listTasks</span><span class="tsd-signature-symbol">()</span
+                    ><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">Promise</span
+                    ><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">TaskInfo</span
+                    ><span class="tsd-signature-symbol">[]</span><span class="tsd-signature-symbol">&gt;</span
+                    ><a href="#listtasks-1" aria-label="Permalink" class="tsd-anchor-icon"
+                      ><svg viewBox="0 0 24 24" aria-hidden="true">
+                        <use href="../assets/icons.svg#icon-anchor"></use></svg
+                    ></a>
+                  </div>
+                  <div class="tsd-description">
+                    <div class="tsd-comment tsd-typography"><p>List all tasks for this agent</p></div>
+                    <h4 class="tsd-returns-title">
+                      Returns <span class="tsd-signature-type">Promise</span
+                      ><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">TaskInfo</span
+                      ><span class="tsd-signature-symbol">[]</span><span class="tsd-signature-symbol">&gt;</span>
+                    </h4>
+                    <aside class="tsd-sources">
+                      <ul>
+                        <li>
+                          Defined in
+                          <a
+                            href="https://github.com/adcontextprotocol/adcp-client/blob/f019701d35957263620cbc63b0e73eb94547b8ea/src/lib/core/AgentClient.ts#L504"
+                            >src/lib/core/AgentClient.ts:504</a
+                          >
+                        </li>
+                      </ul>
+                    </aside>
+                  </div>
+                </li>
+              </ul>
+            </section>
+            <section class="tsd-panel tsd-member">
+              <h3 class="tsd-anchor-link" id="gettaskinfo">
+                <span>get<wbr />Task<wbr />Info</span
+                ><a href="#gettaskinfo" aria-label="Permalink" class="tsd-anchor-icon"
+                  ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg
+                ></a>
+              </h3>
+              <ul class="tsd-signatures">
+                <li class="">
+                  <div class="tsd-signature tsd-anchor-link" id="gettaskinfo-1">
+                    <span class="tsd-kind-call-signature">getTaskInfo</span><span class="tsd-signature-symbol">(</span
+                    ><span class="tsd-kind-parameter">taskId</span><span class="tsd-signature-symbol">:</span>
+                    <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">)</span
+                    ><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">Promise</span
+                    ><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">null</span>
+                    <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">TaskInfo</span
+                    ><span class="tsd-signature-symbol">&gt;</span
+                    ><a href="#gettaskinfo-1" aria-label="Permalink" class="tsd-anchor-icon"
+                      ><svg viewBox="0 0 24 24" aria-hidden="true">
+                        <use href="../assets/icons.svg#icon-anchor"></use></svg
+                    ></a>
+                  </div>
+                  <div class="tsd-description">
+                    <div class="tsd-comment tsd-typography"><p>Get detailed information about a specific task</p></div>
+                    <div class="tsd-parameters">
+                      <h4 class="tsd-parameters-title">Parameters</h4>
+                      <ul class="tsd-parameter-list">
+                        <li>
+                          <span
+                            ><span class="tsd-kind-parameter">taskId</span>:
+                            <span class="tsd-signature-type">string</span></span
+                          >
+                        </li>
+                      </ul>
+                    </div>
+                    <h4 class="tsd-returns-title">
+                      Returns <span class="tsd-signature-type">Promise</span
+                      ><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">null</span>
+                      <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">TaskInfo</span
+                      ><span class="tsd-signature-symbol">&gt;</span>
+                    </h4>
+                    <aside class="tsd-sources">
+                      <ul>
+                        <li>
+                          Defined in
+                          <a
+                            href="https://github.com/adcontextprotocol/adcp-client/blob/f019701d35957263620cbc63b0e73eb94547b8ea/src/lib/core/AgentClient.ts#L511"
+                            >src/lib/core/AgentClient.ts:511</a
+                          >
+                        </li>
+                      </ul>
+                    </aside>
+                  </div>
+                </li>
+              </ul>
+            </section>
+            <section class="tsd-panel tsd-member">
+              <h3 class="tsd-anchor-link" id="ontaskupdate">
+                <span>on<wbr />Task<wbr />Update</span
+                ><a href="#ontaskupdate" aria-label="Permalink" class="tsd-anchor-icon"
+                  ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg
+                ></a>
+              </h3>
+              <ul class="tsd-signatures">
+                <li class="">
+                  <div class="tsd-signature tsd-anchor-link" id="ontaskupdate-1">
+                    <span class="tsd-kind-call-signature">onTaskUpdate</span><span class="tsd-signature-symbol">(</span
+                    ><span class="tsd-kind-parameter">callback</span><span class="tsd-signature-symbol">:</span>
+                    <span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">task</span
+                    ><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">TaskInfo</span
+                    ><span class="tsd-signature-symbol">)</span> <span class="tsd-signature-symbol">=&gt;</span>
+                    <span class="tsd-signature-type">void</span><span class="tsd-signature-symbol">)</span
+                    ><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-symbol">()</span>
+                    <span class="tsd-signature-symbol">=&gt;</span> <span class="tsd-signature-type">void</span
+                    ><a href="#ontaskupdate-1" aria-label="Permalink" class="tsd-anchor-icon"
+                      ><svg viewBox="0 0 24 24" aria-hidden="true">
+                        <use href="../assets/icons.svg#icon-anchor"></use></svg
+                    ></a>
+                  </div>
+                  <div class="tsd-description">
+                    <div class="tsd-comment tsd-typography"><p>Subscribe to task notifications for this agent</p></div>
+                    <div class="tsd-parameters">
+                      <h4 class="tsd-parameters-title">Parameters</h4>
+                      <ul class="tsd-parameter-list">
+                        <li>
+                          <span
+                            ><span class="tsd-kind-parameter">callback</span>:
+                            <span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">task</span
+                            ><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">TaskInfo</span
+                            ><span class="tsd-signature-symbol">)</span>
+                            <span class="tsd-signature-symbol">=&gt;</span>
+                            <span class="tsd-signature-type">void</span></span
+                          >
+                        </li>
+                      </ul>
+                    </div>
+                    <h4 class="tsd-returns-title">
+                      Returns <span class="tsd-signature-symbol">()</span>
+                      <span class="tsd-signature-symbol">=&gt;</span> <span class="tsd-signature-type">void</span>
+                    </h4>
+                    <aside class="tsd-sources">
+                      <ul>
+                        <li>
+                          Defined in
+                          <a
+                            href="https://github.com/adcontextprotocol/adcp-client/blob/f019701d35957263620cbc63b0e73eb94547b8ea/src/lib/core/AgentClient.ts#L518"
+                            >src/lib/core/AgentClient.ts:518</a
+                          >
+                        </li>
+                      </ul>
+                    </aside>
+                  </div>
+                </li>
+              </ul>
+            </section>
+            <section class="tsd-panel tsd-member">
+              <h3 class="tsd-anchor-link" id="ontaskevents">
+                <span>on<wbr />Task<wbr />Events</span
+                ><a href="#ontaskevents" aria-label="Permalink" class="tsd-anchor-icon"
+                  ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg
+                ></a>
+              </h3>
+              <ul class="tsd-signatures">
+                <li class="">
+                  <div class="tsd-signature tsd-anchor-link" id="ontaskevents-1">
+                    <span class="tsd-kind-call-signature">onTaskEvents</span><span class="tsd-signature-symbol">(</span
+                    ><br />    <span class="tsd-kind-parameter">callbacks</span
+                    ><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-symbol">{</span
+                    ><br />        <span class="tsd-kind-property">onTaskCreated</span
+                    ><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-symbol">(</span
+                    ><span class="tsd-kind-parameter">task</span><span class="tsd-signature-symbol">:</span>
+                    <span class="tsd-signature-type">TaskInfo</span><span class="tsd-signature-symbol">)</span>
+                    <span class="tsd-signature-symbol">=&gt;</span> <span class="tsd-signature-type">void</span
+                    ><span class="tsd-signature-symbol">;</span><br />        <span class="tsd-kind-property"
+                      >onTaskUpdated</span
+                    ><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-symbol">(</span
+                    ><span class="tsd-kind-parameter">task</span><span class="tsd-signature-symbol">:</span>
+                    <span class="tsd-signature-type">TaskInfo</span><span class="tsd-signature-symbol">)</span>
+                    <span class="tsd-signature-symbol">=&gt;</span> <span class="tsd-signature-type">void</span
+                    ><span class="tsd-signature-symbol">;</span><br />        <span class="tsd-kind-property"
+                      >onTaskCompleted</span
+                    ><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-symbol">(</span
+                    ><span class="tsd-kind-parameter">task</span><span class="tsd-signature-symbol">:</span>
+                    <span class="tsd-signature-type">TaskInfo</span><span class="tsd-signature-symbol">)</span>
+                    <span class="tsd-signature-symbol">=&gt;</span> <span class="tsd-signature-type">void</span
+                    ><span class="tsd-signature-symbol">;</span><br />        <span class="tsd-kind-property"
+                      >onTaskFailed</span
+                    ><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-symbol">(</span
+                    ><span class="tsd-kind-parameter">task</span><span class="tsd-signature-symbol">:</span>
+                    <span class="tsd-signature-type">TaskInfo</span><span class="tsd-signature-symbol">,</span>
+                    <span class="tsd-kind-parameter">error</span><span class="tsd-signature-symbol">:</span>
+                    <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">)</span>
+                    <span class="tsd-signature-symbol">=&gt;</span> <span class="tsd-signature-type">void</span
+                    ><span class="tsd-signature-symbol">;</span><br />    <span class="tsd-signature-symbol">}</span
+                    ><span class="tsd-signature-symbol">,</span><br /><span class="tsd-signature-symbol">)</span
+                    ><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-symbol">()</span>
+                    <span class="tsd-signature-symbol">=&gt;</span> <span class="tsd-signature-type">void</span
+                    ><a href="#ontaskevents-1" aria-label="Permalink" class="tsd-anchor-icon"
+                      ><svg viewBox="0 0 24 24" aria-hidden="true">
+                        <use href="../assets/icons.svg#icon-anchor"></use></svg
+                    ></a>
+                  </div>
+                  <div class="tsd-description">
+                    <div class="tsd-comment tsd-typography"><p>Subscribe to all task events</p></div>
+                    <div class="tsd-parameters">
+                      <h4 class="tsd-parameters-title">Parameters</h4>
+                      <ul class="tsd-parameter-list">
+                        <li>
+                          <span
+                            ><span class="tsd-kind-parameter">callbacks</span>:
+                            <span class="tsd-signature-symbol">{</span><br />    <span class="tsd-kind-property"
+                              >onTaskCreated</span
+                            ><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-symbol">(</span
+                            ><span class="tsd-kind-parameter">task</span><span class="tsd-signature-symbol">:</span>
+                            <span class="tsd-signature-type">TaskInfo</span><span class="tsd-signature-symbol">)</span>
+                            <span class="tsd-signature-symbol">=&gt;</span> <span class="tsd-signature-type">void</span
+                            ><span class="tsd-signature-symbol">;</span><br />    <span class="tsd-kind-property"
+                              >onTaskUpdated</span
+                            ><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-symbol">(</span
+                            ><span class="tsd-kind-parameter">task</span><span class="tsd-signature-symbol">:</span>
+                            <span class="tsd-signature-type">TaskInfo</span><span class="tsd-signature-symbol">)</span>
+                            <span class="tsd-signature-symbol">=&gt;</span> <span class="tsd-signature-type">void</span
+                            ><span class="tsd-signature-symbol">;</span><br />    <span class="tsd-kind-property"
+                              >onTaskCompleted</span
+                            ><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-symbol">(</span
+                            ><span class="tsd-kind-parameter">task</span><span class="tsd-signature-symbol">:</span>
+                            <span class="tsd-signature-type">TaskInfo</span><span class="tsd-signature-symbol">)</span>
+                            <span class="tsd-signature-symbol">=&gt;</span> <span class="tsd-signature-type">void</span
+                            ><span class="tsd-signature-symbol">;</span><br />    <span class="tsd-kind-property"
+                              >onTaskFailed</span
+                            ><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-symbol">(</span
+                            ><span class="tsd-kind-parameter">task</span><span class="tsd-signature-symbol">:</span>
+                            <span class="tsd-signature-type">TaskInfo</span><span class="tsd-signature-symbol">,</span>
+                            <span class="tsd-kind-parameter">error</span><span class="tsd-signature-symbol">:</span>
+                            <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">)</span>
+                            <span class="tsd-signature-symbol">=&gt;</span> <span class="tsd-signature-type">void</span
+                            ><span class="tsd-signature-symbol">;</span><br /><span class="tsd-signature-symbol"
+                              >}</span
+                            ></span
+                          >
+                        </li>
+                      </ul>
+                    </div>
+                    <h4 class="tsd-returns-title">
+                      Returns <span class="tsd-signature-symbol">()</span>
+                      <span class="tsd-signature-symbol">=&gt;</span> <span class="tsd-signature-type">void</span>
+                    </h4>
+                    <aside class="tsd-sources">
+                      <ul>
+                        <li>
+                          Defined in
+                          <a
+                            href="https://github.com/adcontextprotocol/adcp-client/blob/f019701d35957263620cbc63b0e73eb94547b8ea/src/lib/core/AgentClient.ts#L525"
+                            >src/lib/core/AgentClient.ts:525</a
+                          >
+                        </li>
+                      </ul>
+                    </aside>
+                  </div>
+                </li>
+              </ul>
+            </section>
+            <section class="tsd-panel tsd-member">
+              <h3 class="tsd-anchor-link" id="registerwebhook">
+                <span>register<wbr />Webhook</span
+                ><a href="#registerwebhook" aria-label="Permalink" class="tsd-anchor-icon"
+                  ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg
+                ></a>
+              </h3>
+              <ul class="tsd-signatures">
+                <li class="">
+                  <div class="tsd-signature tsd-anchor-link" id="registerwebhook-1">
+                    <span class="tsd-kind-call-signature">registerWebhook</span
+                    ><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">webhookUrl</span
+                    ><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span
+                    ><span class="tsd-signature-symbol">,</span> <span class="tsd-kind-parameter">taskTypes</span
+                    ><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span
+                    ><span class="tsd-signature-symbol">[]</span><span class="tsd-signature-symbol">)</span
+                    ><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">Promise</span
+                    ><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">void</span
+                    ><span class="tsd-signature-symbol">&gt;</span
+                    ><a href="#registerwebhook-1" aria-label="Permalink" class="tsd-anchor-icon"
+                      ><svg viewBox="0 0 24 24" aria-hidden="true">
+                        <use href="../assets/icons.svg#icon-anchor"></use></svg
+                    ></a>
+                  </div>
+                  <div class="tsd-description">
+                    <div class="tsd-comment tsd-typography"><p>Register webhook for task notifications</p></div>
+                    <div class="tsd-parameters">
+                      <h4 class="tsd-parameters-title">Parameters</h4>
+                      <ul class="tsd-parameter-list">
+                        <li>
+                          <span
+                            ><span class="tsd-kind-parameter">webhookUrl</span>:
+                            <span class="tsd-signature-type">string</span></span
+                          >
+                        </li>
+                        <li>
+                          <span
+                            ><code class="tsd-tag">Optional</code><span class="tsd-kind-parameter">taskTypes</span>:
+                            <span class="tsd-signature-type">string</span
+                            ><span class="tsd-signature-symbol">[]</span></span
+                          >
+                        </li>
+                      </ul>
+                    </div>
+                    <h4 class="tsd-returns-title">
+                      Returns <span class="tsd-signature-type">Promise</span
+                      ><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">void</span
+                      ><span class="tsd-signature-symbol">&gt;</span>
+                    </h4>
+                    <aside class="tsd-sources">
+                      <ul>
+                        <li>
+                          Defined in
+                          <a
+                            href="https://github.com/adcontextprotocol/adcp-client/blob/f019701d35957263620cbc63b0e73eb94547b8ea/src/lib/core/AgentClient.ts#L537"
+                            >src/lib/core/AgentClient.ts:537</a
+                          >
+                        </li>
+                      </ul>
+                    </aside>
+                  </div>
+                </li>
+              </ul>
+            </section>
+            <section class="tsd-panel tsd-member">
+              <h3 class="tsd-anchor-link" id="unregisterwebhook">
+                <span>unregister<wbr />Webhook</span
+                ><a href="#unregisterwebhook" aria-label="Permalink" class="tsd-anchor-icon"
+                  ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg
+                ></a>
+              </h3>
+              <ul class="tsd-signatures">
+                <li class="">
+                  <div class="tsd-signature tsd-anchor-link" id="unregisterwebhook-1">
+                    <span class="tsd-kind-call-signature">unregisterWebhook</span
+                    ><span class="tsd-signature-symbol">()</span><span class="tsd-signature-symbol">:</span>
+                    <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span
+                    ><span class="tsd-signature-type">void</span><span class="tsd-signature-symbol">&gt;</span
+                    ><a href="#unregisterwebhook-1" aria-label="Permalink" class="tsd-anchor-icon"
+                      ><svg viewBox="0 0 24 24" aria-hidden="true">
+                        <use href="../assets/icons.svg#icon-anchor"></use></svg
+                    ></a>
+                  </div>
+                  <div class="tsd-description">
+                    <div class="tsd-comment tsd-typography"><p>Unregister webhook notifications</p></div>
+                    <h4 class="tsd-returns-title">
+                      Returns <span class="tsd-signature-type">Promise</span
+                      ><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">void</span
+                      ><span class="tsd-signature-symbol">&gt;</span>
+                    </h4>
+                    <aside class="tsd-sources">
+                      <ul>
+                        <li>
+                          Defined in
+                          <a
+                            href="https://github.com/adcontextprotocol/adcp-client/blob/f019701d35957263620cbc63b0e73eb94547b8ea/src/lib/core/AgentClient.ts#L544"
+                            >src/lib/core/AgentClient.ts:544</a
+                          >
+                        </li>
+                      </ul>
+                    </aside>
+                  </div>
+                </li>
+              </ul>
+            </section>
+          </section>
+        </details>
+      </div>
+      <div class="col-sidebar">
+        <div class="page-menu">
+          <div class="tsd-navigation settings">
+            <details class="tsd-accordion">
+              <summary class="tsd-accordion-summary">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <use href="../assets/icons.svg#icon-chevronDown"></use>
+                </svg>
+                <h3>Settings</h3>
+              </summary>
+              <div class="tsd-accordion-details">
+                <div class="tsd-filter-visibility">
+                  <span class="settings-label">Member Visibility</span>
+                  <ul id="tsd-filter-options">
+                    <li class="tsd-filter-item">
+                      <label class="tsd-filter-input"
+                        ><input type="checkbox" id="tsd-filter-inherited" name="inherited" checked /><svg
+                          width="32"
+                          height="32"
+                          viewBox="0 0 32 32"
+                          aria-hidden="true"
+                        >
+                          <rect
+                            class="tsd-checkbox-background"
+                            width="30"
+                            height="30"
+                            x="1"
+                            y="1"
+                            rx="6"
+                            fill="none"
+                          ></rect>
+                          <path
+                            class="tsd-checkbox-checkmark"
+                            d="M8.35422 16.8214L13.2143 21.75L24.6458 10.25"
+                            stroke="none"
+                            stroke-width="3.5"
+                            stroke-linejoin="round"
+                            fill="none"
+                          ></path></svg
+                        ><span>Inherited</span></label
+                      >
+                    </li>
+                    <li class="tsd-filter-item">
+                      <label class="tsd-filter-input"
+                        ><input type="checkbox" id="tsd-filter-external" name="external" /><svg
+                          width="32"
+                          height="32"
+                          viewBox="0 0 32 32"
+                          aria-hidden="true"
+                        >
+                          <rect
+                            class="tsd-checkbox-background"
+                            width="30"
+                            height="30"
+                            x="1"
+                            y="1"
+                            rx="6"
+                            fill="none"
+                          ></rect>
+                          <path
+                            class="tsd-checkbox-checkmark"
+                            d="M8.35422 16.8214L13.2143 21.75L24.6458 10.25"
+                            stroke="none"
+                            stroke-width="3.5"
+                            stroke-linejoin="round"
+                            fill="none"
+                          ></path></svg
+                        ><span>External</span></label
+                      >
+                    </li>
+                  </ul>
+                </div>
+                <div class="tsd-theme-toggle">
+                  <label class="settings-label" for="tsd-theme">Theme</label
+                  ><select id="tsd-theme">
+                    <option value="os">OS</option>
+                    <option value="light">Light</option>
+                    <option value="dark">Dark</option>
+                  </select>
+                </div>
+              </div>
+            </details>
+          </div>
+          <details open class="tsd-accordion tsd-page-navigation">
+            <summary class="tsd-accordion-summary">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <use href="../assets/icons.svg#icon-chevronDown"></use>
+              </svg>
+              <h3>On This Page</h3>
+            </summary>
+            <div class="tsd-accordion-details">
+              <details open class="tsd-accordion tsd-page-navigation-section">
+                <summary class="tsd-accordion-summary" data-key="section-Constructors">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <use href="../assets/icons.svg#icon-chevronDown"></use></svg
+                  >Constructors
+                </summary>
+                <div>
+                  <a href="#constructor"
+                    ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Constructor">
+                      <use href="../assets/icons.svg#icon-512"></use></svg
+                    ><span>constructor</span></a
+                  >
+                </div>
+              </details>
+              <details open class="tsd-accordion tsd-page-navigation-section">
+                <summary class="tsd-accordion-summary" data-key="section-Methods">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <use href="../assets/icons.svg#icon-chevronDown"></use></svg
+                  >Methods
+                </summary>
+                <div>
+                  <a href="#handlewebhook"
+                    ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method">
+                      <use href="../assets/icons.svg#icon-2048"></use></svg
+                    ><span>handle<wbr />Webhook</span></a
+                  ><a href="#getwebhookurl"
+                    ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method">
+                      <use href="../assets/icons.svg#icon-2048"></use></svg
+                    ><span>get<wbr />Webhook<wbr />Url</span></a
+                  ><a href="#verifywebhooksignature"
+                    ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method">
+                      <use href="../assets/icons.svg#icon-2048"></use></svg
+                    ><span>verify<wbr />Webhook<wbr />Signature</span></a
+                  ><a href="#getproducts"
+                    ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method">
+                      <use href="../assets/icons.svg#icon-2048"></use></svg
+                    ><span>get<wbr />Products</span></a
+                  ><a href="#listcreativeformats"
+                    ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method">
+                      <use href="../assets/icons.svg#icon-2048"></use></svg
+                    ><span>list<wbr />Creative<wbr />Formats</span></a
+                  ><a href="#createmediabuy"
+                    ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method">
+                      <use href="../assets/icons.svg#icon-2048"></use></svg
+                    ><span>create<wbr />Media<wbr />Buy</span></a
+                  ><a href="#updatemediabuy"
+                    ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method">
+                      <use href="../assets/icons.svg#icon-2048"></use></svg
+                    ><span>update<wbr />Media<wbr />Buy</span></a
+                  ><a href="#synccreatives"
+                    ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method">
+                      <use href="../assets/icons.svg#icon-2048"></use></svg
+                    ><span>sync<wbr />Creatives</span></a
+                  ><a href="#listcreatives"
+                    ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method">
+                      <use href="../assets/icons.svg#icon-2048"></use></svg
+                    ><span>list<wbr />Creatives</span></a
+                  ><a href="#getmediabuydelivery"
+                    ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method">
+                      <use href="../assets/icons.svg#icon-2048"></use></svg
+                    ><span>get<wbr />Media<wbr />Buy<wbr />Delivery</span></a
+                  ><a href="#listauthorizedproperties"
+                    ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method">
+                      <use href="../assets/icons.svg#icon-2048"></use></svg
+                    ><span>list<wbr />Authorized<wbr />Properties</span></a
+                  ><a href="#provideperformancefeedback"
+                    ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method">
+                      <use href="../assets/icons.svg#icon-2048"></use></svg
+                    ><span>provide<wbr />Performance<wbr />Feedback</span></a
+                  ><a href="#getsignals"
+                    ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method">
+                      <use href="../assets/icons.svg#icon-2048"></use></svg
+                    ><span>get<wbr />Signals</span></a
+                  ><a href="#activatesignal"
+                    ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method">
+                      <use href="../assets/icons.svg#icon-2048"></use></svg
+                    ><span>activate<wbr />Signal</span></a
+                  ><a href="#continueconversation"
+                    ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method">
+                      <use href="../assets/icons.svg#icon-2048"></use></svg
+                    ><span>continue<wbr />Conversation</span></a
+                  ><a href="#gethistory"
+                    ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method">
+                      <use href="../assets/icons.svg#icon-2048"></use></svg
+                    ><span>get<wbr />History</span></a
+                  ><a href="#clearcontext"
+                    ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method">
+                      <use href="../assets/icons.svg#icon-2048"></use></svg
+                    ><span>clear<wbr />Context</span></a
+                  ><a href="#getcontextid"
+                    ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method">
+                      <use href="../assets/icons.svg#icon-2048"></use></svg
+                    ><span>get<wbr />Context<wbr />Id</span></a
+                  ><a href="#setcontextid"
+                    ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method">
+                      <use href="../assets/icons.svg#icon-2048"></use></svg
+                    ><span>set<wbr />Context<wbr />Id</span></a
+                  ><a href="#getagent"
+                    ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method">
+                      <use href="../assets/icons.svg#icon-2048"></use></svg
+                    ><span>get<wbr />Agent</span></a
+                  ><a href="#getagentid"
+                    ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method">
+                      <use href="../assets/icons.svg#icon-2048"></use></svg
+                    ><span>get<wbr />Agent<wbr />Id</span></a
+                  ><a href="#getagentname"
+                    ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method">
+                      <use href="../assets/icons.svg#icon-2048"></use></svg
+                    ><span>get<wbr />Agent<wbr />Name</span></a
+                  ><a href="#getprotocol"
+                    ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method">
+                      <use href="../assets/icons.svg#icon-2048"></use></svg
+                    ><span>get<wbr />Protocol</span></a
+                  ><a href="#getagentinfo"
+                    ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method">
+                      <use href="../assets/icons.svg#icon-2048"></use></svg
+                    ><span>get<wbr />Agent<wbr />Info</span></a
+                  ><a href="#hasactiveconversation"
+                    ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method">
+                      <use href="../assets/icons.svg#icon-2048"></use></svg
+                    ><span>has<wbr />Active<wbr />Conversation</span></a
+                  ><a href="#getactivetasks"
+                    ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method">
+                      <use href="../assets/icons.svg#icon-2048"></use></svg
+                    ><span>get<wbr />Active<wbr />Tasks</span></a
+                  ><a href="#executetask"
+                    ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method">
+                      <use href="../assets/icons.svg#icon-2048"></use></svg
+                    ><span>execute<wbr />Task</span></a
+                  ><a href="#listtasks"
+                    ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method">
+                      <use href="../assets/icons.svg#icon-2048"></use></svg
+                    ><span>list<wbr />Tasks</span></a
+                  ><a href="#gettaskinfo"
+                    ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method">
+                      <use href="../assets/icons.svg#icon-2048"></use></svg
+                    ><span>get<wbr />Task<wbr />Info</span></a
+                  ><a href="#ontaskupdate"
+                    ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method">
+                      <use href="../assets/icons.svg#icon-2048"></use></svg
+                    ><span>on<wbr />Task<wbr />Update</span></a
+                  ><a href="#ontaskevents"
+                    ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method">
+                      <use href="../assets/icons.svg#icon-2048"></use></svg
+                    ><span>on<wbr />Task<wbr />Events</span></a
+                  ><a href="#registerwebhook"
+                    ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method">
+                      <use href="../assets/icons.svg#icon-2048"></use></svg
+                    ><span>register<wbr />Webhook</span></a
+                  ><a href="#unregisterwebhook"
+                    ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Method">
+                      <use href="../assets/icons.svg#icon-2048"></use></svg
+                    ><span>unregister<wbr />Webhook</span></a
+                  >
+                </div>
+              </details>
+            </div>
+          </details>
+        </div>
+        <div class="site-menu">
+          <nav id="tsd-sidebar-links" class="tsd-navigation">
+            <a href="https://docs.adcontextprotocol.org" class="tsd-nav-link">Documentation</a
+            ><a href="https://github.com/adcontextprotocol/adcp-client" class="tsd-nav-link">GitHub</a
+            ><a href="https://www.npmjs.com/package/@adcp/client" class="tsd-nav-link">npm</a>
+          </nav>
+          <nav class="tsd-navigation">
+            <a href="../modules.html">@adcp/client API Reference - v3.1.0</a>
+            <ul class="tsd-small-nested-navigation" id="tsd-nav-container">
+              <li>Loading...</li>
+            </ul>
+          </nav>
+        </div>
+      </div>
+    </div>
+    <footer>
+      <p class="tsd-generator">Generated using <a href="https://typedoc.org/" target="_blank">TypeDoc</a></p>
+    </footer>
+    <div class="overlay"></div>
+  </body>
+</html>

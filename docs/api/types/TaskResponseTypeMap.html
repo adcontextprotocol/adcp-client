@@ -1,0 +1,678 @@
+<!doctype html>
+<html class="default" lang="en" data-base="../">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="x-ua-compatible" content="IE=edge" />
+    <title>TaskResponseTypeMap | @adcp/client API Reference - v3.1.0</title>
+    <meta name="description" content="Documentation for @adcp/client API Reference" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="stylesheet" href="../assets/style.css" />
+    <link rel="stylesheet" href="../assets/highlight.css" />
+    <script defer src="../assets/main.js"></script>
+    <script async src="../assets/icons.js" id="tsd-icons-script"></script>
+    <script async src="../assets/search.js" id="tsd-search-script"></script>
+    <script async src="../assets/navigation.js" id="tsd-nav-script"></script>
+    <script async src="../assets/hierarchy.js" id="tsd-hierarchy-script"></script>
+  </head>
+  <body>
+    <script>
+      document.documentElement.dataset.theme = localStorage.getItem('tsd-theme') || 'os';
+      document.body.style.display = 'none';
+      setTimeout(() => (window.app ? app.showPage() : document.body.style.removeProperty('display')), 500);
+    </script>
+    <header class="tsd-page-toolbar">
+      <div class="tsd-toolbar-contents container">
+        <a href="../index.html" class="title">@adcp/client API Reference - v3.1.0</a>
+        <div id="tsd-toolbar-links">
+          <a href="https://docs.adcontextprotocol.org">Documentation</a
+          ><a href="https://github.com/adcontextprotocol/adcp-client">GitHub</a
+          ><a href="https://www.npmjs.com/package/@adcp/client">npm</a>
+        </div>
+        <button id="tsd-search-trigger" class="tsd-widget" aria-label="Search">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <use href="../assets/icons.svg#icon-search"></use>
+          </svg>
+        </button>
+        <dialog id="tsd-search" aria-label="Search">
+          <input
+            role="combobox"
+            id="tsd-search-input"
+            aria-controls="tsd-search-results"
+            aria-autocomplete="list"
+            aria-expanded="true"
+            autocapitalize="off"
+            autocomplete="off"
+            placeholder="Search the docs"
+            maxlength="100"
+          />
+          <ul role="listbox" id="tsd-search-results"></ul>
+          <div id="tsd-search-status" aria-live="polite" aria-atomic="true"><div>Preparing search index...</div></div>
+        </dialog>
+        <a href="#" class="tsd-widget menu" id="tsd-toolbar-menu-trigger" data-toggle="menu" aria-label="Menu"
+          ><svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <use href="../assets/icons.svg#icon-menu"></use></svg
+        ></a>
+      </div>
+    </header>
+    <div class="container container-main">
+      <div class="col-content">
+        <div class="tsd-page-title">
+          <ul class="tsd-breadcrumb" aria-label="Breadcrumb">
+            <li><a href="" aria-current="page">TaskResponseTypeMap</a></li>
+          </ul>
+          <h1>Type Alias TaskResponseTypeMap</h1>
+        </div>
+        <section class="tsd-panel tsd-comment">
+          <div class="tsd-comment tsd-typography">
+            <p>Type mapping for task names to their response types Enables type-safe generic executeTask() calls</p>
+          </div>
+        </section>
+        <div class="tsd-signature">
+          <span class="tsd-signature-keyword">type</span> <span class="tsd-kind-type-alias">TaskResponseTypeMap</span>
+          <span class="tsd-signature-symbol">=</span> <span class="tsd-signature-symbol">{</span><br />    <a
+            class="tsd-kind-property"
+            href="#get_products"
+            >get_products</a
+          ><span class="tsd-signature-symbol">:</span>
+          <a href="../interfaces/GetProductsResponse.html" class="tsd-signature-type tsd-kind-interface"
+            >GetProductsResponse</a
+          ><span class="tsd-signature-symbol">;</span><br />    <a
+            class="tsd-kind-property"
+            href="#list_creative_formats"
+            >list_creative_formats</a
+          ><span class="tsd-signature-symbol">:</span>
+          <a href="../interfaces/ListCreativeFormatsResponse.html" class="tsd-signature-type tsd-kind-interface"
+            >ListCreativeFormatsResponse</a
+          ><span class="tsd-signature-symbol">;</span><br />    <a class="tsd-kind-property" href="#create_media_buy"
+            >create_media_buy</a
+          ><span class="tsd-signature-symbol">:</span>
+          <a href="CreateMediaBuyResponse.html" class="tsd-signature-type tsd-kind-type-alias">CreateMediaBuyResponse</a
+          ><span class="tsd-signature-symbol">;</span><br />    <a class="tsd-kind-property" href="#update_media_buy"
+            >update_media_buy</a
+          ><span class="tsd-signature-symbol">:</span>
+          <a href="UpdateMediaBuyResponse.html" class="tsd-signature-type tsd-kind-type-alias">UpdateMediaBuyResponse</a
+          ><span class="tsd-signature-symbol">;</span><br />    <a class="tsd-kind-property" href="#sync_creatives"
+            >sync_creatives</a
+          ><span class="tsd-signature-symbol">:</span>
+          <a href="SyncCreativesResponse.html" class="tsd-signature-type tsd-kind-type-alias">SyncCreativesResponse</a
+          ><span class="tsd-signature-symbol">;</span><br />    <a class="tsd-kind-property" href="#list_creatives"
+            >list_creatives</a
+          ><span class="tsd-signature-symbol">:</span>
+          <a href="../interfaces/ListCreativesResponse.html" class="tsd-signature-type tsd-kind-interface"
+            >ListCreativesResponse</a
+          ><span class="tsd-signature-symbol">;</span><br />    <a
+            class="tsd-kind-property"
+            href="#get_media_buy_delivery"
+            >get_media_buy_delivery</a
+          ><span class="tsd-signature-symbol">:</span>
+          <a href="../interfaces/GetMediaBuyDeliveryResponse.html" class="tsd-signature-type tsd-kind-interface"
+            >GetMediaBuyDeliveryResponse</a
+          ><span class="tsd-signature-symbol">;</span><br />    <a
+            class="tsd-kind-property"
+            href="#list_authorized_properties"
+            >list_authorized_properties</a
+          ><span class="tsd-signature-symbol">:</span>
+          <a href="../interfaces/ListAuthorizedPropertiesResponse.html" class="tsd-signature-type tsd-kind-interface"
+            >ListAuthorizedPropertiesResponse</a
+          ><span class="tsd-signature-symbol">;</span><br />    <a
+            class="tsd-kind-property"
+            href="#provide_performance_feedback"
+            >provide_performance_feedback</a
+          ><span class="tsd-signature-symbol">:</span>
+          <a href="ProvidePerformanceFeedbackResponse.html" class="tsd-signature-type tsd-kind-type-alias"
+            >ProvidePerformanceFeedbackResponse</a
+          ><span class="tsd-signature-symbol">;</span><br />    <a class="tsd-kind-property" href="#get_signals"
+            >get_signals</a
+          ><span class="tsd-signature-symbol">:</span>
+          <a href="../interfaces/GetSignalsResponse.html" class="tsd-signature-type tsd-kind-interface"
+            >GetSignalsResponse</a
+          ><span class="tsd-signature-symbol">;</span><br />    <a class="tsd-kind-property" href="#activate_signal"
+            >activate_signal</a
+          ><span class="tsd-signature-symbol">:</span>
+          <a href="ActivateSignalResponse.html" class="tsd-signature-type tsd-kind-type-alias">ActivateSignalResponse</a
+          ><span class="tsd-signature-symbol">;</span><br /><span class="tsd-signature-symbol">}</span>
+        </div>
+        <aside class="tsd-sources">
+          <ul>
+            <li>
+              Defined in
+              <a
+                href="https://github.com/adcontextprotocol/adcp-client/blob/f019701d35957263620cbc63b0e73eb94547b8ea/src/lib/core/AgentClient.ts#L35"
+                >src/lib/core/AgentClient.ts:35</a
+              >
+            </li>
+          </ul>
+        </aside>
+        <section class="tsd-panel-group tsd-index-group">
+          <section class="tsd-panel tsd-index-panel">
+            <details class="tsd-index-content tsd-accordion" open>
+              <summary class="tsd-accordion-summary tsd-index-summary">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <use href="../assets/icons.svg#icon-chevronDown"></use>
+                </svg>
+                <h5 class="tsd-index-heading uppercase">Index</h5>
+              </summary>
+              <div class="tsd-accordion-details">
+                <section class="tsd-index-section">
+                  <h3 class="tsd-index-heading">Properties</h3>
+                  <div class="tsd-index-list">
+                    <a href="#get_products" class="tsd-index-link"
+                      ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property">
+                        <use href="../assets/icons.svg#icon-1024"></use></svg
+                      ><span>get_<wbr />products</span></a
+                    >
+                    <a href="#list_creative_formats" class="tsd-index-link"
+                      ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property">
+                        <use href="../assets/icons.svg#icon-1024"></use></svg
+                      ><span>list_<wbr />creative_<wbr />formats</span></a
+                    >
+                    <a href="#create_media_buy" class="tsd-index-link"
+                      ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property">
+                        <use href="../assets/icons.svg#icon-1024"></use></svg
+                      ><span>create_<wbr />media_<wbr />buy</span></a
+                    >
+                    <a href="#update_media_buy" class="tsd-index-link"
+                      ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property">
+                        <use href="../assets/icons.svg#icon-1024"></use></svg
+                      ><span>update_<wbr />media_<wbr />buy</span></a
+                    >
+                    <a href="#sync_creatives" class="tsd-index-link"
+                      ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property">
+                        <use href="../assets/icons.svg#icon-1024"></use></svg
+                      ><span>sync_<wbr />creatives</span></a
+                    >
+                    <a href="#list_creatives" class="tsd-index-link"
+                      ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property">
+                        <use href="../assets/icons.svg#icon-1024"></use></svg
+                      ><span>list_<wbr />creatives</span></a
+                    >
+                    <a href="#get_media_buy_delivery" class="tsd-index-link"
+                      ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property">
+                        <use href="../assets/icons.svg#icon-1024"></use></svg
+                      ><span>get_<wbr />media_<wbr />buy_<wbr />delivery</span></a
+                    >
+                    <a href="#list_authorized_properties" class="tsd-index-link"
+                      ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property">
+                        <use href="../assets/icons.svg#icon-1024"></use></svg
+                      ><span>list_<wbr />authorized_<wbr />properties</span></a
+                    >
+                    <a href="#provide_performance_feedback" class="tsd-index-link"
+                      ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property">
+                        <use href="../assets/icons.svg#icon-1024"></use></svg
+                      ><span>provide_<wbr />performance_<wbr />feedback</span></a
+                    >
+                    <a href="#get_signals" class="tsd-index-link"
+                      ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property">
+                        <use href="../assets/icons.svg#icon-1024"></use></svg
+                      ><span>get_<wbr />signals</span></a
+                    >
+                    <a href="#activate_signal" class="tsd-index-link"
+                      ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property">
+                        <use href="../assets/icons.svg#icon-1024"></use></svg
+                      ><span>activate_<wbr />signal</span></a
+                    >
+                  </div>
+                </section>
+              </div>
+            </details>
+          </section>
+        </section>
+        <details class="tsd-panel-group tsd-member-group tsd-accordion" open>
+          <summary class="tsd-accordion-summary" data-key="section-Properties">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <use href="../assets/icons.svg#icon-chevronDown"></use>
+            </svg>
+            <h2>Properties</h2>
+          </summary>
+          <section>
+            <section class="tsd-panel tsd-member">
+              <h3 class="tsd-anchor-link" id="get_products">
+                <span>get_<wbr />products</span
+                ><a href="#get_products" aria-label="Permalink" class="tsd-anchor-icon"
+                  ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg
+                ></a>
+              </h3>
+              <div class="tsd-signature">
+                <span class="tsd-kind-property">get_products</span><span class="tsd-signature-symbol">:</span>
+                <a href="../interfaces/GetProductsResponse.html" class="tsd-signature-type tsd-kind-interface"
+                  >GetProductsResponse</a
+                >
+              </div>
+              <aside class="tsd-sources">
+                <ul>
+                  <li>
+                    Defined in
+                    <a
+                      href="https://github.com/adcontextprotocol/adcp-client/blob/f019701d35957263620cbc63b0e73eb94547b8ea/src/lib/core/AgentClient.ts#L36"
+                      >src/lib/core/AgentClient.ts:36</a
+                    >
+                  </li>
+                </ul>
+              </aside>
+            </section>
+            <section class="tsd-panel tsd-member">
+              <h3 class="tsd-anchor-link" id="list_creative_formats">
+                <span>list_<wbr />creative_<wbr />formats</span
+                ><a href="#list_creative_formats" aria-label="Permalink" class="tsd-anchor-icon"
+                  ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg
+                ></a>
+              </h3>
+              <div class="tsd-signature">
+                <span class="tsd-kind-property">list_creative_formats</span><span class="tsd-signature-symbol">:</span>
+                <a href="../interfaces/ListCreativeFormatsResponse.html" class="tsd-signature-type tsd-kind-interface"
+                  >ListCreativeFormatsResponse</a
+                >
+              </div>
+              <aside class="tsd-sources">
+                <ul>
+                  <li>
+                    Defined in
+                    <a
+                      href="https://github.com/adcontextprotocol/adcp-client/blob/f019701d35957263620cbc63b0e73eb94547b8ea/src/lib/core/AgentClient.ts#L37"
+                      >src/lib/core/AgentClient.ts:37</a
+                    >
+                  </li>
+                </ul>
+              </aside>
+            </section>
+            <section class="tsd-panel tsd-member">
+              <h3 class="tsd-anchor-link" id="create_media_buy">
+                <span>create_<wbr />media_<wbr />buy</span
+                ><a href="#create_media_buy" aria-label="Permalink" class="tsd-anchor-icon"
+                  ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg
+                ></a>
+              </h3>
+              <div class="tsd-signature">
+                <span class="tsd-kind-property">create_media_buy</span><span class="tsd-signature-symbol">:</span>
+                <a href="CreateMediaBuyResponse.html" class="tsd-signature-type tsd-kind-type-alias"
+                  >CreateMediaBuyResponse</a
+                >
+              </div>
+              <aside class="tsd-sources">
+                <ul>
+                  <li>
+                    Defined in
+                    <a
+                      href="https://github.com/adcontextprotocol/adcp-client/blob/f019701d35957263620cbc63b0e73eb94547b8ea/src/lib/core/AgentClient.ts#L38"
+                      >src/lib/core/AgentClient.ts:38</a
+                    >
+                  </li>
+                </ul>
+              </aside>
+            </section>
+            <section class="tsd-panel tsd-member">
+              <h3 class="tsd-anchor-link" id="update_media_buy">
+                <span>update_<wbr />media_<wbr />buy</span
+                ><a href="#update_media_buy" aria-label="Permalink" class="tsd-anchor-icon"
+                  ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg
+                ></a>
+              </h3>
+              <div class="tsd-signature">
+                <span class="tsd-kind-property">update_media_buy</span><span class="tsd-signature-symbol">:</span>
+                <a href="UpdateMediaBuyResponse.html" class="tsd-signature-type tsd-kind-type-alias"
+                  >UpdateMediaBuyResponse</a
+                >
+              </div>
+              <aside class="tsd-sources">
+                <ul>
+                  <li>
+                    Defined in
+                    <a
+                      href="https://github.com/adcontextprotocol/adcp-client/blob/f019701d35957263620cbc63b0e73eb94547b8ea/src/lib/core/AgentClient.ts#L39"
+                      >src/lib/core/AgentClient.ts:39</a
+                    >
+                  </li>
+                </ul>
+              </aside>
+            </section>
+            <section class="tsd-panel tsd-member">
+              <h3 class="tsd-anchor-link" id="sync_creatives">
+                <span>sync_<wbr />creatives</span
+                ><a href="#sync_creatives" aria-label="Permalink" class="tsd-anchor-icon"
+                  ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg
+                ></a>
+              </h3>
+              <div class="tsd-signature">
+                <span class="tsd-kind-property">sync_creatives</span><span class="tsd-signature-symbol">:</span>
+                <a href="SyncCreativesResponse.html" class="tsd-signature-type tsd-kind-type-alias"
+                  >SyncCreativesResponse</a
+                >
+              </div>
+              <aside class="tsd-sources">
+                <ul>
+                  <li>
+                    Defined in
+                    <a
+                      href="https://github.com/adcontextprotocol/adcp-client/blob/f019701d35957263620cbc63b0e73eb94547b8ea/src/lib/core/AgentClient.ts#L40"
+                      >src/lib/core/AgentClient.ts:40</a
+                    >
+                  </li>
+                </ul>
+              </aside>
+            </section>
+            <section class="tsd-panel tsd-member">
+              <h3 class="tsd-anchor-link" id="list_creatives">
+                <span>list_<wbr />creatives</span
+                ><a href="#list_creatives" aria-label="Permalink" class="tsd-anchor-icon"
+                  ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg
+                ></a>
+              </h3>
+              <div class="tsd-signature">
+                <span class="tsd-kind-property">list_creatives</span><span class="tsd-signature-symbol">:</span>
+                <a href="../interfaces/ListCreativesResponse.html" class="tsd-signature-type tsd-kind-interface"
+                  >ListCreativesResponse</a
+                >
+              </div>
+              <aside class="tsd-sources">
+                <ul>
+                  <li>
+                    Defined in
+                    <a
+                      href="https://github.com/adcontextprotocol/adcp-client/blob/f019701d35957263620cbc63b0e73eb94547b8ea/src/lib/core/AgentClient.ts#L41"
+                      >src/lib/core/AgentClient.ts:41</a
+                    >
+                  </li>
+                </ul>
+              </aside>
+            </section>
+            <section class="tsd-panel tsd-member">
+              <h3 class="tsd-anchor-link" id="get_media_buy_delivery">
+                <span>get_<wbr />media_<wbr />buy_<wbr />delivery</span
+                ><a href="#get_media_buy_delivery" aria-label="Permalink" class="tsd-anchor-icon"
+                  ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg
+                ></a>
+              </h3>
+              <div class="tsd-signature">
+                <span class="tsd-kind-property">get_media_buy_delivery</span><span class="tsd-signature-symbol">:</span>
+                <a href="../interfaces/GetMediaBuyDeliveryResponse.html" class="tsd-signature-type tsd-kind-interface"
+                  >GetMediaBuyDeliveryResponse</a
+                >
+              </div>
+              <aside class="tsd-sources">
+                <ul>
+                  <li>
+                    Defined in
+                    <a
+                      href="https://github.com/adcontextprotocol/adcp-client/blob/f019701d35957263620cbc63b0e73eb94547b8ea/src/lib/core/AgentClient.ts#L42"
+                      >src/lib/core/AgentClient.ts:42</a
+                    >
+                  </li>
+                </ul>
+              </aside>
+            </section>
+            <section class="tsd-panel tsd-member">
+              <h3 class="tsd-anchor-link" id="list_authorized_properties">
+                <span>list_<wbr />authorized_<wbr />properties</span
+                ><a href="#list_authorized_properties" aria-label="Permalink" class="tsd-anchor-icon"
+                  ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg
+                ></a>
+              </h3>
+              <div class="tsd-signature">
+                <span class="tsd-kind-property">list_authorized_properties</span
+                ><span class="tsd-signature-symbol">:</span>
+                <a
+                  href="../interfaces/ListAuthorizedPropertiesResponse.html"
+                  class="tsd-signature-type tsd-kind-interface"
+                  >ListAuthorizedPropertiesResponse</a
+                >
+              </div>
+              <aside class="tsd-sources">
+                <ul>
+                  <li>
+                    Defined in
+                    <a
+                      href="https://github.com/adcontextprotocol/adcp-client/blob/f019701d35957263620cbc63b0e73eb94547b8ea/src/lib/core/AgentClient.ts#L43"
+                      >src/lib/core/AgentClient.ts:43</a
+                    >
+                  </li>
+                </ul>
+              </aside>
+            </section>
+            <section class="tsd-panel tsd-member">
+              <h3 class="tsd-anchor-link" id="provide_performance_feedback">
+                <span>provide_<wbr />performance_<wbr />feedback</span
+                ><a href="#provide_performance_feedback" aria-label="Permalink" class="tsd-anchor-icon"
+                  ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg
+                ></a>
+              </h3>
+              <div class="tsd-signature">
+                <span class="tsd-kind-property">provide_performance_feedback</span
+                ><span class="tsd-signature-symbol">:</span>
+                <a href="ProvidePerformanceFeedbackResponse.html" class="tsd-signature-type tsd-kind-type-alias"
+                  >ProvidePerformanceFeedbackResponse</a
+                >
+              </div>
+              <aside class="tsd-sources">
+                <ul>
+                  <li>
+                    Defined in
+                    <a
+                      href="https://github.com/adcontextprotocol/adcp-client/blob/f019701d35957263620cbc63b0e73eb94547b8ea/src/lib/core/AgentClient.ts#L44"
+                      >src/lib/core/AgentClient.ts:44</a
+                    >
+                  </li>
+                </ul>
+              </aside>
+            </section>
+            <section class="tsd-panel tsd-member">
+              <h3 class="tsd-anchor-link" id="get_signals">
+                <span>get_<wbr />signals</span
+                ><a href="#get_signals" aria-label="Permalink" class="tsd-anchor-icon"
+                  ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg
+                ></a>
+              </h3>
+              <div class="tsd-signature">
+                <span class="tsd-kind-property">get_signals</span><span class="tsd-signature-symbol">:</span>
+                <a href="../interfaces/GetSignalsResponse.html" class="tsd-signature-type tsd-kind-interface"
+                  >GetSignalsResponse</a
+                >
+              </div>
+              <aside class="tsd-sources">
+                <ul>
+                  <li>
+                    Defined in
+                    <a
+                      href="https://github.com/adcontextprotocol/adcp-client/blob/f019701d35957263620cbc63b0e73eb94547b8ea/src/lib/core/AgentClient.ts#L45"
+                      >src/lib/core/AgentClient.ts:45</a
+                    >
+                  </li>
+                </ul>
+              </aside>
+            </section>
+            <section class="tsd-panel tsd-member">
+              <h3 class="tsd-anchor-link" id="activate_signal">
+                <span>activate_<wbr />signal</span
+                ><a href="#activate_signal" aria-label="Permalink" class="tsd-anchor-icon"
+                  ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg
+                ></a>
+              </h3>
+              <div class="tsd-signature">
+                <span class="tsd-kind-property">activate_signal</span><span class="tsd-signature-symbol">:</span>
+                <a href="ActivateSignalResponse.html" class="tsd-signature-type tsd-kind-type-alias"
+                  >ActivateSignalResponse</a
+                >
+              </div>
+              <aside class="tsd-sources">
+                <ul>
+                  <li>
+                    Defined in
+                    <a
+                      href="https://github.com/adcontextprotocol/adcp-client/blob/f019701d35957263620cbc63b0e73eb94547b8ea/src/lib/core/AgentClient.ts#L46"
+                      >src/lib/core/AgentClient.ts:46</a
+                    >
+                  </li>
+                </ul>
+              </aside>
+            </section>
+          </section>
+        </details>
+      </div>
+      <div class="col-sidebar">
+        <div class="page-menu">
+          <div class="tsd-navigation settings">
+            <details class="tsd-accordion">
+              <summary class="tsd-accordion-summary">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <use href="../assets/icons.svg#icon-chevronDown"></use>
+                </svg>
+                <h3>Settings</h3>
+              </summary>
+              <div class="tsd-accordion-details">
+                <div class="tsd-filter-visibility">
+                  <span class="settings-label">Member Visibility</span>
+                  <ul id="tsd-filter-options">
+                    <li class="tsd-filter-item">
+                      <label class="tsd-filter-input"
+                        ><input type="checkbox" id="tsd-filter-inherited" name="inherited" checked /><svg
+                          width="32"
+                          height="32"
+                          viewBox="0 0 32 32"
+                          aria-hidden="true"
+                        >
+                          <rect
+                            class="tsd-checkbox-background"
+                            width="30"
+                            height="30"
+                            x="1"
+                            y="1"
+                            rx="6"
+                            fill="none"
+                          ></rect>
+                          <path
+                            class="tsd-checkbox-checkmark"
+                            d="M8.35422 16.8214L13.2143 21.75L24.6458 10.25"
+                            stroke="none"
+                            stroke-width="3.5"
+                            stroke-linejoin="round"
+                            fill="none"
+                          ></path></svg
+                        ><span>Inherited</span></label
+                      >
+                    </li>
+                    <li class="tsd-filter-item">
+                      <label class="tsd-filter-input"
+                        ><input type="checkbox" id="tsd-filter-external" name="external" /><svg
+                          width="32"
+                          height="32"
+                          viewBox="0 0 32 32"
+                          aria-hidden="true"
+                        >
+                          <rect
+                            class="tsd-checkbox-background"
+                            width="30"
+                            height="30"
+                            x="1"
+                            y="1"
+                            rx="6"
+                            fill="none"
+                          ></rect>
+                          <path
+                            class="tsd-checkbox-checkmark"
+                            d="M8.35422 16.8214L13.2143 21.75L24.6458 10.25"
+                            stroke="none"
+                            stroke-width="3.5"
+                            stroke-linejoin="round"
+                            fill="none"
+                          ></path></svg
+                        ><span>External</span></label
+                      >
+                    </li>
+                  </ul>
+                </div>
+                <div class="tsd-theme-toggle">
+                  <label class="settings-label" for="tsd-theme">Theme</label
+                  ><select id="tsd-theme">
+                    <option value="os">OS</option>
+                    <option value="light">Light</option>
+                    <option value="dark">Dark</option>
+                  </select>
+                </div>
+              </div>
+            </details>
+          </div>
+          <details open class="tsd-accordion tsd-page-navigation">
+            <summary class="tsd-accordion-summary">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <use href="../assets/icons.svg#icon-chevronDown"></use>
+              </svg>
+              <h3>On This Page</h3>
+            </summary>
+            <div class="tsd-accordion-details">
+              <details open class="tsd-accordion tsd-page-navigation-section">
+                <summary class="tsd-accordion-summary" data-key="section-Properties">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <use href="../assets/icons.svg#icon-chevronDown"></use></svg
+                  >Properties
+                </summary>
+                <div>
+                  <a href="#get_products"
+                    ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property">
+                      <use href="../assets/icons.svg#icon-1024"></use></svg
+                    ><span>get_<wbr />products</span></a
+                  ><a href="#list_creative_formats"
+                    ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property">
+                      <use href="../assets/icons.svg#icon-1024"></use></svg
+                    ><span>list_<wbr />creative_<wbr />formats</span></a
+                  ><a href="#create_media_buy"
+                    ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property">
+                      <use href="../assets/icons.svg#icon-1024"></use></svg
+                    ><span>create_<wbr />media_<wbr />buy</span></a
+                  ><a href="#update_media_buy"
+                    ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property">
+                      <use href="../assets/icons.svg#icon-1024"></use></svg
+                    ><span>update_<wbr />media_<wbr />buy</span></a
+                  ><a href="#sync_creatives"
+                    ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property">
+                      <use href="../assets/icons.svg#icon-1024"></use></svg
+                    ><span>sync_<wbr />creatives</span></a
+                  ><a href="#list_creatives"
+                    ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property">
+                      <use href="../assets/icons.svg#icon-1024"></use></svg
+                    ><span>list_<wbr />creatives</span></a
+                  ><a href="#get_media_buy_delivery"
+                    ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property">
+                      <use href="../assets/icons.svg#icon-1024"></use></svg
+                    ><span>get_<wbr />media_<wbr />buy_<wbr />delivery</span></a
+                  ><a href="#list_authorized_properties"
+                    ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property">
+                      <use href="../assets/icons.svg#icon-1024"></use></svg
+                    ><span>list_<wbr />authorized_<wbr />properties</span></a
+                  ><a href="#provide_performance_feedback"
+                    ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property">
+                      <use href="../assets/icons.svg#icon-1024"></use></svg
+                    ><span>provide_<wbr />performance_<wbr />feedback</span></a
+                  ><a href="#get_signals"
+                    ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property">
+                      <use href="../assets/icons.svg#icon-1024"></use></svg
+                    ><span>get_<wbr />signals</span></a
+                  ><a href="#activate_signal"
+                    ><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property">
+                      <use href="../assets/icons.svg#icon-1024"></use></svg
+                    ><span>activate_<wbr />signal</span></a
+                  >
+                </div>
+              </details>
+            </div>
+          </details>
+        </div>
+        <div class="site-menu">
+          <nav id="tsd-sidebar-links" class="tsd-navigation">
+            <a href="https://docs.adcontextprotocol.org" class="tsd-nav-link">Documentation</a
+            ><a href="https://github.com/adcontextprotocol/adcp-client" class="tsd-nav-link">GitHub</a
+            ><a href="https://www.npmjs.com/package/@adcp/client" class="tsd-nav-link">npm</a>
+          </nav>
+          <nav class="tsd-navigation">
+            <a href="../modules.html">@adcp/client API Reference - v3.1.0</a>
+            <ul class="tsd-small-nested-navigation" id="tsd-nav-container">
+              <li>Loading...</li>
+            </ul>
+          </nav>
+        </div>
+      </div>
+    </div>
+    <footer>
+      <p class="tsd-generator">Generated using <a href="https://typedoc.org/" target="_blank">TypeDoc</a></p>
+    </footer>
+    <div class="overlay"></div>
+  </body>
+</html>

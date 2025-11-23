@@ -10,6 +10,7 @@ import {
   type ListCreativeFormatsRequest,
   type CreateMediaBuyRequest,
   type TaskResult,
+  type BrandManifest,
 } from '../lib';
 import { ADCP_VERSION } from '../lib/version';
 
@@ -155,7 +156,7 @@ export class SalesAgentsHandlers {
       if (toolName === 'get_products') {
         // Build GetProductsRequest with proper types
         // brand_manifest must be either a valid URL or a BrandManifest object
-        let brandManifest: string | { name: string; url?: string };
+        let brandManifest: string | BrandManifest;
 
         const manifestInput = brandStory || userProvidedOffering || 'Test brand';
 
@@ -170,7 +171,7 @@ export class SalesAgentsHandlers {
           );
           brandManifest = {
             name: manifestInput,
-          };
+          } as BrandManifest;
         }
 
         const params: GetProductsRequest = {
@@ -238,7 +239,7 @@ export class SalesAgentsHandlers {
         result = await agent.listCreativeFormats(params);
       } else if (toolName === 'create_media_buy') {
         // brand_manifest must be either a valid URL or a BrandManifest object
-        let brandManifestForBuy: string | { name: string; url?: string };
+        let brandManifestForBuy: string | BrandManifest;
 
         const manifestInputForBuy = brandStory || userProvidedOffering || 'Test brand';
 
@@ -253,7 +254,7 @@ export class SalesAgentsHandlers {
           );
           brandManifestForBuy = {
             name: manifestInputForBuy,
-          };
+          } as BrandManifest;
         }
 
         const params: CreateMediaBuyRequest = {
