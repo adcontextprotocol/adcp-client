@@ -10,7 +10,6 @@
   },
   "includeVersion": true,
   "categorizeByGroup": true,
-  "plugin": ["typedoc-plugin-markdown"],
   "githubPages": true,
   "readme": "docs/API_README.md",
   "excludePrivate": true,
@@ -64,5 +63,11 @@
     "private": false,
     "inherited": true,
     "external": false
-  }
+  },
+  "navigation": {
+    "includeCategories": true,
+    "includeGroups": true
+  },
+  "searchInComments": true,
+  "searchInDocuments": true
 }

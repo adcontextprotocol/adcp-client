@@ -1,148 +1,62 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>ADCP Client Documentation</title>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="refresh" content="0; url=./api/index.html">
+    <title>@adcp/client Documentation</title>
     <style>
-      body {
-        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-        max-width: 1200px;
-        margin: 0 auto;
-        padding: 2rem;
-        line-height: 1.6;
-        color: #333;
-      }
-      .header {
-        text-align: center;
-        margin-bottom: 3rem;
-        padding-bottom: 2rem;
-        border-bottom: 2px solid #eee;
-      }
-      .logo {
-        font-size: 2.5rem;
-        font-weight: bold;
-        color: #0066cc;
-        margin-bottom: 0.5rem;
-      }
-      .tagline {
-        font-size: 1.2rem;
-        color: #666;
-      }
-      .nav-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-        gap: 1.5rem;
-        margin-bottom: 3rem;
-      }
-      .nav-card {
-        background: #f8f9fa;
-        border: 1px solid #e9ecef;
-        border-radius: 8px;
-        padding: 1.5rem;
-        text-decoration: none;
-        color: inherit;
-        transition: all 0.2s ease;
-      }
-      .nav-card:hover {
-        background: #fff;
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-        transform: translateY(-2px);
-      }
-      .nav-card h3 {
-        margin: 0 0 0.5rem 0;
-        color: #0066cc;
-        font-size: 1.3rem;
-      }
-      .nav-card p {
-        margin: 0;
-        color: #666;
-        font-size: 0.95rem;
-      }
-      .quick-links {
-        background: #fff;
-        border: 1px solid #ddd;
-        border-radius: 8px;
-        padding: 1.5rem;
-      }
-      .quick-links h3 {
-        margin-top: 0;
-        color: #333;
-      }
-      .quick-links ul {
-        list-style: none;
-        padding: 0;
-        margin: 0;
-      }
-      .quick-links li {
-        margin: 0.5rem 0;
-      }
-      .quick-links a {
-        color: #0066cc;
-        text-decoration: none;
-      }
-      .quick-links a:hover {
-        text-decoration: underline;
-      }
-      .badge {
-        display: inline-block;
-        background: #28a745;
-        color: white;
-        padding: 0.2rem 0.5rem;
-        border-radius: 4px;
-        font-size: 0.8rem;
-        margin-left: 0.5rem;
-      }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+        .container {
+            text-align: center;
+            padding: 2rem;
+        }
+        h1 {
+            font-size: 2.5rem;
+            margin-bottom: 1rem;
+        }
+        p {
+            font-size: 1.2rem;
+            margin-bottom: 2rem;
+        }
+        a {
+            color: white;
+            text-decoration: underline;
+            font-weight: 600;
+        }
+        .spinner {
+            border: 4px solid rgba(255, 255, 255, 0.3);
+            border-top: 4px solid white;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
     </style>
-  </head>
-  <body>
-    <div class="header">
-      <div class="logo">@adcp/client</div>
-      <div class="tagline">Official TypeScript/JavaScript client for the Ad Context Protocol</div>
+</head>
+<body>
+    <div class="container">
+        <h1>@adcp/client Documentation</h1>
+        <p>Redirecting to API documentation...</p>
+        <div class="spinner"></div>
+        <p style="margin-top: 2rem; font-size: 0.9rem;">
+            If you are not redirected automatically,
+            <a href="./api/index.html">click here</a>.
+        </p>
     </div>
-
-    <div class="nav-grid">
-      <a href="getting-started.md" class="nav-card">
-        <h3>🚀 Getting Started</h3>
-        <p>Quick installation guide and basic usage examples to get you up and running in minutes.</p>
-      </a>
-
-      <a href="api/README.md" class="nav-card">
-        <h3>📖 API Reference <span class="badge">Auto-generated</span></h3>
-        <p>Complete API documentation with classes, interfaces, and type definitions.</p>
-      </a>
-
-      <a href="guides/ASYNC-DEVELOPER-GUIDE.md" class="nav-card">
-        <h3>⚡ Async Patterns</h3>
-        <p>Master async execution with webhooks, deferrals, and input handlers.</p>
-      </a>
-
-      <a href="guides/REAL-WORLD-EXAMPLES.md" class="nav-card">
-        <h3>💡 Examples</h3>
-        <p>Real-world scenarios and code examples for common use cases.</p>
-      </a>
-
-      <a href="guides/HANDLER-PATTERNS-GUIDE.md" class="nav-card">
-        <h3>🔧 Handler Patterns</h3>
-        <p>Build powerful input handlers for interactive agent conversations.</p>
-      </a>
-
-      <a href="guides/ASYNC-TROUBLESHOOTING-GUIDE.md" class="nav-card">
-        <h3>🐛 Troubleshooting</h3>
-        <p>Common issues and solutions for debugging agent integrations.</p>
-      </a>
-    </div>
-
-    <div class="quick-links">
-      <h3>Quick Links</h3>
-      <ul>
-        <li><a href="https://www.npmjs.com/package/@adcp/client">📦 npm Package</a></li>
-        <li><a href="https://github.com/adcontextprotocol/adcp-client">💻 GitHub Repository</a></li>
-        <li><a href="https://adcontextprotocol.org">📋 AdCP Specification</a></li>
-        <li><a href="guides/ASYNC-MIGRATION-GUIDE.md">🔄 Migration Guide</a></li>
-        <li><a href="guides/TESTING-STRATEGY.md">🧪 Testing Strategy</a></li>
-        <li><a href="DEVELOPMENT.md">🛠️ Documentation Development</a></li>
-      </ul>
-    </div>
-  </body>
+</body>
 </html>
