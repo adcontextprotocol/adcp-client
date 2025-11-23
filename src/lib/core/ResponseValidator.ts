@@ -176,11 +176,6 @@ export class ResponseValidator {
     if (!firstPart.data) {
       warnings.push('A2A part missing data field');
     }
-
-    // Validate artifact metadata
-    if (!firstArtifact.artifactId && !firstArtifact.artifact_id) {
-      warnings.push('A2A artifact missing artifactId');
-    }
   }
 
   /**

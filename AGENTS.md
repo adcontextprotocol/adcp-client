@@ -69,6 +69,79 @@ import { ProtocolClient } from "./src/lib/protocols";
 // Routes to: callA2ATool() or callMCPTool() based on agent.protocol
 ```
 
+**🚨 CRITICAL: A2A Protocol Implementation Requirements**
+
+The A2A protocol has specific implementation requirements that differ from MCP:
+
+**1. Artifact Field Names**
+
+A2A artifacts use `artifactId` per @a2a-js/sdk Artifact interface, NOT `name`:
+```typescript
+// Correct (per @a2a-js/sdk)
+if (!artifact.artifactId) {
+  warnings.push('A2A artifact missing artifactId field');
+}
+
+// Incorrect - 'name' doesn't exist in A2A SDK
+if (!artifact.name) { ... }
+```
+
+**2. Two Types of Webhooks - Do Not Confuse!**
+
+**1. `push_notification_config` - For Async Task Status Updates**
+
+Used for receiving task completion/progress notifications. Placement differs by protocol:
+
+- **A2A Protocol**: Goes in `params.configuration.pushNotificationConfig` (camelCase)
+  ```typescript
+  await a2aClient.sendMessage({
+    message: { /* task content */ },
+    configuration: {
+      pushNotificationConfig: {  // ← For async task status
+        url: webhookUrl,
+        token?: clientToken,
+        authentication: { schemes: ['HMAC-SHA256'], credentials: secret }
+      }
+    }
+  });
+  ```
+
+- **MCP Protocol**: Goes in tool arguments as `push_notification_config` (snake_case)
+  ```typescript
+  await mcpClient.callTool('create_media_buy', {
+    buyer_ref: '...',
+    packages: [...],
+    push_notification_config: {  // ← For async task status
+      url: webhookUrl,
+      token?: clientToken,
+      authentication: { schemes: ['HMAC-SHA256'], credentials: secret }
+    }
+  });
+  ```
+
+**2. `reporting_webhook` - For Reporting Data Delivery**
+
+Used for receiving periodic performance metrics. **Always stays in skill parameters** (both A2A and MCP):
+
+```typescript
+// Both protocols - reporting_webhook in skill parameters
+{
+  buyer_ref: '...',
+  packages: [...],
+  reporting_webhook: {  // ← Stays in parameters for BOTH protocols
+    url: reportingUrl,
+    token?: clientToken,
+    authentication: { schemes: ['HMAC-SHA256'], credentials: secret },
+    reporting_frequency: 'daily',  // Additional fields specific to reporting
+    requested_metrics: ['impressions', 'spend', 'clicks']
+  }
+}
+```
+
+Schema: https://adcontextprotocol.org/schemas/v1/core/push-notification-config.json
+
+The `ProtocolClient.callTool()` method in `src/lib/protocols/index.ts` handles this routing automatically.
+
 ### Async Operation Patterns (AdCP PR 78)
 
 All operations follow 5 status patterns based on agent response:
