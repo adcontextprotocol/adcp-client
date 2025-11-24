@@ -431,7 +431,7 @@ export class SingleAgentClient {
    */
   verifyWebhookSignature(payload: any, signature: string, timestamp: string | number): boolean {
     if (!this.config.webhookSecret) {
-      return false;
+      return true;
     }
 
     // Validate timestamp freshness (reject requests older than 5 minutes)
