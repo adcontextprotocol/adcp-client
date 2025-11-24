@@ -3,13 +3,25 @@ import { Client as MCPClient } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { createMCPAuthHeaders } from '../auth';
+import { logger } from '../utils/logger';
+
+export interface ProtocolLoggingConfig {
+  enabled?: boolean;
+  logRequests?: boolean;
+  logResponses?: boolean;
+  logRequestBodies?: boolean;
+  logResponseBodies?: boolean;
+  maxBodySize?: number;
+  redactAuthHeaders?: boolean;
+}
 
 export async function callMCPTool(
   agentUrl: string,
   toolName: string,
   args: any,
   authToken?: string,
-  debugLogs: any[] = []
+  debugLogs: any[] = [],
+  loggingConfig?: ProtocolLoggingConfig
 ): Promise<any> {
   let mcpClient: MCPClient | undefined = undefined;
   const baseUrl = new URL(agentUrl);
@@ -37,6 +49,8 @@ export async function callMCPTool(
   // Create custom fetch that injects auth headers into every request
   // This ensures ALL requests (including initialization) include auth headers when needed
   const customFetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    const startTime = Date.now();
+
     // Convert existing headers to plain object for merging
     let existingHeaders: Record<string, string> = {};
     if (init?.headers) {
@@ -64,6 +78,48 @@ export async function callMCPTool(
       headers: mergedHeaders
     };
 
+    // Log request details if protocol logging is enabled
+    const shouldLog = loggingConfig?.enabled === true;
+    const shouldLogRequest = shouldLog && (loggingConfig?.logRequests !== false);
+    const shouldLogRequestBody = shouldLog && (loggingConfig?.logRequestBodies !== false);
+    const shouldRedact = loggingConfig?.redactAuthHeaders !== false;
+    const maxBodySize = loggingConfig?.maxBodySize || 50000;
+
+    if (shouldLogRequest) {
+      const url = typeof input === 'string' ? input : input.toString();
+      const method = init?.method || 'POST';
+
+      // Prepare headers for logging (redact sensitive ones)
+      const headersForLog = { ...mergedHeaders };
+      if (shouldRedact) {
+        if (headersForLog['Authorization']) headersForLog['Authorization'] = '***REDACTED***';
+        if (headersForLog['x-adcp-auth']) headersForLog['x-adcp-auth'] = '***REDACTED***';
+      }
+
+      let requestBody: any = null;
+      if (shouldLogRequestBody && init?.body) {
+        const bodyStr = typeof init.body === 'string' ? init.body : JSON.stringify(init.body);
+        if (bodyStr.length > maxBodySize) {
+          requestBody = bodyStr.substring(0, maxBodySize) + `... [TRUNCATED: ${bodyStr.length - maxBodySize} bytes]`;
+        } else {
+          try {
+            requestBody = JSON.parse(bodyStr);
+          } catch {
+            requestBody = bodyStr;
+          }
+        }
+      }
+
+      logger.debug('[MCP Request]', {
+        protocol: 'mcp',
+        method,
+        url,
+        headers: headersForLog,
+        body: requestBody,
+        timestamp: new Date().toISOString()
+      });
+    }
+
     debugLogs.push({
       type: 'info',
       message: `MCP: Fetch to ${typeof input === 'string' ? input : input.toString()}`,
@@ -74,7 +130,51 @@ export async function callMCPTool(
         : mergedHeaders
     });
 
-    return fetch(input, mergedInit);
+    const response = await fetch(input, mergedInit);
+    const latency = Date.now() - startTime;
+
+    // Log response details if protocol logging is enabled
+    const shouldLogResponse = shouldLog && (loggingConfig?.logResponses !== false);
+    const shouldLogResponseBody = shouldLog && (loggingConfig?.logResponseBodies !== false);
+
+    if (shouldLogResponse) {
+      const responseHeadersObj: Record<string, string> = {};
+      response.headers.forEach((value, key) => {
+        responseHeadersObj[key] = value;
+      });
+
+      let responseBody: any = null;
+      if (shouldLogResponseBody && response.body) {
+        // Clone response to read body without consuming it
+        const clonedResponse = response.clone();
+        try {
+          const bodyText = await clonedResponse.text();
+          if (bodyText.length > maxBodySize) {
+            responseBody = bodyText.substring(0, maxBodySize) + `... [TRUNCATED: ${bodyText.length - maxBodySize} bytes]`;
+          } else {
+            try {
+              responseBody = JSON.parse(bodyText);
+            } catch {
+              responseBody = bodyText;
+            }
+          }
+        } catch (err) {
+          responseBody = '[Could not read response body]';
+        }
+      }
+
+      logger.debug('[MCP Response]', {
+        protocol: 'mcp',
+        status: response.status,
+        statusText: response.statusText,
+        headers: responseHeadersObj,
+        body: responseBody,
+        latency: `${latency}ms`,
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    return response;
   };
 
   try {

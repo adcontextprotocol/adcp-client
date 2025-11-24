@@ -1,8 +1,9 @@
 // Unified Protocol Interface for AdCP
-export { callMCPTool } from './mcp';
-export { callA2ATool } from './a2a';
+export { callMCPTool, type ProtocolLoggingConfig as MCPLoggingConfig } from './mcp';
+export { callA2ATool, type ProtocolLoggingConfig as A2ALoggingConfig } from './a2a';
+export type { ProtocolLoggingConfig } from './mcp'; // Re-export for convenience
 
-import { callMCPTool } from './mcp';
+import { callMCPTool, type ProtocolLoggingConfig } from './mcp';
 import { callA2ATool } from './a2a';
 import type { AgentConfig } from '../types';
 import { getAuthToken } from '../auth';
@@ -21,7 +22,8 @@ export class ProtocolClient {
     args: Record<string, any>,
     debugLogs: any[] = [],
     webhookUrl?: string,
-    webhookSecret?: string
+    webhookSecret?: string,
+    loggingConfig?: ProtocolLoggingConfig
   ): Promise<any> {
     validateAgentUrl(agent.agent_uri);
 
@@ -48,7 +50,8 @@ export class ProtocolClient {
         toolName,
         argsWithWebhook,
         authToken,
-        debugLogs
+        debugLogs,
+        loggingConfig
       );
     } else if (agent.protocol === 'a2a') {
       return callA2ATool(
@@ -56,7 +59,8 @@ export class ProtocolClient {
         toolName,
         argsWithWebhook, // This maps to 'parameters' in callA2ATool
         authToken,
-        debugLogs
+        debugLogs,
+        loggingConfig
       );
     } else {
       throw new Error(`Unsupported protocol: ${agent.protocol}`);
