@@ -3,13 +3,25 @@ import { Client as MCPClient } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { createMCPAuthHeaders } from '../auth';
+import { logger } from '../utils/logger';
+
+export interface ProtocolLoggingConfig {
+  enabled?: boolean;
+  logRequests?: boolean;
+  logResponses?: boolean;
+  logRequestBodies?: boolean;
+  logResponseBodies?: boolean;
+  maxBodySize?: number;
+  redactAuthHeaders?: boolean;
+}
 
 export async function callMCPTool(
   agentUrl: string,
   toolName: string,
   args: any,
   authToken?: string,
-  debugLogs: any[] = []
+  debugLogs: any[] = [],
+  loggingConfig?: ProtocolLoggingConfig
 ): Promise<any> {
   let mcpClient: MCPClient | undefined = undefined;
   const baseUrl = new URL(agentUrl);
@@ -34,14 +46,6 @@ export async function callMCPTool(
     });
   }
 
-  // Log auth configuration
-  debugLogs.push({
-    type: 'info',
-    message: `MCP: Auth configuration`,
-    timestamp: new Date().toISOString(),
-    hasAuth: !!authToken,
-    headers: authToken ? { 'x-adcp-auth': '***' } : {},
-  });
 
   try {
     // First, try to connect using StreamableHTTPClientTransport
