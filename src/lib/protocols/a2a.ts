@@ -8,17 +8,32 @@ if (!A2AClient) {
   throw new Error('A2A SDK client is required. Please install @a2a-js/sdk');
 }
 
+import { logger } from '../utils/logger';
+
+export interface ProtocolLoggingConfig {
+  enabled?: boolean;
+  logRequests?: boolean;
+  logResponses?: boolean;
+  logRequestBodies?: boolean;
+  logResponseBodies?: boolean;
+  maxBodySize?: number;
+  redactAuthHeaders?: boolean;
+}
+
 export async function callA2ATool(
   agentUrl: string,
   toolName: string,
   parameters: Record<string, any>,
   authToken?: string,
   debugLogs: any[] = [],
-  pushNotificationConfig?: PushNotificationConfig
+  pushNotificationConfig?: PushNotificationConfig,
+  loggingConfig?: ProtocolLoggingConfig (feat: add detailed protocol logging for MCP and A2A requests)
 ): Promise<any> {
   // Create authenticated fetch that wraps native fetch
   // This ensures ALL requests (including agent card fetching) include auth headers
   const fetchImpl = async (url: string | URL | Request, options?: RequestInit) => {
+    const startTime = Date.now();
+
     // Build headers - always start with existing headers, then add auth if available
     const existingHeaders: Record<string, string> = {};
     if (options?.headers) {
@@ -44,6 +59,48 @@ export async function callA2ATool(
       }),
     };
 
+    // Log request details if protocol logging is enabled
+    const shouldLog = loggingConfig?.enabled === true;
+    const shouldLogRequest = shouldLog && (loggingConfig?.logRequests !== false);
+    const shouldLogRequestBody = shouldLog && (loggingConfig?.logRequestBodies !== false);
+    const shouldRedact = loggingConfig?.redactAuthHeaders !== false;
+    const maxBodySize = loggingConfig?.maxBodySize || 50000;
+
+    if (shouldLogRequest) {
+      const urlString = typeof url === 'string' ? url : url.toString();
+      const method = options?.method || 'POST';
+
+      // Prepare headers for logging (redact sensitive ones)
+      const headersForLog = { ...headers };
+      if (shouldRedact) {
+        if (headersForLog['Authorization']) headersForLog['Authorization'] = '***REDACTED***';
+        if (headersForLog['x-adcp-auth']) headersForLog['x-adcp-auth'] = '***REDACTED***';
+      }
+
+      let requestBody: any = null;
+      if (shouldLogRequestBody && options?.body) {
+        const bodyStr = typeof options.body === 'string' ? options.body : JSON.stringify(options.body);
+        if (bodyStr.length > maxBodySize) {
+          requestBody = bodyStr.substring(0, maxBodySize) + `... [TRUNCATED: ${bodyStr.length - maxBodySize} bytes]`;
+        } else {
+          try {
+            requestBody = JSON.parse(bodyStr);
+          } catch {
+            requestBody = bodyStr;
+          }
+        }
+      }
+
+      logger.debug('[A2A Request]', {
+        protocol: 'a2a',
+        method,
+        url: urlString,
+        headers: headersForLog,
+        body: requestBody,
+        timestamp: new Date().toISOString()
+      });
+    }
+
     debugLogs.push({
       type: 'info',
       message: `A2A: Fetch to ${typeof url === 'string' ? url : url.toString()}`,
@@ -52,10 +109,55 @@ export async function callA2ATool(
       headers: authToken ? { ...headers, Authorization: 'Bearer ***', 'x-adcp-auth': '***' } : headers,
     });
 
-    return fetch(url, {
+    const response = await fetch(url, {
       ...options,
       headers,
     });
+
+    const latency = Date.now() - startTime;
+
+    // Log response details if protocol logging is enabled
+    const shouldLogResponse = shouldLog && (loggingConfig?.logResponses !== false);
+    const shouldLogResponseBody = shouldLog && (loggingConfig?.logResponseBodies !== false);
+
+    if (shouldLogResponse) {
+      const responseHeadersObj: Record<string, string> = {};
+      response.headers.forEach((value, key) => {
+        responseHeadersObj[key] = value;
+      });
+
+      let responseBody: any = null;
+      if (shouldLogResponseBody && response.body) {
+        // Clone response to read body without consuming it
+        const clonedResponse = response.clone();
+        try {
+          const bodyText = await clonedResponse.text();
+          if (bodyText.length > maxBodySize) {
+            responseBody = bodyText.substring(0, maxBodySize) + `... [TRUNCATED: ${bodyText.length - maxBodySize} bytes]`;
+          } else {
+            try {
+              responseBody = JSON.parse(bodyText);
+            } catch {
+              responseBody = bodyText;
+            }
+          }
+        } catch (err) {
+          responseBody = '[Could not read response body]';
+        }
+      }
+
+      logger.debug('[A2A Response]', {
+        protocol: 'a2a',
+        status: response.status,
+        statusText: response.statusText,
+        headers: responseHeadersObj,
+        body: responseBody,
+        latency: `${latency}ms`,
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    return response;
   };
 
   // Create A2A client using the recommended fromCardUrl method
