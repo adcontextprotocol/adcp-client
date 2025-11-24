@@ -94,6 +94,68 @@ export interface SingleAgentClientConfig extends ConversationConfig {
      */
     logSchemaViolations?: boolean;
   };
+  /**
+   * Detailed protocol logging configuration
+   *
+   * Enables logging of exact wire-level protocol requests and responses.
+   * Useful for debugging, monitoring, and understanding protocol interactions.
+   *
+   * @example
+   * ```typescript
+   * const client = new ADCPClient(agent, {
+   *   protocolLogging: {
+   *     enabled: true,
+   *     logRequests: true,
+   *     logResponses: true,
+   *     logRequestBodies: true,
+   *     logResponseBodies: true,
+   *     maxBodySize: 10000
+   *   }
+   * });
+   * ```
+   */
+  protocolLogging?: {
+    /**
+     * Enable detailed protocol logging (default: false)
+     *
+     * When enabled, logs exact HTTP requests and responses for both MCP and A2A protocols
+     */
+    enabled?: boolean;
+    /**
+     * Log request details including method, URL, and headers (default: true if enabled)
+     */
+    logRequests?: boolean;
+    /**
+     * Log response details including status, headers, and body (default: true if enabled)
+     */
+    logResponses?: boolean;
+    /**
+     * Log request bodies/payloads (default: true if enabled)
+     *
+     * For MCP: Logs JSON-RPC request payloads
+     * For A2A: Logs message payloads with skill name and parameters
+     */
+    logRequestBodies?: boolean;
+    /**
+     * Log response bodies/payloads (default: true if enabled)
+     *
+     * For MCP: Logs JSON-RPC response content
+     * For A2A: Logs message response data
+     */
+    logResponseBodies?: boolean;
+    /**
+     * Maximum body size to log in bytes (default: 50000 / 50KB)
+     *
+     * Bodies larger than this will be truncated with a note
+     */
+    maxBodySize?: number;
+    /**
+     * Redact sensitive headers from logs (default: true)
+     *
+     * When true, masks Authorization and x-adcp-auth header values
+     */
+    redactAuthHeaders?: boolean;
+  };
 }
 
 /**
@@ -133,6 +195,7 @@ export class SingleAgentClient {
       strictSchemaValidation: config.validation?.strictSchemaValidation !== false, // Default: true
       logSchemaViolations: config.validation?.logSchemaViolations !== false, // Default: true
       onActivity: config.onActivity,
+      protocolLogging: config.protocolLogging
     });
 
     // Create async handler if handlers are provided

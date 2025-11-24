@@ -3,7 +3,7 @@
 
 import { randomUUID } from 'crypto';
 import type { AgentConfig } from '../types';
-import { ProtocolClient } from '../protocols';
+import { ProtocolClient, type ProtocolLoggingConfig } from '../protocols';
 import type { Storage } from '../storage/interfaces';
 import { responseValidator } from './ResponseValidator';
 import { unwrapProtocolResponse } from '../utils/response-unwrapper';
@@ -110,6 +110,8 @@ export class TaskExecutor {
       logSchemaViolations?: boolean;
       /** Global activity callback for observability */
       onActivity?: (activity: Activity) => void | Promise<void>;
+      /** Protocol logging configuration */
+      protocolLogging?: ProtocolLoggingConfig;
     } = {}
   ) {
     this.responseParser = new ProtocolResponseParser();
@@ -210,7 +212,9 @@ export class TaskExecutor {
         params,
         debugLogs,
         webhookUrl,
-        this.config.webhookSecret
+        this.config.webhookSecret,
+        undefined, // webhookToken
+        this.config.protocolLogging
       );
 
       // Emit protocol_response activity
@@ -701,7 +705,7 @@ export class TaskExecutor {
    */
   async listTasks(agent: AgentConfig): Promise<TaskInfo[]> {
     try {
-      const response = await ProtocolClient.callTool(agent, 'tasks/list', {});
+      const response = await ProtocolClient.callTool(agent, 'tasks/list', {}, [], undefined, undefined, undefined, this.config.protocolLogging);
       return response.tasks || [];
     } catch (error) {
       console.warn('Failed to list tasks:', error);
@@ -710,7 +714,7 @@ export class TaskExecutor {
   }
 
   async getTaskStatus(agent: AgentConfig, taskId: string): Promise<TaskInfo> {
-    const response = await ProtocolClient.callTool(agent, 'tasks/get', { taskId });
+    const response = await ProtocolClient.callTool(agent, 'tasks/get', { taskId }, [], undefined, undefined, undefined, this.config.protocolLogging);
     return response.task || response;
   }
 
@@ -805,7 +809,11 @@ export class TaskExecutor {
         contextId,
         input,
       },
-      debugLogs
+      debugLogs,
+      undefined,
+      undefined,
+      undefined, // webhookToken
+      this.config.protocolLogging
     );
 
     // Add response message
@@ -906,7 +914,7 @@ export class TaskExecutor {
     const agent = this.findAgentById(agentId);
     if (agent) {
       try {
-        const response = await ProtocolClient.callTool(agent, 'tasks/list', {});
+        const response = await ProtocolClient.callTool(agent, 'tasks/list', {}, [], undefined, undefined, undefined, this.config.protocolLogging);
         return response.tasks || [];
       } catch (error) {
         console.warn('Failed to get remote task list:', error);
