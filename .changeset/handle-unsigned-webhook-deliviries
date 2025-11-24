@@ -1,0 +1,5 @@
+---
+'@adcp/client': patch
+---
+
+Allow handling non signed webhook deliveries
