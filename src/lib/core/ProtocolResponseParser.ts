@@ -35,7 +35,12 @@ export class ProtocolResponseParser {
    * Check if response indicates input is needed per ADCP spec
    */
   isInputRequest(response: any): boolean {
-    // ADCP spec: check status field first
+    // ADCP spec: check A2A JSON-RPC wrapped status first
+    if (response?.result?.status?.state === ADCP_STATUS.INPUT_REQUIRED) {
+      return true;
+    }
+
+    // ADCP spec: check top-level status field
     if (response?.status === ADCP_STATUS.INPUT_REQUIRED) {
       return true;
     }
@@ -72,6 +77,11 @@ export class ProtocolResponseParser {
    * Get ADCP status from response
    */
   getStatus(response: any): ADCPStatus | null {
+    // Check A2A JSON-RPC wrapped status (result.status.state)
+    if (response?.result?.status?.state && Object.values(ADCP_STATUS).includes(response.result.status.state)) {
+      return response.result.status.state as ADCPStatus;
+    }
+
     // Check top-level status first (A2A and direct responses)
     if (response?.status && Object.values(ADCP_STATUS).includes(response.status)) {
       return response.status as ADCPStatus;
