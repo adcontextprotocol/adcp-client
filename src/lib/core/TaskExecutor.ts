@@ -484,7 +484,7 @@ export class TaskExecutor {
   }
 
   /**
-   * Wait for 'working' status completion (max 120s per PR #78)
+   * Handle 'working' status - return as valid intermediate state
    */
   private async waitForWorkingCompletion<T>(
     agent: AgentConfig,
@@ -498,70 +498,27 @@ export class TaskExecutor {
     debugLogs: any[] = [],
     startTime: number = Date.now()
   ): Promise<TaskResult<T>> {
-    // TODO: Implement SSE/streaming connection waiting
-    // For now, simulate by polling tasks/get endpoint
-    const workingTimeout = this.config.workingTimeout || 120000;
-    const pollInterval = this.config.pollingInterval || 2000;
-    const deadline = Date.now() + workingTimeout;
+    // Extract any data that came with the working response
+    const partialData = this.extractResponseData(initialResponse, debugLogs, taskName);
 
-    while (Date.now() < deadline) {
-      await this.sleep(pollInterval);
-
-      try {
-        const taskInfo = await this.getTaskStatus(agent, taskId);
-
-        if (taskInfo.status === ADCP_STATUS.COMPLETED) {
-          // Check if the actual operation succeeded
-          const workingSuccess = taskInfo.result?.success !== false && !taskInfo.result?.error;
-
-          return {
-            success: workingSuccess,
-            status: 'completed',
-            data: taskInfo.result,
-            error: workingSuccess
-              ? undefined
-              : taskInfo.result?.error || taskInfo.result?.message || 'Operation failed',
-            metadata: {
-              taskId,
-              taskName,
-              agent: { id: agent.id, name: agent.name, protocol: agent.protocol },
-              responseTimeMs: Date.now() - startTime,
-              timestamp: new Date().toISOString(),
-              clarificationRounds: 0,
-              status: 'completed',
-            },
-            conversation: messages,
-          };
-        }
-
-        if (taskInfo.status === ADCP_STATUS.INPUT_REQUIRED) {
-          // Transition to input handling
-          return this.handleInputRequired<T>(
-            agent,
-            taskId,
-            taskName,
-            params,
-            taskInfo,
-            messages,
-            inputHandler,
-            options,
-            debugLogs,
-            startTime
-          );
-        }
-
-        if (taskInfo.status === ADCP_STATUS.FAILED) {
-          throw new Error(`Task failed: ${taskInfo.error}`);
-        }
-
-        // Still working, continue polling
-      } catch (error) {
-        // Network error during polling - continue trying
-        console.warn(`Polling error for task ${taskId}:`, error);
-      }
-    }
-
-    throw new TaskTimeoutError(taskId, workingTimeout);
+    // Return working status immediately - this is a valid intermediate state
+    // Callers can use the taskId to poll for completion or set up webhooks
+    return {
+      success: true, // The task is progressing, not failed
+      status: 'working',
+      data: partialData,
+      metadata: {
+        taskId,
+        taskName,
+        agent: { id: agent.id, name: agent.name, protocol: agent.protocol },
+        responseTimeMs: Date.now() - startTime,
+        timestamp: new Date().toISOString(),
+        clarificationRounds: 0,
+        status: 'working',
+      },
+      conversation: messages,
+      debug_logs: debugLogs,
+    };
   }
 
   /**
@@ -593,7 +550,7 @@ export class TaskExecutor {
     };
 
     return {
-      success: false,
+      success: true, // The task is progressing, not failed
       status: 'submitted',
       submitted,
       metadata: {
@@ -611,7 +568,12 @@ export class TaskExecutor {
   }
 
   /**
-   * Handle input-required status (handler mandatory)
+   * Handle input-required status
+   *
+   * Some agents (like Yahoo) return input-required status. THIS IS TOTALLY VALID AND IS AN INTERMEDIATE STATE.
+   * IT SHOULD NOT BE THROWING AN ERROR. IT DOES NOT ALWAYS REQUIRE an input handler.
+   * This is common for HITL (human-in-the-loop) workflows where the agent has already processed
+   * the request and is just signaling that async approval may be needed.
    */
   private async handleInputRequired<T>(
     agent: AgentConfig,
@@ -627,9 +589,29 @@ export class TaskExecutor {
   ): Promise<TaskResult<T>> {
     const inputRequest = this.responseParser.parseInputRequest(response);
 
-    // Handler is mandatory for input-required
+    // If no handler provided, return input-required status as a valid intermediate state
+    // This allows callers to handle the input-required state themselves (e.g., HITL workflows)
     if (!inputHandler) {
-      throw new InputRequiredError(inputRequest.question);
+      // Extract any data that came with the response (some agents include partial results)
+      const partialData = this.extractResponseData(response, debugLogs, taskName);
+
+      return {
+        success: true, // The task is progressing, not failed
+        status: 'input-required',
+        data: partialData,
+        metadata: {
+          taskId,
+          taskName,
+          agent: { id: agent.id, name: agent.name, protocol: agent.protocol },
+          responseTimeMs: Date.now() - startTime,
+          timestamp: new Date().toISOString(),
+          clarificationRounds: 0,
+          status: 'input-required',
+          inputRequest, // Include the input request details for the caller
+        },
+        conversation: messages,
+        debug_logs: debugLogs,
+      };
     }
 
     // Build context for handler
@@ -682,7 +664,7 @@ export class TaskExecutor {
       };
 
       return {
-        success: false,
+        success: true, // The task is progressing, not failed
         status: 'deferred',
         deferred,
         metadata: {

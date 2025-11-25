@@ -74,10 +74,16 @@ export class AgentClient {
    * @param payload - Webhook payload from agent
    * @param signature - Optional signature for verification (X-ADCP-Signature)
    * @param timestamp - Optional timestamp for verification (X-ADCP-Timestamp)
+   * @param taskType - Task type from URL path (e.g., 'create_media_buy')
    * @returns Whether webhook was handled successfully
    */
-  async handleWebhook(payload: any, signature?: string, timestamp?: string | number): Promise<boolean> {
-    return this.client.handleWebhook(payload, signature, timestamp);
+  async handleWebhook(
+    payload: any,
+    signature?: string,
+    timestamp?: string | number,
+    taskType?: string
+  ): Promise<boolean> {
+    return this.client.handleWebhook(payload, signature, timestamp, taskType);
   }
 
   /**
