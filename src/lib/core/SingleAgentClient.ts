@@ -393,7 +393,7 @@ export class SingleAgentClient {
       operation_id: payload.metadata?.operation_id || payload.id || 'unknown',
       context_id: payload.contextId || payload.metadata?.adcp_context?.buyer_ref,
       task_id: payload.id,
-      task_type: payload.metadata?.task_type || taskType || 'unknown',
+      task_type: payload?.task_type || taskType || 'unknown',
       status: a2aStatus,
       result,
       error: payload.status?.message?.message || payload.error,
