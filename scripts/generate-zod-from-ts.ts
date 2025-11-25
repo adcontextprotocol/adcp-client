@@ -137,6 +137,58 @@ const TOOL_TYPES = [
   'CreativeFilters',
 ];
 
+/**
+ * Post-process generated Zod schemas to convert .optional() to .nullish() for specific schemas.
+ * This is needed because real-world API responses often send explicit null values for optional
+ * fields, but ts-to-zod generates .optional() which only accepts undefined.
+ * Using .nullish() accepts both undefined and null.
+ */
+function postProcessForNullish(content: string): string {
+  // Schemas that should use .nullish() instead of .optional() for their fields
+  // These are response schemas where APIs may send explicit null values
+  const schemasToProcess = [
+    'PackageSchema',
+    'CreateMediaBuyResponseSchema',
+  ];
+
+  let result = content;
+
+  for (const schemaName of schemasToProcess) {
+    // Match the schema definition and replace .optional() with .nullish() within it
+    const schemaRegex = new RegExp(
+      `(export const ${schemaName} = z\\.(?:object|union)\\([\\s\\S]*?)(\\.optional\\(\\))`,
+      'g'
+    );
+
+    // For PackageSchema, replace all .optional() with .nullish() within the schema block
+    if (schemaName === 'PackageSchema') {
+      // Find the PackageSchema block and replace .optional() with .nullish()
+      const packageSchemaMatch = result.match(
+        /export const PackageSchema = z\.object\(\{[\s\S]*?\}\);/
+      );
+      if (packageSchemaMatch) {
+        const original = packageSchemaMatch[0];
+        const modified = original.replace(/\.optional\(\)/g, '.nullish()');
+        result = result.replace(original, modified);
+      }
+    }
+
+    // For CreateMediaBuyResponseSchema, replace .optional() with .nullish()
+    if (schemaName === 'CreateMediaBuyResponseSchema') {
+      const createMediaBuyMatch = result.match(
+        /export const CreateMediaBuyResponseSchema = z\.union\(\[[\s\S]*?\]\);/
+      );
+      if (createMediaBuyMatch) {
+        const original = createMediaBuyMatch[0];
+        const modified = original.replace(/\.optional\(\)/g, '.nullish()');
+        result = result.replace(original, modified);
+      }
+    }
+  }
+
+  return result;
+}
+
 // Write file only if content differs (excluding timestamp)
 function writeFileIfChanged(filePath: string, newContent: string): boolean {
   const contentWithoutTimestamp = (content: string) => {
@@ -211,7 +263,13 @@ async function generateZodSchemas() {
     }
 
     // Get the generated Zod schemas
-    const zodSchemas = result.getZodSchemasFile();
+    let zodSchemas = result.getZodSchemasFile();
+
+    // Post-process: Convert .optional() to .nullish() for PackageSchema fields
+    // This is needed because real-world API responses (e.g., Yahoo webhook) send explicit
+    // null values for optional fields, but ts-to-zod generates .optional() which only
+    // accepts undefined, not null. Using .nullish() accepts both undefined and null.
+    zodSchemas = postProcessForNullish(zodSchemas);
 
     // Create header with metadata
     const header = `// Generated Zod v4 schemas from TypeScript types

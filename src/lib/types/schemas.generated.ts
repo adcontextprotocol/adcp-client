@@ -454,18 +454,18 @@ export const AuthenticationSchemeSchema = z.union([z.literal("Bearer"), z.litera
 
 export const PackageSchema = z.object({
     package_id: z.string(),
-    buyer_ref: z.string().optional(),
-    product_id: z.string().optional(),
-    budget: z.number().optional(),
-    pacing: PacingSchema.optional(),
-    pricing_option_id: z.string().optional(),
-    bid_price: z.number().optional(),
-    impressions: z.number().optional(),
-    targeting_overlay: TargetingOverlaySchema.optional(),
-    creative_assignments: z.array(CreativeAssignmentSchema).optional(),
-    format_ids_to_provide: z.array(FormatIDSchema).optional(),
-    paused: z.boolean().optional(),
-    ext: ExtensionObjectSchema.optional()
+    buyer_ref: z.string().nullish(),
+    product_id: z.string().nullish(),
+    budget: z.number().nullish(),
+    pacing: PacingSchema.nullish(),
+    pricing_option_id: z.string().nullish(),
+    bid_price: z.number().nullish(),
+    impressions: z.number().nullish(),
+    targeting_overlay: TargetingOverlaySchema.nullish(),
+    creative_assignments: z.array(CreativeAssignmentSchema).nullish(),
+    format_ids_to_provide: z.array(FormatIDSchema).nullish(),
+    paused: z.boolean().nullish(),
+    ext: ExtensionObjectSchema.nullish()
 });
 
 export const CreativeAssetSchema = z.object({
@@ -972,14 +972,14 @@ export const PackageRequestSchema = z.object({
 export const CreateMediaBuyResponseSchema = z.union([z.object({
         media_buy_id: z.string(),
         buyer_ref: z.string(),
-        creative_deadline: z.string().optional(),
+        creative_deadline: z.string().nullish(),
         packages: z.array(PackageSchema),
-        context: ContextObjectSchema.optional(),
-        ext: ExtensionObjectSchema.optional()
+        context: ContextObjectSchema.nullish(),
+        ext: ExtensionObjectSchema.nullish()
     }), z.object({
         errors: z.tuple([ErrorSchema]).rest(ErrorSchema),
-        context: ContextObjectSchema.optional(),
-        ext: ExtensionObjectSchema.optional()
+        context: ContextObjectSchema.nullish(),
+        ext: ExtensionObjectSchema.nullish()
     })]);
 
 export const SyncCreativesRequestSchema = z.object({
