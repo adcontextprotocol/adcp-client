@@ -138,55 +138,17 @@ const TOOL_TYPES = [
 ];
 
 /**
- * Post-process generated Zod schemas to convert .optional() to .nullish() for specific schemas.
+ * Post-process generated Zod schemas to convert .optional() to .nullish() globally.
  * This is needed because real-world API responses often send explicit null values for optional
  * fields, but ts-to-zod generates .optional() which only accepts undefined.
  * Using .nullish() accepts both undefined and null.
+ *
+ * Many JSON serializers (Python, Java, etc.) default to sending null for absent optional fields,
+ * so treating "optional" as "can be undefined OR null" is the pragmatic approach.
  */
 function postProcessForNullish(content: string): string {
-  // Schemas that should use .nullish() instead of .optional() for their fields
-  // These are response schemas where APIs may send explicit null values
-  const schemasToProcess = [
-    'PackageSchema',
-    'CreateMediaBuyResponseSchema',
-  ];
-
-  let result = content;
-
-  for (const schemaName of schemasToProcess) {
-    // Match the schema definition and replace .optional() with .nullish() within it
-    const schemaRegex = new RegExp(
-      `(export const ${schemaName} = z\\.(?:object|union)\\([\\s\\S]*?)(\\.optional\\(\\))`,
-      'g'
-    );
-
-    // For PackageSchema, replace all .optional() with .nullish() within the schema block
-    if (schemaName === 'PackageSchema') {
-      // Find the PackageSchema block and replace .optional() with .nullish()
-      const packageSchemaMatch = result.match(
-        /export const PackageSchema = z\.object\(\{[\s\S]*?\}\);/
-      );
-      if (packageSchemaMatch) {
-        const original = packageSchemaMatch[0];
-        const modified = original.replace(/\.optional\(\)/g, '.nullish()');
-        result = result.replace(original, modified);
-      }
-    }
-
-    // For CreateMediaBuyResponseSchema, replace .optional() with .nullish()
-    if (schemaName === 'CreateMediaBuyResponseSchema') {
-      const createMediaBuyMatch = result.match(
-        /export const CreateMediaBuyResponseSchema = z\.union\(\[[\s\S]*?\]\);/
-      );
-      if (createMediaBuyMatch) {
-        const original = createMediaBuyMatch[0];
-        const modified = original.replace(/\.optional\(\)/g, '.nullish()');
-        result = result.replace(original, modified);
-      }
-    }
-  }
-
-  return result;
+  // Replace all .optional() with .nullish() globally
+  return content.replace(/\.optional\(\)/g, '.nullish()');
 }
 
 // Write file only if content differs (excluding timestamp)
