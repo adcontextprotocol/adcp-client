@@ -27,7 +27,7 @@ export async function callA2ATool(
   authToken?: string,
   debugLogs: any[] = [],
   pushNotificationConfig?: PushNotificationConfig,
-  loggingConfig?: ProtocolLoggingConfig (feat: add detailed protocol logging for MCP and A2A requests)
+  loggingConfig?: ProtocolLoggingConfig
 ): Promise<any> {
   // Create authenticated fetch that wraps native fetch
   // This ensures ALL requests (including agent card fetching) include auth headers

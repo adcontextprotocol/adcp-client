@@ -36,7 +36,7 @@ export class ProtocolClient {
     webhookUrl?: string,
     webhookSecret?: string,
     webhookToken?: string,
-    loggingConfig?: ProtocolLoggingConfig (feat: add detailed protocol logging for MCP and A2A requests)
+    loggingConfig?: ProtocolLoggingConfig
   ): Promise<any> {
     validateAgentUrl(agent.agent_uri);
 
@@ -68,7 +68,7 @@ export class ProtocolClient {
         authToken,
         debugLogs,
         loggingConfig
-      ); (feat: add detailed protocol logging for MCP and A2A requests)
+      );
     } else if (agent.protocol === 'a2a') {
       // For A2A, pass pushNotificationConfig separately (not in skill parameters)
       return callA2ATool(

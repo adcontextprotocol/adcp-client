@@ -111,7 +111,7 @@ export class TaskExecutor {
       /** Global activity callback for observability */
       onActivity?: (activity: Activity) => void | Promise<void>;
       /** Protocol logging configuration */
-      protocolLogging?: ProtocolLoggingConfig; (feat: add detailed protocol logging for MCP and A2A requests)
+      protocolLogging?: ProtocolLoggingConfig;
     } = {}
   ) {
     this.responseParser = new ProtocolResponseParser();
@@ -213,6 +213,7 @@ export class TaskExecutor {
         debugLogs,
         webhookUrl,
         this.config.webhookSecret,
+        undefined, // webhookToken
         this.config.protocolLogging
       );
 
@@ -229,7 +230,7 @@ export class TaskExecutor {
         payload: response,
         timestamp: new Date().toISOString(),
       });
- (feat: add detailed protocol logging for MCP and A2A requests)
+
       // Add initial response message
       const responseMessage: Message = {
         id: randomUUID(),
@@ -473,6 +474,74 @@ export class TaskExecutor {
   }
 
   /**
+   * Try to extract data from an input-required response
+   *
+   * Some agents (like Yahoo HITL) return input-required status but include
+   * valid response data in artifacts. This method attempts to extract that data.
+   *
+   * @returns Extracted data if found, null otherwise
+   */
+  private tryExtractDataFromInputRequired(response: any, debugLogs?: any[], toolName?: string): any | null {
+    try {
+      // Check if this is an A2A response with artifacts
+      const artifacts = response?.result?.artifacts;
+      if (!Array.isArray(artifacts) || artifacts.length === 0) {
+        this.logDebug(debugLogs, 'info', 'No artifacts in input-required response');
+        return null;
+      }
+
+      // Look for data parts in artifacts
+      const lastArtifact = artifacts[artifacts.length - 1];
+      if (!lastArtifact?.parts || !Array.isArray(lastArtifact.parts)) {
+        this.logDebug(debugLogs, 'info', 'No parts in input-required artifact');
+        return null;
+      }
+
+      const dataParts = lastArtifact.parts.filter((p: any) => p.kind === 'data');
+      if (dataParts.length === 0) {
+        this.logDebug(debugLogs, 'info', 'No data parts in input-required artifact');
+        return null;
+      }
+
+      const lastDataPart = dataParts[dataParts.length - 1];
+      if (!lastDataPart?.data) {
+        this.logDebug(debugLogs, 'info', 'Data part has no data in input-required response');
+        return null;
+      }
+
+      // Extract the data
+      let data = lastDataPart.data;
+
+      // Unwrap nested response field if present (some agents wrap AdCP responses)
+      if (data?.response && typeof data.response === 'object' && !Array.isArray(data.response)) {
+        data = data.response;
+      }
+
+      // Extract text parts for _message field
+      const textParts = lastArtifact.parts
+        .filter((p: any) => p.kind === 'text' && p.text)
+        .map((p: any) => p.text);
+
+      if (textParts.length > 0) {
+        data = { ...data, _message: textParts.join('\n') };
+      }
+
+      this.logDebug(debugLogs, 'info', 'Successfully extracted data from input-required response', {
+        artifactId: lastArtifact.artifactId,
+        dataKeys: Object.keys(data || {}),
+        hasTextParts: textParts.length > 0,
+      });
+
+      return data;
+    } catch (error) {
+      this.logDebug(debugLogs, 'warning', 'Failed to extract data from input-required response', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return null;
+    }
+  }
+
+  /**
    * Helper to add debug logs safely
    */
   private logDebug(debugLogs: any[] | undefined, type: string, message: string, details?: any) {
@@ -614,7 +683,12 @@ export class TaskExecutor {
   }
 
   /**
-   * Handle input-required status (handler mandatory)
+   * Handle input-required status
+   *
+   * Some agents (like Yahoo) return input-required status with valid data already in artifacts.
+   * In this case, we should extract and return the data rather than requiring an input handler.
+   * This is common for HITL (human-in-the-loop) workflows where the agent has already processed
+   * the request and is just signaling that async approval may be needed.
    */
   private async handleInputRequired<T>(
     agent: AgentConfig,
@@ -628,9 +702,51 @@ export class TaskExecutor {
     debugLogs: any[] = [],
     startTime: number = Date.now()
   ): Promise<TaskResult<T>> {
+    // First, check if the response has extractable data in artifacts
+    // Some agents return input-required with valid response data (HITL pattern)
+    const extractedData = this.tryExtractDataFromInputRequired(response, debugLogs, taskName);
+
+    if (extractedData !== null) {
+      // Data was found in artifacts - treat as successful response
+      this.logDebug(debugLogs, 'info', 'Extracted data from input-required response (HITL pattern)', {
+        hasData: true,
+        dataKeys: Object.keys(extractedData || {}),
+      });
+
+      this.updateTaskStatus(taskId, 'completed', extractedData);
+
+      // Validate response against AdCP schema
+      const validationResult = this.validateResponseSchema(extractedData, taskName, debugLogs);
+      const operationSuccess = extractedData?.success !== false && !extractedData?.error;
+      const finalSuccess = operationSuccess && validationResult.valid;
+      const finalError = !finalSuccess
+        ? validationResult.errors.length > 0
+          ? `Schema validation failed: ${validationResult.errors.join('; ')}`
+          : extractedData?.error || extractedData?.message || 'Operation failed'
+        : undefined;
+
+      return {
+        success: finalSuccess,
+        status: 'completed',
+        data: extractedData,
+        error: finalError,
+        metadata: {
+          taskId,
+          taskName,
+          agent: { id: agent.id, name: agent.name, protocol: agent.protocol },
+          responseTimeMs: Date.now() - startTime,
+          timestamp: new Date().toISOString(),
+          clarificationRounds: 0,
+          status: 'completed',
+        },
+        conversation: messages,
+        debug_logs: debugLogs,
+      };
+    }
+
     const inputRequest = this.responseParser.parseInputRequest(response);
 
-    // Handler is mandatory for input-required
+    // No extractable data - handler is required
     if (!inputHandler) {
       throw new InputRequiredError(inputRequest.question);
     }
@@ -722,7 +838,7 @@ export class TaskExecutor {
    */
   async listTasks(agent: AgentConfig): Promise<TaskInfo[]> {
     try {
-      const response = await ProtocolClient.callTool(agent, 'tasks/list', {}, [], undefined, undefined, this.config.protocolLogging);
+      const response = await ProtocolClient.callTool(agent, 'tasks/list', {}, [], undefined, undefined, undefined, this.config.protocolLogging);
       return response.tasks || [];
     } catch (error) {
       console.warn('Failed to list tasks:', error);
@@ -731,7 +847,7 @@ export class TaskExecutor {
   }
 
   async getTaskStatus(agent: AgentConfig, taskId: string): Promise<TaskInfo> {
-    const response = await ProtocolClient.callTool(agent, 'tasks/get', { taskId }, [], undefined, undefined, this.config.protocolLogging);
+    const response = await ProtocolClient.callTool(agent, 'tasks/get', { taskId }, [], undefined, undefined, undefined, this.config.protocolLogging);
     return response.task || response;
   }
 
@@ -827,6 +943,7 @@ export class TaskExecutor {
         input,
       },
       debugLogs,
+      undefined,
       undefined,
       undefined,
       this.config.protocolLogging
@@ -930,7 +1047,7 @@ export class TaskExecutor {
     const agent = this.findAgentById(agentId);
     if (agent) {
       try {
-        const response = await ProtocolClient.callTool(agent, 'tasks/list', {}, [], undefined, undefined, this.config.protocolLogging);
+        const response = await ProtocolClient.callTool(agent, 'tasks/list', {}, [], undefined, undefined, undefined, this.config.protocolLogging);
         return response.tasks || [];
       } catch (error) {
         console.warn('Failed to get remote task list:', error);
