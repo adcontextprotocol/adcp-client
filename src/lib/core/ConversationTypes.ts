@@ -107,7 +107,9 @@ export interface ConversationContext {
 export type TaskStatus =
   | 'pending'
   | 'running'
+  | 'working'
   | 'needs_input'
+  | 'input-required'
   | 'completed'
   | 'failed'
   | 'deferred'
@@ -214,10 +216,10 @@ export interface SubmittedContinuation<T> {
  * Result of a task execution
  */
 export interface TaskResult<T = any> {
-  /** Whether the task completed successfully */
+  /** Whether the task is progressing without errors (true for all intermediate states and successful completion) */
   success: boolean;
   /** Task execution status */
-  status: 'completed' | 'deferred' | 'submitted';
+  status: 'completed' | 'deferred' | 'submitted' | 'input-required' | 'working';
   /** Task result data (if successful) */
   data?: T;
   /** Error message (if failed) */
@@ -243,6 +245,8 @@ export interface TaskResult<T = any> {
     clarificationRounds: number;
     /** Final status */
     status: TaskStatus;
+    /** Input request details (for input-required status) */
+    inputRequest?: InputRequest;
   };
   /** Full conversation history */
   conversation?: Message[];

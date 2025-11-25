@@ -35,6 +35,7 @@ import { TaskExecutor, DeferredTaskError } from './TaskExecutor';
 import type { InputHandler, TaskOptions, TaskResult, ConversationConfig, TaskInfo } from './ConversationTypes';
 import type { Activity, AsyncHandlerConfig, WebhookPayload } from './AsyncHandler';
 import { AsyncHandler } from './AsyncHandler';
+import { unwrapProtocolResponse } from '../utils/response-unwrapper';
 import * as crypto from 'crypto';
 
 /**
@@ -276,18 +277,27 @@ export class SingleAgentClient {
   /**
    * Handle webhook from agent (async task completion)
    *
-   * @param payload - Webhook payload from agent
+   * Accepts either:
+   * 1. Standard WebhookPayload format (operation_id, task_type, result, etc.)
+   * 2. Raw A2A task payload (artifacts, status, contextId, etc.) - will be transformed
+   *
+   * For A2A payloads, extracts the ADCP response from artifacts[0].parts[].data
+   * so handlers receive the unwrapped response, not the raw protocol structure.
+   *
+   * @param payload - Webhook payload from agent (WebhookPayload or raw A2A task)
    * @param signature - X-ADCP-Signature header (format: "sha256=...")
    * @param timestamp - X-ADCP-Timestamp header (Unix timestamp)
+   * @param taskType - Task type override (useful when not in payload, e.g., from URL path)
    * @returns Whether webhook was handled successfully
    *
    * @example
    * ```typescript
-   * app.post('/webhook', async (req, res) => {
+   * app.post('/webhook/:taskType', async (req, res) => {
    *   const signature = req.headers['x-adcp-signature'];
    *   const timestamp = req.headers['x-adcp-timestamp'];
    *
-   *   try *     const handled = await client.handleWebhook(req.body, signature, timestamp);
+   *   try {
+   *     const handled = await client.handleWebhook(req.body, signature, timestamp, req.params.taskType);
    *     res.status(200).json({ received: handled });
    *   } catch (error) {
    *     res.status(401).json({ error: error.message });
@@ -295,7 +305,12 @@ export class SingleAgentClient {
    * });
    * ```
    */
-  async handleWebhook(payload: WebhookPayload, signature?: string, timestamp?: string | number): Promise<boolean> {
+  async handleWebhook(
+    payload: WebhookPayload | any,
+    signature?: string,
+    timestamp?: string | number,
+    taskType?: string
+  ): Promise<boolean> {
     // Verify signature if secret is configured
     if (this.config.webhookSecret) {
       if (!signature || !timestamp) {
@@ -308,26 +323,83 @@ export class SingleAgentClient {
       }
     }
 
+    // Transform raw A2A task payload to WebhookPayload format
+    const normalizedPayload = this.normalizeWebhookPayload(payload, taskType);
+
     // Emit activity
     await this.config.onActivity?.({
       type: 'webhook_received',
-      operation_id: payload.operation_id,
+      operation_id: normalizedPayload.operation_id,
       agent_id: this.agent.id,
-      context_id: payload.context_id,
-      task_id: payload.task_id,
-      task_type: payload.task_type,
-      status: payload.status,
-      payload: payload.result,
-      timestamp: payload.timestamp || new Date().toISOString(),
+      context_id: normalizedPayload.context_id,
+      task_id: normalizedPayload.task_id,
+      task_type: normalizedPayload.task_type,
+      status: normalizedPayload.status,
+      payload: normalizedPayload.result,
+      timestamp: normalizedPayload.timestamp || new Date().toISOString(),
     });
 
     // Handle through async handler if configured
     if (this.asyncHandler) {
-      await this.asyncHandler.handleWebhook(payload, this.agent.id);
+      await this.asyncHandler.handleWebhook(normalizedPayload, this.agent.id);
       return true;
     }
 
     return false;
+  }
+
+  /**
+   * Normalize webhook payload - transform raw A2A task payload to WebhookPayload format
+   *
+   * Detects if payload is a raw A2A task (has artifacts, kind: 'task') and extracts
+   * the ADCP response from artifacts[0].parts[].data where kind === 'data'.
+   *
+   * @param payload - Raw webhook payload (could be WebhookPayload or A2A task)
+   * @param taskType - Task type override (useful when from URL path)
+   * @returns Normalized WebhookPayload with extracted ADCP response
+   */
+  private normalizeWebhookPayload(payload: any, taskType?: string): WebhookPayload {
+    // Check if this is a raw A2A task payload (has artifacts and kind: 'task')
+    const isA2ATaskPayload = payload.artifacts && (payload.kind === 'task' || payload.status?.state);
+
+    if (!isA2ATaskPayload) {
+      // Already in WebhookPayload format or close enough
+      return payload as WebhookPayload;
+    }
+
+    // Extract status from A2A task
+    const a2aStatus = payload.status?.state || 'unknown';
+
+    // For completed tasks, extract the ADCP response from artifacts
+    let result: any = undefined;
+    if (a2aStatus === 'completed' && payload.artifacts?.length > 0) {
+      try {
+        // Use the response unwrapper to extract ADCP data from A2A artifacts
+        // Wrap in the format unwrapProtocolResponse expects
+        result = unwrapProtocolResponse({ result: payload }, taskType, 'a2a');
+      } catch (error) {
+        // If unwrapping fails, pass the raw artifacts as result
+        // The handler can deal with it
+        console.warn('Failed to unwrap A2A webhook payload:', error);
+        result = payload.artifacts;
+      }
+    } else if (payload.artifacts?.length > 0) {
+      // For non-completed tasks (working, input-required), just pass artifacts
+      result = payload.artifacts;
+    }
+
+    // Build normalized WebhookPayload
+    return {
+      operation_id: payload.metadata?.operation_id || payload.id || 'unknown',
+      context_id: payload.contextId || payload.metadata?.adcp_context?.buyer_ref,
+      task_id: payload.id,
+      task_type: payload.metadata?.task_type || taskType || 'unknown',
+      status: a2aStatus,
+      result,
+      error: payload.status?.message?.message || payload.error,
+      message: payload.status?.message?.message,
+      timestamp: payload.status?.timestamp || new Date().toISOString(),
+    };
   }
 
   /**

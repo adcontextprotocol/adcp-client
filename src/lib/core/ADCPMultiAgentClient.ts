@@ -939,7 +939,12 @@ export class ADCPMultiAgentClient {
    * });
    * ```
    */
-  async handleWebhook(payload: any, signature?: string, timestamp?: string | number): Promise<boolean> {
+  async handleWebhook(
+    payload: any,
+    signature?: string,
+    timestamp?: string | number,
+    taskType?: string
+  ): Promise<boolean> {
     // Extract agent ID from payload
     // Webhook payloads include agent_id or we can infer from operation_id pattern
     const agentId = payload.agent_id || this.inferAgentIdFromPayload(payload);
@@ -949,7 +954,7 @@ export class ADCPMultiAgentClient {
     }
 
     const agent = this.getAgent(agentId);
-    return agent.handleWebhook(payload, signature, timestamp);
+    return agent.handleWebhook(payload, signature, timestamp, taskType);
   }
 
   /**
