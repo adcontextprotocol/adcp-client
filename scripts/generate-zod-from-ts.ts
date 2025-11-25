@@ -137,6 +137,20 @@ const TOOL_TYPES = [
   'CreativeFilters',
 ];
 
+/**
+ * Post-process generated Zod schemas to convert .optional() to .nullish() globally.
+ * This is needed because real-world API responses often send explicit null values for optional
+ * fields, but ts-to-zod generates .optional() which only accepts undefined.
+ * Using .nullish() accepts both undefined and null.
+ *
+ * Many JSON serializers (Python, Java, etc.) default to sending null for absent optional fields,
+ * so treating "optional" as "can be undefined OR null" is the pragmatic approach.
+ */
+function postProcessForNullish(content: string): string {
+  // Replace all .optional() with .nullish() globally
+  return content.replace(/\.optional\(\)/g, '.nullish()');
+}
+
 // Write file only if content differs (excluding timestamp)
 function writeFileIfChanged(filePath: string, newContent: string): boolean {
   const contentWithoutTimestamp = (content: string) => {
@@ -211,7 +225,13 @@ async function generateZodSchemas() {
     }
 
     // Get the generated Zod schemas
-    const zodSchemas = result.getZodSchemasFile();
+    let zodSchemas = result.getZodSchemasFile();
+
+    // Post-process: Convert .optional() to .nullish() for PackageSchema fields
+    // This is needed because real-world API responses (e.g., Yahoo webhook) send explicit
+    // null values for optional fields, but ts-to-zod generates .optional() which only
+    // accepts undefined, not null. Using .nullish() accepts both undefined and null.
+    zodSchemas = postProcessForNullish(zodSchemas);
 
     // Create header with metadata
     const header = `// Generated Zod v4 schemas from TypeScript types
