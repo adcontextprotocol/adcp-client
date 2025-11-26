@@ -65,8 +65,8 @@ function extractProtocolMessage(conversation, protocol) {
  * Display agent info - just calls library method
  */
 async function displayAgentInfo(agentConfig, jsonOutput) {
-  const client = new AdCPClient(agentConfig);
-  const info = await client.getAgentInfo();
+  const client = new AdCPClient([agentConfig]);
+  const info = await client.agent(agentConfig.id).getAgentInfo();
 
   if (jsonOutput) {
     console.log(JSON.stringify(info, null, 2));
