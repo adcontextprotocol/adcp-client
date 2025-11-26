@@ -28,9 +28,13 @@ npx adcp [arguments...]
 
 ### List Available Tools
 
-First, discover what tools/skills an agent supports:
+First, discover what tools/skills an agent supports. The CLI can auto-detect the protocol:
 
 ```bash
+# Auto-detect protocol (recommended)
+adcp https://test-agent.adcontextprotocol.org
+
+# Or specify protocol explicitly
 adcp a2a https://test-agent.adcontextprotocol.org
 adcp mcp https://agent.example.com/mcp
 ```
@@ -40,22 +44,26 @@ adcp mcp https://agent.example.com/mcp
 Once you know what's available, call a specific tool:
 
 ```bash
+# Auto-detect protocol
+adcp https://agent.example.com get_products '{"brief":"coffee brands"}'
+
+# Or specify protocol explicitly
 adcp mcp https://agent.example.com/mcp get_products '{"brief":"coffee brands"}'
 ```
 
 ## Usage
 
 ```
-adcp <protocol> <agent-url> [tool-name] [payload] [options]
+adcp [protocol] <agent-url> [tool-name] [payload] [options]
 ```
 
 ### Required Arguments
 
-- **protocol**: Protocol to use (`mcp` or `a2a`)
 - **agent-url**: Full URL to the agent endpoint
 
 ### Optional Arguments
 
+- **protocol**: Protocol to use (`mcp` or `a2a`). If omitted, protocol will be auto-detected
 - **tool-name**: Name of the AdCP tool/task to call (omit to list available tools)
 - **payload**: JSON payload for the tool (default: `{}`)
   - Inline JSON: `'{"brief":"text"}'`
@@ -69,6 +77,34 @@ adcp <protocol> <agent-url> [tool-name] [payload] [options]
 - `--json`: Output raw JSON response (default: pretty print)
 - `--debug`: Show debug information
 
+## Protocol Auto-Detection
+
+The CLI can automatically detect whether an agent uses A2A or MCP protocol. Simply omit the protocol argument:
+
+```bash
+# Auto-detect - CLI will test both A2A and MCP
+adcp https://test-agent.adcontextprotocol.org
+
+# Output shows detected protocol:
+# 🔍 Auto-detecting protocol...
+# ✓ Detected protocol: A2A
+```
+
+The auto-detection algorithm:
+1. **Tests A2A first** - Checks for agent card at `/.well-known/agent-card.json`
+2. **Tests MCP** - Tries provided URL, then tries adding `/mcp` suffix
+3. **Reports results** - Shows which protocol was detected
+
+**When to use explicit protocol:**
+- You already know the protocol (slightly faster)
+- Auto-detection fails due to network issues
+- You want to skip the detection step
+
+**When auto-detection works best:**
+- Testing unfamiliar agents
+- Writing portable scripts that work with any agent
+- Quick exploratory testing
+
 ## Examples
 
 ### List Available Tools/Skills
@@ -76,10 +112,11 @@ adcp <protocol> <agent-url> [tool-name] [payload] [options]
 Discover what an agent can do (no tool name = list tools):
 
 ```bash
-# List MCP tools
-adcp mcp https://agent.example.com/mcp
+# Auto-detect protocol (recommended)
+adcp https://test-agent.adcontextprotocol.org
 
-# List A2A skills
+# Or specify protocol explicitly
+adcp mcp https://agent.example.com/mcp
 adcp a2a https://test-agent.adcontextprotocol.org
 ```
 
