@@ -306,6 +306,24 @@ Should show:
 
 **IMPORTANT**: This project uses **Changesets** for version management and releases.
 
+### 📦 When to Create a Changeset
+
+**ALWAYS create a changeset for:**
+- ✅ Library code changes (`src/lib/`)
+- ✅ CLI changes (`bin/`)
+- ✅ Published files (anything in `package.json` `files` field)
+- ✅ Schema changes (`src/schemas/`)
+- ✅ TypeScript types changes
+
+**NO changeset needed for:**
+- ❌ Documentation only (`*.md` files, except CHANGELOG.md)
+- ❌ Development tooling (`conductor.json`, `.github/workflows/`)
+- ❌ Test files only (no behavior changes)
+- ❌ Configuration files (`.eslintrc`, `tsconfig.json`, etc.)
+
+**Why CLI changes need changesets:**
+The CLI (`bin/adcp.js`) is bundled with the npm package. Users who run `npx @adcp/client` or install the package globally need version bumps to get CLI fixes. Without a changeset, the fix won't be published to npm.
+
 ### 🚨 REQUIRED: Make Changeset Check a Required Status Check 🚨
 
 The CI workflow includes a `Changeset Check` job that validates changesets are included for library changes. However, this check must be marked as **required** in GitHub repository settings to prevent PRs from merging without changesets.

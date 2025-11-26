@@ -1,5 +1,5 @@
 {
   "scripts": {
-    "setup": "# Copy configuration files\ncp $CONDUCTOR_ROOT_PATH/.env .\n\n# Install dependencies\nnpm install\n\n# Sync ADCP schemas\necho '📥 Syncing ADCP schemas...'\nnpm run sync-schemas\n\n# Generate types from schemas\necho '🔧 Generating TypeScript types...'\nnpm run generate-types"
+    "setup": "# Fetch latest changes from remote\ngit fetch origin\n\n# Rebase onto latest origin/main\ngit rebase origin/main\n\n# Copy configuration files\ncp $CONDUCTOR_ROOT_PATH/.env .\n\n# Install dependencies\nnpm install\n\n# Sync ADCP schemas\necho '📥 Syncing ADCP schemas...'\nnpm run sync-schemas\n\n# Generate types from schemas\necho '🔧 Generating TypeScript types...'\nnpm run generate-types"
   }
 }
