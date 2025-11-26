@@ -19,7 +19,31 @@ const { readFileSync } = require('fs');
 const { AsyncWebhookHandler } = require('./adcp-async-handler.js');
 
 /**
+ * Create a promise that rejects after a timeout
+ * @param {number} ms - Timeout in milliseconds
+ * @returns {Promise<never>}
+ */
+function createTimeout(ms) {
+  return new Promise((_, reject) => {
+    setTimeout(() => reject(new Error(`Operation timed out after ${ms}ms`)), ms);
+  });
+}
+
+/**
+ * Normalize agent card URL by removing trailing slash and adding agent card path
+ * @param {string} agentUrl - Base agent URL
+ * @returns {string} Normalized agent card URL
+ */
+function normalizeAgentCardUrl(agentUrl) {
+  if (agentUrl.endsWith('/.well-known/agent-card.json')) {
+    return agentUrl;
+  }
+  return agentUrl.replace(/\/$/, '') + '/.well-known/agent-card.json';
+}
+
+/**
  * Auto-detect protocol by testing if agent responds to A2A or MCP
+ * Tries A2A first (agent card lookup), then MCP (endpoint connection)
  *
  * @param {string} agentUrl - URL to test
  * @param {string} authToken - Optional auth token
@@ -32,6 +56,7 @@ async function detectProtocol(agentUrl, authToken, debug) {
   }
 
   // Test A2A first (faster - just needs agent card)
+  // Timeout after 5 seconds to avoid hanging on unresponsive servers
   try {
     const clientModule = require('@a2a-js/sdk/client');
     const A2AClient = clientModule.A2AClient;
@@ -45,12 +70,15 @@ async function detectProtocol(agentUrl, authToken, debug) {
       return fetch(url, { ...options, headers });
     } : undefined;
 
-    const cardUrl = agentUrl.endsWith('/.well-known/agent-card.json')
-      ? agentUrl
-      : agentUrl.replace(/\/$/, '') + '/.well-known/agent-card.json';
+    const cardUrl = normalizeAgentCardUrl(agentUrl);
 
-    const client = await A2AClient.fromCardUrl(cardUrl, fetchImpl ? { fetchImpl } : {});
-    const agentCard = client.agentCardPromise ? await client.agentCardPromise : client.agentCard;
+    const a2aDetection = (async () => {
+      const client = await A2AClient.fromCardUrl(cardUrl, fetchImpl ? { fetchImpl } : {});
+      const agentCard = client.agentCardPromise ? await client.agentCardPromise : client.agentCard;
+      return agentCard;
+    })();
+
+    const agentCard = await Promise.race([a2aDetection, createTimeout(5000)]);
 
     if (agentCard && (agentCard.skills || agentCard.name)) {
       if (debug) {
@@ -67,6 +95,7 @@ async function detectProtocol(agentUrl, authToken, debug) {
   }
 
   // Test MCP (try both with and without /mcp suffix)
+  // Timeout after 5 seconds per endpoint to avoid hanging
   try {
     const { Client: MCPClient } = await import('@modelcontextprotocol/sdk/client/index.js');
     const { StreamableHTTPClientTransport } = await import('@modelcontextprotocol/sdk/client/streamableHttp.js');
@@ -92,8 +121,19 @@ async function detectProtocol(agentUrl, authToken, debug) {
           customFetch ? { fetch: customFetch } : {}
         );
 
-        await mcpClient.connect(transport);
-        await mcpClient.close();
+        const mcpTest = (async () => {
+          await mcpClient.connect(transport);
+          try {
+            await mcpClient.close();
+          } catch (closeError) {
+            // Ignore close errors - connection succeeded which is what matters
+            if (debug) {
+              console.error(`DEBUG: MCP close error ignored: ${closeError.message}`);
+            }
+          }
+        })();
+
+        await Promise.race([mcpTest, createTimeout(5000)]);
         return true;
       } catch {
         return false;
@@ -128,14 +168,16 @@ async function detectProtocol(agentUrl, authToken, debug) {
     }
   }
 
-  throw new Error(
-    `Could not detect protocol at ${agentUrl}\n` +
-    `Tried:\n` +
-    `  - A2A agent card at ${agentUrl}/.well-known/agent-card.json\n` +
-    `  - MCP endpoint at ${agentUrl}\n` +
-    `  - MCP endpoint at ${agentUrl}/mcp\n` +
+  const errorMessage = [
+    `Could not detect protocol at ${agentUrl}`,
+    `Tried:`,
+    `  - A2A agent card at ${agentUrl}/.well-known/agent-card.json`,
+    `  - MCP endpoint at ${agentUrl}`,
+    `  - MCP endpoint at ${agentUrl}/mcp`,
     `Please specify protocol explicitly: 'adcp mcp <url>' or 'adcp a2a <url>'`
-  );
+  ].join('\n');
+
+  throw new Error(errorMessage);
 }
 
 /**

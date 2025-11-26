@@ -20,7 +20,8 @@
   },
   "files": [
     "dist/lib/**/*",
-    "bin/**/*.js",
+    "bin/adcp.js",
+    "bin/adcp-async-handler.js",
     "README.md",
     "LICENSE"
   ],
