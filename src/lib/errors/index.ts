@@ -6,7 +6,10 @@
 export abstract class ADCPError extends Error {
   abstract readonly code: string;
 
-  constructor(message: string, public details?: any) {
+  constructor(
+    message: string,
+    public details?: any
+  ) {
     super(message);
     this.name = this.constructor.name;
   }
@@ -18,7 +21,10 @@ export abstract class ADCPError extends Error {
 export class TaskTimeoutError extends ADCPError {
   readonly code = 'TASK_TIMEOUT';
 
-  constructor(public readonly taskId: string, public readonly timeout: number) {
+  constructor(
+    public readonly taskId: string,
+    public readonly timeout: number
+  ) {
     super(`Task ${taskId} timed out after ${timeout}ms`);
   }
 }
@@ -29,7 +35,10 @@ export class TaskTimeoutError extends ADCPError {
 export class MaxClarificationError extends ADCPError {
   readonly code = 'MAX_CLARIFICATIONS';
 
-  constructor(public readonly taskId: string, public readonly maxAttempts: number) {
+  constructor(
+    public readonly taskId: string,
+    public readonly maxAttempts: number
+  ) {
     super(`Task ${taskId} exceeded maximum clarification attempts: ${maxAttempts}`);
   }
 }
@@ -52,7 +61,10 @@ export class DeferredTaskError extends ADCPError {
 export class TaskAbortedError extends ADCPError {
   readonly code = 'TASK_ABORTED';
 
-  constructor(public readonly taskId: string, public readonly reason?: string) {
+  constructor(
+    public readonly taskId: string,
+    public readonly reason?: string
+  ) {
     super(`Task ${taskId} aborted: ${reason || 'No reason provided'}`);
   }
 }
@@ -63,7 +75,10 @@ export class TaskAbortedError extends ADCPError {
 export class AgentNotFoundError extends ADCPError {
   readonly code = 'AGENT_NOT_FOUND';
 
-  constructor(public readonly agentId: string, public readonly availableAgents: string[]) {
+  constructor(
+    public readonly agentId: string,
+    public readonly availableAgents: string[]
+  ) {
     super(`Agent '${agentId}' not found. Available agents: ${availableAgents.join(', ')}`);
   }
 }
@@ -90,7 +105,11 @@ export class UnsupportedTaskError extends ADCPError {
 export class ProtocolError extends ADCPError {
   readonly code = 'PROTOCOL_ERROR';
 
-  constructor(public readonly protocol: 'mcp' | 'a2a', message: string, public readonly originalError?: Error) {
+  constructor(
+    public readonly protocol: 'mcp' | 'a2a',
+    message: string,
+    public readonly originalError?: Error
+  ) {
     super(`${protocol.toUpperCase()} protocol error: ${message}`);
     this.details = { originalError };
   }
@@ -102,7 +121,11 @@ export class ProtocolError extends ADCPError {
 export class ValidationError extends ADCPError {
   readonly code = 'VALIDATION_ERROR';
 
-  constructor(public readonly field: string, public readonly value: any, public readonly constraint: string) {
+  constructor(
+    public readonly field: string,
+    public readonly value: any,
+    public readonly constraint: string
+  ) {
     super(`Validation failed for field '${field}': ${constraint}`);
     this.details = { field, value, constraint };
   }
@@ -114,7 +137,10 @@ export class ValidationError extends ADCPError {
 export class MissingInputHandlerError extends ADCPError {
   readonly code = 'MISSING_INPUT_HANDLER';
 
-  constructor(public readonly taskId: string, public readonly question: string) {
+  constructor(
+    public readonly taskId: string,
+    public readonly question: string
+  ) {
     super(`Agent requested input but no handler provided. Task: ${taskId}, Question: ${question}`);
   }
 }
@@ -125,7 +151,10 @@ export class MissingInputHandlerError extends ADCPError {
 export class InvalidContextError extends ADCPError {
   readonly code = 'INVALID_CONTEXT';
 
-  constructor(public readonly contextId: string, reason: string) {
+  constructor(
+    public readonly contextId: string,
+    reason: string
+  ) {
     super(`Invalid conversation context '${contextId}': ${reason}`);
   }
 }
@@ -136,7 +165,10 @@ export class InvalidContextError extends ADCPError {
 export class ConfigurationError extends ADCPError {
   readonly code = 'CONFIGURATION_ERROR';
 
-  constructor(message: string, public readonly configField?: string) {
+  constructor(
+    message: string,
+    public readonly configField?: string
+  ) {
     super(`Configuration error: ${message}`);
     this.details = { configField };
   }

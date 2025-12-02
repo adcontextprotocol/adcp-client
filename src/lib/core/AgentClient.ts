@@ -61,7 +61,10 @@ export class AgentClient {
   private client: SingleAgentClient;
   private currentContextId?: string;
 
-  constructor(private agent: AgentConfig, private config: SingleAgentClientConfig = {}) {
+  constructor(
+    private agent: AgentConfig,
+    private config: SingleAgentClientConfig = {}
+  ) {
     this.client = new SingleAgentClient(agent, config);
   }
 
