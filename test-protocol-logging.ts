@@ -11,7 +11,7 @@ import { logger } from './src/lib/utils/logger';
 // Configure logger to show debug messages
 logger.configure({
   level: 'debug',
-  enabled: true
+  enabled: true,
 });
 
 // Mock agent for testing
@@ -19,7 +19,7 @@ const testAgent: AgentConfig = {
   id: 'test-agent',
   name: 'Test Agent',
   agent_uri: 'https://test-agent.adcontextprotocol.org/mcp/',
-  protocol: 'mcp'
+  protocol: 'mcp',
 };
 
 async function testProtocolLogging() {
@@ -39,8 +39,8 @@ async function testProtocolLogging() {
       logRequestBodies: true,
       logResponseBodies: true,
       redactAuthHeaders: true,
-      maxBodySize: 50000
-    }
+      maxBodySize: 50000,
+    },
   });
 
   try {
@@ -49,8 +49,8 @@ async function testProtocolLogging() {
       brief: 'Test products for logging demo',
       brand_manifest: {
         agent_url: 'https://test-agent.example.com',
-        id: 'test-brand-123'
-      }
+        id: 'test-brand-123',
+      },
     });
 
     console.log('\n✅ Test 1 completed successfully');
@@ -72,8 +72,8 @@ async function testProtocolLogging() {
       logResponses: true,
       logRequestBodies: false,
       logResponseBodies: false,
-      redactAuthHeaders: true
-    }
+      redactAuthHeaders: true,
+    },
   });
 
   try {
@@ -93,8 +93,8 @@ async function testProtocolLogging() {
 
   const clientNoLogging = new ADCPClient(testAgent, {
     protocolLogging: {
-      enabled: false
-    }
+      enabled: false,
+    },
   });
 
   try {
@@ -103,8 +103,8 @@ async function testProtocolLogging() {
       brief: 'This should NOT generate protocol logs',
       brand_manifest: {
         agent_url: 'https://test-agent.example.com',
-        id: 'test-brand-123'
-      }
+        id: 'test-brand-123',
+      },
     });
 
     console.log('\n✅ Test 3 completed successfully');
@@ -126,7 +126,7 @@ async function testProtocolLogging() {
 }
 
 // Run tests
-testProtocolLogging().catch((error) => {
+testProtocolLogging().catch(error => {
   console.error('\n❌ Test failed with error:');
   console.error(error);
   process.exit(1);

@@ -17,13 +17,13 @@ const agent: AgentConfig = {
   name: 'Sales Agent',
   agent_uri: 'https://sales-agent.example.com',
   protocol: 'mcp',
-  auth_token_env: 'YOUR_AUTH_TOKEN_HERE'
+  auth_token_env: 'YOUR_AUTH_TOKEN_HERE',
 };
 
 // Enable protocol logging with all defaults
 const clientWithLogging = new ADCPClient(agent, {
   protocolLogging: {
-    enabled: true
+    enabled: true,
     // All other options default to true:
     // - logRequests: true
     // - logResponses: true
@@ -31,14 +31,14 @@ const clientWithLogging = new ADCPClient(agent, {
     // - logResponseBodies: true
     // - maxBodySize: 50000 (50KB)
     // - redactAuthHeaders: true
-  }
+  },
 });
 
 // When you make a call, you'll see detailed logs in console:
 async function example1() {
   const result = await clientWithLogging.getProducts({
     brief: 'Premium coffee brands',
-    promoted_offering: 'Artisan coffee'
+    promoted_offering: 'Artisan coffee',
   });
 
   // Console output will show:
@@ -85,16 +85,16 @@ const clientMinimalLogging = new ADCPClient(agent, {
     enabled: true,
     logRequests: true,
     logResponses: true,
-    logRequestBodies: false,  // Don't log request bodies
+    logRequestBodies: false, // Don't log request bodies
     logResponseBodies: false, // Don't log response bodies
-    redactAuthHeaders: true
-  }
+    redactAuthHeaders: true,
+  },
 });
 
 // This will only log method, URL, headers, and status codes
 async function example2() {
   await clientMinimalLogging.getProducts({
-    brief: 'Tech products'
+    brief: 'Tech products',
   });
 
   // Console output will show:
@@ -120,15 +120,15 @@ const clientMaxVerbosity = new ADCPClient(agent, {
     logRequestBodies: true,
     logResponseBodies: true,
     maxBodySize: 100000, // Allow larger bodies (100KB)
-    redactAuthHeaders: false // CAUTION: Shows actual auth tokens!
-  }
+    redactAuthHeaders: false, // CAUTION: Shows actual auth tokens!
+  },
 });
 
 // WARNING: Only use redactAuthHeaders: false in local development!
 // This will expose your actual authentication tokens in logs.
 async function example3() {
   await clientMaxVerbosity.getProducts({
-    brief: 'Fashion items'
+    brief: 'Fashion items',
   });
 
   // Console output will show actual tokens:
@@ -148,14 +148,14 @@ async function example3() {
 const clientWithSizeLimit = new ADCPClient(agent, {
   protocolLogging: {
     enabled: true,
-    maxBodySize: 5000 // Only log first 5KB of request/response bodies
-  }
+    maxBodySize: 5000, // Only log first 5KB of request/response bodies
+  },
 });
 
 async function example4() {
   // If response is larger than 5KB, it will be truncated:
   const result = await clientWithSizeLimit.listCreatives({
-    media_buy_id: 'mb_123'
+    media_buy_id: 'mb_123',
   });
 
   // Console output might show:
@@ -174,20 +174,20 @@ const a2aAgent: AgentConfig = {
   name: 'A2A Sales Agent',
   agent_uri: 'https://a2a-agent.example.com',
   protocol: 'a2a',
-  auth_token_env: 'YOUR_AUTH_TOKEN_HERE'
+  auth_token_env: 'YOUR_AUTH_TOKEN_HERE',
 };
 
 const a2aClient = new ADCPClient(a2aAgent, {
   protocolLogging: {
     enabled: true,
     logRequestBodies: true,
-    logResponseBodies: true
-  }
+    logResponseBodies: true,
+  },
 });
 
 async function example5() {
   await a2aClient.getProducts({
-    brief: 'Luxury watches'
+    brief: 'Luxury watches',
   });
 
   // Console output will show:
@@ -237,13 +237,15 @@ const customLoggerConfig: LoggerConfig = {
   handler: {
     debug: (message: string, meta?: any) => {
       // Send to your logging service (e.g., DataDog, Splunk, etc.)
-      console.log(JSON.stringify({
-        level: 'debug',
-        message,
-        meta,
-        timestamp: new Date().toISOString(),
-        service: 'adcp-client'
-      }));
+      console.log(
+        JSON.stringify({
+          level: 'debug',
+          message,
+          meta,
+          timestamp: new Date().toISOString(),
+          service: 'adcp-client',
+        })
+      );
     },
     info: (message: string, meta?: any) => {
       console.log(JSON.stringify({ level: 'info', message, meta }));
@@ -253,8 +255,8 @@ const customLoggerConfig: LoggerConfig = {
     },
     error: (message: string, meta?: any) => {
       console.error(JSON.stringify({ level: 'error', message, meta }));
-    }
-  }
+    },
+  },
 };
 
 // Apply custom logger config globally
@@ -263,13 +265,13 @@ logger.configure(customLoggerConfig);
 // Now all protocol logs will use your custom handler
 const clientWithCustomLogger = new ADCPClient(agent, {
   protocolLogging: {
-    enabled: true
-  }
+    enabled: true,
+  },
 });
 
 async function example6() {
   await clientWithCustomLogger.getProducts({
-    brief: 'Electronics'
+    brief: 'Electronics',
   });
 
   // Your custom handler will receive structured JSON logs:
@@ -301,8 +303,8 @@ async function example6() {
 
 const clientWithEnvConfig = new ADCPClient(agent, {
   protocolLogging: {
-    enabled: true
-  }
+    enabled: true,
+  },
 });
 
 // The logger will automatically pick up LOG_LEVEL and LOG_ENABLED
@@ -319,8 +321,8 @@ const productionClient = new ADCPClient(agent, {
     logRequestBodies: true,
     logResponseBodies: true,
     redactAuthHeaders: true, // Always redact in production
-    maxBodySize: 10000 // Smaller limit for production
-  }
+    maxBodySize: 10000, // Smaller limit for production
+  },
 });
 
 async function debugProductionIssue() {
@@ -334,7 +336,6 @@ async function debugProductionIssue() {
     // - Exact response received
     // - Request/response latency
     // - All headers (with auth redacted)
-
   } catch (error) {
     console.error('Media buy failed:', error);
     // Check console for detailed protocol logs to diagnose
@@ -357,8 +358,8 @@ logger.configure({
     },
     info: console.log,
     warn: console.warn,
-    error: console.error
-  }
+    error: console.error,
+  },
 });
 
 // ============================================================================

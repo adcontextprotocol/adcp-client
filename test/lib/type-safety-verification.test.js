@@ -612,10 +612,10 @@ describe(
                 params.input === null
                   ? 'null'
                   : params.input === undefined
-                    ? 'undefined'
-                    : Array.isArray(params.input)
-                      ? 'array'
-                      : typeof params.input;
+                  ? 'undefined'
+                  : Array.isArray(params.input)
+                  ? 'array'
+                  : typeof params.input;
 
               return {
                 status: 'completed',

@@ -178,10 +178,7 @@ export class SingleAgentClient {
   private normalizedAgent: AgentConfig;
   private discoveredEndpoint?: string; // Cache discovered endpoint
 
-  constructor(
-    private agent: AgentConfig,
-    private config: SingleAgentClientConfig = {}
-  ) {
+  constructor(private agent: AgentConfig, private config: SingleAgentClientConfig = {}) {
     // Normalize agent URL for MCP protocol
     this.normalizedAgent = this.normalizeAgentConfig(agent);
 
@@ -195,7 +192,7 @@ export class SingleAgentClient {
       strictSchemaValidation: config.validation?.strictSchemaValidation !== false, // Default: true
       logSchemaViolations: config.validation?.logSchemaViolations !== false, // Default: true
       onActivity: config.onActivity,
-      protocolLogging: config.protocolLogging
+      protocolLogging: config.protocolLogging,
     });
 
     // Create async handler if handlers are provided

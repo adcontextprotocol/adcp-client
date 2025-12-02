@@ -705,7 +705,16 @@ export class TaskExecutor {
    */
   async listTasks(agent: AgentConfig): Promise<TaskInfo[]> {
     try {
-      const response = await ProtocolClient.callTool(agent, 'tasks/list', {}, [], undefined, undefined, undefined, this.config.protocolLogging);
+      const response = await ProtocolClient.callTool(
+        agent,
+        'tasks/list',
+        {},
+        [],
+        undefined,
+        undefined,
+        undefined,
+        this.config.protocolLogging
+      );
       return response.tasks || [];
     } catch (error) {
       console.warn('Failed to list tasks:', error);
@@ -714,7 +723,16 @@ export class TaskExecutor {
   }
 
   async getTaskStatus(agent: AgentConfig, taskId: string): Promise<TaskInfo> {
-    const response = await ProtocolClient.callTool(agent, 'tasks/get', { taskId }, [], undefined, undefined, undefined, this.config.protocolLogging);
+    const response = await ProtocolClient.callTool(
+      agent,
+      'tasks/get',
+      { taskId },
+      [],
+      undefined,
+      undefined,
+      undefined,
+      this.config.protocolLogging
+    );
     return response.task || response;
   }
 
@@ -914,7 +932,16 @@ export class TaskExecutor {
     const agent = this.findAgentById(agentId);
     if (agent) {
       try {
-        const response = await ProtocolClient.callTool(agent, 'tasks/list', {}, [], undefined, undefined, undefined, this.config.protocolLogging);
+        const response = await ProtocolClient.callTool(
+          agent,
+          'tasks/list',
+          {},
+          [],
+          undefined,
+          undefined,
+          undefined,
+          this.config.protocolLogging
+        );
         return response.tasks || [];
       } catch (error) {
         console.warn('Failed to get remote task list:', error);

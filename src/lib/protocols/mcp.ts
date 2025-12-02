@@ -46,7 +46,6 @@ export async function callMCPTool(
     });
   }
 
-
   try {
     // First, try to connect using StreamableHTTPClientTransport
     debugLogs.push({

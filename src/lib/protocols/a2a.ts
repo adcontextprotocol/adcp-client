@@ -61,8 +61,8 @@ export async function callA2ATool(
 
     // Log request details if protocol logging is enabled
     const shouldLog = loggingConfig?.enabled === true;
-    const shouldLogRequest = shouldLog && (loggingConfig?.logRequests !== false);
-    const shouldLogRequestBody = shouldLog && (loggingConfig?.logRequestBodies !== false);
+    const shouldLogRequest = shouldLog && loggingConfig?.logRequests !== false;
+    const shouldLogRequestBody = shouldLog && loggingConfig?.logRequestBodies !== false;
     const shouldRedact = loggingConfig?.redactAuthHeaders !== false;
     const maxBodySize = loggingConfig?.maxBodySize || 50000;
 
@@ -97,7 +97,7 @@ export async function callA2ATool(
         url: urlString,
         headers: headersForLog,
         body: requestBody,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
       });
     }
 
@@ -117,8 +117,8 @@ export async function callA2ATool(
     const latency = Date.now() - startTime;
 
     // Log response details if protocol logging is enabled
-    const shouldLogResponse = shouldLog && (loggingConfig?.logResponses !== false);
-    const shouldLogResponseBody = shouldLog && (loggingConfig?.logResponseBodies !== false);
+    const shouldLogResponse = shouldLog && loggingConfig?.logResponses !== false;
+    const shouldLogResponseBody = shouldLog && loggingConfig?.logResponseBodies !== false;
 
     if (shouldLogResponse) {
       const responseHeadersObj: Record<string, string> = {};
@@ -133,7 +133,8 @@ export async function callA2ATool(
         try {
           const bodyText = await clonedResponse.text();
           if (bodyText.length > maxBodySize) {
-            responseBody = bodyText.substring(0, maxBodySize) + `... [TRUNCATED: ${bodyText.length - maxBodySize} bytes]`;
+            responseBody =
+              bodyText.substring(0, maxBodySize) + `... [TRUNCATED: ${bodyText.length - maxBodySize} bytes]`;
           } else {
             try {
               responseBody = JSON.parse(bodyText);
@@ -153,7 +154,7 @@ export async function callA2ATool(
         headers: responseHeadersObj,
         body: responseBody,
         latency: `${latency}ms`,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
       });
     }
 
