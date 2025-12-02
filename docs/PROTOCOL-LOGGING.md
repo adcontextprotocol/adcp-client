@@ -11,8 +11,8 @@ import { ADCPClient } from '@adcp/client';
 
 const client = new ADCPClient(agent, {
   protocolLogging: {
-    enabled: true
-  }
+    enabled: true,
+  },
 });
 
 // All protocol requests/responses will now be logged to console
@@ -185,8 +185,8 @@ const client = new ADCPClient(agent, {
     logResponses: true,
     logRequestBodies: true,
     logResponseBodies: true,
-    redactAuthHeaders: true // Still redact even in dev
-  }
+    redactAuthHeaders: true, // Still redact even in dev
+  },
 });
 ```
 
@@ -200,11 +200,11 @@ const client = new ADCPClient(agent, {
     enabled: process.env.ENABLE_PROTOCOL_LOGGING === 'true',
     logRequests: true,
     logResponses: true,
-    logRequestBodies: false,  // Don't log bodies in production
+    logRequestBodies: false, // Don't log bodies in production
     logResponseBodies: false,
-    maxBodySize: 5000,        // Small limit if bodies are logged
-    redactAuthHeaders: true   // Always redact in production
-  }
+    maxBodySize: 5000, // Small limit if bodies are logged
+    redactAuthHeaders: true, // Always redact in production
+  },
 });
 ```
 
@@ -219,8 +219,8 @@ const debugClient = new ADCPClient(agent, {
     enabled: true,
     logRequestBodies: true,
     logResponseBodies: true,
-    maxBodySize: 100000 // Larger limit for debugging
-  }
+    maxBodySize: 100000, // Larger limit for debugging
+  },
 });
 
 // Use for specific problematic request
@@ -238,8 +238,8 @@ const client = new ADCPClient(agent, {
     logRequests: true,
     logResponses: true,
     logRequestBodies: false,
-    logResponseBodies: false // Just track timing, not content
-  }
+    logResponseBodies: false, // Just track timing, not content
+  },
 });
 
 // Response logs will include 'latency: XXXms'
@@ -264,31 +264,31 @@ logger.configure({
           message,
           meta,
           service: 'adcp-client',
-          timestamp: new Date().toISOString()
-        })
+          timestamp: new Date().toISOString(),
+        }),
       });
     },
     info: console.log,
     warn: console.warn,
-    error: console.error
-  }
+    error: console.error,
+  },
 });
 
 const client = new ADCPClient(agent, {
-  protocolLogging: { enabled: true }
+  protocolLogging: { enabled: true },
 });
 ```
 
 ## Performance Impact
 
-| Configuration | Overhead | Notes |
-|--------------|----------|-------|
-| `enabled: false` | 0ms | No logging overhead |
-| `logRequests: true, logRequestBodies: false` | ~0.5ms | Minimal overhead |
-| `logRequests: true, logRequestBodies: true` | ~1-2ms | Serialization overhead |
-| `logResponses: true, logResponseBodies: false` | ~0.5ms | Minimal overhead |
-| `logResponses: true, logResponseBodies: true` | ~2-5ms | Response cloning + serialization |
-| **Full logging (all enabled)** | ~3-7ms | Total per request |
+| Configuration                                  | Overhead | Notes                            |
+| ---------------------------------------------- | -------- | -------------------------------- |
+| `enabled: false`                               | 0ms      | No logging overhead              |
+| `logRequests: true, logRequestBodies: false`   | ~0.5ms   | Minimal overhead                 |
+| `logRequests: true, logRequestBodies: true`    | ~1-2ms   | Serialization overhead           |
+| `logResponses: true, logResponseBodies: false` | ~0.5ms   | Minimal overhead                 |
+| `logResponses: true, logResponseBodies: true`  | ~2-5ms   | Response cloning + serialization |
+| **Full logging (all enabled)**                 | ~3-7ms   | Total per request                |
 
 **Recommendation**: In production, keep body logging disabled or use small `maxBodySize` limits to minimize overhead.
 
@@ -312,8 +312,8 @@ headers: {
 const client = new ADCPClient(agent, {
   protocolLogging: {
     enabled: true,
-    redactAuthHeaders: false // ⚠️ DANGER: Shows actual tokens!
-  }
+    redactAuthHeaders: false, // ⚠️ DANGER: Shows actual tokens!
+  },
 });
 ```
 
@@ -333,15 +333,15 @@ Large request/response bodies can fill up logs. Use `maxBodySize` to truncate:
 const client = new ADCPClient(agent, {
   protocolLogging: {
     enabled: true,
-    maxBodySize: 5000 // Only log first 5KB
-  }
+    maxBodySize: 5000, // Only log first 5KB
+  },
 });
 ```
 
 Truncated bodies will show:
 
 ```javascript
-body: "{ ... first 5000 bytes ... [TRUNCATED: 15000 bytes]"
+body: '{ ... first 5000 bytes ... [TRUNCATED: 15000 bytes]';
 ```
 
 ## Environment Variables
@@ -383,8 +383,8 @@ logger.configure({
     },
     info: console.log,
     warn: console.warn,
-    error: console.error
-  }
+    error: console.error,
+  },
 });
 ```
 
