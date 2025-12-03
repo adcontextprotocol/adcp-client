@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2025-11-25T18:39:49.787Z
+// Generated at: 2025-12-03T01:26:09.792Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -585,8 +585,6 @@ export const UpdateMediaBuyRequest1Schema = z.object({
     ext: ExtensionObjectSchema.nullish()
 });
 
-export const UpdateMediaBuyRequest2Schema = z.record(z.string(), z.unknown());
-
 export const UpdateMediaBuyResponseSchema = z.union([z.object({
         media_buy_id: z.string(),
         buyer_ref: z.string(),
@@ -657,8 +655,6 @@ export const ListAuthorizedPropertiesRequestSchema = z.object({
 });
 
 export const AdvertisingChannelsSchema = z.union([z.literal("display"), z.literal("video"), z.literal("audio"), z.literal("native"), z.literal("dooh"), z.literal("ctv"), z.literal("podcast"), z.literal("retail"), z.literal("social")]);
-
-export const ProvidePerformanceFeedbackRequest2Schema = z.record(z.string(), z.unknown());
 
 export const MetricTypeSchema = z.union([z.literal("overall_performance"), z.literal("conversion_rate"), z.literal("brand_lift"), z.literal("click_through_rate"), z.literal("completion_rate"), z.literal("viewability"), z.literal("brand_safety"), z.literal("cost_efficiency")]);
 
@@ -1037,7 +1033,7 @@ export const CreativeFiltersSchema = z.object({
     has_performance_data: z.boolean().nullish()
 });
 
-export const UpdateMediaBuyRequestSchema = UpdateMediaBuyRequest1Schema.and(UpdateMediaBuyRequest2Schema);
+export const UpdateMediaBuyRequestSchema = UpdateMediaBuyRequest1Schema;
 
 export const GetMediaBuyDeliveryResponseSchema = z.object({
     notification_type: z.union([z.literal("scheduled"), z.literal("final"), z.literal("delayed"), z.literal("adjusted")]).nullish(),
@@ -1100,7 +1096,7 @@ export const ListAuthorizedPropertiesResponseSchema = z.object({
     ext: ExtensionObjectSchema.nullish()
 });
 
-export const ProvidePerformanceFeedbackRequestSchema = ProvidePerformanceFeedbackRequest1Schema.and(ProvidePerformanceFeedbackRequest2Schema);
+export const ProvidePerformanceFeedbackRequestSchema = ProvidePerformanceFeedbackRequest1Schema;
 
 export const WebhookAssetSchema = z.object({
     url: z.string(),
