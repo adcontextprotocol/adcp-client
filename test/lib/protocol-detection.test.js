@@ -19,7 +19,8 @@ test('Protocol Detection Tests', async t => {
     assert.strictEqual(protocol, 'mcp');
   });
 
-  await t.test('detects A2A for real test agent (root URL)', async () => {
+  // Skip network tests in CI - they depend on external services being available
+  await t.test('detects A2A for real test agent (root URL)', { skip: process.env.CI ? 'Network test - skipped in CI' : false }, async () => {
     const protocol = await detectProtocol('https://test-agent.adcontextprotocol.org');
     // Should detect A2A since the agent has /.well-known/agent-card.json endpoint
     assert.strictEqual(protocol, 'a2a');
@@ -31,7 +32,8 @@ test('Protocol Detection Tests', async t => {
     assert.strictEqual(protocol, 'mcp');
   });
 
-  await t.test('defaults to MCP for unknown endpoints', async () => {
+  // Skip network tests in CI - they depend on external services being available
+  await t.test('defaults to MCP for unknown endpoints', { skip: process.env.CI ? 'Network test - skipped in CI' : false }, async () => {
     const protocol = await detectProtocol('https://nonexistent-agent-12345.example.com');
     // Should default to MCP when A2A discovery fails
     assert.strictEqual(protocol, 'mcp');
