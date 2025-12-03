@@ -2657,13 +2657,10 @@ export interface ListCreativesResponse {
 /**
  * Request parameters for updating campaign and package settings
  */
-export type UpdateMediaBuyRequest = UpdateMediaBuyRequest1 & UpdateMediaBuyRequest2;
+export type UpdateMediaBuyRequest = UpdateMediaBuyRequest1;
 /**
  * Campaign start timing: 'asap' or ISO 8601 date-time
  */
-export type UpdateMediaBuyRequest2 = {
-  [k: string]: unknown;
-};
 
 export interface UpdateMediaBuyRequest1 {
   /**
@@ -3145,7 +3142,7 @@ export interface ListAuthorizedPropertiesResponse {
 /**
  * Request payload for provide_performance_feedback task
  */
-export type ProvidePerformanceFeedbackRequest = ProvidePerformanceFeedbackRequest1 & ProvidePerformanceFeedbackRequest2;
+export type ProvidePerformanceFeedbackRequest = ProvidePerformanceFeedbackRequest1;
 /**
  * The business metric being measured
  */
@@ -3166,9 +3163,6 @@ export type FeedbackSource =
   | 'third_party_measurement'
   | 'platform_analytics'
   | 'verification_partner';
-export type ProvidePerformanceFeedbackRequest2 = {
-  [k: string]: unknown;
-};
 
 export interface ProvidePerformanceFeedbackRequest1 {
   /**

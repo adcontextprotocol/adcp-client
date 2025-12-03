@@ -500,6 +500,68 @@ async function generateToolTypes(tools: ToolDefinition[]) {
   return toolTypes;
 }
 
+/**
+ * Remove index signature types generated from oneOf schemas.
+ *
+ * json-schema-to-typescript generates types like:
+ *   export type Foo = Foo1 & Foo2;
+ *   export type Foo2 = { [k: string]: unknown };
+ *
+ * When the JSON Schema has additionalProperties: false but uses oneOf with only
+ * required constraints, the library incorrectly creates an index signature type.
+ *
+ * This function:
+ * 1. Identifies types that are pure index signatures: { [k: string]: unknown }
+ * 2. Removes those type definitions
+ * 3. Removes references to them from intersection types (Foo1 & Foo2 becomes Foo1)
+ */
+function removeIndexSignatureTypes(typeDefinitions: string): string {
+  // Find all types that are pure index signatures
+  // Pattern: export type TypeName = { [k: string]: unknown };
+  // or: export type TypeName = {\n  [k: string]: unknown;\n};
+  const indexSigTypePattern = /export type (\w+) = \{\s*\[k: string\]: unknown;?\s*\};?/g;
+  const indexSigTypes = new Set<string>();
+
+  let match;
+  while ((match = indexSigTypePattern.exec(typeDefinitions)) !== null) {
+    indexSigTypes.add(match[1]);
+  }
+
+  if (indexSigTypes.size === 0) {
+    return typeDefinitions;
+  }
+
+  console.log(`🧹 Removing ${indexSigTypes.size} index signature types: ${Array.from(indexSigTypes).join(', ')}`);
+
+  let result = typeDefinitions;
+
+  // Remove the index signature type definitions
+  for (const typeName of indexSigTypes) {
+    // Remove single-line pattern
+    result = result.replace(
+      new RegExp(`export type ${typeName} = \\{\\s*\\[k: string\\]: unknown;?\\s*\\};?\\n?`, 'g'),
+      ''
+    );
+    // Remove multi-line pattern
+    result = result.replace(
+      new RegExp(`export type ${typeName} = \\{\\n\\s*\\[k: string\\]: unknown;\\n\\};?\\n?`, 'g'),
+      ''
+    );
+  }
+
+  // Remove references to these types from intersection types
+  // Pattern: Type1 & IndexSigType becomes Type1
+  // Pattern: IndexSigType & Type1 becomes Type1
+  for (const typeName of indexSigTypes) {
+    // Remove " & TypeName" (when it comes after)
+    result = result.replace(new RegExp(` & ${typeName}(?=[;\\s])`, 'g'), '');
+    // Remove "TypeName & " (when it comes before)
+    result = result.replace(new RegExp(`${typeName} & `, 'g'), '');
+  }
+
+  return result;
+}
+
 // Helper function to filter duplicate type definitions properly
 function filterDuplicateTypeDefinitions(typeDefinitions: string, generatedTypes: Set<string>): string {
   const lines = typeDefinitions.split('\n');
@@ -827,14 +889,18 @@ async function generateTypes() {
   const tools = loadAdCPTools();
 
   // Generate tool types
-  const toolTypes = await generateToolTypes(tools);
+  let toolTypes = await generateToolTypes(tools);
+
+  // Remove index signature types that were incorrectly generated from oneOf schemas
+  // These occur when JSON Schema has additionalProperties: false but oneOf with only required constraints
+  toolTypes = removeIndexSignatureTypes(toolTypes);
 
   // Generate Agent classes
   const agentClasses = generateAgentClasses(tools);
 
   // Write files only if content changed
   const coreTypesPath = path.join(libOutputDir, 'core.generated.ts');
-  const coreChanged = writeFileIfChanged(coreTypesPath, coreTypes);
+  const coreChanged = writeFileIfChanged(coreTypesPath, removeIndexSignatureTypes(coreTypes));
 
   const toolTypesPath = path.join(libOutputDir, 'tools.generated.ts');
   const toolsChanged = writeFileIfChanged(toolTypesPath, toolTypes);

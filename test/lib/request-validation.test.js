@@ -128,6 +128,133 @@ describe('SingleAgentClient Request Validation', () => {
     });
   });
 
+  describe('update_media_buy validation', () => {
+    test('should reject update_media_buy with extra fields', async () => {
+      const client = new AdCPClient([mockAgent]);
+      const agent = client.agent(mockAgent.id);
+
+      // AdCP spec has additionalProperties: false for update_media_buy
+      // Extra fields should be rejected (use ext field for extensions)
+      await assert.rejects(
+        async () => {
+          await agent.updateMediaBuy({
+            media_buy_id: 'mb123',
+            extra_field: 'should fail',
+          });
+        },
+        err => {
+          return err.message.includes('Request validation failed for update_media_buy');
+        },
+        'Should throw validation error for invalid update_media_buy request'
+      );
+    });
+  });
+
+  describe('list_creatives validation', () => {
+    test('should validate list_creatives requests', async () => {
+      const client = new AdCPClient([mockAgent]);
+      const agent = client.agent(mockAgent.id);
+
+      await assert.rejects(
+        async () => {
+          // Invalid request with extra field
+          await agent.listCreatives({
+            invalid_field: 'should fail',
+          });
+        },
+        err => {
+          return err.message.includes('Request validation failed for list_creatives');
+        },
+        'Should throw validation error for invalid list_creatives request'
+      );
+    });
+  });
+
+  describe('PackageRequest format_ids validation', () => {
+    test('should allow format_ids with extra fields (Zod strips unknown fields by default)', async () => {
+      const client = new AdCPClient([mockAgent]);
+      const agent = client.agent(mockAgent.id);
+
+      // NOTE: Zod strips unknown fields in nested objects by default (not strict for nested)
+      // This is intentional - strict() only applies to top-level fields
+      // Extra fields in format_ids will be silently stripped, not rejected
+      await assert.doesNotReject(async () => {
+        try {
+          await agent.createMediaBuy({
+            buyer_ref: 'buyer123',
+            packages: [
+              {
+                buyer_ref: 'pkg123',
+                product_id: 'prod123',
+                format_ids: [
+                  {
+                    agent_url: 'https://test.example.com',
+                    id: 'display_300x250',
+                    width: 300,
+                    height: 250,
+                    // Extra fields - will be stripped, not rejected
+                    name: 'Banner',
+                    description: 'Standard banner',
+                  },
+                ],
+                budget: 1000,
+                pricing_option_id: 'cpm-fixed',
+              },
+            ],
+            brand_manifest: 'https://example.com/brand',
+            start_time: 'asap',
+            end_time: '2025-12-31T23:59:59Z',
+          });
+        } catch (err) {
+          // Network errors are expected since we're not mocking the agent
+          // We only care that validation doesn't reject format_ids with extra fields
+          if (err.message.includes('Request validation failed')) {
+            throw err;
+          }
+        }
+      });
+    });
+
+    test('should accept format_ids with only valid FormatID fields', async () => {
+      const client = new AdCPClient([mockAgent]);
+      const agent = client.agent(mockAgent.id);
+
+      // This should NOT throw validation error (may fail on network, but not validation)
+      await assert.doesNotReject(async () => {
+        try {
+          await agent.createMediaBuy({
+            buyer_ref: 'buyer123',
+            packages: [
+              {
+                buyer_ref: 'pkg123',
+                product_id: 'prod123',
+                format_ids: [
+                  {
+                    agent_url: 'https://test.example.com',
+                    id: 'display_300x250',
+                    width: 300,
+                    height: 250,
+                  },
+                ],
+                budget: 1000,
+                pricing_option_id: 'cpm-fixed',
+              },
+            ],
+            brand_manifest: 'https://example.com/brand',
+            start_time: 'asap',
+            end_time: '2025-12-31T23:59:59Z',
+          });
+        } catch (err) {
+          // Network errors are expected since we're not mocking the agent
+          // We only care that validation doesn't reject valid format_ids
+          if (err.message.includes('Request validation failed')) {
+            throw err;
+          }
+        }
+      });
+    });
+  });
+
   describe('context field preservation', () => {
     test('should allow arbitrary properties in context field for get_products', async () => {
       const client = new AdCPClient([mockAgent]);
