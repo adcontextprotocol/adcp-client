@@ -8,6 +8,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const { callMCPTool } = require('../../dist/lib/protocols/mcp.js');
+const { TEST_AGENT_TOKEN } = require('../../dist/lib/testing/index.js');
 
 // Mock server response helper
 function createMockResponse(body, status = 200, headers = {}) {
@@ -268,5 +269,52 @@ test('MCP: Protocol integration sends auth headers', async t => {
 
     // Restore NODE_ENV
     process.env.NODE_ENV = originalNodeEnv;
+  });
+
+  await t.test('CLI --auth flag should use auth_token not auth_token_env', () => {
+    const { getAuthToken } = require('../../dist/lib/auth/index.js');
+
+    // This simulates what the CLI should do when --auth is provided
+    // The bug was that CLI was setting auth_token_env (env var name) instead of auth_token (direct value)
+    // Use the public test token from the testing module
+    const literalToken = TEST_AGENT_TOKEN;
+
+    // CORRECT: Use auth_token for literal token values
+    const correctConfig = {
+      id: 'cli-agent',
+      protocol: 'mcp',
+      agent_uri: 'https://test-agent.adcontextprotocol.org/mcp',
+      requiresAuth: true,
+      auth_token: literalToken,
+    };
+
+    const authToken = getAuthToken(correctConfig);
+    assert.strictEqual(authToken, literalToken, 'auth_token should return the literal token value');
+
+    // INCORRECT (the bug): Using auth_token_env treats it as env var name
+    const buggyConfig = {
+      id: 'cli-agent',
+      protocol: 'mcp',
+      agent_uri: 'https://test-agent.adcontextprotocol.org/mcp',
+      requiresAuth: true,
+      auth_token_env: literalToken, // BUG: This is treated as env var name
+    };
+
+    // Capture console.warn
+    const warnings = [];
+    const originalWarn = console.warn;
+    console.warn = msg => warnings.push(msg);
+
+    const buggyToken = getAuthToken(buggyConfig);
+
+    // Restore console.warn
+    console.warn = originalWarn;
+
+    // The bug causes undefined because process.env[literalToken] doesn't exist
+    assert.strictEqual(buggyToken, undefined, 'auth_token_env with literal value returns undefined (the bug)');
+    assert.ok(
+      warnings.some(w => w.includes(literalToken)),
+      'Should warn about missing env var when auth_token_env is misused'
+    );
   });
 });
