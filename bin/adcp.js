@@ -502,7 +502,7 @@ async function main() {
     name: 'CLI Agent',
     agent_uri: agentUrl,
     protocol: protocol,
-    ...(authToken && { auth_token_env: authToken, requiresAuth: true }),
+    ...(authToken && { auth_token: authToken, requiresAuth: true }),
   };
 
   try {
