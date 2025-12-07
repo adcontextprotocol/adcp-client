@@ -8,6 +8,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const { callMCPTool } = require('../../dist/lib/protocols/mcp.js');
+const { TEST_AGENT_TOKEN } = require('../../dist/lib/testing/index.js');
 
 // Mock server response helper
 function createMockResponse(body, status = 200, headers = {}) {
@@ -275,7 +276,8 @@ test('MCP: Protocol integration sends auth headers', async t => {
 
     // This simulates what the CLI should do when --auth is provided
     // The bug was that CLI was setting auth_token_env (env var name) instead of auth_token (direct value)
-    const literalToken = '1v8tAhASaUYYp4odoQ1PnMpdqNaMiTrCRqYo9OJp6IQ';
+    // Use the public test token from the testing module
+    const literalToken = TEST_AGENT_TOKEN;
 
     // CORRECT: Use auth_token for literal token values
     const correctConfig = {
