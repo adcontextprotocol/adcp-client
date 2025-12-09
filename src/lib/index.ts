@@ -157,6 +157,10 @@ export type {
 // Re-export all Zod schemas for user validation needs
 export * from './types/schemas.generated';
 
+// ====== PROTOCOL LOGGING ======
+// Protocol logging configuration
+export type { ProtocolLoggingConfig } from './protocols/mcp';
+
 // ====== AUTHENTICATION ======
 // Auth utilities for custom integrations
 export { getAuthToken, createAdCPHeaders, createMCPAuthHeaders, createAuthenticatedFetch } from './auth';
