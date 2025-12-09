@@ -2249,6 +2249,12 @@
               📋 View All
             </button>
           </div>
+          <div style="display: flex; align-items: center; gap: 5px; padding: 8px 12px; background: rgba(255,255,255,0.1); border-radius: 6px">
+            <input type="checkbox" id="enable-protocol-logging" style="width: auto; margin: 0" />
+            <label for="enable-protocol-logging" style="margin: 0; cursor: pointer; font-size: 13px" title="Enable detailed wire-level HTTP request/response logging">
+              🔍 Protocol Logging
+            </label>
+          </div>
         </div>
       </div>
 
@@ -8362,6 +8368,23 @@
         }
       }
 
+      // Helper function to get protocol logging config from UI
+      function getProtocolLoggingConfig() {
+        const enabled = document.getElementById('enable-protocol-logging').checked;
+        if (!enabled) {
+          return null;
+        }
+        return {
+          enabled: true,
+          logRequests: true,
+          logResponses: true,
+          logRequestBodies: true,
+          logResponseBodies: true,
+          maxBodySize: 50000,
+          redactAuthHeaders: true,
+        };
+      }
+
       async function executeMCPTool(agent, toolName, params) {
         logEvent('info', `Executing MCP tool ${toolName} with agent: ${agent.name} (ID: ${agent.id})`);
         return await executeMCPToolBackend(agent, toolName, params);
@@ -8406,6 +8429,7 @@
             brandStory: params.brief || 'Test execution from ADCP Testing Suite',
             offering: null,
             agentConfig: agent,
+            protocolLogging: getProtocolLoggingConfig(),
           }),
         });
 
@@ -8486,6 +8510,7 @@
             brandStory: params.brief || 'Test execution from ADCP Testing Suite',
             offering: null,
             agentConfig: agent,
+            protocolLogging: getProtocolLoggingConfig(),
           }),
         });
 

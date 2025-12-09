@@ -19,6 +19,7 @@ import {
   type SyncCreativesResponse,
   type CreateMediaBuyResponse,
   type MediaBuyDeliveryNotification,
+  type ProtocolLoggingConfig,
   ADCP_STATUS,
   InputRequiredError,
 } from '../lib';
@@ -125,6 +126,18 @@ const clientConfig: SingleAgentClientConfig = {
   validation: {
     strictSchemaValidation: process.env.ADCP_STRICT_VALIDATION !== 'false', // Default: true
     logSchemaViolations: process.env.ADCP_LOG_SCHEMA_VIOLATIONS !== 'false', // Default: true
+  },
+
+  // Protocol logging configuration - wire-level HTTP request/response logging
+  // Can be enabled via env var or dynamically per request
+  protocolLogging: {
+    enabled: process.env.ADCP_PROTOCOL_LOGGING === 'true', // Default: false
+    logRequests: true,
+    logResponses: true,
+    logRequestBodies: true,
+    logResponseBodies: true,
+    maxBodySize: 50000,
+    redactAuthHeaders: true,
   },
 
   // Activity logging - store ALL events
@@ -655,6 +668,89 @@ app.get('/api/sales/agents/:agentId/info', async (request, reply) => {
     return reply.code(500).send({
       success: false,
       error: error instanceof Error ? error.message : 'Failed to get agent info',
+      timestamp: new Date().toISOString(),
+    });
+  }
+});
+
+// Query agent endpoint - supports protocol logging
+app.post<{
+  Params: { agentId: string };
+  Body: {
+    brandStory?: string;
+    offering?: string | null;
+    agentConfig?: AgentConfig;
+    protocolLogging?: ProtocolLoggingConfig | null;
+  };
+}>('/api/sales/agents/:agentId/query', async (request, reply) => {
+  const { agentId } = request.params;
+  const { brandStory, offering, agentConfig, protocolLogging } = request.body;
+
+  try {
+    // Create a temporary client if custom config is provided, or use the existing client with protocol logging
+    let agent;
+    let tempClient: ADCPMultiAgentClient | null = null;
+
+    if (agentConfig) {
+      // Custom agent configuration provided
+      const customAgentConfig: AgentConfig = {
+        id: agentConfig.id || agentId,
+        name: agentConfig.name || agentId,
+        agent_uri: agentConfig.agent_uri || (agentConfig as any).server_url,
+        protocol: agentConfig.protocol || 'mcp',
+        auth_token_env: agentConfig.auth_token_env,
+        requiresAuth: agentConfig.requiresAuth !== false,
+      };
+
+      // Merge protocol logging config if provided
+      const tempClientConfig: SingleAgentClientConfig = {
+        ...clientConfig,
+        ...(protocolLogging && { protocolLogging }),
+      };
+
+      tempClient = new ADCPMultiAgentClient([customAgentConfig], tempClientConfig);
+      agent = tempClient.agent(customAgentConfig.id);
+    } else {
+      // Use existing client - if protocol logging is provided, create new client with that config
+      if (protocolLogging) {
+        const agentConfigs = adcpClient.getAgentConfigs();
+        const tempClientConfig: SingleAgentClientConfig = {
+          ...clientConfig,
+          protocolLogging,
+        };
+        tempClient = new ADCPMultiAgentClient(agentConfigs, tempClientConfig);
+        agent = tempClient.agent(agentId);
+      } else {
+        agent = adcpClient.agent(agentId);
+      }
+    }
+
+    if (!agent) {
+      return reply.code(404).send({
+        success: false,
+        error: `Agent ${agentId} not found`,
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    // Call get_products by default (this is what the testing UI expects)
+    const result = await agent.getProducts({
+      brand_manifest: { name: brandStory || offering || 'Test brand' },
+      ...(brandStory && { brief: brandStory }),
+    });
+
+    return reply.send({
+      success: result.success,
+      data: result.data,
+      error: result.error,
+      debugLogs: result.debug_logs || [],
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    app.log.error(`Failed to query agent ${agentId}: ${error instanceof Error ? error.message : String(error)}`);
+    return reply.code(500).send({
+      success: false,
+      error: error instanceof Error ? error.message : 'Failed to query agent',
       timestamp: new Date().toISOString(),
     });
   }
