@@ -320,13 +320,3 @@ export function isSyncCreativesFailed(
 ): response is SyncCreativesResponse {
   return metadata.status === 'failed';
 }
-/**
- * Type guard to check if SyncCreatives response failed.
- * Automatically narrows response type to SyncCreativesResponse.
- */
-export function isSyncCreativesRejected(
-  metadata: WebhookMetadata,
-  response: any
-): response is SyncCreativesResponse {
-  return metadata.status === 'rejected';
-}
