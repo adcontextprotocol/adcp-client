@@ -72,6 +72,8 @@ export class AgentClient {
    * Handle webhook from agent (async task completion or notifications)
    *
    * @param payload - Webhook payload from agent
+   * @param taskType - Task type (e.g create_media_buy) from url param or url part of the webhook delivery
+   * @param operationId - Operation id (e.g used for client app to track the operation) from the param or url part of the webhook delivery
    * @param signature - Optional signature for verification (X-ADCP-Signature)
    * @param timestamp - Optional timestamp for verification (X-ADCP-Timestamp)
    * @param taskType - Task type from URL path (e.g., 'create_media_buy')
@@ -79,11 +81,12 @@ export class AgentClient {
    */
   async handleWebhook(
     payload: any,
+    taskType: string,
+    operationId: string,
     signature?: string,
-    timestamp?: string | number,
-    taskType?: string
+    timestamp?: string | number
   ): Promise<boolean> {
-    return this.client.handleWebhook(payload, signature, timestamp, taskType);
+    return this.client.handleWebhook(payload, taskType, operationId, signature, timestamp);
   }
 
   /**

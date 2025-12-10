@@ -15,9 +15,12 @@ export type {
   ManageCreativeAssetsRequest,
   ManageCreativeAssetsResponse,
   SyncCreativesRequest,
-  SyncCreativesResponse,
   ListCreativesRequest,
   ListCreativesResponse,
+  CreateMediaBuyAsyncResponseData,
+  UpdateMediaBuyAsyncResponseData,
+  GetProductsAsyncResponseData,
+  SyncCreativesAsyncResponseData
 } from './adcp';
 
 // Re-export FormatID from generated core types
