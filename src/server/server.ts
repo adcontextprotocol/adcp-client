@@ -7,7 +7,6 @@ import {
   ADCPMultiAgentClient,
   ConfigurationManager,
   CreativeAgentClient,
-  getStandardFormats,
   type TaskResult,
   type InputHandler,
   type SingleAgentClientConfig,
@@ -15,14 +14,10 @@ import {
   type Activity,
   type NotificationMetadata,
   type WebhookMetadata,
-  type GetProductsResponse,
-  type SyncCreativesResponse,
-  type CreateMediaBuyResponse,
   type MediaBuyDeliveryNotification,
-  ADCP_STATUS,
   InputRequiredError,
 } from '../lib';
-import type { TestRequest, ApiResponse, TestResponse, AgentListResponse, AgentConfig, TestResult } from '../lib/types';
+import type { TestRequest, ApiResponse, TestResponse, AgentListResponse, AgentConfig, TestResult, GetProductsAsyncResponseData, SyncCreativesAsyncResponseData, CreateMediaBuyAsyncResponseData } from '../lib/types';
 
 // __dirname is available in CommonJS mode
 
@@ -150,7 +145,7 @@ const clientConfig: SingleAgentClientConfig = {
 
   // Status change handlers - called for ALL status changes (completed, failed, needs_input, working, etc)
   handlers: {
-    onGetProductsStatusChange: (response: GetProductsResponse, metadata: WebhookMetadata) => {
+    onGetProductsStatusChange: (response: GetProductsAsyncResponseData, metadata: WebhookMetadata) => {
       const status = metadata.status || 'completed'; // Get actual status from webhook
       storeEvent({
         type: 'handler_called',
@@ -161,10 +156,14 @@ const clientConfig: SingleAgentClientConfig = {
         payload: response,
         metadata,
       });
-      app.log.info(`[${status}] Products: ${response.products?.length || 0} for ${metadata.operation_id}`);
+      if('products' in response) {
+        app.log.info(`[${status}] Products: ${response.products?.length || 0} for ${metadata.operation_id}`);
+      } else {
+        app.log.info(`[${status}] Products: 0 for ${metadata.operation_id}`);
+      }
     },
 
-    onSyncCreativesStatusChange: (response: SyncCreativesResponse, metadata: WebhookMetadata) => {
+    onSyncCreativesStatusChange: (response: SyncCreativesAsyncResponseData, metadata: WebhookMetadata) => {
       const status = metadata.status || 'completed';
       storeEvent({
         type: 'handler_called',
@@ -179,7 +178,7 @@ const clientConfig: SingleAgentClientConfig = {
       app.log.info(`[${status}] Creatives synced: ${creativesCount} for ${metadata.operation_id}`);
     },
 
-    onCreateMediaBuyStatusChange: (response: CreateMediaBuyResponse, metadata: WebhookMetadata) => {
+    onCreateMediaBuyStatusChange: (response: CreateMediaBuyAsyncResponseData, metadata: WebhookMetadata) => {
       const status = metadata.status || 'completed';
       storeEvent({
         type: 'handler_called',
@@ -191,6 +190,7 @@ const clientConfig: SingleAgentClientConfig = {
         metadata,
       });
       const mediaBuyId = 'media_buy_id' in response ? response.media_buy_id : 'error';
+
       app.log.info(`[${status}] Media buy created: ${mediaBuyId} for ${metadata.operation_id}`);
     },
 
@@ -1932,29 +1932,11 @@ app.post<{
       });
     }
 
-    // Validate payload task_type matches URL
-    const payloadTaskType = (payload as any).task_type;
-    if (payloadTaskType && payloadTaskType !== taskType) {
-      app.log.error(`Task type mismatch: URL says ${taskType}, payload says ${payloadTaskType}`);
-      return reply.code(400).send({
-        success: false,
-        error: `Task type mismatch: expected ${taskType}, got ${payloadTaskType}`,
-        timestamp: new Date().toISOString(),
-      });
-    }
-
-    // Inject URL parameters into payload for handlers
-    const enrichedPayload = {
-      ...payload,
-      operation_id: operationId,
-      task_type: taskType,
-    };
-
     // Handle webhook - agents are NOT stateful, but URL contains agent_id for routing
     // The webhook URL was generated with this agent_id during operation setup
     // We use it to look up the correct agent configuration (auth, protocol, etc)
     const agent = adcpClient.agent(agentId);
-    const handled = await agent.handleWebhook(enrichedPayload, signature, timestamp);
+    const handled = await agent.handleWebhook(payload, taskType, operationId, signature, timestamp);
 
     if (!handled) {
       app.log.warn(`Webhook not handled - no handlers configured`);
