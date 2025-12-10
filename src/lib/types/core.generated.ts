@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas v2.5.0
-// Generated at: 2025-11-23T14:51:07.409Z
+// Generated at: 2025-12-09T20:52:33.466Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -1629,5 +1629,462 @@ export interface Property {
    * Domain where adagents.json should be checked for authorization validation. Required for list_authorized_properties response. Optional in adagents.json (file location implies domain).
    */
   publisher_domain?: string;
+}
+
+// MCP-WEBHOOK-PAYLOAD SCHEMA
+/**
+ * Type of AdCP operation that triggered this webhook. Enables webhook handlers to route to appropriate processing logic.
+ */
+export type TaskType = 'create_media_buy' | 'update_media_buy' | 'sync_creatives' | 'activate_signal' | 'get_signals';
+/**
+ * AdCP domain this task belongs to. Helps classify the operation type at a high level.
+ */
+export type AdCPDomain = 'media-buy' | 'signals';
+/**
+ * Current task status. Webhooks are triggered for status changes after initial submission.
+ */
+export type TaskStatus =
+  | 'submitted'
+  | 'working'
+  | 'input-required'
+  | 'completed'
+  | 'canceled'
+  | 'failed'
+  | 'rejected'
+  | 'auth-required'
+  | 'unknown';
+/**
+ * Task-specific payload matching the status. For completed/failed, contains the full task response. For working/input-required/submitted, contains status-specific data. This is the data layer that AdCP specs - same structure used in A2A status.message.parts[].data.
+ */
+export type AdCPAsyncResponseData =
+  | GetProductsResponse
+  | GetProductsAsyncWorking
+  | GetProductsAsyncInputRequired
+  | GetProductsAsyncSubmitted
+  | CreateMediaBuyResponse
+  | CreateMediaBuyAsyncWorking
+  | CreateMediaBuyAsyncInputRequired
+  | CreateMediaBuyAsyncSubmitted
+  | UpdateMediaBuyResponse
+  | UpdateMediaBuyAsyncWorking
+  | UpdateMediaBuyAsyncInputRequired
+  | UpdateMediaBuyAsyncSubmitted
+  | SyncCreativesResponse
+  | SyncCreativesAsyncWorking
+  | SyncCreativesAsyncInputRequired
+  | SyncCreativesAsyncSubmitted;
+/**
+ * Selects properties from a publisher's adagents.json. Used for both product definitions and agent authorization. Supports three selection patterns: all properties, specific IDs, or by tags.
+ */
+export type CreateMediaBuyResponse =
+  | {
+      /**
+       * Publisher's unique identifier for the created media buy
+       */
+      media_buy_id: string;
+      /**
+       * Buyer's reference identifier for this media buy
+       */
+      buyer_ref: string;
+      /**
+       * ISO 8601 timestamp for creative upload deadline
+       */
+      creative_deadline?: string;
+      /**
+       * Array of created packages with complete state information
+       */
+      packages: Package[];
+      context?: ContextObject;
+      ext?: ExtensionObject;
+    }
+  | {
+      /**
+       * Array of errors explaining why the operation failed
+       *
+       * @minItems 1
+       */
+      errors: [Error, ...Error[]];
+      context?: ContextObject;
+      ext?: ExtensionObject;
+    };
+/**
+ * Budget pacing strategy
+ */
+export type UpdateMediaBuyResponse =
+  | {
+      /**
+       * Publisher's identifier for the media buy
+       */
+      media_buy_id: string;
+      /**
+       * Buyer's reference identifier for the media buy
+       */
+      buyer_ref: string;
+      /**
+       * ISO 8601 timestamp when changes take effect (null if pending approval)
+       */
+      implementation_date?: string | null;
+      /**
+       * Array of packages that were modified with complete state information
+       */
+      affected_packages?: Package[];
+      context?: ContextObject;
+      ext?: ExtensionObject;
+    }
+  | {
+      /**
+       * Array of errors explaining why the operation failed
+       *
+       * @minItems 1
+       */
+      errors: [Error, ...Error[]];
+      context?: ContextObject;
+      ext?: ExtensionObject;
+    };
+/**
+ * Response for completed or failed sync_creatives
+ */
+export type SyncCreativesResponse =
+  | {
+      /**
+       * Whether this was a dry run (no actual changes made)
+       */
+      dry_run?: boolean;
+      /**
+       * Results for each creative processed. Items with action='failed' indicate per-item validation/processing failures, not operation-level failures.
+       */
+      creatives: {
+        /**
+         * Creative ID from the request
+         */
+        creative_id: string;
+        action: CreativeAction;
+        /**
+         * Platform-specific ID assigned to the creative
+         */
+        platform_id?: string;
+        /**
+         * Field names that were modified (only present when action='updated')
+         */
+        changes?: string[];
+        /**
+         * Validation or processing errors (only present when action='failed')
+         */
+        errors?: string[];
+        /**
+         * Non-fatal warnings about this creative
+         */
+        warnings?: string[];
+        /**
+         * Preview URL for generative creatives (only present for generative formats)
+         */
+        preview_url?: string;
+        /**
+         * ISO 8601 timestamp when preview link expires (only present when preview_url exists)
+         */
+        expires_at?: string;
+        /**
+         * Package IDs this creative was successfully assigned to (only present when assignments were requested)
+         */
+        assigned_to?: string[];
+        /**
+         * Assignment errors by package ID (only present when assignment failures occurred)
+         */
+        assignment_errors?: {
+          /**
+           * Error message for this package assignment
+           *
+           * This interface was referenced by `undefined`'s JSON-Schema definition
+           * via the `patternProperty` "^[a-zA-Z0-9_-]+$".
+           */
+          [k: string]: string;
+        };
+      }[];
+      context?: ContextObject;
+      ext?: ExtensionObject;
+    }
+  | {
+      /**
+       * Operation-level errors that prevented processing any creatives (e.g., authentication failure, service unavailable, invalid request format)
+       *
+       * @minItems 1
+       */
+      errors: [Error, ...Error[]];
+      context?: ContextObject;
+      ext?: ExtensionObject;
+    };
+/**
+ * Action taken for this creative
+ */
+export type CreativeAction = 'created' | 'updated' | 'unchanged' | 'failed' | 'deleted';
+
+/**
+ * Standard envelope for HTTP-based push notifications (MCP). This defines the wire format sent to the URL configured in `pushNotificationConfig`. NOTE: This envelope is NOT used in A2A integration, which uses native Task/TaskStatusUpdateEvent messages with the AdCP payload nested in `status.message.parts[].data`.
+ */
+export interface MCPWebhookPayload {
+  /**
+   * Publisher-defined operation identifier correlating a sequence of task updates across webhooks.
+   */
+  operation_id?: string;
+  /**
+   * Unique identifier for this task. Use this to correlate webhook notifications with the original task submission.
+   */
+  task_id: string;
+  task_type: TaskType;
+  domain?: AdCPDomain;
+  status: TaskStatus;
+  /**
+   * ISO 8601 timestamp when this webhook was generated.
+   */
+  timestamp: string;
+  /**
+   * Human-readable summary of the current task state. Provides context about what happened and what action may be needed.
+   */
+  message?: string;
+  /**
+   * Session/conversation identifier. Use this to continue the conversation if input-required status needs clarification or additional parameters.
+   */
+  context_id?: string;
+  result?: AdCPAsyncResponseData;
+}
+/**
+ * Response for completed or failed get_products
+ */
+export interface GetProductsResponse {
+  /**
+   * Array of matching products
+   */
+  products: Product[];
+  /**
+   * Task-specific errors and warnings (e.g., product filtering issues)
+   */
+  errors?: Error[];
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Represents available advertising inventory
+ */
+export interface Error {
+  /**
+   * Error code for programmatic handling
+   */
+  code: string;
+  /**
+   * Human-readable error message
+   */
+  message: string;
+  /**
+   * Field path associated with the error (e.g., 'packages[0].targeting')
+   */
+  field?: string;
+  /**
+   * Suggested fix for the error
+   */
+  suggestion?: string;
+  /**
+   * Seconds to wait before retrying the operation
+   */
+  retry_after?: number;
+  /**
+   * Additional task-specific error details
+   */
+  details?: {
+    [k: string]: unknown;
+  };
+}
+/**
+ * Opaque correlation data that is echoed unchanged in responses. Used for internal tracking, UI session IDs, trace IDs, and other caller-specific identifiers that don't affect protocol behavior. Context data is never parsed by AdCP agents - it's simply preserved and returned.
+ */
+export interface ContextObject {
+  [k: string]: unknown;
+}
+/**
+ * Progress data for working get_products
+ */
+export interface GetProductsAsyncWorking {
+  /**
+   * Progress percentage of the search operation
+   */
+  percentage?: number;
+  /**
+   * Current step in the search process (e.g., 'searching_inventory', 'validating_availability')
+   */
+  current_step?: string;
+  /**
+   * Total number of steps in the search process
+   */
+  total_steps?: number;
+  /**
+   * Current step number (1-indexed)
+   */
+  step_number?: number;
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Input requirements for get_products needing clarification
+ */
+export interface GetProductsAsyncInputRequired {
+  /**
+   * Reason code indicating why input is needed
+   */
+  reason?: 'CLARIFICATION_NEEDED' | 'BUDGET_REQUIRED';
+  /**
+   * Partial product results that may help inform the clarification
+   */
+  partial_results?: Product[];
+  /**
+   * Suggested values or options for the required input
+   */
+  suggestions?: string[];
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Acknowledgment for submitted get_products (custom curation)
+ */
+export interface GetProductsAsyncSubmitted {
+  /**
+   * Estimated completion time for the search
+   */
+  estimated_completion?: string;
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * A specific product within a media buy (line item)
+ */
+export interface CreateMediaBuyAsyncWorking {
+  /**
+   * Completion percentage (0-100)
+   */
+  percentage?: number;
+  /**
+   * Current step or phase of the operation
+   */
+  current_step?: string;
+  /**
+   * Total number of steps in the operation
+   */
+  total_steps?: number;
+  /**
+   * Current step number
+   */
+  step_number?: number;
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Input requirements for create_media_buy needing user input
+ */
+export interface CreateMediaBuyAsyncInputRequired {
+  /**
+   * Reason code indicating why input is needed
+   */
+  reason?: 'APPROVAL_REQUIRED' | 'BUDGET_EXCEEDS_LIMIT';
+  /**
+   * Optional validation errors or warnings for debugging purposes. Helps explain why input is required.
+   */
+  errors?: Error[];
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Acknowledgment for submitted create_media_buy
+ */
+export interface CreateMediaBuyAsyncSubmitted {
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Progress data for working update_media_buy
+ */
+export interface UpdateMediaBuyAsyncWorking {
+  /**
+   * Completion percentage (0-100)
+   */
+  percentage?: number;
+  /**
+   * Current step or phase of the operation
+   */
+  current_step?: string;
+  /**
+   * Total number of steps in the operation
+   */
+  total_steps?: number;
+  /**
+   * Current step number
+   */
+  step_number?: number;
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Input requirements for update_media_buy needing user input
+ */
+export interface UpdateMediaBuyAsyncInputRequired {
+  /**
+   * Reason code indicating why input is needed
+   */
+  reason?: 'APPROVAL_REQUIRED' | 'CHANGE_CONFIRMATION';
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Acknowledgment for submitted update_media_buy
+ */
+export interface UpdateMediaBuyAsyncSubmitted {
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Progress data for working sync_creatives
+ */
+export interface SyncCreativesAsyncWorking {
+  /**
+   * Completion percentage (0-100)
+   */
+  percentage?: number;
+  /**
+   * Current step or phase of the operation
+   */
+  current_step?: string;
+  /**
+   * Total number of steps in the operation
+   */
+  total_steps?: number;
+  /**
+   * Current step number
+   */
+  step_number?: number;
+  /**
+   * Number of creatives processed so far
+   */
+  creatives_processed?: number;
+  /**
+   * Total number of creatives to process
+   */
+  creatives_total?: number;
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Input requirements for sync_creatives needing user input
+ */
+export interface SyncCreativesAsyncInputRequired {
+  /**
+   * Reason code indicating why input is needed
+   */
+  reason?: 'APPROVAL_REQUIRED' | 'ASSET_CONFIRMATION' | 'FORMAT_CLARIFICATION';
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Acknowledgment for submitted sync_creatives
+ */
+export interface SyncCreativesAsyncSubmitted {
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 

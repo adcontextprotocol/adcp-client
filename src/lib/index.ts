@@ -71,7 +71,6 @@ export { createOperationId } from './core/TaskEventTypes';
 export type {
   AsyncHandlerConfig,
   WebhookMetadata,
-  WebhookPayload,
   Activity,
   NotificationMetadata,
   MediaBuyDeliveryNotification,

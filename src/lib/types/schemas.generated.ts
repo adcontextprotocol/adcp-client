@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2025-12-03T01:26:09.792Z
+// Generated at: 2025-12-09T20:52:34.568Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -292,6 +292,19 @@ export const PropertyTypeSchema = z.union([z.literal("website"), z.literal("mobi
 
 export const PropertyTagSchema = z.string();
 
+export const ContextObjectSchema = z.record(z.string(), z.unknown());
+
+export const ErrorSchema = z.object({
+    code: z.string(),
+    message: z.string(),
+    field: z.string().nullish(),
+    suggestion: z.string().nullish(),
+    retry_after: z.number().nullish(),
+    details: z.record(z.string(), z.unknown()).nullish()
+});
+
+export const CreativeActionSchema = z.union([z.literal("created"), z.literal("updated"), z.literal("unchanged"), z.literal("failed"), z.literal("deleted")]);
+
 export const BrandManifestSchema = z.object({
     url: z.string().nullish(),
     name: z.string(),
@@ -355,17 +368,6 @@ export const BrandManifestSchema = z.object({
 });
 
 export const BrandManifestReferenceSchema = z.union([BrandManifestSchema, z.string()]);
-
-export const ContextObjectSchema = z.record(z.string(), z.unknown());
-
-export const ErrorSchema = z.object({
-    code: z.string(),
-    message: z.string(),
-    field: z.string().nullish(),
-    suggestion: z.string().nullish(),
-    retry_after: z.number().nullish(),
-    details: z.record(z.string(), z.unknown()).nullish()
-});
 
 export const PublisherPropertySelectorSchema = z.union([z.object({
         publisher_domain: z.string(),
@@ -495,7 +497,27 @@ export const PushNotificationConfigSchema = z.object({
     })
 });
 
-export const CreativeActionSchema = z.union([z.literal("created"), z.literal("updated"), z.literal("unchanged"), z.literal("failed"), z.literal("deleted")]);
+export const SyncCreativesResponseSchema = z.union([z.object({
+        dry_run: z.boolean().nullish(),
+        creatives: z.array(z.object({
+            creative_id: z.string(),
+            action: CreativeActionSchema,
+            platform_id: z.string().nullish(),
+            changes: z.array(z.string()).nullish(),
+            errors: z.array(z.string()).nullish(),
+            warnings: z.array(z.string()).nullish(),
+            preview_url: z.string().nullish(),
+            expires_at: z.string().nullish(),
+            assigned_to: z.array(z.string()).nullish(),
+            assignment_errors: z.record(z.string(), z.string()).nullish()
+        })),
+        context: ContextObjectSchema.nullish(),
+        ext: ExtensionObjectSchema.nullish()
+    }), z.object({
+        errors: z.tuple([ErrorSchema]).rest(ErrorSchema),
+        context: ContextObjectSchema.nullish(),
+        ext: ExtensionObjectSchema.nullish()
+    })]);
 
 export const CreativeSortFieldSchema = z.union([z.literal("created_date"), z.literal("updated_date"), z.literal("name"), z.literal("status"), z.literal("assignment_count"), z.literal("performance_score")]);
 
@@ -870,6 +892,26 @@ export const PropertySchema = z.object({
     publisher_domain: z.string().nullish()
 });
 
+export const CreateMediaBuyResponseSchema = z.union([z.object({
+        media_buy_id: z.string(),
+        buyer_ref: z.string(),
+        creative_deadline: z.string().nullish(),
+        packages: z.array(PackageSchema),
+        context: ContextObjectSchema.nullish(),
+        ext: ExtensionObjectSchema.nullish()
+    }), z.object({
+        errors: z.tuple([ErrorSchema]).rest(ErrorSchema),
+        context: ContextObjectSchema.nullish(),
+        ext: ExtensionObjectSchema.nullish()
+    })]);
+
+export const GetProductsResponseSchema = z.object({
+    products: z.array(ProductSchema),
+    errors: z.array(ErrorSchema).nullish(),
+    context: ContextObjectSchema.nullish(),
+    ext: ExtensionObjectSchema.nullish()
+});
+
 export const ProductFiltersSchema = z.object({
     delivery_type: DeliveryTypeSchema.nullish(),
     is_fixed_price: z.boolean().nullish(),
@@ -882,13 +924,6 @@ export const ProductFiltersSchema = z.object({
     budget_range: z.record(z.string(), z.unknown()).nullish(),
     countries: z.array(z.string()).nullish(),
     channels: z.array(AdvertisingChannelsSchema).nullish()
-});
-
-export const GetProductsResponseSchema = z.object({
-    products: z.array(ProductSchema),
-    errors: z.array(ErrorSchema).nullish(),
-    context: ContextObjectSchema.nullish(),
-    ext: ExtensionObjectSchema.nullish()
 });
 
 export const ListCreativeFormatsRequestSchema = z.object({
@@ -965,19 +1000,6 @@ export const PackageRequestSchema = z.object({
     ext: ExtensionObjectSchema.nullish()
 });
 
-export const CreateMediaBuyResponseSchema = z.union([z.object({
-        media_buy_id: z.string(),
-        buyer_ref: z.string(),
-        creative_deadline: z.string().nullish(),
-        packages: z.array(PackageSchema),
-        context: ContextObjectSchema.nullish(),
-        ext: ExtensionObjectSchema.nullish()
-    }), z.object({
-        errors: z.tuple([ErrorSchema]).rest(ErrorSchema),
-        context: ContextObjectSchema.nullish(),
-        ext: ExtensionObjectSchema.nullish()
-    })]);
-
 export const SyncCreativesRequestSchema = z.object({
     creatives: z.array(CreativeAssetSchema),
     creative_ids: z.array(z.string()).nullish(),
@@ -989,28 +1011,6 @@ export const SyncCreativesRequestSchema = z.object({
     context: ContextObjectSchema.nullish(),
     ext: ExtensionObjectSchema.nullish()
 });
-
-export const SyncCreativesResponseSchema = z.union([z.object({
-        dry_run: z.boolean().nullish(),
-        creatives: z.array(z.object({
-            creative_id: z.string(),
-            action: CreativeActionSchema,
-            platform_id: z.string().nullish(),
-            changes: z.array(z.string()).nullish(),
-            errors: z.array(z.string()).nullish(),
-            warnings: z.array(z.string()).nullish(),
-            preview_url: z.string().nullish(),
-            expires_at: z.string().nullish(),
-            assigned_to: z.array(z.string()).nullish(),
-            assignment_errors: z.record(z.string(), z.string()).nullish()
-        })),
-        context: ContextObjectSchema.nullish(),
-        ext: ExtensionObjectSchema.nullish()
-    }), z.object({
-        errors: z.tuple([ErrorSchema]).rest(ErrorSchema),
-        context: ContextObjectSchema.nullish(),
-        ext: ExtensionObjectSchema.nullish()
-    })]);
 
 export const CreativeFiltersSchema = z.object({
     format: z.string().nullish(),
