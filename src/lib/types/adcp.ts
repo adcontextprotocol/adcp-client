@@ -407,22 +407,32 @@ export type PropertyIdentifierType =
   | 'custom';
 
 /** Grouped types by tool type */
-export type CreateMediaBuyAsyncResponseData = | CreateMediaBuyResponse
-| CreateMediaBuyAsyncWorking
-| CreateMediaBuyAsyncInputRequired
-| CreateMediaBuyAsyncSubmitted
+export type AsyncResponseByTask = {
+  create_media_buy:
+    | CreateMediaBuyResponse
+    | CreateMediaBuyAsyncWorking
+    | CreateMediaBuyAsyncInputRequired
+    | CreateMediaBuyAsyncSubmitted;
+  get_products:
+    | GetProductsResponse
+    | GetProductsAsyncWorking
+    | GetProductsAsyncInputRequired
+    | GetProductsAsyncSubmitted;
+  update_media_buy:
+    | UpdateMediaBuyResponse
+    | UpdateMediaBuyAsyncWorking
+    | UpdateMediaBuyAsyncInputRequired
+    | UpdateMediaBuyAsyncSubmitted;
+  sync_creatives:
+    | SyncCreativesResponse
+    | SyncCreativesAsyncWorking
+    | SyncCreativesAsyncInputRequired
+    | SyncCreativesAsyncSubmitted;
+};
 
-export type GetProductsAsyncResponseData = | GetProductsResponse
-| GetProductsAsyncWorking
-| GetProductsAsyncInputRequired
-| GetProductsAsyncSubmitted
+export type AsyncResponseFor<TTask extends keyof AsyncResponseByTask> = AsyncResponseByTask[TTask];
 
-export type UpdateMediaBuyAsyncResponseData = | UpdateMediaBuyResponse
-| UpdateMediaBuyAsyncWorking
-| UpdateMediaBuyAsyncInputRequired
-| UpdateMediaBuyAsyncSubmitted
-
-export type SyncCreativesAsyncResponseData = | SyncCreativesResponse
-| SyncCreativesAsyncWorking
-| SyncCreativesAsyncInputRequired
-| SyncCreativesAsyncSubmitted;
+export type CreateMediaBuyAsyncResponseData = AsyncResponseFor<'create_media_buy'>;
+export type GetProductsAsyncResponseData = AsyncResponseFor<'get_products'>;
+export type UpdateMediaBuyAsyncResponseData = AsyncResponseFor<'update_media_buy'>;
+export type SyncCreativesAsyncResponseData = AsyncResponseFor<'sync_creatives'>;

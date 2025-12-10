@@ -16,8 +16,24 @@ import type {
 
 import type {
   AdCPAsyncResponseData,
+  CreateMediaBuyAsyncInputRequired,
+  CreateMediaBuyAsyncSubmitted,
+  CreateMediaBuyAsyncWorking,
+  CreateMediaBuyResponse,
+  GetProductsAsyncInputRequired,
+  GetProductsAsyncSubmitted,
+  GetProductsAsyncWorking,
+  GetProductsResponse,
+  SyncCreativesAsyncInputRequired,
+  SyncCreativesAsyncSubmitted,
+  SyncCreativesAsyncWorking,
+  SyncCreativesResponse,
   TaskStatus,
-  TaskType
+  TaskType,
+  UpdateMediaBuyAsyncInputRequired,
+  UpdateMediaBuyAsyncSubmitted,
+  UpdateMediaBuyAsyncWorking,
+  UpdateMediaBuyResponse
 } from '../types/core.generated';
 import { CreateMediaBuyAsyncResponseData, GetProductsAsyncResponseData, SyncCreativesAsyncResponseData, UpdateMediaBuyAsyncResponseData } from '../types';
 
@@ -57,6 +73,27 @@ export interface NotificationMetadata extends WebhookMetadata {
   /** When next notification is expected (not present for 'final') */
   next_expected_at?: string;
 }
+
+// Simple union-typed handlers for webhook status changes
+export type GetProductsStatusChangeHandler = (
+  response: GetProductsResponse | GetProductsAsyncSubmitted | GetProductsAsyncWorking | GetProductsAsyncInputRequired,
+  metadata: WebhookMetadata
+) => void | Promise<void>;
+
+export type CreateMediaBuyStatusChangeHandler = (
+  response: CreateMediaBuyResponse | CreateMediaBuyAsyncSubmitted | CreateMediaBuyAsyncWorking | CreateMediaBuyAsyncInputRequired,
+  metadata: WebhookMetadata
+) => void | Promise<void>;
+
+export type UpdateMediaBuyStatusChangeHandler = (
+  response: UpdateMediaBuyResponse | UpdateMediaBuyAsyncSubmitted | UpdateMediaBuyAsyncWorking | UpdateMediaBuyAsyncInputRequired,
+  metadata: WebhookMetadata
+) => void | Promise<void>;
+
+export type SyncCreativesStatusChangeHandler = (
+  response: SyncCreativesResponse | SyncCreativesAsyncSubmitted | SyncCreativesAsyncWorking | SyncCreativesAsyncInputRequired,
+  metadata: WebhookMetadata
+) => void | Promise<void>;
 
 /**
  * Media buy delivery notification payload (PR #81)
@@ -107,26 +144,14 @@ export interface Activity {
  */
 export interface AsyncHandlerConfig {
   // AdCP tool status change handlers - called for ALL status changes (completed, failed, working, input-required, submitted)
-  onGetProductsStatusChange?: (
-    data: GetProductsAsyncResponseData,
-    metadata: WebhookMetadata
-  ) => void | Promise<void>;
+  onGetProductsStatusChange?: GetProductsStatusChangeHandler;
   onListCreativeFormatsStatusChange?: (
     data: ListCreativeFormatsResponse,
     metadata: WebhookMetadata
   ) => void | Promise<void>;
-  onCreateMediaBuyStatusChange?: (
-    data: CreateMediaBuyAsyncResponseData,
-    metadata: WebhookMetadata
-  ) => void | Promise<void>;
-  onUpdateMediaBuyStatusChange?: (
-    data: UpdateMediaBuyAsyncResponseData,
-    metadata: WebhookMetadata
-  ) => void | Promise<void>;
-  onSyncCreativesStatusChange?: (
-    response: SyncCreativesAsyncResponseData,
-    metadata: WebhookMetadata
-  ) => void | Promise<void>;
+  onCreateMediaBuyStatusChange?: CreateMediaBuyStatusChangeHandler;
+  onUpdateMediaBuyStatusChange?: UpdateMediaBuyStatusChangeHandler;
+  onSyncCreativesStatusChange?: SyncCreativesStatusChangeHandler;
   onListCreativesStatusChange?: (response: ListCreativesResponse, metadata: WebhookMetadata) => void | Promise<void>;
   onPreviewCreativeStatusChange?: (
     response: PreviewCreativeResponse,
@@ -226,7 +251,7 @@ export class AsyncHandler {
     result: AdCPAsyncResponseData | undefined,
     metadata: WebhookMetadata
   ): Promise<void> {
-    let handler: ((result: any, metadata: WebhookMetadata) => void | Promise<void>) | undefined;
+    let handler: ((result: any, metadata: any) => void | Promise<void>) | undefined;
 
     // Route to specific handler based on task type
     switch (taskType) {
