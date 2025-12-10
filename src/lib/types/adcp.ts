@@ -2,7 +2,7 @@
 // https://adcontextprotocol.org/docs/reference/data-models
 
 // Import structured FormatID from generated core types
-import type { FormatID } from './core.generated';
+import type { CreateMediaBuyAsyncInputRequired, CreateMediaBuyAsyncSubmitted, CreateMediaBuyAsyncWorking, FormatID, CreateMediaBuyResponse, GetProductsResponse, GetProductsAsyncWorking, GetProductsAsyncInputRequired, GetProductsAsyncSubmitted, UpdateMediaBuyResponse, UpdateMediaBuyAsyncWorking, UpdateMediaBuyAsyncInputRequired, UpdateMediaBuyAsyncSubmitted, SyncCreativesAsyncWorking, SyncCreativesAsyncInputRequired, SyncCreativesAsyncSubmitted, SyncCreativesResponse } from './core.generated';
 
 export interface MediaBuy {
   id: string;
@@ -356,24 +356,6 @@ export interface ManageCreativeAssetsResponse {
   }[];
 }
 
-export interface SyncCreativesResponse {
-  success: boolean;
-  summary: {
-    total_processed: number;
-    created: number;
-    updated: number;
-    assigned: number;
-    errors: number;
-  };
-  results: {
-    created?: CreativeLibraryItem[];
-    updated?: CreativeLibraryItem[];
-    assigned?: { creative_id: string; packages: string[] }[];
-    errors?: { creative_id?: string; error_code: string; message: string }[];
-  };
-  dry_run?: boolean;
-}
-
 export interface ListCreativesResponse {
   success: boolean;
   creatives: CreativeLibraryItem[];
@@ -423,3 +405,24 @@ export type PropertyIdentifierType =
   | 'apple_podcast_id'
   | 'iab_tech_lab_domain_id'
   | 'custom';
+
+/** Grouped types by tool type */
+export type CreateMediaBuyAsyncResponseData = | CreateMediaBuyResponse
+| CreateMediaBuyAsyncWorking
+| CreateMediaBuyAsyncInputRequired
+| CreateMediaBuyAsyncSubmitted
+
+export type GetProductsAsyncResponseData = | GetProductsResponse
+| GetProductsAsyncWorking
+| GetProductsAsyncInputRequired
+| GetProductsAsyncSubmitted
+
+export type UpdateMediaBuyAsyncResponseData = | UpdateMediaBuyResponse
+| UpdateMediaBuyAsyncWorking
+| UpdateMediaBuyAsyncInputRequired
+| UpdateMediaBuyAsyncSubmitted
+
+export type SyncCreativesAsyncResponseData = | SyncCreativesResponse
+| SyncCreativesAsyncWorking
+| SyncCreativesAsyncInputRequired
+| SyncCreativesAsyncSubmitted;

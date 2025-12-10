@@ -4,11 +4,7 @@
  */
 
 import type {
-  GetProductsResponse,
   ListCreativeFormatsResponse,
-  CreateMediaBuyResponse,
-  UpdateMediaBuyResponse,
-  SyncCreativesResponse,
   ListCreativesResponse,
   PreviewCreativeResponse,
   GetMediaBuyDeliveryResponse,
@@ -20,19 +16,10 @@ import type {
 
 import type {
   AdCPAsyncResponseData,
-  GetProductsAsyncWorking,
-  GetProductsAsyncInputRequired,
-  GetProductsAsyncSubmitted,
-  CreateMediaBuyAsyncWorking,
-  CreateMediaBuyAsyncInputRequired,
-  CreateMediaBuyAsyncSubmitted,
-  UpdateMediaBuyAsyncWorking,
-  UpdateMediaBuyAsyncInputRequired,
-  UpdateMediaBuyAsyncSubmitted,
-  SyncCreativesAsyncWorking,
-  SyncCreativesAsyncInputRequired,
-  SyncCreativesAsyncSubmitted,
+  TaskStatus,
+  TaskType
 } from '../types/core.generated';
+import { CreateMediaBuyAsyncResponseData, GetProductsAsyncResponseData, SyncCreativesAsyncResponseData, UpdateMediaBuyAsyncResponseData } from '../types';
 
 /**
  * Metadata provided with webhook responses
@@ -40,22 +27,22 @@ import type {
 export interface WebhookMetadata {
   /** Client-provided operation ID */
   operation_id: string;
-  /** Server's context ID */
-  context_id?: string;
   /** Server's task ID */
-  task_id?: string;
+  task_id: string;
   /** Agent ID */
   agent_id: string;
   /** Task type/tool name */
   task_type: string;
   /** Task status (completed, failed, needs_input, working, etc) */
-  status?: string;
-  /** Error message if status is failed */
-  error?: string;
-  /** Human-readable message about the task state */
-  message?: string;
+  status: TaskStatus;
+  /** Server's context ID */
+  context_id?: string;
+  /** Human-readable context about the status change */
+  message?: string
   /** Timestamp */
   timestamp: string;
+  /** raw HTTP payload */
+  rawHTTPPayload?: any
 }
 
 /**
@@ -121,23 +108,23 @@ export interface Activity {
 export interface AsyncHandlerConfig {
   // AdCP tool status change handlers - called for ALL status changes (completed, failed, working, input-required, submitted)
   onGetProductsStatusChange?: (
-    response: GetProductsResponse | GetProductsAsyncWorking | GetProductsAsyncInputRequired | GetProductsAsyncSubmitted,
+    data: GetProductsAsyncResponseData,
     metadata: WebhookMetadata
   ) => void | Promise<void>;
   onListCreativeFormatsStatusChange?: (
-    response: ListCreativeFormatsResponse,
+    data: ListCreativeFormatsResponse,
     metadata: WebhookMetadata
   ) => void | Promise<void>;
   onCreateMediaBuyStatusChange?: (
-    response: CreateMediaBuyResponse | CreateMediaBuyAsyncWorking | CreateMediaBuyAsyncInputRequired | CreateMediaBuyAsyncSubmitted,
+    data: CreateMediaBuyAsyncResponseData,
     metadata: WebhookMetadata
   ) => void | Promise<void>;
   onUpdateMediaBuyStatusChange?: (
-    response: UpdateMediaBuyResponse | UpdateMediaBuyAsyncWorking | UpdateMediaBuyAsyncInputRequired | UpdateMediaBuyAsyncSubmitted,
+    data: UpdateMediaBuyAsyncResponseData,
     metadata: WebhookMetadata
   ) => void | Promise<void>;
   onSyncCreativesStatusChange?: (
-    response: SyncCreativesResponse | SyncCreativesAsyncWorking | SyncCreativesAsyncInputRequired | SyncCreativesAsyncSubmitted,
+    response: SyncCreativesAsyncResponseData,
     metadata: WebhookMetadata
   ) => void | Promise<void>;
   onListCreativesStatusChange?: (response: ListCreativesResponse, metadata: WebhookMetadata) => void | Promise<void>;

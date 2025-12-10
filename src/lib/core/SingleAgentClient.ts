@@ -9,7 +9,7 @@ import type {
   ListCreativeFormatsRequest,
   ListCreativeFormatsResponse,
   CreateMediaBuyRequest,
-  CreateMediaBuyResponse,
+  
   UpdateMediaBuyRequest,
   UpdateMediaBuyResponse,
   SyncCreativesRequest,
@@ -31,7 +31,7 @@ import type {
   Format,
 } from '../types/tools.generated';
 
-import type { MCPWebhookPayload, AdCPAsyncResponseData } from '../types/core.generated';
+import type { MCPWebhookPayload, AdCPAsyncResponseData, TaskStatus, CreateMediaBuyResponse } from '../types/core.generated';
 import type { Task as A2ATask, TaskStatusUpdateEvent } from '@a2a-js/sdk';
 
 import { TaskExecutor, DeferredTaskError } from './TaskExecutor';
@@ -43,12 +43,11 @@ import * as crypto from 'crypto';
 
 type NormalizedWebhookPayload = {
   operation_id: string;
-  context_id?: string;
-  task_id?: string;
+  task_id: string;
   task_type: string;
-  status: string;
+  status: TaskStatus;
+  context_id?: string;
   result?: AdCPAsyncResponseData;
-  error?: string;
   message?: string;
   timestamp?: string;
 };
@@ -302,9 +301,10 @@ export class SingleAgentClient {
    * AdCP response data (AdCPAsyncResponseData), not the raw protocol structure.
    *
    * @param payload - Protocol-specific webhook payload (MCPWebhookPayload | Task | TaskStatusUpdateEvent)
+   * @param taskType - Task type (e.g create_media_buy) from url param or url part of the webhook delivery
+   * @param operationId - Operation id (e.g used for client app to track the operation) from the param or url part of the webhook delivery
    * @param signature - X-ADCP-Signature header (format: "sha256=...")
    * @param timestamp - X-ADCP-Timestamp header (Unix timestamp)
-   * @param taskType - Task type override (useful when not in payload, e.g., from URL path)
    * @returns Whether webhook was handled successfully
    *
    * @example
@@ -324,9 +324,10 @@ export class SingleAgentClient {
    */
   async handleWebhook(
     payload: MCPWebhookPayload | A2ATask | TaskStatusUpdateEvent,
+    taskType: string,
+    operationId: string,
     signature?: string,
     timestamp?: string | number,
-    taskType?: string
   ): Promise<boolean> {
     // Verify signature if secret is configured
     if (this.config.webhookSecret) {
@@ -341,7 +342,7 @@ export class SingleAgentClient {
     }
 
     // Transform raw protocol payload to normalized format
-    const normalizedPayload = this.normalizeWebhookPayload(payload, taskType);
+    const normalizedPayload = this.normalizeWebhookPayload(payload, taskType, operationId);
 
     const metadata: WebhookMetadata = {
       operation_id: normalizedPayload.operation_id,
@@ -350,7 +351,6 @@ export class SingleAgentClient {
       agent_id: this.agent.id,
       task_type: normalizedPayload.task_type,
       status: normalizedPayload.status,
-      error: normalizedPayload.error,
       message: normalizedPayload.message,
       timestamp: normalizedPayload.timestamp || new Date().toISOString(),
     };
@@ -386,21 +386,23 @@ export class SingleAgentClient {
    *      - artifacts (for task completion responses, per A2A spec)
    *
    * @param payload - Protocol-specific webhook payload (MCPWebhookPayload | Task | TaskStatusUpdateEvent)
-   * @param taskType - Task type override (useful when not in payload, e.g., from URL path)
+   * @param taskType - Task type override
+   * @param operationId - Operation id
    * @returns Normalized webhook payload with extracted AdCP response
    */
   private normalizeWebhookPayload(
     payload: MCPWebhookPayload | A2ATask | TaskStatusUpdateEvent,
-    taskType?: string
+    taskType: string,
+    operationId: string
   ): NormalizedWebhookPayload {
     // 1. Check for MCP Webhook Payload (has task_id, status, task_type fields)
     if ('task_id' in payload && 'task_type' in payload && 'status' in payload) {
       const mcpPayload = payload as MCPWebhookPayload;
       return {
-        operation_id: mcpPayload.operation_id || 'unknown',
+        operation_id: operationId || 'unknown',
         context_id: mcpPayload.context_id,
         task_id: mcpPayload.task_id,
-        task_type: mcpPayload.task_type,
+        task_type: taskType,
         status: mcpPayload.status,
         result: mcpPayload.result,
         message: mcpPayload.message,
@@ -435,14 +437,14 @@ export class SingleAgentClient {
         }
       }
 
-      // Extract error/message text from status.message.parts (A2A Message structure)
-      let errorMessage: string | undefined = undefined;
+      // Extract message part from status.message.parts (A2A Message structure)
+      let message: string | undefined = undefined;
       if (a2aPayload.status?.message?.parts) {
         const textParts = a2aPayload.status.message.parts
           .filter((p) => p.kind === 'text' && 'text' in p)
           .map((p) => ('text' in p ? p.text : ''));
         if (textParts.length > 0) {
-          errorMessage = textParts.join(' ');
+          message = textParts.join(' ');
         }
       }
 
@@ -454,22 +456,14 @@ export class SingleAgentClient {
         taskId = String(a2aPayload.taskId);
       }
 
-      // Get operation_id ensuring it's a string
-      const operationId =
-        (a2aPayload.metadata?.operation_id
-          ? String(a2aPayload.metadata.operation_id)
-          : undefined) ||
-        ('id' in a2aPayload && a2aPayload.id ? String(a2aPayload.id) : 'unknown');
-
       return {
         operation_id: operationId,
         context_id: 'contextId' in a2aPayload ? a2aPayload.contextId : undefined,
         task_id: taskId,
-        task_type: taskType || 'unknown',
+        task_type: taskType,
         status: a2aStatus,
         result,
-        error: errorMessage,
-        message: errorMessage,
+        message: message,
         timestamp: a2aPayload.status?.timestamp || new Date().toISOString(),
       };
     }
