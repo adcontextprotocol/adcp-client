@@ -34,7 +34,7 @@ const SCHEMA_CACHE_DIR = path.join(__dirname, '../schemas/cache');
 const LATEST_CACHE_DIR = path.join(SCHEMA_CACHE_DIR, 'latest');
 
 // Core AdCP schemas to generate
-const ADCP_CORE_SCHEMAS = ['media-buy', 'creative-asset', 'product', 'targeting', 'property'];
+const ADCP_CORE_SCHEMAS = ['media-buy', 'creative-asset', 'product', 'targeting', 'property', 'mcp-webhook-payload'];
 
 // Additional standalone schemas (not in core/ directory)
 // NOTE: 'adagents' commented out due to duplicate PropertyIdentifierTypes causing TS errors
