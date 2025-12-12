@@ -30,10 +30,10 @@ describe('Logger', () => {
     testLogger.warn('warn message');
     testLogger.error('error message');
 
-    assert.strictEqual(calls.filter((c) => c.method === 'debug').length, 0);
-    assert.strictEqual(calls.filter((c) => c.method === 'info').length, 0);
-    assert.strictEqual(calls.filter((c) => c.method === 'warn').length, 1);
-    assert.strictEqual(calls.filter((c) => c.method === 'error').length, 1);
+    assert.strictEqual(calls.filter(c => c.method === 'debug').length, 0);
+    assert.strictEqual(calls.filter(c => c.method === 'info').length, 0);
+    assert.strictEqual(calls.filter(c => c.method === 'warn').length, 1);
+    assert.strictEqual(calls.filter(c => c.method === 'error').length, 1);
   });
 
   test('should log with metadata', () => {
@@ -110,11 +110,11 @@ describe('Logger', () => {
     });
 
     testLogger.debug('should not log');
-    assert.strictEqual(calls.filter((c) => c.method === 'debug').length, 0);
+    assert.strictEqual(calls.filter(c => c.method === 'debug').length, 0);
 
     testLogger.configure({ level: 'debug' });
     testLogger.debug('should log now');
-    assert.strictEqual(calls.filter((c) => c.method === 'debug').length, 1);
+    assert.strictEqual(calls.filter(c => c.method === 'debug').length, 1);
   });
 
   test('should handle nested child loggers', () => {
@@ -143,7 +143,7 @@ describe('Logger', () => {
     test('should output JSON format when configured', () => {
       const logged = [];
       const originalLog = console.log;
-      console.log = (msg) => logged.push(msg);
+      console.log = msg => logged.push(msg);
 
       try {
         const testLogger = createLogger({
@@ -167,7 +167,7 @@ describe('Logger', () => {
     test('should include metadata in JSON output', () => {
       const logged = [];
       const originalLog = console.log;
-      console.log = (msg) => logged.push(msg);
+      console.log = msg => logged.push(msg);
 
       try {
         const testLogger = createLogger({
@@ -189,7 +189,7 @@ describe('Logger', () => {
     test('should include context in JSON output for child loggers', () => {
       const logged = [];
       const originalLog = console.log;
-      console.log = (msg) => logged.push(msg);
+      console.log = msg => logged.push(msg);
 
       try {
         const testLogger = createLogger({
@@ -212,7 +212,7 @@ describe('Logger', () => {
     test('should handle nested child loggers in JSON format', () => {
       const logged = [];
       const originalLog = console.log;
-      console.log = (msg) => logged.push(msg);
+      console.log = msg => logged.push(msg);
 
       try {
         const testLogger = createLogger({
@@ -236,7 +236,7 @@ describe('Logger', () => {
     test('should use console.warn for warn level in JSON format', () => {
       const logged = [];
       const originalWarn = console.warn;
-      console.warn = (msg) => logged.push(msg);
+      console.warn = msg => logged.push(msg);
 
       try {
         const testLogger = createLogger({
@@ -259,7 +259,7 @@ describe('Logger', () => {
     test('should use console.error for error level in JSON format', () => {
       const logged = [];
       const originalError = console.error;
-      console.error = (msg) => logged.push(msg);
+      console.error = msg => logged.push(msg);
 
       try {
         const testLogger = createLogger({
