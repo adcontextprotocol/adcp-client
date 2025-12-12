@@ -7,6 +7,7 @@ import { ProtocolClient } from '../protocols';
 import type { Storage } from '../storage/interfaces';
 import { responseValidator } from './ResponseValidator';
 import { unwrapProtocolResponse } from '../utils/response-unwrapper';
+import { noopLogger, type ILogger } from '../utils/logger';
 import type {
   Message,
   InputRequest,
@@ -83,6 +84,7 @@ export class TaskExecutor {
   private responseParser: ProtocolResponseParser;
   private activeTasks = new Map<string, TaskState>();
   private conversationStorage?: Map<string, Message[]>;
+  private logger: ILogger;
 
   constructor(
     private config: {
@@ -110,9 +112,12 @@ export class TaskExecutor {
       logSchemaViolations?: boolean;
       /** Global activity callback for observability */
       onActivity?: (activity: Activity) => void | Promise<void>;
+      /** Logger for internal diagnostics */
+      logger?: ILogger;
     } = {}
   ) {
     this.responseParser = new ProtocolResponseParser();
+    this.logger = config.logger || noopLogger;
     if (config.enableConversationStorage) {
       this.conversationStorage = new Map();
     }
@@ -704,7 +709,7 @@ export class TaskExecutor {
       const response = await ProtocolClient.callTool(agent, 'tasks/list', {});
       return response.tasks || [];
     } catch (error) {
-      console.warn('Failed to list tasks:', error);
+      this.logger.warn('Failed to list tasks', { error });
       return [];
     }
   }
@@ -909,7 +914,7 @@ export class TaskExecutor {
         const response = await ProtocolClient.callTool(agent, 'tasks/list', {});
         return response.tasks || [];
       } catch (error) {
-        console.warn('Failed to get remote task list:', error);
+        this.logger.warn('Failed to get remote task list', { error, agentId });
       }
     }
 
@@ -1013,7 +1018,7 @@ export class TaskExecutor {
     });
 
     // TODO: Register with remote agent if it supports webhooks
-    console.log(`Webhook registered for agent ${agent.id}: ${webhookUrl}`);
+    this.logger.debug('Webhook registered', { agentId: agent.id, webhookUrl });
   }
 
   /**
@@ -1021,7 +1026,7 @@ export class TaskExecutor {
    */
   async unregisterWebhook(agent: AgentConfig): Promise<void> {
     this.webhookRegistrations.delete(agent.id);
-    console.log(`Webhook unregistered for agent ${agent.id}`);
+    this.logger.debug('Webhook unregistered', { agentId: agent.id });
   }
 
   /**
@@ -1034,7 +1039,7 @@ export class TaskExecutor {
           try {
             callback(task);
           } catch (error) {
-            console.error('Error in task event callback:', error);
+            this.logger.error('Error in task event callback', { error, taskId: task.taskId });
           }
         }
       });
@@ -1078,11 +1083,11 @@ export class TaskExecutor {
           });
         }
 
-        // Console output based on strict mode
+        // Log based on strict mode
         if (strictMode) {
-          console.error(`Schema validation failed for ${taskName}:`, validationResult.errors);
+          this.logger.error('Schema validation failed', { taskName, errors: validationResult.errors });
         } else {
-          console.warn(`Schema validation failed for ${taskName} (non-blocking):`, validationResult.errors);
+          this.logger.warn('Schema validation failed (non-blocking)', { taskName, errors: validationResult.errors });
         }
 
         // In strict mode, validation failures are treated as invalid
@@ -1100,7 +1105,7 @@ export class TaskExecutor {
         errors: [],
       };
     } catch (error) {
-      console.error(`Error during schema validation:`, error);
+      this.logger.error('Error during schema validation', { error, taskName });
       // On validation error, fail safe based on strict mode
       return {
         valid: !strictMode, // In strict mode, treat validation errors as failures

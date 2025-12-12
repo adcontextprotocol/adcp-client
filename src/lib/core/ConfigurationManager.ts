@@ -1,9 +1,10 @@
 // Enhanced configuration manager for easy ADCP client setup
 
 import { readFileSync, existsSync } from 'fs';
-import { resolve, join } from 'path';
+import { resolve } from 'path';
 import type { AgentConfig } from '../types';
 import { ConfigurationError } from '../errors';
+import { noopLogger, type ILogger } from '../utils/logger';
 
 /**
  * Configuration structure for ADCP agents
@@ -42,35 +43,38 @@ export class ConfigurationManager {
    * 1. Environment variables
    * 2. Config files in current directory
    * 3. Config files in project root
+   *
+   * @param logger - Optional logger for diagnostics (silent by default)
    */
-  static loadAgents(): AgentConfig[] {
+  static loadAgents(logger: ILogger = noopLogger): AgentConfig[] {
     // Try environment variables first
-    const envAgents = this.loadAgentsFromEnv();
+    const envAgents = this.loadAgentsFromEnv(logger);
     if (envAgents.length > 0) {
       return envAgents;
     }
 
     // Try config files
-    const configAgents = this.loadAgentsFromConfig();
+    const configAgents = this.loadAgentsFromConfig(undefined, logger);
     if (configAgents.length > 0) {
       return configAgents;
     }
 
     // No configuration found
-    console.warn('⚠️  No ADCP agent configuration found');
-    console.log('💡 To configure agents, you can:');
-    console.log('   1. Set SALES_AGENTS_CONFIG environment variable');
-    console.log('   2. Create an adcp.config.json file');
-    console.log('   3. Pass agents directly to the constructor');
-    console.log('\n📖 See documentation for configuration examples');
+    logger.warn('No ADCP agent configuration found');
+    logger.info('To configure agents, you can:');
+    logger.info('  1. Set SALES_AGENTS_CONFIG environment variable');
+    logger.info('  2. Create an adcp.config.json file');
+    logger.info('  3. Pass agents directly to the constructor');
 
     return [];
   }
 
   /**
    * Load agents from environment variables
+   *
+   * @param logger - Optional logger for diagnostics (silent by default)
    */
-  static loadAgentsFromEnv(): AgentConfig[] {
+  static loadAgentsFromEnv(logger: ILogger = noopLogger): AgentConfig[] {
     for (const envVar of this.ENV_VARS) {
       const configEnv = process.env[envVar];
       if (configEnv) {
@@ -79,13 +83,13 @@ export class ConfigurationManager {
           const agents = this.extractAgents(config);
 
           if (agents.length > 0) {
-            console.log(`📡 Loaded ${agents.length} agents from ${envVar}`);
-            this.logAgents(agents);
+            logger.info(`Loaded ${agents.length} agents from ${envVar}`);
+            this.logAgents(agents, logger);
             return agents;
           }
         } catch (error) {
           const errorMessage = error instanceof Error ? error.message : String(error);
-          console.error(`❌ Failed to parse ${envVar}:`, errorMessage);
+          logger.error(`Failed to parse ${envVar}`, { error: errorMessage });
           throw new ConfigurationError(`Invalid JSON in ${envVar}: ${errorMessage}`, envVar);
         }
       }
@@ -96,8 +100,11 @@ export class ConfigurationManager {
 
   /**
    * Load agents from config file
+   *
+   * @param configPath - Optional specific config file path
+   * @param logger - Optional logger for diagnostics (silent by default)
    */
-  static loadAgentsFromConfig(configPath?: string): AgentConfig[] {
+  static loadAgentsFromConfig(configPath?: string, logger: ILogger = noopLogger): AgentConfig[] {
     const filesToTry = configPath ? [configPath] : this.CONFIG_FILES;
 
     for (const file of filesToTry) {
@@ -110,13 +117,13 @@ export class ConfigurationManager {
           const agents = this.extractAgents(config);
 
           if (agents.length > 0) {
-            console.log(`📁 Loaded ${agents.length} agents from ${file}`);
-            this.logAgents(agents);
+            logger.info(`Loaded ${agents.length} agents from ${file}`);
+            this.logAgents(agents, logger);
             return agents;
           }
         } catch (error) {
           const errorMessage = error instanceof Error ? error.message : String(error);
-          console.error(`❌ Failed to load config from ${file}:`, errorMessage);
+          logger.error(`Failed to load config from ${file}`, { error: errorMessage });
           throw new ConfigurationError(`Invalid config file ${file}: ${errorMessage}`, 'configFile');
         }
       }
@@ -146,17 +153,19 @@ export class ConfigurationManager {
   }
 
   /**
-   * Log configured agents in a user-friendly way
+   * Log configured agents
    */
-  private static logAgents(agents: AgentConfig[]): void {
+  private static logAgents(agents: AgentConfig[], logger: ILogger): void {
     agents.forEach(agent => {
-      const protocolIcon = agent.protocol === 'mcp' ? '🔗' : '⚡';
-      const authIcon = agent.requiresAuth ? '🔐' : '🌐';
-      console.log(`  ${protocolIcon}${authIcon} ${agent.name} (${agent.protocol.toUpperCase()}) at ${agent.agent_uri}`);
+      logger.debug(`Agent: ${agent.name} (${agent.protocol.toUpperCase()}) at ${agent.agent_uri}`, {
+        id: agent.id,
+        protocol: agent.protocol,
+        requiresAuth: agent.requiresAuth,
+      });
     });
 
     const useRealAgents = process.env.USE_REAL_AGENTS === 'true';
-    console.log(`🔧 Real agents mode: ${useRealAgents ? 'ENABLED' : 'DISABLED'}`);
+    logger.debug(`Real agents mode: ${useRealAgents ? 'ENABLED' : 'DISABLED'}`);
   }
 
   /**

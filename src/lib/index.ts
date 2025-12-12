@@ -173,7 +173,15 @@ export { detectProtocol, detectProtocolWithTimeout } from './utils';
 
 // ====== LOGGER ======
 // Logger utilities for structured logging (text or JSON format)
-export { logger, createLogger, type LogLevel, type LogFormat, type LoggerConfig } from './utils';
+export {
+  logger,
+  createLogger,
+  noopLogger,
+  type LogLevel,
+  type LogFormat,
+  type LoggerConfig,
+  type ILogger,
+} from './utils';
 
 // ====== VERSION INFORMATION ======
 export {

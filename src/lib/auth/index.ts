@@ -36,13 +36,10 @@ export function getAuthToken(agent: AgentConfig): string | undefined {
   // Look up auth_token_env in environment
   if (agent.auth_token_env) {
     const envValue = process.env[agent.auth_token_env];
-    if (!envValue) {
-      const message = `Environment variable "${agent.auth_token_env}" not found for agent ${agent.id}`;
-      if (process.env.NODE_ENV === 'production') {
-        throw new Error(`[AUTH] ${message} - Agent cannot authenticate`);
-      } else {
-        console.warn(`⚠️  ${message}`);
-      }
+    if (!envValue && process.env.NODE_ENV === 'production') {
+      throw new Error(
+        `[AUTH] Environment variable "${agent.auth_token_env}" not found for agent ${agent.id} - Agent cannot authenticate`
+      );
     }
     return envValue;
   }

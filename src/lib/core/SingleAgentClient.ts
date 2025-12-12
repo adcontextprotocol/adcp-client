@@ -36,13 +36,14 @@ import type { InputHandler, TaskOptions, TaskResult, ConversationConfig, TaskInf
 import type { Activity, AsyncHandlerConfig, WebhookPayload } from './AsyncHandler';
 import { AsyncHandler } from './AsyncHandler';
 import { unwrapProtocolResponse } from '../utils/response-unwrapper';
+import { noopLogger, type ILogger } from '../utils/logger';
 import * as crypto from 'crypto';
 
 /**
  * Configuration for SingleAgentClient (and multi-agent client)
  */
 export interface SingleAgentClientConfig extends ConversationConfig {
-  /** Enable debug logging */
+  /** Enable debug logging @deprecated Use logger instead */
   debug?: boolean;
   /** Custom user agent string */
   userAgent?: string;
@@ -54,6 +55,20 @@ export interface SingleAgentClientConfig extends ConversationConfig {
   handlers?: AsyncHandlerConfig;
   /** Webhook secret for signature verification (recommended for production) */
   webhookSecret?: string;
+  /**
+   * Logger for internal diagnostics. Library is silent by default.
+   * Inject your own logger (e.g., pino, winston, console) to see internal logs.
+   *
+   * @example
+   * ```typescript
+   * import { createLogger } from '@adcp/client';
+   *
+   * const client = new AdCPClient(agents, {
+   *   logger: createLogger({ level: 'debug', format: 'json' })
+   * });
+   * ```
+   */
+  logger?: ILogger;
   /**
    * Webhook URL template with macro substitution
    *
@@ -115,11 +130,15 @@ export class SingleAgentClient {
   private asyncHandler?: AsyncHandler;
   private normalizedAgent: AgentConfig;
   private discoveredEndpoint?: string; // Cache discovered endpoint
+  private logger: ILogger;
 
   constructor(
     private agent: AgentConfig,
     private config: SingleAgentClientConfig = {}
   ) {
+    // Use provided logger or silent noop logger
+    this.logger = config.logger || noopLogger;
+
     // Normalize agent URL for MCP protocol
     this.normalizedAgent = this.normalizeAgentConfig(agent);
 
@@ -133,11 +152,12 @@ export class SingleAgentClient {
       strictSchemaValidation: config.validation?.strictSchemaValidation !== false, // Default: true
       logSchemaViolations: config.validation?.logSchemaViolations !== false, // Default: true
       onActivity: config.onActivity,
+      logger: this.logger.child('TaskExecutor'),
     });
 
     // Create async handler if handlers are provided
     if (config.handlers) {
-      this.asyncHandler = new AsyncHandler(config.handlers);
+      this.asyncHandler = new AsyncHandler(config.handlers, this.logger.child('AsyncHandler'));
     }
   }
 
@@ -380,7 +400,7 @@ export class SingleAgentClient {
       } catch (error) {
         // If unwrapping fails, pass the raw artifacts as result
         // The handler can deal with it
-        console.warn('Failed to unwrap A2A webhook payload:', error);
+        this.logger.warn('Failed to unwrap A2A webhook payload', { error });
         result = payload.artifacts;
       }
     } else if (payload.artifacts?.length > 0) {

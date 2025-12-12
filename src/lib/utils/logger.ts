@@ -71,7 +71,19 @@ function createDefaultHandler(format: LogFormat, context?: string) {
   };
 }
 
-class Logger {
+/**
+ * Logger interface for dependency injection
+ * Libraries can accept this interface to allow consumers to inject their own logger
+ */
+export interface ILogger {
+  debug(message: string, meta?: any): void;
+  info(message: string, meta?: any): void;
+  warn(message: string, meta?: any): void;
+  error(message: string, meta?: any): void;
+  child(context: string): ILogger;
+}
+
+class Logger implements ILogger {
   private config: Required<LoggerConfig>;
   private context?: string;
 
@@ -181,3 +193,25 @@ export const logger = new Logger({
 export function createLogger(config?: LoggerConfig): Logger {
   return new Logger(config);
 }
+
+/**
+ * A no-op logger that silently discards all log messages.
+ * Used as the default for library code to ensure silent operation unless
+ * the consumer explicitly provides a logger.
+ */
+class NoopLogger implements ILogger {
+  debug(_message: string, _meta?: any): void {}
+  info(_message: string, _meta?: any): void {}
+  warn(_message: string, _meta?: any): void {}
+  error(_message: string, _meta?: any): void {}
+  child(_context: string): ILogger {
+    return this;
+  }
+}
+
+/**
+ * Singleton no-op logger instance for library internal use.
+ * Libraries should use this as their default logger to remain silent
+ * unless the consumer injects their own logger.
+ */
+export const noopLogger: ILogger = new NoopLogger();

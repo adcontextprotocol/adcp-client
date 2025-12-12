@@ -4,6 +4,7 @@ import type { AgentConfig } from '../types';
 import { AgentClient } from './AgentClient';
 import type { SingleAgentClientConfig } from './SingleAgentClient';
 import { ConfigurationManager } from './ConfigurationManager';
+import { noopLogger } from '../utils/logger';
 import { CreativeAgentClient, STANDARD_CREATIVE_AGENTS } from './CreativeAgentClient';
 import type { CreativeFormat } from './CreativeAgentClient';
 import type { InputHandler, TaskOptions, TaskResult, TaskInfo } from './ConversationTypes';
@@ -403,10 +404,11 @@ export class ADCPMultiAgentClient {
    * ```
    */
   static fromConfig(config?: SingleAgentClientConfig): ADCPMultiAgentClient {
-    const agents = ConfigurationManager.loadAgents();
+    const logger = config?.logger || noopLogger;
+    const agents = ConfigurationManager.loadAgents(logger);
 
     if (agents.length === 0) {
-      console.log('\n' + ConfigurationManager.getConfigurationHelp());
+      logger.info(ConfigurationManager.getConfigurationHelp());
       throw new Error('No ADCP agents configured. See configuration help above.');
     }
 
