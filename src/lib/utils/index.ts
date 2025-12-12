@@ -1,7 +1,7 @@
 import type { CreativeFormat } from '../types';
 
 // Re-export logger utilities
-export { logger, createLogger, type LogLevel, type LoggerConfig } from './logger';
+export { logger, createLogger, type LogLevel, type LogFormat, type LoggerConfig } from './logger';
 import { logger } from './logger';
 
 // Re-export preview utilities

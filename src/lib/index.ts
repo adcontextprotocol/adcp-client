@@ -171,6 +171,10 @@ export { getStandardFormats, unwrapProtocolResponse, isAdcpError, isAdcpSuccess 
 export { REQUEST_TIMEOUT, MAX_CONCURRENT, STANDARD_FORMATS } from './utils';
 export { detectProtocol, detectProtocolWithTimeout } from './utils';
 
+// ====== LOGGER ======
+// Logger utilities for structured logging (text or JSON format)
+export { logger, createLogger, type LogLevel, type LogFormat, type LoggerConfig } from './utils';
+
 // ====== VERSION INFORMATION ======
 export {
   getAdcpVersion,
