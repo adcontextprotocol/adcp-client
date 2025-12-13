@@ -8,7 +8,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const { callMCPTool } = require('../../dist/lib/protocols/mcp.js');
-const { TEST_AGENT_TOKEN } = require('../../dist/lib/testing/index.js');
 
 // Mock server response helper
 function createMockResponse(body, status = 200, headers = {}) {
@@ -139,14 +138,14 @@ test('MCP: Protocol integration sends auth headers', async t => {
       protocol: 'mcp',
       agent_uri: 'https://test.example.com/mcp',
       requiresAuth: false,
-      auth_token_env: 'test-token',
+      auth_token: 'test-token',
     };
 
     const authToken = getAuthToken(noAuthConfig);
     assert.strictEqual(authToken, undefined);
   });
 
-  await t.test('getAuthToken returns undefined when auth_token_env is missing', () => {
+  await t.test('getAuthToken returns undefined when auth_token is missing (non-production)', () => {
     const { getAuthToken } = require('../../dist/lib/auth/index.js');
 
     const missingTokenConfig = {
@@ -160,96 +159,22 @@ test('MCP: Protocol integration sends auth headers', async t => {
     assert.strictEqual(authToken, undefined);
   });
 
-  await t.test('auth_token_env resolves environment variables', () => {
+  await t.test('getAuthToken returns auth_token when provided', () => {
     const { getAuthToken } = require('../../dist/lib/auth/index.js');
 
-    // Set up environment variable
-    process.env.TEST_AUTH_TOKEN = 'resolved-from-env-123456';
-
-    const envVarConfig = {
+    const config = {
       id: 'test-agent',
       protocol: 'mcp',
       agent_uri: 'https://test.example.com/mcp',
       requiresAuth: true,
-      auth_token_env: 'TEST_AUTH_TOKEN',
+      auth_token: 'my-direct-token',
     };
 
-    const authToken = getAuthToken(envVarConfig);
-    assert.strictEqual(authToken, 'resolved-from-env-123456');
-
-    // Clean up
-    delete process.env.TEST_AUTH_TOKEN;
+    const authToken = getAuthToken(config);
+    assert.strictEqual(authToken, 'my-direct-token');
   });
 
-  await t.test('auth_token takes precedence over auth_token_env', () => {
-    const { getAuthToken } = require('../../dist/lib/auth/index.js');
-
-    // Set up environment variable
-    process.env.TEST_AUTH_TOKEN = 'from-env';
-
-    const bothFieldsConfig = {
-      id: 'test-agent',
-      protocol: 'mcp',
-      agent_uri: 'https://test.example.com/mcp',
-      requiresAuth: true,
-      auth_token: 'direct-token-wins',
-      auth_token_env: 'TEST_AUTH_TOKEN',
-    };
-
-    const authToken = getAuthToken(bothFieldsConfig);
-    assert.strictEqual(authToken, 'direct-token-wins');
-
-    // Clean up
-    delete process.env.TEST_AUTH_TOKEN;
-  });
-
-  await t.test('auth_token_env warns when environment variable not found', () => {
-    const { getAuthToken } = require('../../dist/lib/auth/index.js');
-
-    // Capture console.warn
-    const warnings = [];
-    const originalWarn = console.warn;
-    console.warn = msg => warnings.push(msg);
-
-    const missingEnvConfig = {
-      id: 'test-agent',
-      protocol: 'mcp',
-      agent_uri: 'https://test.example.com/mcp',
-      requiresAuth: true,
-      auth_token_env: 'NONEXISTENT_TOKEN',
-    };
-
-    const authToken = getAuthToken(missingEnvConfig);
-
-    assert.strictEqual(authToken, undefined);
-    assert.ok(warnings.some(w => w.includes('NONEXISTENT_TOKEN')));
-    assert.ok(warnings.some(w => w.includes('test-agent')));
-
-    // Restore console.warn
-    console.warn = originalWarn;
-  });
-
-  await t.test('production mode throws error for missing env var', () => {
-    const { getAuthToken } = require('../../dist/lib/auth/index.js');
-
-    const originalNodeEnv = process.env.NODE_ENV;
-    process.env.NODE_ENV = 'production';
-
-    const missingEnvConfig = {
-      id: 'prod-agent',
-      protocol: 'mcp',
-      agent_uri: 'https://test.example.com/mcp',
-      requiresAuth: true,
-      auth_token_env: 'MISSING_PROD_TOKEN',
-    };
-
-    assert.throws(() => getAuthToken(missingEnvConfig), /Environment variable "MISSING_PROD_TOKEN" not found/);
-
-    // Restore NODE_ENV
-    process.env.NODE_ENV = originalNodeEnv;
-  });
-
-  await t.test('production mode throws error when no auth configured', () => {
+  await t.test('production mode throws error when no auth_token configured', () => {
     const { getAuthToken } = require('../../dist/lib/auth/index.js');
 
     const originalNodeEnv = process.env.NODE_ENV;
@@ -262,59 +187,9 @@ test('MCP: Protocol integration sends auth headers', async t => {
       requiresAuth: true,
     };
 
-    assert.throws(
-      () => getAuthToken(noAuthConfig),
-      /requires authentication but no auth_token or auth_token_env configured/
-    );
+    assert.throws(() => getAuthToken(noAuthConfig), /requires authentication but no auth_token configured/);
 
     // Restore NODE_ENV
     process.env.NODE_ENV = originalNodeEnv;
-  });
-
-  await t.test('CLI --auth flag should use auth_token not auth_token_env', () => {
-    const { getAuthToken } = require('../../dist/lib/auth/index.js');
-
-    // This simulates what the CLI should do when --auth is provided
-    // The bug was that CLI was setting auth_token_env (env var name) instead of auth_token (direct value)
-    // Use the public test token from the testing module
-    const literalToken = TEST_AGENT_TOKEN;
-
-    // CORRECT: Use auth_token for literal token values
-    const correctConfig = {
-      id: 'cli-agent',
-      protocol: 'mcp',
-      agent_uri: 'https://test-agent.adcontextprotocol.org/mcp',
-      requiresAuth: true,
-      auth_token: literalToken,
-    };
-
-    const authToken = getAuthToken(correctConfig);
-    assert.strictEqual(authToken, literalToken, 'auth_token should return the literal token value');
-
-    // INCORRECT (the bug): Using auth_token_env treats it as env var name
-    const buggyConfig = {
-      id: 'cli-agent',
-      protocol: 'mcp',
-      agent_uri: 'https://test-agent.adcontextprotocol.org/mcp',
-      requiresAuth: true,
-      auth_token_env: literalToken, // BUG: This is treated as env var name
-    };
-
-    // Capture console.warn
-    const warnings = [];
-    const originalWarn = console.warn;
-    console.warn = msg => warnings.push(msg);
-
-    const buggyToken = getAuthToken(buggyConfig);
-
-    // Restore console.warn
-    console.warn = originalWarn;
-
-    // The bug causes undefined because process.env[literalToken] doesn't exist
-    assert.strictEqual(buggyToken, undefined, 'auth_token_env with literal value returns undefined (the bug)');
-    assert.ok(
-      warnings.some(w => w.includes(literalToken)),
-      'Should warn about missing env var when auth_token_env is misused'
-    );
   });
 });

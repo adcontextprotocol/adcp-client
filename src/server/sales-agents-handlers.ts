@@ -127,7 +127,7 @@ export class SalesAgentsHandlers {
           name: customAgentConfig.name || customAgentConfig.id,
           agent_uri: customAgentConfig.agent_uri || (customAgentConfig as any).server_url,
           protocol: customAgentConfig.protocol || 'mcp',
-          auth_token_env: customAgentConfig.auth_token_env,
+          auth_token: customAgentConfig.auth_token,
           requiresAuth: customAgentConfig.requiresAuth !== false,
         };
         client = new ADCPMultiAgentClient([customAgent]);

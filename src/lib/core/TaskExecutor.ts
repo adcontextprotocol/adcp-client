@@ -681,7 +681,7 @@ export class TaskExecutor {
       };
     }
 
-    // Handler provided input - continue with the task
+    // Handler provided input - continue with the task (pass inputHandler for multi-round)
     return this.continueTaskWithInput<T>(
       agent,
       taskId,
@@ -690,6 +690,7 @@ export class TaskExecutor {
       response.contextId,
       handlerResponse,
       messages,
+      inputHandler,
       options,
       debugLogs,
       startTime
@@ -760,7 +761,7 @@ export class TaskExecutor {
       throw new Error(`Deferred task not found: ${token}`);
     }
 
-    // Continue task with the provided input
+    // Continue task with the provided input (no handler for manual resume)
     return this.continueTaskWithInput<T>(
       state.agent,
       state.taskId,
@@ -768,7 +769,8 @@ export class TaskExecutor {
       state.params,
       state.contextId,
       input,
-      state.messages
+      state.messages,
+      undefined
     );
   }
 
@@ -783,6 +785,7 @@ export class TaskExecutor {
     contextId: string,
     input: any,
     messages: Message[],
+    inputHandler?: InputHandler,
     options: TaskOptions = {},
     debugLogs: any[] = [],
     startTime: number = Date.now()
@@ -818,7 +821,7 @@ export class TaskExecutor {
     };
     messages.push(responseMessage);
 
-    // Handle the continued response
+    // Handle the continued response (pass inputHandler for multi-round conversations)
     return this.handleAsyncResponse<T>(
       agent,
       taskId,
@@ -826,7 +829,7 @@ export class TaskExecutor {
       params,
       response,
       messages,
-      undefined,
+      inputHandler,
       options,
       debugLogs,
       startTime

@@ -218,7 +218,7 @@ export class ConfigurationManager {
           agent_uri: 'https://premium-ads.example.com/mcp/',
           protocol: 'mcp',
           requiresAuth: true,
-          auth_token_env: 'PREMIUM_AGENT_TOKEN',
+          auth_token: process.env.PREMIUM_AGENT_TOKEN,
         },
         {
           id: 'budget-network',
@@ -277,8 +277,7 @@ The ADCP client can load agents from multiple sources:
          "name": "Premium Ad Network",
          "agent_uri": "https://premium.example.com",
          "protocol": "mcp",
-         "requiresAuth": true,
-         "auth_token_env": "PREMIUM_TOKEN"
+         "requiresAuth": true
        },
        {
          "id": "dev-agent",
@@ -291,14 +290,10 @@ The ADCP client can load agents from multiple sources:
      ]
    }
 
-   Authentication options:
-   - auth_token_env: Environment variable name (recommended for production)
-   - auth_token: Direct token value (useful for development/testing)
-
 3️⃣  Programmatic Configuration:
    const client = new ADCPMultiAgentClient([
      { id: 'agent', agent_uri: 'https://...', protocol: 'mcp',
-       auth_token_env: 'MY_TOKEN' }
+       auth_token: process.env.MY_TOKEN }
    ]);
 
 📖 For more examples, see the documentation.
