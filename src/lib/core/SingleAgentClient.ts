@@ -36,7 +36,7 @@ import type { InputHandler, TaskOptions, TaskResult, ConversationConfig, TaskInf
 import type { Activity, AsyncHandlerConfig, WebhookPayload } from './AsyncHandler';
 import { AsyncHandler } from './AsyncHandler';
 import { unwrapProtocolResponse } from '../utils/response-unwrapper';
-import { noopLogger, type ILogger } from '../utils/logger';
+import { createLogger, type ILogger, type LoggerConfig } from '../utils/logger';
 import * as crypto from 'crypto';
 
 /**
@@ -56,19 +56,20 @@ export interface SingleAgentClientConfig extends ConversationConfig {
   /** Webhook secret for signature verification (recommended for production) */
   webhookSecret?: string;
   /**
-   * Logger for internal diagnostics. Library is silent by default.
-   * Inject your own logger (e.g., pino, winston, console) to see internal logs.
+   * Logging configuration for internal diagnostics.
+   * Default: { level: 'warn' } - shows warnings and errors only.
+   *
+   * Set level to 'debug' or 'info' to see more verbose output.
+   * Set format to 'json' for structured logging in production.
    *
    * @example
    * ```typescript
-   * import { createLogger } from '@adcp/client';
-   *
    * const client = new AdCPClient(agents, {
-   *   logger: createLogger({ level: 'debug', format: 'json' })
+   *   logging: { level: 'debug', format: 'json' }
    * });
    * ```
    */
-  logger?: ILogger;
+  logging?: LoggerConfig;
   /**
    * Webhook URL template with macro substitution
    *
@@ -136,8 +137,8 @@ export class SingleAgentClient {
     private agent: AgentConfig,
     private config: SingleAgentClientConfig = {}
   ) {
-    // Use provided logger or silent noop logger
-    this.logger = config.logger || noopLogger;
+    // Create logger from config with default level: warn (shows warnings/errors, not debug/info)
+    this.logger = createLogger(config.logging ?? { level: 'warn' });
 
     // Normalize agent URL for MCP protocol
     this.normalizedAgent = this.normalizeAgentConfig(agent);

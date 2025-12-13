@@ -4,15 +4,15 @@
 
 Add JSON logging format and injectable logger pattern for production deployments.
 
-**JSON Logging**: Set `LOG_FORMAT=json` environment variable or configure via `createLogger({ format: 'json' })` to output structured JSON logs with timestamp, level, message, context, and metadata.
+**JSON Logging**: Configure logging via `createLogger({ format: 'json' })` to output structured JSON logs with timestamp, level, message, context, and metadata.
 
-**Injectable Logger**: Library is now silent by default. Inject your own logger via config to see internal diagnostics:
+**Injectable Logger**: Library defaults to `{ level: 'warn' }` - warnings and errors are visible, but debug/info noise is hidden. Configure via the `logging` option:
 
 ```typescript
 import { createLogger, AdCPClient } from '@adcp/client';
 
 const client = new AdCPClient(agents, {
-  logger: createLogger({ level: 'debug', format: 'json' })
+  logging: { level: 'debug', format: 'json' }
 });
 ```
 
