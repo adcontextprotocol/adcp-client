@@ -173,7 +173,14 @@ export { detectProtocol, detectProtocolWithTimeout } from './utils';
 
 // ====== LOGGING ======
 // Logger utilities for production deployments
-export { createLogger, noopLogger, type ILogger, type LoggerConfig, type LogFormat, type LogLevel } from './utils/logger';
+export {
+  createLogger,
+  noopLogger,
+  type ILogger,
+  type LoggerConfig,
+  type LogFormat,
+  type LogLevel,
+} from './utils/logger';
 
 // ====== VERSION INFORMATION ======
 export {

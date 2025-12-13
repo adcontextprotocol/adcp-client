@@ -383,8 +383,10 @@ describe('TaskExecutor Error Scenarios', { skip: process.env.CI ? 'Slow tests - 
         // Should handle unknown statuses gracefully if there's data
         assert.strictEqual(result.success, true);
         // The data may include the original response structure or just the inner data
-        assert(result.data?.data === 'some-data' || result.data?.result?.data === 'some-data',
-          `Expected data to contain 'some-data' but got: ${JSON.stringify(result.data)}`);
+        assert(
+          result.data?.data === 'some-data' || result.data?.result?.data === 'some-data',
+          `Expected data to contain 'some-data' but got: ${JSON.stringify(result.data)}`
+        );
       }
     });
 
@@ -518,8 +520,10 @@ describe('TaskExecutor Error Scenarios', { skip: process.env.CI ? 'Slow tests - 
 
       assert.strictEqual(result.success, true);
       // Data may be nested differently depending on extraction
-      assert(result.data?.handled === 'large-conversation' || result.data?.result?.handled === 'large-conversation',
-        `Expected data to contain 'large-conversation' but got: ${JSON.stringify(result.data)}`);
+      assert(
+        result.data?.handled === 'large-conversation' || result.data?.result?.handled === 'large-conversation',
+        `Expected data to contain 'large-conversation' but got: ${JSON.stringify(result.data)}`
+      );
     });
   });
 
@@ -585,10 +589,7 @@ describe('TaskExecutor Error Scenarios', { skip: process.env.CI ? 'Slow tests - 
       assert.strictEqual(result.status, 'working');
 
       // Polling failure happens when caller explicitly polls
-      await assert.rejects(
-        executor.pollTaskCompletion(mockAgent, result.metadata.taskId, 10),
-        /Task state corrupted/
-      );
+      await assert.rejects(executor.pollTaskCompletion(mockAgent, result.metadata.taskId, 10), /Task state corrupted/);
     });
   });
 
@@ -682,8 +683,10 @@ describe('TaskExecutor Error Scenarios', { skip: process.env.CI ? 'Slow tests - 
 
       assert.strictEqual(result.success, true);
       // Data may be nested differently depending on extraction
-      assert(result.data?.handled === 'long-data' || result.data?.result?.handled === 'long-data',
-        `Expected data to contain 'long-data' but got: ${JSON.stringify(result.data)}`);
+      assert(
+        result.data?.handled === 'long-data' || result.data?.result?.handled === 'long-data',
+        `Expected data to contain 'long-data' but got: ${JSON.stringify(result.data)}`
+      );
     });
 
     test('should accept any timeout config but return working status immediately', async () => {
@@ -737,8 +740,10 @@ describe('TaskExecutor Error Scenarios', { skip: process.env.CI ? 'Slow tests - 
 
       assert.strictEqual(result.success, true);
       // Data may be nested differently depending on extraction
-      assert(result.data?.special === 'handled' || result.data?.result?.special === 'handled',
-        `Expected data to contain 'handled' but got: ${JSON.stringify(result.data)}`);
+      assert(
+        result.data?.special === 'handled' || result.data?.result?.special === 'handled',
+        `Expected data to contain 'handled' but got: ${JSON.stringify(result.data)}`
+      );
     });
   });
 });
