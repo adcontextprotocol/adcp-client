@@ -203,14 +203,11 @@ test('MCP: Protocol integration sends auth headers', async t => {
     delete process.env.TEST_AUTH_TOKEN;
   });
 
-  await t.test('auth_token_env warns when environment variable not found', () => {
+  await t.test('auth_token_env returns undefined when environment variable not found (non-production)', () => {
     const { getAuthToken } = require('../../dist/lib/auth/index.js');
 
-    // Capture console.warn
-    const warnings = [];
-    const originalWarn = console.warn;
-    console.warn = msg => warnings.push(msg);
-
+    // In non-production mode, missing env var returns undefined silently
+    // (library is silent by default per design)
     const missingEnvConfig = {
       id: 'test-agent',
       protocol: 'mcp',
@@ -221,12 +218,8 @@ test('MCP: Protocol integration sends auth headers', async t => {
 
     const authToken = getAuthToken(missingEnvConfig);
 
+    // Should return undefined when env var is missing (non-production mode)
     assert.strictEqual(authToken, undefined);
-    assert.ok(warnings.some(w => w.includes('NONEXISTENT_TOKEN')));
-    assert.ok(warnings.some(w => w.includes('test-agent')));
-
-    // Restore console.warn
-    console.warn = originalWarn;
   });
 
   await t.test('production mode throws error for missing env var', () => {
@@ -300,21 +293,10 @@ test('MCP: Protocol integration sends auth headers', async t => {
       auth_token_env: literalToken, // BUG: This is treated as env var name
     };
 
-    // Capture console.warn
-    const warnings = [];
-    const originalWarn = console.warn;
-    console.warn = msg => warnings.push(msg);
-
     const buggyToken = getAuthToken(buggyConfig);
 
-    // Restore console.warn
-    console.warn = originalWarn;
-
     // The bug causes undefined because process.env[literalToken] doesn't exist
+    // Library is silent by default so no warning is emitted (per design)
     assert.strictEqual(buggyToken, undefined, 'auth_token_env with literal value returns undefined (the bug)');
-    assert.ok(
-      warnings.some(w => w.includes(literalToken)),
-      'Should warn about missing env var when auth_token_env is misused'
-    );
   });
 });
