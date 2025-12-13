@@ -3,7 +3,6 @@
  * Provides type-safe callbacks for each AdCP tool completion
  */
 
-import { noopLogger, type ILogger } from '../utils/logger';
 import type {
   GetProductsResponse,
   ListCreativeFormatsResponse,
@@ -163,14 +162,7 @@ export interface WebhookPayload {
  * Async handler class
  */
 export class AsyncHandler {
-  private logger: ILogger;
-
-  constructor(
-    private config: AsyncHandlerConfig,
-    logger?: ILogger
-  ) {
-    this.logger = logger || noopLogger;
-  }
+  constructor(private config: AsyncHandlerConfig) {}
 
   /**
    * Handle incoming webhook payload (both task completions and notifications)
@@ -290,7 +282,7 @@ export class AsyncHandler {
         await handlerToCall(result, metadata);
       } catch (error) {
         // Log error but don't crash webhook processing
-        this.logger.error('Error in handler for task', { taskType, error });
+        console.error(`Error in handler for task ${taskType}:`, error);
       }
     }
   }

@@ -171,17 +171,9 @@ export { getStandardFormats, unwrapProtocolResponse, isAdcpError, isAdcpSuccess 
 export { REQUEST_TIMEOUT, MAX_CONCURRENT, STANDARD_FORMATS } from './utils';
 export { detectProtocol, detectProtocolWithTimeout } from './utils';
 
-// ====== LOGGER ======
-// Logger utilities for structured logging (text or JSON format)
-export {
-  logger,
-  createLogger,
-  noopLogger,
-  type LogLevel,
-  type LogFormat,
-  type LoggerConfig,
-  type ILogger,
-} from './utils';
+// ====== LOGGING ======
+// Logger utilities for production deployments
+export { createLogger, noopLogger, type ILogger, type LoggerConfig, type LogFormat, type LogLevel } from './utils/logger';
 
 // ====== VERSION INFORMATION ======
 export {

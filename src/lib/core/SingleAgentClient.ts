@@ -36,14 +36,13 @@ import type { InputHandler, TaskOptions, TaskResult, ConversationConfig, TaskInf
 import type { Activity, AsyncHandlerConfig, WebhookPayload } from './AsyncHandler';
 import { AsyncHandler } from './AsyncHandler';
 import { unwrapProtocolResponse } from '../utils/response-unwrapper';
-import { createLogger, type ILogger, type LoggerConfig } from '../utils/logger';
 import * as crypto from 'crypto';
 
 /**
  * Configuration for SingleAgentClient (and multi-agent client)
  */
 export interface SingleAgentClientConfig extends ConversationConfig {
-  /** Enable debug logging @deprecated Use logger instead */
+  /** Enable debug logging */
   debug?: boolean;
   /** Custom user agent string */
   userAgent?: string;
@@ -55,21 +54,6 @@ export interface SingleAgentClientConfig extends ConversationConfig {
   handlers?: AsyncHandlerConfig;
   /** Webhook secret for signature verification (recommended for production) */
   webhookSecret?: string;
-  /**
-   * Logging configuration for internal diagnostics.
-   * Default: { level: 'warn' } - shows warnings and errors only.
-   *
-   * Set level to 'debug' or 'info' to see more verbose output.
-   * Set format to 'json' for structured logging in production.
-   *
-   * @example
-   * ```typescript
-   * const client = new AdCPClient(agents, {
-   *   logging: { level: 'debug', format: 'json' }
-   * });
-   * ```
-   */
-  logging?: LoggerConfig;
   /**
    * Webhook URL template with macro substitution
    *
@@ -131,15 +115,11 @@ export class SingleAgentClient {
   private asyncHandler?: AsyncHandler;
   private normalizedAgent: AgentConfig;
   private discoveredEndpoint?: string; // Cache discovered endpoint
-  private logger: ILogger;
 
   constructor(
     private agent: AgentConfig,
     private config: SingleAgentClientConfig = {}
   ) {
-    // Create logger from config with default level: warn (shows warnings/errors, not debug/info)
-    this.logger = createLogger(config.logging ?? { level: 'warn' });
-
     // Normalize agent URL for MCP protocol
     this.normalizedAgent = this.normalizeAgentConfig(agent);
 
@@ -153,12 +133,11 @@ export class SingleAgentClient {
       strictSchemaValidation: config.validation?.strictSchemaValidation !== false, // Default: true
       logSchemaViolations: config.validation?.logSchemaViolations !== false, // Default: true
       onActivity: config.onActivity,
-      logger: this.logger.child('TaskExecutor'),
     });
 
     // Create async handler if handlers are provided
     if (config.handlers) {
-      this.asyncHandler = new AsyncHandler(config.handlers, this.logger.child('AsyncHandler'));
+      this.asyncHandler = new AsyncHandler(config.handlers);
     }
   }
 
@@ -206,7 +185,7 @@ export class SingleAgentClient {
     const { Client: MCPClient } = await import('@modelcontextprotocol/sdk/client/index.js');
     const { StreamableHTTPClientTransport } = await import('@modelcontextprotocol/sdk/client/streamableHttp.js');
 
-    const authToken = this.agent.auth_token_env;
+    const authToken = this.agent.auth_token;
 
     const testEndpoint = async (url: string): Promise<boolean> => {
       try {
@@ -401,7 +380,7 @@ export class SingleAgentClient {
       } catch (error) {
         // If unwrapping fails, pass the raw artifacts as result
         // The handler can deal with it
-        this.logger.warn('Failed to unwrap A2A webhook payload', { error });
+        console.warn('Failed to unwrap A2A webhook payload:', error);
         result = payload.artifacts;
       }
     } else if (payload.artifacts?.length > 0) {
@@ -1163,7 +1142,7 @@ export class SingleAgentClient {
         version: '1.0.0',
       });
 
-      const authToken = this.agent.auth_token_env;
+      const authToken = this.agent.auth_token;
       const customFetch = authToken
         ? async (input: any, init?: any) => {
             // IMPORTANT: Must preserve SDK's default headers (especially Accept header)
@@ -1229,7 +1208,7 @@ export class SingleAgentClient {
       const clientModule = require('@a2a-js/sdk/client');
       const A2AClient = clientModule.A2AClient;
 
-      const authToken = this.agent.auth_token_env;
+      const authToken = this.agent.auth_token;
       const fetchImpl = authToken
         ? async (url: any, options?: any) => {
             const headers = {

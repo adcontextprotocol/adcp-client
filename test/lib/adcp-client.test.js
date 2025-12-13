@@ -38,7 +38,7 @@ describe('AdCPClient', () => {
         agent_uri: 'https://new.example.com',
         protocol: 'a2a',
         requiresAuth: true,
-        auth_token_env: 'TEST_TOKEN',
+        auth_token: 'TEST_TOKEN',
       };
 
       client.addAgent(agent);
@@ -217,7 +217,7 @@ describe('ConfigurationManager', () => {
             agent_uri: 'https://env-test.example.com',
             protocol: 'mcp',
             requiresAuth: true,
-            auth_token_env: 'TEST_TOKEN',
+            auth_token: 'TEST_TOKEN',
           },
         ],
       });

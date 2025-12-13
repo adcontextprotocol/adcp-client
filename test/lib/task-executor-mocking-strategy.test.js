@@ -213,7 +213,7 @@ describe('TaskExecutor Mocking Strategies', { skip: process.env.CI ? 'Slow tests
       const authAgent = {
         ...mockAgent,
         requiresAuth: true,
-        auth_token_env: 'TEST_AUTH_TOKEN',
+        auth_token: 'TEST_AUTH_TOKEN',
       };
 
       // Mock authenticated call with token validation

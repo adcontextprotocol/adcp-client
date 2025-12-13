@@ -138,14 +138,14 @@ test('MCP: Protocol integration sends auth headers', async t => {
       protocol: 'mcp',
       agent_uri: 'https://test.example.com/mcp',
       requiresAuth: false,
-      auth_token_env: 'test-token',
+      auth_token: 'test-token',
     };
 
     const authToken = getAuthToken(noAuthConfig);
     assert.strictEqual(authToken, undefined);
   });
 
-  await t.test('getAuthToken returns undefined when auth_token_env is missing', () => {
+  await t.test('getAuthToken returns undefined when auth_token is missing (non-production)', () => {
     const { getAuthToken } = require('../../dist/lib/auth/index.js');
 
     const missingTokenConfig = {
@@ -159,89 +159,22 @@ test('MCP: Protocol integration sends auth headers', async t => {
     assert.strictEqual(authToken, undefined);
   });
 
-  await t.test('auth_token_env resolves environment variables', () => {
+  await t.test('getAuthToken returns auth_token when provided', () => {
     const { getAuthToken } = require('../../dist/lib/auth/index.js');
 
-    // Set up environment variable
-    process.env.TEST_AUTH_TOKEN = 'resolved-from-env-123456';
-
-    const envVarConfig = {
+    const config = {
       id: 'test-agent',
       protocol: 'mcp',
       agent_uri: 'https://test.example.com/mcp',
       requiresAuth: true,
-      auth_token_env: 'TEST_AUTH_TOKEN',
+      auth_token: 'my-direct-token',
     };
 
-    const authToken = getAuthToken(envVarConfig);
-    assert.strictEqual(authToken, 'resolved-from-env-123456');
-
-    // Clean up
-    delete process.env.TEST_AUTH_TOKEN;
+    const authToken = getAuthToken(config);
+    assert.strictEqual(authToken, 'my-direct-token');
   });
 
-  await t.test('auth_token takes precedence over auth_token_env', () => {
-    const { getAuthToken } = require('../../dist/lib/auth/index.js');
-
-    // Set up environment variable
-    process.env.TEST_AUTH_TOKEN = 'from-env';
-
-    const bothFieldsConfig = {
-      id: 'test-agent',
-      protocol: 'mcp',
-      agent_uri: 'https://test.example.com/mcp',
-      requiresAuth: true,
-      auth_token: 'direct-token-wins',
-      auth_token_env: 'TEST_AUTH_TOKEN',
-    };
-
-    const authToken = getAuthToken(bothFieldsConfig);
-    assert.strictEqual(authToken, 'direct-token-wins');
-
-    // Clean up
-    delete process.env.TEST_AUTH_TOKEN;
-  });
-
-  await t.test('auth_token_env returns undefined when environment variable not found (non-production)', () => {
-    const { getAuthToken } = require('../../dist/lib/auth/index.js');
-
-    // In non-production mode, missing env var returns undefined silently
-    // (library is silent by default per design)
-    const missingEnvConfig = {
-      id: 'test-agent',
-      protocol: 'mcp',
-      agent_uri: 'https://test.example.com/mcp',
-      requiresAuth: true,
-      auth_token_env: 'NONEXISTENT_TOKEN',
-    };
-
-    const authToken = getAuthToken(missingEnvConfig);
-
-    // Should return undefined when env var is missing (non-production mode)
-    assert.strictEqual(authToken, undefined);
-  });
-
-  await t.test('production mode throws error for missing env var', () => {
-    const { getAuthToken } = require('../../dist/lib/auth/index.js');
-
-    const originalNodeEnv = process.env.NODE_ENV;
-    process.env.NODE_ENV = 'production';
-
-    const missingEnvConfig = {
-      id: 'prod-agent',
-      protocol: 'mcp',
-      agent_uri: 'https://test.example.com/mcp',
-      requiresAuth: true,
-      auth_token_env: 'MISSING_PROD_TOKEN',
-    };
-
-    assert.throws(() => getAuthToken(missingEnvConfig), /Environment variable "MISSING_PROD_TOKEN" not found/);
-
-    // Restore NODE_ENV
-    process.env.NODE_ENV = originalNodeEnv;
-  });
-
-  await t.test('production mode throws error when no auth configured', () => {
+  await t.test('production mode throws error when no auth_token configured', () => {
     const { getAuthToken } = require('../../dist/lib/auth/index.js');
 
     const originalNodeEnv = process.env.NODE_ENV;
@@ -254,10 +187,7 @@ test('MCP: Protocol integration sends auth headers', async t => {
       requiresAuth: true,
     };
 
-    assert.throws(
-      () => getAuthToken(noAuthConfig),
-      /requires authentication but no auth_token or auth_token_env configured/
-    );
+    assert.throws(() => getAuthToken(noAuthConfig), /requires authentication but no auth_token configured/);
 
     // Restore NODE_ENV
     process.env.NODE_ENV = originalNodeEnv;

@@ -14,12 +14,6 @@ export function generateUUID(): string {
 /**
  * Get authentication token for an agent
  *
- * Supports two explicit authentication methods:
- * 1. auth_token: Direct token value, used as-is
- * 2. auth_token_env: Environment variable name, looked up in process.env
- *
- * Priority: auth_token takes precedence if both are provided
- *
  * @param agent - Agent configuration
  * @returns Authentication token string or undefined if not configured/required
  */
@@ -28,25 +22,13 @@ export function getAuthToken(agent: AgentConfig): string | undefined {
     return undefined;
   }
 
-  // Explicit auth_token takes precedence
   if (agent.auth_token) {
     return agent.auth_token;
   }
 
-  // Look up auth_token_env in environment
-  if (agent.auth_token_env) {
-    const envValue = process.env[agent.auth_token_env];
-    if (!envValue && process.env.NODE_ENV === 'production') {
-      throw new Error(
-        `[AUTH] Environment variable "${agent.auth_token_env}" not found for agent ${agent.id} - Agent cannot authenticate`
-      );
-    }
-    return envValue;
-  }
-
   // In production, require explicit auth configuration when requiresAuth is true
   if (process.env.NODE_ENV === 'production') {
-    throw new Error(`[AUTH] Agent ${agent.id} requires authentication but no auth_token or auth_token_env configured`);
+    throw new Error(`[AUTH] Agent ${agent.id} requires authentication but no auth_token configured`);
   }
 
   return undefined;

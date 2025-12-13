@@ -1,10 +1,9 @@
 // Enhanced configuration manager for easy ADCP client setup
 
 import { readFileSync, existsSync } from 'fs';
-import { resolve } from 'path';
+import { resolve, join } from 'path';
 import type { AgentConfig } from '../types';
 import { ConfigurationError } from '../errors';
-import { noopLogger, type ILogger } from '../utils/logger';
 
 /**
  * Configuration structure for ADCP agents
@@ -43,38 +42,35 @@ export class ConfigurationManager {
    * 1. Environment variables
    * 2. Config files in current directory
    * 3. Config files in project root
-   *
-   * @param logger - Optional logger for diagnostics (silent by default)
    */
-  static loadAgents(logger: ILogger = noopLogger): AgentConfig[] {
+  static loadAgents(): AgentConfig[] {
     // Try environment variables first
-    const envAgents = this.loadAgentsFromEnv(logger);
+    const envAgents = this.loadAgentsFromEnv();
     if (envAgents.length > 0) {
       return envAgents;
     }
 
     // Try config files
-    const configAgents = this.loadAgentsFromConfig(undefined, logger);
+    const configAgents = this.loadAgentsFromConfig();
     if (configAgents.length > 0) {
       return configAgents;
     }
 
     // No configuration found
-    logger.warn('No ADCP agent configuration found');
-    logger.info('To configure agents, you can:');
-    logger.info('  1. Set SALES_AGENTS_CONFIG environment variable');
-    logger.info('  2. Create an adcp.config.json file');
-    logger.info('  3. Pass agents directly to the constructor');
+    console.warn('⚠️  No ADCP agent configuration found');
+    console.log('💡 To configure agents, you can:');
+    console.log('   1. Set SALES_AGENTS_CONFIG environment variable');
+    console.log('   2. Create an adcp.config.json file');
+    console.log('   3. Pass agents directly to the constructor');
+    console.log('\n📖 See documentation for configuration examples');
 
     return [];
   }
 
   /**
    * Load agents from environment variables
-   *
-   * @param logger - Optional logger for diagnostics (silent by default)
    */
-  static loadAgentsFromEnv(logger: ILogger = noopLogger): AgentConfig[] {
+  static loadAgentsFromEnv(): AgentConfig[] {
     for (const envVar of this.ENV_VARS) {
       const configEnv = process.env[envVar];
       if (configEnv) {
@@ -83,13 +79,13 @@ export class ConfigurationManager {
           const agents = this.extractAgents(config);
 
           if (agents.length > 0) {
-            logger.info(`Loaded ${agents.length} agents from ${envVar}`);
-            this.logAgents(agents, logger);
+            console.log(`📡 Loaded ${agents.length} agents from ${envVar}`);
+            this.logAgents(agents);
             return agents;
           }
         } catch (error) {
           const errorMessage = error instanceof Error ? error.message : String(error);
-          logger.error(`Failed to parse ${envVar}`, { error: errorMessage });
+          console.error(`❌ Failed to parse ${envVar}:`, errorMessage);
           throw new ConfigurationError(`Invalid JSON in ${envVar}: ${errorMessage}`, envVar);
         }
       }
@@ -100,11 +96,8 @@ export class ConfigurationManager {
 
   /**
    * Load agents from config file
-   *
-   * @param configPath - Optional specific config file path
-   * @param logger - Optional logger for diagnostics (silent by default)
    */
-  static loadAgentsFromConfig(configPath?: string, logger: ILogger = noopLogger): AgentConfig[] {
+  static loadAgentsFromConfig(configPath?: string): AgentConfig[] {
     const filesToTry = configPath ? [configPath] : this.CONFIG_FILES;
 
     for (const file of filesToTry) {
@@ -117,13 +110,13 @@ export class ConfigurationManager {
           const agents = this.extractAgents(config);
 
           if (agents.length > 0) {
-            logger.info(`Loaded ${agents.length} agents from ${file}`);
-            this.logAgents(agents, logger);
+            console.log(`📁 Loaded ${agents.length} agents from ${file}`);
+            this.logAgents(agents);
             return agents;
           }
         } catch (error) {
           const errorMessage = error instanceof Error ? error.message : String(error);
-          logger.error(`Failed to load config from ${file}`, { error: errorMessage });
+          console.error(`❌ Failed to load config from ${file}:`, errorMessage);
           throw new ConfigurationError(`Invalid config file ${file}: ${errorMessage}`, 'configFile');
         }
       }
@@ -153,19 +146,17 @@ export class ConfigurationManager {
   }
 
   /**
-   * Log configured agents
+   * Log configured agents in a user-friendly way
    */
-  private static logAgents(agents: AgentConfig[], logger: ILogger): void {
+  private static logAgents(agents: AgentConfig[]): void {
     agents.forEach(agent => {
-      logger.debug(`Agent: ${agent.name} (${agent.protocol.toUpperCase()}) at ${agent.agent_uri}`, {
-        id: agent.id,
-        protocol: agent.protocol,
-        requiresAuth: agent.requiresAuth,
-      });
+      const protocolIcon = agent.protocol === 'mcp' ? '🔗' : '⚡';
+      const authIcon = agent.requiresAuth ? '🔐' : '🌐';
+      console.log(`  ${protocolIcon}${authIcon} ${agent.name} (${agent.protocol.toUpperCase()}) at ${agent.agent_uri}`);
     });
 
     const useRealAgents = process.env.USE_REAL_AGENTS === 'true';
-    logger.debug(`Real agents mode: ${useRealAgents ? 'ENABLED' : 'DISABLED'}`);
+    console.log(`🔧 Real agents mode: ${useRealAgents ? 'ENABLED' : 'DISABLED'}`);
   }
 
   /**
@@ -227,7 +218,7 @@ export class ConfigurationManager {
           agent_uri: 'https://premium-ads.example.com/mcp/',
           protocol: 'mcp',
           requiresAuth: true,
-          auth_token_env: 'PREMIUM_AGENT_TOKEN',
+          auth_token: process.env.PREMIUM_AGENT_TOKEN,
         },
         {
           id: 'budget-network',
@@ -286,8 +277,7 @@ The ADCP client can load agents from multiple sources:
          "name": "Premium Ad Network",
          "agent_uri": "https://premium.example.com",
          "protocol": "mcp",
-         "requiresAuth": true,
-         "auth_token_env": "PREMIUM_TOKEN"
+         "requiresAuth": true
        },
        {
          "id": "dev-agent",
@@ -300,14 +290,10 @@ The ADCP client can load agents from multiple sources:
      ]
    }
 
-   Authentication options:
-   - auth_token_env: Environment variable name (recommended for production)
-   - auth_token: Direct token value (useful for development/testing)
-
 3️⃣  Programmatic Configuration:
    const client = new ADCPMultiAgentClient([
      { id: 'agent', agent_uri: 'https://...', protocol: 'mcp',
-       auth_token_env: 'MY_TOKEN' }
+       auth_token: process.env.MY_TOKEN }
    ]);
 
 📖 For more examples, see the documentation.

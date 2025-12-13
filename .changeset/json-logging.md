@@ -1,8 +1,18 @@
 ---
-"@adcp/client": minor
+"@adcp/client": major
 ---
 
-Add JSON logging format and injectable logger pattern for production deployments.
+**BREAKING**: Remove `auth_token_env` from `AgentConfig`. Use `auth_token` directly instead.
+
+Before:
+```typescript
+{ auth_token_env: 'MY_TOKEN_ENV_VAR' }  // looked up from process.env
+```
+
+After:
+```typescript
+{ auth_token: process.env.MY_TOKEN_ENV_VAR }  // caller handles env lookup
+```
 
 **JSON Logging**: Configure logging via `createLogger({ format: 'json' })` to output structured JSON logs with timestamp, level, message, context, and metadata.
 

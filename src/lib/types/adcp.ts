@@ -165,10 +165,8 @@ export interface AgentConfig {
   name: string;
   agent_uri: string;
   protocol: 'mcp' | 'a2a';
-  /** Direct authentication token value */
+  /** Authentication token value */
   auth_token?: string;
-  /** Environment variable name containing the auth token */
-  auth_token_env?: string;
   requiresAuth?: boolean;
 }
 

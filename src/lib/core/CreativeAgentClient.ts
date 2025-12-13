@@ -48,7 +48,7 @@ export class CreativeAgentClient {
       name: 'Creative Agent',
       agent_uri: config.agentUrl,
       protocol: config.protocol || 'mcp',
-      ...(config.authToken && { auth_token_env: config.authToken }),
+      ...(config.authToken && { auth_token: config.authToken }),
     };
 
     this.client = new SingleAgentClient(agentConfig, config);

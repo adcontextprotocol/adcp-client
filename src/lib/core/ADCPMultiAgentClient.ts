@@ -4,7 +4,6 @@ import type { AgentConfig } from '../types';
 import { AgentClient } from './AgentClient';
 import type { SingleAgentClientConfig } from './SingleAgentClient';
 import { ConfigurationManager } from './ConfigurationManager';
-import { createLogger } from '../utils/logger';
 import { CreativeAgentClient, STANDARD_CREATIVE_AGENTS } from './CreativeAgentClient';
 import type { CreativeFormat } from './CreativeAgentClient';
 import type { InputHandler, TaskOptions, TaskResult, TaskInfo } from './ConversationTypes';
@@ -404,11 +403,10 @@ export class ADCPMultiAgentClient {
    * ```
    */
   static fromConfig(config?: SingleAgentClientConfig): ADCPMultiAgentClient {
-    const logger = createLogger(config?.logging ?? { level: 'warn' });
-    const agents = ConfigurationManager.loadAgents(logger);
+    const agents = ConfigurationManager.loadAgents();
 
     if (agents.length === 0) {
-      logger.info(ConfigurationManager.getConfigurationHelp());
+      console.log('\n' + ConfigurationManager.getConfigurationHelp());
       throw new Error('No ADCP agents configured. See configuration help above.');
     }
 
@@ -498,7 +496,7 @@ export class ADCPMultiAgentClient {
       agentName?: string;
       protocol?: 'mcp' | 'a2a';
       requiresAuth?: boolean;
-      authTokenEnv?: string;
+      authToken?: string;
       debug?: boolean;
       timeout?: number;
     } = {}
@@ -508,7 +506,7 @@ export class ADCPMultiAgentClient {
       agentName = 'Default Agent',
       protocol = 'mcp',
       requiresAuth = false,
-      authTokenEnv,
+      authToken,
       debug = false,
       timeout,
     } = options;
@@ -519,7 +517,7 @@ export class ADCPMultiAgentClient {
       agent_uri: agentUrl,
       protocol,
       requiresAuth,
-      auth_token_env: authTokenEnv,
+      auth_token: authToken,
     };
 
     ConfigurationManager.validateAgentConfig(agent);

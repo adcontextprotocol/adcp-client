@@ -54,7 +54,7 @@ describe('Test Helpers', () => {
     assert.strictEqual(TEST_AGENT_MCP_CONFIG.protocol, 'mcp');
     assert.strictEqual(TEST_AGENT_MCP_CONFIG.agent_uri, 'https://test-agent.adcontextprotocol.org/mcp/');
     assert.strictEqual(TEST_AGENT_MCP_CONFIG.requiresAuth, true);
-    assert.ok(TEST_AGENT_MCP_CONFIG.auth_token_env, 'should have auth_token_env');
+    assert.ok(TEST_AGENT_MCP_CONFIG.auth_token, 'should have auth_token');
   });
 
   test('TEST_AGENT_A2A_CONFIG should have correct structure', () => {
@@ -64,7 +64,7 @@ describe('Test Helpers', () => {
     assert.strictEqual(TEST_AGENT_A2A_CONFIG.protocol, 'a2a');
     assert.strictEqual(TEST_AGENT_A2A_CONFIG.agent_uri, 'https://test-agent.adcontextprotocol.org');
     assert.strictEqual(TEST_AGENT_A2A_CONFIG.requiresAuth, true);
-    assert.ok(TEST_AGENT_A2A_CONFIG.auth_token_env, 'should have auth_token_env');
+    assert.ok(TEST_AGENT_A2A_CONFIG.auth_token, 'should have auth_token');
   });
 
   test('testAgent should be an AgentClient instance', () => {
@@ -114,7 +114,7 @@ describe('Test Helpers', () => {
 
     assert.strictEqual(config.id, 'test-agent-mcp');
     assert.strictEqual(config.protocol, 'mcp');
-    assert.ok(config.auth_token_env, 'should have auth_token_env');
+    assert.ok(config.auth_token, 'should have auth_token');
   });
 
   test('createTestAgent should allow overrides', () => {
@@ -128,7 +128,7 @@ describe('Test Helpers', () => {
     assert.strictEqual(config.id, 'custom-test-agent');
     assert.strictEqual(config.name, 'Custom Test Agent');
     assert.strictEqual(config.protocol, 'mcp'); // unchanged
-    assert.ok(config.auth_token_env, 'should retain auth_token_env');
+    assert.ok(config.auth_token, 'should retain auth_token');
   });
 
   test('createTestAgent should allow protocol override', () => {
