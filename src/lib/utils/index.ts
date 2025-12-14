@@ -140,3 +140,6 @@ export type { AdCPResponse } from './response-unwrapper';
 
 // Re-export protocol detection utilities
 export { detectProtocol, detectProtocolWithTimeout } from './protocol-detection';
+
+// Re-export tool support utilities
+export { checkToolSupportsPushNotification } from './tool-support';

@@ -8,6 +8,7 @@ import type { AgentConfig } from '../types';
 import type { PushNotificationConfig } from '../types/tools.generated';
 import { getAuthToken } from '../auth';
 import { validateAgentUrl } from '../validation';
+import { checkToolSupportsPushNotification } from '../utils/tool-support';
 
 /**
  * Universal protocol client - automatically routes to the correct protocol implementation
@@ -43,7 +44,9 @@ export class ProtocolClient {
     // Build push_notification_config for ASYNC TASK STATUS notifications
     // (NOT for reporting_webhook - that stays in args)
     // Schema: https://adcontextprotocol.org/schemas/v1/core/push-notification-config.json
-    const pushNotificationConfig: PushNotificationConfig | undefined = webhookUrl
+    // Only build for tools that support async task notifications
+    const shouldAddWebhook = checkToolSupportsPushNotification(toolName) && webhookUrl;
+    const pushNotificationConfig: PushNotificationConfig | undefined = shouldAddWebhook
       ? {
           url: webhookUrl,
           ...(webhookToken && { token: webhookToken }),
