@@ -3,6 +3,7 @@
 import { z } from 'zod';
 import * as schemas from '../types/schemas.generated';
 import type { AgentConfig } from '../types';
+import type { ILogger } from '../utils/logger';
 import type {
   GetProductsRequest,
   GetProductsResponse,
@@ -44,6 +45,8 @@ import * as crypto from 'crypto';
 export interface SingleAgentClientConfig extends ConversationConfig {
   /** Enable debug logging */
   debug?: boolean;
+  /** Logger instance for structured logging (use createLogger() from @adcp/client) */
+  logger?: ILogger;
   /** Custom user agent string */
   userAgent?: string;
   /** Additional headers to include in requests */
@@ -133,6 +136,7 @@ export class SingleAgentClient {
       strictSchemaValidation: config.validation?.strictSchemaValidation !== false, // Default: true
       logSchemaViolations: config.validation?.logSchemaViolations !== false, // Default: true
       onActivity: config.onActivity,
+      logger: config.logger,
     });
 
     // Create async handler if handlers are provided

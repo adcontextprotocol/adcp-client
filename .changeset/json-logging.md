@@ -5,10 +5,14 @@
 **JSON Logging**: Add `format: 'json'` option to logger for structured JSON output with timestamp, level, message, context, and metadata fields.
 
 ```typescript
-import { createLogger } from '@adcp/client';
+import { createLogger, SingleAgentClient } from '@adcp/client';
 
+// Create a logger with JSON format for production
 const logger = createLogger({ level: 'debug', format: 'json' });
-// Output: {"timestamp":"2025-12-13T...","level":"info","message":"...","context":"...","meta":{}}
+
+// Pass logger to client for structured logging of task execution
+const client = new SingleAgentClient(agentConfig, { logger });
+// Output: {"timestamp":"2025-12-13T...","level":"info","message":"Task completed: get_products","context":"TaskExecutor","meta":{"taskId":"...","responseTimeMs":123}}
 ```
 
 **Injectable Logger Interface**: New `ILogger` interface for dependency injection and `noopLogger` singleton for silent library defaults.

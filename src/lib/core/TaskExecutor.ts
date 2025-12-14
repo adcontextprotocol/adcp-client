@@ -7,6 +7,8 @@ import { ProtocolClient } from '../protocols';
 import type { Storage } from '../storage/interfaces';
 import { responseValidator } from './ResponseValidator';
 import { unwrapProtocolResponse } from '../utils/response-unwrapper';
+import type { ILogger } from '../utils/logger';
+import { noopLogger } from '../utils/logger';
 import type {
   Message,
   InputRequest,
@@ -83,6 +85,7 @@ export class TaskExecutor {
   private responseParser: ProtocolResponseParser;
   private activeTasks = new Map<string, TaskState>();
   private conversationStorage?: Map<string, Message[]>;
+  private logger: ILogger;
 
   constructor(
     private config: {
@@ -110,9 +113,12 @@ export class TaskExecutor {
       logSchemaViolations?: boolean;
       /** Global activity callback for observability */
       onActivity?: (activity: Activity) => void | Promise<void>;
+      /** Logger for debug/info/warn/error messages (default: noopLogger) */
+      logger?: ILogger;
     } = {}
   ) {
     this.responseParser = new ProtocolResponseParser();
+    this.logger = (config.logger || noopLogger).child('TaskExecutor');
     if (config.enableConversationStorage) {
       this.conversationStorage = new Map();
     }
@@ -146,6 +152,8 @@ export class TaskExecutor {
     const taskId = options.contextId || randomUUID();
     const startTime = Date.now();
     const workingTimeout = this.config.workingTimeout || 120000; // 120s max per PR #78
+
+    this.logger.debug(`Executing task: ${taskName}`, { taskId, agent: agent.id, protocol: agent.protocol });
 
     // Register task in active tasks
     const taskState: TaskState = {
@@ -272,6 +280,7 @@ export class TaskExecutor {
     startTime: number = Date.now()
   ): Promise<TaskResult<T>> {
     const status = this.responseParser.getStatus(response) as ADCPStatus;
+    this.logger.debug(`Response status: ${status}`, { taskId, taskName });
 
     switch (status) {
       case ADCP_STATUS.COMPLETED:
@@ -294,6 +303,12 @@ export class TaskExecutor {
             ? `Schema validation failed: ${validationResult.errors.join('; ')}`
             : completedData?.error || completedData?.message || 'Operation failed'
           : undefined;
+
+        if (finalSuccess) {
+          this.logger.info(`Task completed: ${taskName}`, { taskId, responseTimeMs: Date.now() - startTime });
+        } else {
+          this.logger.warn(`Task completed with error: ${finalError}`, { taskId, taskName });
+        }
 
         return {
           success: finalSuccess,
@@ -850,6 +865,7 @@ export class TaskExecutor {
     debugLogs: any[] = [],
     startTime: number = Date.now()
   ): TaskResult<T> {
+    this.logger.error(`Task failed: ${error.message || error}`, { taskId, agent: agent.id });
     return {
       success: false,
       status: 'completed', // TaskResult status
