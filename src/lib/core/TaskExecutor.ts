@@ -534,6 +534,9 @@ export class TaskExecutor {
     debugLogs: any[] = [],
     startTime: number = Date.now()
   ): Promise<TaskResult<T>> {
+    // Extract any data that came with the submitted response
+    const partialData = this.extractResponseData(response, debugLogs, taskName);
+
     let webhookUrl = response.webhookUrl;
 
     // If no webhook URL provided by server, generate one
@@ -553,6 +556,7 @@ export class TaskExecutor {
       success: true, // The task is progressing, not failed
       status: 'submitted',
       submitted,
+      data: partialData,
       metadata: {
         taskId,
         taskName,
