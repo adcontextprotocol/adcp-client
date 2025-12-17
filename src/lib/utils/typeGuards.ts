@@ -86,10 +86,7 @@ export function isStatusRejected(metadata: WebhookMetadata): boolean {
  * }
  * ```
  */
-export function isGetProductsCompleted(
-  metadata: WebhookMetadata,
-  response: any
-): response is GetProductsResponse {
+export function isGetProductsCompleted(metadata: WebhookMetadata, response: any): response is GetProductsResponse {
   return metadata.status === 'completed';
 }
 
@@ -104,10 +101,7 @@ export function isGetProductsCompleted(
  * }
  * ```
  */
-export function isGetProductsWorking(
-  metadata: WebhookMetadata,
-  response: any
-): response is GetProductsAsyncWorking {
+export function isGetProductsWorking(metadata: WebhookMetadata, response: any): response is GetProductsAsyncWorking {
   return metadata.status === 'working';
 }
 
@@ -137,10 +131,7 @@ export function isGetProductsSubmitted(
  * Type guard to check if GetProducts response failed.
  * Automatically narrows response type to GetProductsResponse.
  */
-export function isGetProductsFailed(
-  metadata: WebhookMetadata,
-  response: any
-): response is GetProductsResponse {
+export function isGetProductsFailed(metadata: WebhookMetadata, response: any): response is GetProductsResponse {
   return metadata.status === 'failed';
 }
 
@@ -196,10 +187,7 @@ export function isCreateMediaBuySubmitted(
  * Type guard to check if CreateMediaBuy response failed.
  * Automatically narrows response type to CreateMediaBuyResponse.
  */
-export function isCreateMediaBuyFailed(
-  metadata: WebhookMetadata,
-  response: any
-): response is CreateMediaBuyResponse {
+export function isCreateMediaBuyFailed(metadata: WebhookMetadata, response: any): response is CreateMediaBuyResponse {
   return metadata.status === 'failed';
 }
 
@@ -255,10 +243,7 @@ export function isUpdateMediaBuySubmitted(
  * Type guard to check if UpdateMediaBuy response failed.
  * Automatically narrows response type to UpdateMediaBuyResponse.
  */
-export function isUpdateMediaBuyFailed(
-  metadata: WebhookMetadata,
-  response: any
-): response is UpdateMediaBuyResponse {
+export function isUpdateMediaBuyFailed(metadata: WebhookMetadata, response: any): response is UpdateMediaBuyResponse {
   return metadata.status === 'failed';
 }
 
@@ -270,10 +255,7 @@ export function isUpdateMediaBuyFailed(
  * Type guard to check if SyncCreatives response is completed.
  * Automatically narrows response type to SyncCreativesResponse.
  */
-export function isSyncCreativesCompleted(
-  metadata: WebhookMetadata,
-  response: any
-): response is SyncCreativesResponse {
+export function isSyncCreativesCompleted(metadata: WebhookMetadata, response: any): response is SyncCreativesResponse {
   return metadata.status === 'completed';
 }
 
@@ -314,9 +296,6 @@ export function isSyncCreativesSubmitted(
  * Type guard to check if SyncCreatives response failed.
  * Automatically narrows response type to SyncCreativesResponse.
  */
-export function isSyncCreativesFailed(
-  metadata: WebhookMetadata,
-  response: any
-): response is SyncCreativesResponse {
+export function isSyncCreativesFailed(metadata: WebhookMetadata, response: any): response is SyncCreativesResponse {
   return metadata.status === 'failed';
 }

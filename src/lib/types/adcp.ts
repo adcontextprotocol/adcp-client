@@ -2,7 +2,25 @@
 // https://adcontextprotocol.org/docs/reference/data-models
 
 // Import structured FormatID from generated core types
-import type { CreateMediaBuyAsyncInputRequired, CreateMediaBuyAsyncSubmitted, CreateMediaBuyAsyncWorking, FormatID, CreateMediaBuyResponse, GetProductsResponse, GetProductsAsyncWorking, GetProductsAsyncInputRequired, GetProductsAsyncSubmitted, UpdateMediaBuyResponse, UpdateMediaBuyAsyncWorking, UpdateMediaBuyAsyncInputRequired, UpdateMediaBuyAsyncSubmitted, SyncCreativesAsyncWorking, SyncCreativesAsyncInputRequired, SyncCreativesAsyncSubmitted, SyncCreativesResponse } from './core.generated';
+import type {
+  CreateMediaBuyAsyncInputRequired,
+  CreateMediaBuyAsyncSubmitted,
+  CreateMediaBuyAsyncWorking,
+  FormatID,
+  CreateMediaBuyResponse,
+  GetProductsResponse,
+  GetProductsAsyncWorking,
+  GetProductsAsyncInputRequired,
+  GetProductsAsyncSubmitted,
+  UpdateMediaBuyResponse,
+  UpdateMediaBuyAsyncWorking,
+  UpdateMediaBuyAsyncInputRequired,
+  UpdateMediaBuyAsyncSubmitted,
+  SyncCreativesAsyncWorking,
+  SyncCreativesAsyncInputRequired,
+  SyncCreativesAsyncSubmitted,
+  SyncCreativesResponse,
+} from './core.generated';
 
 export interface MediaBuy {
   id: string;

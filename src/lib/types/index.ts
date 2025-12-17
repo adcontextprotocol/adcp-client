@@ -20,7 +20,7 @@ export type {
   CreateMediaBuyAsyncResponseData,
   UpdateMediaBuyAsyncResponseData,
   GetProductsAsyncResponseData,
-  SyncCreativesAsyncResponseData
+  SyncCreativesAsyncResponseData,
 } from './adcp';
 
 // Re-export FormatID from generated core types

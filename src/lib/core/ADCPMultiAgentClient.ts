@@ -946,7 +946,7 @@ export class ADCPMultiAgentClient {
     taskType: string,
     operationId: string,
     signature?: string,
-    timestamp?: string | number,
+    timestamp?: string | number
   ): Promise<boolean> {
     // Extract agent ID from payload
     // Webhook payloads include agent_id or we can infer from operation_id pattern
@@ -957,7 +957,7 @@ export class ADCPMultiAgentClient {
     }
 
     const agent = this.getAgent(agentId);
-    return agent.handleWebhook(payload, taskType, operationId, signature, timestamp,);
+    return agent.handleWebhook(payload, taskType, operationId, signature, timestamp);
   }
 
   /**

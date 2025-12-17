@@ -33,9 +33,14 @@ import type {
   UpdateMediaBuyAsyncInputRequired,
   UpdateMediaBuyAsyncSubmitted,
   UpdateMediaBuyAsyncWorking,
-  UpdateMediaBuyResponse
+  UpdateMediaBuyResponse,
 } from '../types/core.generated';
-import { CreateMediaBuyAsyncResponseData, GetProductsAsyncResponseData, SyncCreativesAsyncResponseData, UpdateMediaBuyAsyncResponseData } from '../types';
+import {
+  CreateMediaBuyAsyncResponseData,
+  GetProductsAsyncResponseData,
+  SyncCreativesAsyncResponseData,
+  UpdateMediaBuyAsyncResponseData,
+} from '../types';
 
 /**
  * Metadata provided with webhook responses
@@ -54,11 +59,11 @@ export interface WebhookMetadata {
   /** Server's context ID */
   context_id?: string;
   /** Human-readable context about the status change */
-  message?: string
+  message?: string;
   /** Timestamp */
   timestamp: string;
   /** raw HTTP payload */
-  rawHTTPPayload?: any
+  rawHTTPPayload?: any;
 }
 
 /**
@@ -81,17 +86,29 @@ export type GetProductsStatusChangeHandler = (
 ) => void | Promise<void>;
 
 export type CreateMediaBuyStatusChangeHandler = (
-  response: CreateMediaBuyResponse | CreateMediaBuyAsyncSubmitted | CreateMediaBuyAsyncWorking | CreateMediaBuyAsyncInputRequired,
+  response:
+    | CreateMediaBuyResponse
+    | CreateMediaBuyAsyncSubmitted
+    | CreateMediaBuyAsyncWorking
+    | CreateMediaBuyAsyncInputRequired,
   metadata: WebhookMetadata
 ) => void | Promise<void>;
 
 export type UpdateMediaBuyStatusChangeHandler = (
-  response: UpdateMediaBuyResponse | UpdateMediaBuyAsyncSubmitted | UpdateMediaBuyAsyncWorking | UpdateMediaBuyAsyncInputRequired,
+  response:
+    | UpdateMediaBuyResponse
+    | UpdateMediaBuyAsyncSubmitted
+    | UpdateMediaBuyAsyncWorking
+    | UpdateMediaBuyAsyncInputRequired,
   metadata: WebhookMetadata
 ) => void | Promise<void>;
 
 export type SyncCreativesStatusChangeHandler = (
-  response: SyncCreativesResponse | SyncCreativesAsyncSubmitted | SyncCreativesAsyncWorking | SyncCreativesAsyncInputRequired,
+  response:
+    | SyncCreativesResponse
+    | SyncCreativesAsyncSubmitted
+    | SyncCreativesAsyncWorking
+    | SyncCreativesAsyncInputRequired,
   metadata: WebhookMetadata
 ) => void | Promise<void>;
 
