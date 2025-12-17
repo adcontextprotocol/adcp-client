@@ -9,7 +9,6 @@ import type {
   ListCreativeFormatsRequest,
   ListCreativeFormatsResponse,
   CreateMediaBuyRequest,
-  
   UpdateMediaBuyRequest,
   UpdateMediaBuyResponse,
   SyncCreativesRequest,
@@ -31,7 +30,12 @@ import type {
   Format,
 } from '../types/tools.generated';
 
-import type { MCPWebhookPayload, AdCPAsyncResponseData, TaskStatus, CreateMediaBuyResponse } from '../types/core.generated';
+import type {
+  MCPWebhookPayload,
+  AdCPAsyncResponseData,
+  TaskStatus,
+  CreateMediaBuyResponse,
+} from '../types/core.generated';
 import type { Task as A2ATask, TaskStatusUpdateEvent } from '@a2a-js/sdk';
 
 import { TaskExecutor, DeferredTaskError } from './TaskExecutor';
@@ -327,7 +331,7 @@ export class SingleAgentClient {
     taskType: string,
     operationId: string,
     signature?: string,
-    timestamp?: string | number,
+    timestamp?: string | number
   ): Promise<boolean> {
     // Verify signature if secret is configured
     if (this.config.webhookSecret) {
@@ -419,7 +423,7 @@ export class SingleAgentClient {
       // Try to extract data from status.message.parts first (for status updates)
       const parts = a2aPayload.status?.message?.parts;
       if (parts && Array.isArray(parts)) {
-        const dataPart = parts.find((p) => 'data' in p && p.kind === 'data');
+        const dataPart = parts.find(p => 'data' in p && p.kind === 'data');
         if (dataPart && 'data' in dataPart) {
           result = dataPart.data as AdCPAsyncResponseData;
         }
@@ -441,8 +445,8 @@ export class SingleAgentClient {
       let message: string | undefined = undefined;
       if (a2aPayload.status?.message?.parts) {
         const textParts = a2aPayload.status.message.parts
-          .filter((p) => p.kind === 'text' && 'text' in p)
-          .map((p) => ('text' in p ? p.text : ''));
+          .filter(p => p.kind === 'text' && 'text' in p)
+          .map(p => ('text' in p ? p.text : ''));
         if (textParts.length > 0) {
           message = textParts.join(' ');
         }
@@ -715,24 +719,36 @@ export class SingleAgentClient {
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<CreateMediaBuyResponse>> {
-    // Auto-inject reporting_webhook if supported and not provided by caller
+    // Merge library defaults with consumer-provided reporting_webhook config
+    // Library provides url/auth/frequency defaults, consumer can override any field
     // Generates a media_buy_delivery webhook URL using operation_id pattern: delivery_report_{agent_id}_{YYYY-MM}
-    if (!params?.reporting_webhook && this.config.webhookUrlTemplate) {
+    if (this.config.webhookUrlTemplate) {
       const now = new Date();
       const year = now.getUTCFullYear();
       const month = String(now.getUTCMonth() + 1).padStart(2, '0');
       const operationId = `delivery_report_${this.agent.id}_${year}-${month}`;
       const deliveryWebhookUrl = this.getWebhookUrl('media_buy_delivery', operationId);
 
+      // Library defaults
+      const libraryDefaults = {
+        url: deliveryWebhookUrl,
+        authentication: {
+          schemes: ['HMAC-SHA256'] as const,
+          credentials: this.config.webhookSecret || 'placeholder_secret_min_32_characters_required',
+        },
+        reporting_frequency: (this.config.reportingWebhookFrequency || 'daily') as 'hourly' | 'daily' | 'monthly',
+      };
+
+      // Deep merge: consumer overrides library defaults
       params = {
         ...params,
         reporting_webhook: {
-          url: deliveryWebhookUrl,
+          ...libraryDefaults,
+          ...params.reporting_webhook,
           authentication: {
-            schemes: ['HMAC-SHA256'],
-            credentials: this.config.webhookSecret || 'placeholder_secret_min_32_characters_required',
+            ...libraryDefaults.authentication,
+            ...params.reporting_webhook?.authentication,
           },
-          reporting_frequency: this.config.reportingWebhookFrequency || 'daily',
         },
       } as CreateMediaBuyRequest;
     }

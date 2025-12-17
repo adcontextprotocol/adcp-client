@@ -213,6 +213,9 @@ export class TaskExecutor {
         this.config.webhookSecret
       );
 
+      console.log('POOOQ:');
+      console.log(response);
+
       // Emit protocol_response activity
       const respStatus = this.responseParser.getStatus(response) as string | undefined;
       await this.config.onActivity?.({
