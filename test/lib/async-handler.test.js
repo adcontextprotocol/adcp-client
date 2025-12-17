@@ -22,15 +22,17 @@ test('onGetProductsStatusChange called with completed status', async () => {
     },
   });
 
-  await handler.handleWebhook(
-    {
+  await handler.handleWebhook({
+    result: { products: [{ id: 'prod_1', name: 'Product 1' }] },
+    metadata: {
       operation_id: 'op_123',
+      task_id: 'task_1',
+      agent_id: 'agent_1',
       task_type: 'get_products',
       status: 'completed',
-      result: { products: [{ id: 'prod_1', name: 'Product 1' }] },
+      timestamp: new Date().toISOString(),
     },
-    'agent_1'
-  );
+  });
 
   assert.strictEqual(handlerCalled, true, 'Handler should be called');
   assert.strictEqual(receivedStatus, 'completed', 'Should receive completed status');
@@ -40,30 +42,32 @@ test('onGetProductsStatusChange called with completed status', async () => {
 test('onGetProductsStatusChange called with failed status', async () => {
   let handlerCalled = false;
   let receivedStatus = null;
-  let receivedError = null;
+  let receivedMessage = null;
 
   const handler = new AsyncHandler({
     onGetProductsStatusChange: (response, metadata) => {
       handlerCalled = true;
       receivedStatus = metadata.status;
-      receivedError = metadata.error;
+      receivedMessage = metadata.message;
     },
   });
 
-  await handler.handleWebhook(
-    {
+  await handler.handleWebhook({
+    result: null,
+    metadata: {
       operation_id: 'op_123',
+      task_id: 'task_1',
+      agent_id: 'agent_1',
       task_type: 'get_products',
       status: 'failed',
-      error: 'Agent timeout',
-      result: null,
+      message: 'Agent timeout',
+      timestamp: new Date().toISOString(),
     },
-    'agent_1'
-  );
+  });
 
   assert.strictEqual(handlerCalled, true, 'Handler should be called');
   assert.strictEqual(receivedStatus, 'failed', 'Should receive failed status');
-  assert.strictEqual(receivedError, 'Agent timeout', 'Should receive error message');
+  assert.strictEqual(receivedMessage, 'Agent timeout', 'Should receive error message');
 });
 
 test('onGetProductsStatusChange called with needs_input status', async () => {
@@ -77,15 +81,17 @@ test('onGetProductsStatusChange called with needs_input status', async () => {
     },
   });
 
-  await handler.handleWebhook(
-    {
+  await handler.handleWebhook({
+    result: { message: 'Please specify product category' },
+    metadata: {
       operation_id: 'op_123',
+      task_id: 'task_1',
+      agent_id: 'agent_1',
       task_type: 'get_products',
       status: 'needs_input',
-      result: { message: 'Please specify product category' },
+      timestamp: new Date().toISOString(),
     },
-    'agent_1'
-  );
+  });
 
   assert.strictEqual(handlerCalled, true, 'Handler should be called');
   assert.strictEqual(receivedStatus, 'needs_input', 'Should receive needs_input status');
@@ -102,15 +108,17 @@ test('onGetProductsStatusChange called with working status', async () => {
     },
   });
 
-  await handler.handleWebhook(
-    {
+  await handler.handleWebhook({
+    result: { message: 'Fetching products...' },
+    metadata: {
       operation_id: 'op_123',
+      task_id: 'task_1',
+      agent_id: 'agent_1',
       task_type: 'get_products',
       status: 'working',
-      result: { message: 'Fetching products...' },
+      timestamp: new Date().toISOString(),
     },
-    'agent_1'
-  );
+  });
 
   assert.strictEqual(handlerCalled, true, 'Handler should be called');
   assert.strictEqual(receivedStatus, 'working', 'Should receive working status');
@@ -127,15 +135,17 @@ test('onCreateMediaBuyStatusChange called with completed status', async () => {
     },
   });
 
-  await handler.handleWebhook(
-    {
+  await handler.handleWebhook({
+    result: { media_buy_id: 'mb_789', status: 'active' },
+    metadata: {
       operation_id: 'op_456',
+      task_id: 'task_1',
+      agent_id: 'agent_2',
       task_type: 'create_media_buy',
       status: 'completed',
-      result: { media_buy_id: 'mb_789', status: 'active' },
+      timestamp: new Date().toISOString(),
     },
-    'agent_2'
-  );
+  });
 
   assert.strictEqual(handlerCalled, true, 'Handler should be called');
   assert.strictEqual(receivedMediaBuyId, 'mb_789', 'Should receive media buy ID');
@@ -152,15 +162,17 @@ test('onTaskStatusChange fallback handler called for unmapped task type', async 
     },
   });
 
-  await handler.handleWebhook(
-    {
+  await handler.handleWebhook({
+    result: { data: 'test' },
+    metadata: {
       operation_id: 'op_999',
+      task_id: 'task_1',
+      agent_id: 'agent_3',
       task_type: 'unknown_task',
       status: 'completed',
-      result: { data: 'test' },
+      timestamp: new Date().toISOString(),
     },
-    'agent_3'
-  );
+  });
 
   assert.strictEqual(fallbackCalled, true, 'Fallback handler should be called');
   assert.strictEqual(receivedTaskType, 'unknown_task', 'Should receive task type');
@@ -179,19 +191,21 @@ test('onMediaBuyDeliveryNotification called for delivery notifications', async (
     },
   });
 
-  await handler.handleWebhook(
-    {
+  await handler.handleWebhook({
+    result: {
+      notification_type: 'scheduled',
+      sequence_number: 3,
+      media_buy_deliveries: [{ media_buy_id: 'mb_1', impressions: 1000, clicks: 50 }],
+    },
+    metadata: {
       operation_id: 'delivery_report_agent1_2025-10',
+      task_id: 'task_1',
+      agent_id: 'agent_1',
       task_type: 'media_buy_delivery',
       status: 'completed',
-      result: {
-        notification_type: 'scheduled',
-        sequence_number: 3,
-        media_buy_deliveries: [{ media_buy_id: 'mb_1', impressions: 1000, clicks: 50 }],
-      },
+      timestamp: new Date().toISOString(),
     },
-    'agent_1'
-  );
+  });
 
   assert.strictEqual(notificationCalled, true, 'Notification handler should be called');
   assert.strictEqual(receivedNotificationType, 'scheduled', 'Should receive notification type');
@@ -209,19 +223,21 @@ test('onMediaBuyDeliveryNotification called for final notification', async () =>
     },
   });
 
-  await handler.handleWebhook(
-    {
+  await handler.handleWebhook({
+    result: {
+      notification_type: 'final',
+      sequence_number: 10,
+      media_buy_deliveries: [{ media_buy_id: 'mb_1', impressions: 10000, clicks: 500 }],
+    },
+    metadata: {
       operation_id: 'delivery_report_agent1_2025-10',
+      task_id: 'task_1',
+      agent_id: 'agent_1',
       task_type: 'media_buy_delivery',
       status: 'completed',
-      result: {
-        notification_type: 'final',
-        sequence_number: 10,
-        media_buy_deliveries: [{ media_buy_id: 'mb_1', impressions: 10000, clicks: 500 }],
-      },
+      timestamp: new Date().toISOString(),
     },
-    'agent_1'
-  );
+  });
 
   assert.strictEqual(notificationCalled, true, 'Notification handler should be called');
   assert.strictEqual(receivedNotificationType, 'final', 'Should receive final notification type');
@@ -241,15 +257,17 @@ test('onActivity called for webhook received event', async () => {
     onGetProductsStatusChange: () => {}, // Need this to avoid error
   });
 
-  await handler.handleWebhook(
-    {
+  await handler.handleWebhook({
+    result: { products: [] },
+    metadata: {
       operation_id: 'op_activity_test',
+      task_id: 'task_1',
+      agent_id: 'agent_1',
       task_type: 'get_products',
       status: 'completed',
-      result: { products: [] },
+      timestamp: new Date().toISOString(),
     },
-    'agent_1'
-  );
+  });
 
   assert.strictEqual(activityCalled, true, 'Activity callback should be called');
   assert.strictEqual(receivedActivityType, 'webhook_received', 'Should receive webhook_received event');
@@ -265,18 +283,18 @@ test('metadata includes all webhook fields', async () => {
     },
   });
 
-  await handler.handleWebhook(
-    {
+  await handler.handleWebhook({
+    result: { products: [] },
+    metadata: {
       operation_id: 'op_meta_test',
       context_id: 'ctx_123',
       task_id: 'task_456',
+      agent_id: 'agent_meta',
       task_type: 'get_products',
       status: 'completed',
-      result: { products: [] },
       timestamp: '2025-10-05T12:00:00Z',
     },
-    'agent_meta'
-  );
+  });
 
   assert.strictEqual(receivedMetadata.operation_id, 'op_meta_test', 'Should have operation_id');
   assert.strictEqual(receivedMetadata.context_id, 'ctx_123', 'Should have context_id');
@@ -297,15 +315,17 @@ test('handler can be async', async () => {
     },
   });
 
-  await handler.handleWebhook(
-    {
+  await handler.handleWebhook({
+    result: { products: [] },
+    metadata: {
       operation_id: 'op_async',
+      task_id: 'task_1',
+      agent_id: 'agent_1',
       task_type: 'get_products',
       status: 'completed',
-      result: { products: [] },
+      timestamp: new Date().toISOString(),
     },
-    'agent_1'
-  );
+  });
 
   assert.strictEqual(asyncCompleted, true, 'Async handler should complete');
 });
@@ -327,25 +347,29 @@ test('multiple handlers can be configured', async () => {
     },
   });
 
-  await handler.handleWebhook(
-    {
+  await handler.handleWebhook({
+    result: { products: [] },
+    metadata: {
       operation_id: 'op_1',
+      task_id: 'task_1',
+      agent_id: 'agent_1',
       task_type: 'get_products',
       status: 'completed',
-      result: { products: [] },
+      timestamp: new Date().toISOString(),
     },
-    'agent_1'
-  );
+  });
 
-  await handler.handleWebhook(
-    {
+  await handler.handleWebhook({
+    result: { media_buy_id: 'mb_1' },
+    metadata: {
       operation_id: 'op_2',
+      task_id: 'task_2',
+      agent_id: 'agent_1',
       task_type: 'create_media_buy',
       status: 'completed',
-      result: { media_buy_id: 'mb_1' },
+      timestamp: new Date().toISOString(),
     },
-    'agent_1'
-  );
+  });
 
   assert.strictEqual(getProductsCalled, true, 'GetProducts handler should be called');
   assert.strictEqual(createMediaBuyCalled, true, 'CreateMediaBuy handler should be called');
@@ -366,15 +390,17 @@ test('handler error does not crash webhook processing', async () => {
 
   // Should not throw - error should be caught internally
   try {
-    await handler.handleWebhook(
-      {
+    await handler.handleWebhook({
+      result: { products: [] },
+      metadata: {
         operation_id: 'op_123',
+        task_id: 'task_1',
+        agent_id: 'agent_1',
         task_type: 'get_products',
         status: 'completed',
-        result: { products: [] },
+        timestamp: new Date().toISOString(),
       },
-      'agent_1'
-    );
+    });
     webhookProcessed = true;
   } catch (error) {
     // If this catches, the error wasn't handled properly
@@ -396,15 +422,17 @@ test('missing handler configuration handled gracefully', async () => {
     },
   });
 
-  await handler.handleWebhook(
-    {
+  await handler.handleWebhook({
+    result: { products: [] },
+    metadata: {
       operation_id: 'op_123',
+      task_id: 'task_1',
+      agent_id: 'agent_1',
       task_type: 'get_products',
       status: 'completed',
-      result: { products: [] },
+      timestamp: new Date().toISOString(),
     },
-    'agent_1'
-  );
+  });
 
   assert.strictEqual(fallbackCalled, true, 'Fallback handler should be called');
 });
@@ -416,19 +444,19 @@ test('invalid webhook payload does not crash', async () => {
     },
   });
 
-  // Missing required fields
+  // Missing required fields in the new format
   const invalidPayloads = [
     null,
     undefined,
     {},
-    { operation_id: 'op_1' }, // missing task_type
-    { task_type: 'get_products' }, // missing operation_id
-    { operation_id: 'op_1', task_type: 'get_products' }, // missing status and result
+    { result: {} }, // missing metadata
+    { metadata: {} }, // missing required metadata fields
+    { result: {}, metadata: { operation_id: 'op_1' } }, // missing task_type
   ];
 
   for (const payload of invalidPayloads) {
     try {
-      await handler.handleWebhook(payload, 'agent_1');
+      await handler.handleWebhook(payload);
       // If no error is thrown, that's acceptable - handler should be defensive
     } catch (error) {
       // Errors are acceptable for invalid payloads, but should not crash the process
