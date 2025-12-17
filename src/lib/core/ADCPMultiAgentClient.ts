@@ -496,7 +496,7 @@ export class ADCPMultiAgentClient {
       agentName?: string;
       protocol?: 'mcp' | 'a2a';
       requiresAuth?: boolean;
-      authTokenEnv?: string;
+      authToken?: string;
       debug?: boolean;
       timeout?: number;
     } = {}
@@ -506,7 +506,7 @@ export class ADCPMultiAgentClient {
       agentName = 'Default Agent',
       protocol = 'mcp',
       requiresAuth = false,
-      authTokenEnv,
+      authToken,
       debug = false,
       timeout,
     } = options;
@@ -517,7 +517,7 @@ export class ADCPMultiAgentClient {
       agent_uri: agentUrl,
       protocol,
       requiresAuth,
-      auth_token_env: authTokenEnv,
+      auth_token: authToken,
     };
 
     ConfigurationManager.validateAgentConfig(agent);

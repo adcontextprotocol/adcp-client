@@ -122,7 +122,7 @@ export class PropertyCrawler {
       name: 'Property Crawler',
       agent_uri: agentInfo.agent_url,
       protocol: agentInfo.protocol || 'mcp',
-      ...(agentInfo.auth_token && { auth_token_env: agentInfo.auth_token }),
+      ...(agentInfo.auth_token && { auth_token: agentInfo.auth_token }),
     });
 
     try {

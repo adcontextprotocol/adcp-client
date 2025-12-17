@@ -3,6 +3,7 @@
 import { z } from 'zod';
 import * as schemas from '../types/schemas.generated';
 import type { AgentConfig } from '../types';
+import type { ILogger } from '../utils/logger';
 import type {
   GetProductsRequest,
   GetProductsResponse,
@@ -44,6 +45,8 @@ import * as crypto from 'crypto';
 export interface SingleAgentClientConfig extends ConversationConfig {
   /** Enable debug logging */
   debug?: boolean;
+  /** Logger instance for structured logging (use createLogger() from @adcp/client) */
+  logger?: ILogger;
   /** Custom user agent string */
   userAgent?: string;
   /** Additional headers to include in requests */
@@ -133,6 +136,7 @@ export class SingleAgentClient {
       strictSchemaValidation: config.validation?.strictSchemaValidation !== false, // Default: true
       logSchemaViolations: config.validation?.logSchemaViolations !== false, // Default: true
       onActivity: config.onActivity,
+      logger: config.logger,
     });
 
     // Create async handler if handlers are provided
@@ -185,7 +189,7 @@ export class SingleAgentClient {
     const { Client: MCPClient } = await import('@modelcontextprotocol/sdk/client/index.js');
     const { StreamableHTTPClientTransport } = await import('@modelcontextprotocol/sdk/client/streamableHttp.js');
 
-    const authToken = this.agent.auth_token_env;
+    const authToken = this.agent.auth_token;
 
     const testEndpoint = async (url: string): Promise<boolean> => {
       try {
@@ -1142,7 +1146,7 @@ export class SingleAgentClient {
         version: '1.0.0',
       });
 
-      const authToken = this.agent.auth_token_env;
+      const authToken = this.agent.auth_token;
       const customFetch = authToken
         ? async (input: any, init?: any) => {
             // IMPORTANT: Must preserve SDK's default headers (especially Accept header)
@@ -1208,7 +1212,7 @@ export class SingleAgentClient {
       const clientModule = require('@a2a-js/sdk/client');
       const A2AClient = clientModule.A2AClient;
 
-      const authToken = this.agent.auth_token_env;
+      const authToken = this.agent.auth_token;
       const fetchImpl = authToken
         ? async (url: any, options?: any) => {
             const headers = {
