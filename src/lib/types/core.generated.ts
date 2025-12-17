@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas v2.5.0
-// Generated at: 2025-12-09T20:52:33.466Z
+// Generated at: 2025-12-17T15:02:21.682Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -2074,7 +2074,7 @@ export interface SyncCreativesAsyncWorking {
  */
 export interface SyncCreativesAsyncInputRequired {
   /**
-   * Reason code indicating why input is needed
+   * Reason code indicating why buyer input is needed
    */
   reason?: 'APPROVAL_REQUIRED' | 'ASSET_CONFIRMATION' | 'FORMAT_CLARIFICATION';
   context?: ContextObject;
