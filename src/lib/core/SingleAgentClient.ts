@@ -172,6 +172,18 @@ export class SingleAgentClient {
   }
 
   /**
+   * Check if URL is a .well-known/agent-card.json URL
+   *
+   * These URLs are A2A agent card discovery URLs and should use A2A protocol.
+   * Only matches when .well-known is at the root path (not in a subdirectory).
+   */
+  private isWellKnownAgentCardUrl(url: string): boolean {
+    // Match: https://example.com/.well-known/agent-card.json
+    // Don't match: https://example.com/api/.well-known/agent-card.json
+    return /^https?:\/\/[^/]+\/\.well-known\/agent-card\.json$/i.test(url);
+  }
+
+  /**
    * Discover MCP endpoint by testing the provided path, then trying variants
    *
    * Strategy:
@@ -257,12 +269,22 @@ export class SingleAgentClient {
   }
 
   /**
-   * Normalize agent config - mark all MCP agents for discovery
+   * Normalize agent config
    *
-   * We always test the endpoint they give us, and if it doesn't work,
-   * we try adding /mcp. Simple.
+   * - If URL is a .well-known/agent-card.json URL, switch to A2A protocol
+   *   (these are A2A discovery URLs, not MCP endpoints)
+   * - If protocol is MCP, mark for endpoint discovery
    */
   private normalizeAgentConfig(agent: AgentConfig): AgentConfig {
+    // If URL is a well-known agent card URL, use A2A protocol regardless of what was specified
+    // The A2A protocol handler already knows how to fetch the agent card and extract the canonical URL
+    if (this.isWellKnownAgentCardUrl(agent.agent_uri)) {
+      return {
+        ...agent,
+        protocol: 'a2a',
+      };
+    }
+
     if (agent.protocol !== 'mcp') {
       return agent;
     }
@@ -973,7 +995,7 @@ export class SingleAgentClient {
    * Get the agent configuration
    */
   getAgent(): AgentConfig {
-    return { ...this.agent };
+    return { ...this.normalizedAgent };
   }
 
   /**
@@ -991,10 +1013,10 @@ export class SingleAgentClient {
   }
 
   /**
-   * Get the agent protocol
+   * Get the agent protocol (may be normalized from original config)
    */
   getProtocol(): 'mcp' | 'a2a' {
-    return this.agent.protocol;
+    return this.normalizedAgent.protocol;
   }
 
   /**
@@ -1129,7 +1151,7 @@ export class SingleAgentClient {
       parameters?: string[];
     }>;
   }> {
-    if (this.agent.protocol === 'mcp') {
+    if (this.normalizedAgent.protocol === 'mcp') {
       // Discover endpoint if needed
       const agent = await this.ensureEndpointDiscovered();
 
@@ -1142,7 +1164,7 @@ export class SingleAgentClient {
         version: '1.0.0',
       });
 
-      const authToken = this.agent.auth_token_env;
+      const authToken = this.normalizedAgent.auth_token_env;
       const customFetch = authToken
         ? async (input: any, init?: any) => {
             // IMPORTANT: Must preserve SDK's default headers (especially Accept header)
@@ -1197,18 +1219,18 @@ export class SingleAgentClient {
       }));
 
       return {
-        name: this.agent.name,
+        name: this.normalizedAgent.name,
         description: undefined,
-        protocol: this.agent.protocol,
+        protocol: this.normalizedAgent.protocol,
         url: agent.agent_uri,
         tools,
       };
-    } else if (this.agent.protocol === 'a2a') {
+    } else if (this.normalizedAgent.protocol === 'a2a') {
       // Use A2A SDK to get agent card
       const clientModule = require('@a2a-js/sdk/client');
       const A2AClient = clientModule.A2AClient;
 
-      const authToken = this.agent.auth_token_env;
+      const authToken = this.normalizedAgent.auth_token_env;
       const fetchImpl = authToken
         ? async (url: any, options?: any) => {
             const headers = {
@@ -1237,15 +1259,15 @@ export class SingleAgentClient {
         : [];
 
       return {
-        name: agentCard?.displayName || agentCard?.name || this.agent.name,
+        name: agentCard?.displayName || agentCard?.name || this.normalizedAgent.name,
         description: agentCard?.description,
-        protocol: this.agent.protocol,
+        protocol: this.normalizedAgent.protocol,
         url: this.normalizedAgent.agent_uri,
         tools,
       };
     }
 
-    throw new Error(`Unsupported protocol: ${this.agent.protocol}`);
+    throw new Error(`Unsupported protocol: ${this.normalizedAgent.protocol}`);
   }
 
   // ====== STATIC HELPER METHODS ======

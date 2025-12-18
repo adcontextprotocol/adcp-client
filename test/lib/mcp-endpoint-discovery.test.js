@@ -204,6 +204,64 @@ test('MCP Endpoint Discovery - Edge Cases', async t => {
   });
 });
 
+test('MCP Endpoint Discovery - Well-Known URL Handling', async t => {
+  await t.test('switches .well-known/agent-card.json URLs to A2A protocol', async () => {
+    // Well-known agent card URLs are A2A discovery URLs - should switch to A2A
+    const agent = {
+      id: 'test-well-known',
+      name: 'Test Well Known',
+      agent_uri: 'https://example.com/.well-known/agent-card.json',
+      protocol: 'mcp', // Even if MCP is specified...
+      requiresAuth: false,
+    };
+
+    const client = new AdCPClient([agent]);
+    const configs = client.getAgentConfigs();
+    assert.strictEqual(configs.length, 1);
+    // ...it should be normalized to A2A because it's an agent card URL
+    assert.strictEqual(configs[0].protocol, 'a2a');
+    // URL should be preserved as-is (A2A handler knows how to use it)
+    assert.strictEqual(configs[0].agent_uri, 'https://example.com/.well-known/agent-card.json');
+  });
+
+  await t.test('normalizes various well-known URL patterns to A2A', async () => {
+    const wellKnownUrls = [
+      'https://example.com/.well-known/agent-card.json',
+      'https://agentic-sales.pbs.yahoo.com/.well-known/agent-card.json',
+      'http://localhost:3000/.well-known/agent-card.json',
+      'https://example.com:8080/.well-known/agent-card.json',
+    ];
+
+    for (const uri of wellKnownUrls) {
+      const agent = {
+        id: `test-${uri}`,
+        name: 'Test Agent',
+        agent_uri: uri,
+        protocol: 'mcp',
+        requiresAuth: false,
+      };
+
+      const client = new AdCPClient([agent]);
+      const configs = client.getAgentConfigs();
+      assert.strictEqual(configs[0].protocol, 'a2a', `${uri} should be normalized to A2A`);
+    }
+  });
+
+  await t.test('preserves A2A protocol for well-known URLs', async () => {
+    // If already A2A, should stay A2A
+    const agent = {
+      id: 'test-a2a-wellknown',
+      name: 'Test A2A',
+      agent_uri: 'https://example.com/.well-known/agent-card.json',
+      protocol: 'a2a',
+      requiresAuth: false,
+    };
+
+    const client = new AdCPClient([agent]);
+    assert.strictEqual(client.getAgentConfigs()[0].protocol, 'a2a');
+  });
+});
+
 test('MCP Endpoint Discovery - Real-World Scenarios', async t => {
   await t.test('supports Fly.io style endpoints with trailing slash', async () => {
     // This is the real-world case that prompted the fix
