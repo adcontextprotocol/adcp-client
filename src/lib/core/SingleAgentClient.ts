@@ -9,7 +9,6 @@ import type {
   ListCreativeFormatsRequest,
   ListCreativeFormatsResponse,
   CreateMediaBuyRequest,
-  CreateMediaBuyResponse,
   UpdateMediaBuyRequest,
   UpdateMediaBuyResponse,
   SyncCreativesRequest,
@@ -31,12 +30,31 @@ import type {
   Format,
 } from '../types/tools.generated';
 
+import type {
+  MCPWebhookPayload,
+  AdCPAsyncResponseData,
+  TaskStatus,
+  CreateMediaBuyResponse,
+} from '../types/core.generated';
+import type { Task as A2ATask, TaskStatusUpdateEvent } from '@a2a-js/sdk';
+
 import { TaskExecutor, DeferredTaskError } from './TaskExecutor';
 import type { InputHandler, TaskOptions, TaskResult, ConversationConfig, TaskInfo } from './ConversationTypes';
-import type { Activity, AsyncHandlerConfig, WebhookPayload } from './AsyncHandler';
+import type { Activity, AsyncHandlerConfig, WebhookMetadata } from './AsyncHandler';
 import { AsyncHandler } from './AsyncHandler';
 import { unwrapProtocolResponse } from '../utils/response-unwrapper';
 import * as crypto from 'crypto';
+
+type NormalizedWebhookPayload = {
+  operation_id: string;
+  task_id: string;
+  task_type: string;
+  status: TaskStatus;
+  context_id?: string;
+  result?: AdCPAsyncResponseData;
+  message?: string;
+  timestamp?: string;
+};
 
 /**
  * Configuration for SingleAgentClient (and multi-agent client)
@@ -275,19 +293,22 @@ export class SingleAgentClient {
   }
 
   /**
-   * Handle webhook from agent (async task completion)
+   * Handle webhook from agent (async task status updates and completions)
    *
-   * Accepts either:
-   * 1. Standard WebhookPayload format (operation_id, task_type, result, etc.)
-   * 2. Raw A2A task payload (artifacts, status, contextId, etc.) - will be transformed
+   * Accepts webhook payloads from both MCP and A2A protocols:
+   * 1. MCP: MCPWebhookPayload envelope with AdCP data in .result field
+   * 2. A2A: Native Task/TaskStatusUpdateEvent with AdCP data in either:
+   *    - status.message.parts[].data (for status updates)
+   *    - artifacts (for task completion, per A2A spec)
    *
-   * For A2A payloads, extracts the ADCP response from artifacts[0].parts[].data
-   * so handlers receive the unwrapped response, not the raw protocol structure.
+   * The method normalizes both formats so handlers receive the unwrapped
+   * AdCP response data (AdCPAsyncResponseData), not the raw protocol structure.
    *
-   * @param payload - Webhook payload from agent (WebhookPayload or raw A2A task)
+   * @param payload - Protocol-specific webhook payload (MCPWebhookPayload | Task | TaskStatusUpdateEvent)
+   * @param taskType - Task type (e.g create_media_buy) from url param or url part of the webhook delivery
+   * @param operationId - Operation id (e.g used for client app to track the operation) from the param or url part of the webhook delivery
    * @param signature - X-ADCP-Signature header (format: "sha256=...")
    * @param timestamp - X-ADCP-Timestamp header (Unix timestamp)
-   * @param taskType - Task type override (useful when not in payload, e.g., from URL path)
    * @returns Whether webhook was handled successfully
    *
    * @example
@@ -306,10 +327,11 @@ export class SingleAgentClient {
    * ```
    */
   async handleWebhook(
-    payload: WebhookPayload | any,
+    payload: MCPWebhookPayload | A2ATask | TaskStatusUpdateEvent,
+    taskType: string,
+    operationId: string,
     signature?: string,
-    timestamp?: string | number,
-    taskType?: string
+    timestamp?: string | number
   ): Promise<boolean> {
     // Verify signature if secret is configured
     if (this.config.webhookSecret) {
@@ -321,27 +343,40 @@ export class SingleAgentClient {
       if (!isValid) {
         throw new Error('Invalid webhook signature or timestamp too old');
       }
+
+      console.log('[ADCP Client]: Webhook signature is valid');
     }
 
-    // Transform raw A2A task payload to WebhookPayload format
-    const normalizedPayload = this.normalizeWebhookPayload(payload, taskType);
+    // Transform raw protocol payload to normalized format
+    const normalizedPayload = this.normalizeWebhookPayload(payload, taskType, operationId);
+
+    const metadata: WebhookMetadata = {
+      operation_id: normalizedPayload.operation_id,
+      context_id: normalizedPayload.context_id,
+      task_id: normalizedPayload.task_id,
+      agent_id: this.agent.id,
+      task_type: normalizedPayload.task_type,
+      status: normalizedPayload.status,
+      message: normalizedPayload.message,
+      timestamp: normalizedPayload.timestamp || new Date().toISOString(),
+    };
 
     // Emit activity
     await this.config.onActivity?.({
       type: 'webhook_received',
-      operation_id: normalizedPayload.operation_id,
-      agent_id: this.agent.id,
-      context_id: normalizedPayload.context_id,
-      task_id: normalizedPayload.task_id,
-      task_type: normalizedPayload.task_type,
-      status: normalizedPayload.status,
+      operation_id: metadata.operation_id,
+      agent_id: metadata.agent_id,
+      context_id: metadata.context_id,
+      task_id: metadata.task_id,
+      task_type: metadata.task_type,
+      status: metadata.status,
       payload: normalizedPayload.result,
-      timestamp: normalizedPayload.timestamp || new Date().toISOString(),
+      timestamp: metadata.timestamp,
     });
 
     // Handle through async handler if configured
     if (this.asyncHandler) {
-      await this.asyncHandler.handleWebhook(normalizedPayload, this.agent.id);
+      await this.asyncHandler.handleWebhook({ result: normalizedPayload.result, metadata });
       return true;
     }
 
@@ -349,57 +384,101 @@ export class SingleAgentClient {
   }
 
   /**
-   * Normalize webhook payload - transform raw A2A task payload to WebhookPayload format
+   * Normalize webhook payload - handles both MCP and A2A webhook formats
    *
-   * Detects if payload is a raw A2A task (has artifacts, kind: 'task') and extracts
-   * the ADCP response from artifacts[0].parts[].data where kind === 'data'.
+   * MCP: Uses MCPWebhookPayload envelope with AdCP data in .result field
+   * A2A: Uses native Task/TaskStatusUpdateEvent messages with AdCP data in either:
+   *      - status.message.parts[].data (for status updates)
+   *      - artifacts (for task completion responses, per A2A spec)
    *
-   * @param payload - Raw webhook payload (could be WebhookPayload or A2A task)
-   * @param taskType - Task type override (useful when from URL path)
-   * @returns Normalized WebhookPayload with extracted ADCP response
+   * @param payload - Protocol-specific webhook payload (MCPWebhookPayload | Task | TaskStatusUpdateEvent)
+   * @param taskType - Task type override
+   * @param operationId - Operation id
+   * @returns Normalized webhook payload with extracted AdCP response
    */
-  private normalizeWebhookPayload(payload: any, taskType?: string): WebhookPayload {
-    // Check if this is a raw A2A task payload (has artifacts and kind: 'task')
-    const isA2ATaskPayload = payload.artifacts && (payload.kind === 'task' || payload.status?.state);
-
-    if (!isA2ATaskPayload) {
-      // Already in WebhookPayload format or close enough
-      return payload as WebhookPayload;
+  private normalizeWebhookPayload(
+    payload: MCPWebhookPayload | A2ATask | TaskStatusUpdateEvent,
+    taskType: string,
+    operationId: string
+  ): NormalizedWebhookPayload {
+    // 1. Check for MCP Webhook Payload (has task_id, status, task_type fields)
+    if ('task_id' in payload && 'task_type' in payload && 'status' in payload) {
+      const mcpPayload = payload as MCPWebhookPayload;
+      return {
+        operation_id: operationId || 'unknown',
+        context_id: mcpPayload.context_id,
+        task_id: mcpPayload.task_id,
+        task_type: taskType,
+        status: mcpPayload.status,
+        result: mcpPayload.result,
+        message: mcpPayload.message,
+        timestamp: mcpPayload.timestamp,
+      };
     }
 
-    // Extract status from A2A task
-    const a2aStatus = payload.status?.state || 'unknown';
+    // 2. Check for A2A Task or TaskStatusUpdateEvent
+    if ('kind' in payload && (payload.kind === 'task' || payload.kind === 'status-update')) {
+      const a2aPayload = payload as A2ATask | TaskStatusUpdateEvent;
+      const a2aStatus = a2aPayload.status?.state || 'unknown';
+      let result: AdCPAsyncResponseData | undefined = undefined;
 
-    // For completed tasks, extract the ADCP response from artifacts
-    let result: any = undefined;
-    if (a2aStatus === 'completed' && payload.artifacts?.length > 0) {
-      try {
-        // Use the response unwrapper to extract ADCP data from A2A artifacts
-        // Wrap in the format unwrapProtocolResponse expects
-        result = unwrapProtocolResponse({ result: payload }, taskType, 'a2a');
-      } catch (error) {
-        // If unwrapping fails, pass the raw artifacts as result
-        // The handler can deal with it
-        console.warn('Failed to unwrap A2A webhook payload:', error);
-        result = payload.artifacts;
+      // Try to extract data from status.message.parts first (for status updates)
+      const parts = a2aPayload.status?.message?.parts;
+      if (parts && Array.isArray(parts)) {
+        const dataPart = parts.find(p => 'data' in p && p.kind === 'data');
+        if (dataPart && 'data' in dataPart) {
+          result = dataPart.data as AdCPAsyncResponseData;
+        }
       }
-    } else if (payload.artifacts?.length > 0) {
-      // For non-completed tasks (working, input-required), just pass artifacts
-      result = payload.artifacts;
+
+      // If not found in parts, check artifacts (standard A2A task output location)
+      if (!result && 'artifacts' in a2aPayload && a2aPayload.artifacts && a2aPayload.artifacts.length > 0) {
+        try {
+          // Try to unwrap artifacts for all statuses
+          result = unwrapProtocolResponse({ result: a2aPayload }, taskType, 'a2a') as AdCPAsyncResponseData;
+        } catch (error) {
+          console.warn('Failed to unwrap A2A webhook payload:', error);
+          // Fallback: pass raw artifacts so handler has something to work with
+          result = a2aPayload.artifacts as any;
+        }
+      }
+
+      // Extract message part from status.message.parts (A2A Message structure)
+      let message: string | undefined = undefined;
+      if (a2aPayload.status?.message?.parts) {
+        const textParts = a2aPayload.status.message.parts
+          .filter(p => p.kind === 'text' && 'text' in p)
+          .map(p => ('text' in p ? p.text : ''));
+        if (textParts.length > 0) {
+          message = textParts.join(' ');
+        }
+      }
+
+      // Get task_id ensuring it's a string
+      let taskId = 'unknown';
+      if ('id' in a2aPayload && a2aPayload.id) {
+        taskId = String(a2aPayload.id);
+      } else if ('taskId' in a2aPayload && a2aPayload.taskId) {
+        taskId = String(a2aPayload.taskId);
+      }
+
+      return {
+        operation_id: operationId,
+        context_id: 'contextId' in a2aPayload ? a2aPayload.contextId : undefined,
+        task_id: taskId,
+        task_type: taskType,
+        status: a2aStatus,
+        result,
+        message: message,
+        timestamp: a2aPayload.status?.timestamp || new Date().toISOString(),
+      };
     }
 
-    // Build normalized WebhookPayload
-    return {
-      operation_id: payload.metadata?.operation_id || payload.id || 'unknown',
-      context_id: payload.contextId || payload.metadata?.adcp_context?.buyer_ref,
-      task_id: payload.id,
-      task_type: payload?.task_type || taskType || 'unknown',
-      status: a2aStatus,
-      result,
-      error: payload.status?.message?.message || payload.error,
-      message: payload.status?.message?.message,
-      timestamp: payload.status?.timestamp || new Date().toISOString(),
-    };
+    // 3. Unknown payload format
+    throw new Error(
+      'Unsupported webhook payload format. Expected MCPWebhookPayload, Task, or TaskStatusUpdateEvent. ' +
+        `Received: ${JSON.stringify(payload).substring(0, 200)}`
+    );
   }
 
   /**
@@ -642,24 +721,36 @@ export class SingleAgentClient {
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<CreateMediaBuyResponse>> {
-    // Auto-inject reporting_webhook if supported and not provided by caller
+    // Merge library defaults with consumer-provided reporting_webhook config
+    // Library provides url/auth/frequency defaults, consumer can override any field
     // Generates a media_buy_delivery webhook URL using operation_id pattern: delivery_report_{agent_id}_{YYYY-MM}
-    if (!params?.reporting_webhook && this.config.webhookUrlTemplate) {
+    if (this.config.webhookUrlTemplate) {
       const now = new Date();
       const year = now.getUTCFullYear();
       const month = String(now.getUTCMonth() + 1).padStart(2, '0');
       const operationId = `delivery_report_${this.agent.id}_${year}-${month}`;
       const deliveryWebhookUrl = this.getWebhookUrl('media_buy_delivery', operationId);
 
+      // Library defaults
+      const libraryDefaults = {
+        url: deliveryWebhookUrl,
+        authentication: {
+          schemes: ['HMAC-SHA256'] as const,
+          credentials: this.config.webhookSecret || 'placeholder_secret_min_32_characters_required',
+        },
+        reporting_frequency: (this.config.reportingWebhookFrequency || 'daily') as 'hourly' | 'daily' | 'monthly',
+      };
+
+      // Deep merge: consumer overrides library defaults
       params = {
         ...params,
         reporting_webhook: {
-          url: deliveryWebhookUrl,
+          ...libraryDefaults,
+          ...params.reporting_webhook,
           authentication: {
-            schemes: ['HMAC-SHA256'],
-            credentials: this.config.webhookSecret || 'placeholder_secret_min_32_characters_required',
+            ...libraryDefaults.authentication,
+            ...params.reporting_webhook?.authentication,
           },
-          reporting_frequency: this.config.reportingWebhookFrequency || 'daily',
         },
       } as CreateMediaBuyRequest;
     }

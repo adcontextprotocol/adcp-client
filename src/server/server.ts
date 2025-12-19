@@ -7,7 +7,6 @@ import {
   ADCPMultiAgentClient,
   ConfigurationManager,
   CreativeAgentClient,
-  getStandardFormats,
   type TaskResult,
   type InputHandler,
   type SingleAgentClientConfig,
@@ -15,13 +14,40 @@ import {
   type Activity,
   type NotificationMetadata,
   type WebhookMetadata,
-  type GetProductsResponse,
-  type SyncCreativesResponse,
-  type CreateMediaBuyResponse,
   type MediaBuyDeliveryNotification,
-  ADCP_STATUS,
+  type CreateMediaBuyStatusChangeHandler,
+  type UpdateMediaBuyStatusChangeHandler,
+  type SyncCreativesStatusChangeHandler,
+  type GetProductsStatusChangeHandler,
   InputRequiredError,
+  // Type guards
+  isGetProductsCompleted,
+  isGetProductsWorking,
+  isGetProductsInputRequired,
+  isGetProductsFailed,
+  isCreateMediaBuyCompleted,
+  isUpdateMediaBuyCompleted,
+  isSyncCreativesCompleted,
 } from '../lib';
+import type {
+  CreateMediaBuyAsyncInputRequired,
+  CreateMediaBuyAsyncSubmitted,
+  CreateMediaBuyAsyncWorking,
+  CreateMediaBuyResponse,
+  GetProductsAsyncInputRequired,
+  GetProductsAsyncSubmitted,
+  GetProductsAsyncWorking,
+  GetProductsResponse,
+  SyncCreativesAsyncInputRequired,
+  SyncCreativesAsyncSubmitted,
+  SyncCreativesAsyncWorking,
+  SyncCreativesResponse,
+  TaskStatus,
+  UpdateMediaBuyAsyncInputRequired,
+  UpdateMediaBuyAsyncSubmitted,
+  UpdateMediaBuyAsyncWorking,
+  UpdateMediaBuyResponse,
+} from '../lib/types/core.generated';
 import type { TestRequest, ApiResponse, TestResponse, AgentListResponse, AgentConfig, TestResult } from '../lib/types';
 
 // __dirname is available in CommonJS mode
@@ -150,8 +176,9 @@ const clientConfig: SingleAgentClientConfig = {
 
   // Status change handlers - called for ALL status changes (completed, failed, needs_input, working, etc)
   handlers: {
-    onGetProductsStatusChange: (response: GetProductsResponse, metadata: WebhookMetadata) => {
-      const status = metadata.status || 'completed'; // Get actual status from webhook
+    onGetProductsStatusChange: (response, metadata) => {
+      const status = metadata.status || 'completed';
+
       storeEvent({
         type: 'handler_called',
         operation_id: metadata.operation_id,
@@ -161,11 +188,35 @@ const clientConfig: SingleAgentClientConfig = {
         payload: response,
         metadata,
       });
-      app.log.info(`[${status}] Products: ${response.products?.length || 0} for ${metadata.operation_id}`);
+
+      // ✅ Use type guards - automatic type narrowing!
+      if (isGetProductsCompleted(metadata, response)) {
+        app.log.info(`[${status}] Products: ${response.products?.length || 0} for ${metadata.operation_id}`);
+        return;
+      }
+
+      if (isGetProductsWorking(metadata, response)) {
+        app.log.info(`[${status}] Working: ${response.percentage}% for ${metadata.operation_id}`);
+        return;
+      }
+
+      if (isGetProductsInputRequired(metadata, response)) {
+        app.log.info(`[${status}] Input required: ${response.reason} for ${metadata.operation_id}`);
+        return;
+      }
+
+      if (isGetProductsFailed(metadata, response)) {
+        app.log.info(`[${status}] Failed: ${response.errors?.length || 0} errors for ${metadata.operation_id}`);
+        return;
+      }
+
+      // Default case for other statuses
+      app.log.info(`[${status}] Products: 0 for ${metadata.operation_id}`);
     },
 
-    onSyncCreativesStatusChange: (response: SyncCreativesResponse, metadata: WebhookMetadata) => {
+    onSyncCreativesStatusChange: (response, metadata) => {
       const status = metadata.status || 'completed';
+
       storeEvent({
         type: 'handler_called',
         operation_id: metadata.operation_id,
@@ -175,12 +226,21 @@ const clientConfig: SingleAgentClientConfig = {
         payload: response,
         metadata,
       });
-      const creativesCount = 'creatives' in response ? response.creatives?.length || 0 : 0;
-      app.log.info(`[${status}] Creatives synced: ${creativesCount} for ${metadata.operation_id}`);
+
+      // ✅ Use type guard for completed status
+      if (isSyncCreativesCompleted(metadata, response)) {
+        const creativesCount = 'creatives' in response ? response.creatives?.length || 0 : 0;
+        app.log.info(`[${status}] Creatives synced: ${creativesCount} for ${metadata.operation_id}`);
+        return;
+      }
+
+      // Default for other statuses
+      app.log.info(`[${status}] Sync creatives status: ${status} for ${metadata.operation_id}`);
     },
 
-    onCreateMediaBuyStatusChange: (response: CreateMediaBuyResponse, metadata: WebhookMetadata) => {
+    onCreateMediaBuyStatusChange: (response, metadata) => {
       const status = metadata.status || 'completed';
+
       storeEvent({
         type: 'handler_called',
         operation_id: metadata.operation_id,
@@ -190,8 +250,40 @@ const clientConfig: SingleAgentClientConfig = {
         payload: response,
         metadata,
       });
-      const mediaBuyId = 'media_buy_id' in response ? response.media_buy_id : 'error';
-      app.log.info(`[${status}] Media buy created: ${mediaBuyId} for ${metadata.operation_id}`);
+
+      // ✅ Use type guard for completed status
+      if (isCreateMediaBuyCompleted(metadata, response)) {
+        const mediaBuyId = 'media_buy_id' in response ? response.media_buy_id : 'error';
+        app.log.info(`[${status}] Media buy created: ${mediaBuyId} for ${metadata.operation_id}`);
+        return;
+      }
+
+      // Default for other statuses
+      app.log.info(`[${status}] Create media buy status: ${status} for ${metadata.operation_id}`);
+    },
+
+    onUpdateMediaBuyStatusChange: (response, metadata) => {
+      const status = metadata.status || 'completed';
+
+      storeEvent({
+        type: 'handler_called',
+        operation_id: metadata.operation_id,
+        agent_id: metadata.agent_id,
+        task_type: 'update_media_buy',
+        status,
+        payload: response,
+        metadata,
+      });
+
+      // ✅ Use type guard for completed status
+      if (isUpdateMediaBuyCompleted(metadata, response)) {
+        const mediaBuyId = 'media_buy_id' in response ? response.media_buy_id : 'error';
+        app.log.info(`[${status}] Media buy updated: ${mediaBuyId} for ${metadata.operation_id}`);
+        return;
+      }
+
+      // Default for other statuses
+      app.log.info(`[${status}] Update media buy status: ${status} for ${metadata.operation_id}`);
     },
 
     onMediaBuyDeliveryNotification: (notification: MediaBuyDeliveryNotification, metadata: NotificationMetadata) => {
@@ -1932,29 +2024,11 @@ app.post<{
       });
     }
 
-    // Validate payload task_type matches URL
-    const payloadTaskType = (payload as any).task_type;
-    if (payloadTaskType && payloadTaskType !== taskType) {
-      app.log.error(`Task type mismatch: URL says ${taskType}, payload says ${payloadTaskType}`);
-      return reply.code(400).send({
-        success: false,
-        error: `Task type mismatch: expected ${taskType}, got ${payloadTaskType}`,
-        timestamp: new Date().toISOString(),
-      });
-    }
-
-    // Inject URL parameters into payload for handlers
-    const enrichedPayload = {
-      ...payload,
-      operation_id: operationId,
-      task_type: taskType,
-    };
-
     // Handle webhook - agents are NOT stateful, but URL contains agent_id for routing
     // The webhook URL was generated with this agent_id during operation setup
     // We use it to look up the correct agent configuration (auth, protocol, etc)
     const agent = adcpClient.agent(agentId);
-    const handled = await agent.handleWebhook(enrichedPayload, signature, timestamp);
+    const handled = await agent.handleWebhook(payload, taskType, operationId, signature, timestamp);
 
     if (!handled) {
       app.log.warn(`Webhook not handled - no handlers configured`);

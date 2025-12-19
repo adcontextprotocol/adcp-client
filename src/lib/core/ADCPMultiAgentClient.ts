@@ -920,6 +920,8 @@ export class ADCPMultiAgentClient {
    * Automatically routes webhook to the correct agent based on agent_id in payload.
    *
    * @param payload - Webhook payload from agent (must contain agent_id or operation_id)
+   * @param taskType - Task type (e.g create_media_buy) from url param or url part of the webhook delivery
+   * @param operationId - Operation id (e.g used for client app to track the operation) from the param or url part of the webhook delivery
    * @param signature - Optional signature for verification (X-ADCP-Signature)
    * @param timestamp - Optional timestamp for verification (X-ADCP-Timestamp)
    * @returns Whether webhook was handled successfully
@@ -941,9 +943,10 @@ export class ADCPMultiAgentClient {
    */
   async handleWebhook(
     payload: any,
+    taskType: string,
+    operationId: string,
     signature?: string,
-    timestamp?: string | number,
-    taskType?: string
+    timestamp?: string | number
   ): Promise<boolean> {
     // Extract agent ID from payload
     // Webhook payloads include agent_id or we can infer from operation_id pattern
@@ -954,7 +957,7 @@ export class ADCPMultiAgentClient {
     }
 
     const agent = this.getAgent(agentId);
-    return agent.handleWebhook(payload, signature, timestamp, taskType);
+    return agent.handleWebhook(payload, taskType, operationId, signature, timestamp);
   }
 
   /**

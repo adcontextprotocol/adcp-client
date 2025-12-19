@@ -71,10 +71,13 @@ export { createOperationId } from './core/TaskEventTypes';
 export type {
   AsyncHandlerConfig,
   WebhookMetadata,
-  WebhookPayload,
   Activity,
   NotificationMetadata,
   MediaBuyDeliveryNotification,
+  CreateMediaBuyStatusChangeHandler,
+  UpdateMediaBuyStatusChangeHandler,
+  SyncCreativesStatusChangeHandler,
+  GetProductsStatusChangeHandler,
 } from './core/AsyncHandler';
 export { AsyncHandler, createAsyncHandler } from './core/AsyncHandler';
 
@@ -170,6 +173,42 @@ export { validateAgentUrl, validateAdCPResponse, getExpectedSchema, handleAdCPRe
 export { getStandardFormats, unwrapProtocolResponse, isAdcpError, isAdcpSuccess } from './utils';
 export { REQUEST_TIMEOUT, MAX_CONCURRENT, STANDARD_FORMATS } from './utils';
 export { detectProtocol, detectProtocolWithTimeout } from './utils';
+
+// ====== TYPE GUARD UTILITIES ======
+// Type guards for automatic TypeScript type narrowing in webhook handlers
+export {
+  // Generic status checks
+  isStatusCompleted,
+  isStatusWorking,
+  isStatusInputRequired,
+  isStatusSubmitted,
+  isStatusFailed,
+  isStatusRejected,
+  // GetProducts type guards
+  isGetProductsCompleted,
+  isGetProductsWorking,
+  isGetProductsInputRequired,
+  isGetProductsSubmitted,
+  isGetProductsFailed,
+  // CreateMediaBuy type guards
+  isCreateMediaBuyCompleted,
+  isCreateMediaBuyWorking,
+  isCreateMediaBuyInputRequired,
+  isCreateMediaBuySubmitted,
+  isCreateMediaBuyFailed,
+  // UpdateMediaBuy type guards
+  isUpdateMediaBuyCompleted,
+  isUpdateMediaBuyWorking,
+  isUpdateMediaBuyInputRequired,
+  isUpdateMediaBuySubmitted,
+  isUpdateMediaBuyFailed,
+  // SyncCreatives type guards
+  isSyncCreativesCompleted,
+  isSyncCreativesWorking,
+  isSyncCreativesInputRequired,
+  isSyncCreativesSubmitted,
+  isSyncCreativesFailed,
+} from './utils/typeGuards';
 
 // ====== VERSION INFORMATION ======
 export {
