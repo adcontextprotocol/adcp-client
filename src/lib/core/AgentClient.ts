@@ -432,6 +432,58 @@ export class AgentClient {
   }
 
   /**
+   * Get the canonical base URL for this agent
+   *
+   * Returns the canonical URL if already resolved, or computes it synchronously.
+   * For guaranteed canonical URL (especially for A2A), use resolveCanonicalUrl() first.
+   */
+  getCanonicalUrl(): string {
+    return this.client.getCanonicalUrl();
+  }
+
+  /**
+   * Resolve and return the canonical base URL for this agent
+   *
+   * For A2A: Fetches the agent card and uses its 'url' field
+   * For MCP: Performs endpoint discovery and strips /mcp suffix
+   */
+  async resolveCanonicalUrl(): Promise<string> {
+    return this.client.resolveCanonicalUrl();
+  }
+
+  /**
+   * Check if this agent is the same as another agent by canonical URL
+   */
+  isSameAgent(other: AgentConfig | AgentClient): boolean {
+    if (other instanceof AgentClient) {
+      // Compare using the other client's agent config
+      return this.client.isSameAgent(other.getAgent());
+    }
+    return this.client.isSameAgent(other);
+  }
+
+  /**
+   * Async version that resolves canonical URLs first for more accurate comparison
+   */
+  async isSameAgentResolved(other: AgentConfig | AgentClient): Promise<boolean> {
+    if (other instanceof AgentClient) {
+      // Resolve both sides first
+      await this.resolveCanonicalUrl();
+      await other.resolveCanonicalUrl();
+      // Then compare using the resolved agent config
+      return this.client.isSameAgent(other.getAgent());
+    }
+    return this.client.isSameAgentResolved(other);
+  }
+
+  /**
+   * Get the fully resolved agent configuration with canonical URL
+   */
+  async getResolvedAgent(): Promise<AgentConfig> {
+    return this.client.getResolvedAgent();
+  }
+
+  /**
    * Get agent information including capabilities
    */
   async getAgentInfo() {

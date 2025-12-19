@@ -17,7 +17,7 @@ function isWellKnownAgentCardUrl(url) {
   return /^https?:\/\/[^/]+\/\.well-known\/agent-card\.json$/i.test(url);
 }
 
-test('Well-Known URL Detection', async (t) => {
+test('Well-Known URL Detection', async t => {
   await t.test('detects .well-known/agent-card.json URLs', async () => {
     const wellKnownUrls = [
       'https://example.com/.well-known/agent-card.json',
@@ -27,11 +27,7 @@ test('Well-Known URL Detection', async (t) => {
     ];
 
     for (const url of wellKnownUrls) {
-      assert.strictEqual(
-        isWellKnownAgentCardUrl(url),
-        true,
-        `Should detect as well-known URL: ${url}`
-      );
+      assert.strictEqual(isWellKnownAgentCardUrl(url), true, `Should detect as well-known URL: ${url}`);
     }
   });
 
@@ -44,11 +40,7 @@ test('Well-Known URL Detection', async (t) => {
     ];
 
     for (const url of otherWellKnown) {
-      assert.strictEqual(
-        isWellKnownAgentCardUrl(url),
-        false,
-        `Should NOT detect as agent-card URL: ${url}`
-      );
+      assert.strictEqual(isWellKnownAgentCardUrl(url), false, `Should NOT detect as agent-card URL: ${url}`);
     }
   });
 
@@ -63,11 +55,7 @@ test('Well-Known URL Detection', async (t) => {
     ];
 
     for (const url of regularUrls) {
-      assert.strictEqual(
-        isWellKnownAgentCardUrl(url),
-        false,
-        `Should NOT detect as well-known URL: ${url}`
-      );
+      assert.strictEqual(isWellKnownAgentCardUrl(url), false, `Should NOT detect as well-known URL: ${url}`);
     }
   });
 
@@ -85,11 +73,7 @@ test('Well-Known URL Detection', async (t) => {
     ];
 
     for (const url of caseVariants) {
-      assert.strictEqual(
-        isWellKnownAgentCardUrl(url),
-        true,
-        `Should detect case-insensitively: ${url}`
-      );
+      assert.strictEqual(isWellKnownAgentCardUrl(url), true, `Should detect case-insensitively: ${url}`);
     }
   });
 });
