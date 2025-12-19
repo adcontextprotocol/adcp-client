@@ -343,6 +343,8 @@ export class SingleAgentClient {
       if (!isValid) {
         throw new Error('Invalid webhook signature or timestamp too old');
       }
+
+      console.log('[ADCP Client]: Webhook signature is valid');
     }
 
     // Transform raw protocol payload to normalized format
