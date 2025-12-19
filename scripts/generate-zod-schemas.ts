@@ -77,11 +77,26 @@ function writeFileIfChanged(filePath: string, newContent: string): boolean {
   return hasChanged;
 }
 
-// Load schema from cache
+// Load schema from cache - handles both /schemas/v1/ and /schemas/X.Y.Z/ paths
 function loadCachedSchema(schemaRef: string): any {
   try {
     const latestCacheDir = getLatestCacheDir();
-    const schemaPath = path.join(latestCacheDir, schemaRef.replace('/schemas/v1/', ''));
+
+    // Strip any /schemas/ prefix (versioned or v1) to get the relative path
+    // e.g., /schemas/2.5.0/core/product.json -> core/product.json
+    //       /schemas/v1/core/product.json -> core/product.json
+    let relativePath = schemaRef;
+    if (relativePath.startsWith('/schemas/')) {
+      // Remove /schemas/ prefix
+      relativePath = relativePath.substring('/schemas/'.length);
+      // Remove version segment (e.g., "2.5.0/" or "v1/" or "v2/")
+      const firstSlash = relativePath.indexOf('/');
+      if (firstSlash > 0) {
+        relativePath = relativePath.substring(firstSlash + 1);
+      }
+    }
+
+    const schemaPath = path.join(latestCacheDir, relativePath);
     if (!existsSync(schemaPath)) {
       throw new Error(`Schema not found in cache: ${schemaPath}`);
     }
@@ -106,6 +121,56 @@ function getCachedAdCPVersion(): string {
     console.warn(`⚠️  Failed to get cached AdCP version:`, error.message);
     return '1.0.0';
   }
+}
+
+// Dereference a schema by inlining all $ref values
+// This is necessary because json-schema-to-zod doesn't support custom ref resolvers
+function dereferenceSchema(schema: any, visited: Set<string> = new Set()): any {
+  if (typeof schema !== 'object' || schema === null) {
+    return schema;
+  }
+
+  // Handle $ref
+  if (schema.$ref && typeof schema.$ref === 'string') {
+    const refPath = schema.$ref;
+
+    // Prevent circular references
+    if (visited.has(refPath)) {
+      console.warn(`  ⚠️  Circular reference detected: ${refPath}`);
+      return { type: 'object', additionalProperties: true }; // Fallback for circular refs
+    }
+
+    visited.add(refPath);
+
+    // Load the referenced schema
+    const referencedSchema = loadCachedSchema(refPath);
+    if (!referencedSchema) {
+      console.warn(`  ⚠️  Could not resolve $ref: ${refPath}`);
+      return { type: 'object', additionalProperties: true }; // Fallback
+    }
+
+    // Recursively dereference the loaded schema
+    const dereferenced = dereferenceSchema(referencedSchema, new Set(visited));
+
+    // Merge any additional properties from the original (like description)
+    const { $ref, ...rest } = schema;
+    if (Object.keys(rest).length > 0) {
+      return { ...dereferenced, ...rest };
+    }
+    return dereferenced;
+  }
+
+  // Recursively process arrays
+  if (Array.isArray(schema)) {
+    return schema.map(item => dereferenceSchema(item, visited));
+  }
+
+  // Recursively process objects
+  const result: any = {};
+  for (const [key, value] of Object.entries(schema)) {
+    result[key] = dereferenceSchema(value, visited);
+  }
+  return result;
 }
 
 // Load schema from cache by name
@@ -209,8 +274,11 @@ function loadOfficialAdCPTools(): ToolDefinition[] {
 // Convert JSON Schema to Zod with proper naming
 function convertSchemaToZod(schema: any, schemaName: string): string {
   try {
+    // Dereference schema to inline all $ref values before conversion
+    const dereferencedSchema = dereferenceSchema(schema);
+
     // Use json-schema-to-zod to convert
-    const zodCode = jsonSchemaToZod(schema, {
+    const zodCode = jsonSchemaToZod(dereferencedSchema, {
       name: schemaName,
       module: 'esm',
     });

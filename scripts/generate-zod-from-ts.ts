@@ -100,6 +100,8 @@ const TOOL_TYPES = [
   // Creative tools
   'SyncCreativesRequest',
   'SyncCreativesResponse',
+  'SyncCreativesSuccess', // Component of SyncCreativesResponse union
+  'SyncCreativesError', // Component of SyncCreativesResponse union
   'ListCreativesRequest',
   'ListCreativesResponse',
   'SubAsset',
@@ -109,6 +111,8 @@ const TOOL_TYPES = [
   'BuildCreativeResponse',
   'PreviewCreativeRequest',
   'PreviewCreativeResponse',
+  'PreviewCreativeSingleResponse', // Component of PreviewCreativeResponse union
+  'PreviewCreativeBatchResponse', // Component of PreviewCreativeResponse union
 
   // Property tools
   'ListAuthorizedPropertiesRequest',
@@ -135,6 +139,9 @@ const TOOL_TYPES = [
   'CreativePolicy',
   'PushNotificationConfig',
   'CreativeFilters',
+  'ContextObject', // Used by many response types
+  'ExtensionObject', // Used by many response types
+  'CreativeAction', // Used by SyncCreativesSuccess
 ];
 
 /**

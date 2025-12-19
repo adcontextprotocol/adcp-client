@@ -2,7 +2,25 @@
 // https://adcontextprotocol.org/docs/reference/data-models
 
 // Import structured FormatID from generated core types
-import type { FormatID } from './core.generated';
+import type {
+  CreateMediaBuyAsyncInputRequired,
+  CreateMediaBuyAsyncSubmitted,
+  CreateMediaBuyAsyncWorking,
+  FormatID,
+  CreateMediaBuyResponse,
+  GetProductsResponse,
+  GetProductsAsyncWorking,
+  GetProductsAsyncInputRequired,
+  GetProductsAsyncSubmitted,
+  UpdateMediaBuyResponse,
+  UpdateMediaBuyAsyncWorking,
+  UpdateMediaBuyAsyncInputRequired,
+  UpdateMediaBuyAsyncSubmitted,
+  SyncCreativesAsyncWorking,
+  SyncCreativesAsyncInputRequired,
+  SyncCreativesAsyncSubmitted,
+  SyncCreativesResponse,
+} from './core.generated';
 
 export interface MediaBuy {
   id: string;
@@ -356,24 +374,6 @@ export interface ManageCreativeAssetsResponse {
   }[];
 }
 
-export interface SyncCreativesResponse {
-  success: boolean;
-  summary: {
-    total_processed: number;
-    created: number;
-    updated: number;
-    assigned: number;
-    errors: number;
-  };
-  results: {
-    created?: CreativeLibraryItem[];
-    updated?: CreativeLibraryItem[];
-    assigned?: { creative_id: string; packages: string[] }[];
-    errors?: { creative_id?: string; error_code: string; message: string }[];
-  };
-  dry_run?: boolean;
-}
-
 export interface ListCreativesResponse {
   success: boolean;
   creatives: CreativeLibraryItem[];
@@ -423,3 +423,34 @@ export type PropertyIdentifierType =
   | 'apple_podcast_id'
   | 'iab_tech_lab_domain_id'
   | 'custom';
+
+/** Grouped types by tool type */
+export type AsyncResponseByTask = {
+  create_media_buy:
+    | CreateMediaBuyResponse
+    | CreateMediaBuyAsyncWorking
+    | CreateMediaBuyAsyncInputRequired
+    | CreateMediaBuyAsyncSubmitted;
+  get_products:
+    | GetProductsResponse
+    | GetProductsAsyncWorking
+    | GetProductsAsyncInputRequired
+    | GetProductsAsyncSubmitted;
+  update_media_buy:
+    | UpdateMediaBuyResponse
+    | UpdateMediaBuyAsyncWorking
+    | UpdateMediaBuyAsyncInputRequired
+    | UpdateMediaBuyAsyncSubmitted;
+  sync_creatives:
+    | SyncCreativesResponse
+    | SyncCreativesAsyncWorking
+    | SyncCreativesAsyncInputRequired
+    | SyncCreativesAsyncSubmitted;
+};
+
+export type AsyncResponseFor<TTask extends keyof AsyncResponseByTask> = AsyncResponseByTask[TTask];
+
+export type CreateMediaBuyAsyncResponseData = AsyncResponseFor<'create_media_buy'>;
+export type GetProductsAsyncResponseData = AsyncResponseFor<'get_products'>;
+export type UpdateMediaBuyAsyncResponseData = AsyncResponseFor<'update_media_buy'>;
+export type SyncCreativesAsyncResponseData = AsyncResponseFor<'sync_creatives'>;
