@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2025-12-19T12:50:36.265Z
+// Generated at: 2025-12-19T13:05:34.853Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -291,6 +291,8 @@ export const PropertyTypeSchema = z.union([z.literal("website"), z.literal("mobi
 
 export const PropertyTagSchema = z.string();
 
+export const CreativeActionSchema = z.union([z.literal("created"), z.literal("updated"), z.literal("unchanged"), z.literal("failed"), z.literal("deleted")]);
+
 export const ErrorSchema = z.object({
     code: z.string(),
     message: z.string(),
@@ -301,6 +303,30 @@ export const ErrorSchema = z.object({
 });
 
 export const ContextObjectSchema = z.record(z.string(), z.unknown());
+
+export const SyncCreativesSuccessSchema = z.object({
+    dry_run: z.boolean().nullish(),
+    creatives: z.array(z.object({
+        creative_id: z.string(),
+        action: CreativeActionSchema,
+        platform_id: z.string().nullish(),
+        changes: z.array(z.string()).nullish(),
+        errors: z.array(z.string()).nullish(),
+        warnings: z.array(z.string()).nullish(),
+        preview_url: z.string().nullish(),
+        expires_at: z.string().nullish(),
+        assigned_to: z.array(z.string()).nullish(),
+        assignment_errors: z.record(z.string(), z.string()).nullish()
+    })),
+    context: ContextObjectSchema.nullish(),
+    ext: ExtensionObjectSchema.nullish()
+});
+
+export const SyncCreativesErrorSchema = z.object({
+    errors: z.tuple([ErrorSchema]).rest(ErrorSchema),
+    context: ContextObjectSchema.nullish(),
+    ext: ExtensionObjectSchema.nullish()
+});
 
 export const BrandManifestSchema = z.object({
     url: z.string().nullish(),
@@ -500,11 +526,7 @@ export const PushNotificationConfigSchema = z.object({
     })
 });
 
-export const SyncCreativesErrorSchema = z.object({
-    errors: z.tuple([ErrorSchema]).rest(ErrorSchema),
-    context: ContextObjectSchema.nullish(),
-    ext: ExtensionObjectSchema.nullish()
-});
+export const SyncCreativesResponseSchema = z.union([SyncCreativesSuccessSchema, SyncCreativesErrorSchema]);
 
 export const CreativeSortFieldSchema = z.union([z.literal("created_date"), z.literal("updated_date"), z.literal("name"), z.literal("status"), z.literal("assignment_count"), z.literal("performance_score")]);
 
@@ -716,6 +738,62 @@ export const PreviewOutputFormatSchema = z.union([z.literal("url"), z.literal("h
 export const PreviewOutputFormat1Schema = z.union([z.literal("url"), z.literal("html")]);
 
 export const PreviewOutputFormat2Schema = z.union([z.literal("url"), z.literal("html")]);
+
+export const PreviewRenderSchema = z.union([z.object({
+        render_id: z.string(),
+        output_format: z.literal("url"),
+        preview_url: z.string(),
+        role: z.string(),
+        dimensions: z.object({
+            width: z.number(),
+            height: z.number()
+        }).nullish(),
+        embedding: z.object({
+            recommended_sandbox: z.string().nullish(),
+            requires_https: z.boolean().nullish(),
+            supports_fullscreen: z.boolean().nullish(),
+            csp_policy: z.string().nullish()
+        }).nullish()
+    }), z.object({
+        render_id: z.string(),
+        output_format: z.literal("html"),
+        preview_html: z.string(),
+        role: z.string(),
+        dimensions: z.object({
+            width: z.number(),
+            height: z.number()
+        }).nullish(),
+        embedding: z.object({
+            recommended_sandbox: z.string().nullish(),
+            requires_https: z.boolean().nullish(),
+            supports_fullscreen: z.boolean().nullish(),
+            csp_policy: z.string().nullish()
+        }).nullish()
+    }), z.object({
+        render_id: z.string(),
+        output_format: z.literal("both"),
+        preview_url: z.string(),
+        preview_html: z.string(),
+        role: z.string(),
+        dimensions: z.object({
+            width: z.number(),
+            height: z.number()
+        }).nullish(),
+        embedding: z.object({
+            recommended_sandbox: z.string().nullish(),
+            requires_https: z.boolean().nullish(),
+            supports_fullscreen: z.boolean().nullish(),
+            csp_policy: z.string().nullish()
+        }).nullish()
+    })]);
+
+export const PreviewBatchResultSuccessSchema = z.object({
+    success: z.literal(true).nullish()
+});
+
+export const PreviewBatchResultErrorSchema = z.object({
+    success: z.literal(false).nullish()
+});
 
 export const DestinationSchema = z.union([z.object({
         type: z.literal("platform"),
@@ -1079,6 +1157,38 @@ export const CreativeManifest1Schema = z.object({
     ext: ExtensionObjectSchema.nullish()
 });
 
+export const PreviewCreativeSingleResponseSchema = z.object({
+    response_type: z.literal("single"),
+    previews: z.tuple([z.object({
+            preview_id: z.string(),
+            renders: z.tuple([PreviewRenderSchema]).rest(PreviewRenderSchema),
+            input: z.object({
+                name: z.string(),
+                macros: z.record(z.string(), z.string()).nullish(),
+                context_description: z.string().nullish()
+            })
+        })]).rest(z.object({
+        preview_id: z.string(),
+        renders: z.tuple([PreviewRenderSchema]).rest(PreviewRenderSchema),
+        input: z.object({
+            name: z.string(),
+            macros: z.record(z.string(), z.string()).nullish(),
+            context_description: z.string().nullish()
+        })
+    })),
+    interactive_url: z.string().nullish(),
+    expires_at: z.string(),
+    context: ContextObjectSchema.nullish(),
+    ext: ExtensionObjectSchema.nullish()
+});
+
+export const PreviewCreativeBatchResponseSchema = z.object({
+    response_type: z.literal("batch"),
+    results: z.tuple([z.union([PreviewBatchResultSuccessSchema, PreviewBatchResultErrorSchema])]).rest(z.union([PreviewBatchResultSuccessSchema, PreviewBatchResultErrorSchema])),
+    context: ContextObjectSchema.nullish(),
+    ext: ExtensionObjectSchema.nullish()
+});
+
 export const SignalFiltersSchema = z.object({
     catalog_types: z.array(SignalCatalogTypeSchema).nullish(),
     data_providers: z.array(z.string()).nullish(),
@@ -1214,6 +1324,8 @@ export const PreviewCreativeRequestSchema = z.union([z.object({
         context: ContextObjectSchema.nullish(),
         ext: ExtensionObjectSchema.nullish()
     })]);
+
+export const PreviewCreativeResponseSchema = z.union([PreviewCreativeSingleResponseSchema, PreviewCreativeBatchResponseSchema]);
 
 export const GetSignalsRequestSchema = z.object({
     signal_spec: z.string(),
