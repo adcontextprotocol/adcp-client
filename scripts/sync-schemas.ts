@@ -45,8 +45,35 @@ async function fetchJson(url: string): Promise<any> {
   return response.json();
 }
 
+// Normalize $ref paths in a schema to use the semantic version instead of "latest"
+function normalizeSchemaRefs(schema: any, semanticVersion: string): any {
+  if (typeof schema === 'object' && schema !== null) {
+    // If this is a $ref, normalize it
+    if (schema.$ref && typeof schema.$ref === 'string') {
+      // Replace /schemas/latest/ with /schemas/{semanticVersion}/
+      if (schema.$ref.includes('/schemas/latest/')) {
+        schema.$ref = schema.$ref.replace('/schemas/latest/', `/schemas/${semanticVersion}/`);
+      }
+    }
+
+    // Recursively process all nested objects and arrays
+    for (const key of Object.keys(schema)) {
+      if (typeof schema[key] === 'object' && schema[key] !== null) {
+        normalizeSchemaRefs(schema[key], semanticVersion);
+      }
+    }
+  }
+
+  return schema;
+}
+
 // Download and cache a schema file
-async function downloadSchema(schemaRef: string, cacheDir: string, adcpVersion: string): Promise<void> {
+async function downloadSchema(
+  schemaRef: string,
+  cacheDir: string,
+  adcpVersion: string,
+  semanticVersion?: string
+): Promise<void> {
   const url = `${ADCP_BASE_URL}${schemaRef}`;
 
   // Strip the version prefix from the schema path to get the local path
@@ -73,6 +100,12 @@ async function downloadSchema(schemaRef: string, cacheDir: string, adcpVersion: 
   try {
     console.log(`📥 Downloading ${schemaRef}...`);
     const schema = await fetchJson(url);
+
+    // Normalize $ref paths to use semantic version instead of "latest"
+    if (semanticVersion) {
+      normalizeSchemaRefs(schema, semanticVersion);
+    }
+
     writeFileSync(localPath, JSON.stringify(schema, null, 2));
     console.log(`✅ Cached ${schemaRef} -> ${localPath}`);
   } catch (error) {
@@ -169,8 +202,14 @@ async function syncSchemas(version?: string): Promise<void> {
 
   console.log(`📋 Found ${allRefs.size} schema references to download`);
 
+  // Get the semantic version from the index (e.g., "2.5.0") for normalizing refs
+  const semanticVersion = schemaIndex.adcp_version;
+  console.log(`📋 Semantic version for ref normalization: ${semanticVersion}`);
+
   // Download all primary schemas
-  const downloadPromises = Array.from(allRefs).map(ref => downloadSchema(ref, versionCacheDir, adcpVersion));
+  const downloadPromises = Array.from(allRefs).map(ref =>
+    downloadSchema(ref, versionCacheDir, adcpVersion, semanticVersion)
+  );
 
   await Promise.allSettled(downloadPromises);
 
@@ -223,7 +262,9 @@ async function syncSchemas(version?: string): Promise<void> {
     }
 
     console.log(`📋 Found ${nestedRefs.size} additional nested references at depth ${depth + 1}`);
-    const nestedDownloadPromises = Array.from(nestedRefs).map(ref => downloadSchema(ref, versionCacheDir, adcpVersion));
+    const nestedDownloadPromises = Array.from(nestedRefs).map(ref =>
+      downloadSchema(ref, versionCacheDir, adcpVersion, semanticVersion)
+    );
     await Promise.allSettled(nestedDownloadPromises);
 
     // Add newly downloaded refs to the set

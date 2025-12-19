@@ -1395,44 +1395,6 @@ export interface FormatID3 {
  */
 export type Pacing = 'even' | 'asap' | 'front_loaded';
 /**
- * Image asset with URL and dimensions
- */
-export type ImageAsset = Dimensions & {
-  /**
-   * URL to the image asset
-   */
-  url: string;
-  /**
-   * Image file format (jpg, png, gif, webp, etc.)
-   */
-  format?: string;
-  /**
-   * Alternative text for accessibility
-   */
-  alt_text?: string;
-};
-/**
- * Video asset with URL and specifications
- */
-export type VideoAsset = Dimensions & {
-  /**
-   * URL to the video asset
-   */
-  url: string;
-  /**
-   * Video duration in milliseconds
-   */
-  duration_ms?: number;
-  /**
-   * Video file format (mp4, webm, mov, etc.)
-   */
-  format?: string;
-  /**
-   * Video bitrate in kilobits per second
-   */
-  bitrate_kbps?: number;
-};
-/**
  * JavaScript module type
  */
 export type JavaScriptModuleType = 'esm' | 'commonjs' | 'script';
@@ -1807,7 +1769,11 @@ export interface CreativeAsset {
 /**
  * Structured format identifier with agent URL and format name. Can reference: (1) a concrete format with fixed dimensions (id only), (2) a template format without parameters (id only), or (3) a template format with parameters (id + dimensions/duration). Template formats accept parameters in format_id while concrete formats have fixed dimensions in their definition. Parameterized format IDs create unique, specific format variants.
  */
-export interface Dimensions {
+export interface ImageAsset {
+  /**
+   * URL to the image asset
+   */
+  url: string;
   /**
    * Width in pixels
    */
@@ -1816,6 +1782,43 @@ export interface Dimensions {
    * Height in pixels
    */
   height: number;
+  /**
+   * Image file format (jpg, png, gif, webp, etc.)
+   */
+  format?: string;
+  /**
+   * Alternative text for accessibility
+   */
+  alt_text?: string;
+}
+/**
+ * Video asset with URL and specifications
+ */
+export interface VideoAsset {
+  /**
+   * URL to the video asset
+   */
+  url: string;
+  /**
+   * Width in pixels
+   */
+  width: number;
+  /**
+   * Height in pixels
+   */
+  height: number;
+  /**
+   * Video duration in milliseconds
+   */
+  duration_ms?: number;
+  /**
+   * Video file format (mp4, webm, mov, etc.)
+   */
+  format?: string;
+  /**
+   * Video bitrate in kilobits per second
+   */
+  bitrate_kbps?: number;
 }
 /**
  * Audio asset with URL and specifications
@@ -2014,39 +2017,32 @@ export interface PushNotificationConfig {
 /**
  * Response payload for create_media_buy task. Returns either complete success data OR error information, never both. This enforces atomic operation semantics - the media buy is either fully created or not created at all.
  */
-export type CreateMediaBuyResponse =
-  | {
-      /**
-       * Publisher's unique identifier for the created media buy
-       */
-      media_buy_id: string;
-      /**
-       * Buyer's reference identifier for this media buy
-       */
-      buyer_ref: string;
-      /**
-       * ISO 8601 timestamp for creative upload deadline
-       */
-      creative_deadline?: string;
-      /**
-       * Array of created packages with complete state information
-       */
-      packages: Package[];
-      context?: ContextObject;
-      ext?: ExtensionObject;
-    }
-  | {
-      /**
-       * Array of errors explaining why the operation failed
-       *
-       * @minItems 1
-       */
-      errors: [Error, ...Error[]];
-      context?: ContextObject;
-      ext?: ExtensionObject;
-    };
+export type CreateMediaBuyResponse = CreateMediaBuySuccess | CreateMediaBuyError;
 /**
  * Budget pacing strategy
+ */
+export interface CreateMediaBuySuccess {
+  /**
+   * Publisher's unique identifier for the created media buy
+   */
+  media_buy_id: string;
+  /**
+   * Buyer's reference identifier for this media buy
+   */
+  buyer_ref: string;
+  /**
+   * ISO 8601 timestamp for creative upload deadline
+   */
+  creative_deadline?: string;
+  /**
+   * Array of created packages with complete state information
+   */
+  packages: Package[];
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * A specific product within a media buy (line item)
  */
 export interface Package {
   /**
@@ -2115,10 +2111,23 @@ export interface CreativeAssignment {
 /**
  * Structured format identifier with agent URL and format name. Can reference: (1) a concrete format with fixed dimensions (id only), (2) a template format without parameters (id only), or (3) a template format with parameters (id + dimensions/duration). Template formats accept parameters in format_id while concrete formats have fixed dimensions in their definition. Parameterized format IDs create unique, specific format variants.
  */
+export interface CreateMediaBuyError {
+  /**
+   * Array of errors explaining why the operation failed
+   *
+   * @minItems 1
+   */
+  errors: [Error, ...Error[]];
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Standard error structure for task-specific errors and warnings
+ */
 
 // sync_creatives parameters
 /**
- * Image asset with URL and dimensions
+ * JavaScript module type
  */
 export type ValidationMode = 'strict' | 'lenient';
 /**
@@ -2170,82 +2179,88 @@ export interface SyncCreativesRequest {
 /**
  * Response from creative sync operation. Returns either per-creative results (best-effort processing) OR operation-level errors (complete failure). This enforces atomic semantics at the operation level while allowing per-item failures within successful operations.
  */
-export type SyncCreativesResponse =
-  | {
-      /**
-       * Whether this was a dry run (no actual changes made)
-       */
-      dry_run?: boolean;
-      /**
-       * Results for each creative processed. Items with action='failed' indicate per-item validation/processing failures, not operation-level failures.
-       */
-      creatives: {
-        /**
-         * Creative ID from the request
-         */
-        creative_id: string;
-        action: CreativeAction;
-        /**
-         * Platform-specific ID assigned to the creative
-         */
-        platform_id?: string;
-        /**
-         * Field names that were modified (only present when action='updated')
-         */
-        changes?: string[];
-        /**
-         * Validation or processing errors (only present when action='failed')
-         */
-        errors?: string[];
-        /**
-         * Non-fatal warnings about this creative
-         */
-        warnings?: string[];
-        /**
-         * Preview URL for generative creatives (only present for generative formats)
-         */
-        preview_url?: string;
-        /**
-         * ISO 8601 timestamp when preview link expires (only present when preview_url exists)
-         */
-        expires_at?: string;
-        /**
-         * Package IDs this creative was successfully assigned to (only present when assignments were requested)
-         */
-        assigned_to?: string[];
-        /**
-         * Assignment errors by package ID (only present when assignment failures occurred)
-         */
-        assignment_errors?: {
-          /**
-           * Error message for this package assignment
-           *
-           * This interface was referenced by `undefined`'s JSON-Schema definition
-           * via the `patternProperty` "^[a-zA-Z0-9_-]+$".
-           */
-          [k: string]: string;
-        };
-      }[];
-      context?: ContextObject;
-      ext?: ExtensionObject;
-    }
-  | {
-      /**
-       * Operation-level errors that prevented processing any creatives (e.g., authentication failure, service unavailable, invalid request format)
-       *
-       * @minItems 1
-       */
-      errors: [Error, ...Error[]];
-      context?: ContextObject;
-      ext?: ExtensionObject;
-    };
+export type SyncCreativesResponse = SyncCreativesSuccess | SyncCreativesError;
 /**
  * Action taken for this creative
  */
 export type CreativeAction = 'created' | 'updated' | 'unchanged' | 'failed' | 'deleted';
 
 /**
+ * Success response - sync operation processed creatives (may include per-item failures)
+ */
+export interface SyncCreativesSuccess {
+  /**
+   * Whether this was a dry run (no actual changes made)
+   */
+  dry_run?: boolean;
+  /**
+   * Results for each creative processed. Items with action='failed' indicate per-item validation/processing failures, not operation-level failures.
+   */
+  creatives: {
+    /**
+     * Creative ID from the request
+     */
+    creative_id: string;
+    action: CreativeAction;
+    /**
+     * Platform-specific ID assigned to the creative
+     */
+    platform_id?: string;
+    /**
+     * Field names that were modified (only present when action='updated')
+     */
+    changes?: string[];
+    /**
+     * Validation or processing errors (only present when action='failed')
+     */
+    errors?: string[];
+    /**
+     * Non-fatal warnings about this creative
+     */
+    warnings?: string[];
+    /**
+     * Preview URL for generative creatives (only present for generative formats)
+     */
+    preview_url?: string;
+    /**
+     * ISO 8601 timestamp when preview link expires (only present when preview_url exists)
+     */
+    expires_at?: string;
+    /**
+     * Package IDs this creative was successfully assigned to (only present when assignments were requested)
+     */
+    assigned_to?: string[];
+    /**
+     * Assignment errors by package ID (only present when assignment failures occurred)
+     */
+    assignment_errors?: {
+      /**
+       * Error message for this package assignment
+       *
+       * This interface was referenced by `undefined`'s JSON-Schema definition
+       * via the `patternProperty` "^[a-zA-Z0-9_-]+$".
+       */
+      [k: string]: string;
+    };
+  }[];
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
  * Opaque correlation data that is echoed unchanged in responses. Used for internal tracking, UI session IDs, trace IDs, and other caller-specific identifiers that don't affect protocol behavior. Context data is never parsed by AdCP agents - it's simply preserved and returned.
+ */
+export interface SyncCreativesError {
+  /**
+   * Operation-level errors that prevented processing any creatives (e.g., authentication failure, service unavailable, invalid request format)
+   *
+   * @minItems 1
+   */
+  errors: [Error, ...Error[]];
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Standard error structure for task-specific errors and warnings
  */
 
 // list_creatives parameters
@@ -2703,39 +2718,45 @@ export interface UpdateMediaBuyRequest1 {
 /**
  * Response payload for update_media_buy task. Returns either complete success data OR error information, never both. This enforces atomic operation semantics - updates are either fully applied or not applied at all.
  */
-export type UpdateMediaBuyResponse =
-  | {
-      /**
-       * Publisher's identifier for the media buy
-       */
-      media_buy_id: string;
-      /**
-       * Buyer's reference identifier for the media buy
-       */
-      buyer_ref: string;
-      /**
-       * ISO 8601 timestamp when changes take effect (null if pending approval)
-       */
-      implementation_date?: string | null;
-      /**
-       * Array of packages that were modified with complete state information
-       */
-      affected_packages?: Package[];
-      context?: ContextObject;
-      ext?: ExtensionObject;
-    }
-  | {
-      /**
-       * Array of errors explaining why the operation failed
-       *
-       * @minItems 1
-       */
-      errors: [Error, ...Error[]];
-      context?: ContextObject;
-      ext?: ExtensionObject;
-    };
+export type UpdateMediaBuyResponse = UpdateMediaBuySuccess | UpdateMediaBuyError;
 /**
  * Budget pacing strategy
+ */
+export interface UpdateMediaBuySuccess {
+  /**
+   * Publisher's identifier for the media buy
+   */
+  media_buy_id: string;
+  /**
+   * Buyer's reference identifier for the media buy
+   */
+  buyer_ref: string;
+  /**
+   * ISO 8601 timestamp when changes take effect (null if pending approval)
+   */
+  implementation_date?: string | null;
+  /**
+   * Array of packages that were modified with complete state information
+   */
+  affected_packages?: Package[];
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * A specific product within a media buy (line item)
+ */
+export interface UpdateMediaBuyError {
+  /**
+   * Array of errors explaining why the operation failed
+   *
+   * @minItems 1
+   */
+  errors: [Error, ...Error[]];
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Standard error structure for task-specific errors and warnings
  */
 
 // get_media_buy_delivery parameters
@@ -3211,33 +3232,39 @@ export interface ProvidePerformanceFeedbackRequest1 {
 /**
  * Response payload for provide_performance_feedback task. Returns either success confirmation OR error information, never both.
  */
-export type ProvidePerformanceFeedbackResponse =
-  | {
-      /**
-       * Whether the performance feedback was successfully received
-       */
-      success: true;
-      context?: ContextObject;
-      ext?: ExtensionObject;
-    }
-  | {
-      /**
-       * Array of errors explaining why feedback was rejected (e.g., invalid measurement period, missing campaign data)
-       *
-       * @minItems 1
-       */
-      errors: [Error, ...Error[]];
-      context?: ContextObject;
-      ext?: ExtensionObject;
-    };
+export type ProvidePerformanceFeedbackResponse = ProvidePerformanceFeedbackSuccess | ProvidePerformanceFeedbackError;
 
 /**
+ * Success response - feedback received and processed
+ */
+export interface ProvidePerformanceFeedbackSuccess {
+  /**
+   * Whether the performance feedback was successfully received
+   */
+  success: true;
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
  * Opaque correlation data that is echoed unchanged in responses. Used for internal tracking, UI session IDs, trace IDs, and other caller-specific identifiers that don't affect protocol behavior. Context data is never parsed by AdCP agents - it's simply preserved and returned.
+ */
+export interface ProvidePerformanceFeedbackError {
+  /**
+   * Array of errors explaining why feedback was rejected (e.g., invalid measurement period, missing campaign data)
+   *
+   * @minItems 1
+   */
+  errors: [Error, ...Error[]];
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Standard error structure for task-specific errors and warnings
  */
 
 // build_creative parameters
 /**
- * Image asset with URL and dimensions
+ * VAST (Video Ad Serving Template) tag for third-party video ad serving
  */
 export type HTTPMethod = 'GET' | 'POST';
 /**
@@ -3341,24 +3368,30 @@ export interface WebhookAsset {
 /**
  * Response containing the transformed or generated creative manifest, ready for use with preview_creative or sync_creatives. Returns either the complete creative manifest OR error information, never both.
  */
-export type BuildCreativeResponse =
-  | {
-      creative_manifest: CreativeManifest;
-      context?: ContextObject;
-      ext?: ExtensionObject;
-    }
-  | {
-      /**
-       * Array of errors explaining why creative generation failed
-       *
-       * @minItems 1
-       */
-      errors: [Error, ...Error[]];
-      context?: ContextObject;
-      ext?: ExtensionObject;
-    };
+export type BuildCreativeResponse = BuildCreativeSuccess | BuildCreativeError;
 /**
- * Image asset with URL and dimensions
+ * VAST (Video Ad Serving Template) tag for third-party video ad serving
+ */
+export interface BuildCreativeSuccess {
+  creative_manifest: CreativeManifest;
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * The generated or transformed creative manifest
+ */
+export interface BuildCreativeError {
+  /**
+   * Array of errors explaining why creative generation failed
+   *
+   * @minItems 1
+   */
+  errors: [Error, ...Error[]];
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Standard error structure for task-specific errors and warnings
  */
 
 // preview_creative parameters
@@ -3474,7 +3507,7 @@ export type PreviewCreativeRequest =
       ext?: ExtensionObject;
     };
 /**
- * Image asset with URL and dimensions
+ * VAST (Video Ad Serving Template) tag for third-party video ad serving
  */
 export type PreviewOutputFormat = 'url' | 'html';
 /**
@@ -3527,123 +3560,7 @@ export interface CreativeManifest1 {
 /**
  * Response containing preview links for one or more creatives. Format matches the request: single preview response for single requests, batch results for batch requests.
  */
-export type PreviewCreativeResponse =
-  | {
-      /**
-       * Discriminator indicating this is a single preview response
-       */
-      response_type: 'single';
-      /**
-       * Array of preview variants. Each preview corresponds to an input set from the request. If no inputs were provided, returns a single default preview.
-       *
-       * @minItems 1
-       */
-      previews: [
-        {
-          /**
-           * Unique identifier for this preview variant
-           */
-          preview_id: string;
-          /**
-           * Array of rendered pieces for this preview variant. Most formats render as a single piece. Companion ad formats (video + banner), multi-placement formats, and adaptive formats render as multiple pieces.
-           *
-           * @minItems 1
-           */
-          renders: [PreviewRender, ...PreviewRender[]];
-          /**
-           * The input parameters that generated this preview variant. Echoes back the request input or shows defaults used.
-           */
-          input: {
-            /**
-             * Human-readable name for this variant
-             */
-            name: string;
-            /**
-             * Macro values applied to this variant
-             */
-            macros?: {
-              [k: string]: string;
-            };
-            /**
-             * Context description applied to this variant
-             */
-            context_description?: string;
-          };
-        },
-        ...{
-          /**
-           * Unique identifier for this preview variant
-           */
-          preview_id: string;
-          /**
-           * Array of rendered pieces for this preview variant. Most formats render as a single piece. Companion ad formats (video + banner), multi-placement formats, and adaptive formats render as multiple pieces.
-           *
-           * @minItems 1
-           */
-          renders: [PreviewRender, ...PreviewRender[]];
-          /**
-           * The input parameters that generated this preview variant. Echoes back the request input or shows defaults used.
-           */
-          input: {
-            /**
-             * Human-readable name for this variant
-             */
-            name: string;
-            /**
-             * Macro values applied to this variant
-             */
-            macros?: {
-              [k: string]: string;
-            };
-            /**
-             * Context description applied to this variant
-             */
-            context_description?: string;
-          };
-        }[]
-      ];
-      /**
-       * Optional URL to an interactive testing page that shows all preview variants with controls to switch between them, modify macro values, and test different scenarios.
-       */
-      interactive_url?: string;
-      /**
-       * ISO 8601 timestamp when preview links expire
-       */
-      expires_at: string;
-      context?: ContextObject;
-      ext?: ExtensionObject;
-    }
-  | {
-      /**
-       * Discriminator indicating this is a batch preview response
-       */
-      response_type: 'batch';
-      /**
-       * Array of preview results corresponding to each request in the same order. results[0] is the result for requests[0], results[1] for requests[1], etc. Order is guaranteed even when some requests fail. Each result contains either a successful preview response or an error.
-       *
-       * @minItems 1
-       */
-      results: [
-        (
-          | {
-              success?: true;
-            }
-          | {
-              success?: false;
-            }
-        ),
-        ...(
-          | {
-              success?: true;
-            }
-          | {
-              success?: false;
-            }
-        )[]
-      ];
-      context?: ContextObject;
-      ext?: ExtensionObject;
-    };
+export type PreviewCreativeResponse = PreviewCreativeSingleResponse | PreviewCreativeBatchResponse;
 /**
  * A single rendered piece of a creative preview with discriminated output format
  */
@@ -3792,8 +3709,120 @@ export type PreviewRender =
     };
 
 /**
+ * Single preview response - each preview URL returns an HTML page that can be embedded in an iframe
+ */
+export interface PreviewCreativeSingleResponse {
+  /**
+   * Discriminator indicating this is a single preview response
+   */
+  response_type: 'single';
+  /**
+   * Array of preview variants. Each preview corresponds to an input set from the request. If no inputs were provided, returns a single default preview.
+   *
+   * @minItems 1
+   */
+  previews: [
+    {
+      /**
+       * Unique identifier for this preview variant
+       */
+      preview_id: string;
+      /**
+       * Array of rendered pieces for this preview variant. Most formats render as a single piece. Companion ad formats (video + banner), multi-placement formats, and adaptive formats render as multiple pieces.
+       *
+       * @minItems 1
+       */
+      renders: [PreviewRender, ...PreviewRender[]];
+      /**
+       * The input parameters that generated this preview variant. Echoes back the request input or shows defaults used.
+       */
+      input: {
+        /**
+         * Human-readable name for this variant
+         */
+        name: string;
+        /**
+         * Macro values applied to this variant
+         */
+        macros?: {
+          [k: string]: string;
+        };
+        /**
+         * Context description applied to this variant
+         */
+        context_description?: string;
+      };
+    },
+    ...{
+      /**
+       * Unique identifier for this preview variant
+       */
+      preview_id: string;
+      /**
+       * Array of rendered pieces for this preview variant. Most formats render as a single piece. Companion ad formats (video + banner), multi-placement formats, and adaptive formats render as multiple pieces.
+       *
+       * @minItems 1
+       */
+      renders: [PreviewRender, ...PreviewRender[]];
+      /**
+       * The input parameters that generated this preview variant. Echoes back the request input or shows defaults used.
+       */
+      input: {
+        /**
+         * Human-readable name for this variant
+         */
+        name: string;
+        /**
+         * Macro values applied to this variant
+         */
+        macros?: {
+          [k: string]: string;
+        };
+        /**
+         * Context description applied to this variant
+         */
+        context_description?: string;
+      };
+    }[]
+  ];
+  /**
+   * Optional URL to an interactive testing page that shows all preview variants with controls to switch between them, modify macro values, and test different scenarios.
+   */
+  interactive_url?: string;
+  /**
+   * ISO 8601 timestamp when preview links expire
+   */
+  expires_at: string;
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
  * Opaque correlation data that is echoed unchanged in responses. Used for internal tracking, UI session IDs, trace IDs, and other caller-specific identifiers that don't affect protocol behavior. Context data is never parsed by AdCP agents - it's simply preserved and returned.
  */
+export interface PreviewCreativeBatchResponse {
+  /**
+   * Discriminator indicating this is a batch preview response
+   */
+  response_type: 'batch';
+  /**
+   * Array of preview results corresponding to each request in the same order. results[0] is the result for requests[0], results[1] for requests[1], etc. Order is guaranteed even when some requests fail. Each result contains either a successful preview response or an error.
+   *
+   * @minItems 1
+   */
+  results: [
+    PreviewBatchResultSuccess | PreviewBatchResultError,
+    ...(PreviewBatchResultSuccess | PreviewBatchResultError)[]
+  ];
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+export interface PreviewBatchResultSuccess {
+  success?: true;
+}
+export interface PreviewBatchResultError {
+  success?: false;
+}
+
 
 // get_signals parameters
 /**
@@ -4089,25 +4118,31 @@ export interface ActivateSignalRequest {
 /**
  * Response payload for activate_signal task. Returns either complete success data OR error information, never both. This enforces atomic operation semantics - the signal is either fully activated or not activated at all.
  */
-export type ActivateSignalResponse =
-  | {
-      /**
-       * Array of deployment results for each deployment target
-       */
-      deployments: Deployment[];
-      context?: ContextObject;
-      ext?: ExtensionObject;
-    }
-  | {
-      /**
-       * Array of errors explaining why activation failed (e.g., platform connectivity issues, signal definition problems, authentication failures)
-       *
-       * @minItems 1
-       */
-      errors: [Error, ...Error[]];
-      context?: ContextObject;
-      ext?: ExtensionObject;
-    };
+export type ActivateSignalResponse = ActivateSignalSuccess | ActivateSignalError;
 /**
  * A signal deployment to a specific deployment target with activation status and key
+ */
+export interface ActivateSignalSuccess {
+  /**
+   * Array of deployment results for each deployment target
+   */
+  deployments: Deployment[];
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Opaque correlation data that is echoed unchanged in responses. Used for internal tracking, UI session IDs, trace IDs, and other caller-specific identifiers that don't affect protocol behavior. Context data is never parsed by AdCP agents - it's simply preserved and returned.
+ */
+export interface ActivateSignalError {
+  /**
+   * Array of errors explaining why activation failed (e.g., platform connectivity issues, signal definition problems, authentication failures)
+   *
+   * @minItems 1
+   */
+  errors: [Error, ...Error[]];
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Standard error structure for task-specific errors and warnings
  */

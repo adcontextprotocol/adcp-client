@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas v2.5.0
-// Generated at: 2025-12-17T15:02:21.682Z
+// Generated at: 2025-12-19T12:50:35.077Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -189,44 +189,6 @@ export interface ExtensionObject {
 }
 
 // CREATIVE-ASSET SCHEMA
-/**
- * Image asset with URL and dimensions
- */
-export type ImageAsset = Dimensions & {
-  /**
-   * URL to the image asset
-   */
-  url: string;
-  /**
-   * Image file format (jpg, png, gif, webp, etc.)
-   */
-  format?: string;
-  /**
-   * Alternative text for accessibility
-   */
-  alt_text?: string;
-};
-/**
- * Video asset with URL and specifications
- */
-export type VideoAsset = Dimensions & {
-  /**
-   * URL to the video asset
-   */
-  url: string;
-  /**
-   * Video duration in milliseconds
-   */
-  duration_ms?: number;
-  /**
-   * Video file format (mp4, webm, mov, etc.)
-   */
-  format?: string;
-  /**
-   * Video bitrate in kilobits per second
-   */
-  bitrate_kbps?: number;
-};
 /**
  * JavaScript module type
  */
@@ -483,7 +445,11 @@ export interface CreativeAsset {
 /**
  * Format identifier specifying which format this creative conforms to. Can be: (1) concrete format_id referencing a format with fixed dimensions, (2) template format_id referencing a template format, or (3) parameterized format_id with dimensions/duration parameters for template formats.
  */
-export interface Dimensions {
+export interface ImageAsset {
+  /**
+   * URL to the image asset
+   */
+  url: string;
   /**
    * Width in pixels
    */
@@ -492,6 +458,43 @@ export interface Dimensions {
    * Height in pixels
    */
   height: number;
+  /**
+   * Image file format (jpg, png, gif, webp, etc.)
+   */
+  format?: string;
+  /**
+   * Alternative text for accessibility
+   */
+  alt_text?: string;
+}
+/**
+ * Video asset with URL and specifications
+ */
+export interface VideoAsset {
+  /**
+   * URL to the video asset
+   */
+  url: string;
+  /**
+   * Width in pixels
+   */
+  width: number;
+  /**
+   * Height in pixels
+   */
+  height: number;
+  /**
+   * Video duration in milliseconds
+   */
+  duration_ms?: number;
+  /**
+   * Video file format (mp4, webm, mov, etc.)
+   */
+  format?: string;
+  /**
+   * Video bitrate in kilobits per second
+   */
+  bitrate_kbps?: number;
 }
 /**
  * Audio asset with URL and specifications
@@ -1676,143 +1679,15 @@ export type AdCPAsyncResponseData =
 /**
  * Selects properties from a publisher's adagents.json. Used for both product definitions and agent authorization. Supports three selection patterns: all properties, specific IDs, or by tags.
  */
-export type CreateMediaBuyResponse =
-  | {
-      /**
-       * Publisher's unique identifier for the created media buy
-       */
-      media_buy_id: string;
-      /**
-       * Buyer's reference identifier for this media buy
-       */
-      buyer_ref: string;
-      /**
-       * ISO 8601 timestamp for creative upload deadline
-       */
-      creative_deadline?: string;
-      /**
-       * Array of created packages with complete state information
-       */
-      packages: Package[];
-      context?: ContextObject;
-      ext?: ExtensionObject;
-    }
-  | {
-      /**
-       * Array of errors explaining why the operation failed
-       *
-       * @minItems 1
-       */
-      errors: [Error, ...Error[]];
-      context?: ContextObject;
-      ext?: ExtensionObject;
-    };
+export type CreateMediaBuyResponse = CreateMediaBuySuccess | CreateMediaBuyError;
 /**
  * Budget pacing strategy
  */
-export type UpdateMediaBuyResponse =
-  | {
-      /**
-       * Publisher's identifier for the media buy
-       */
-      media_buy_id: string;
-      /**
-       * Buyer's reference identifier for the media buy
-       */
-      buyer_ref: string;
-      /**
-       * ISO 8601 timestamp when changes take effect (null if pending approval)
-       */
-      implementation_date?: string | null;
-      /**
-       * Array of packages that were modified with complete state information
-       */
-      affected_packages?: Package[];
-      context?: ContextObject;
-      ext?: ExtensionObject;
-    }
-  | {
-      /**
-       * Array of errors explaining why the operation failed
-       *
-       * @minItems 1
-       */
-      errors: [Error, ...Error[]];
-      context?: ContextObject;
-      ext?: ExtensionObject;
-    };
+export type UpdateMediaBuyResponse = UpdateMediaBuySuccess | UpdateMediaBuyError;
 /**
  * Response for completed or failed sync_creatives
  */
-export type SyncCreativesResponse =
-  | {
-      /**
-       * Whether this was a dry run (no actual changes made)
-       */
-      dry_run?: boolean;
-      /**
-       * Results for each creative processed. Items with action='failed' indicate per-item validation/processing failures, not operation-level failures.
-       */
-      creatives: {
-        /**
-         * Creative ID from the request
-         */
-        creative_id: string;
-        action: CreativeAction;
-        /**
-         * Platform-specific ID assigned to the creative
-         */
-        platform_id?: string;
-        /**
-         * Field names that were modified (only present when action='updated')
-         */
-        changes?: string[];
-        /**
-         * Validation or processing errors (only present when action='failed')
-         */
-        errors?: string[];
-        /**
-         * Non-fatal warnings about this creative
-         */
-        warnings?: string[];
-        /**
-         * Preview URL for generative creatives (only present for generative formats)
-         */
-        preview_url?: string;
-        /**
-         * ISO 8601 timestamp when preview link expires (only present when preview_url exists)
-         */
-        expires_at?: string;
-        /**
-         * Package IDs this creative was successfully assigned to (only present when assignments were requested)
-         */
-        assigned_to?: string[];
-        /**
-         * Assignment errors by package ID (only present when assignment failures occurred)
-         */
-        assignment_errors?: {
-          /**
-           * Error message for this package assignment
-           *
-           * This interface was referenced by `undefined`'s JSON-Schema definition
-           * via the `patternProperty` "^[a-zA-Z0-9_-]+$".
-           */
-          [k: string]: string;
-        };
-      }[];
-      context?: ContextObject;
-      ext?: ExtensionObject;
-    }
-  | {
-      /**
-       * Operation-level errors that prevented processing any creatives (e.g., authentication failure, service unavailable, invalid request format)
-       *
-       * @minItems 1
-       */
-      errors: [Error, ...Error[]];
-      context?: ContextObject;
-      ext?: ExtensionObject;
-    };
+export type SyncCreativesResponse = SyncCreativesSuccess | SyncCreativesError;
 /**
  * Action taken for this creative
  */
@@ -1953,7 +1828,43 @@ export interface GetProductsAsyncSubmitted {
   ext?: ExtensionObject;
 }
 /**
+ * Success response - media buy created successfully
+ */
+export interface CreateMediaBuySuccess {
+  /**
+   * Publisher's unique identifier for the created media buy
+   */
+  media_buy_id: string;
+  /**
+   * Buyer's reference identifier for this media buy
+   */
+  buyer_ref: string;
+  /**
+   * ISO 8601 timestamp for creative upload deadline
+   */
+  creative_deadline?: string;
+  /**
+   * Array of created packages with complete state information
+   */
+  packages: Package[];
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
  * A specific product within a media buy (line item)
+ */
+export interface CreateMediaBuyError {
+  /**
+   * Array of errors explaining why the operation failed
+   *
+   * @minItems 1
+   */
+  errors: [Error, ...Error[]];
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Progress data for working create_media_buy
  */
 export interface CreateMediaBuyAsyncWorking {
   /**
@@ -1998,6 +1909,42 @@ export interface CreateMediaBuyAsyncSubmitted {
   ext?: ExtensionObject;
 }
 /**
+ * Success response - media buy updated successfully
+ */
+export interface UpdateMediaBuySuccess {
+  /**
+   * Publisher's identifier for the media buy
+   */
+  media_buy_id: string;
+  /**
+   * Buyer's reference identifier for the media buy
+   */
+  buyer_ref: string;
+  /**
+   * ISO 8601 timestamp when changes take effect (null if pending approval)
+   */
+  implementation_date?: string | null;
+  /**
+   * Array of packages that were modified with complete state information
+   */
+  affected_packages?: Package[];
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Error response - operation failed, no changes applied
+ */
+export interface UpdateMediaBuyError {
+  /**
+   * Array of errors explaining why the operation failed
+   *
+   * @minItems 1
+   */
+  errors: [Error, ...Error[]];
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
  * Progress data for working update_media_buy
  */
 export interface UpdateMediaBuyAsyncWorking {
@@ -2035,6 +1982,80 @@ export interface UpdateMediaBuyAsyncInputRequired {
  * Acknowledgment for submitted update_media_buy
  */
 export interface UpdateMediaBuyAsyncSubmitted {
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Success response - sync operation processed creatives (may include per-item failures)
+ */
+export interface SyncCreativesSuccess {
+  /**
+   * Whether this was a dry run (no actual changes made)
+   */
+  dry_run?: boolean;
+  /**
+   * Results for each creative processed. Items with action='failed' indicate per-item validation/processing failures, not operation-level failures.
+   */
+  creatives: {
+    /**
+     * Creative ID from the request
+     */
+    creative_id: string;
+    action: CreativeAction;
+    /**
+     * Platform-specific ID assigned to the creative
+     */
+    platform_id?: string;
+    /**
+     * Field names that were modified (only present when action='updated')
+     */
+    changes?: string[];
+    /**
+     * Validation or processing errors (only present when action='failed')
+     */
+    errors?: string[];
+    /**
+     * Non-fatal warnings about this creative
+     */
+    warnings?: string[];
+    /**
+     * Preview URL for generative creatives (only present for generative formats)
+     */
+    preview_url?: string;
+    /**
+     * ISO 8601 timestamp when preview link expires (only present when preview_url exists)
+     */
+    expires_at?: string;
+    /**
+     * Package IDs this creative was successfully assigned to (only present when assignments were requested)
+     */
+    assigned_to?: string[];
+    /**
+     * Assignment errors by package ID (only present when assignment failures occurred)
+     */
+    assignment_errors?: {
+      /**
+       * Error message for this package assignment
+       *
+       * This interface was referenced by `undefined`'s JSON-Schema definition
+       * via the `patternProperty` "^[a-zA-Z0-9_-]+$".
+       */
+      [k: string]: string;
+    };
+  }[];
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Error response - operation failed completely, no creatives were processed
+ */
+export interface SyncCreativesError {
+  /**
+   * Operation-level errors that prevented processing any creatives (e.g., authentication failure, service unavailable, invalid request format)
+   *
+   * @minItems 1
+   */
+  errors: [Error, ...Error[]];
   context?: ContextObject;
   ext?: ExtensionObject;
 }
