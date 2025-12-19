@@ -132,7 +132,8 @@ export class SingleAgentClient {
   private executor: TaskExecutor;
   private asyncHandler?: AsyncHandler;
   private normalizedAgent: AgentConfig;
-  private discoveredEndpoint?: string; // Cache discovered endpoint
+  private discoveredEndpoint?: string; // Cache discovered MCP endpoint
+  private canonicalBaseUrl?: string; // Cache canonical base URL (from agent card or stripped /mcp)
 
   constructor(
     private agent: AgentConfig,
@@ -164,6 +165,7 @@ export class SingleAgentClient {
    *
    * If the agent needs discovery, perform it now and cache the result.
    * Returns the agent config with the discovered endpoint.
+   * Also computes the canonical base URL by stripping /mcp suffix.
    */
   private async ensureEndpointDiscovered(): Promise<AgentConfig> {
     const needsDiscovery = (this.normalizedAgent as any)._needsDiscovery;
@@ -183,10 +185,118 @@ export class SingleAgentClient {
     // Perform discovery
     this.discoveredEndpoint = await this.discoverMCPEndpoint(this.normalizedAgent.agent_uri);
 
+    // Compute canonical base URL by stripping /mcp suffix
+    this.canonicalBaseUrl = this.computeBaseUrl(this.discoveredEndpoint);
+
     return {
       ...this.normalizedAgent,
       agent_uri: this.discoveredEndpoint,
     };
+  }
+
+  /**
+   * Ensure A2A canonical URL is resolved (lazy initialization)
+   *
+   * Fetches the agent card and extracts the canonical URL.
+   * Returns the agent config with the canonical URL.
+   */
+  private async ensureCanonicalUrlResolved(): Promise<AgentConfig> {
+    const needsCanonicalUrl = (this.normalizedAgent as any)._needsCanonicalUrl;
+
+    if (!needsCanonicalUrl) {
+      return this.normalizedAgent;
+    }
+
+    // Already resolved? Use cached value
+    if (this.canonicalBaseUrl) {
+      return {
+        ...this.normalizedAgent,
+        agent_uri: this.canonicalBaseUrl,
+      };
+    }
+
+    // Fetch agent card to get canonical URL
+    const canonicalUrl = await this.fetchA2ACanonicalUrl(this.normalizedAgent.agent_uri);
+    this.canonicalBaseUrl = canonicalUrl;
+
+    return {
+      ...this.normalizedAgent,
+      agent_uri: canonicalUrl,
+    };
+  }
+
+  /**
+   * Fetch the canonical URL from an A2A agent card
+   */
+  private async fetchA2ACanonicalUrl(agentUri: string): Promise<string> {
+    const clientModule = require('@a2a-js/sdk/client');
+    const A2AClient = clientModule.A2AClient;
+
+    const authToken = this.normalizedAgent.auth_token_env;
+    const fetchImpl = authToken
+      ? async (url: string | URL | Request, options?: RequestInit) => {
+          const headers: Record<string, string> = {
+            ...(options?.headers as Record<string, string>),
+            Authorization: `Bearer ${authToken}`,
+            'x-adcp-auth': authToken,
+          };
+          return fetch(url, { ...options, headers });
+        }
+      : undefined;
+
+    // Construct agent card URL
+    const cardUrl = agentUri.endsWith('/.well-known/agent-card.json')
+      ? agentUri
+      : agentUri.replace(/\/$/, '') + '/.well-known/agent-card.json';
+
+    const client = await A2AClient.fromCardUrl(cardUrl, fetchImpl ? { fetchImpl } : {});
+    const agentCard = client.agentCardPromise ? await client.agentCardPromise : client.agentCard;
+
+    // Use the canonical URL from the agent card, falling back to computed base URL
+    if (agentCard?.url) {
+      return agentCard.url;
+    }
+
+    // Fallback: strip .well-known/agent-card.json if present
+    return this.computeBaseUrl(agentUri);
+  }
+
+  /**
+   * Compute base URL by stripping protocol-specific suffixes
+   *
+   * - Strips /mcp or /mcp/ suffix for MCP endpoints
+   * - Strips /.well-known/agent-card.json for A2A discovery URLs
+   * - Strips trailing slash for consistency
+   */
+  private computeBaseUrl(url: string): string {
+    let baseUrl = url;
+
+    // Strip /.well-known/agent-card.json
+    if (baseUrl.match(/\/\.well-known\/agent-card\.json$/i)) {
+      baseUrl = baseUrl.replace(/\/\.well-known\/agent-card\.json$/i, '');
+    }
+
+    // Strip /mcp or /mcp/
+    if (baseUrl.match(/\/mcp\/?$/i)) {
+      baseUrl = baseUrl.replace(/\/mcp\/?$/i, '');
+    }
+
+    // Strip trailing slash for consistency
+    baseUrl = baseUrl.replace(/\/$/, '');
+
+    return baseUrl;
+  }
+
+  /**
+   * Check if URL is a .well-known/agent-card.json URL
+   *
+   * These URLs are A2A agent card discovery URLs and should use A2A protocol.
+   * Only matches when .well-known is at the root path (not in a subdirectory).
+   */
+  private isWellKnownAgentCardUrl(url: string): boolean {
+    // Match: https://example.com/.well-known/agent-card.json
+    // Don't match: https://example.com/api/.well-known/agent-card.json
+    return /^https?:\/\/[^/]+\/\.well-known\/agent-card\.json$/i.test(url);
   }
 
   /**
@@ -275,17 +385,37 @@ export class SingleAgentClient {
   }
 
   /**
-   * Normalize agent config - mark all MCP agents for discovery
+   * Normalize agent config
    *
-   * We always test the endpoint they give us, and if it doesn't work,
-   * we try adding /mcp. Simple.
+   * - If URL is a .well-known/agent-card.json URL, switch to A2A protocol
+   *   (these are A2A discovery URLs, not MCP endpoints)
+   * - A2A agents are marked for canonical URL resolution (from agent card)
+   * - MCP agents are marked for endpoint discovery
    */
   private normalizeAgentConfig(agent: AgentConfig): AgentConfig {
+    // If URL is a well-known agent card URL, use A2A protocol regardless of what was specified
+    // Mark for canonical URL resolution - we'll fetch the agent card and use its url field
+    if (this.isWellKnownAgentCardUrl(agent.agent_uri)) {
+      return {
+        ...agent,
+        protocol: 'a2a',
+        _needsCanonicalUrl: true,
+      } as any;
+    }
+
+    if (agent.protocol === 'a2a') {
+      // A2A agents need canonical URL resolution from agent card
+      return {
+        ...agent,
+        _needsCanonicalUrl: true,
+      } as any;
+    }
+
     if (agent.protocol !== 'mcp') {
       return agent;
     }
 
-    // Mark for discovery - we'll test their path, then try adding /mcp
+    // MCP agents need endpoint discovery - we'll test their path, then try adding /mcp
     return {
       ...agent,
       _needsDiscovery: true,
@@ -1061,10 +1191,41 @@ export class SingleAgentClient {
   // ====== AGENT INFORMATION ======
 
   /**
-   * Get the agent configuration
+   * Get the agent configuration with normalized protocol
+   *
+   * Returns the agent config with:
+   * - Protocol normalized (e.g., .well-known URLs switch to A2A)
+   * - If canonical URL has been resolved, agent_uri will be the canonical URL
+   *
+   * For guaranteed canonical URL, use getResolvedAgent() instead.
    */
   getAgent(): AgentConfig {
-    return { ...this.agent };
+    // If we have resolved the canonical URL, return config with it
+    if (this.canonicalBaseUrl) {
+      const { _needsDiscovery, _needsCanonicalUrl, ...cleanAgent } = this.normalizedAgent as any;
+      return {
+        ...cleanAgent,
+        agent_uri: this.canonicalBaseUrl,
+      };
+    }
+
+    // Return normalized agent without internal flags
+    const { _needsDiscovery, _needsCanonicalUrl, ...cleanAgent } = this.normalizedAgent as any;
+    return { ...cleanAgent };
+  }
+
+  /**
+   * Get the fully resolved agent configuration
+   *
+   * This async method ensures the agent config has the canonical URL resolved:
+   * - For A2A: Fetches the agent card and uses its 'url' field
+   * - For MCP: Performs endpoint discovery
+   *
+   * @returns Promise resolving to agent config with canonical URL
+   */
+  async getResolvedAgent(): Promise<AgentConfig> {
+    await this.resolveCanonicalUrl();
+    return this.getAgent();
   }
 
   /**
@@ -1082,10 +1243,107 @@ export class SingleAgentClient {
   }
 
   /**
-   * Get the agent protocol
+   * Get the agent protocol (may be normalized from original config)
    */
   getProtocol(): 'mcp' | 'a2a' {
-    return this.agent.protocol;
+    return this.normalizedAgent.protocol;
+  }
+
+  /**
+   * Get the canonical base URL for this agent
+   *
+   * Returns the canonical URL if already resolved, or computes it synchronously
+   * from the configured URL. For the most accurate canonical URL (especially for A2A
+   * where the agent card contains the authoritative URL), use resolveCanonicalUrl() first.
+   *
+   * The canonical URL is:
+   * - For A2A: The 'url' field from the agent card (if resolved), or base URL with
+   *   /.well-known/agent-card.json stripped
+   * - For MCP: The discovered endpoint with /mcp stripped
+   *
+   * @returns The canonical base URL (synchronous, may not be fully resolved)
+   */
+  getCanonicalUrl(): string {
+    // Return cached canonical URL if available
+    if (this.canonicalBaseUrl) {
+      return this.canonicalBaseUrl;
+    }
+
+    // Compute from configured URL (best effort without network call)
+    return this.computeBaseUrl(this.normalizedAgent.agent_uri);
+  }
+
+  /**
+   * Resolve and return the canonical base URL for this agent
+   *
+   * This async method ensures the canonical URL is properly resolved:
+   * - For A2A: Fetches the agent card and uses its 'url' field
+   * - For MCP: Performs endpoint discovery and strips /mcp suffix
+   *
+   * The result is cached, so subsequent calls are fast.
+   *
+   * @returns Promise resolving to the canonical base URL
+   */
+  async resolveCanonicalUrl(): Promise<string> {
+    if (this.canonicalBaseUrl) {
+      return this.canonicalBaseUrl;
+    }
+
+    if (this.normalizedAgent.protocol === 'a2a') {
+      await this.ensureCanonicalUrlResolved();
+    } else if (this.normalizedAgent.protocol === 'mcp') {
+      await this.ensureEndpointDiscovered();
+    }
+
+    return this.canonicalBaseUrl || this.computeBaseUrl(this.normalizedAgent.agent_uri);
+  }
+
+  /**
+   * Check if this agent is the same as another agent
+   *
+   * Compares agents by their canonical base URLs. Two agents are considered
+   * the same if they have the same canonical URL, regardless of:
+   * - Protocol (MCP vs A2A)
+   * - URL format (with/without /mcp, with/without /.well-known/agent-card.json)
+   * - Trailing slashes
+   *
+   * @param other - Another agent configuration or SingleAgentClient to compare
+   * @returns true if agents have the same canonical URL
+   */
+  isSameAgent(other: AgentConfig | SingleAgentClient): boolean {
+    const thisUrl = this.getCanonicalUrl().toLowerCase();
+
+    let otherUrl: string;
+    if (other instanceof SingleAgentClient) {
+      otherUrl = other.getCanonicalUrl().toLowerCase();
+    } else {
+      otherUrl = this.computeBaseUrl(other.agent_uri).toLowerCase();
+    }
+
+    return thisUrl === otherUrl;
+  }
+
+  /**
+   * Async version of isSameAgent that resolves canonical URLs first
+   *
+   * This provides more accurate comparison for A2A agents since it fetches
+   * the agent card to get the authoritative canonical URL.
+   *
+   * @param other - Another agent configuration or SingleAgentClient to compare
+   * @returns Promise resolving to true if agents have the same canonical URL
+   */
+  async isSameAgentResolved(other: AgentConfig | SingleAgentClient): Promise<boolean> {
+    const thisUrl = (await this.resolveCanonicalUrl()).toLowerCase();
+
+    let otherUrl: string;
+    if (other instanceof SingleAgentClient) {
+      otherUrl = (await other.resolveCanonicalUrl()).toLowerCase();
+    } else {
+      // For raw AgentConfig, we can only compute from the URL
+      otherUrl = this.computeBaseUrl(other.agent_uri).toLowerCase();
+    }
+
+    return thisUrl === otherUrl;
   }
 
   /**
@@ -1220,7 +1478,7 @@ export class SingleAgentClient {
       parameters?: string[];
     }>;
   }> {
-    if (this.agent.protocol === 'mcp') {
+    if (this.normalizedAgent.protocol === 'mcp') {
       // Discover endpoint if needed
       const agent = await this.ensureEndpointDiscovered();
 
@@ -1233,7 +1491,7 @@ export class SingleAgentClient {
         version: '1.0.0',
       });
 
-      const authToken = this.agent.auth_token_env;
+      const authToken = this.normalizedAgent.auth_token_env;
       const customFetch = authToken
         ? async (input: any, init?: any) => {
             // IMPORTANT: Must preserve SDK's default headers (especially Accept header)
@@ -1288,18 +1546,18 @@ export class SingleAgentClient {
       }));
 
       return {
-        name: this.agent.name,
+        name: this.normalizedAgent.name,
         description: undefined,
-        protocol: this.agent.protocol,
+        protocol: this.normalizedAgent.protocol,
         url: agent.agent_uri,
         tools,
       };
-    } else if (this.agent.protocol === 'a2a') {
+    } else if (this.normalizedAgent.protocol === 'a2a') {
       // Use A2A SDK to get agent card
       const clientModule = require('@a2a-js/sdk/client');
       const A2AClient = clientModule.A2AClient;
 
-      const authToken = this.agent.auth_token_env;
+      const authToken = this.normalizedAgent.auth_token_env;
       const fetchImpl = authToken
         ? async (url: any, options?: any) => {
             const headers = {
@@ -1328,15 +1586,15 @@ export class SingleAgentClient {
         : [];
 
       return {
-        name: agentCard?.displayName || agentCard?.name || this.agent.name,
+        name: agentCard?.displayName || agentCard?.name || this.normalizedAgent.name,
         description: agentCard?.description,
-        protocol: this.agent.protocol,
+        protocol: this.normalizedAgent.protocol,
         url: this.normalizedAgent.agent_uri,
         tools,
       };
     }
 
-    throw new Error(`Unsupported protocol: ${this.agent.protocol}`);
+    throw new Error(`Unsupported protocol: ${this.normalizedAgent.protocol}`);
   }
 
   // ====== STATIC HELPER METHODS ======
