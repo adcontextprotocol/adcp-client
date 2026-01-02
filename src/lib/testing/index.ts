@@ -18,3 +18,15 @@ export {
   // Creative agents (MCP only - A2A not yet supported)
   creativeAgent,
 } from './test-helpers';
+
+// E2E Agent Testing Framework
+export {
+  testAgent as runAgentTests,
+  formatTestResults,
+  setAgentTesterLogger,
+  type TestScenario,
+  type TestOptions,
+  type TestResult,
+  type TestStepResult,
+  type AgentProfile,
+} from './agent-tester';
