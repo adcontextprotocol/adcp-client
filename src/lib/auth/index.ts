@@ -20,15 +20,15 @@ export function generateUUID(): string {
  *
  * Priority: auth_token takes precedence if both are provided
  *
+ * The `requiresAuth` flag controls enforcement, not usage:
+ * - If auth credentials are provided, they're always used (regardless of requiresAuth)
+ * - If requiresAuth is true but no credentials are provided, an error is thrown in production
+ *
  * @param agent - Agent configuration
- * @returns Authentication token string or undefined if not configured/required
+ * @returns Authentication token string or undefined if not configured
  */
 export function getAuthToken(agent: AgentConfig): string | undefined {
-  if (!agent.requiresAuth) {
-    return undefined;
-  }
-
-  // Explicit auth_token takes precedence
+  // Explicit auth_token takes precedence - always use it if provided
   if (agent.auth_token) {
     return agent.auth_token;
   }
@@ -47,8 +47,8 @@ export function getAuthToken(agent: AgentConfig): string | undefined {
     return envValue;
   }
 
-  // In production, require explicit auth configuration when requiresAuth is true
-  if (process.env.NODE_ENV === 'production') {
+  // No auth credentials provided - check if they're required
+  if (agent.requiresAuth && process.env.NODE_ENV === 'production') {
     throw new Error(`[AUTH] Agent ${agent.id} requires authentication but no auth_token or auth_token_env configured`);
   }
 
