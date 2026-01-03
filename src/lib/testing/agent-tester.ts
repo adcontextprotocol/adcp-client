@@ -60,25 +60,25 @@ interface TaskResult {
 
 // Test scenarios that can be run
 export type TestScenario =
-  | 'health_check'           // Just check if agent responds
-  | 'discovery'              // get_products, list_creative_formats, list_authorized_properties
-  | 'create_media_buy'       // Discovery + create a test media buy
-  | 'full_sales_flow'        // Full lifecycle: discovery -> create -> update -> delivery
-  | 'creative_sync'          // Test sync_creatives flow
-  | 'creative_inline'        // Test inline creatives in create_media_buy
-  | 'creative_reference'     // Test reference creatives (creative_ids)
-  | 'pricing_models'         // Test different pricing models the agent supports
-  | 'creative_flow'          // Creative agent: list_formats -> build -> preview
-  | 'signals_flow'           // Signals agent: get_signals -> activate
+  | 'health_check' // Just check if agent responds
+  | 'discovery' // get_products, list_creative_formats, list_authorized_properties
+  | 'create_media_buy' // Discovery + create a test media buy
+  | 'full_sales_flow' // Full lifecycle: discovery -> create -> update -> delivery
+  | 'creative_sync' // Test sync_creatives flow
+  | 'creative_inline' // Test inline creatives in create_media_buy
+  | 'creative_reference' // Test reference creatives (creative_ids)
+  | 'pricing_models' // Test different pricing models the agent supports
+  | 'creative_flow' // Creative agent: list_formats -> build -> preview
+  | 'signals_flow' // Signals agent: get_signals -> activate
   // Edge case testing scenarios
-  | 'error_handling'         // Test agent returns proper error responses
-  | 'validation'             // Test schema validation (invalid inputs should be rejected)
-  | 'pricing_edge_cases'     // Test auction vs fixed pricing, min spend, bid_price requirements
-  | 'temporal_validation'    // Test date/time ordering and format validation
+  | 'error_handling' // Test agent returns proper error responses
+  | 'validation' // Test schema validation (invalid inputs should be rejected)
+  | 'pricing_edge_cases' // Test auction vs fixed pricing, min spend, bid_price requirements
+  | 'temporal_validation' // Test date/time ordering and format validation
   // Behavioral analysis scenarios
-  | 'behavior_analysis'      // Analyze agent behavior: auth requirements, brief relevance, filtering
+  | 'behavior_analysis' // Analyze agent behavior: auth requirements, brief relevance, filtering
   // Response consistency scenarios
-  | 'response_consistency';  // Check for schema errors, pagination bugs, data mismatches
+  | 'response_consistency'; // Check for schema errors, pagination bugs, data mismatches
 
 export interface TestOptions {
   // Custom brief for product discovery
@@ -140,11 +140,7 @@ export interface TestResult {
 /**
  * Create a test client for an agent
  */
-function createTestClient(
-  agentUrl: string,
-  protocol: 'mcp' | 'a2a' = 'mcp',
-  options: TestOptions = {}
-) {
+function createTestClient(agentUrl: string, protocol: 'mcp' | 'a2a' = 'mcp', options: TestOptions = {}) {
   const headers: Record<string, string> = {};
 
   // Dry-run is true by default for safety
@@ -224,10 +220,8 @@ async function runStep<T>(
 async function discoverAgentProfile(
   client: ReturnType<typeof createTestClient>
 ): Promise<{ profile: AgentProfile; step: TestStepResult }> {
-  const { result: agentInfo, step } = await runStep(
-    'Discover agent capabilities',
-    'getAgentInfo',
-    () => client.getAgentInfo()
+  const { result: agentInfo, step } = await runStep('Discover agent capabilities', 'getAgentInfo', () =>
+    client.getAgentInfo()
   );
 
   const profile: AgentProfile = {
@@ -237,10 +231,14 @@ async function discoverAgentProfile(
 
   if (agentInfo) {
     step.details = `Agent: ${profile.name}, Tools: ${profile.tools.length}`;
-    step.response_preview = JSON.stringify({
-      name: profile.name,
-      tools: profile.tools,
-    }, null, 2);
+    step.response_preview = JSON.stringify(
+      {
+        name: profile.name,
+        tools: profile.tools,
+      },
+      null,
+      2
+    );
   }
 
   return { profile, step };
@@ -318,13 +316,17 @@ async function discoverAgentCapabilities(
     capabilities.delivery_types = Array.from(deliveryTypes);
 
     step.details = `Found ${products.length} products across ${channels.size} channel(s), ${pricingModels.size} pricing model(s)`;
-    step.response_preview = JSON.stringify({
-      products_count: products.length,
-      channels: capabilities.channels,
-      pricing_models: capabilities.pricing_models,
-      delivery_types: capabilities.delivery_types,
-      format_count: capabilities.format_ids?.length,
-    }, null, 2);
+    step.response_preview = JSON.stringify(
+      {
+        products_count: products.length,
+        channels: capabilities.channels,
+        pricing_models: capabilities.pricing_models,
+        delivery_types: capabilities.delivery_types,
+        format_count: capabilities.format_ids?.length,
+      },
+      null,
+      2
+    );
   } else if (result && !result.success) {
     step.passed = false;
     step.error = result.error || 'get_products failed';
@@ -352,7 +354,10 @@ async function testHealthCheck(agentUrl: string, options: TestOptions): Promise<
  * Test: Discovery
  * Tests product discovery, format listing, and property listing
  */
-async function testDiscovery(agentUrl: string, options: TestOptions): Promise<{ steps: TestStepResult[]; profile?: AgentProfile }> {
+async function testDiscovery(
+  agentUrl: string,
+  options: TestOptions
+): Promise<{ steps: TestStepResult[]; profile?: AgentProfile }> {
   const steps: TestStepResult[] = [];
   const client = createTestClient(agentUrl, 'mcp', options);
 
@@ -384,10 +389,14 @@ async function testDiscovery(agentUrl: string, options: TestOptions): Promise<{ 
       const formatCount = data.format_ids?.length || data.formats?.length || 0;
       const creativeAgents = data.creative_agents || [];
       step.details = `Found ${formatCount} format(s), ${creativeAgents.length} creative agent(s)`;
-      step.response_preview = JSON.stringify({
-        format_ids: (data.format_ids || data.formats?.map((f: any) => f.format_id))?.slice(0, 5),
-        creative_agents: creativeAgents.map((a: any) => a.agent_url || a.url),
-      }, null, 2);
+      step.response_preview = JSON.stringify(
+        {
+          format_ids: (data.format_ids || data.formats?.map((f: any) => f.format_id))?.slice(0, 5),
+          creative_agents: creativeAgents.map((a: any) => a.agent_url || a.url),
+        },
+        null,
+        2
+      );
     } else if (result && !result.success) {
       step.passed = false;
       step.error = result.error || 'list_creative_formats returned unsuccessful result';
@@ -406,10 +415,14 @@ async function testDiscovery(agentUrl: string, options: TestOptions): Promise<{ 
     const properties = result?.data?.authorized_properties as any[] | undefined;
     if (result?.success && properties) {
       step.details = `Found ${properties.length} authorized propert(ies)`;
-      step.response_preview = JSON.stringify({
-        properties_count: properties.length,
-        domains: properties.slice(0, 3).map((p: any) => p.domain),
-      }, null, 2);
+      step.response_preview = JSON.stringify(
+        {
+          properties_count: properties.length,
+          domains: properties.slice(0, 3).map((p: any) => p.domain),
+        },
+        null,
+        2
+      );
     } else if (result && !result.success) {
       step.passed = false;
       step.error = result.error || 'list_authorized_properties returned unsuccessful result';
@@ -428,17 +441,13 @@ function selectProduct(products: any[], options: TestOptions): any | null {
   let candidates = products;
 
   if (options.channels?.length) {
-    candidates = products.filter(p =>
-      p.channels?.some((ch: string) => options.channels!.includes(ch))
-    );
+    candidates = products.filter(p => p.channels?.some((ch: string) => options.channels!.includes(ch)));
   }
 
   // If pricing models specified, filter further
   if (options.pricing_models?.length) {
     candidates = candidates.filter(p =>
-      p.pricing_options?.some((po: any) =>
-        options.pricing_models!.includes(po.model)
-      )
+      p.pricing_options?.some((po: any) => options.pricing_models!.includes(po.model))
     );
   }
 
@@ -477,9 +486,8 @@ function buildCreateMediaBuyRequest(
   const startTime = new Date(now.getTime() + 24 * 60 * 60 * 1000); // Tomorrow
   const endTime = new Date(startTime.getTime() + 7 * 24 * 60 * 60 * 1000); // 7 days later
 
-  const isAuction = pricingOption.model === 'auction' ||
-                    pricingOption.is_fixed === false ||
-                    pricingOption.floor_price !== undefined;
+  const isAuction =
+    pricingOption.model === 'auction' || pricingOption.is_fixed === false || pricingOption.floor_price !== undefined;
 
   const packageRequest: any = {
     buyer_ref: `pkg-test-${Date.now()}`,
@@ -519,7 +527,10 @@ function buildCreateMediaBuyRequest(
  * Test: Create Media Buy
  * Discovers products, then creates a test media buy
  */
-async function testCreateMediaBuy(agentUrl: string, options: TestOptions): Promise<{ steps: TestStepResult[]; profile?: AgentProfile; mediaBuyId?: string }> {
+async function testCreateMediaBuy(
+  agentUrl: string,
+  options: TestOptions
+): Promise<{ steps: TestStepResult[]; profile?: AgentProfile; mediaBuyId?: string }> {
   const steps: TestStepResult[] = [];
   const client = createTestClient(agentUrl, 'mcp', options);
 
@@ -542,13 +553,14 @@ async function testCreateMediaBuy(agentUrl: string, options: TestOptions): Promi
   const { result: productsResult } = await runStep<TaskResult>(
     'Fetch products for media buy',
     'get_products',
-    async () => client.executeTask('get_products', {
-      brief: options.brief || 'Looking for display advertising products',
-      brand_manifest: {
-        name: 'E2E Test Brand',
-        url: 'https://test.example.com',
-      },
-    }) as Promise<TaskResult>
+    async () =>
+      client.executeTask('get_products', {
+        brief: options.brief || 'Looking for display advertising products',
+        brand_manifest: {
+          name: 'E2E Test Brand',
+          url: 'https://test.example.com',
+        },
+      }) as Promise<TaskResult>
   );
 
   const products = productsResult?.data?.products as any[] | undefined;
@@ -595,13 +607,17 @@ async function testCreateMediaBuy(agentUrl: string, options: TestOptions): Promi
     const packages = mediaBuy.packages || mediaBuy.media_buy?.packages;
     createStep.details = `Created media buy: ${mediaBuyId}, status: ${status}`;
     createStep.created_id = mediaBuyId;
-    createStep.response_preview = JSON.stringify({
-      media_buy_id: mediaBuyId,
-      status,
-      packages_count: packages?.length,
-      pricing_model: pricingOption.model,
-      product_name: product.name,
-    }, null, 2);
+    createStep.response_preview = JSON.stringify(
+      {
+        media_buy_id: mediaBuyId,
+        status,
+        packages_count: packages?.length,
+        pricing_model: pricingOption.model,
+        product_name: product.name,
+      },
+      null,
+      2
+    );
   } else if (createResult && !createResult.success) {
     createStep.passed = false;
     createStep.error = createResult.error || 'create_media_buy returned unsuccessful result';
@@ -615,7 +631,10 @@ async function testCreateMediaBuy(agentUrl: string, options: TestOptions): Promi
  * Test: Full Sales Flow
  * Complete lifecycle: discovery -> create -> update -> delivery
  */
-async function testFullSalesFlow(agentUrl: string, options: TestOptions): Promise<{ steps: TestStepResult[]; profile?: AgentProfile }> {
+async function testFullSalesFlow(
+  agentUrl: string,
+  options: TestOptions
+): Promise<{ steps: TestStepResult[]; profile?: AgentProfile }> {
   const steps: TestStepResult[] = [];
   const client = createTestClient(agentUrl, 'mcp', options);
 
@@ -632,23 +651,30 @@ async function testFullSalesFlow(agentUrl: string, options: TestOptions): Promis
     const { result: updateResult, step: updateStep } = await runStep<TaskResult>(
       'Update media buy (increase budget)',
       'update_media_buy',
-      async () => client.executeTask('update_media_buy', {
-        media_buy_id: mediaBuyId,
-        packages: [{
-          package_id: 'pkg-0',
-          budget: (options.budget || 1000) * 1.5,
-        }],
-      }) as Promise<TaskResult>
+      async () =>
+        client.executeTask('update_media_buy', {
+          media_buy_id: mediaBuyId,
+          packages: [
+            {
+              package_id: 'pkg-0',
+              budget: (options.budget || 1000) * 1.5,
+            },
+          ],
+        }) as Promise<TaskResult>
     );
 
     if (updateResult?.success && updateResult?.data) {
       const data = updateResult.data as any;
       const status = data.status || data.media_buy?.status;
       updateStep.details = `Updated media buy, status: ${status}`;
-      updateStep.response_preview = JSON.stringify({
-        media_buy_id: data.media_buy_id || data.media_buy?.media_buy_id,
-        status,
-      }, null, 2);
+      updateStep.response_preview = JSON.stringify(
+        {
+          media_buy_id: data.media_buy_id || data.media_buy?.media_buy_id,
+          status,
+        },
+        null,
+        2
+      );
     } else if (updateResult && !updateResult.success) {
       updateStep.passed = false;
       updateStep.error = updateResult.error || 'update_media_buy returned unsuccessful result';
@@ -661,17 +687,22 @@ async function testFullSalesFlow(agentUrl: string, options: TestOptions): Promis
     const { result: deliveryResult, step: deliveryStep } = await runStep<TaskResult>(
       'Get delivery metrics',
       'get_media_buy_delivery',
-      async () => client.executeTask('get_media_buy_delivery', {
-        media_buy_ids: [mediaBuyId],
-      }) as Promise<TaskResult>
+      async () =>
+        client.executeTask('get_media_buy_delivery', {
+          media_buy_ids: [mediaBuyId],
+        }) as Promise<TaskResult>
     );
 
     if (deliveryResult?.success && deliveryResult?.data) {
       const delivery = deliveryResult.data as any;
       deliveryStep.details = `Retrieved delivery metrics`;
-      deliveryStep.response_preview = JSON.stringify({
-        has_deliveries: !!(delivery.deliveries?.length || delivery.media_buys?.length),
-      }, null, 2);
+      deliveryStep.response_preview = JSON.stringify(
+        {
+          has_deliveries: !!(delivery.deliveries?.length || delivery.media_buys?.length),
+        },
+        null,
+        2
+      );
     } else if (deliveryResult && !deliveryResult.success) {
       deliveryStep.passed = false;
       deliveryStep.error = deliveryResult.error || 'get_media_buy_delivery returned unsuccessful result';
@@ -686,7 +717,10 @@ async function testFullSalesFlow(agentUrl: string, options: TestOptions): Promis
  * Test: Creative Sync Flow
  * Tests sync_creatives separately from create_media_buy
  */
-async function testCreativeSync(agentUrl: string, options: TestOptions): Promise<{ steps: TestStepResult[]; profile?: AgentProfile }> {
+async function testCreativeSync(
+  agentUrl: string,
+  options: TestOptions
+): Promise<{ steps: TestStepResult[]; profile?: AgentProfile }> {
   const steps: TestStepResult[] = [];
   const client = createTestClient(agentUrl, 'mcp', options);
 
@@ -718,7 +752,7 @@ async function testCreativeSync(agentUrl: string, options: TestOptions): Promise
       const data = formatsResult.data as any;
       const firstFormat = data.format_ids?.[0] || data.formats?.[0];
       if (firstFormat) {
-        formatId = typeof firstFormat === 'string' ? firstFormat : (firstFormat.id || firstFormat.format_id);
+        formatId = typeof firstFormat === 'string' ? firstFormat : firstFormat.id || firstFormat.format_id;
       }
     }
   }
@@ -742,9 +776,10 @@ async function testCreativeSync(agentUrl: string, options: TestOptions): Promise
   const { result: syncResult, step: syncStep } = await runStep<TaskResult>(
     'Sync creative to library',
     'sync_creatives',
-    async () => client.executeTask('sync_creatives', {
-      creatives: [testCreative],
-    }) as Promise<TaskResult>
+    async () =>
+      client.executeTask('sync_creatives', {
+        creatives: [testCreative],
+      }) as Promise<TaskResult>
   );
 
   if (syncResult?.success && syncResult?.data) {
@@ -752,11 +787,15 @@ async function testCreativeSync(agentUrl: string, options: TestOptions): Promise
     const creatives = data.creatives || [];
     const actions = creatives.map((c: any) => c.action);
     syncStep.details = `Synced ${creatives.length} creative(s), actions: ${actions.join(', ')}`;
-    syncStep.response_preview = JSON.stringify({
-      creatives_count: creatives.length,
-      actions: actions,
-      creative_ids: creatives.map((c: any) => c.creative_id),
-    }, null, 2);
+    syncStep.response_preview = JSON.stringify(
+      {
+        creatives_count: creatives.length,
+        actions: actions,
+        creative_ids: creatives.map((c: any) => c.creative_id),
+      },
+      null,
+      2
+    );
   } else if (syncResult && !syncResult.success) {
     syncStep.passed = false;
     syncStep.error = syncResult.error || 'sync_creatives returned unsuccessful result';
@@ -782,19 +821,27 @@ async function testCreativeSync(agentUrl: string, options: TestOptions): Promise
       if (totalMatching !== undefined && totalMatching > 0 && returned === 0) {
         listStep.passed = false;
         listStep.error = `Pagination bug: query_summary shows ${totalMatching} total_matching but returned ${returned} creatives`;
-        listStep.response_preview = JSON.stringify({
-          total_matching: totalMatching,
-          returned,
-          creatives_count: creatives.length,
-          pagination: data.pagination,
-        }, null, 2);
+        listStep.response_preview = JSON.stringify(
+          {
+            total_matching: totalMatching,
+            returned,
+            creatives_count: creatives.length,
+            pagination: data.pagination,
+          },
+          null,
+          2
+        );
       } else {
         listStep.details = `Found ${creatives.length} creative(s) in library`;
-        listStep.response_preview = JSON.stringify({
-          creatives_count: creatives.length,
-          total_matching: totalMatching,
-          statuses: Array.from(new Set(creatives.map((c: any) => c.status))),
-        }, null, 2);
+        listStep.response_preview = JSON.stringify(
+          {
+            creatives_count: creatives.length,
+            total_matching: totalMatching,
+            statuses: Array.from(new Set(creatives.map((c: any) => c.status))),
+          },
+          null,
+          2
+        );
       }
     } else if (listResult && !listResult.success) {
       listStep.passed = false;
@@ -810,7 +857,10 @@ async function testCreativeSync(agentUrl: string, options: TestOptions): Promise
  * Test: Creative Inline Flow
  * Tests providing creatives inline in create_media_buy
  */
-async function testCreativeInline(agentUrl: string, options: TestOptions): Promise<{ steps: TestStepResult[]; profile?: AgentProfile }> {
+async function testCreativeInline(
+  agentUrl: string,
+  options: TestOptions
+): Promise<{ steps: TestStepResult[]; profile?: AgentProfile }> {
   const steps: TestStepResult[] = [];
   const client = createTestClient(agentUrl, 'mcp', options);
 
@@ -833,13 +883,14 @@ async function testCreativeInline(agentUrl: string, options: TestOptions): Promi
   const { result: productsResult } = await runStep<TaskResult>(
     'Fetch products',
     'get_products',
-    async () => client.executeTask('get_products', {
-      brief: options.brief || 'Looking for display advertising products',
-      brand_manifest: {
-        name: 'E2E Test Brand',
-        url: 'https://test.example.com',
-      },
-    }) as Promise<TaskResult>
+    async () =>
+      client.executeTask('get_products', {
+        brief: options.brief || 'Looking for display advertising products',
+        brand_manifest: {
+          name: 'E2E Test Brand',
+          url: 'https://test.example.com',
+        },
+      }) as Promise<TaskResult>
   );
 
   const products = productsResult?.data?.products as any[] | undefined;
@@ -870,7 +921,7 @@ async function testCreativeInline(agentUrl: string, options: TestOptions): Promi
 
   // Build inline creative
   const formatId = product.format_ids?.[0];
-  const formatIdValue = typeof formatId === 'string' ? formatId : (formatId?.id || 'display_300x250');
+  const formatIdValue = typeof formatId === 'string' ? formatId : formatId?.id || 'display_300x250';
 
   // Assets must be an object keyed by asset_role, not an array
   const inlineCreative = {
@@ -901,11 +952,15 @@ async function testCreativeInline(agentUrl: string, options: TestOptions): Promi
     const mediaBuy = createResult.data as any;
     const mediaBuyId = mediaBuy.media_buy_id || mediaBuy.media_buy?.media_buy_id;
     createStep.details = `Created media buy with inline creative: ${mediaBuyId}`;
-    createStep.response_preview = JSON.stringify({
-      media_buy_id: mediaBuyId,
-      status: mediaBuy.status || mediaBuy.media_buy?.status,
-      inline_creative_used: true,
-    }, null, 2);
+    createStep.response_preview = JSON.stringify(
+      {
+        media_buy_id: mediaBuyId,
+        status: mediaBuy.status || mediaBuy.media_buy?.status,
+        inline_creative_used: true,
+      },
+      null,
+      2
+    );
   } else if (createResult && !createResult.success) {
     createStep.passed = false;
     createStep.error = createResult.error || 'create_media_buy returned unsuccessful result';
@@ -919,7 +974,10 @@ async function testCreativeInline(agentUrl: string, options: TestOptions): Promi
  * Test: Pricing Models
  * Tests different pricing models the agent supports
  */
-async function testPricingModels(agentUrl: string, options: TestOptions): Promise<{ steps: TestStepResult[]; profile?: AgentProfile }> {
+async function testPricingModels(
+  agentUrl: string,
+  options: TestOptions
+): Promise<{ steps: TestStepResult[]; profile?: AgentProfile }> {
   const steps: TestStepResult[] = [];
   const client = createTestClient(agentUrl, 'mcp', options);
 
@@ -941,13 +999,14 @@ async function testPricingModels(agentUrl: string, options: TestOptions): Promis
   const { result: productsResult } = await runStep<TaskResult>(
     'Fetch products for pricing analysis',
     'get_products',
-    async () => client.executeTask('get_products', {
-      brief: 'Show all products',
-      brand_manifest: {
-        name: 'E2E Test Brand',
-        url: 'https://test.example.com',
-      },
-    }) as Promise<TaskResult>
+    async () =>
+      client.executeTask('get_products', {
+        brief: 'Show all products',
+        brand_manifest: {
+          name: 'E2E Test Brand',
+          url: 'https://test.example.com',
+        },
+      }) as Promise<TaskResult>
   );
 
   const products = productsResult?.data?.products as any[] | undefined;
@@ -959,7 +1018,7 @@ async function testPricingModels(agentUrl: string, options: TestOptions): Promis
   const pricingAnalysis: Record<string, { count: number; fixed: number; auction: number }> = {};
 
   for (const product of products) {
-    for (const po of (product.pricing_options || [])) {
+    for (const po of product.pricing_options || []) {
       const model = po.model || 'unknown';
       if (!pricingAnalysis[model]) {
         pricingAnalysis[model] = { count: 0, fixed: 0, auction: 0 };
@@ -987,7 +1046,10 @@ async function testPricingModels(agentUrl: string, options: TestOptions): Promis
 /**
  * Test: Creative Flow (for creative agents)
  */
-async function testCreativeFlow(agentUrl: string, options: TestOptions): Promise<{ steps: TestStepResult[]; profile?: AgentProfile }> {
+async function testCreativeFlow(
+  agentUrl: string,
+  options: TestOptions
+): Promise<{ steps: TestStepResult[]; profile?: AgentProfile }> {
   const steps: TestStepResult[] = [];
   const client = createTestClient(agentUrl, 'mcp', options);
 
@@ -1010,10 +1072,14 @@ async function testCreativeFlow(agentUrl: string, options: TestOptions): Promise
       const data = result.data as any;
       const formats = data.formats || [];
       step.details = `Found ${formats.length} format(s)`;
-      step.response_preview = JSON.stringify({
-        formats_count: formats.length,
-        format_names: formats.slice(0, 5).map((f: any) => f.name || f.format_id),
-      }, null, 2);
+      step.response_preview = JSON.stringify(
+        {
+          formats_count: formats.length,
+          format_names: formats.slice(0, 5).map((f: any) => f.name || f.format_id),
+        },
+        null,
+        2
+      );
     } else if (result && !result.success) {
       step.passed = false;
       step.error = result.error || 'list_creative_formats failed';
@@ -1026,24 +1092,29 @@ async function testCreativeFlow(agentUrl: string, options: TestOptions): Promise
     const { result, step } = await runStep<TaskResult>(
       'Build creative',
       'build_creative',
-      async () => client.executeTask('build_creative', {
-        format_id: options.format_ids?.[0] || 'display_300x250',
-        brand_manifest: {
-          name: 'E2E Test Brand',
-          url: 'https://test.example.com',
-          tagline: 'Testing the future of advertising',
-        },
-        prompt: 'Create a simple display ad for a tech product',
-      }) as Promise<TaskResult>
+      async () =>
+        client.executeTask('build_creative', {
+          format_id: options.format_ids?.[0] || 'display_300x250',
+          brand_manifest: {
+            name: 'E2E Test Brand',
+            url: 'https://test.example.com',
+            tagline: 'Testing the future of advertising',
+          },
+          prompt: 'Create a simple display ad for a tech product',
+        }) as Promise<TaskResult>
     );
 
     if (result?.success && result?.data) {
       const data = result.data as any;
       step.details = `Built creative successfully`;
-      step.response_preview = JSON.stringify({
-        creative_id: data.creative_id || data.creative?.creative_id,
-        format_id: data.format_id || data.creative?.format_id,
-      }, null, 2);
+      step.response_preview = JSON.stringify(
+        {
+          creative_id: data.creative_id || data.creative?.creative_id,
+          format_id: data.format_id || data.creative?.format_id,
+        },
+        null,
+        2
+      );
     } else if (result && !result.success) {
       step.passed = false;
       step.error = result.error || 'build_creative failed';
@@ -1056,21 +1127,26 @@ async function testCreativeFlow(agentUrl: string, options: TestOptions): Promise
     const { result, step } = await runStep<TaskResult>(
       'Preview creative',
       'preview_creative',
-      async () => client.executeTask('preview_creative', {
-        creative: {
-          format_id: options.format_ids?.[0] || 'display_300x250',
-          name: 'Test Creative',
-          assets: [],
-        },
-      }) as Promise<TaskResult>
+      async () =>
+        client.executeTask('preview_creative', {
+          creative: {
+            format_id: options.format_ids?.[0] || 'display_300x250',
+            name: 'Test Creative',
+            assets: [],
+          },
+        }) as Promise<TaskResult>
     );
 
     if (result?.success && result?.data) {
       const data = result.data as any;
       step.details = `Generated preview`;
-      step.response_preview = JSON.stringify({
-        has_renders: !!(data.renders?.length || data.preview_url),
-      }, null, 2);
+      step.response_preview = JSON.stringify(
+        {
+          has_renders: !!(data.renders?.length || data.preview_url),
+        },
+        null,
+        2
+      );
     } else if (result && !result.success) {
       step.passed = false;
       step.error = result.error || 'preview_creative failed';
@@ -1084,7 +1160,10 @@ async function testCreativeFlow(agentUrl: string, options: TestOptions): Promise
 /**
  * Test: Signals Flow (for signals agents)
  */
-async function testSignalsFlow(agentUrl: string, options: TestOptions): Promise<{ steps: TestStepResult[]; profile?: AgentProfile }> {
+async function testSignalsFlow(
+  agentUrl: string,
+  options: TestOptions
+): Promise<{ steps: TestStepResult[]; profile?: AgentProfile }> {
   const steps: TestStepResult[] = [];
   const client = createTestClient(agentUrl, 'mcp', options);
 
@@ -1100,19 +1179,24 @@ async function testSignalsFlow(agentUrl: string, options: TestOptions): Promise<
     const { result, step } = await runStep<TaskResult>(
       'Get signals',
       'get_signals',
-      async () => client.executeTask('get_signals', {
-        brief: 'Looking for audience segments interested in technology',
-      }) as Promise<TaskResult>
+      async () =>
+        client.executeTask('get_signals', {
+          brief: 'Looking for audience segments interested in technology',
+        }) as Promise<TaskResult>
     );
 
     if (result?.success && result?.data) {
       const data = result.data as any;
       const signals = data.signals || [];
       step.details = `Found ${signals.length} signal(s)`;
-      step.response_preview = JSON.stringify({
-        signals_count: signals.length,
-        signal_names: signals.slice(0, 3).map((s: any) => s.name),
-      }, null, 2);
+      step.response_preview = JSON.stringify(
+        {
+          signals_count: signals.length,
+          signal_names: signals.slice(0, 3).map((s: any) => s.name),
+        },
+        null,
+        2
+      );
     } else if (result && !result.success) {
       step.passed = false;
       step.error = result.error || 'get_signals failed';
@@ -1125,21 +1209,26 @@ async function testSignalsFlow(agentUrl: string, options: TestOptions): Promise<
     const { result, step } = await runStep<TaskResult>(
       'Activate signal',
       'activate_signal',
-      async () => client.executeTask('activate_signal', {
-        signal_id: 'test-signal-id',
-        destination: {
-          platform: 'test-platform',
-          account_id: 'test-account',
-        },
-      }) as Promise<TaskResult>
+      async () =>
+        client.executeTask('activate_signal', {
+          signal_id: 'test-signal-id',
+          destination: {
+            platform: 'test-platform',
+            account_id: 'test-account',
+          },
+        }) as Promise<TaskResult>
     );
 
     if (result?.success && result?.data) {
       const data = result.data as any;
       step.details = `Signal activation submitted`;
-      step.response_preview = JSON.stringify({
-        status: data.status || data.deployment?.status,
-      }, null, 2);
+      step.response_preview = JSON.stringify(
+        {
+          status: data.status || data.deployment?.status,
+        },
+        null,
+        2
+      );
     } else if (result && !result.success) {
       step.passed = false;
       step.error = result.error || 'activate_signal failed';
@@ -1154,7 +1243,10 @@ async function testSignalsFlow(agentUrl: string, options: TestOptions): Promise<
  * Test: Error Handling
  * Verifies the agent returns proper discriminated union error responses
  */
-async function testErrorHandling(agentUrl: string, options: TestOptions): Promise<{ steps: TestStepResult[]; profile?: AgentProfile }> {
+async function testErrorHandling(
+  agentUrl: string,
+  options: TestOptions
+): Promise<{ steps: TestStepResult[]; profile?: AgentProfile }> {
   const steps: TestStepResult[] = [];
   const client = createTestClient(agentUrl, 'mcp', options);
 
@@ -1170,21 +1262,24 @@ async function testErrorHandling(agentUrl: string, options: TestOptions): Promis
     const { result, step } = await runStep<TaskResult>(
       'Invalid product_id error response',
       'create_media_buy',
-      async () => client.executeTask('create_media_buy', {
-        buyer_ref: `error-test-${Date.now()}`,
-        brand_manifest: {
-          name: 'Error Test Brand',
-          url: 'https://test.example.com',
-        },
-        start_time: new Date(Date.now() + 86400000).toISOString(),
-        end_time: new Date(Date.now() + 604800000).toISOString(),
-        packages: [{
-          buyer_ref: 'pkg-error-test',
-          product_id: 'NONEXISTENT_PRODUCT_ID_12345',
-          budget: 1000,
-          pricing_option_id: 'nonexistent-pricing',
-        }],
-      }) as Promise<TaskResult>
+      async () =>
+        client.executeTask('create_media_buy', {
+          buyer_ref: `error-test-${Date.now()}`,
+          brand_manifest: {
+            name: 'Error Test Brand',
+            url: 'https://test.example.com',
+          },
+          start_time: new Date(Date.now() + 86400000).toISOString(),
+          end_time: new Date(Date.now() + 604800000).toISOString(),
+          packages: [
+            {
+              buyer_ref: 'pkg-error-test',
+              product_id: 'NONEXISTENT_PRODUCT_ID_12345',
+              budget: 1000,
+              pricing_option_id: 'nonexistent-pricing',
+            },
+          ],
+        }) as Promise<TaskResult>
     );
 
     // For error handling test, we EXPECT an error - passing means the error was returned properly
@@ -1230,21 +1325,24 @@ async function testErrorHandling(agentUrl: string, options: TestOptions): Promis
     const { result, step } = await runStep<TaskResult>(
       'Invalid format_id error response',
       'sync_creatives',
-      async () => client.executeTask('sync_creatives', {
-        creatives: [{
-          creative_id: `invalid-format-test-${Date.now()}`,
-          name: 'Invalid Format Test',
-          format_id: 'TOTALLY_INVALID_FORMAT_ID_999',
-          assets: {
-            primary: {
-              url: 'https://via.placeholder.com/300x250',
-              width: 300,
-              height: 250,
-              format: 'png',
+      async () =>
+        client.executeTask('sync_creatives', {
+          creatives: [
+            {
+              creative_id: `invalid-format-test-${Date.now()}`,
+              name: 'Invalid Format Test',
+              format_id: 'TOTALLY_INVALID_FORMAT_ID_999',
+              assets: {
+                primary: {
+                  url: 'https://via.placeholder.com/300x250',
+                  width: 300,
+                  height: 250,
+                  format: 'png',
+                },
+              },
             },
-          },
-        }],
-      }) as Promise<TaskResult>
+          ],
+        }) as Promise<TaskResult>
     );
 
     // Expect error for invalid format_id
@@ -1268,9 +1366,10 @@ async function testErrorHandling(agentUrl: string, options: TestOptions): Promis
     const { result, step } = await runStep<TaskResult>(
       'Non-existent media_buy_id error',
       'get_media_buy_delivery',
-      async () => client.executeTask('get_media_buy_delivery', {
-        media_buy_ids: ['NONEXISTENT_MEDIA_BUY_ID_99999'],
-      }) as Promise<TaskResult>
+      async () =>
+        client.executeTask('get_media_buy_delivery', {
+          media_buy_ids: ['NONEXISTENT_MEDIA_BUY_ID_99999'],
+        }) as Promise<TaskResult>
     );
 
     if (result && !result.success && result.error) {
@@ -1302,7 +1401,10 @@ async function testErrorHandling(agentUrl: string, options: TestOptions): Promis
  * Test: Validation
  * Tests that agents properly validate inputs and reject malformed requests
  */
-async function testValidation(agentUrl: string, options: TestOptions): Promise<{ steps: TestStepResult[]; profile?: AgentProfile }> {
+async function testValidation(
+  agentUrl: string,
+  options: TestOptions
+): Promise<{ steps: TestStepResult[]; profile?: AgentProfile }> {
   const steps: TestStepResult[] = [];
   const client = createTestClient(agentUrl, 'mcp', options);
 
@@ -1318,19 +1420,22 @@ async function testValidation(agentUrl: string, options: TestOptions): Promise<{
     const { result, step } = await runStep<TaskResult>(
       'Invalid pacing enum value',
       'create_media_buy',
-      async () => client.executeTask('create_media_buy', {
-        buyer_ref: `validation-test-${Date.now()}`,
-        brand_manifest: { name: 'Validation Test', url: 'https://test.example.com' },
-        start_time: new Date(Date.now() + 86400000).toISOString(),
-        end_time: new Date(Date.now() + 604800000).toISOString(),
-        packages: [{
-          buyer_ref: 'pkg-validation',
-          product_id: 'test-product',
-          budget: 1000,
-          pricing_option_id: 'test-pricing',
-          pacing: 'INVALID_PACING_VALUE' as any, // Invalid - should be even/asap/front_loaded
-        }],
-      }) as Promise<TaskResult>
+      async () =>
+        client.executeTask('create_media_buy', {
+          buyer_ref: `validation-test-${Date.now()}`,
+          brand_manifest: { name: 'Validation Test', url: 'https://test.example.com' },
+          start_time: new Date(Date.now() + 86400000).toISOString(),
+          end_time: new Date(Date.now() + 604800000).toISOString(),
+          packages: [
+            {
+              buyer_ref: 'pkg-validation',
+              product_id: 'test-product',
+              budget: 1000,
+              pricing_option_id: 'test-pricing',
+              pacing: 'INVALID_PACING_VALUE' as any, // Invalid - should be even/asap/front_loaded
+            },
+          ],
+        }) as Promise<TaskResult>
     );
 
     if (result && !result.success && result.error) {
@@ -1351,18 +1456,21 @@ async function testValidation(agentUrl: string, options: TestOptions): Promise<{
     const { result, step } = await runStep<TaskResult>(
       'Zero budget validation',
       'create_media_buy',
-      async () => client.executeTask('create_media_buy', {
-        buyer_ref: `zero-budget-test-${Date.now()}`,
-        brand_manifest: { name: 'Zero Budget Test', url: 'https://test.example.com' },
-        start_time: new Date(Date.now() + 86400000).toISOString(),
-        end_time: new Date(Date.now() + 604800000).toISOString(),
-        packages: [{
-          buyer_ref: 'pkg-zero-budget',
-          product_id: 'test-product',
-          budget: 0, // Zero budget - should be rejected or flagged
-          pricing_option_id: 'test-pricing',
-        }],
-      }) as Promise<TaskResult>
+      async () =>
+        client.executeTask('create_media_buy', {
+          buyer_ref: `zero-budget-test-${Date.now()}`,
+          brand_manifest: { name: 'Zero Budget Test', url: 'https://test.example.com' },
+          start_time: new Date(Date.now() + 86400000).toISOString(),
+          end_time: new Date(Date.now() + 604800000).toISOString(),
+          packages: [
+            {
+              buyer_ref: 'pkg-zero-budget',
+              product_id: 'test-product',
+              budget: 0, // Zero budget - should be rejected or flagged
+              pricing_option_id: 'test-pricing',
+            },
+          ],
+        }) as Promise<TaskResult>
     );
 
     if (result && !result.success && result.error) {
@@ -1383,18 +1491,21 @@ async function testValidation(agentUrl: string, options: TestOptions): Promise<{
     const { result, step } = await runStep<TaskResult>(
       'Negative budget rejection',
       'create_media_buy',
-      async () => client.executeTask('create_media_buy', {
-        buyer_ref: `negative-budget-test-${Date.now()}`,
-        brand_manifest: { name: 'Negative Budget Test', url: 'https://test.example.com' },
-        start_time: new Date(Date.now() + 86400000).toISOString(),
-        end_time: new Date(Date.now() + 604800000).toISOString(),
-        packages: [{
-          buyer_ref: 'pkg-negative',
-          product_id: 'test-product',
-          budget: -500, // Negative budget - MUST be rejected
-          pricing_option_id: 'test-pricing',
-        }],
-      }) as Promise<TaskResult>
+      async () =>
+        client.executeTask('create_media_buy', {
+          buyer_ref: `negative-budget-test-${Date.now()}`,
+          brand_manifest: { name: 'Negative Budget Test', url: 'https://test.example.com' },
+          start_time: new Date(Date.now() + 86400000).toISOString(),
+          end_time: new Date(Date.now() + 604800000).toISOString(),
+          packages: [
+            {
+              buyer_ref: 'pkg-negative',
+              product_id: 'test-product',
+              budget: -500, // Negative budget - MUST be rejected
+              pricing_option_id: 'test-pricing',
+            },
+          ],
+        }) as Promise<TaskResult>
     );
 
     if (result && !result.success && result.error) {
@@ -1415,22 +1526,25 @@ async function testValidation(agentUrl: string, options: TestOptions): Promise<{
     const { result, step } = await runStep<TaskResult>(
       'Invalid creative weight (> 100)',
       'sync_creatives',
-      async () => client.executeTask('sync_creatives', {
-        creatives: [{
-          creative_id: `weight-test-${Date.now()}`,
-          name: 'Weight Test Creative',
-          format_id: 'display_300x250',
-          weight: 150, // Invalid - max is 100
-          assets: {
-            primary: {
-              url: 'https://via.placeholder.com/300x250',
-              width: 300,
-              height: 250,
-              format: 'png',
+      async () =>
+        client.executeTask('sync_creatives', {
+          creatives: [
+            {
+              creative_id: `weight-test-${Date.now()}`,
+              name: 'Weight Test Creative',
+              format_id: 'display_300x250',
+              weight: 150, // Invalid - max is 100
+              assets: {
+                primary: {
+                  url: 'https://via.placeholder.com/300x250',
+                  width: 300,
+                  height: 250,
+                  format: 'png',
+                },
+              },
             },
-          },
-        }],
-      }) as Promise<TaskResult>
+          ],
+        }) as Promise<TaskResult>
     );
 
     if (result && !result.success && result.error) {
@@ -1451,9 +1565,10 @@ async function testValidation(agentUrl: string, options: TestOptions): Promise<{
     const { result, step } = await runStep<TaskResult>(
       'Empty creatives array handling',
       'sync_creatives',
-      async () => client.executeTask('sync_creatives', {
-        creatives: [], // Empty array - should be rejected or return empty
-      }) as Promise<TaskResult>
+      async () =>
+        client.executeTask('sync_creatives', {
+          creatives: [], // Empty array - should be rejected or return empty
+        }) as Promise<TaskResult>
     );
 
     if (result && !result.success && result.error) {
@@ -1476,7 +1591,10 @@ async function testValidation(agentUrl: string, options: TestOptions): Promise<{
  * Test: Pricing Edge Cases
  * Tests auction vs fixed pricing, min spend requirements, bid_price handling
  */
-async function testPricingEdgeCases(agentUrl: string, options: TestOptions): Promise<{ steps: TestStepResult[]; profile?: AgentProfile }> {
+async function testPricingEdgeCases(
+  agentUrl: string,
+  options: TestOptions
+): Promise<{ steps: TestStepResult[]; profile?: AgentProfile }> {
   const steps: TestStepResult[] = [];
   const client = createTestClient(agentUrl, 'mcp', options);
 
@@ -1498,10 +1616,11 @@ async function testPricingEdgeCases(agentUrl: string, options: TestOptions): Pro
   const { result: productsResult } = await runStep<TaskResult>(
     'Fetch products for pricing analysis',
     'get_products',
-    async () => client.executeTask('get_products', {
-      brief: 'Show all products with pricing details',
-      brand_manifest: { name: 'Pricing Test', url: 'https://test.example.com' },
-    }) as Promise<TaskResult>
+    async () =>
+      client.executeTask('get_products', {
+        brief: 'Show all products with pricing details',
+        brand_manifest: { name: 'Pricing Test', url: 'https://test.example.com' },
+      }) as Promise<TaskResult>
   );
 
   const products = productsResult?.data?.products as any[] | undefined;
@@ -1521,7 +1640,7 @@ async function testPricingEdgeCases(agentUrl: string, options: TestOptions): Pro
   const productsWithMinSpend: any[] = [];
 
   for (const product of products) {
-    for (const po of (product.pricing_options || [])) {
+    for (const po of product.pricing_options || []) {
       if (po.is_fixed === false || po.floor_price !== undefined || po.price_guidance !== undefined) {
         auctionProducts.push({ product, pricingOption: po });
       } else if (po.rate !== undefined) {
@@ -1538,11 +1657,15 @@ async function testPricingEdgeCases(agentUrl: string, options: TestOptions): Pro
     passed: true,
     duration_ms: 0,
     details: `Found ${fixedProducts.length} fixed, ${auctionProducts.length} auction, ${productsWithMinSpend.length} with min spend`,
-    response_preview: JSON.stringify({
-      fixed_count: fixedProducts.length,
-      auction_count: auctionProducts.length,
-      min_spend_count: productsWithMinSpend.length,
-    }, null, 2),
+    response_preview: JSON.stringify(
+      {
+        fixed_count: fixedProducts.length,
+        auction_count: auctionProducts.length,
+        min_spend_count: productsWithMinSpend.length,
+      },
+      null,
+      2
+    ),
   });
 
   // Test 1: Auction pricing without bid_price (should fail)
@@ -1551,19 +1674,22 @@ async function testPricingEdgeCases(agentUrl: string, options: TestOptions): Pro
     const { result, step } = await runStep<TaskResult>(
       'Auction pricing without bid_price',
       'create_media_buy',
-      async () => client.executeTask('create_media_buy', {
-        buyer_ref: `auction-no-bid-${Date.now()}`,
-        brand_manifest: { name: 'Auction Test', url: 'https://test.example.com' },
-        start_time: new Date(Date.now() + 86400000).toISOString(),
-        end_time: new Date(Date.now() + 604800000).toISOString(),
-        packages: [{
-          buyer_ref: 'pkg-auction-no-bid',
-          product_id: product.product_id,
-          budget: 5000,
-          pricing_option_id: pricingOption.pricing_option_id,
-          // Intentionally missing bid_price for auction pricing
-        }],
-      }) as Promise<TaskResult>
+      async () =>
+        client.executeTask('create_media_buy', {
+          buyer_ref: `auction-no-bid-${Date.now()}`,
+          brand_manifest: { name: 'Auction Test', url: 'https://test.example.com' },
+          start_time: new Date(Date.now() + 86400000).toISOString(),
+          end_time: new Date(Date.now() + 604800000).toISOString(),
+          packages: [
+            {
+              buyer_ref: 'pkg-auction-no-bid',
+              product_id: product.product_id,
+              budget: 5000,
+              pricing_option_id: pricingOption.pricing_option_id,
+              // Intentionally missing bid_price for auction pricing
+            },
+          ],
+        }) as Promise<TaskResult>
     );
 
     if (result && !result.success && result.error) {
@@ -1585,19 +1711,22 @@ async function testPricingEdgeCases(agentUrl: string, options: TestOptions): Pro
     const { result, step } = await runStep<TaskResult>(
       'Fixed pricing with unnecessary bid_price',
       'create_media_buy',
-      async () => client.executeTask('create_media_buy', {
-        buyer_ref: `fixed-with-bid-${Date.now()}`,
-        brand_manifest: { name: 'Fixed Test', url: 'https://test.example.com' },
-        start_time: new Date(Date.now() + 86400000).toISOString(),
-        end_time: new Date(Date.now() + 604800000).toISOString(),
-        packages: [{
-          buyer_ref: 'pkg-fixed-bid',
-          product_id: product.product_id,
-          budget: 5000,
-          pricing_option_id: pricingOption.pricing_option_id,
-          bid_price: 15.00, // Unnecessary for fixed pricing
-        }],
-      }) as Promise<TaskResult>
+      async () =>
+        client.executeTask('create_media_buy', {
+          buyer_ref: `fixed-with-bid-${Date.now()}`,
+          brand_manifest: { name: 'Fixed Test', url: 'https://test.example.com' },
+          start_time: new Date(Date.now() + 86400000).toISOString(),
+          end_time: new Date(Date.now() + 604800000).toISOString(),
+          packages: [
+            {
+              buyer_ref: 'pkg-fixed-bid',
+              product_id: product.product_id,
+              budget: 5000,
+              pricing_option_id: pricingOption.pricing_option_id,
+              bid_price: 15.0, // Unnecessary for fixed pricing
+            },
+          ],
+        }) as Promise<TaskResult>
     );
 
     if (result?.success) {
@@ -1621,18 +1750,21 @@ async function testPricingEdgeCases(agentUrl: string, options: TestOptions): Pro
     const { result, step } = await runStep<TaskResult>(
       'Budget below min_spend_per_package',
       'create_media_buy',
-      async () => client.executeTask('create_media_buy', {
-        buyer_ref: `under-min-spend-${Date.now()}`,
-        brand_manifest: { name: 'Min Spend Test', url: 'https://test.example.com' },
-        start_time: new Date(Date.now() + 86400000).toISOString(),
-        end_time: new Date(Date.now() + 604800000).toISOString(),
-        packages: [{
-          buyer_ref: 'pkg-under-min',
-          product_id: product.product_id,
-          budget: underBudget,
-          pricing_option_id: pricingOption.pricing_option_id,
-        }],
-      }) as Promise<TaskResult>
+      async () =>
+        client.executeTask('create_media_buy', {
+          buyer_ref: `under-min-spend-${Date.now()}`,
+          brand_manifest: { name: 'Min Spend Test', url: 'https://test.example.com' },
+          start_time: new Date(Date.now() + 86400000).toISOString(),
+          end_time: new Date(Date.now() + 604800000).toISOString(),
+          packages: [
+            {
+              buyer_ref: 'pkg-under-min',
+              product_id: product.product_id,
+              budget: underBudget,
+              pricing_option_id: pricingOption.pricing_option_id,
+            },
+          ],
+        }) as Promise<TaskResult>
     );
 
     if (result && !result.success && result.error) {
@@ -1659,19 +1791,22 @@ async function testPricingEdgeCases(agentUrl: string, options: TestOptions): Pro
       const { result, step } = await runStep<TaskResult>(
         'Bid below floor price',
         'create_media_buy',
-        async () => client.executeTask('create_media_buy', {
-          buyer_ref: `below-floor-${Date.now()}`,
-          brand_manifest: { name: 'Floor Test', url: 'https://test.example.com' },
-          start_time: new Date(Date.now() + 86400000).toISOString(),
-          end_time: new Date(Date.now() + 604800000).toISOString(),
-          packages: [{
-            buyer_ref: 'pkg-below-floor',
-            product_id: product.product_id,
-            budget: 5000,
-            pricing_option_id: pricingOption.pricing_option_id,
-            bid_price: belowFloor,
-          }],
-        }) as Promise<TaskResult>
+        async () =>
+          client.executeTask('create_media_buy', {
+            buyer_ref: `below-floor-${Date.now()}`,
+            brand_manifest: { name: 'Floor Test', url: 'https://test.example.com' },
+            start_time: new Date(Date.now() + 86400000).toISOString(),
+            end_time: new Date(Date.now() + 604800000).toISOString(),
+            packages: [
+              {
+                buyer_ref: 'pkg-below-floor',
+                product_id: product.product_id,
+                budget: 5000,
+                pricing_option_id: pricingOption.pricing_option_id,
+                bid_price: belowFloor,
+              },
+            ],
+          }) as Promise<TaskResult>
       );
 
       if (result && !result.success && result.error) {
@@ -1699,7 +1834,10 @@ async function testPricingEdgeCases(agentUrl: string, options: TestOptions): Pro
  * - Does it require brand_manifest to return products?
  * - Are responses filtered based on the brief or is everything returned?
  */
-async function testBehaviorAnalysis(agentUrl: string, options: TestOptions): Promise<{ steps: TestStepResult[]; profile?: AgentProfile }> {
+async function testBehaviorAnalysis(
+  agentUrl: string,
+  options: TestOptions
+): Promise<{ steps: TestStepResult[]; profile?: AgentProfile }> {
   const steps: TestStepResult[] = [];
 
   // Create authenticated client for comparison
@@ -1731,27 +1869,36 @@ async function testBehaviorAnalysis(agentUrl: string, options: TestOptions): Pro
   const { result: noAuthResult, step: noAuthStep } = await runStep<TaskResult>(
     'Get products without authentication',
     'get_products',
-    async () => noAuthClient.executeTask('get_products', {
-      brief: 'Show me all available products',
-      brand_manifest: { name: 'Auth Test', url: 'https://test.example.com' },
-    }) as Promise<TaskResult>
+    async () =>
+      noAuthClient.executeTask('get_products', {
+        brief: 'Show me all available products',
+        brand_manifest: { name: 'Auth Test', url: 'https://test.example.com' },
+      }) as Promise<TaskResult>
   );
 
   if (noAuthResult?.success && noAuthResult?.data?.products) {
     const products = noAuthResult.data.products as any[];
     noAuthStep.passed = true;
     noAuthStep.details = `No auth required: returned ${products.length} product(s)`;
-    noAuthStep.response_preview = JSON.stringify({
-      auth_required: false,
-      products_returned: products.length,
-    }, null, 2);
+    noAuthStep.response_preview = JSON.stringify(
+      {
+        auth_required: false,
+        products_returned: products.length,
+      },
+      null,
+      2
+    );
   } else if (noAuthResult && !noAuthResult.success) {
     noAuthStep.passed = true;
     noAuthStep.details = 'Authentication required for get_products';
-    noAuthStep.response_preview = JSON.stringify({
-      auth_required: true,
-      error: noAuthResult.error,
-    }, null, 2);
+    noAuthStep.response_preview = JSON.stringify(
+      {
+        auth_required: true,
+        error: noAuthResult.error,
+      },
+      null,
+      2
+    );
   } else {
     noAuthStep.passed = false;
     noAuthStep.error = 'Unclear authentication behavior';
@@ -1759,45 +1906,57 @@ async function testBehaviorAnalysis(agentUrl: string, options: TestOptions): Pro
   steps.push(noAuthStep);
 
   // Detect if auth is required - if so, subsequent tests need auth to work
-  const authRequired = noAuthResult && !noAuthResult.success &&
-    noAuthResult.error?.toLowerCase().includes('auth');
+  const authRequired = noAuthResult && !noAuthResult.success && noAuthResult.error?.toLowerCase().includes('auth');
 
   // Test 2: Brand manifest requirement - call without brand_manifest
   const { result: noBrandResult, step: noBrandStep } = await runStep<TaskResult>(
     'Get products without brand_manifest',
     'get_products',
-    async () => authClient.executeTask('get_products', {
-      brief: 'Show me all available products',
-      // Intentionally no brand_manifest
-    }) as Promise<TaskResult>
+    async () =>
+      authClient.executeTask('get_products', {
+        brief: 'Show me all available products',
+        // Intentionally no brand_manifest
+      }) as Promise<TaskResult>
   );
 
   if (noBrandResult?.success && noBrandResult?.data?.products) {
     const products = noBrandResult.data.products as any[];
     noBrandStep.passed = true;
     noBrandStep.details = `Brand manifest not required: returned ${products.length} product(s)`;
-    noBrandStep.response_preview = JSON.stringify({
-      brand_manifest_required: false,
-      products_returned: products.length,
-    }, null, 2);
+    noBrandStep.response_preview = JSON.stringify(
+      {
+        brand_manifest_required: false,
+        products_returned: products.length,
+      },
+      null,
+      2
+    );
   } else if (noBrandResult && !noBrandResult.success) {
     // Check if this is an auth error (same as the no-auth test) or a brand_manifest error
     const isAuthError = noBrandResult.error?.toLowerCase().includes('auth');
     if (isAuthError && authRequired) {
       noBrandStep.passed = true;
       noBrandStep.details = 'Inconclusive: auth failed (cannot test brand_manifest requirement independently)';
-      noBrandStep.response_preview = JSON.stringify({
-        brand_manifest_required: 'unknown',
-        reason: 'Auth token not accepted - cannot isolate brand_manifest requirement',
-        error: noBrandResult.error,
-      }, null, 2);
+      noBrandStep.response_preview = JSON.stringify(
+        {
+          brand_manifest_required: 'unknown',
+          reason: 'Auth token not accepted - cannot isolate brand_manifest requirement',
+          error: noBrandResult.error,
+        },
+        null,
+        2
+      );
     } else {
       noBrandStep.passed = true;
       noBrandStep.details = 'Brand manifest required for get_products';
-      noBrandStep.response_preview = JSON.stringify({
-        brand_manifest_required: true,
-        error: noBrandResult.error,
-      }, null, 2);
+      noBrandStep.response_preview = JSON.stringify(
+        {
+          brand_manifest_required: true,
+          error: noBrandResult.error,
+        },
+        null,
+        2
+      );
     }
   } else {
     noBrandStep.passed = false;
@@ -1811,8 +1970,7 @@ async function testBehaviorAnalysis(agentUrl: string, options: TestOptions): Pro
   let specificProductCount = 0;
   let briefTestsSkipped = false;
 
-  if (authRequired && noBrandResult && !noBrandResult.success &&
-      noBrandResult.error?.toLowerCase().includes('auth')) {
+  if (authRequired && noBrandResult && !noBrandResult.success && noBrandResult.error?.toLowerCase().includes('auth')) {
     // Auth is not working - skip brief relevance tests
     briefTestsSkipped = true;
     const skipStep: TestStepResult = {
@@ -1820,20 +1978,25 @@ async function testBehaviorAnalysis(agentUrl: string, options: TestOptions): Pro
       passed: true,
       duration_ms: 0,
       details: 'Skipped: auth token not accepted by agent - cannot test brief filtering',
-      response_preview: JSON.stringify({
-        skipped: true,
-        reason: 'Auth required but token not accepted for get_products',
-      }, null, 2),
+      response_preview: JSON.stringify(
+        {
+          skipped: true,
+          reason: 'Auth required but token not accepted for get_products',
+        },
+        null,
+        2
+      ),
     };
     steps.push(skipStep);
   } else {
     const { result: genericResult, step: genericStep } = await runStep<TaskResult>(
       'Get products with generic brief',
       'get_products',
-      async () => authClient.executeTask('get_products', {
-        brief: 'Show me all available advertising products',
-        brand_manifest: { name: 'Brief Test', url: 'https://test.example.com' },
-      }) as Promise<TaskResult>
+      async () =>
+        authClient.executeTask('get_products', {
+          brief: 'Show me all available advertising products',
+          brand_manifest: { name: 'Brief Test', url: 'https://test.example.com' },
+        }) as Promise<TaskResult>
     );
 
     if (genericResult?.success && genericResult?.data?.products) {
@@ -1851,15 +2014,16 @@ async function testBehaviorAnalysis(agentUrl: string, options: TestOptions): Pro
     const { result: specificResult, step: specificStep } = await runStep<TaskResult>(
       'Get products with specific brief',
       'get_products',
-      async () => authClient.executeTask('get_products', {
-        brief: 'I need video advertising products for automotive brands targeting luxury car buyers aged 35-55',
-        brand_manifest: {
-          name: 'Luxury Auto Brand',
-          url: 'https://test.example.com',
-          industry: 'automotive',
-          target_audience: 'luxury car buyers aged 35-55',
-        },
-      }) as Promise<TaskResult>
+      async () =>
+        authClient.executeTask('get_products', {
+          brief: 'I need video advertising products for automotive brands targeting luxury car buyers aged 35-55',
+          brand_manifest: {
+            name: 'Luxury Auto Brand',
+            url: 'https://test.example.com',
+            industry: 'automotive',
+            target_audience: 'luxury car buyers aged 35-55',
+          },
+        }) as Promise<TaskResult>
     );
 
     if (specificResult?.success && specificResult?.data?.products) {
@@ -1877,10 +2041,14 @@ async function testBehaviorAnalysis(agentUrl: string, options: TestOptions): Pro
           }
         }
       }
-      specificStep.response_preview = JSON.stringify({
-        products_returned: products.length,
-        channels: Array.from(channels),
-      }, null, 2);
+      specificStep.response_preview = JSON.stringify(
+        {
+          products_returned: products.length,
+          channels: Array.from(channels),
+        },
+        null,
+        2
+      );
     } else {
       specificStep.passed = false;
       specificStep.error = specificResult?.error || 'Failed to get products with specific brief';
@@ -1899,28 +2067,40 @@ async function testBehaviorAnalysis(agentUrl: string, options: TestOptions): Pro
     if (genericProductCount > 0 && specificProductCount > 0) {
       if (specificProductCount < genericProductCount) {
         filteringAnalysisStep.details = `Agent filters by brief: generic=${genericProductCount}, specific=${specificProductCount} (${Math.round((1 - specificProductCount / genericProductCount) * 100)}% reduction)`;
-        filteringAnalysisStep.response_preview = JSON.stringify({
-          filtering_behavior: 'filtered',
-          generic_count: genericProductCount,
-          specific_count: specificProductCount,
-          reduction_percent: Math.round((1 - specificProductCount / genericProductCount) * 100),
-        }, null, 2);
+        filteringAnalysisStep.response_preview = JSON.stringify(
+          {
+            filtering_behavior: 'filtered',
+            generic_count: genericProductCount,
+            specific_count: specificProductCount,
+            reduction_percent: Math.round((1 - specificProductCount / genericProductCount) * 100),
+          },
+          null,
+          2
+        );
       } else if (specificProductCount === genericProductCount) {
         filteringAnalysisStep.details = `Agent returns same products regardless of brief (${genericProductCount} products)`;
-        filteringAnalysisStep.response_preview = JSON.stringify({
-          filtering_behavior: 'unfiltered',
-          generic_count: genericProductCount,
-          specific_count: specificProductCount,
-          note: 'Same products returned for different briefs',
-        }, null, 2);
+        filteringAnalysisStep.response_preview = JSON.stringify(
+          {
+            filtering_behavior: 'unfiltered',
+            generic_count: genericProductCount,
+            specific_count: specificProductCount,
+            note: 'Same products returned for different briefs',
+          },
+          null,
+          2
+        );
       } else {
         filteringAnalysisStep.details = `Specific brief returned more products (${specificProductCount} > ${genericProductCount})`;
-        filteringAnalysisStep.response_preview = JSON.stringify({
-          filtering_behavior: 'expanded',
-          generic_count: genericProductCount,
-          specific_count: specificProductCount,
-          note: 'More products for detailed brief - may include related products',
-        }, null, 2);
+        filteringAnalysisStep.response_preview = JSON.stringify(
+          {
+            filtering_behavior: 'expanded',
+            generic_count: genericProductCount,
+            specific_count: specificProductCount,
+            note: 'More products for detailed brief - may include related products',
+          },
+          null,
+          2
+        );
       }
     } else if (genericProductCount === 0 && specificProductCount === 0) {
       filteringAnalysisStep.details = 'No products returned for either brief';
@@ -1938,11 +2118,12 @@ async function testBehaviorAnalysis(agentUrl: string, options: TestOptions): Pro
     const { result: channelResult, step: channelStep } = await runStep<TaskResult>(
       'Get products with channel-specific brief',
       'get_products',
-      async () => authClient.executeTask('get_products', {
-        brief: 'I only want display advertising products, no video or audio',
-        brand_manifest: { name: 'Channel Test', url: 'https://test.example.com' },
-        channels: ['display'], // Explicit channel filter if supported
-      }) as Promise<TaskResult>
+      async () =>
+        authClient.executeTask('get_products', {
+          brief: 'I only want display advertising products, no video or audio',
+          brand_manifest: { name: 'Channel Test', url: 'https://test.example.com' },
+          channels: ['display'], // Explicit channel filter if supported
+        }) as Promise<TaskResult>
     );
 
     if (channelResult?.success && channelResult?.data?.products) {
@@ -1966,11 +2147,15 @@ async function testBehaviorAnalysis(agentUrl: string, options: TestOptions): Pro
       } else {
         channelStep.details = `Agent returned channels: ${Array.from(channels).join(', ')} (${products.length} products)`;
       }
-      channelStep.response_preview = JSON.stringify({
-        products_returned: products.length,
-        channels_in_response: Array.from(channels),
-        display_only: hasOnlyDisplay,
-      }, null, 2);
+      channelStep.response_preview = JSON.stringify(
+        {
+          products_returned: products.length,
+          channels_in_response: Array.from(channels),
+          display_only: hasOnlyDisplay,
+        },
+        null,
+        2
+      );
     } else if (channelResult && !channelResult.success) {
       channelStep.passed = true;
       channelStep.details = 'Channel filter parameter not supported';
@@ -1989,7 +2174,10 @@ async function testBehaviorAnalysis(agentUrl: string, options: TestOptions): Pro
  * Test: Temporal Validation
  * Tests date/time ordering, format validation, and deadline logic
  */
-async function testTemporalValidation(agentUrl: string, options: TestOptions): Promise<{ steps: TestStepResult[]; profile?: AgentProfile }> {
+async function testTemporalValidation(
+  agentUrl: string,
+  options: TestOptions
+): Promise<{ steps: TestStepResult[]; profile?: AgentProfile }> {
   const steps: TestStepResult[] = [];
   const client = createTestClient(agentUrl, 'mcp', options);
 
@@ -2011,18 +2199,21 @@ async function testTemporalValidation(agentUrl: string, options: TestOptions): P
   const { result: endBeforeStartResult, step: endBeforeStartStep } = await runStep<TaskResult>(
     'End time before start time',
     'create_media_buy',
-    async () => client.executeTask('create_media_buy', {
-      buyer_ref: `temporal-test-${Date.now()}`,
-      brand_manifest: { name: 'Temporal Test', url: 'https://test.example.com' },
-      start_time: new Date(now + 604800000).toISOString(), // 7 days from now
-      end_time: new Date(now + 86400000).toISOString(),   // 1 day from now (BEFORE start!)
-      packages: [{
-        buyer_ref: 'pkg-temporal',
-        product_id: 'test-product',
-        budget: 1000,
-        pricing_option_id: 'test-pricing',
-      }],
-    }) as Promise<TaskResult>
+    async () =>
+      client.executeTask('create_media_buy', {
+        buyer_ref: `temporal-test-${Date.now()}`,
+        brand_manifest: { name: 'Temporal Test', url: 'https://test.example.com' },
+        start_time: new Date(now + 604800000).toISOString(), // 7 days from now
+        end_time: new Date(now + 86400000).toISOString(), // 1 day from now (BEFORE start!)
+        packages: [
+          {
+            buyer_ref: 'pkg-temporal',
+            product_id: 'test-product',
+            budget: 1000,
+            pricing_option_id: 'test-pricing',
+          },
+        ],
+      }) as Promise<TaskResult>
   );
 
   if (endBeforeStartResult && !endBeforeStartResult.success && endBeforeStartResult.error) {
@@ -2041,18 +2232,21 @@ async function testTemporalValidation(agentUrl: string, options: TestOptions): P
   const { result: pastStartResult, step: pastStartStep } = await runStep<TaskResult>(
     'Start time in the past',
     'create_media_buy',
-    async () => client.executeTask('create_media_buy', {
-      buyer_ref: `past-start-${Date.now()}`,
-      brand_manifest: { name: 'Past Start Test', url: 'https://test.example.com' },
-      start_time: new Date(now - 604800000).toISOString(), // 7 days ago (IN THE PAST!)
-      end_time: new Date(now + 604800000).toISOString(),   // 7 days from now
-      packages: [{
-        buyer_ref: 'pkg-past',
-        product_id: 'test-product',
-        budget: 1000,
-        pricing_option_id: 'test-pricing',
-      }],
-    }) as Promise<TaskResult>
+    async () =>
+      client.executeTask('create_media_buy', {
+        buyer_ref: `past-start-${Date.now()}`,
+        brand_manifest: { name: 'Past Start Test', url: 'https://test.example.com' },
+        start_time: new Date(now - 604800000).toISOString(), // 7 days ago (IN THE PAST!)
+        end_time: new Date(now + 604800000).toISOString(), // 7 days from now
+        packages: [
+          {
+            buyer_ref: 'pkg-past',
+            product_id: 'test-product',
+            budget: 1000,
+            pricing_option_id: 'test-pricing',
+          },
+        ],
+      }) as Promise<TaskResult>
   );
 
   if (pastStartResult && !pastStartResult.success && pastStartResult.error) {
@@ -2072,18 +2266,21 @@ async function testTemporalValidation(agentUrl: string, options: TestOptions): P
   const { result: invalidDateResult, step: invalidDateStep } = await runStep<TaskResult>(
     'Invalid date format',
     'create_media_buy',
-    async () => client.executeTask('create_media_buy', {
-      buyer_ref: `invalid-date-${Date.now()}`,
-      brand_manifest: { name: 'Invalid Date Test', url: 'https://test.example.com' },
-      start_time: '01/15/2025', // Invalid - should be ISO 8601
-      end_time: new Date(now + 604800000).toISOString(),
-      packages: [{
-        buyer_ref: 'pkg-invalid-date',
-        product_id: 'test-product',
-        budget: 1000,
-        pricing_option_id: 'test-pricing',
-      }],
-    }) as Promise<TaskResult>
+    async () =>
+      client.executeTask('create_media_buy', {
+        buyer_ref: `invalid-date-${Date.now()}`,
+        brand_manifest: { name: 'Invalid Date Test', url: 'https://test.example.com' },
+        start_time: '01/15/2025', // Invalid - should be ISO 8601
+        end_time: new Date(now + 604800000).toISOString(),
+        packages: [
+          {
+            buyer_ref: 'pkg-invalid-date',
+            product_id: 'test-product',
+            budget: 1000,
+            pricing_option_id: 'test-pricing',
+          },
+        ],
+      }) as Promise<TaskResult>
   );
 
   if (invalidDateResult && !invalidDateResult.success && invalidDateResult.error) {
@@ -2102,18 +2299,21 @@ async function testTemporalValidation(agentUrl: string, options: TestOptions): P
   const { result: longCampaignResult, step: longCampaignStep } = await runStep<TaskResult>(
     'Very long campaign duration (365 days)',
     'create_media_buy',
-    async () => client.executeTask('create_media_buy', {
-      buyer_ref: `long-campaign-${Date.now()}`,
-      brand_manifest: { name: 'Long Campaign Test', url: 'https://test.example.com' },
-      start_time: new Date(now + 86400000).toISOString(),
-      end_time: new Date(now + 365 * 86400000).toISOString(), // 365 days!
-      packages: [{
-        buyer_ref: 'pkg-long',
-        product_id: 'test-product',
-        budget: 100000,
-        pricing_option_id: 'test-pricing',
-      }],
-    }) as Promise<TaskResult>
+    async () =>
+      client.executeTask('create_media_buy', {
+        buyer_ref: `long-campaign-${Date.now()}`,
+        brand_manifest: { name: 'Long Campaign Test', url: 'https://test.example.com' },
+        start_time: new Date(now + 86400000).toISOString(),
+        end_time: new Date(now + 365 * 86400000).toISOString(), // 365 days!
+        packages: [
+          {
+            buyer_ref: 'pkg-long',
+            product_id: 'test-product',
+            budget: 100000,
+            pricing_option_id: 'test-pricing',
+          },
+        ],
+      }) as Promise<TaskResult>
   );
 
   if (longCampaignResult?.success) {
@@ -2135,7 +2335,10 @@ async function testTemporalValidation(agentUrl: string, options: TestOptions): P
  * Test: Response Consistency
  * Tests for schema errors, pagination bugs, data mismatches between fields
  */
-async function testResponseConsistency(agentUrl: string, options: TestOptions): Promise<{ steps: TestStepResult[]; profile?: AgentProfile }> {
+async function testResponseConsistency(
+  agentUrl: string,
+  options: TestOptions
+): Promise<{ steps: TestStepResult[]; profile?: AgentProfile }> {
   const steps: TestStepResult[] = [];
   const client = createTestClient(agentUrl, 'mcp', options);
 
@@ -2192,19 +2395,27 @@ async function testResponseConsistency(agentUrl: string, options: TestOptions): 
       if (issues.length > 0) {
         step.passed = false;
         step.error = `Pagination inconsistencies: ${issues.join('; ')}`;
-        step.response_preview = JSON.stringify({
-          issues,
-          query_summary: querySummary,
-          pagination,
-          creatives_count: creatives.length,
-        }, null, 2);
+        step.response_preview = JSON.stringify(
+          {
+            issues,
+            query_summary: querySummary,
+            pagination,
+            creatives_count: creatives.length,
+          },
+          null,
+          2
+        );
       } else {
         step.details = `Pagination consistent: ${creatives.length} creative(s)`;
-        step.response_preview = JSON.stringify({
-          creatives_count: creatives.length,
-          total_matching: querySummary?.total_matching,
-          returned: querySummary?.returned,
-        }, null, 2);
+        step.response_preview = JSON.stringify(
+          {
+            creatives_count: creatives.length,
+            total_matching: querySummary?.total_matching,
+            returned: querySummary?.returned,
+          },
+          null,
+          2
+        );
       }
     } else if (result && !result.success) {
       // Schema validation error - report it
@@ -2219,10 +2430,11 @@ async function testResponseConsistency(agentUrl: string, options: TestOptions): 
     const { result, step } = await runStep<TaskResult>(
       'get_products response consistency',
       'get_products',
-      async () => client.executeTask('get_products', {
-        brief: 'Show all available products',
-        brand_manifest: { name: 'Consistency Test', url: 'https://test.example.com' },
-      }) as Promise<TaskResult>
+      async () =>
+        client.executeTask('get_products', {
+          brief: 'Show all available products',
+          brand_manifest: { name: 'Consistency Test', url: 'https://test.example.com' },
+        }) as Promise<TaskResult>
     );
 
     if (result?.success && result?.data) {
@@ -2268,18 +2480,26 @@ async function testResponseConsistency(agentUrl: string, options: TestOptions): 
       if (issues.length > 0) {
         step.passed = false;
         step.error = `Product data inconsistencies (${issues.length} issue(s))`;
-        step.response_preview = JSON.stringify({
-          issues: issues.slice(0, 10), // Limit to first 10
-          total_issues: issues.length,
-          products_count: products.length,
-        }, null, 2);
+        step.response_preview = JSON.stringify(
+          {
+            issues: issues.slice(0, 10), // Limit to first 10
+            total_issues: issues.length,
+            products_count: products.length,
+          },
+          null,
+          2
+        );
       } else {
         step.details = `Products consistent: ${products.length} product(s)`;
-        step.response_preview = JSON.stringify({
-          products_count: products.length,
-          all_have_product_id: true,
-          all_pricing_options_valid: true,
-        }, null, 2);
+        step.response_preview = JSON.stringify(
+          {
+            products_count: products.length,
+            all_have_product_id: true,
+            all_pricing_options_valid: true,
+          },
+          null,
+          2
+        );
       }
     } else if (result && !result.success) {
       step.passed = false;
@@ -2323,12 +2543,16 @@ async function testResponseConsistency(agentUrl: string, options: TestOptions): 
       if (issues.length > 0) {
         step.passed = false;
         step.error = `Format data inconsistencies (${issues.length} issue(s))`;
-        step.response_preview = JSON.stringify({
-          issues: issues.slice(0, 10),
-          total_issues: issues.length,
-          format_ids_count: formatIds.length,
-          formats_count: formats.length,
-        }, null, 2);
+        step.response_preview = JSON.stringify(
+          {
+            issues: issues.slice(0, 10),
+            total_issues: issues.length,
+            format_ids_count: formatIds.length,
+            formats_count: formats.length,
+          },
+          null,
+          2
+        );
       } else {
         step.details = `Formats consistent: ${formatIds.length} format_ids, ${formats.length} formats`;
       }
@@ -2371,12 +2595,16 @@ async function testResponseConsistency(agentUrl: string, options: TestOptions): 
       if (issues.length > 0) {
         step.passed = false;
         step.error = `Property data inconsistencies (${issues.length} issue(s))`;
-        step.response_preview = JSON.stringify({
-          issues: issues.slice(0, 10),
-          total_issues: issues.length,
-          properties_count: properties.length,
-          publisher_domains_count: publisherDomains.length,
-        }, null, 2);
+        step.response_preview = JSON.stringify(
+          {
+            issues: issues.slice(0, 10),
+            total_issues: issues.length,
+            properties_count: properties.length,
+            publisher_domains_count: publisherDomains.length,
+          },
+          null,
+          2
+        );
       } else {
         step.details = `Properties consistent: ${properties.length} properties, ${publisherDomains.length} domains`;
       }
@@ -2445,12 +2673,14 @@ export async function testAgent(
         break;
       case 'creative_reference':
         // TODO: Implement reference creative testing
-        steps = [{
-          step: 'Test reference creatives',
-          passed: false,
-          duration_ms: 0,
-          error: 'creative_reference scenario not yet implemented',
-        }];
+        steps = [
+          {
+            step: 'Test reference creatives',
+            passed: false,
+            duration_ms: 0,
+            error: 'creative_reference scenario not yet implemented',
+          },
+        ];
         break;
       case 'pricing_models':
         result = await testPricingModels(agentUrl, effectiveOptions);
@@ -2498,12 +2728,14 @@ export async function testAgent(
         profile = result.profile;
         break;
       default:
-        steps = [{
-          step: 'Unknown scenario',
-          passed: false,
-          duration_ms: 0,
-          error: `Unknown test scenario: ${scenario}`,
-        }];
+        steps = [
+          {
+            step: 'Unknown scenario',
+            passed: false,
+            duration_ms: 0,
+            error: `Unknown test scenario: ${scenario}`,
+          },
+        ];
     }
   } catch (error) {
     logger.error({ error, agentUrl, scenario }, 'Agent test failed with exception');
