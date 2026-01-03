@@ -1588,7 +1588,34 @@ export interface CreateMediaBuyRequest {
    * Campaign end date/time in ISO 8601 format
    */
   end_time: string;
-  reporting_webhook?: PushNotificationConfig & {
+  /**
+   * Optional webhook configuration for automated reporting delivery. Combines push_notification_config structure with reporting-specific fields.
+   */
+  reporting_webhook?: {
+    /**
+     * Webhook endpoint URL for reporting notifications
+     */
+    url: string;
+    /**
+     * Optional client-provided token for webhook validation. Echoed back in webhook payload to validate request authenticity.
+     */
+    token?: string;
+    /**
+     * Authentication configuration for webhook delivery (A2A-compatible)
+     */
+    authentication: {
+      /**
+       * Array of authentication schemes. Supported: ['Bearer'] for simple token auth, ['HMAC-SHA256'] for signature verification (recommended for production)
+       *
+       * @minItems 1
+       * @maxItems 1
+       */
+      schemes: [AuthenticationScheme];
+      /**
+       * Credentials for authentication. For Bearer: token sent in Authorization header. For HMAC-SHA256: shared secret used to generate signature. Minimum 32 characters. Exchanged out-of-band during onboarding.
+       */
+      credentials: string;
+    };
     /**
      * Frequency for automated reporting delivery. Must be supported by all products in the media buy.
      */
@@ -1983,35 +2010,6 @@ export interface URLAsset {
 /**
  * Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.
  */
-export interface PushNotificationConfig {
-  /**
-   * Webhook endpoint URL for task status notifications
-   */
-  url: string;
-  /**
-   * Optional client-provided token for webhook validation. Echoed back in webhook payload to validate request authenticity.
-   */
-  token?: string;
-  /**
-   * Authentication configuration for webhook delivery (A2A-compatible)
-   */
-  authentication: {
-    /**
-     * Array of authentication schemes. Supported: ['Bearer'] for simple token auth, ['HMAC-SHA256'] for signature verification (recommended for production)
-     *
-     * @minItems 1
-     * @maxItems 1
-     */
-    schemes: [AuthenticationScheme];
-    /**
-     * Credentials for authentication. For Bearer: token sent in Authorization header. For HMAC-SHA256: shared secret used to generate signature. Minimum 32 characters. Exchanged out-of-band during onboarding.
-     */
-    credentials: string;
-  };
-}
-/**
- * Opaque correlation data that is echoed unchanged in responses. Used for internal tracking, UI session IDs, trace IDs, and other caller-specific identifiers that don't affect protocol behavior. Context data is never parsed by AdCP agents - it's simply preserved and returned.
- */
 
 // create_media_buy response
 /**
@@ -2173,6 +2171,35 @@ export interface SyncCreativesRequest {
 }
 /**
  * Creative asset for upload to library - supports static assets, generative formats, and third-party snippets
+ */
+export interface PushNotificationConfig {
+  /**
+   * Webhook endpoint URL for task status notifications
+   */
+  url: string;
+  /**
+   * Optional client-provided token for webhook validation. Echoed back in webhook payload to validate request authenticity.
+   */
+  token?: string;
+  /**
+   * Authentication configuration for webhook delivery (A2A-compatible)
+   */
+  authentication: {
+    /**
+     * Array of authentication schemes. Supported: ['Bearer'] for simple token auth, ['HMAC-SHA256'] for signature verification (recommended for production)
+     *
+     * @minItems 1
+     * @maxItems 1
+     */
+    schemes: [AuthenticationScheme];
+    /**
+     * Credentials for authentication. For Bearer: token sent in Authorization header. For HMAC-SHA256: shared secret used to generate signature. Minimum 32 characters. Exchanged out-of-band during onboarding.
+     */
+    credentials: string;
+  };
+}
+/**
+ * Opaque correlation data that is echoed unchanged in responses. Used for internal tracking, UI session IDs, trace IDs, and other caller-specific identifiers that don't affect protocol behavior. Context data is never parsed by AdCP agents - it's simply preserved and returned.
  */
 
 // sync_creatives response

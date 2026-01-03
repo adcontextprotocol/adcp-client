@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2025-12-19T13:05:34.853Z
+// Generated at: 2026-01-02T21:37:16.467Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -439,6 +439,8 @@ export const BrandManifestReference1Schema = z.union([BrandManifestSchema, z.str
 
 export const StartTimingSchema = z.union([z.literal("asap"), z.string()]);
 
+export const AuthenticationSchemeSchema = z.union([z.literal("Bearer"), z.literal("HMAC-SHA256")]);
+
 export const TargetingOverlaySchema = z.object({
     geo_country_any_of: z.array(z.string()).nullish(),
     geo_region_any_of: z.array(z.string()).nullish(),
@@ -474,8 +476,6 @@ export const URLAssetSchema = z.object({
     url_type: URLAssetTypeSchema.nullish(),
     description: z.string().nullish()
 });
-
-export const AuthenticationSchemeSchema = z.union([z.literal("Bearer"), z.literal("HMAC-SHA256")]);
 
 export const CreateMediaBuyErrorSchema = z.object({
     errors: z.tuple([ErrorSchema]).rest(ErrorSchema),
@@ -1244,10 +1244,16 @@ export const CreateMediaBuyRequestSchema = z.object({
     po_number: z.string().nullish(),
     start_time: StartTimingSchema,
     end_time: z.string(),
-    reporting_webhook: PushNotificationConfigSchema.and(z.object({
+    reporting_webhook: z.object({
+        url: z.string(),
+        token: z.string().nullish(),
+        authentication: z.object({
+            schemes: z.tuple([AuthenticationSchemeSchema]),
+            credentials: z.string()
+        }),
         reporting_frequency: z.union([z.literal("hourly"), z.literal("daily"), z.literal("monthly")]),
         requested_metrics: z.array(z.union([z.literal("impressions"), z.literal("spend"), z.literal("clicks"), z.literal("ctr"), z.literal("video_completions"), z.literal("completion_rate"), z.literal("conversions"), z.literal("viewability"), z.literal("engagement_rate")])).nullish()
-    })).nullish(),
+    }).nullish(),
     context: ContextObjectSchema.nullish(),
     ext: ExtensionObjectSchema.nullish()
 });
