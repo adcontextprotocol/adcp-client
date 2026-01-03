@@ -31,7 +31,7 @@ export async function testErrorHandling(
   options: TestOptions
 ): Promise<{ steps: TestStepResult[]; profile?: AgentProfile }> {
   const steps: TestStepResult[] = [];
-  const client = createTestClient(agentUrl, 'mcp', options);
+  const client = createTestClient(agentUrl, options.protocol || 'mcp', options);
 
   const { profile, step: profileStep } = await discoverAgentProfile(client);
   steps.push(profileStep);
@@ -184,7 +184,7 @@ export async function testValidation(
   options: TestOptions
 ): Promise<{ steps: TestStepResult[]; profile?: AgentProfile }> {
   const steps: TestStepResult[] = [];
-  const client = createTestClient(agentUrl, 'mcp', options);
+  const client = createTestClient(agentUrl, options.protocol || 'mcp', options);
 
   const { profile, step: profileStep } = await discoverAgentProfile(client);
   steps.push(profileStep);
@@ -339,7 +339,7 @@ export async function testPricingEdgeCases(
   options: TestOptions
 ): Promise<{ steps: TestStepResult[]; profile?: AgentProfile }> {
   const steps: TestStepResult[] = [];
-  const client = createTestClient(agentUrl, 'mcp', options);
+  const client = createTestClient(agentUrl, options.protocol || 'mcp', options);
 
   const { steps: discoverySteps, profile } = await testDiscovery(agentUrl, options);
   steps.push(...discoverySteps);
@@ -498,7 +498,7 @@ export async function testTemporalValidation(
   options: TestOptions
 ): Promise<{ steps: TestStepResult[]; profile?: AgentProfile }> {
   const steps: TestStepResult[] = [];
-  const client = createTestClient(agentUrl, 'mcp', options);
+  const client = createTestClient(agentUrl, options.protocol || 'mcp', options);
 
   const { profile, step: profileStep } = await discoverAgentProfile(client);
   steps.push(profileStep);
@@ -585,7 +585,7 @@ export async function testBehaviorAnalysis(
   options: TestOptions
 ): Promise<{ steps: TestStepResult[]; profile?: AgentProfile }> {
   const steps: TestStepResult[] = [];
-  const client = createTestClient(agentUrl, 'mcp', options);
+  const client = createTestClient(agentUrl, options.protocol || 'mcp', options);
 
   const { profile, step: profileStep } = await discoverAgentProfile(client);
   steps.push(profileStep);
@@ -666,7 +666,7 @@ export async function testResponseConsistency(
   options: TestOptions
 ): Promise<{ steps: TestStepResult[]; profile?: AgentProfile }> {
   const steps: TestStepResult[] = [];
-  const client = createTestClient(agentUrl, 'mcp', options);
+  const client = createTestClient(agentUrl, options.protocol || 'mcp', options);
 
   const { profile, step: profileStep } = await discoverAgentProfile(client);
   steps.push(profileStep);

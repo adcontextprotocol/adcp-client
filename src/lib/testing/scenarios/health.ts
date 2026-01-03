@@ -16,7 +16,7 @@ export async function testHealthCheck(
   options: TestOptions
 ): Promise<TestStepResult[]> {
   const steps: TestStepResult[] = [];
-  const client = createTestClient(agentUrl, 'mcp', options);
+  const client = createTestClient(agentUrl, options.protocol || 'mcp', options);
 
   const { step } = await discoverAgentProfile(client);
   steps.push(step);

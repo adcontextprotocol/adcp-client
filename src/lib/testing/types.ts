@@ -25,6 +25,8 @@ export type TestScenario =
   | 'response_consistency'; // Check for schema errors, pagination bugs, data mismatches
 
 export interface TestOptions {
+  // Protocol to use for testing (default: 'mcp')
+  protocol?: 'mcp' | 'a2a';
   // Custom brief for product discovery
   brief?: string;
   // Budget for test media buy (default: 1000)

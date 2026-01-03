@@ -122,13 +122,14 @@ export async function testAgent(
         break;
 
       case 'creative_reference':
-        // TODO: Implement reference creative testing
+        // Reference creative testing tests the creative_ids flow in create_media_buy.
+        // This is lower priority since testCreativeInline covers most creative attachment scenarios.
         steps = [
           {
             step: 'Test reference creatives',
             passed: false,
             duration_ms: 0,
-            error: 'creative_reference scenario not yet implemented',
+            error: 'creative_reference scenario not yet implemented - use creative_inline instead',
           },
         ];
         break;

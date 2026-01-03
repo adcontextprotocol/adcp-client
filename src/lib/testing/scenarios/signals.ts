@@ -27,7 +27,7 @@ export async function testSignalsFlow(
   options: TestOptions
 ): Promise<{ steps: TestStepResult[]; profile?: AgentProfile }> {
   const steps: TestStepResult[] = [];
-  const client = createTestClient(agentUrl, 'mcp', options);
+  const client = createTestClient(agentUrl, options.protocol || 'mcp', options);
 
   // Discover agent profile
   const { profile, step: profileStep } = await discoverAgentProfile(client);

@@ -120,7 +120,7 @@ export async function testCreateMediaBuy(
   options: TestOptions
 ): Promise<{ steps: TestStepResult[]; profile?: AgentProfile; mediaBuyId?: string }> {
   const steps: TestStepResult[] = [];
-  const client = createTestClient(agentUrl, 'mcp', options);
+  const client = createTestClient(agentUrl, options.protocol || 'mcp', options);
 
   // First run discovery
   const { steps: discoverySteps, profile } = await testDiscovery(agentUrl, options);
@@ -224,7 +224,7 @@ export async function testFullSalesFlow(
   options: TestOptions
 ): Promise<{ steps: TestStepResult[]; profile?: AgentProfile }> {
   const steps: TestStepResult[] = [];
-  const client = createTestClient(agentUrl, 'mcp', options);
+  const client = createTestClient(agentUrl, options.protocol || 'mcp', options);
 
   // Run create media buy flow first
   const { steps: createSteps, profile, mediaBuyId } = await testCreateMediaBuy(agentUrl, options);
@@ -311,7 +311,7 @@ export async function testCreativeSync(
   options: TestOptions
 ): Promise<{ steps: TestStepResult[]; profile?: AgentProfile }> {
   const steps: TestStepResult[] = [];
-  const client = createTestClient(agentUrl, 'mcp', options);
+  const client = createTestClient(agentUrl, options.protocol || 'mcp', options);
 
   // Discover profile
   const { profile, step: profileStep } = await discoverAgentProfile(client);
@@ -452,7 +452,7 @@ export async function testCreativeInline(
   options: TestOptions
 ): Promise<{ steps: TestStepResult[]; profile?: AgentProfile }> {
   const steps: TestStepResult[] = [];
-  const client = createTestClient(agentUrl, 'mcp', options);
+  const client = createTestClient(agentUrl, options.protocol || 'mcp', options);
 
   // Discovery first
   const { steps: discoverySteps, profile } = await testDiscovery(agentUrl, options);
