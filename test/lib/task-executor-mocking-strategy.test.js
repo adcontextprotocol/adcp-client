@@ -35,7 +35,6 @@ describe('TaskExecutor Mocking Strategies', { skip: process.env.CI ? 'Slow tests
       name: 'Mock Agent',
       agent_uri: 'https://mock.test.com',
       protocol: 'mcp',
-      requiresAuth: false,
     };
 
     testEmitter = new EventEmitter();
@@ -212,14 +211,13 @@ describe('TaskExecutor Mocking Strategies', { skip: process.env.CI ? 'Slow tests
     test('should handle authentication token scenarios', async () => {
       const authAgent = {
         ...mockAgent,
-        requiresAuth: true,
-        auth_token_env: 'TEST_AUTH_TOKEN',
+        auth_token: 'TEST_AUTH_TOKEN',
       };
 
       // Mock authenticated call with token validation
       ProtocolClient.callTool = mock.fn(async (agent, toolName, args, debugLogs) => {
         // Verify authentication was handled
-        assert.strictEqual(agent.requiresAuth, true);
+        assert.strictEqual(agent.auth_token, 'TEST_AUTH_TOKEN');
         return {
           status: 'completed',
           result: { authenticated: true },

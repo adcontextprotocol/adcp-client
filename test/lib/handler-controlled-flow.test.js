@@ -48,7 +48,6 @@ describe(
         name: 'Handler Test Agent',
         agent_uri: 'https://handler.test.com',
         protocol: 'mcp',
-        requiresAuth: false,
       };
     });
 

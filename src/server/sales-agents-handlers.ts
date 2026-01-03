@@ -127,8 +127,7 @@ export class SalesAgentsHandlers {
           name: customAgentConfig.name || customAgentConfig.id,
           agent_uri: customAgentConfig.agent_uri || (customAgentConfig as any).server_url,
           protocol: customAgentConfig.protocol || 'mcp',
-          auth_token_env: customAgentConfig.auth_token_env,
-          requiresAuth: customAgentConfig.requiresAuth !== false,
+          auth_token: customAgentConfig.auth_token || (customAgentConfig as any).auth_token_env,
         };
         client = new ADCPMultiAgentClient([customAgent]);
         console.log(`🔧 Created temporary client for custom agent: ${customAgent.name}`);
@@ -284,7 +283,7 @@ export class SalesAgentsHandlers {
         method: toolName,
         protocol: agentConfig.protocol,
         url: agentConfig.agent_uri,
-        headers: agentConfig.requiresAuth ? { 'x-adcp-auth': '[REDACTED]' } : {},
+        headers: agentConfig.auth_token ? { 'x-adcp-auth': '[REDACTED]' } : {},
         body: actualParams || additionalParams,
         timestamp: new Date().toISOString(),
       });

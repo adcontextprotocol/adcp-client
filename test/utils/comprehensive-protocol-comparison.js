@@ -61,8 +61,7 @@ class ProtocolComparison {
         name: `HITL ${principalType} Principal (${protocol.toUpperCase()})`,
         agent_uri: serverUrl,
         protocol: protocol,
-        auth_token_env: authToken,
-        requiresAuth: true,
+        auth_token: authToken,
       };
 
       // Create multi-agent client

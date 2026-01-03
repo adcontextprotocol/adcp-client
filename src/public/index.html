@@ -2360,12 +2360,12 @@
   "name": "My Test Agent",
   "agent_uri": "https://your-agent.example.com",
   "protocol": "mcp",
-  "auth_token_env": "your-bearer-token"
+  "auth_token": "your-bearer-token"
 }'
               style="height: 120px; font-family: 'Courier New', monospace; font-size: 13px"
             ></textarea>
             <small style="display: block; color: #666; margin-top: 5px">
-              💡 Paste agent JSON configuration. Supported fields: name, agent_uri, protocol, auth_token_env
+              💡 Paste agent JSON configuration. Supported fields: name, agent_uri, protocol, auth_token
             </small>
           </div>
         </div>
@@ -8190,8 +8190,7 @@
           name: name,
           agent_uri: url,
           protocol: protocol,
-          auth_token_env: authToken,
-          requiresAuth: !!authToken,
+          auth_token: authToken,
         };
       }
 
@@ -8243,8 +8242,7 @@
           name: config.name || 'Imported Agent',
           agent_uri: url,
           protocol: config.protocol,
-          auth_token_env: config.auth_token_env || config.auth_token || '',
-          requiresAuth: !!(config.auth_token_env || config.auth_token),
+          auth_token: config.auth_token || config.auth_token || '',
         };
       }
 
@@ -9169,8 +9167,7 @@ ${JSON.stringify(result, null, 2)}
           name: name,
           agent_uri: url,
           protocol: protocol,
-          auth_token_env: authToken,
-          requiresAuth: !!authToken,
+          auth_token: authToken,
         };
       }
 
@@ -9222,8 +9219,7 @@ ${JSON.stringify(result, null, 2)}
           name: config.name || 'Imported Agent',
           agent_uri: url,
           protocol: config.protocol,
-          auth_token_env: config.auth_token_env || config.auth_token || '',
-          requiresAuth: !!(config.auth_token_env || config.auth_token),
+          auth_token: config.auth_token || config.auth_token || '',
         };
       }
 
@@ -9338,7 +9334,7 @@ ${JSON.stringify(result, null, 2)}
           html += '<tr><th>Name</th><th>ID</th><th>Protocol</th><th>Auth Token</th><th>Actions</th></tr>';
 
           agents.forEach(agent => {
-            const authToken = agent.auth_token || agent.auth_token_env;
+            const authToken = agent.auth_token || agent.auth_token;
             const hasToken = !!authToken;
             const tokenDisplay = hasToken ? `✅ Yes (${authToken.length} chars)` : '❌ No';
 
@@ -9397,7 +9393,7 @@ ${JSON.stringify(result, null, 2)}
         document.getElementById('agent-name').value = agent.name;
         document.getElementById('agent-uri').value = agent.agent_uri;
         document.getElementById('agent-protocol').value = agent.protocol;
-        document.getElementById('auth-token').value = agent.auth_token || agent.auth_token_env || '';
+        document.getElementById('auth-token').value = agent.auth_token || agent.auth_token || '';
 
         // Show the form
         toggleAddAgent();

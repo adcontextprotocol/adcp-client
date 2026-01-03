@@ -232,7 +232,7 @@ export class SingleAgentClient {
     const clientModule = require('@a2a-js/sdk/client');
     const A2AClient = clientModule.A2AClient;
 
-    const authToken = this.normalizedAgent.auth_token_env;
+    const authToken = this.normalizedAgent.auth_token;
     const fetchImpl = authToken
       ? async (url: string | URL | Request, options?: RequestInit) => {
           const headers: Record<string, string> = {
@@ -313,7 +313,7 @@ export class SingleAgentClient {
     const { Client: MCPClient } = await import('@modelcontextprotocol/sdk/client/index.js');
     const { StreamableHTTPClientTransport } = await import('@modelcontextprotocol/sdk/client/streamableHttp.js');
 
-    const authToken = this.agent.auth_token_env;
+    const authToken = this.agent.auth_token;
 
     const testEndpoint = async (url: string): Promise<boolean> => {
       try {
@@ -1491,7 +1491,7 @@ export class SingleAgentClient {
         version: '1.0.0',
       });
 
-      const authToken = this.normalizedAgent.auth_token_env;
+      const authToken = this.normalizedAgent.auth_token;
       const customFetch = authToken
         ? async (input: any, init?: any) => {
             // IMPORTANT: Must preserve SDK's default headers (especially Accept header)
@@ -1557,7 +1557,7 @@ export class SingleAgentClient {
       const clientModule = require('@a2a-js/sdk/client');
       const A2AClient = clientModule.A2AClient;
 
-      const authToken = this.normalizedAgent.auth_token_env;
+      const authToken = this.normalizedAgent.auth_token;
       const fetchImpl = authToken
         ? async (url: any, options?: any) => {
             const headers = {

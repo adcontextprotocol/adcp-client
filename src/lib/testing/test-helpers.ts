@@ -45,7 +45,6 @@ export const TEST_AGENT_NO_AUTH_MCP_CONFIG: AgentConfig = {
   name: 'AdCP Public Test Agent (MCP, No Auth)',
   agent_uri: 'https://test-agent.adcontextprotocol.org/mcp/',
   protocol: 'mcp',
-  requiresAuth: false,
 };
 
 /**
@@ -57,7 +56,6 @@ export const TEST_AGENT_NO_AUTH_A2A_CONFIG: AgentConfig = {
   name: 'AdCP Public Test Agent (A2A, No Auth)',
   agent_uri: 'https://test-agent.adcontextprotocol.org',
   protocol: 'a2a',
-  requiresAuth: false,
 };
 
 /**

@@ -151,7 +151,7 @@ export class ConfigurationManager {
   private static logAgents(agents: AgentConfig[]): void {
     agents.forEach(agent => {
       const protocolIcon = agent.protocol === 'mcp' ? '🔗' : '⚡';
-      const authIcon = agent.requiresAuth ? '🔐' : '🌐';
+      const authIcon = agent.auth_token ? '🔐' : '🌐';
       console.log(`  ${protocolIcon}${authIcon} ${agent.name} (${agent.protocol.toUpperCase()}) at ${agent.agent_uri}`);
     });
 
@@ -217,15 +217,13 @@ export class ConfigurationManager {
           name: 'Premium Ad Network',
           agent_uri: 'https://premium-ads.example.com/mcp/',
           protocol: 'mcp',
-          requiresAuth: true,
-          auth_token_env: 'PREMIUM_AGENT_TOKEN',
+          auth_token: process.env.PREMIUM_AGENT_TOKEN,
         },
         {
           id: 'budget-network',
           name: 'Budget Ad Network',
           agent_uri: 'https://budget-ads.example.com/a2a/',
           protocol: 'a2a',
-          requiresAuth: false,
         },
       ],
       defaults: {
@@ -277,28 +275,21 @@ The ADCP client can load agents from multiple sources:
          "name": "Premium Ad Network",
          "agent_uri": "https://premium.example.com",
          "protocol": "mcp",
-         "requiresAuth": true,
-         "auth_token_env": "PREMIUM_TOKEN"
+         "auth_token": "your-token-here"
        },
        {
          "id": "dev-agent",
          "name": "Development Agent",
          "agent_uri": "https://dev.example.com",
-         "protocol": "a2a",
-         "requiresAuth": true,
-         "auth_token": "direct-token-value-for-testing"
+         "protocol": "a2a"
        }
      ]
    }
 
-   Authentication options:
-   - auth_token_env: Environment variable name (recommended for production)
-   - auth_token: Direct token value (useful for development/testing)
-
 3️⃣  Programmatic Configuration:
    const client = new ADCPMultiAgentClient([
      { id: 'agent', agent_uri: 'https://...', protocol: 'mcp',
-       auth_token_env: 'MY_TOKEN' }
+       auth_token: process.env.MY_TOKEN }
    ]);
 
 📖 For more examples, see the documentation.
