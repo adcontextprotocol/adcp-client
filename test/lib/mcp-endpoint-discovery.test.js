@@ -37,7 +37,6 @@ test('MCP Endpoint Discovery - Trailing Slash Handling', async t => {
       name: 'Test Trailing Slash',
       agent_uri: 'https://example.com/mcp/',
       protocol: 'mcp',
-      requiresAuth: false,
     };
 
     const client = new AdCPClient([agent]);
@@ -51,7 +50,6 @@ test('MCP Endpoint Discovery - Trailing Slash Handling', async t => {
       name: 'Test No Trailing Slash',
       agent_uri: 'https://example.com/mcp',
       protocol: 'mcp',
-      requiresAuth: false,
     };
 
     const client = new AdCPClient([agent]);
@@ -64,7 +62,6 @@ test('MCP Endpoint Discovery - Trailing Slash Handling', async t => {
       name: 'Test MCP Path',
       agent_uri: 'https://audience-agent.fly.dev/mcp/',
       protocol: 'mcp',
-      requiresAuth: false,
     };
 
     const client = new AdCPClient([agent]);
@@ -77,7 +74,6 @@ test('MCP Endpoint Discovery - Trailing Slash Handling', async t => {
       name: 'Test Root Path',
       agent_uri: 'https://test-agent.adcontextprotocol.org',
       protocol: 'mcp',
-      requiresAuth: false,
     };
 
     const client = new AdCPClient([agent]);
@@ -100,7 +96,6 @@ test('MCP Endpoint Discovery - Trailing Slash Handling', async t => {
         name: 'Test Agent',
         agent_uri: uri,
         protocol: 'mcp',
-        requiresAuth: false,
       };
 
       const client = new AdCPClient([agent]);
@@ -119,7 +114,6 @@ test('MCP Endpoint Discovery - URL Normalization', async t => {
         name: 'Test Agent',
         agent_uri: uri,
         protocol: 'mcp',
-        requiresAuth: false,
       };
 
       const client = new AdCPClient([agent]);
@@ -138,7 +132,6 @@ test('MCP Endpoint Discovery - URL Normalization', async t => {
         name: 'Test Agent',
         agent_uri: uri,
         protocol: 'mcp',
-        requiresAuth: false,
       };
 
       const client = new AdCPClient([agent]);
@@ -157,7 +150,6 @@ test('MCP Endpoint Discovery - Edge Cases', async t => {
       name: 'Test Double Slash',
       agent_uri: 'https://example.com//mcp/',
       protocol: 'mcp',
-      requiresAuth: false,
     };
 
     const client = new AdCPClient([agent]);
@@ -170,7 +162,6 @@ test('MCP Endpoint Discovery - Edge Cases', async t => {
       name: 'Test Query',
       agent_uri: 'https://example.com/mcp/?foo=bar',
       protocol: 'mcp',
-      requiresAuth: false,
     };
 
     const client = new AdCPClient([agent]);
@@ -183,7 +174,6 @@ test('MCP Endpoint Discovery - Edge Cases', async t => {
       name: 'Test Fragment',
       agent_uri: 'https://example.com/mcp/#section',
       protocol: 'mcp',
-      requiresAuth: false,
     };
 
     const client = new AdCPClient([agent]);
@@ -196,7 +186,6 @@ test('MCP Endpoint Discovery - Edge Cases', async t => {
       name: 'Test Port',
       agent_uri: 'https://example.com:8080/mcp/',
       protocol: 'mcp',
-      requiresAuth: false,
     };
 
     const client = new AdCPClient([agent]);
@@ -212,7 +201,6 @@ test('MCP Endpoint Discovery - Well-Known URL Handling', async t => {
       name: 'Test Well Known',
       agent_uri: 'https://example.com/.well-known/agent-card.json',
       protocol: 'mcp', // Even if MCP is specified...
-      requiresAuth: false,
     };
 
     const client = new AdCPClient([agent]);
@@ -238,7 +226,6 @@ test('MCP Endpoint Discovery - Well-Known URL Handling', async t => {
         name: 'Test Agent',
         agent_uri: uri,
         protocol: 'mcp',
-        requiresAuth: false,
       };
 
       const client = new AdCPClient([agent]);
@@ -254,7 +241,6 @@ test('MCP Endpoint Discovery - Well-Known URL Handling', async t => {
       name: 'Test A2A',
       agent_uri: 'https://example.com/.well-known/agent-card.json',
       protocol: 'a2a',
-      requiresAuth: false,
     };
 
     const client = new AdCPClient([agent]);
@@ -270,7 +256,6 @@ test('MCP Endpoint Discovery - Real-World Scenarios', async t => {
       name: 'Fly.io Example',
       agent_uri: 'https://audience-agent.fly.dev/mcp/',
       protocol: 'mcp',
-      requiresAuth: false,
     };
 
     const client = new AdCPClient([agent]);
@@ -284,7 +269,6 @@ test('MCP Endpoint Discovery - Real-World Scenarios', async t => {
       name: 'Root Example',
       agent_uri: 'https://test-agent.adcontextprotocol.org',
       protocol: 'mcp',
-      requiresAuth: false,
     };
 
     const client = new AdCPClient([agent]);
@@ -297,7 +281,6 @@ test('MCP Endpoint Discovery - Real-World Scenarios', async t => {
       name: 'Nested Example',
       agent_uri: 'https://example.com/api/v1/mcp/',
       protocol: 'mcp',
-      requiresAuth: false,
     };
 
     const client = new AdCPClient([agent]);
@@ -313,7 +296,6 @@ test('MCP Endpoint Discovery - Real-World Scenarios', async t => {
         name: 'Test Agent',
         agent_uri: uri,
         protocol: 'mcp',
-        requiresAuth: false,
       };
 
       const client = new AdCPClient([agent]);

@@ -55,7 +55,6 @@ describe('TaskExecutor Error Scenarios', { skip: process.env.CI ? 'Slow tests - 
       name: 'Error Test Agent',
       agent_uri: 'https://error.test.com',
       protocol: 'mcp',
-      requiresAuth: false,
     };
   });
 

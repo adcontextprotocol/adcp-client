@@ -484,7 +484,7 @@ export class ADCPMultiAgentClient {
    * const client = ADCPMultiAgentClient.simple('https://my-agent.example.com', {
    *   agentName: 'My Agent',
    *   protocol: 'mcp',
-   *   requiresAuth: true,
+   *   authToken: 'my-token',
    *   debug: true
    * });
    * ```
@@ -495,8 +495,7 @@ export class ADCPMultiAgentClient {
       agentId?: string;
       agentName?: string;
       protocol?: 'mcp' | 'a2a';
-      requiresAuth?: boolean;
-      authTokenEnv?: string;
+      authToken?: string;
       debug?: boolean;
       timeout?: number;
     } = {}
@@ -505,8 +504,7 @@ export class ADCPMultiAgentClient {
       agentId = 'default-agent',
       agentName = 'Default Agent',
       protocol = 'mcp',
-      requiresAuth = false,
-      authTokenEnv,
+      authToken,
       debug = false,
       timeout,
     } = options;
@@ -516,8 +514,7 @@ export class ADCPMultiAgentClient {
       name: agentName,
       agent_uri: agentUrl,
       protocol,
-      requiresAuth,
-      auth_token_env: authTokenEnv,
+      auth_token: authToken,
     };
 
     ConfigurationManager.validateAgentConfig(agent);

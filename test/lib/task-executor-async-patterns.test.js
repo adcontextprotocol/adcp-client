@@ -58,7 +58,6 @@ describe(
         name: 'Test Agent',
         agent_uri: 'https://test.example.com',
         protocol: 'mcp',
-        requiresAuth: false,
       };
     });
 

@@ -19,7 +19,6 @@ describe('AdCPClient', () => {
           name: 'Test Agent',
           agent_uri: 'https://test.example.com',
           protocol: 'mcp',
-          requiresAuth: false,
         },
       ];
 
@@ -37,8 +36,7 @@ describe('AdCPClient', () => {
         name: 'New Agent',
         agent_uri: 'https://new.example.com',
         protocol: 'a2a',
-        requiresAuth: true,
-        auth_token_env: 'TEST_TOKEN',
+        auth_token: 'TEST_TOKEN',
       };
 
       client.addAgent(agent);
@@ -53,7 +51,6 @@ describe('AdCPClient', () => {
           name: 'Existing',
           agent_uri: 'https://existing.example.com',
           protocol: 'mcp',
-          requiresAuth: false,
         },
       ]);
 
@@ -62,7 +59,6 @@ describe('AdCPClient', () => {
         name: 'New',
         agent_uri: 'https://new.example.com',
         protocol: 'a2a',
-        requiresAuth: false,
       });
 
       assert.strictEqual(client.getAgentConfigs().length, 2);
@@ -77,7 +73,6 @@ describe('AdCPClient', () => {
         name: 'Test',
         agent_uri: 'https://test.example.com',
         protocol: 'mcp',
-        requiresAuth: false,
       };
 
       const client = new AdCPClient([originalAgent]);
@@ -89,7 +84,6 @@ describe('AdCPClient', () => {
         name: 'Hacker',
         agent_uri: 'https://evil.example.com',
         protocol: 'mcp',
-        requiresAuth: false,
       });
 
       // Original client should be unchanged
@@ -119,7 +113,6 @@ describe('AdCPClient', () => {
           name: 'Test Agent',
           agent_uri: 'https://test.example.com',
           protocol: 'mcp',
-          requiresAuth: false,
         },
       ]);
 
@@ -138,14 +131,12 @@ describe('AdCPClient', () => {
           name: 'Agent 1',
           agent_uri: 'https://agent1.example.com',
           protocol: 'mcp',
-          requiresAuth: false,
         },
         {
           id: 'agent2',
           name: 'Agent 2',
           agent_uri: 'https://agent2.example.com',
           protocol: 'a2a',
-          requiresAuth: false,
         },
       ]);
 
@@ -163,7 +154,6 @@ describe('AdCPClient', () => {
           name: 'Agent 1',
           agent_uri: 'https://agent1.example.com',
           protocol: 'mcp',
-          requiresAuth: false,
         },
       ]);
 
@@ -216,8 +206,7 @@ describe('ConfigurationManager', () => {
             name: 'Env Test Agent',
             agent_uri: 'https://env-test.example.com',
             protocol: 'mcp',
-            requiresAuth: true,
-            auth_token_env: 'TEST_TOKEN',
+            auth_token: 'TEST_TOKEN',
           },
         ],
       });
@@ -227,7 +216,7 @@ describe('ConfigurationManager', () => {
       assert.strictEqual(agents.length, 1);
       assert.strictEqual(agents[0].id, 'env-test');
       assert.strictEqual(agents[0].protocol, 'mcp');
-      assert.strictEqual(agents[0].requiresAuth, true);
+      assert.strictEqual(agents[0].auth_token, 'TEST_TOKEN');
 
       // Restore original env var
       if (originalConfig) {
@@ -274,7 +263,6 @@ describe('factory methods', () => {
           name: 'Env Agent',
           agent_uri: 'https://env.example.com',
           protocol: 'mcp',
-          requiresAuth: false,
         },
       ],
     });

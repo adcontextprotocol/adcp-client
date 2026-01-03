@@ -78,7 +78,6 @@ describe.skip('TaskExecutor Async Patterns - Master Test Suite', () => {
         name: 'Benchmark Agent',
         agent_uri: 'https://benchmark.test.com',
         protocol: 'mcp',
-        requiresAuth: false,
       };
 
       // Benchmark different patterns
@@ -155,7 +154,6 @@ describe.skip('TaskExecutor Async Patterns - Master Test Suite', () => {
       name: 'Integration Agent',
       agent_uri: 'https://integration.test.com',
       protocol: 'mcp',
-      requiresAuth: false,
     };
 
     // Complex integration scenario that uses multiple patterns

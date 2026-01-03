@@ -9,7 +9,6 @@ describe('Webhook Signature Verification (PR #86 Spec)', () => {
     name: 'Test Agent',
     agent_uri: 'https://test.example.com',
     protocol: 'mcp',
-    requiresAuth: false,
   };
 
   const webhookSecret = 'test-secret-key-minimum-32-characters-long';

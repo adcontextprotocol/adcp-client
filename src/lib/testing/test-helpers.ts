@@ -21,8 +21,7 @@ export const TEST_AGENT_MCP_CONFIG: AgentConfig = {
   name: 'AdCP Public Test Agent (MCP)',
   agent_uri: 'https://test-agent.adcontextprotocol.org/mcp/',
   protocol: 'mcp',
-  auth_token_env: TEST_AGENT_TOKEN,
-  requiresAuth: true,
+  auth_token: TEST_AGENT_TOKEN,
 };
 
 /**
@@ -34,8 +33,7 @@ export const TEST_AGENT_A2A_CONFIG: AgentConfig = {
   name: 'AdCP Public Test Agent (A2A)',
   agent_uri: 'https://test-agent.adcontextprotocol.org',
   protocol: 'a2a',
-  auth_token_env: TEST_AGENT_TOKEN,
-  requiresAuth: true,
+  auth_token: TEST_AGENT_TOKEN,
 };
 
 /**
@@ -47,7 +45,6 @@ export const TEST_AGENT_NO_AUTH_MCP_CONFIG: AgentConfig = {
   name: 'AdCP Public Test Agent (MCP, No Auth)',
   agent_uri: 'https://test-agent.adcontextprotocol.org/mcp/',
   protocol: 'mcp',
-  requiresAuth: false,
 };
 
 /**
@@ -59,7 +56,6 @@ export const TEST_AGENT_NO_AUTH_A2A_CONFIG: AgentConfig = {
   name: 'AdCP Public Test Agent (A2A, No Auth)',
   agent_uri: 'https://test-agent.adcontextprotocol.org',
   protocol: 'a2a',
-  requiresAuth: false,
 };
 
 /**

@@ -137,7 +137,6 @@ test('Agent Canonical URL via AdCPClient', async t => {
       name: 'Test Agent',
       agent_uri: 'https://example.com/.well-known/agent-card.json',
       protocol: 'mcp', // Will be normalized to a2a
-      requiresAuth: false,
     };
 
     const client = new AdCPClient([agent]);
@@ -156,7 +155,6 @@ test('Agent Canonical URL via AdCPClient', async t => {
       name: 'Test MCP Agent',
       agent_uri: 'https://example.com/mcp',
       protocol: 'mcp',
-      requiresAuth: false,
     };
 
     const client = new AdCPClient([agent]);
@@ -172,7 +170,6 @@ test('Agent Canonical URL via AdCPClient', async t => {
       name: 'Test Trailing Slash',
       agent_uri: 'https://example.com/mcp/',
       protocol: 'mcp',
-      requiresAuth: false,
     };
 
     const client = new AdCPClient([agent]);
@@ -191,21 +188,18 @@ test('Agent Comparison - isSameAgent', async t => {
         name: 'Agent Base',
         agent_uri: 'https://example.com',
         protocol: 'a2a',
-        requiresAuth: false,
       },
       {
         id: 'agent-mcp',
         name: 'Agent MCP',
         agent_uri: 'https://example.com/mcp',
         protocol: 'mcp',
-        requiresAuth: false,
       },
       {
         id: 'agent-wellknown',
         name: 'Agent Well-Known',
         agent_uri: 'https://example.com/.well-known/agent-card.json',
         protocol: 'a2a',
-        requiresAuth: false,
       },
     ];
 
@@ -228,14 +222,12 @@ test('Agent Comparison - isSameAgent', async t => {
         name: 'Agent One',
         agent_uri: 'https://agent-one.example.com',
         protocol: 'a2a',
-        requiresAuth: false,
       },
       {
         id: 'agent-two',
         name: 'Agent Two',
         agent_uri: 'https://agent-two.example.com',
         protocol: 'a2a',
-        requiresAuth: false,
       },
     ];
 
@@ -254,14 +246,12 @@ test('Agent Comparison - isSameAgent', async t => {
         name: 'Agent Lower',
         agent_uri: 'https://example.com',
         protocol: 'a2a',
-        requiresAuth: false,
       },
       {
         id: 'agent-upper',
         name: 'Agent Upper',
         agent_uri: 'https://EXAMPLE.COM',
         protocol: 'a2a',
-        requiresAuth: false,
       },
     ];
 
@@ -279,7 +269,6 @@ test('Agent Comparison - isSameAgent', async t => {
       name: 'Test Agent',
       agent_uri: 'https://example.com',
       protocol: 'a2a',
-      requiresAuth: false,
     };
 
     const client = new AdCPClient([agent]);
@@ -291,7 +280,6 @@ test('Agent Comparison - isSameAgent', async t => {
       name: 'Other Agent',
       agent_uri: 'https://example.com/mcp',
       protocol: 'mcp',
-      requiresAuth: false,
     };
 
     assert.strictEqual(
@@ -309,7 +297,6 @@ test('getAgent returns clean config without internal flags', async t => {
       name: 'Test MCP',
       agent_uri: 'https://example.com',
       protocol: 'mcp',
-      requiresAuth: false,
     };
 
     const client = new AdCPClient([agent]);
@@ -324,7 +311,6 @@ test('getAgent returns clean config without internal flags', async t => {
       name: 'Test A2A',
       agent_uri: 'https://example.com',
       protocol: 'a2a',
-      requiresAuth: false,
     };
 
     const client = new AdCPClient([agent]);
