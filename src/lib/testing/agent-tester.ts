@@ -23,15 +23,7 @@
  */
 
 // Re-export types
-export type {
-  TestScenario,
-  TestOptions,
-  TestStepResult,
-  AgentProfile,
-  TestResult,
-  TaskResult,
-  Logger,
-} from './types';
+export type { TestScenario, TestOptions, TestStepResult, AgentProfile, TestResult, TaskResult, Logger } from './types';
 
 // Re-export client utilities
 export { setAgentTesterLogger, getLogger, createTestClient, runStep } from './client';
@@ -236,10 +228,7 @@ export async function testAgent(
     dry_run: effectiveOptions.dry_run !== false,
   };
 
-  logger.info(
-    { agentUrl, scenario, overallPassed, passedCount, failedCount, totalDuration },
-    'Agent test completed'
-  );
+  logger.info({ agentUrl, scenario, overallPassed, passedCount, failedCount, totalDuration }, 'Agent test completed');
 
   return testResult;
 }

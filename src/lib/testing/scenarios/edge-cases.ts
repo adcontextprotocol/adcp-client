@@ -14,12 +14,7 @@
  */
 
 import type { TestOptions, TestStepResult, AgentProfile, TaskResult } from '../types';
-import {
-  createTestClient,
-  runStep,
-  discoverAgentProfile,
-  discoverAgentCapabilities,
-} from '../client';
+import { createTestClient, runStep, discoverAgentProfile, discoverAgentCapabilities } from '../client';
 import { testDiscovery } from './discovery';
 
 /**
@@ -386,11 +381,7 @@ export async function testPricingEdgeCases(
 
   for (const product of products) {
     for (const po of product.pricing_options || []) {
-      if (
-        po.is_fixed === false ||
-        po.floor_price !== undefined ||
-        po.price_guidance !== undefined
-      ) {
+      if (po.is_fixed === false || po.floor_price !== undefined || po.price_guidance !== undefined) {
         auctionProducts.push({ product, pricingOption: po });
       } else if (po.rate !== undefined) {
         fixedProducts.push({ product, pricingOption: po });

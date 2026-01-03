@@ -33,11 +33,7 @@ export function getLogger(): Logger {
 /**
  * Create a test client for an agent
  */
-export function createTestClient(
-  agentUrl: string,
-  protocol: 'mcp' | 'a2a' = 'mcp',
-  options: TestOptions = {}
-) {
+export function createTestClient(agentUrl: string, protocol: 'mcp' | 'a2a' = 'mcp', options: TestOptions = {}) {
   const headers: Record<string, string> = {};
 
   // Dry-run is true by default for safety

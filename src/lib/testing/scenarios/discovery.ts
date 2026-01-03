@@ -5,12 +5,7 @@
  */
 
 import type { TestOptions, TestStepResult, AgentProfile, TaskResult } from '../types';
-import {
-  createTestClient,
-  runStep,
-  discoverAgentProfile,
-  discoverAgentCapabilities,
-} from '../client';
+import { createTestClient, runStep, discoverAgentProfile, discoverAgentCapabilities } from '../client';
 
 /**
  * Test: Discovery

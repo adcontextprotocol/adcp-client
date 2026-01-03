@@ -11,10 +11,7 @@ import { createTestClient, discoverAgentProfile } from '../client';
  * Test: Health Check
  * Verifies the agent is responding and has an agent card
  */
-export async function testHealthCheck(
-  agentUrl: string,
-  options: TestOptions
-): Promise<TestStepResult[]> {
+export async function testHealthCheck(agentUrl: string, options: TestOptions): Promise<TestStepResult[]> {
   const steps: TestStepResult[] = [];
   const client = createTestClient(agentUrl, options.protocol || 'mcp', options);
 

@@ -38,11 +38,7 @@ export async function testSignalsFlow(
   }
 
   // Discover available signals
-  const { signals: discoveredSignals, step: signalsStep } = await discoverSignals(
-    client,
-    profile,
-    options
-  );
+  const { signals: discoveredSignals, step: signalsStep } = await discoverSignals(client, profile, options);
   steps.push(signalsStep);
 
   // Use mutable array to collect signals
@@ -129,11 +125,7 @@ export async function testSignalsFlow(
         } else if (result && !result.success) {
           // Check if this is an expected failure (e.g., destination not supported)
           const error = result.error || '';
-          if (
-            error.includes('not supported') ||
-            error.includes('invalid destination') ||
-            error.includes('dry_run')
-          ) {
+          if (error.includes('not supported') || error.includes('invalid destination') || error.includes('dry_run')) {
             step.passed = true;
             step.details = `Expected rejection: ${error}`;
           } else {
@@ -245,9 +237,7 @@ function selectSignalsToTest(
 ): NonNullable<AgentProfile['supported_signals']> {
   // If specific signal types requested, filter to those
   if (options.signal_types?.length) {
-    const filtered = signals.filter(
-      s => s.type && options.signal_types!.includes(s.type)
-    );
+    const filtered = signals.filter(s => s.type && options.signal_types!.includes(s.type));
     if (filtered.length > 0) return filtered.slice(0, 3);
   }
 

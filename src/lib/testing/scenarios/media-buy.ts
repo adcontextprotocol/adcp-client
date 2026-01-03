@@ -9,12 +9,7 @@
  */
 
 import type { TestOptions, TestStepResult, AgentProfile, TaskResult } from '../types';
-import {
-  createTestClient,
-  runStep,
-  discoverAgentProfile,
-  discoverAgentCapabilities,
-} from '../client';
+import { createTestClient, runStep, discoverAgentProfile, discoverAgentCapabilities } from '../client';
 import { testDiscovery } from './discovery';
 
 /**
@@ -25,9 +20,7 @@ export function selectProduct(products: any[], options: TestOptions): any | null
   let candidates = products;
 
   if (options.channels?.length) {
-    candidates = products.filter(p =>
-      p.channels?.some((ch: string) => options.channels!.includes(ch))
-    );
+    candidates = products.filter(p => p.channels?.some((ch: string) => options.channels!.includes(ch)));
   }
 
   // If pricing models specified, filter further
@@ -73,9 +66,7 @@ export function buildCreateMediaBuyRequest(
   const endTime = new Date(startTime.getTime() + 7 * 24 * 60 * 60 * 1000); // 7 days later
 
   const isAuction =
-    pricingOption.model === 'auction' ||
-    pricingOption.is_fixed === false ||
-    pricingOption.floor_price !== undefined;
+    pricingOption.model === 'auction' || pricingOption.is_fixed === false || pricingOption.floor_price !== undefined;
 
   const packageRequest: any = {
     buyer_ref: `pkg-test-${Date.now()}`,
@@ -293,8 +284,7 @@ export async function testFullSalesFlow(
       );
     } else if (deliveryResult && !deliveryResult.success) {
       deliveryStep.passed = false;
-      deliveryStep.error =
-        deliveryResult.error || 'get_media_buy_delivery returned unsuccessful result';
+      deliveryStep.error = deliveryResult.error || 'get_media_buy_delivery returned unsuccessful result';
     }
     steps.push(deliveryStep);
   }
@@ -341,8 +331,7 @@ export async function testCreativeSync(
       const data = formatsResult.data as any;
       const firstFormat = data.format_ids?.[0] || data.formats?.[0];
       if (firstFormat) {
-        formatId =
-          typeof firstFormat === 'string' ? firstFormat : firstFormat.id || firstFormat.format_id;
+        formatId = typeof firstFormat === 'string' ? firstFormat : firstFormat.id || firstFormat.format_id;
       }
     }
   }
@@ -545,9 +534,7 @@ export async function testCreativeInline(
     const mediaBuyId = mediaBuy.media_buy_id || mediaBuy.media_buy?.media_buy_id;
     const status = mediaBuy.status || mediaBuy.media_buy?.status;
     const packages = mediaBuy.packages || mediaBuy.media_buy?.packages;
-    const hasCreatives = packages?.some(
-      (p: any) => p.creatives?.length || p.creative_ids?.length
-    );
+    const hasCreatives = packages?.some((p: any) => p.creatives?.length || p.creative_ids?.length);
 
     createStep.details = `Created media buy with inline creative: ${mediaBuyId}`;
     createStep.created_id = mediaBuyId;
