@@ -158,6 +158,34 @@ function postProcessForNullish(content: string): string {
   return content.replace(/\.optional\(\)/g, '.nullish()');
 }
 
+/**
+ * Post-process generated Zod schemas to convert tuple patterns to arrays.
+ *
+ * ts-to-zod converts TypeScript arrays with @minItems JSDoc annotations to Zod tuples:
+ *   z.tuple([z.string()]).rest(z.string())
+ *
+ * This requires at least one element, but agents in the wild return empty arrays.
+ * Convert these patterns to simple arrays that allow empty arrays:
+ *   z.array(z.string())
+ *
+ * This is more lenient than the JSON Schema spec (which requires minItems: 1),
+ * but necessary for real-world interoperability.
+ *
+ * LIMITATIONS: This regex handles simple patterns like z.tuple([z.string()]).rest(z.string())
+ * but may not handle complex nested schemas with brackets (e.g., z.object({ ... })).
+ * The [^\]]+ pattern stops at the first closing bracket, which works for primitive types
+ * and simple references. If edge cases with nested objects appear, consider using an AST parser.
+ */
+function postProcessTuplesToArrays(content: string): string {
+  // Match patterns like: z.tuple([SomeSchema]).rest(SomeSchema)
+  // and convert to: z.array(SomeSchema)
+  // The pattern captures the inner schema type and uses a backreference to ensure they match
+  return content.replace(
+    /z\.tuple\(\[([^\]]+)\]\)\.rest\(\1\)/g,
+    'z.array($1)'
+  );
+}
+
 // Write file only if content differs (excluding timestamp)
 function writeFileIfChanged(filePath: string, newContent: string): boolean {
   const contentWithoutTimestamp = (content: string) => {
@@ -239,6 +267,11 @@ async function generateZodSchemas() {
     // null values for optional fields, but ts-to-zod generates .optional() which only
     // accepts undefined, not null. Using .nullish() accepts both undefined and null.
     zodSchemas = postProcessForNullish(zodSchemas);
+
+    // Post-process: Convert tuple patterns to arrays to allow empty arrays
+    // ts-to-zod converts @minItems 1 to z.tuple([]).rest() which requires at least one element,
+    // but agents in the wild return empty arrays. This relaxes validation for interoperability.
+    zodSchemas = postProcessTuplesToArrays(zodSchemas);
 
     // Create header with metadata
     const header = `// Generated Zod v4 schemas from TypeScript types

@@ -1607,10 +1607,9 @@ export interface CreateMediaBuyRequest {
       /**
        * Array of authentication schemes. Supported: ['Bearer'] for simple token auth, ['HMAC-SHA256'] for signature verification (recommended for production)
        *
-       * @minItems 1
        * @maxItems 1
        */
-      schemes: [AuthenticationScheme];
+      schemes: [] | [AuthenticationScheme];
       /**
        * Credentials for authentication. For Bearer: token sent in Authorization header. For HMAC-SHA256: shared secret used to generate signature. Minimum 32 characters. Exchanged out-of-band during onboarding.
        */
@@ -2112,10 +2111,8 @@ export interface CreativeAssignment {
 export interface CreateMediaBuyError {
   /**
    * Array of errors explaining why the operation failed
-   *
-   * @minItems 1
    */
-  errors: [Error, ...Error[]];
+  errors: Error[];
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -2279,10 +2276,8 @@ export interface SyncCreativesSuccess {
 export interface SyncCreativesError {
   /**
    * Operation-level errors that prevented processing any creatives (e.g., authentication failure, service unavailable, invalid request format)
-   *
-   * @minItems 1
    */
-  errors: [Error, ...Error[]];
+  errors: Error[];
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -2775,10 +2770,8 @@ export interface UpdateMediaBuySuccess {
 export interface UpdateMediaBuyError {
   /**
    * Array of errors explaining why the operation failed
-   *
-   * @minItems 1
    */
-  errors: [Error, ...Error[]];
+  errors: Error[];
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -3129,10 +3122,8 @@ export interface DeliveryMetrics {
 export interface ListAuthorizedPropertiesRequest {
   /**
    * Filter to specific publisher domains (optional). If omitted, returns all publishers this agent represents.
-   *
-   * @minItems 1
    */
-  publisher_domains?: [string, ...string[]];
+  publisher_domains?: string[];
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -3147,22 +3138,16 @@ export interface ListAuthorizedPropertiesRequest {
 export interface ListAuthorizedPropertiesResponse {
   /**
    * Publisher domains this agent is authorized to represent. Buyers should fetch each publisher's adagents.json to see property definitions and verify this agent is in their authorized_agents list with authorization scope.
-   *
-   * @minItems 1
    */
-  publisher_domains: [string, ...string[]];
+  publisher_domains: string[];
   /**
    * Primary advertising channels represented in this property portfolio. Helps buying agents quickly filter relevance.
-   *
-   * @minItems 1
    */
-  primary_channels?: [AdvertisingChannels, ...AdvertisingChannels[]];
+  primary_channels?: AdvertisingChannels[];
   /**
    * Primary countries (ISO 3166-1 alpha-2 codes) where properties are concentrated. Helps buying agents quickly filter relevance.
-   *
-   * @minItems 1
    */
-  primary_countries?: [string, ...string[]];
+  primary_countries?: string[];
   /**
    * Markdown-formatted description of the property portfolio, including inventory types, audience characteristics, and special features.
    */
@@ -3278,10 +3263,8 @@ export interface ProvidePerformanceFeedbackSuccess {
 export interface ProvidePerformanceFeedbackError {
   /**
    * Array of errors explaining why feedback was rejected (e.g., invalid measurement period, missing campaign data)
-   *
-   * @minItems 1
    */
-  errors: [Error, ...Error[]];
+  errors: Error[];
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -3410,10 +3393,8 @@ export interface BuildCreativeSuccess {
 export interface BuildCreativeError {
   /**
    * Array of errors explaining why creative generation failed
-   *
-   * @minItems 1
    */
-  errors: [Error, ...Error[]];
+  errors: Error[];
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -3468,67 +3449,36 @@ export type PreviewCreativeRequest =
       /**
        * Array of preview requests (1-50 items). Each follows the single request structure.
        *
-       * @minItems 1
        * @maxItems 50
        */
-      requests: [
-        {
-          format_id: FormatID2;
-          creative_manifest: CreativeManifest1;
+      requests: {
+        format_id: FormatID2;
+        creative_manifest: CreativeManifest1;
+        /**
+         * Array of input sets for generating multiple preview variants
+         */
+        inputs?: {
           /**
-           * Array of input sets for generating multiple preview variants
+           * Human-readable name for this input set
            */
-          inputs?: {
-            /**
-             * Human-readable name for this input set
-             */
-            name: string;
-            /**
-             * Macro values to use for this preview
-             */
-            macros?: {
-              [k: string]: string;
-            };
-            /**
-             * Natural language description of the context for AI-generated content
-             */
-            context_description?: string;
-          }[];
+          name: string;
           /**
-           * Specific template ID for custom format rendering
+           * Macro values to use for this preview
            */
-          template_id?: string;
-          output_format?: PreviewOutputFormat1;
-        },
-        ...{
-          format_id: FormatID2;
-          creative_manifest: CreativeManifest1;
+          macros?: {
+            [k: string]: string;
+          };
           /**
-           * Array of input sets for generating multiple preview variants
+           * Natural language description of the context for AI-generated content
            */
-          inputs?: {
-            /**
-             * Human-readable name for this input set
-             */
-            name: string;
-            /**
-             * Macro values to use for this preview
-             */
-            macros?: {
-              [k: string]: string;
-            };
-            /**
-             * Natural language description of the context for AI-generated content
-             */
-            context_description?: string;
-          }[];
-          /**
-           * Specific template ID for custom format rendering
-           */
-          template_id?: string;
-          output_format?: PreviewOutputFormat1;
-        }[]
-      ];
+          context_description?: string;
+        }[];
+        /**
+         * Specific template ID for custom format rendering
+         */
+        template_id?: string;
+        output_format?: PreviewOutputFormat1;
+      }[];
       output_format?: PreviewOutputFormat2;
       context?: ContextObject;
       ext?: ExtensionObject;
@@ -3745,73 +3695,36 @@ export interface PreviewCreativeSingleResponse {
   response_type: 'single';
   /**
    * Array of preview variants. Each preview corresponds to an input set from the request. If no inputs were provided, returns a single default preview.
-   *
-   * @minItems 1
    */
-  previews: [
-    {
+  previews: {
+    /**
+     * Unique identifier for this preview variant
+     */
+    preview_id: string;
+    /**
+     * Array of rendered pieces for this preview variant. Most formats render as a single piece. Companion ad formats (video + banner), multi-placement formats, and adaptive formats render as multiple pieces.
+     */
+    renders: PreviewRender[];
+    /**
+     * The input parameters that generated this preview variant. Echoes back the request input or shows defaults used.
+     */
+    input: {
       /**
-       * Unique identifier for this preview variant
+       * Human-readable name for this variant
        */
-      preview_id: string;
+      name: string;
       /**
-       * Array of rendered pieces for this preview variant. Most formats render as a single piece. Companion ad formats (video + banner), multi-placement formats, and adaptive formats render as multiple pieces.
-       *
-       * @minItems 1
+       * Macro values applied to this variant
        */
-      renders: [PreviewRender, ...PreviewRender[]];
-      /**
-       * The input parameters that generated this preview variant. Echoes back the request input or shows defaults used.
-       */
-      input: {
-        /**
-         * Human-readable name for this variant
-         */
-        name: string;
-        /**
-         * Macro values applied to this variant
-         */
-        macros?: {
-          [k: string]: string;
-        };
-        /**
-         * Context description applied to this variant
-         */
-        context_description?: string;
+      macros?: {
+        [k: string]: string;
       };
-    },
-    ...{
       /**
-       * Unique identifier for this preview variant
+       * Context description applied to this variant
        */
-      preview_id: string;
-      /**
-       * Array of rendered pieces for this preview variant. Most formats render as a single piece. Companion ad formats (video + banner), multi-placement formats, and adaptive formats render as multiple pieces.
-       *
-       * @minItems 1
-       */
-      renders: [PreviewRender, ...PreviewRender[]];
-      /**
-       * The input parameters that generated this preview variant. Echoes back the request input or shows defaults used.
-       */
-      input: {
-        /**
-         * Human-readable name for this variant
-         */
-        name: string;
-        /**
-         * Macro values applied to this variant
-         */
-        macros?: {
-          [k: string]: string;
-        };
-        /**
-         * Context description applied to this variant
-         */
-        context_description?: string;
-      };
-    }[]
-  ];
+      context_description?: string;
+    };
+  }[];
   /**
    * Optional URL to an interactive testing page that shows all preview variants with controls to switch between them, modify macro values, and test different scenarios.
    */
@@ -3833,13 +3746,8 @@ export interface PreviewCreativeBatchResponse {
   response_type: 'batch';
   /**
    * Array of preview results corresponding to each request in the same order. results[0] is the result for requests[0], results[1] for requests[1], etc. Order is guaranteed even when some requests fail. Each result contains either a successful preview response or an error.
-   *
-   * @minItems 1
    */
-  results: [
-    PreviewBatchResultSuccess | PreviewBatchResultError,
-    ...(PreviewBatchResultSuccess | PreviewBatchResultError)[]
-  ];
+  results: (PreviewBatchResultSuccess | PreviewBatchResultError)[];
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -3903,10 +3811,8 @@ export interface GetSignalsRequest {
   deliver_to: {
     /**
      * List of deployment targets (DSPs, sales agents, etc.). If the authenticated caller matches one of these deployment targets, activation keys will be included in the response.
-     *
-     * @minItems 1
      */
-    deployments: [Destination, ...Destination[]];
+    deployments: Destination[];
     /**
      * Countries where signals will be used (ISO codes)
      */
@@ -4130,10 +4036,8 @@ export interface ActivateSignalRequest {
   signal_agent_segment_id: string;
   /**
    * Target deployment(s) for activation. If the authenticated caller matches one of these deployment targets, activation keys will be included in the response.
-   *
-   * @minItems 1
    */
-  deployments: [Destination, ...Destination[]];
+  deployments: Destination[];
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -4163,10 +4067,8 @@ export interface ActivateSignalSuccess {
 export interface ActivateSignalError {
   /**
    * Array of errors explaining why activation failed (e.g., platform connectivity issues, signal definition problems, authentication failures)
-   *
-   * @minItems 1
    */
-  errors: [Error, ...Error[]];
+  errors: Error[];
   context?: ContextObject;
   ext?: ExtensionObject;
 }

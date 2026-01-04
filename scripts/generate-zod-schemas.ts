@@ -3,6 +3,7 @@
 import { writeFileSync, mkdirSync, readFileSync, existsSync } from 'fs';
 import { jsonSchemaToZod } from 'json-schema-to-zod';
 import path from 'path';
+import { removeMinItemsConstraints } from './schema-utils';
 
 // Schema cache configuration
 const SCHEMA_CACHE_DIR = path.join(__dirname, '../schemas/cache');
@@ -277,8 +278,11 @@ function convertSchemaToZod(schema: any, schemaName: string): string {
     // Dereference schema to inline all $ref values before conversion
     const dereferencedSchema = dereferenceSchema(schema);
 
+    // Remove minItems constraints to allow empty arrays
+    const relaxedSchema = removeMinItemsConstraints(dereferencedSchema);
+
     // Use json-schema-to-zod to convert
-    const zodCode = jsonSchemaToZod(dereferencedSchema, {
+    const zodCode = jsonSchemaToZod(relaxedSchema, {
       name: schemaName,
       module: 'esm',
     });
