@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas v2.5.1
-// Generated at: 2026-01-02T21:37:15.772Z
+// Generated at: 2026-01-04T17:26:07.039Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -437,10 +437,8 @@ export interface CreativeAsset {
   weight?: number;
   /**
    * Optional array of placement IDs where this creative should run when uploading via create_media_buy or update_media_buy. References placement_id values from the product's placements array. If omitted, creative runs on all placements. Only used during upload to media buy - not stored in creative library.
-   *
-   * @minItems 1
    */
-  placement_ids?: [string, ...string[]];
+  placement_ids?: string[];
 }
 /**
  * Format identifier specifying which format this creative conforms to. Can be: (1) concrete format_id referencing a format with fixed dimensions, (2) template format_id referencing a template format, or (3) parameterized format_id with dimensions/duration parameters for template formats.
@@ -989,27 +987,21 @@ export interface Product {
   description: string;
   /**
    * Publisher properties covered by this product. Buyers fetch actual property definitions from each publisher's adagents.json and validate agent authorization. Selection patterns mirror the authorization patterns in adagents.json for consistency.
-   *
-   * @minItems 1
    */
-  publisher_properties: [PublisherPropertySelector, ...PublisherPropertySelector[]];
+  publisher_properties: PublisherPropertySelector[];
   /**
    * Array of supported creative format IDs - structured format_id objects with agent_url and id
    */
   format_ids: FormatID[];
   /**
    * Optional array of specific placements within this product. When provided, buyers can target specific placements when assigning creatives.
-   *
-   * @minItems 1
    */
-  placements?: [Placement, ...Placement[]];
+  placements?: Placement[];
   delivery_type: DeliveryType;
   /**
    * Available pricing models for this product
-   *
-   * @minItems 1
    */
-  pricing_options: [PricingOption, ...PricingOption[]];
+  pricing_options: PricingOption[];
   /**
    * Estimated exposures/impressions for guaranteed products
    */
@@ -1605,25 +1597,14 @@ export interface Property {
   name: string;
   /**
    * Array of identifiers for this property
-   *
-   * @minItems 1
    */
-  identifiers: [
-    {
-      type: PropertyIdentifierTypes;
-      /**
-       * The identifier value. For domain type: 'example.com' matches base domain plus www and m subdomains; 'edition.example.com' matches that specific subdomain; '*.example.com' matches ALL subdomains but NOT base domain
-       */
-      value: string;
-    },
-    ...{
-      type: PropertyIdentifierTypes;
-      /**
-       * The identifier value. For domain type: 'example.com' matches base domain plus www and m subdomains; 'edition.example.com' matches that specific subdomain; '*.example.com' matches ALL subdomains but NOT base domain
-       */
-      value: string;
-    }[]
-  ];
+  identifiers: {
+    type: PropertyIdentifierTypes;
+    /**
+     * The identifier value. For domain type: 'example.com' matches base domain plus www and m subdomains; 'edition.example.com' matches that specific subdomain; '*.example.com' matches ALL subdomains but NOT base domain
+     */
+    value: string;
+  }[];
   /**
    * Tags for categorization and grouping (e.g., network membership, content categories)
    */

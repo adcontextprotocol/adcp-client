@@ -3,6 +3,7 @@
 import { writeFileSync, mkdirSync, readFileSync, existsSync } from 'fs';
 import { compile } from 'json-schema-to-typescript';
 import path from 'path';
+import { removeMinItemsConstraints } from './schema-utils';
 
 // Write file only if content differs (excluding timestamp)
 function writeFileIfChanged(filePath: string, newContent: string): boolean {
@@ -448,8 +449,8 @@ async function generateToolTypes(tools: ToolDefinition[]) {
       // Generate parameter types
       if (tool.paramsSchema) {
         const paramTypeName = `${tool.methodName.charAt(0).toUpperCase() + tool.methodName.slice(1)}Request`;
-        // Enforce strict schema (remove additionalProperties: true)
-        const strictParamsSchema = enforceStrictSchema(tool.paramsSchema);
+        // Process schema: remove additionalProperties and minItems constraints
+        const strictParamsSchema = enforceStrictSchema(removeMinItemsConstraints(tool.paramsSchema));
         const paramTypes = await compile(strictParamsSchema, paramTypeName, {
           bannerComment: '',
           style: { semi: true, singleQuote: true },
@@ -470,8 +471,8 @@ async function generateToolTypes(tools: ToolDefinition[]) {
       // Generate response types
       if (tool.responseSchema) {
         const responseTypeName = `${tool.methodName.charAt(0).toUpperCase() + tool.methodName.slice(1)}Response`;
-        // Enforce strict schema (remove additionalProperties: true)
-        const strictResponseSchema = enforceStrictSchema(tool.responseSchema);
+        // Process schema: remove additionalProperties and minItems constraints
+        const strictResponseSchema = enforceStrictSchema(removeMinItemsConstraints(tool.responseSchema));
         const responseTypes = await compile(strictResponseSchema, responseTypeName, {
           bannerComment: '',
           style: { semi: true, singleQuote: true },
@@ -805,8 +806,8 @@ async function generateTypes() {
 
       if (schema) {
         console.log(`🔧 Generating TypeScript types for ${schemaName}...`);
-        // Enforce strict schema (remove additionalProperties: true)
-        const strictSchema = enforceStrictSchema(schema);
+        // Process schema: remove additionalProperties and minItems constraints
+        const strictSchema = enforceStrictSchema(removeMinItemsConstraints(schema));
         const types = await compile(strictSchema, schemaName, {
           bannerComment: '',
           style: {
@@ -856,8 +857,8 @@ async function generateTypes() {
 
       if (schema) {
         console.log(`🔧 Generating TypeScript types for ${schemaName}...`);
-        // Enforce strict schema (remove additionalProperties: true)
-        const strictSchema = enforceStrictSchema(schema);
+        // Process schema: remove additionalProperties and minItems constraints
+        const strictSchema = enforceStrictSchema(removeMinItemsConstraints(schema));
         const types = await compile(strictSchema, schemaName, {
           bannerComment: '',
           style: {

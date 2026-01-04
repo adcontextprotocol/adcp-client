@@ -99,4 +99,51 @@ describe('Zod Schema Validation', () => {
       'CreativeAssetSchema should have safeParse method'
     );
   });
+
+  test('ListAuthorizedPropertiesResponseSchema accepts empty publisher_domains array', async () => {
+    if (!schemas) {
+      schemas = await import('../../dist/lib/types/schemas.generated.js');
+    }
+
+    // Test agents may return empty arrays when not authorized for any publishers
+    const responseWithEmptyDomains = {
+      publisher_domains: [],
+    };
+
+    const result = schemas.ListAuthorizedPropertiesResponseSchema.safeParse(responseWithEmptyDomains);
+    assert.ok(
+      result.success,
+      `ListAuthorizedPropertiesResponse should accept empty publisher_domains: ${JSON.stringify(result.error?.issues || result.error)}`
+    );
+  });
+
+  test('ListAuthorizedPropertiesResponseSchema accepts non-empty publisher_domains array', async () => {
+    if (!schemas) {
+      schemas = await import('../../dist/lib/types/schemas.generated.js');
+    }
+
+    const responseWithDomains = {
+      publisher_domains: ['cnn.com', 'nytimes.com'],
+    };
+
+    const result = schemas.ListAuthorizedPropertiesResponseSchema.safeParse(responseWithDomains);
+    assert.ok(
+      result.success,
+      `ListAuthorizedPropertiesResponse should accept non-empty publisher_domains: ${JSON.stringify(result.error?.issues || result.error)}`
+    );
+  });
+
+  test('ListAuthorizedPropertiesResponseSchema rejects invalid element types', async () => {
+    if (!schemas) {
+      schemas = await import('../../dist/lib/types/schemas.generated.js');
+    }
+
+    // publisher_domains should only contain strings
+    const responseWithInvalidTypes = {
+      publisher_domains: [123, null, { domain: 'example.com' }],
+    };
+
+    const result = schemas.ListAuthorizedPropertiesResponseSchema.safeParse(responseWithInvalidTypes);
+    assert.ok(!result.success, 'Should reject non-string elements in publisher_domains');
+  });
 });
