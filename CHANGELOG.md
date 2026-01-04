@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.5.1
+
+### Patch Changes
+
+- 15244b1: fix(testing): Use publisher_domains instead of legacy authorized_properties in discovery tests
+
 ## 3.5.0
 
 ### Minor Changes
