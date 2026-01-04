@@ -180,10 +180,7 @@ function postProcessTuplesToArrays(content: string): string {
   // Match patterns like: z.tuple([SomeSchema]).rest(SomeSchema)
   // and convert to: z.array(SomeSchema)
   // The pattern captures the inner schema type and uses a backreference to ensure they match
-  return content.replace(
-    /z\.tuple\(\[([^\]]+)\]\)\.rest\(\1\)/g,
-    'z.array($1)'
-  );
+  return content.replace(/z\.tuple\(\[([^\]]+)\]\)\.rest\(\1\)/g, 'z.array($1)');
 }
 
 // Write file only if content differs (excluding timestamp)
