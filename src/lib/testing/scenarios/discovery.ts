@@ -69,13 +69,13 @@ export async function testDiscovery(
       async () => client.executeTask('list_authorized_properties', {}) as Promise<TaskResult>
     );
 
-    const properties = result?.data?.authorized_properties as any[] | undefined;
-    if (result?.success && properties) {
-      step.details = `Found ${properties.length} authorized propert(ies)`;
+    const publisherDomains = result?.data?.publisher_domains as string[] | undefined;
+    if (result?.success && publisherDomains) {
+      step.details = `Found ${publisherDomains.length} publisher domain(s)`;
       step.response_preview = JSON.stringify(
         {
-          properties_count: properties.length,
-          domains: properties.slice(0, 3).map((p: any) => p.domain),
+          publisher_domains_count: publisherDomains.length,
+          domains: publisherDomains.slice(0, 3),
         },
         null,
         2

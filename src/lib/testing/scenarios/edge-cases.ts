@@ -676,16 +676,10 @@ export async function testResponseConsistency(
 
     if (result?.success && result?.data) {
       const data = result.data as any;
-      const properties = data.authorized_properties || data.properties || [];
       const publisherDomains = data.publisher_domains || [];
       const issues: string[] = [];
 
       // Check for undefined elements
-      for (let i = 0; i < properties.length; i++) {
-        if (properties[i] === undefined || properties[i] === null) {
-          issues.push(`properties[${i}] is ${properties[i]}`);
-        }
-      }
       for (let i = 0; i < publisherDomains.length; i++) {
         if (publisherDomains[i] === undefined || publisherDomains[i] === null) {
           issues.push(`publisher_domains[${i}] is ${publisherDomains[i]}`);
@@ -698,14 +692,13 @@ export async function testResponseConsistency(
         step.response_preview = JSON.stringify(
           {
             issues: issues.slice(0, 10),
-            properties_count: properties.length,
             publisher_domains_count: publisherDomains.length,
           },
           null,
           2
         );
       } else {
-        step.details = `Properties consistent: ${properties.length} properties, ${publisherDomains.length} domains`;
+        step.details = `Publisher domains consistent: ${publisherDomains.length} domain(s)`;
       }
     } else if (result && !result.success) {
       step.passed = false;
