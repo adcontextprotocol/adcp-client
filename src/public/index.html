@@ -4356,7 +4356,7 @@
                     <td style="padding: 12px; border: 1px solid #dee2e6;">${product.product_id || 'N/A'}</td>
                     <td style="padding: 12px; border: 1px solid #dee2e6;">${product.name || 'Unnamed Product'}</td>
                     <td style="padding: 12px; border: 1px solid #dee2e6;">${product.delivery_type || 'N/A'}</td>
-                    <td style="padding: 12px; border: 1px solid #dee2e6;">${formatCPM(product.cpm)}</td>
+                    <td style="padding: 12px; border: 1px solid #dee2e6;">${formatCPM(product) || '<span style="color: #888;">Contact for pricing</span>'}</td>
                     <td style="padding: 12px; border: 1px solid #dee2e6;">${formatMinSpend(product.min_spend)}</td>
                     <td style="padding: 12px; border: 1px solid #dee2e6;">${formatFormats(product)}</td>
                     <td style="padding: 12px; border: 1px solid #dee2e6; text-align: center;">${getValidationStatusIcon(
@@ -4370,11 +4370,27 @@
         updateCreateBuyButton();
       }
 
-      function formatCPM(cpm) {
-        if (cpm === null || cpm === undefined) {
-          return '<span style="color: #888;">Contact for pricing</span>';
+      function formatCPM(product) {
+        if (!product) {
+          return null;
         }
-        return `$${cpm}`;
+        // Check pricing_options first (AdCP spec compliant)
+        if (product.pricing_options && Array.isArray(product.pricing_options) && product.pricing_options.length > 0) {
+          const option = product.pricing_options[0];
+          // Fixed rate pricing has 'rate' field
+          if (option.rate !== undefined && option.rate !== null) {
+            return `$${option.rate}`;
+          }
+          // Auction pricing has 'price_guidance' with 'p75' as recommended price
+          if (option.price_guidance && option.price_guidance.p75 !== undefined) {
+            return `~$${option.price_guidance.p75}`;
+          }
+        }
+        // Fall back to deprecated cpm field for backwards compatibility
+        if (product.cpm !== undefined && product.cpm !== null) {
+          return `$${product.cpm}`;
+        }
+        return null;
       }
 
       function formatMinSpend(minSpend) {
@@ -5194,9 +5210,11 @@
         const selectedProductsList = Array.from(selectedProducts)
           .map(productId => {
             const product = products.find(p => p.product_id === productId);
-            return product
-              ? `• ${product.name || 'Unnamed Product'} (${product.product_id}) - $${product.cpm || '0'} CPM`
-              : `• ${productId}`;
+            if (!product) return `• ${productId}`;
+            const price = formatCPM(product);
+            return price
+              ? `• ${product.name || 'Unnamed Product'} (${product.product_id}) - ${price} CPM`
+              : `• ${product.name || 'Unnamed Product'} (${product.product_id})`;
           })
           .join('<br>');
 
