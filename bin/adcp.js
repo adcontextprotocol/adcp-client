@@ -19,6 +19,57 @@ const { readFileSync } = require('fs');
 const { AsyncWebhookHandler } = require('./adcp-async-handler.js');
 const { getAgent, listAgents, isAlias, interactiveSetup, removeAgent, getConfigPath } = require('./adcp-config.js');
 
+// Test scenarios available
+const TEST_SCENARIOS = [
+  'health_check',
+  'discovery',
+  'create_media_buy',
+  'full_sales_flow',
+  'creative_sync',
+  'creative_inline',
+  'creative_flow',
+  'signals_flow',
+  'error_handling',
+  'validation',
+  'pricing_edge_cases',
+  'temporal_validation',
+  'behavior_analysis',
+  'response_consistency',
+];
+
+// Built-in test agent aliases (shared between main CLI and test command)
+// Note: These tokens are intentionally public for the AdCP test infrastructure.
+// They provide rate-limited access to test agents for SDK development and examples.
+const BUILT_IN_AGENTS = {
+  test: {
+    url: 'https://test-agent.adcontextprotocol.org/mcp/',
+    protocol: 'mcp',
+    auth_token: '1v8tAhASaUYYp4odoQ1PnMpdqNaMiTrCRqYo9OJp6IQ',
+    description: 'AdCP public test agent (MCP, with auth)',
+  },
+  'test-a2a': {
+    url: 'https://test-agent.adcontextprotocol.org',
+    protocol: 'a2a',
+    auth_token: '1v8tAhASaUYYp4odoQ1PnMpdqNaMiTrCRqYo9OJp6IQ',
+    description: 'AdCP public test agent (A2A, with auth)',
+  },
+  'test-no-auth': {
+    url: 'https://test-agent.adcontextprotocol.org/mcp/',
+    protocol: 'mcp',
+    description: 'AdCP public test agent (MCP, no auth - demonstrates errors)',
+  },
+  'test-a2a-no-auth': {
+    url: 'https://test-agent.adcontextprotocol.org',
+    protocol: 'a2a',
+    description: 'AdCP public test agent (A2A, no auth - demonstrates errors)',
+  },
+  creative: {
+    url: 'https://creative.adcontextprotocol.org/mcp',
+    protocol: 'mcp',
+    description: 'Official AdCP creative agent (MCP only)',
+  },
+};
+
 /**
  * Extract human-readable protocol message from conversation
  */
@@ -97,6 +148,203 @@ async function displayAgentInfo(agentConfig, jsonOutput) {
   }
 }
 
+/**
+ * Handle the 'test' subcommand for running agent test scenarios
+ */
+async function handleTestCommand(args) {
+  // Handle --list-scenarios
+  if (args.includes('--list-scenarios') || args.length === 0) {
+    console.log('\n📋 Available Test Scenarios:\n');
+    const descriptions = {
+      health_check: 'Basic connectivity check - verify agent responds',
+      discovery: 'Test get_products, list_creative_formats, list_authorized_properties',
+      create_media_buy: 'Discovery + create a test media buy (dry-run by default)',
+      full_sales_flow: 'Full lifecycle: discovery → create → update → delivery',
+      creative_sync: 'Test sync_creatives flow',
+      creative_inline: 'Test inline creatives in create_media_buy',
+      creative_flow: 'Creative agent: list_formats → build → preview',
+      signals_flow: 'Signals agent: get_signals → activate',
+      error_handling: 'Verify agent returns proper error responses',
+      validation: 'Test schema validation (invalid inputs should be rejected)',
+      pricing_edge_cases: 'Test auction vs fixed pricing, min spend, bid_price',
+      temporal_validation: 'Test date/time ordering and format validation',
+      behavior_analysis: 'Analyze agent behavior: auth, brief relevance, filtering',
+      response_consistency: 'Check for schema errors, pagination bugs, data mismatches',
+    };
+
+    for (const scenario of TEST_SCENARIOS) {
+      console.log(`  ${scenario}`);
+      if (descriptions[scenario]) {
+        console.log(`    ${descriptions[scenario]}`);
+      }
+      console.log('');
+    }
+    console.log('Usage: adcp test <agent> [scenario] [options]\n');
+    return;
+  }
+
+  // Parse options with bounds checking
+  const authIndex = args.indexOf('--auth');
+  let authToken = process.env.ADCP_AUTH_TOKEN;
+  if (authIndex !== -1) {
+    if (authIndex + 1 >= args.length || args[authIndex + 1].startsWith('--')) {
+      console.error('ERROR: --auth requires a token value\n');
+      process.exit(2);
+    }
+    authToken = args[authIndex + 1];
+  }
+
+  const protocolIndex = args.indexOf('--protocol');
+  let protocolFlag = null;
+  if (protocolIndex !== -1) {
+    if (protocolIndex + 1 >= args.length || args[protocolIndex + 1].startsWith('--')) {
+      console.error('ERROR: --protocol requires a value (mcp or a2a)\n');
+      process.exit(2);
+    }
+    protocolFlag = args[protocolIndex + 1];
+  }
+
+  const briefIndex = args.indexOf('--brief');
+  let brief;
+  if (briefIndex !== -1) {
+    if (briefIndex + 1 >= args.length || args[briefIndex + 1].startsWith('--')) {
+      console.error('ERROR: --brief requires a value\n');
+      process.exit(2);
+    }
+    brief = args[briefIndex + 1];
+  }
+
+  const jsonOutput = args.includes('--json');
+  const debug = args.includes('--debug') || process.env.ADCP_DEBUG === 'true';
+  const dryRun = !args.includes('--no-dry-run');
+
+  // Filter out flag arguments to find positional arguments
+  const positionalArgs = args.filter(
+    arg =>
+      !arg.startsWith('--') &&
+      arg !== authToken &&
+      arg !== protocolFlag &&
+      arg !== brief
+  );
+
+  if (positionalArgs.length === 0) {
+    console.error('ERROR: test command requires an agent alias or URL\n');
+    console.error('Usage: adcp test <agent> [scenario] [options]');
+    console.error('       adcp test --list-scenarios\n');
+    process.exit(2);
+  }
+
+  const agentArg = positionalArgs[0];
+  const scenario = positionalArgs[1] || 'discovery';
+
+  // Validate scenario
+  if (!TEST_SCENARIOS.includes(scenario)) {
+    console.error(`ERROR: Unknown scenario '${scenario}'\n`);
+    console.error('Available scenarios:');
+    TEST_SCENARIOS.forEach(s => console.error(`  - ${s}`));
+    console.error('\nUse: adcp test --list-scenarios for descriptions\n');
+    process.exit(2);
+  }
+
+  // Validate protocol flag if provided
+  if (protocolFlag && protocolFlag !== 'mcp' && protocolFlag !== 'a2a') {
+    console.error(`ERROR: Invalid protocol '${protocolFlag}'. Must be 'mcp' or 'a2a'\n`);
+    process.exit(2);
+  }
+
+  let agentUrl;
+  let protocol = protocolFlag;
+  let finalAuthToken = authToken;
+
+  // Resolve agent
+  if (BUILT_IN_AGENTS[agentArg]) {
+    const builtIn = BUILT_IN_AGENTS[agentArg];
+    agentUrl = builtIn.url;
+    protocol = protocol || builtIn.protocol;
+    finalAuthToken = finalAuthToken || builtIn.auth_token;
+  } else if (isAlias(agentArg)) {
+    const savedAgent = getAgent(agentArg);
+    agentUrl = savedAgent.url;
+    protocol = protocol || savedAgent.protocol;
+    finalAuthToken = finalAuthToken || savedAgent.auth_token;
+  } else if (agentArg.startsWith('http://') || agentArg.startsWith('https://')) {
+    agentUrl = agentArg;
+  } else {
+    console.error(`ERROR: '${agentArg}' is not a valid agent alias or URL\n`);
+    console.error('Built-in aliases: test, test-a2a, creative');
+    console.error(`Saved aliases: ${Object.keys(listAgents()).join(', ') || 'none'}\n`);
+    process.exit(2);
+  }
+
+  // Auto-detect protocol if not specified
+  if (!protocol) {
+    if (!jsonOutput) {
+      console.error('🔍 Auto-detecting protocol...');
+    }
+    try {
+      protocol = await detectProtocol(agentUrl);
+      if (!jsonOutput) {
+        console.error(`✓ Detected protocol: ${protocol.toUpperCase()}\n`);
+      }
+    } catch (error) {
+      console.error(`ERROR: Failed to detect protocol: ${error.message}\n`);
+      console.error('Please specify protocol: --protocol mcp or --protocol a2a\n');
+      process.exit(2);
+    }
+  }
+
+  // Build test options
+  const testOptions = {
+    protocol,
+    dry_run: dryRun,
+    brief,
+    ...(finalAuthToken && { auth: { type: 'bearer', token: finalAuthToken } }),
+  };
+
+  if (!jsonOutput) {
+    console.log(`\n🧪 Running '${scenario}' tests against ${agentUrl}`);
+    console.log(`   Protocol: ${protocol.toUpperCase()}`);
+    console.log(`   Dry Run: ${dryRun ? 'Yes (safe mode)' : 'No (real operations)'}`);
+    console.log(`   Auth: ${finalAuthToken ? 'configured' : 'none'}\n`);
+  }
+
+  // Import and run tests
+  try {
+    const { testAgent: runAgentTests, formatTestResults, formatTestResultsJSON } = await import(
+      '../dist/lib/testing/agent-tester.js'
+    );
+
+    // Silence default logger for cleaner output
+    const { setAgentTesterLogger } = await import('../dist/lib/testing/client.js');
+    if (!debug) {
+      setAgentTesterLogger({
+        info: () => {},
+        error: () => {},
+        warn: () => {},
+        debug: () => {},
+      });
+    }
+
+    const result = await runAgentTests(agentUrl, scenario, testOptions);
+
+    if (jsonOutput) {
+      console.log(formatTestResultsJSON(result));
+    } else {
+      console.log(formatTestResults(result));
+    }
+
+    // Exit with appropriate code
+    process.exit(result.overall_passed ? 0 : 3);
+  } catch (error) {
+    console.error(`\n❌ Test execution failed: ${error.message}`);
+    if (debug) {
+      console.error('\nStack trace:');
+      console.error(error.stack);
+    }
+    process.exit(1);
+  }
+}
+
 function printUsage() {
   console.log(`
 AdCP CLI Tool - Direct Agent Communication
@@ -136,6 +384,13 @@ AGENT MANAGEMENT:
   --list-agents               List all saved agents
   --remove-agent <alias>      Remove saved agent configuration
   --show-config               Show config file location
+
+AGENT TESTING:
+  test <agent> [scenario]     Run test scenarios against an agent
+                              Scenarios: discovery, health_check, create_media_buy,
+                              full_sales_flow, error_handling, validation, and more
+                              Default scenario: discovery
+  test --list-scenarios       List all available test scenarios
 
 EXAMPLES:
   # Use built-in test agent (zero config!)
@@ -184,6 +439,14 @@ EXAMPLES:
 
   # JSON output for scripting
   adcp myagent get_products '{"brief":"travel"}' --json | jq '.products[0]'
+
+  # Run agent tests
+  adcp test test                          # Test built-in test agent with discovery scenario
+  adcp test test discovery                # Explicit discovery scenario
+  adcp test test full_sales_flow          # Full media buy lifecycle test
+  adcp test https://my-agent.com discovery --auth $TOKEN
+  adcp test myagent error_handling --json # JSON output for CI
+  adcp test --list-scenarios              # Show all available scenarios
 
 ENVIRONMENT VARIABLES:
   ADCP_AUTH_TOKEN    Default authentication token (overridden by --auth)
@@ -307,6 +570,12 @@ async function main() {
     process.exit(0);
   }
 
+  // Handle test command (handleTestCommand calls process.exit internally)
+  if (args[0] === 'test') {
+    await handleTestCommand(args.slice(1));
+    return; // handleTestCommand exits, but return for clarity
+  }
+
   // Parse arguments
   if (args.length < 1) {
     console.error('ERROR: Missing required arguments\n');
@@ -350,37 +619,6 @@ async function main() {
   let savedAgent = null;
 
   const firstArg = positionalArgs[0];
-
-  // Built-in test helper aliases
-  const BUILT_IN_AGENTS = {
-    test: {
-      url: 'https://test-agent.adcontextprotocol.org/mcp/',
-      protocol: 'mcp',
-      auth_token: '1v8tAhASaUYYp4odoQ1PnMpdqNaMiTrCRqYo9OJp6IQ',
-      description: 'AdCP public test agent (MCP, with auth)',
-    },
-    'test-a2a': {
-      url: 'https://test-agent.adcontextprotocol.org',
-      protocol: 'a2a',
-      auth_token: '1v8tAhASaUYYp4odoQ1PnMpdqNaMiTrCRqYo9OJp6IQ',
-      description: 'AdCP public test agent (A2A, with auth)',
-    },
-    'test-no-auth': {
-      url: 'https://test-agent.adcontextprotocol.org/mcp/',
-      protocol: 'mcp',
-      description: 'AdCP public test agent (MCP, no auth - demonstrates auth errors)',
-    },
-    'test-a2a-no-auth': {
-      url: 'https://test-agent.adcontextprotocol.org',
-      protocol: 'a2a',
-      description: 'AdCP public test agent (A2A, no auth - demonstrates auth errors)',
-    },
-    creative: {
-      url: 'https://creative.adcontextprotocol.org/mcp',
-      protocol: 'mcp',
-      description: 'Official AdCP creative agent (MCP only)',
-    },
-  };
 
   // Check if first arg is a built-in alias or saved alias
   if (BUILT_IN_AGENTS[firstArg]) {
