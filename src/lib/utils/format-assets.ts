@@ -51,9 +51,7 @@ export function getFormatAssets(format: Format): FormatAsset[] {
  * @param assetsRequired - The deprecated assets_required array
  * @returns Normalized assets array with explicit required: true
  */
-export function normalizeAssetsRequired(
-  assetsRequired: NonNullable<Format['assets_required']>
-): FormatAsset[] {
+export function normalizeAssetsRequired(assetsRequired: NonNullable<Format['assets_required']>): FormatAsset[] {
   return assetsRequired.map(asset => ({
     ...asset,
     required: true, // assets_required only contained required assets
@@ -102,9 +100,7 @@ export function getOptionalAssets(format: Format): FormatAsset[] {
  * @returns Array of individual assets
  */
 export function getIndividualAssets(format: Format): IndividualAsset[] {
-  return getFormatAssets(format).filter(
-    (asset): asset is IndividualAsset => asset.item_type === 'individual'
-  );
+  return getFormatAssets(format).filter((asset): asset is IndividualAsset => asset.item_type === 'individual');
 }
 
 /**

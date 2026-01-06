@@ -3,6 +3,7 @@
  */
 
 import { ADCPMultiAgentClient } from '../core/ADCPMultiAgentClient';
+import { getFormatAssets } from '../utils/format-assets';
 import type { TestOptions, TestStepResult, AgentProfile, TaskResult, Logger } from './types';
 
 // Default console-based logger
@@ -273,14 +274,16 @@ export async function discoverCreativeFormats(
         optional_assets: [],
       };
 
-      // Extract asset requirements from format spec
-      if (format.asset_slots) {
-        for (const slot of format.asset_slots) {
-          if (slot.required) {
-            formatInfo.required_assets?.push(slot.name || slot.id);
-          } else {
-            formatInfo.optional_assets?.push(slot.name || slot.id);
-          }
+      // Extract asset requirements from format spec using format-assets utilities
+      // This handles both v2.6 `assets` and deprecated `assets_required` fields
+      const formatAssets = getFormatAssets(format);
+      for (const asset of formatAssets) {
+        const assetId = asset.item_type === 'individual' ? asset.asset_id : asset.asset_group_id;
+
+        if (asset.required) {
+          formatInfo.required_assets?.push(assetId);
+        } else {
+          formatInfo.optional_assets?.push(assetId);
         }
       }
 

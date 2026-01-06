@@ -71,7 +71,9 @@ async function main() {
       if (assets.length > 0) {
         const requiredAssets = getRequiredAssets(format);
         const optionalAssets = getOptionalAssets(format);
-        console.log(`\n📦 Assets: ${assets.length} total (${requiredAssets.length} required, ${optionalAssets.length} optional)`);
+        console.log(
+          `\n📦 Assets: ${assets.length} total (${requiredAssets.length} required, ${optionalAssets.length} optional)`
+        );
         if (usesDeprecatedAssetsField(format)) {
           console.log('   ⚠️  Using deprecated assets_required field');
         }
@@ -124,7 +126,9 @@ async function main() {
     if (displayAssets.length > 0) {
       const requiredAssets = getRequiredAssets(displayFormat);
       const optionalAssets = getOptionalAssets(displayFormat);
-      console.log(`\n📦 Assets: ${displayAssets.length} total (${requiredAssets.length} required, ${optionalAssets.length} optional)`);
+      console.log(
+        `\n📦 Assets: ${displayAssets.length} total (${requiredAssets.length} required, ${optionalAssets.length} optional)`
+      );
       if (usesDeprecatedAssetsField(displayFormat)) {
         console.log('   ⚠️  Using deprecated assets_required field');
       }
@@ -132,7 +136,9 @@ async function main() {
         if (asset.item_type === 'individual') {
           console.log(`  - ${asset.asset_id} (${asset.asset_type})${asset.required ? ' *required*' : ' (optional)'}`);
         } else {
-          console.log(`  - [Group] ${asset.asset_group_id} (${asset.min_count}-${asset.max_count})${asset.required ? ' *required*' : ' (optional)'}`);
+          console.log(
+            `  - [Group] ${asset.asset_group_id} (${asset.min_count}-${asset.max_count})${asset.required ? ' *required*' : ' (optional)'}`
+          );
         }
       });
     }

@@ -955,7 +955,7 @@
           // assets_required only contained required assets, so set required: true
           return format.assets_required.map(asset => ({
             ...asset,
-            required: true
+            required: true,
           }));
         }
         return [];
@@ -1221,7 +1221,7 @@
           } else if (asset.asset_type === 'image' || asset.asset_type === 'video') {
             // Image/Video assets - check if URL or file mode
             const fileInput = document.getElementById(`asset_${i}_file`);
-            
+
             // Check if URL input is visible (URL mode)
             if (input.style.display !== 'none' && input.value) {
               // URL mode - wrap in {url: "..."} per schema
