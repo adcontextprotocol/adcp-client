@@ -220,11 +220,7 @@ async function handleTestCommand(args) {
 
   // Filter out flag arguments to find positional arguments
   const positionalArgs = args.filter(
-    arg =>
-      !arg.startsWith('--') &&
-      arg !== authToken &&
-      arg !== protocolFlag &&
-      arg !== brief
+    arg => !arg.startsWith('--') && arg !== authToken && arg !== protocolFlag && arg !== brief
   );
 
   if (positionalArgs.length === 0) {
@@ -310,9 +306,11 @@ async function handleTestCommand(args) {
 
   // Import and run tests
   try {
-    const { testAgent: runAgentTests, formatTestResults, formatTestResultsJSON } = await import(
-      '../dist/lib/testing/agent-tester.js'
-    );
+    const {
+      testAgent: runAgentTests,
+      formatTestResults,
+      formatTestResultsJSON,
+    } = await import('../dist/lib/testing/agent-tester.js');
 
     // Silence default logger for cleaner output
     const { setAgentTesterLogger } = await import('../dist/lib/testing/client.js');
