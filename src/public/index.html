@@ -4645,7 +4645,7 @@
                       format.output_format_ids
                     )}</td>
                     <td style="padding: 12px; border: 1px solid #dee2e6;">${formatAssetsRequired(
-                      format.assets_required
+                      getFormatAssets(format)
                     )}</td>
                     <td style="padding: 12px; border: 1px solid #dee2e6; text-align: center;">${getFormatValidationStatusIcon(
                       format
@@ -4717,14 +4717,10 @@
                                     <span class="format-card-detail-value">${dimensions}</span>
                                 </div>
                                 ${
-                                  format.assets_required
+                                  getFormatAssets(format).length > 0
                                     ? `<div class="format-card-detail-row">
                                         <span class="format-card-detail-label">Assets</span>
-                                        <span class="format-card-detail-value">${
-                                          Array.isArray(format.assets_required)
-                                            ? format.assets_required.length
-                                            : 'Custom'
-                                        }</span>
+                                        <span class="format-card-detail-value">${getFormatAssets(format).length}</span>
                                     </div>`
                                     : ''
                                 }
@@ -4867,6 +4863,26 @@
         return formatNames.join(', ');
       }
 
+      /**
+       * Get assets from a Format, preferring new `assets` field, falling back to `assets_required`
+       * This provides backward compatibility for v2.5 -> v2.6 migration
+       */
+      function getFormatAssets(format) {
+        // Prefer new `assets` field (v2.6+)
+        if (format.assets && format.assets.length > 0) {
+          return format.assets;
+        }
+        // Fall back to deprecated `assets_required` and normalize
+        if (format.assets_required && format.assets_required.length > 0) {
+          // assets_required only contained required assets, so set required: true
+          return format.assets_required.map(asset => ({
+            ...asset,
+            required: true
+          }));
+        }
+        return [];
+      }
+
       function formatAssetsRequired(assets) {
         if (!assets) return 'N/A';
 
@@ -4957,7 +4973,10 @@
           if (!format.format_id.id) adcpViolations.push('format_id missing id');
         }
 
-        // Validate optional arrays if present
+        // Validate optional arrays if present (support both new `assets` and deprecated `assets_required`)
+        if (format.assets && !Array.isArray(format.assets)) {
+          adcpViolations.push('assets must be array');
+        }
         if (format.assets_required && !Array.isArray(format.assets_required)) {
           adcpViolations.push('assets_required must be array');
         }
@@ -6124,8 +6143,9 @@
         let width = 300,
           height = 250;
 
-        if (format.assets_required && Array.isArray(format.assets_required)) {
-          const imageAsset = format.assets_required.find(
+        const assets = getFormatAssets(format);
+        if (assets.length > 0) {
+          const imageAsset = assets.find(
             asset => asset.asset_type === 'image' || asset.width || asset.height
           );
           if (imageAsset) {
@@ -6151,7 +6171,7 @@
           JSON.stringify({
             template: 'native_ad',
             format_id: format.format_id,
-            assets: format.assets_required || [],
+            assets: getFormatAssets(format),
           })
         )}`;
       }
@@ -9480,9 +9500,10 @@ ${JSON.stringify(result, null, 2)}
           if (format.dimensions && format.dimensions.width && format.dimensions.height) {
             width = format.dimensions.width;
             height = format.dimensions.height;
-          } else if (format.assets_required && Array.isArray(format.assets_required)) {
-            // Try to extract from assets_required array
-            const dimensionAsset = format.assets_required.find(a => a.width && a.height);
+          } else {
+            // Try to extract from assets array (supports both new `assets` and deprecated `assets_required`)
+            const assets = getFormatAssets(format);
+            const dimensionAsset = assets.find(a => a.width && a.height);
             if (dimensionAsset) {
               width = dimensionAsset.width;
               height = dimensionAsset.height;
@@ -9520,13 +9541,16 @@ ${JSON.stringify(result, null, 2)}
         if (format.dimensions && format.dimensions.width && format.dimensions.height) {
           width = format.dimensions.width;
           height = format.dimensions.height;
-        } else if (format.assets_required && Array.isArray(format.assets_required)) {
-          const dimensionAsset = format.assets_required.find(a => a.width && a.height);
+        } else {
+          // Try to extract from assets array (supports both new `assets` and deprecated `assets_required`)
+          const assets = getFormatAssets(format);
+          const dimensionAsset = assets.find(a => a.width && a.height);
           if (dimensionAsset) {
             width = dimensionAsset.width;
             height = dimensionAsset.height;
           }
-        } else if (format.format_id && format.format_id.includes('x')) {
+        }
+        if (!width && !height && format.format_id && format.format_id.includes('x')) {
           const match = format.format_id.match(/(\d+)x(\d+)/);
           if (match) {
             width = match[1];
@@ -9665,13 +9689,16 @@ ${JSON.stringify(result, null, 2)}
             if (format.dimensions && format.dimensions.width && format.dimensions.height) {
               width = format.dimensions.width;
               height = format.dimensions.height;
-            } else if (format.assets_required && Array.isArray(format.assets_required)) {
-              const dimensionAsset = format.assets_required.find(a => a.width && a.height);
+            } else {
+              // Try to extract from assets array (supports both new `assets` and deprecated `assets_required`)
+              const assets = getFormatAssets(format);
+              const dimensionAsset = assets.find(a => a.width && a.height);
               if (dimensionAsset) {
                 width = dimensionAsset.width;
                 height = dimensionAsset.height;
               }
-            } else if (format.format_id && format.format_id.includes('x')) {
+            }
+            if (!width && !height && format.format_id && format.format_id.includes('x')) {
               const match = format.format_id.match(/(\d+)x(\d+)/);
               if (match) {
                 width = parseInt(match[1]);

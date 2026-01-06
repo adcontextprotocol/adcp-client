@@ -1164,6 +1164,40 @@ export type AssetContentType1 =
   | 'url'
   | 'webhook';
 /**
+ * Type of asset
+ */
+export type AssetContentType2 =
+  | 'image'
+  | 'video'
+  | 'audio'
+  | 'text'
+  | 'markdown'
+  | 'html'
+  | 'css'
+  | 'javascript'
+  | 'vast'
+  | 'daast'
+  | 'promoted_offerings'
+  | 'url'
+  | 'webhook';
+/**
+ * Type of asset
+ */
+export type AssetContentType3 =
+  | 'image'
+  | 'video'
+  | 'audio'
+  | 'text'
+  | 'markdown'
+  | 'html'
+  | 'css'
+  | 'javascript'
+  | 'vast'
+  | 'daast'
+  | 'promoted_offerings'
+  | 'url'
+  | 'webhook';
+/**
  * Capabilities supported by creative agents for format handling
  */
 export type CreativeAgentCapability = 'validation' | 'assembly' | 'generation' | 'preview';
@@ -1250,7 +1284,8 @@ export interface Format {
     )[]
   ];
   /**
-   * Array of required assets or asset groups for this format. Each asset is identified by its asset_id, which must be used as the key in creative manifests. Can contain individual assets or repeatable asset sequences (e.g., carousel products, slideshow frames).
+   * @deprecated
+   * DEPRECATED: Use 'assets' instead. Array of required assets or asset groups for this format. Each asset is identified by its asset_id, which must be used as the key in creative manifests. Can contain individual assets or repeatable asset sequences (e.g., carousel products, slideshow frames). This field is maintained for backward compatibility; new implementations should use 'assets' with the 'required' boolean on each asset.
    */
   assets_required?: (
     | {
@@ -1312,6 +1347,82 @@ export interface Format {
            * Whether this asset is required in each repetition
            */
           required?: boolean;
+          /**
+           * Technical requirements for this asset. For template formats, use parameters_from_format_id: true to indicate asset parameters must match the format_id parameters (width/height/unit and/or duration_ms).
+           */
+          requirements?: {
+            [k: string]: unknown;
+          };
+        }[];
+      }
+  )[];
+  /**
+   * Array of all assets supported for this format. Each asset is identified by its asset_id, which must be used as the key in creative manifests. Use the 'required' boolean on each asset to indicate whether it's mandatory. This field replaces the deprecated 'assets_required' and enables full asset discovery for buyers and AI agents.
+   */
+  assets?: (
+    | {
+        /**
+         * Discriminator indicating this is an individual asset
+         */
+        item_type: 'individual';
+        /**
+         * Unique identifier for this asset. Creative manifests MUST use this exact value as the key in the assets object.
+         */
+        asset_id: string;
+        asset_type: AssetContentType2;
+        /**
+         * Optional descriptive label for this asset's purpose (e.g., 'hero_image', 'logo', 'third_party_tracking'). Not used for referencing assets in manifests—use asset_id instead. This field is for human-readable documentation and UI display only.
+         */
+        asset_role?: string;
+        /**
+         * Whether this asset is required (true) or optional (false). Required assets must be provided for a valid creative. Optional assets enhance the creative but are not mandatory.
+         */
+        required: boolean;
+        /**
+         * Technical requirements for this asset (dimensions, file size, duration, etc.). For template formats, use parameters_from_format_id: true to indicate asset parameters must match the format_id parameters (width/height/unit and/or duration_ms).
+         */
+        requirements?: {
+          [k: string]: unknown;
+        };
+      }
+    | {
+        /**
+         * Discriminator indicating this is a repeatable asset group
+         */
+        item_type: 'repeatable_group';
+        /**
+         * Identifier for this asset group (e.g., 'product', 'slide', 'card')
+         */
+        asset_group_id: string;
+        /**
+         * Whether this asset group is required. If true, at least min_count repetitions must be provided.
+         */
+        required: boolean;
+        /**
+         * Minimum number of repetitions required (if group is required) or allowed (if optional)
+         */
+        min_count: number;
+        /**
+         * Maximum number of repetitions allowed
+         */
+        max_count: number;
+        /**
+         * Assets within each repetition of this group
+         */
+        assets: {
+          /**
+           * Identifier for this asset within the group
+           */
+          asset_id: string;
+          asset_type: AssetContentType3;
+          /**
+           * Optional descriptive label for this asset's purpose. Not used for referencing assets in manifests—use asset_id instead. This field is for human-readable documentation and UI display only.
+           */
+          asset_role?: string;
+          /**
+           * Whether this asset is required within each repetition of the group
+           */
+          required: boolean;
           /**
            * Technical requirements for this asset. For template formats, use parameters_from_format_id: true to indicate asset parameters must match the format_id parameters (width/height/unit and/or duration_ms).
            */

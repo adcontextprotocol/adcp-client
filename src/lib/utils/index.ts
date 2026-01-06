@@ -140,3 +140,16 @@ export type { AdCPResponse } from './response-unwrapper';
 
 // Re-export protocol detection utilities
 export { detectProtocol, detectProtocolWithTimeout } from './protocol-detection';
+
+// Re-export format asset utilities (v2.6 backward compatibility)
+export {
+  getFormatAssets,
+  normalizeAssetsRequired,
+  getRequiredAssets,
+  getOptionalAssets,
+  getIndividualAssets,
+  getRepeatableGroups,
+  usesDeprecatedAssetsField,
+  getAssetCount,
+  hasAssets,
+} from './format-assets';

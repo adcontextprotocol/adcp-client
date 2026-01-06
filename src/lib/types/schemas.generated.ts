@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-01-04T17:26:07.781Z
+// Generated at: 2026-01-06T18:20:21.277Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -426,6 +426,10 @@ export const CreativeAgentCapabilitySchema = z.union([z.literal("validation"), z
 export const FormatIDParameterSchema = z.union([z.literal("dimensions"), z.literal("duration")]);
 
 export const AssetContentType1Schema = z.union([z.literal("image"), z.literal("video"), z.literal("audio"), z.literal("text"), z.literal("markdown"), z.literal("html"), z.literal("css"), z.literal("javascript"), z.literal("vast"), z.literal("daast"), z.literal("promoted_offerings"), z.literal("url"), z.literal("webhook")]);
+
+export const AssetContentType2Schema = z.union([z.literal("image"), z.literal("video"), z.literal("audio"), z.literal("text"), z.literal("markdown"), z.literal("html"), z.literal("css"), z.literal("javascript"), z.literal("vast"), z.literal("daast"), z.literal("promoted_offerings"), z.literal("url"), z.literal("webhook")]);
+
+export const AssetContentType3Schema = z.union([z.literal("image"), z.literal("video"), z.literal("audio"), z.literal("text"), z.literal("markdown"), z.literal("html"), z.literal("css"), z.literal("javascript"), z.literal("vast"), z.literal("daast"), z.literal("promoted_offerings"), z.literal("url"), z.literal("webhook")]);
 
 export const FormatID3Schema = z.object({
     agent_url: z.string(),
@@ -994,6 +998,27 @@ export const FormatSchema = z.object({
                 asset_type: AssetContentType1Schema,
                 asset_role: z.string().nullish(),
                 required: z.boolean().nullish(),
+                requirements: z.record(z.string(), z.unknown()).nullish()
+            }))
+        })])).nullish(),
+    assets: z.array(z.union([z.object({
+            item_type: z.literal("individual"),
+            asset_id: z.string(),
+            asset_type: AssetContentType2Schema,
+            asset_role: z.string().nullish(),
+            required: z.boolean(),
+            requirements: z.record(z.string(), z.unknown()).nullish()
+        }), z.object({
+            item_type: z.literal("repeatable_group"),
+            asset_group_id: z.string(),
+            required: z.boolean(),
+            min_count: z.number(),
+            max_count: z.number(),
+            assets: z.array(z.object({
+                asset_id: z.string(),
+                asset_type: AssetContentType3Schema,
+                asset_role: z.string().nullish(),
+                required: z.boolean(),
                 requirements: z.record(z.string(), z.unknown()).nullish()
             }))
         })])).nullish(),

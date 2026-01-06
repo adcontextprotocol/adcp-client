@@ -912,14 +912,10 @@
                                     <span class="format-card-detail-value">${dimensions}</span>
                                 </div>
                                 ${
-                                  format.assets_required
+                                  getFormatAssets(format).length > 0
                                     ? `<div class="format-card-detail-row">
                                         <span class="format-card-detail-label">Assets</span>
-                                        <span class="format-card-detail-value">${
-                                          Array.isArray(format.assets_required)
-                                            ? format.assets_required.length
-                                            : 'Custom'
-                                        }</span>
+                                        <span class="format-card-detail-value">${getFormatAssets(format).length}</span>
                                     </div>`
                                     : ''
                                 }
@@ -943,6 +939,26 @@
           .join('');
 
         container.innerHTML = html;
+      }
+
+      /**
+       * Get assets from a Format, preferring new `assets` field, falling back to `assets_required`
+       * This provides backward compatibility for v2.5 -> v2.6 migration
+       */
+      function getFormatAssets(format) {
+        // Prefer new `assets` field (v2.6+)
+        if (format.assets && format.assets.length > 0) {
+          return format.assets;
+        }
+        // Fall back to deprecated `assets_required` and normalize
+        if (format.assets_required && format.assets_required.length > 0) {
+          // assets_required only contained required assets, so set required: true
+          return format.assets_required.map(asset => ({
+            ...asset,
+            required: true
+          }));
+        }
+        return [];
       }
 
       function getTypeEmoji(type) {
@@ -1015,7 +1031,7 @@
 
         // Check if format is generative
         // A format is generative if it has generation_prompt or output_format_ids
-        const hasGenerationPrompt = format.assets_required?.some(a => a.asset_id === 'generation_prompt');
+        const hasGenerationPrompt = getFormatAssets(format).some(a => a.asset_id === 'generation_prompt');
         const isGenerative = (format.output_format_ids && format.output_format_ids.length > 0) || hasGenerationPrompt;
         console.log('Format:', format.name);
         console.log('Has output_format_ids:', format.output_format_ids);
@@ -1037,7 +1053,7 @@
 
         // Show asset inputs
         const assetsDiv = document.getElementById('assetInputs');
-        const assetsRequired = format.assets_required || [];
+        const assetsRequired = getFormatAssets(format);
 
         if (assetsRequired.length === 0) {
           assetsDiv.innerHTML = '<p style="color: #718096;">This format requires no assets.</p>';
@@ -1144,7 +1160,7 @@
 
       // Collect assets from form
       function collectAssets() {
-        const assetsRequired = state.selectedFormat.assets_required || [];
+        const assetsRequired = getFormatAssets(state.selectedFormat);
         const creativeAssets = {};
 
         for (let i = 0; i < assetsRequired.length; i++) {
@@ -1636,7 +1652,7 @@ ${JSON.stringify(result, null, 2)}
         }
 
         const example = QUICK_EXAMPLES[exampleKey];
-        const assetsRequired = state.selectedFormat?.assets_required || [];
+        const assetsRequired = state.selectedFormat ? getFormatAssets(state.selectedFormat) : [];
 
         console.log('Loading example:', exampleKey);
         console.log(
