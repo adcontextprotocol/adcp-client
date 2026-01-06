@@ -10,7 +10,7 @@
  */
 
 import { AdCPClient } from '../src/lib/core/AdCPClient';
-import { getFormatAssets, usesDeprecatedAssetsField } from '../src/lib';
+import { getFormatAssets, getRequiredAssets, getOptionalAssets, usesDeprecatedAssetsField } from '../src/lib';
 
 const CREATIVE_AGENT_URL = process.env.CREATIVE_AGENT_URL || 'https://creative.adcontextprotocol.org/mcp';
 const CREATIVE_AGENT_PROTOCOL = (process.env.CREATIVE_AGENT_PROTOCOL || 'mcp') as 'mcp' | 'a2a';
@@ -69,7 +69,9 @@ async function main() {
 
       const assets = getFormatAssets(format);
       if (assets.length > 0) {
-        console.log('\n📦 Assets:');
+        const requiredAssets = getRequiredAssets(format);
+        const optionalAssets = getOptionalAssets(format);
+        console.log(`\n📦 Assets: ${assets.length} total (${requiredAssets.length} required, ${optionalAssets.length} optional)`);
         if (usesDeprecatedAssetsField(format)) {
           console.log('   ⚠️  Using deprecated assets_required field');
         }
@@ -120,7 +122,9 @@ async function main() {
 
     const displayAssets = getFormatAssets(displayFormat);
     if (displayAssets.length > 0) {
-      console.log('\n📦 Assets:');
+      const requiredAssets = getRequiredAssets(displayFormat);
+      const optionalAssets = getOptionalAssets(displayFormat);
+      console.log(`\n📦 Assets: ${displayAssets.length} total (${requiredAssets.length} required, ${optionalAssets.length} optional)`);
       if (usesDeprecatedAssetsField(displayFormat)) {
         console.log('   ⚠️  Using deprecated assets_required field');
       }
