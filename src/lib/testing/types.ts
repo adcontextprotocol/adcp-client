@@ -80,6 +80,8 @@ export interface TestStepResult {
   response_preview?: string;
   // For tracking what was created (for cleanup or follow-up)
   created_id?: string;
+  // Deprecation or other warnings
+  warnings?: string[];
 }
 
 export interface AgentProfile {
