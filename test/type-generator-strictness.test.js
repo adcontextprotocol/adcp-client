@@ -52,7 +52,14 @@ test('generated types maintain strict schema enforcement', () => {
   //   * Asset manifests (format-defined structures)
   //   * Error details (task-specific information)
   //   * BrandManifest intersections (inherited from allOf pattern)
-  const MAX_ALLOWED = 29;
+  //
+  // Updated from 29 to 105 for AdCP v2.6.0 schema changes:
+  // - Upstream schema added additionalProperties: true to many core types for extensibility
+  // - Affected types include: Package, TargetingOverlay, FrequencyCap, FormatID, CreativeAssignment,
+  //   ImageAsset, VideoAsset, AudioAsset, VASTAsset, DAASTAsset, BrandManifest, ProductFilters,
+  //   PublisherPropertySelector variants, and many others
+  // - This is intentional for forward compatibility - allows agents to include custom fields
+  const MAX_ALLOWED = 105;
 
   console.log(`📊 Type strictness metrics:`);
   console.log(`   Index signatures found: ${count}`);
@@ -95,7 +102,9 @@ test('core types maintain strict schema enforcement', () => {
   const indexSignatures = coreContent.match(/\[k: string\]: unknown/g) || [];
   const count = indexSignatures.length;
 
-  const MAX_CORE_ALLOWED = 15;
+  // Updated from 15 to 75 for AdCP v2.6.0 schema changes:
+  // - Upstream schema added additionalProperties: true to core types for extensibility
+  const MAX_CORE_ALLOWED = 75;
 
   console.log(`📊 Core types strictness:`);
   console.log(`   Index signatures found: ${count}`);
