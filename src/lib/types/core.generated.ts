@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas v2.6.0
-// Generated at: 2026-01-06T18:20:20.365Z
+// Generated at: 2026-01-08T00:11:09.339Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -97,6 +97,7 @@ export interface Package {
    */
   paused?: boolean;
   ext?: ExtensionObject;
+  [k: string]: unknown;
 }
 /**
  * Optional geographic refinements for media buys. Most targeting should be expressed in the brief and handled by the publisher. These fields are primarily for geographic restrictions (RCT testing, regulatory compliance).
@@ -127,6 +128,7 @@ export interface TargetingOverlay {
    */
   axe_exclude_segment?: string;
   frequency_cap?: FrequencyCap;
+  [k: string]: unknown;
 }
 /**
  * Frequency capping settings for package-level application
@@ -136,6 +138,7 @@ export interface FrequencyCap {
    * Minutes to suppress after impression
    */
   suppress_minutes: number;
+  [k: string]: unknown;
 }
 /**
  * Assignment of a creative asset to a package with optional placement targeting. Used in create_media_buy and update_media_buy requests. Note: sync_creatives does not support placement_ids - use create/update_media_buy for placement-level targeting.
@@ -155,6 +158,7 @@ export interface CreativeAssignment {
    * @minItems 1
    */
   placement_ids?: [string, ...string[]];
+  [k: string]: unknown;
 }
 /**
  * Structured format identifier with agent URL and format name. Can reference: (1) a concrete format with fixed dimensions (id only), (2) a template format without parameters (id only), or (3) a template format with parameters (id + dimensions/duration). Template formats accept parameters in format_id while concrete formats have fixed dimensions in their definition. Parameterized format IDs create unique, specific format variants.
@@ -180,6 +184,7 @@ export interface FormatID {
    * Duration in milliseconds for time-based formats (video, audio). When specified, creates a parameterized format ID. Omit to reference a template format without parameters.
    */
   duration_ms?: number;
+  [k: string]: unknown;
 }
 /**
  * Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.
@@ -219,6 +224,7 @@ export type VASTAsset =
        * Tracking events supported by this VAST tag
        */
       tracking_events?: VASTTrackingEvent[];
+      [k: string]: unknown;
     }
   | {
       /**
@@ -242,6 +248,7 @@ export type VASTAsset =
        * Tracking events supported by this VAST tag
        */
       tracking_events?: VASTTrackingEvent[];
+      [k: string]: unknown;
     };
 /**
  * VAST specification version
@@ -297,6 +304,7 @@ export type DAASTAsset =
        * Whether companion display ads are included
        */
       companion_ads?: boolean;
+      [k: string]: unknown;
     }
   | {
       /**
@@ -320,6 +328,7 @@ export type DAASTAsset =
        * Whether companion display ads are included
        */
       companion_ads?: boolean;
+      [k: string]: unknown;
     };
 /**
  * DAAST specification version
@@ -464,6 +473,7 @@ export interface ImageAsset {
    * Alternative text for accessibility
    */
   alt_text?: string;
+  [k: string]: unknown;
 }
 /**
  * Video asset with URL and specifications
@@ -493,6 +503,7 @@ export interface VideoAsset {
    * Video bitrate in kilobits per second
    */
   bitrate_kbps?: number;
+  [k: string]: unknown;
 }
 /**
  * Audio asset with URL and specifications
@@ -514,6 +525,7 @@ export interface AudioAsset {
    * Audio bitrate in kilobits per second
    */
   bitrate_kbps?: number;
+  [k: string]: unknown;
 }
 /**
  * Text content asset
@@ -527,6 +539,7 @@ export interface TextAsset {
    * Language code (e.g., 'en', 'es', 'fr')
    */
   language?: string;
+  [k: string]: unknown;
 }
 /**
  * HTML content asset
@@ -540,6 +553,7 @@ export interface HTMLAsset {
    * HTML version (e.g., 'HTML5')
    */
   version?: string;
+  [k: string]: unknown;
 }
 /**
  * CSS stylesheet asset
@@ -553,6 +567,7 @@ export interface CSSAsset {
    * CSS media query context (e.g., 'screen', 'print')
    */
   media?: string;
+  [k: string]: unknown;
 }
 /**
  * JavaScript code asset
@@ -563,6 +578,7 @@ export interface JavaScriptAsset {
    */
   content: string;
   module_type?: JavaScriptModuleType;
+  [k: string]: unknown;
 }
 /**
  * Complete offering specification combining brand manifest, product selectors, and asset filters. Provides all context needed for creative generation about what is being promoted.
@@ -588,6 +604,7 @@ export interface PromotedOfferings {
     assets?: {
       [k: string]: unknown;
     }[];
+    [k: string]: unknown;
   }[];
   /**
    * Selectors to choose specific assets from the brand manifest
@@ -617,7 +634,9 @@ export interface PromotedOfferings {
      * Exclude assets with these tags
      */
     exclude_tags?: string[];
+    [k: string]: unknown;
   };
+  [k: string]: unknown;
 }
 /**
  * Inline brand manifest object
@@ -753,6 +772,7 @@ export interface BrandManifest {
     metadata?: {
       [k: string]: unknown;
     };
+    [k: string]: unknown;
   }[];
   /**
    * Product catalog information for e-commerce advertisers. Enables SKU-level creative generation and product selection.
@@ -778,6 +798,7 @@ export interface BrandManifest {
      * How frequently the product catalog is updated
      */
     update_frequency?: 'realtime' | 'hourly' | 'daily' | 'weekly';
+    [k: string]: unknown;
   };
   /**
    * Legal disclaimers or required text that must appear in creatives
@@ -834,6 +855,7 @@ export interface BrandManifest {
      */
     version?: string;
   };
+  [k: string]: unknown;
 }
 /**
  * Selectors to choose which products/offerings from the brand manifest product catalog to promote
@@ -855,6 +877,7 @@ export interface PromotedProducts {
    * Natural language query to select products from the brand manifest (e.g., 'all Kraft Heinz pasta sauces', 'organic products under $20')
    */
   manifest_query?: string;
+  [k: string]: unknown;
 }
 /**
  * URL reference asset
@@ -869,6 +892,7 @@ export interface URLAsset {
    * Description of what this URL points to
    */
   description?: string;
+  [k: string]: unknown;
 }
 
 // PRODUCT SCHEMA
@@ -885,6 +909,7 @@ export type PublisherPropertySelector =
        * Discriminator indicating all properties from this publisher are included
        */
       selection_type: 'all';
+      [k: string]: unknown;
     }
   | {
       /**
@@ -901,6 +926,7 @@ export type PublisherPropertySelector =
        * @minItems 1
        */
       property_ids: [PropertyID, ...PropertyID[]];
+      [k: string]: unknown;
     }
   | {
       /**
@@ -917,6 +943,7 @@ export type PublisherPropertySelector =
        * @minItems 1
        */
       property_tags: [PropertyTag, ...PropertyTag[]];
+      [k: string]: unknown;
     };
 /**
  * Identifier for a publisher property. Must be lowercase alphanumeric with underscores only.
@@ -1078,6 +1105,7 @@ export interface Placement {
    * @minItems 1
    */
   format_ids?: [FormatID, ...FormatID[]];
+  [k: string]: unknown;
 }
 /**
  * Cost Per Mille (cost per 1,000 impressions) with guaranteed fixed rate - common for direct/guaranteed deals
@@ -1107,6 +1135,7 @@ export interface CPMFixedRatePricingOption {
    * Minimum spend requirement per package using this pricing option, in the specified currency
    */
   min_spend_per_package?: number;
+  [k: string]: unknown;
 }
 /**
  * Cost Per Mille (cost per 1,000 impressions) with auction-based pricing - common for programmatic/non-guaranteed inventory
@@ -1157,6 +1186,7 @@ export interface CPMAuctionPricingOption {
    * Minimum spend requirement per package using this pricing option, in the specified currency
    */
   min_spend_per_package?: number;
+  [k: string]: unknown;
 }
 /**
  * Viewable Cost Per Mille (cost per 1,000 viewable impressions) with guaranteed fixed rate - impressions meeting MRC viewability standard (50% pixels in-view for 1 second for display, 2 seconds for video)
@@ -1186,6 +1216,7 @@ export interface VCPMFixedRatePricingOption {
    * Minimum spend requirement per package using this pricing option, in the specified currency
    */
   min_spend_per_package?: number;
+  [k: string]: unknown;
 }
 /**
  * Viewable Cost Per Mille (cost per 1,000 viewable impressions) with auction-based pricing - impressions meeting MRC viewability standard (50% pixels in-view for 1 second for display, 2 seconds for video)
@@ -1236,6 +1267,7 @@ export interface VCPMAuctionPricingOption {
    * Minimum spend requirement per package using this pricing option, in the specified currency
    */
   min_spend_per_package?: number;
+  [k: string]: unknown;
 }
 /**
  * Cost Per Click fixed-rate pricing for performance-driven advertising campaigns
@@ -1265,6 +1297,7 @@ export interface CPCPricingOption {
    * Minimum spend requirement per package using this pricing option, in the specified currency
    */
   min_spend_per_package?: number;
+  [k: string]: unknown;
 }
 /**
  * Cost Per Completed View (100% video/audio completion) fixed-rate pricing
@@ -1294,6 +1327,7 @@ export interface CPCVPricingOption {
    * Minimum spend requirement per package using this pricing option, in the specified currency
    */
   min_spend_per_package?: number;
+  [k: string]: unknown;
 }
 /**
  * Cost Per View (at publisher-defined threshold) fixed-rate pricing for video/audio
@@ -1330,12 +1364,15 @@ export interface CPVPricingOption {
            * Seconds of viewing required (e.g., 30 for YouTube-style '30 seconds = view')
            */
           duration_seconds: number;
+          [k: string]: unknown;
         };
+    [k: string]: unknown;
   };
   /**
    * Minimum spend requirement per package using this pricing option, in the specified currency
    */
   min_spend_per_package?: number;
+  [k: string]: unknown;
 }
 /**
  * Cost Per Point (Gross Rating Point) fixed-rate pricing for TV and audio campaigns requiring demographic measurement
@@ -1373,11 +1410,13 @@ export interface CPPPricingOption {
      * Minimum GRPs/TRPs required for this pricing option
      */
     min_points?: number;
+    [k: string]: unknown;
   };
   /**
    * Minimum spend requirement per package using this pricing option, in the specified currency
    */
   min_spend_per_package?: number;
+  [k: string]: unknown;
 }
 /**
  * Flat rate pricing for DOOH, sponsorships, and time-based campaigns - fixed cost regardless of delivery volume
@@ -1435,11 +1474,13 @@ export interface FlatRatePricingOption {
      * Specific daypart for time-based pricing (e.g., 'morning_commute', 'evening_prime', 'overnight')
      */
     daypart?: string;
+    [k: string]: unknown;
   };
   /**
    * Minimum spend requirement per package using this pricing option, in the specified currency
    */
   min_spend_per_package?: number;
+  [k: string]: unknown;
 }
 /**
  * Measurement capabilities included with a product
@@ -1461,6 +1502,7 @@ export interface Measurement {
    * Reporting frequency and format
    */
   reporting: string;
+  [k: string]: unknown;
 }
 /**
  * Reporting capabilities available for a product
@@ -1488,6 +1530,7 @@ export interface ReportingCapabilities {
    * Metrics available in reporting. Impressions and spend are always implicitly included.
    */
   available_metrics: AvailableMetric[];
+  [k: string]: unknown;
 }
 /**
  * Creative requirements and restrictions for a product
@@ -1499,6 +1542,7 @@ export interface CreativePolicy {
    * Whether creative templates are provided
    */
   templates_available: boolean;
+  [k: string]: unknown;
 }
 /**
  * Structured format identifier with agent URL and format name. Can reference: (1) a concrete format with fixed dimensions (id only), (2) a template format without parameters (id only), or (3) a template format with parameters (id + dimensions/duration). Template formats accept parameters in format_id while concrete formats have fixed dimensions in their definition. Parameterized format IDs create unique, specific format variants.
@@ -1524,6 +1568,7 @@ export interface FormatID1 {
    * Duration in milliseconds for time-based formats (video, audio). When specified, creates a parameterized format ID. Omit to reference a template format without parameters.
    */
   duration_ms?: number;
+  [k: string]: unknown;
 }
 /**
  * Structured format identifier with agent URL and format name. Can reference: (1) a concrete format with fixed dimensions (id only), (2) a template format without parameters (id only), or (3) a template format with parameters (id + dimensions/duration). Template formats accept parameters in format_id while concrete formats have fixed dimensions in their definition. Parameterized format IDs create unique, specific format variants.
@@ -1549,6 +1594,7 @@ export interface FormatID2 {
    * Duration in milliseconds for time-based formats (video, audio). When specified, creates a parameterized format ID. Omit to reference a template format without parameters.
    */
   duration_ms?: number;
+  [k: string]: unknown;
 }
 /**
  * Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.
@@ -1717,6 +1763,7 @@ export interface GetProductsResponse {
   errors?: Error[];
   context?: ContextObject;
   ext?: ExtensionObject;
+  [k: string]: unknown;
 }
 /**
  * Represents available advertising inventory
@@ -1748,6 +1795,7 @@ export interface Error {
   details?: {
     [k: string]: unknown;
   };
+  [k: string]: unknown;
 }
 /**
  * Opaque correlation data that is echoed unchanged in responses. Used for internal tracking, UI session IDs, trace IDs, and other caller-specific identifiers that don't affect protocol behavior. Context data is never parsed by AdCP agents - it's simply preserved and returned.
@@ -1777,6 +1825,7 @@ export interface GetProductsAsyncWorking {
   step_number?: number;
   context?: ContextObject;
   ext?: ExtensionObject;
+  [k: string]: unknown;
 }
 /**
  * Input requirements for get_products needing clarification
@@ -1796,6 +1845,7 @@ export interface GetProductsAsyncInputRequired {
   suggestions?: string[];
   context?: ContextObject;
   ext?: ExtensionObject;
+  [k: string]: unknown;
 }
 /**
  * Acknowledgment for submitted get_products (custom curation)
@@ -1807,6 +1857,7 @@ export interface GetProductsAsyncSubmitted {
   estimated_completion?: string;
   context?: ContextObject;
   ext?: ExtensionObject;
+  [k: string]: unknown;
 }
 /**
  * Success response - media buy created successfully
@@ -1830,6 +1881,7 @@ export interface CreateMediaBuySuccess {
   packages: Package[];
   context?: ContextObject;
   ext?: ExtensionObject;
+  [k: string]: unknown;
 }
 /**
  * A specific product within a media buy (line item)
@@ -1843,6 +1895,7 @@ export interface CreateMediaBuyError {
   errors: [Error, ...Error[]];
   context?: ContextObject;
   ext?: ExtensionObject;
+  [k: string]: unknown;
 }
 /**
  * Progress data for working create_media_buy
@@ -1866,6 +1919,7 @@ export interface CreateMediaBuyAsyncWorking {
   step_number?: number;
   context?: ContextObject;
   ext?: ExtensionObject;
+  [k: string]: unknown;
 }
 /**
  * Input requirements for create_media_buy needing user input
@@ -1881,6 +1935,7 @@ export interface CreateMediaBuyAsyncInputRequired {
   errors?: Error[];
   context?: ContextObject;
   ext?: ExtensionObject;
+  [k: string]: unknown;
 }
 /**
  * Acknowledgment for submitted create_media_buy
@@ -1888,6 +1943,7 @@ export interface CreateMediaBuyAsyncInputRequired {
 export interface CreateMediaBuyAsyncSubmitted {
   context?: ContextObject;
   ext?: ExtensionObject;
+  [k: string]: unknown;
 }
 /**
  * Success response - media buy updated successfully
@@ -1911,6 +1967,7 @@ export interface UpdateMediaBuySuccess {
   affected_packages?: Package[];
   context?: ContextObject;
   ext?: ExtensionObject;
+  [k: string]: unknown;
 }
 /**
  * Error response - operation failed, no changes applied
@@ -1924,6 +1981,7 @@ export interface UpdateMediaBuyError {
   errors: [Error, ...Error[]];
   context?: ContextObject;
   ext?: ExtensionObject;
+  [k: string]: unknown;
 }
 /**
  * Progress data for working update_media_buy
@@ -1947,6 +2005,7 @@ export interface UpdateMediaBuyAsyncWorking {
   step_number?: number;
   context?: ContextObject;
   ext?: ExtensionObject;
+  [k: string]: unknown;
 }
 /**
  * Input requirements for update_media_buy needing user input
@@ -1958,6 +2017,7 @@ export interface UpdateMediaBuyAsyncInputRequired {
   reason?: 'APPROVAL_REQUIRED' | 'CHANGE_CONFIRMATION';
   context?: ContextObject;
   ext?: ExtensionObject;
+  [k: string]: unknown;
 }
 /**
  * Acknowledgment for submitted update_media_buy
@@ -1965,6 +2025,7 @@ export interface UpdateMediaBuyAsyncInputRequired {
 export interface UpdateMediaBuyAsyncSubmitted {
   context?: ContextObject;
   ext?: ExtensionObject;
+  [k: string]: unknown;
 }
 /**
  * Success response - sync operation processed creatives (may include per-item failures)
@@ -2015,17 +2076,13 @@ export interface SyncCreativesSuccess {
      * Assignment errors by package ID (only present when assignment failures occurred)
      */
     assignment_errors?: {
-      /**
-       * Error message for this package assignment
-       *
-       * This interface was referenced by `undefined`'s JSON-Schema definition
-       * via the `patternProperty` "^[a-zA-Z0-9_-]+$".
-       */
-      [k: string]: string;
+      [k: string]: unknown;
     };
+    [k: string]: unknown;
   }[];
   context?: ContextObject;
   ext?: ExtensionObject;
+  [k: string]: unknown;
 }
 /**
  * Error response - operation failed completely, no creatives were processed
@@ -2039,6 +2096,7 @@ export interface SyncCreativesError {
   errors: [Error, ...Error[]];
   context?: ContextObject;
   ext?: ExtensionObject;
+  [k: string]: unknown;
 }
 /**
  * Progress data for working sync_creatives
@@ -2070,6 +2128,7 @@ export interface SyncCreativesAsyncWorking {
   creatives_total?: number;
   context?: ContextObject;
   ext?: ExtensionObject;
+  [k: string]: unknown;
 }
 /**
  * Input requirements for sync_creatives needing user input
@@ -2081,6 +2140,7 @@ export interface SyncCreativesAsyncInputRequired {
   reason?: 'APPROVAL_REQUIRED' | 'ASSET_CONFIRMATION' | 'FORMAT_CLARIFICATION';
   context?: ContextObject;
   ext?: ExtensionObject;
+  [k: string]: unknown;
 }
 /**
  * Acknowledgment for submitted sync_creatives
@@ -2088,5 +2148,6 @@ export interface SyncCreativesAsyncInputRequired {
 export interface SyncCreativesAsyncSubmitted {
   context?: ContextObject;
   ext?: ExtensionObject;
+  [k: string]: unknown;
 }
 

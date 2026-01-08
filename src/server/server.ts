@@ -229,7 +229,8 @@ const clientConfig: SingleAgentClientConfig = {
 
       // ✅ Use type guard for completed status
       if (isSyncCreativesCompleted(metadata, response)) {
-        const creativesCount = 'creatives' in response ? response.creatives?.length || 0 : 0;
+        const creativesCount =
+          'creatives' in response && Array.isArray(response.creatives) ? response.creatives.length : 0;
         app.log.info(`[${status}] Creatives synced: ${creativesCount} for ${metadata.operation_id}`);
         return;
       }
