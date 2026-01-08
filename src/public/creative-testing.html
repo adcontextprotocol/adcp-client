@@ -764,6 +764,11 @@
             state.formats = data.data.formats;
             displayFormatsTable(state.formats);
             formatsSection.classList.remove('hidden');
+
+            // Display deprecation warnings if any
+            if (data.warnings && data.warnings.length > 0) {
+              displayWarnings(data.warnings);
+            }
           } else {
             const errorMsg = data.error || 'Unknown error';
             showError('Failed to load formats: ' + errorMsg);
@@ -1457,6 +1462,56 @@ ${JSON.stringify(result, null, 2)}
 
         // Scroll to preview
         previewSection.scrollIntoView({ behavior: 'smooth' });
+      }
+
+      // Display deprecation warnings
+      function displayWarnings(warnings) {
+        if (!warnings || warnings.length === 0) return;
+
+        const formatsSection = document.getElementById('formatsSection');
+        if (!formatsSection) return;
+
+        // Remove any existing warnings
+        const existingWarnings = formatsSection.querySelector('.deprecation-warnings');
+        if (existingWarnings) {
+          existingWarnings.remove();
+        }
+
+        // Create warnings container
+        const warningsDiv = document.createElement('div');
+        warningsDiv.className = 'deprecation-warnings';
+        warningsDiv.style.cssText = `
+          background: #fff3cd;
+          border: 1px solid #ffc107;
+          border-left: 4px solid #ffc107;
+          border-radius: 8px;
+          padding: 1rem;
+          margin-bottom: 1.5rem;
+        `;
+
+        const warningsHtml = warnings
+          .map(
+            warning => `
+          <div style="display: flex; align-items: flex-start; gap: 0.5rem;">
+            <span style="font-size: 1.25rem;">⚠️</span>
+            <div>
+              <strong style="color: #856404;">Deprecation Warning</strong>
+              <p style="margin: 0.25rem 0 0 0; color: #856404; font-size: 0.9rem;">${warning.replace('⚠️', '').trim()}</p>
+            </div>
+          </div>
+        `
+          )
+          .join('');
+
+        warningsDiv.innerHTML = warningsHtml;
+
+        // Insert at the beginning of the formats section (after the h3)
+        const h3 = formatsSection.querySelector('h3');
+        if (h3 && h3.parentElement) {
+          h3.parentElement.insertBefore(warningsDiv, h3.nextSibling.nextSibling);
+        } else {
+          formatsSection.insertBefore(warningsDiv, formatsSection.firstChild);
+        }
       }
 
       // Show error message

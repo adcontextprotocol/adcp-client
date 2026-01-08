@@ -28,6 +28,8 @@ import {
   isCreateMediaBuyCompleted,
   isUpdateMediaBuyCompleted,
   isSyncCreativesCompleted,
+  // Format utilities
+  usesDeprecatedAssetsField,
 } from '../lib';
 import type {
   CreateMediaBuyAsyncInputRequired,
@@ -1456,12 +1458,26 @@ app.post<{
     const adcpClient = creativeClient.getClient();
     const result = await adcpClient.listCreativeFormats(params);
 
+    // Check for deprecated assets_required usage
+    const warnings: string[] = [];
+    const formats = result.data?.formats || [];
+    const deprecatedFormats = formats
+      .filter((format: any) => usesDeprecatedAssetsField(format))
+      .map((format: any) => format.format_id?.id || format.format_id || format.name || 'unknown');
+
+    if (deprecatedFormats.length > 0) {
+      warnings.push(
+        `⚠️  DEPRECATION: ${deprecatedFormats.length} format(s) using deprecated 'assets_required' field. Please migrate to use 'assets' instead.`
+      );
+    }
+
     return reply.send({
       success: result.success,
-      data: { formats: result.data?.formats || [] },
+      data: { formats },
       error: result.error,
       metadata: result.metadata || {},
       debug_logs: result.debug_logs || [],
+      warnings,
       timestamp: new Date().toISOString(),
     });
   } catch (error) {

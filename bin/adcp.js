@@ -76,7 +76,7 @@ const BUILT_IN_AGENTS = {
  */
 function checkDeprecatedFormats(formats) {
   if (!formats || !Array.isArray(formats)) return [];
-  
+
   return formats
     .filter(format => usesDeprecatedAssetsField(format))
     .map(format => format.format_id?.id || format.format_id || format.id || format.name || 'unknown');
