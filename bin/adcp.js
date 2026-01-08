@@ -14,7 +14,7 @@
  *   adcp mcp https://agent.example.com/mcp create_media_buy @payload.json --auth $AGENT_TOKEN
  */
 
-const { AdCPClient, detectProtocol } = require('../dist/lib/index.js');
+const { AdCPClient, detectProtocol, usesDeprecatedAssetsField } = require('../dist/lib/index.js');
 const { readFileSync } = require('fs');
 const { AsyncWebhookHandler } = require('./adcp-async-handler.js');
 const { getAgent, listAgents, isAlias, interactiveSetup, removeAgent, getConfigPath } = require('./adcp-config.js');
@@ -69,6 +69,18 @@ const BUILT_IN_AGENTS = {
     description: 'Official AdCP creative agent (MCP only)',
   },
 };
+
+/**
+ * Check formats for deprecated assets_required usage
+ * Returns array of format IDs using the deprecated field
+ */
+function checkDeprecatedFormats(formats) {
+  if (!formats || !Array.isArray(formats)) return [];
+  
+  return formats
+    .filter(format => usesDeprecatedAssetsField(format))
+    .map(format => format.format_id?.id || format.format_id || format.id || format.name || 'unknown');
+}
 
 /**
  * Extract human-readable protocol message from conversation
@@ -858,10 +870,24 @@ async function main() {
       }
     }
 
+    // Check for deprecated assets_required usage in list_creative_formats response
+    let deprecationWarnings = [];
+    if (toolName === 'list_creative_formats' && result.success && result.data) {
+      const formats = result.data.formats || result.data;
+      const deprecatedFormats = checkDeprecatedFormats(formats);
+      if (deprecatedFormats.length > 0) {
+        deprecationWarnings.push({
+          type: 'assets_required_deprecated',
+          message: `⚠️  DEPRECATION: ${deprecatedFormats.length} format(s) using deprecated 'assets_required' field. Please migrate to use 'assets' instead.`,
+          formats: deprecatedFormats,
+        });
+      }
+    }
+
     // Handle result
     if (result.success) {
       if (jsonOutput) {
-        // Raw JSON output - include protocol metadata
+        // Raw JSON output - include protocol metadata and warnings
         console.log(
           JSON.stringify(
             {
@@ -876,6 +902,7 @@ async function main() {
                     contextId: result.metadata.taskId, // Using taskId as context identifier
                   }),
               },
+              ...(deprecationWarnings.length > 0 && { warnings: deprecationWarnings }),
             },
             null,
             2
@@ -884,6 +911,19 @@ async function main() {
       } else {
         // Pretty output
         console.log('\n✅ SUCCESS\n');
+
+        // Show deprecation warnings if any
+        if (deprecationWarnings.length > 0) {
+          for (const warning of deprecationWarnings) {
+            console.log(warning.message);
+            if (warning.formats && warning.formats.length > 0) {
+              const displayFormats = warning.formats.slice(0, 5).join(', ');
+              const remaining = warning.formats.length - 5;
+              console.log(`   Affected formats: ${displayFormats}${remaining > 0 ? `, (+${remaining} more)` : ''}`);
+            }
+            console.log('');
+          }
+        }
 
         // Show protocol message if available
         if (result.conversation && result.conversation.length > 0) {
