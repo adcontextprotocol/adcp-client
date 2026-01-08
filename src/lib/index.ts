@@ -174,6 +174,20 @@ export { getStandardFormats, unwrapProtocolResponse, isAdcpError, isAdcpSuccess 
 export { REQUEST_TIMEOUT, MAX_CONCURRENT, STANDARD_FORMATS } from './utils';
 export { detectProtocol, detectProtocolWithTimeout } from './utils';
 
+// ====== FORMAT ASSET UTILITIES ======
+// Backward-compatible access to format assets (v2.6 `assets` field replaces deprecated `assets_required`)
+export {
+  getFormatAssets,
+  normalizeAssetsRequired,
+  getRequiredAssets,
+  getOptionalAssets,
+  getIndividualAssets,
+  getRepeatableGroups,
+  usesDeprecatedAssetsField,
+  getAssetCount,
+  hasAssets,
+} from './utils/format-assets';
+
 // ====== TYPE GUARD UTILITIES ======
 // Type guards for automatic TypeScript type narrowing in webhook handlers
 export {

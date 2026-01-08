@@ -764,6 +764,11 @@
             state.formats = data.data.formats;
             displayFormatsTable(state.formats);
             formatsSection.classList.remove('hidden');
+
+            // Display deprecation warnings if any
+            if (data.warnings && data.warnings.length > 0) {
+              displayWarnings(data.warnings);
+            }
           } else {
             const errorMsg = data.error || 'Unknown error';
             showError('Failed to load formats: ' + errorMsg);
@@ -912,14 +917,10 @@
                                     <span class="format-card-detail-value">${dimensions}</span>
                                 </div>
                                 ${
-                                  format.assets_required
+                                  getFormatAssets(format).length > 0
                                     ? `<div class="format-card-detail-row">
                                         <span class="format-card-detail-label">Assets</span>
-                                        <span class="format-card-detail-value">${
-                                          Array.isArray(format.assets_required)
-                                            ? format.assets_required.length
-                                            : 'Custom'
-                                        }</span>
+                                        <span class="format-card-detail-value">${getFormatAssets(format).length}</span>
                                     </div>`
                                     : ''
                                 }
@@ -943,6 +944,26 @@
           .join('');
 
         container.innerHTML = html;
+      }
+
+      /**
+       * Get assets from a Format, preferring new `assets` field, falling back to `assets_required`
+       * This provides backward compatibility for v2.5 -> v2.6 migration
+       */
+      function getFormatAssets(format) {
+        // Prefer new `assets` field (v2.6+)
+        if (format.assets && format.assets.length > 0) {
+          return format.assets;
+        }
+        // Fall back to deprecated `assets_required` and normalize
+        if (format.assets_required && format.assets_required.length > 0) {
+          // assets_required only contained required assets, so set required: true
+          return format.assets_required.map(asset => ({
+            ...asset,
+            required: true,
+          }));
+        }
+        return [];
       }
 
       function getTypeEmoji(type) {
@@ -1015,7 +1036,7 @@
 
         // Check if format is generative
         // A format is generative if it has generation_prompt or output_format_ids
-        const hasGenerationPrompt = format.assets_required?.some(a => a.asset_id === 'generation_prompt');
+        const hasGenerationPrompt = getFormatAssets(format).some(a => a.asset_id === 'generation_prompt');
         const isGenerative = (format.output_format_ids && format.output_format_ids.length > 0) || hasGenerationPrompt;
         console.log('Format:', format.name);
         console.log('Has output_format_ids:', format.output_format_ids);
@@ -1037,7 +1058,7 @@
 
         // Show asset inputs
         const assetsDiv = document.getElementById('assetInputs');
-        const assetsRequired = format.assets_required || [];
+        const assetsRequired = getFormatAssets(format);
 
         if (assetsRequired.length === 0) {
           assetsDiv.innerHTML = '<p style="color: #718096;">This format requires no assets.</p>';
@@ -1107,13 +1128,33 @@
           return `<textarea id="asset_${idx}" rows="10" ${isRequired} placeholder="<html>...</html>"></textarea>`;
         }
 
-        // For images/videos: file upload only
+        // For images: URL input (with optional file upload toggle)
         if (assetType === 'image') {
-          return `<input type="file" id="asset_${idx}" ${isRequired} accept="image/*">`;
+          return `
+                    <div style="margin-bottom: 0.5rem;">
+                        <label style="font-size: 0.875rem; margin-bottom: 0.25rem;">
+                            <input type="radio" name="asset_${idx}_type" value="url" checked onchange="toggleMediaInput(${idx}, 'url')"> URL
+                            <input type="radio" name="asset_${idx}_type" value="file" onchange="toggleMediaInput(${idx}, 'file')" style="margin-left: 1rem;"> File Upload
+                        </label>
+                    </div>
+                    <input type="url" id="asset_${idx}" ${isRequired} placeholder="https://example.com/image.png or https://picsum.photos/300/250" style="display: block;">
+                    <input type="file" id="asset_${idx}_file" accept="image/*" style="display: none;">
+                    <p style="font-size: 0.75rem; color: #718096; margin-top: 0.25rem;">💡 Tip: Use https://picsum.photos/WIDTH/HEIGHT for test images</p>
+                `;
         }
 
+        // For videos: URL input (with optional file upload toggle)
         if (assetType === 'video') {
-          return `<input type="file" id="asset_${idx}" ${isRequired} accept="video/*">`;
+          return `
+                    <div style="margin-bottom: 0.5rem;">
+                        <label style="font-size: 0.875rem; margin-bottom: 0.25rem;">
+                            <input type="radio" name="asset_${idx}_type" value="url" checked onchange="toggleMediaInput(${idx}, 'url')"> URL
+                            <input type="radio" name="asset_${idx}_type" value="file" onchange="toggleMediaInput(${idx}, 'file')" style="margin-left: 1rem;"> File Upload
+                        </label>
+                    </div>
+                    <input type="url" id="asset_${idx}" ${isRequired} placeholder="https://example.com/video.mp4" style="display: block;">
+                    <input type="file" id="asset_${idx}_file" accept="video/*" style="display: none;">
+                `;
         }
 
         // Default: text input
@@ -1142,9 +1183,23 @@
         }
       }
 
+      // Toggle between URL and file input for image/video assets
+      function toggleMediaInput(idx, type) {
+        const urlInput = document.getElementById(`asset_${idx}`);
+        const fileInput = document.getElementById(`asset_${idx}_file`);
+
+        if (type === 'url') {
+          urlInput.style.display = 'block';
+          fileInput.style.display = 'none';
+        } else {
+          urlInput.style.display = 'none';
+          fileInput.style.display = 'block';
+        }
+      }
+
       // Collect assets from form
       function collectAssets() {
-        const assetsRequired = state.selectedFormat.assets_required || [];
+        const assetsRequired = getFormatAssets(state.selectedFormat);
         const creativeAssets = {};
 
         for (let i = 0; i < assetsRequired.length; i++) {
@@ -1167,6 +1222,24 @@
             } else if (input.value) {
               // URL input
               creativeAssets[asset.asset_id] = input.value;
+            }
+          } else if (asset.asset_type === 'image' || asset.asset_type === 'video') {
+            // Image/Video assets - check if URL or file mode
+            const fileInput = document.getElementById(`asset_${i}_file`);
+
+            // Check if URL input is visible (URL mode)
+            if (input.style.display !== 'none' && input.value) {
+              // URL mode - wrap in {url: "..."} per schema
+              creativeAssets[asset.asset_id] = {
+                url: input.value,
+              };
+            } else if (fileInput && fileInput.files && fileInput.files.length > 0) {
+              // File mode - show placeholder (file upload not yet implemented)
+              creativeAssets[asset.asset_id] = {
+                type: asset.asset_type,
+                filename: fileInput.files[0].name,
+                note: 'File upload not yet implemented - would need to upload to storage first',
+              };
             }
           } else if (input.type === 'file') {
             if (input.files.length > 0) {
@@ -1389,6 +1462,56 @@ ${JSON.stringify(result, null, 2)}
 
         // Scroll to preview
         previewSection.scrollIntoView({ behavior: 'smooth' });
+      }
+
+      // Display deprecation warnings
+      function displayWarnings(warnings) {
+        if (!warnings || warnings.length === 0) return;
+
+        const formatsSection = document.getElementById('formatsSection');
+        if (!formatsSection) return;
+
+        // Remove any existing warnings
+        const existingWarnings = formatsSection.querySelector('.deprecation-warnings');
+        if (existingWarnings) {
+          existingWarnings.remove();
+        }
+
+        // Create warnings container
+        const warningsDiv = document.createElement('div');
+        warningsDiv.className = 'deprecation-warnings';
+        warningsDiv.style.cssText = `
+          background: #fff3cd;
+          border: 1px solid #ffc107;
+          border-left: 4px solid #ffc107;
+          border-radius: 8px;
+          padding: 1rem;
+          margin-bottom: 1.5rem;
+        `;
+
+        const warningsHtml = warnings
+          .map(
+            warning => `
+          <div style="display: flex; align-items: flex-start; gap: 0.5rem;">
+            <span style="font-size: 1.25rem;">⚠️</span>
+            <div>
+              <strong style="color: #856404;">Deprecation Warning</strong>
+              <p style="margin: 0.25rem 0 0 0; color: #856404; font-size: 0.9rem;">${warning.replace('⚠️', '').trim()}</p>
+            </div>
+          </div>
+        `
+          )
+          .join('');
+
+        warningsDiv.innerHTML = warningsHtml;
+
+        // Insert at the beginning of the formats section (after the h3)
+        const h3 = formatsSection.querySelector('h3');
+        if (h3 && h3.parentElement) {
+          h3.parentElement.insertBefore(warningsDiv, h3.nextSibling.nextSibling);
+        } else {
+          formatsSection.insertBefore(warningsDiv, formatsSection.firstChild);
+        }
       }
 
       // Show error message
@@ -1636,7 +1759,7 @@ ${JSON.stringify(result, null, 2)}
         }
 
         const example = QUICK_EXAMPLES[exampleKey];
-        const assetsRequired = state.selectedFormat?.assets_required || [];
+        const assetsRequired = state.selectedFormat ? getFormatAssets(state.selectedFormat) : [];
 
         console.log('Loading example:', exampleKey);
         console.log(

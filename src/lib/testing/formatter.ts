@@ -50,6 +50,12 @@ export function formatTestResults(result: TestResult): string {
       output += `   ${step.details}\n`;
     }
 
+    if (step.warnings && step.warnings.length > 0) {
+      for (const warning of step.warnings) {
+        output += `   ${warning}\n`;
+      }
+    }
+
     if (step.error) {
       output += `   ⚠️ Error: ${step.error}\n`;
     }
@@ -83,6 +89,14 @@ export function formatTestResultsSummary(result: TestResult): string {
   const statusEmoji = result.overall_passed ? '✅' : '❌';
   const passedCount = result.steps.filter(s => s.passed).length;
   const failedCount = result.steps.filter(s => !s.passed).length;
+  const warningCount = result.steps.filter(s => s.warnings && s.warnings.length > 0).length;
 
-  return `${statusEmoji} ${result.scenario}: ${passedCount}/${result.steps.length} passed (${result.total_duration_ms}ms)${failedCount > 0 ? ` - ${failedCount} failed` : ''}`;
+  let summary = `${statusEmoji} ${result.scenario}: ${passedCount}/${result.steps.length} passed (${result.total_duration_ms}ms)`;
+  if (failedCount > 0) {
+    summary += ` - ${failedCount} failed`;
+  }
+  if (warningCount > 0) {
+    summary += ` - ⚠️ ${warningCount} warning(s)`;
+  }
+  return summary;
 }

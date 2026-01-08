@@ -3,6 +3,7 @@
  */
 
 import { ADCPMultiAgentClient } from '../core/ADCPMultiAgentClient';
+import { getFormatAssets, usesDeprecatedAssetsField } from '../utils/format-assets';
 import type { TestOptions, TestStepResult, AgentProfile, TaskResult, Logger } from './types';
 
 // Default console-based logger
@@ -263,6 +264,7 @@ export async function discoverCreativeFormats(
   if (result?.success && result?.data) {
     const data = result.data as any;
     const rawFormats = data.formats || data.format_ids || [];
+    const deprecatedFormats: string[] = [];
 
     for (const format of rawFormats) {
       const formatInfo: NonNullable<AgentProfile['supported_formats']>[0] = {
@@ -273,14 +275,21 @@ export async function discoverCreativeFormats(
         optional_assets: [],
       };
 
-      // Extract asset requirements from format spec
-      if (format.asset_slots) {
-        for (const slot of format.asset_slots) {
-          if (slot.required) {
-            formatInfo.required_assets?.push(slot.name || slot.id);
-          } else {
-            formatInfo.optional_assets?.push(slot.name || slot.id);
-          }
+      // Check for deprecated assets_required usage
+      if (usesDeprecatedAssetsField(format)) {
+        deprecatedFormats.push(formatInfo.format_id);
+      }
+
+      // Extract asset requirements from format spec using format-assets utilities
+      // This handles both v2.6 `assets` and deprecated `assets_required` fields
+      const formatAssets = getFormatAssets(format);
+      for (const asset of formatAssets) {
+        const assetId = asset.item_type === 'individual' ? asset.asset_id : asset.asset_group_id;
+
+        if (asset.required) {
+          formatInfo.required_assets?.push(assetId);
+        } else {
+          formatInfo.optional_assets?.push(assetId);
         }
       }
 
@@ -301,6 +310,17 @@ export async function discoverCreativeFormats(
       null,
       2
     );
+
+    // Add deprecation warnings if any formats use assets_required
+    if (deprecatedFormats.length > 0) {
+      step.warnings = [
+        `⚠️ DEPRECATION: ${deprecatedFormats.length} format(s) use 'assets_required' field which is deprecated and will be removed in a future version. Please migrate to the 'assets' field instead. (adcp-client 3.6.0+)`,
+      ];
+      logger.warn(
+        { deprecated_formats: deprecatedFormats },
+        `Agent uses deprecated 'assets_required' field in ${deprecatedFormats.length} format(s). Migrate to 'assets' field.`
+      );
+    }
   } else if (result && !result.success) {
     step.passed = false;
     step.error = result.error || `${toolName} failed`;

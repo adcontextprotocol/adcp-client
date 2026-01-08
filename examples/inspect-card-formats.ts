@@ -5,11 +5,12 @@
  *
  * This will help us understand:
  * 1. What format IDs are available for cards (product_card, format_card)
- * 2. What assets_required those formats expect
+ * 2. What assets those formats expect (using new `assets` field or deprecated `assets_required`)
  * 3. How to properly structure creative_manifest for cards
  */
 
 import { AdCPClient } from '../src/lib/core/AdCPClient';
+import { getFormatAssets, getRequiredAssets, getOptionalAssets, usesDeprecatedAssetsField } from '../src/lib';
 
 const CREATIVE_AGENT_URL = process.env.CREATIVE_AGENT_URL || 'https://creative.adcontextprotocol.org/mcp';
 const CREATIVE_AGENT_PROTOCOL = (process.env.CREATIVE_AGENT_PROTOCOL || 'mcp') as 'mcp' | 'a2a';
@@ -66,21 +67,35 @@ async function main() {
       console.log(`Type: ${format.type || 'N/A'}`);
       console.log(`Description: ${format.description || 'N/A'}`);
 
-      if (format.assets_required && format.assets_required.length > 0) {
-        console.log('\n📦 Required Assets:');
-        format.assets_required.forEach(asset => {
-          console.log(`\n  Asset: ${asset.asset_id}`);
-          console.log(`  Type: ${asset.asset_type}`);
-          console.log(`  Required: ${asset.required !== false ? 'yes' : 'no'}`);
-          if (asset.description) {
-            console.log(`  Description: ${asset.description}`);
-          }
-          if (asset.default_value) {
-            console.log(`  Default: ${JSON.stringify(asset.default_value)}`);
+      const assets = getFormatAssets(format);
+      if (assets.length > 0) {
+        const requiredAssets = getRequiredAssets(format);
+        const optionalAssets = getOptionalAssets(format);
+        console.log(
+          `\n📦 Assets: ${assets.length} total (${requiredAssets.length} required, ${optionalAssets.length} optional)`
+        );
+        if (usesDeprecatedAssetsField(format)) {
+          console.log('   ⚠️  Using deprecated assets_required field');
+        }
+        assets.forEach(asset => {
+          if (asset.item_type === 'individual') {
+            console.log(`\n  Asset: ${asset.asset_id}`);
+            console.log(`  Type: ${asset.asset_type}`);
+            console.log(`  Required: ${asset.required ? 'yes' : 'no'}`);
+            if ((asset as any).description) {
+              console.log(`  Description: ${(asset as any).description}`);
+            }
+            if ((asset as any).default_value) {
+              console.log(`  Default: ${JSON.stringify((asset as any).default_value)}`);
+            }
+          } else {
+            console.log(`\n  Asset Group: ${asset.asset_group_id}`);
+            console.log(`  Required: ${asset.required ? 'yes' : 'no'}`);
+            console.log(`  Count: ${asset.min_count}-${asset.max_count}`);
           }
         });
       } else {
-        console.log('\n⚠️  No assets_required defined (flexible format)');
+        console.log('\n⚠️  No assets defined (flexible format)');
       }
 
       if (format.preview_image) {
@@ -107,10 +122,24 @@ async function main() {
     console.log(`Name: ${displayFormat.name || 'Unnamed'}`);
     console.log(`Type: ${displayFormat.type || 'N/A'}`);
 
-    if (displayFormat.assets_required && displayFormat.assets_required.length > 0) {
-      console.log('\n📦 Required Assets:');
-      displayFormat.assets_required.forEach(asset => {
-        console.log(`  - ${asset.asset_id} (${asset.asset_type})${asset.required !== false ? ' *required*' : ''}`);
+    const displayAssets = getFormatAssets(displayFormat);
+    if (displayAssets.length > 0) {
+      const requiredAssets = getRequiredAssets(displayFormat);
+      const optionalAssets = getOptionalAssets(displayFormat);
+      console.log(
+        `\n📦 Assets: ${displayAssets.length} total (${requiredAssets.length} required, ${optionalAssets.length} optional)`
+      );
+      if (usesDeprecatedAssetsField(displayFormat)) {
+        console.log('   ⚠️  Using deprecated assets_required field');
+      }
+      displayAssets.forEach(asset => {
+        if (asset.item_type === 'individual') {
+          console.log(`  - ${asset.asset_id} (${asset.asset_type})${asset.required ? ' *required*' : ' (optional)'}`);
+        } else {
+          console.log(
+            `  - [Group] ${asset.asset_group_id} (${asset.min_count}-${asset.max_count})${asset.required ? ' *required*' : ' (optional)'}`
+          );
+        }
       });
     }
   } else {
@@ -119,10 +148,11 @@ async function main() {
 
   console.log('\n\n💡 Key Insights:');
   console.log('─'.repeat(60));
-  console.log('1. Card formats should define their assets_required');
-  console.log('2. creative_manifest.assets should map asset_id -> asset object');
-  console.log("3. Each asset_id must match the format's assets_required");
-  console.log('4. Asset types (ImageAsset, TextAsset, etc) depend on asset_type\n');
+  console.log('1. Formats define their assets using `assets` field (v2.6+) or deprecated `assets_required`');
+  console.log('2. Use getFormatAssets() helper to access assets with backward compatibility');
+  console.log('3. creative_manifest.assets should map asset_id -> asset object');
+  console.log("4. Each asset_id must match the format's assets definition");
+  console.log('5. Asset types (ImageAsset, TextAsset, etc) depend on asset_type\n');
 }
 
 main().catch(error => {

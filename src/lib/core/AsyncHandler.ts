@@ -240,7 +240,7 @@ export class AsyncHandler {
       typeof result === 'object' &&
       'notification_type' in result
     ) {
-      const notificationPayload = result as MediaBuyDeliveryNotification;
+      const notificationPayload = result as unknown as MediaBuyDeliveryNotification;
 
       // Build notification metadata
       // operation_id comes from webhook URL and was lazily generated from agent + month
