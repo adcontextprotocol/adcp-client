@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-01-08T00:11:10.008Z
+// Generated at: 2026-01-14T16:45:58.280Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -391,6 +391,12 @@ export const BrandManifestSchema = z.record(z.string(), z.unknown()).and(z.objec
 }));
 
 export const BrandManifestReferenceSchema = z.union([BrandManifestSchema, z.string()]);
+
+export const PropertyListReferenceSchema = z.object({
+    agent_url: z.string(),
+    list_id: z.string(),
+    auth_token: z.string().nullish()
+});
 
 export const PublisherPropertySelectorSchema = z.union([z.record(z.string(), z.unknown()).and(z.object({
         publisher_domain: z.string(),
@@ -956,6 +962,7 @@ export const UpdateMediaBuyResponseSchema = z.union([UpdateMediaBuySuccessSchema
 export const GetProductsResponseSchema = z.object({
     products: z.array(ProductSchema),
     errors: z.array(ErrorSchema).nullish(),
+    property_list_applied: z.boolean().nullish(),
     context: ContextObjectSchema.nullish(),
     ext: ExtensionObjectSchema.nullish()
 });
@@ -1063,6 +1070,8 @@ export const PackageRequestSchema = z.record(z.string(), z.unknown()).and(z.obje
     pacing: PacingSchema.nullish(),
     pricing_option_id: z.string(),
     bid_price: z.number().nullish(),
+    impressions: z.number().nullish(),
+    paused: z.boolean().nullish(),
     targeting_overlay: TargetingOverlaySchema.nullish(),
     creative_ids: z.array(z.string()).nullish(),
     creatives: z.array(CreativeAssetSchema).nullish(),
@@ -1282,6 +1291,7 @@ export const GetProductsRequestSchema = z.object({
     brief: z.string().nullish(),
     brand_manifest: BrandManifestReferenceSchema.nullish(),
     filters: ProductFiltersSchema.nullish(),
+    property_list: PropertyListReferenceSchema.nullish(),
     context: ContextObjectSchema.nullish(),
     ext: ExtensionObjectSchema.nullish()
 });

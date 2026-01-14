@@ -55,6 +55,7 @@ export interface GetProductsRequest {
   brief?: string;
   brand_manifest?: BrandManifestReference;
   filters?: ProductFilters;
+  property_list?: PropertyListReference;
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -353,6 +354,23 @@ export interface FormatID {
   [k: string]: unknown;
 }
 /**
+ * [AdCP 3.0] Reference to an externally managed property list. When provided, the sales agent should filter products to only those available on properties in the list.
+ */
+export interface PropertyListReference {
+  /**
+   * URL of the agent managing the property list
+   */
+  agent_url: string;
+  /**
+   * Identifier for the property list within the agent
+   */
+  list_id: string;
+  /**
+   * JWT or other authorization token for accessing the list. Optional if the list is public or caller has implicit access.
+   */
+  auth_token?: string;
+}
+/**
  * Opaque correlation data that is echoed unchanged in responses. Used for internal tracking, UI session IDs, trace IDs, and other caller-specific identifiers that don't affect protocol behavior. Context data is never parsed by AdCP agents - it's simply preserved and returned.
  */
 export interface ContextObject {
@@ -475,6 +493,10 @@ export interface GetProductsResponse {
    * Task-specific errors and warnings (e.g., product filtering issues)
    */
   errors?: Error[];
+  /**
+   * [AdCP 3.0] Indicates whether property_list filtering was applied. True if the agent filtered products based on the provided property_list. Absent or false if property_list was not provided or not supported by this agent.
+   */
+  property_list_applied?: boolean;
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -1818,6 +1840,14 @@ export interface PackageRequest {
    * Bid price for auction-based CPM pricing (required if using cpm-auction-option)
    */
   bid_price?: number;
+  /**
+   * Impression goal for this package
+   */
+  impressions?: number;
+  /**
+   * Whether this package should be created in a paused state. Paused packages do not deliver impressions. Defaults to false.
+   */
+  paused?: boolean;
   targeting_overlay?: TargetingOverlay;
   /**
    * Creative IDs to assign to this package at creation time (references existing library creatives)
