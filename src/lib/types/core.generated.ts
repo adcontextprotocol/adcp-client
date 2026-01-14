@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas v2.6.0
-// Generated at: 2026-01-08T00:11:09.339Z
+// Generated at: 2026-01-14T16:45:57.591Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -1665,11 +1665,22 @@ export interface Property {
 /**
  * Type of AdCP operation that triggered this webhook. Enables webhook handlers to route to appropriate processing logic.
  */
-export type TaskType = 'create_media_buy' | 'update_media_buy' | 'sync_creatives' | 'activate_signal' | 'get_signals';
+export type TaskType =
+  | 'create_media_buy'
+  | 'update_media_buy'
+  | 'sync_creatives'
+  | 'activate_signal'
+  | 'get_signals'
+  | 'list_property_features'
+  | 'create_property_list'
+  | 'update_property_list'
+  | 'get_property_list'
+  | 'list_property_lists'
+  | 'delete_property_list';
 /**
  * AdCP domain this task belongs to. Helps classify the operation type at a high level.
  */
-export type AdCPDomain = 'media-buy' | 'signals';
+export type AdCPDomain = 'media-buy' | 'signals' | 'governance' | 'creative';
 /**
  * Current task status. Webhooks are triggered for status changes after initial submission.
  */
@@ -1761,6 +1772,10 @@ export interface GetProductsResponse {
    * Task-specific errors and warnings (e.g., product filtering issues)
    */
   errors?: Error[];
+  /**
+   * [AdCP 3.0] Indicates whether property_list filtering was applied. True if the agent filtered products based on the provided property_list. Absent or false if property_list was not provided or not supported by this agent.
+   */
+  property_list_applied?: boolean;
   context?: ContextObject;
   ext?: ExtensionObject;
   [k: string]: unknown;
