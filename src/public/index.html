@@ -9507,13 +9507,13 @@
                   if (dimensionAsset) {
                     width = dimensionAsset.width;
                     height = dimensionAsset.height;
-                  }
-                } else if (format.format_id && format.format_id.includes('x')) {
-                  // Try to parse from format_id like "300x250"
-                  const match = format.format_id.match(/(\d+)x(\d+)/);
-                  if (match) {
-                    width = match[1];
-                    height = match[2];
+                  } else if (format.format_id && format.format_id.includes('x')) {
+                    // Try to parse from format_id like "300x250"
+                    const match = format.format_id.match(/(\d+)x(\d+)/);
+                    if (match) {
+                      width = match[1];
+                      height = match[2];
+                    }
                   }
                 }
 
