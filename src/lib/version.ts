@@ -7,9 +7,14 @@
 export const LIBRARY_VERSION = '3.6.0';
 
 /**
- * AdCP specification version this library is compatible with
+ * AdCP specification version this library is built for
  */
 export const ADCP_VERSION = 'v2.6';
+
+/**
+ * AdCP versions this library maintains backward compatibility with
+ */
+export const COMPATIBLE_ADCP_VERSIONS = ['v2.5', 'v2.6'] as const;
 
 /**
  * Full version information
@@ -17,7 +22,7 @@ export const ADCP_VERSION = 'v2.6';
 export const VERSION_INFO = {
   library: '3.6.0',
   adcp: 'v2.6',
-  compatible: true,
+  compatibleVersions: COMPATIBLE_ADCP_VERSIONS,
   generatedAt: '2026-01-06T21:14:13.710Z',
 } as const;
 
@@ -39,7 +44,12 @@ export function getLibraryVersion(): string {
  * Check if this library version is compatible with a given AdCP version
  */
 export function isCompatibleWith(adcpVersion: string): boolean {
-  // For now, we use exact version matching
-  // Future versions might implement semantic version compatibility
-  return adcpVersion === ADCP_VERSION;
+  return (COMPATIBLE_ADCP_VERSIONS as readonly string[]).includes(adcpVersion);
+}
+
+/**
+ * Get all AdCP versions this library is compatible with
+ */
+export function getCompatibleVersions(): readonly string[] {
+  return COMPATIBLE_ADCP_VERSIONS;
 }

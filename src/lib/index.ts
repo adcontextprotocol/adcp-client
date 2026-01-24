@@ -229,8 +229,10 @@ export {
   getAdcpVersion,
   getLibraryVersion,
   isCompatibleWith,
+  getCompatibleVersions,
   ADCP_VERSION,
   LIBRARY_VERSION,
+  COMPATIBLE_ADCP_VERSIONS,
   VERSION_INFO,
 } from './version';
 
