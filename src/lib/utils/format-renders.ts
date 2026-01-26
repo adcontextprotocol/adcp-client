@@ -123,7 +123,7 @@ export function getFormatRenders(format: FormatV2 | FormatV3): FormatRender[] {
  */
 export function getPrimaryRender(format: FormatV2 | FormatV3): FormatRender | undefined {
   const renders = getFormatRenders(format);
-  return renders.find((r) => r.role === 'primary') ?? renders[0];
+  return renders.find(r => r.role === 'primary') ?? renders[0];
 }
 
 /**
@@ -131,7 +131,7 @@ export function getPrimaryRender(format: FormatV2 | FormatV3): FormatRender | un
  */
 export function getCompanionRenders(format: FormatV2 | FormatV3): FormatRender[] {
   const renders = getFormatRenders(format);
-  return renders.filter((r) => r.role === 'companion');
+  return renders.filter(r => r.role === 'companion');
 }
 
 /**
@@ -147,8 +147,7 @@ export function isMultiRenderFormat(format: FormatV2 | FormatV3): boolean {
  */
 export function usesV2Dimensions(format: any): boolean {
   return (
-    (format.width !== undefined || format.height !== undefined || format.dimensions !== undefined) &&
-    !format.renders
+    (format.width !== undefined || format.height !== undefined || format.dimensions !== undefined) && !format.renders
   );
 }
 

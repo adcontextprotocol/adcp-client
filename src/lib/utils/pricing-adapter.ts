@@ -74,11 +74,7 @@ export interface PricingOptionV2 {
 export function usesV2PricingFields(option: any): boolean {
   if (!option || typeof option !== 'object') return false;
   // v2 uses 'rate' or 'is_fixed' or has floor inside price_guidance
-  return (
-    option.rate !== undefined ||
-    option.is_fixed !== undefined ||
-    option.price_guidance?.floor !== undefined
-  );
+  return option.rate !== undefined || option.is_fixed !== undefined || option.price_guidance?.floor !== undefined;
 }
 
 /**

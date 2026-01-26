@@ -150,48 +150,36 @@ export function usesV3RenderFields(render: any): boolean {
  * Get render ID from a render (works with both v2 and v3)
  */
 export function getRenderId(render: PreviewRenderV2 | PreviewRenderV3): string {
-  return (
-    (render as PreviewRenderV3).render_id ??
-    (render as PreviewRenderV2).output_id ??
-    'primary'
-  );
+  return (render as PreviewRenderV3).render_id ?? (render as PreviewRenderV2).output_id ?? 'primary';
 }
 
 /**
  * Get render role from a render (works with both v2 and v3)
  */
 export function getRenderRole(render: PreviewRenderV2 | PreviewRenderV3): string {
-  return (
-    (render as PreviewRenderV3).role ??
-    (render as PreviewRenderV2).output_role ??
-    'primary'
-  );
+  return (render as PreviewRenderV3).role ?? (render as PreviewRenderV2).output_role ?? 'primary';
 }
 
 /**
  * Get primary render from a preview
  */
-export function getPrimaryPreviewRender(
-  preview: { renders: (PreviewRenderV2 | PreviewRenderV3)[] }
-): PreviewRenderV3 | undefined {
+export function getPrimaryPreviewRender(preview: {
+  renders: (PreviewRenderV2 | PreviewRenderV3)[];
+}): PreviewRenderV3 | undefined {
   const renders = preview.renders.map(normalizePreviewRender);
-  return renders.find((r) => r.role === 'primary') ?? renders[0];
+  return renders.find(r => r.role === 'primary') ?? renders[0];
 }
 
 /**
  * Get preview URL from primary render
  */
-export function getPreviewUrl(
-  preview: { renders: (PreviewRenderV2 | PreviewRenderV3)[] }
-): string | undefined {
+export function getPreviewUrl(preview: { renders: (PreviewRenderV2 | PreviewRenderV3)[] }): string | undefined {
   return getPrimaryPreviewRender(preview)?.preview_url;
 }
 
 /**
  * Get preview HTML from primary render
  */
-export function getPreviewHtml(
-  preview: { renders: (PreviewRenderV2 | PreviewRenderV3)[] }
-): string | undefined {
+export function getPreviewHtml(preview: { renders: (PreviewRenderV2 | PreviewRenderV3)[] }): string | undefined {
   return getPrimaryPreviewRender(preview)?.preview_html;
 }

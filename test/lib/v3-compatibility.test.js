@@ -96,11 +96,7 @@ describe('Version Compatibility', () => {
 
 describe('Synthetic Capabilities Builder', () => {
   test('should detect media_buy protocol from tools', () => {
-    const tools = [
-      { name: 'get_products' },
-      { name: 'create_media_buy' },
-      { name: 'list_creative_formats' },
-    ];
+    const tools = [{ name: 'get_products' }, { name: 'create_media_buy' }, { name: 'list_creative_formats' }];
 
     const capabilities = buildSyntheticCapabilities(tools);
 
@@ -118,10 +114,7 @@ describe('Synthetic Capabilities Builder', () => {
 
   test('should detect media_buy protocol from creative tools', () => {
     // Creative tools like list_creative_formats are part of media_buy protocol
-    const tools = [
-      { name: 'preview_creative' },
-      { name: 'list_creative_formats' },
-    ];
+    const tools = [{ name: 'preview_creative' }, { name: 'list_creative_formats' }];
 
     const capabilities = buildSyntheticCapabilities(tools);
 
@@ -268,10 +261,10 @@ describe('Creative Assignment Adapter', () => {
 
     test('getCreativeIds should work with both formats', () => {
       assert.deepStrictEqual(getCreativeIds({ creative_ids: ['a', 'b'] }), ['a', 'b']);
-      assert.deepStrictEqual(
-        getCreativeIds({ creative_assignments: [{ creative_id: 'a' }, { creative_id: 'b' }] }),
-        ['a', 'b']
-      );
+      assert.deepStrictEqual(getCreativeIds({ creative_assignments: [{ creative_id: 'a' }, { creative_id: 'b' }] }), [
+        'a',
+        'b',
+      ]);
     });
   });
 });
@@ -489,42 +482,42 @@ describe('Pricing Option Adapter', () => {
   describe('Field Detection', () => {
     test('should detect v2 pricing fields', () => {
       // v2 uses: rate, is_fixed, price_guidance.floor
-      assert.strictEqual(usesV2PricingFields({ rate: 5.00, is_fixed: true }), true);
-      assert.strictEqual(usesV2PricingFields({ price_guidance: { floor: 1.00 } }), true);
-      assert.strictEqual(usesV2PricingFields({ fixed_price: 5.00 }), false);
+      assert.strictEqual(usesV2PricingFields({ rate: 5.0, is_fixed: true }), true);
+      assert.strictEqual(usesV2PricingFields({ price_guidance: { floor: 1.0 } }), true);
+      assert.strictEqual(usesV2PricingFields({ fixed_price: 5.0 }), false);
     });
 
     test('should detect v3 pricing fields', () => {
       // v3 uses: fixed_price, floor_price
-      assert.strictEqual(usesV3PricingFields({ fixed_price: 5.00 }), true);
-      assert.strictEqual(usesV3PricingFields({ floor_price: 1.00 }), true);
-      assert.strictEqual(usesV3PricingFields({ rate: 5.00 }), false);
+      assert.strictEqual(usesV3PricingFields({ fixed_price: 5.0 }), true);
+      assert.strictEqual(usesV3PricingFields({ floor_price: 1.0 }), true);
+      assert.strictEqual(usesV3PricingFields({ rate: 5.0 }), false);
     });
   });
 
   describe('Pricing Type Detection', () => {
     test('isFixedPricing should work with v3 fixed_price', () => {
-      assert.strictEqual(isFixedPricing({ fixed_price: 5.00 }), true);
-      assert.strictEqual(isFixedPricing({ floor_price: 1.00 }), false);
+      assert.strictEqual(isFixedPricing({ fixed_price: 5.0 }), true);
+      assert.strictEqual(isFixedPricing({ floor_price: 1.0 }), false);
     });
 
     test('isFixedPricing should work with v2 is_fixed', () => {
-      assert.strictEqual(isFixedPricing({ rate: 5.00, is_fixed: true }), true);
-      assert.strictEqual(isFixedPricing({ is_fixed: false, price_guidance: { floor: 1.00 } }), false);
+      assert.strictEqual(isFixedPricing({ rate: 5.0, is_fixed: true }), true);
+      assert.strictEqual(isFixedPricing({ is_fixed: false, price_guidance: { floor: 1.0 } }), false);
     });
   });
 
   describe('Price Accessor Functions', () => {
     test('getPrice should work with both formats', () => {
-      assert.strictEqual(getPrice({ fixed_price: 5.00 }), 5.00);
-      assert.strictEqual(getPrice({ rate: 3.50 }), 3.50);
-      assert.strictEqual(getPrice({ floor_price: 1.00 }), undefined); // auction has no fixed price
+      assert.strictEqual(getPrice({ fixed_price: 5.0 }), 5.0);
+      assert.strictEqual(getPrice({ rate: 3.5 }), 3.5);
+      assert.strictEqual(getPrice({ floor_price: 1.0 }), undefined); // auction has no fixed price
     });
 
     test('getFloorPrice should work with both formats', () => {
-      assert.strictEqual(getFloorPrice({ floor_price: 1.00 }), 1.00);
-      assert.strictEqual(getFloorPrice({ price_guidance: { floor: 0.50 } }), 0.50);
-      assert.strictEqual(getFloorPrice({ fixed_price: 5.00 }), undefined); // fixed has no floor
+      assert.strictEqual(getFloorPrice({ floor_price: 1.0 }), 1.0);
+      assert.strictEqual(getFloorPrice({ price_guidance: { floor: 0.5 } }), 0.5);
+      assert.strictEqual(getFloorPrice({ fixed_price: 5.0 }), undefined); // fixed has no floor
     });
   });
 
@@ -534,13 +527,13 @@ describe('Pricing Option Adapter', () => {
         pricing_option_id: 'cpm_fixed_usd',
         pricing_model: 'cpm',
         currency: 'USD',
-        fixed_price: 5.00,
+        fixed_price: 5.0,
         min_spend_per_package: 1000,
       };
 
       const v2Option = adaptPricingOptionForV2(v3Option);
 
-      assert.strictEqual(v2Option.rate, 5.00);
+      assert.strictEqual(v2Option.rate, 5.0);
       assert.strictEqual(v2Option.is_fixed, true);
       assert.strictEqual(v2Option.fixed_price, undefined);
       assert.strictEqual(v2Option.min_spend_per_package, 1000);
@@ -551,15 +544,15 @@ describe('Pricing Option Adapter', () => {
         pricing_option_id: 'cpm_auction_usd',
         pricing_model: 'cpm',
         currency: 'USD',
-        floor_price: 1.00,
-        price_guidance: { p50: 2.50, p75: 3.50 },
+        floor_price: 1.0,
+        price_guidance: { p50: 2.5, p75: 3.5 },
       };
 
       const v2Option = adaptPricingOptionForV2(v3Option);
 
       assert.strictEqual(v2Option.is_fixed, false);
-      assert.strictEqual(v2Option.price_guidance.floor, 1.00);
-      assert.strictEqual(v2Option.price_guidance.p50, 2.50);
+      assert.strictEqual(v2Option.price_guidance.floor, 1.0);
+      assert.strictEqual(v2Option.price_guidance.p50, 2.5);
       assert.strictEqual(v2Option.floor_price, undefined);
     });
   });
@@ -570,13 +563,13 @@ describe('Pricing Option Adapter', () => {
         pricing_option_id: 'cpm_fixed_usd',
         pricing_model: 'cpm',
         currency: 'USD',
-        rate: 5.00,
+        rate: 5.0,
         is_fixed: true,
       };
 
       const v3Option = normalizePricingOption(v2Option);
 
-      assert.strictEqual(v3Option.fixed_price, 5.00);
+      assert.strictEqual(v3Option.fixed_price, 5.0);
       assert.strictEqual(v3Option.rate, undefined);
       assert.strictEqual(v3Option.is_fixed, undefined);
     });
@@ -587,13 +580,13 @@ describe('Pricing Option Adapter', () => {
         pricing_model: 'cpm',
         currency: 'USD',
         is_fixed: false,
-        price_guidance: { floor: 1.00, p50: 2.50 },
+        price_guidance: { floor: 1.0, p50: 2.5 },
       };
 
       const v3Option = normalizePricingOption(v2Option);
 
-      assert.strictEqual(v3Option.floor_price, 1.00);
-      assert.strictEqual(v3Option.price_guidance.p50, 2.50);
+      assert.strictEqual(v3Option.floor_price, 1.0);
+      assert.strictEqual(v3Option.price_guidance.p50, 2.5);
       assert.strictEqual(v3Option.price_guidance.floor, undefined);
     });
   });
@@ -604,15 +597,21 @@ describe('Pricing Option Adapter', () => {
         id: 'product-1',
         name: 'Premium Placement',
         pricing_options: [
-          { pricing_option_id: 'opt1', rate: 5.00, is_fixed: true, pricing_model: 'cpm', currency: 'USD' },
-          { pricing_option_id: 'opt2', is_fixed: false, price_guidance: { floor: 1.00 }, pricing_model: 'cpm', currency: 'USD' },
+          { pricing_option_id: 'opt1', rate: 5.0, is_fixed: true, pricing_model: 'cpm', currency: 'USD' },
+          {
+            pricing_option_id: 'opt2',
+            is_fixed: false,
+            price_guidance: { floor: 1.0 },
+            pricing_model: 'cpm',
+            currency: 'USD',
+          },
         ],
       };
 
       const normalized = normalizeProductPricing(product);
 
-      assert.strictEqual(normalized.pricing_options[0].fixed_price, 5.00);
-      assert.strictEqual(normalized.pricing_options[1].floor_price, 1.00);
+      assert.strictEqual(normalized.pricing_options[0].fixed_price, 5.0);
+      assert.strictEqual(normalized.pricing_options[1].floor_price, 1.0);
     });
 
     test('normalizeGetProductsResponse should normalize entire response', () => {
@@ -620,7 +619,9 @@ describe('Pricing Option Adapter', () => {
         products: [
           {
             id: 'p1',
-            pricing_options: [{ pricing_option_id: 'opt', rate: 10.00, is_fixed: true, pricing_model: 'cpm', currency: 'USD' }],
+            pricing_options: [
+              { pricing_option_id: 'opt', rate: 10.0, is_fixed: true, pricing_model: 'cpm', currency: 'USD' },
+            ],
           },
         ],
         total: 1,
@@ -628,7 +629,7 @@ describe('Pricing Option Adapter', () => {
 
       const normalized = normalizeGetProductsResponse(response);
 
-      assert.strictEqual(normalized.products[0].pricing_options[0].fixed_price, 10.00);
+      assert.strictEqual(normalized.products[0].pricing_options[0].fixed_price, 10.0);
       assert.strictEqual(normalized.total, 1);
     });
   });
@@ -728,8 +729,7 @@ describe('V3 Feature Guard Logic', () => {
     };
 
     // Check if content_standards is in required_features
-    const hasContentStandards =
-      requestWithContentStandards.filters?.required_features?.includes('content_standards');
+    const hasContentStandards = requestWithContentStandards.filters?.required_features?.includes('content_standards');
     assert.strictEqual(hasContentStandards, true);
   });
 
@@ -757,8 +757,7 @@ describe('V3 Feature Guard Logic', () => {
     // No v3-only features
     const hasPropertyList = basicRequest.property_list !== undefined;
     const hasContentStandards = basicRequest.filters?.required_features?.includes('content_standards');
-    const hasPropertyListFiltering =
-      basicRequest.filters?.required_features?.includes('property_list_filtering');
+    const hasPropertyListFiltering = basicRequest.filters?.required_features?.includes('property_list_filtering');
 
     assert.strictEqual(hasPropertyList, false);
     assert.strictEqual(hasContentStandards, undefined); // no required_features array

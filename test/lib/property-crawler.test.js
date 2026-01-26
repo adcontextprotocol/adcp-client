@@ -376,7 +376,7 @@ describe('PropertyCrawler', () => {
     });
 
     test('should detect redirect loops', async () => {
-      global.fetch = async (url) => {
+      global.fetch = async url => {
         // Always return a redirect back to the original URL
         return {
           ok: true,
@@ -401,7 +401,7 @@ describe('PropertyCrawler', () => {
     test('should enforce maximum redirect depth', async () => {
       let fetchCallCount = 0;
 
-      global.fetch = async (url) => {
+      global.fetch = async url => {
         fetchCallCount++;
         // Each response redirects to a new unique URL
         return {

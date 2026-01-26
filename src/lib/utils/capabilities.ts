@@ -14,12 +14,7 @@ export type AdcpMajorVersion = 2 | 3;
 /**
  * Supported AdCP protocols/domains
  */
-export type AdcpProtocol =
-  | 'media_buy'
-  | 'signals'
-  | 'governance'
-  | 'creative'
-  | 'sponsored_intelligence';
+export type AdcpProtocol = 'media_buy' | 'signals' | 'governance' | 'creative' | 'sponsored_intelligence';
 
 /**
  * Media buy features available on the agent
@@ -115,11 +110,7 @@ export const GOVERNANCE_TOOLS = [
   'get_media_buy_artifacts',
 ] as const;
 
-export const CREATIVE_TOOLS = [
-  'build_creative',
-  'list_creative_formats',
-  'preview_creative',
-] as const;
+export const CREATIVE_TOOLS = ['build_creative', 'list_creative_formats', 'preview_creative'] as const;
 
 export const SPONSORED_INTELLIGENCE_TOOLS = [
   'si_get_offering',
@@ -135,32 +126,32 @@ export const PROTOCOL_TOOLS = ['get_adcp_capabilities'] as const;
  * Used for v2 servers that don't support get_adcp_capabilities.
  */
 export function buildSyntheticCapabilities(tools: ToolInfo[]): AdcpCapabilities {
-  const toolNames = new Set(tools.map((t) => t.name));
+  const toolNames = new Set(tools.map(t => t.name));
 
   // Detect supported protocols from available tools
   const protocols: AdcpProtocol[] = [];
 
-  const hasMediaBuyTools = MEDIA_BUY_TOOLS.some((t) => toolNames.has(t));
+  const hasMediaBuyTools = MEDIA_BUY_TOOLS.some(t => toolNames.has(t));
   if (hasMediaBuyTools) {
     protocols.push('media_buy');
   }
 
-  const hasSignalsTools = SIGNALS_TOOLS.some((t) => toolNames.has(t));
+  const hasSignalsTools = SIGNALS_TOOLS.some(t => toolNames.has(t));
   if (hasSignalsTools) {
     protocols.push('signals');
   }
 
-  const hasGovernanceTools = GOVERNANCE_TOOLS.some((t) => toolNames.has(t));
+  const hasGovernanceTools = GOVERNANCE_TOOLS.some(t => toolNames.has(t));
   if (hasGovernanceTools) {
     protocols.push('governance');
   }
 
-  const hasCreativeTools = CREATIVE_TOOLS.some((t) => toolNames.has(t));
+  const hasCreativeTools = CREATIVE_TOOLS.some(t => toolNames.has(t));
   if (hasCreativeTools) {
     protocols.push('creative');
   }
 
-  const hasSponsoredIntelligenceTools = SPONSORED_INTELLIGENCE_TOOLS.some((t) => toolNames.has(t));
+  const hasSponsoredIntelligenceTools = SPONSORED_INTELLIGENCE_TOOLS.some(t => toolNames.has(t));
   if (hasSponsoredIntelligenceTools) {
     protocols.push('sponsored_intelligence');
   }
@@ -224,10 +215,7 @@ export function supportsV3(capabilities: AdcpCapabilities): boolean {
 /**
  * Check if a specific protocol is supported
  */
-export function supportsProtocol(
-  capabilities: AdcpCapabilities,
-  protocol: AdcpProtocol
-): boolean {
+export function supportsProtocol(capabilities: AdcpCapabilities, protocol: AdcpProtocol): boolean {
   return capabilities.protocols.includes(protocol);
 }
 

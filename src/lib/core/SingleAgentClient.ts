@@ -900,10 +900,7 @@ export class SingleAgentClient {
    *
    * @returns TaskResult with empty data if v3 features are unsupported, null to proceed normally
    */
-  private async getEarlyResultForUnsupportedFeatures<T>(
-    taskType: string,
-    params: any
-  ): Promise<TaskResult<T> | null> {
+  private async getEarlyResultForUnsupportedFeatures<T>(taskType: string, params: any): Promise<TaskResult<T> | null> {
     // Only check for tasks that have v3-specific features
     if (taskType !== 'get_products') {
       return null;
@@ -922,8 +919,7 @@ export class SingleAgentClient {
       // property_list requires propertyListFiltering
       (params.property_list && !capabilities.features.propertyListFiltering) ||
       // required_features: content_standards requires contentStandards
-      (params.filters?.required_features?.includes('content_standards') &&
-        !capabilities.features.contentStandards) ||
+      (params.filters?.required_features?.includes('content_standards') && !capabilities.features.contentStandards) ||
       // required_features: property_list_filtering requires propertyListFiltering
       (params.filters?.required_features?.includes('property_list_filtering') &&
         !capabilities.features.propertyListFiltering);
@@ -1802,24 +1798,19 @@ export class SingleAgentClient {
 
     // First get tool list to support both detection methods
     const agentInfo = await this.getAgentInfo();
-    const tools: ToolInfo[] = agentInfo.tools.map((t) => ({
+    const tools: ToolInfo[] = agentInfo.tools.map(t => ({
       name: t.name,
       description: t.description,
     }));
 
     // Check if agent supports get_adcp_capabilities (v3)
-    const hasCapabilitiesTool = tools.some((t) => t.name === 'get_adcp_capabilities');
+    const hasCapabilitiesTool = tools.some(t => t.name === 'get_adcp_capabilities');
 
     if (hasCapabilitiesTool) {
       try {
         // Call get_adcp_capabilities tool
         const agent = await this.ensureEndpointDiscovered();
-        const result = await this.executor.executeTask<any>(
-          agent,
-          'get_adcp_capabilities',
-          {},
-          undefined
-        );
+        const result = await this.executor.executeTask<any>(agent, 'get_adcp_capabilities', {}, undefined);
 
         if (result.success && result.data) {
           this.cachedCapabilities = parseCapabilitiesResponse(result.data);

@@ -65,7 +65,7 @@ export function adaptPackageRequestForV2(pkg: PackageRequestV3): PackageRequestV
 
   return {
     ...rest,
-    creative_ids: creative_assignments.map((a) => a.creative_id),
+    creative_ids: creative_assignments.map(a => a.creative_id),
   };
 }
 
@@ -112,7 +112,7 @@ export function normalizePackageResponse(pkg: PackageResponseV2 | PackageRespons
     const { creative_ids, ...rest } = pkg as PackageResponseV2;
     return {
       ...rest,
-      creative_assignments: creative_ids!.map((id) => ({ creative_id: id })),
+      creative_assignments: creative_ids!.map(id => ({ creative_id: id })),
     };
   }
 
@@ -153,7 +153,7 @@ export function usesV3CreativeAssignments(pkg: any): boolean {
  */
 export function getCreativeIds(pkg: PackageResponseV2 | PackageResponseV3): string[] {
   if ((pkg as PackageResponseV3).creative_assignments) {
-    return (pkg as PackageResponseV3).creative_assignments!.map((a) => a.creative_id);
+    return (pkg as PackageResponseV3).creative_assignments!.map(a => a.creative_id);
   }
   if ((pkg as PackageResponseV2).creative_ids) {
     return (pkg as PackageResponseV2).creative_ids!;
@@ -164,14 +164,12 @@ export function getCreativeIds(pkg: PackageResponseV2 | PackageResponseV3): stri
 /**
  * Get creative assignments from a package (normalizes v2 to v3 format)
  */
-export function getCreativeAssignments(
-  pkg: PackageResponseV2 | PackageResponseV3
-): CreativeAssignment[] {
+export function getCreativeAssignments(pkg: PackageResponseV2 | PackageResponseV3): CreativeAssignment[] {
   if ((pkg as PackageResponseV3).creative_assignments) {
     return (pkg as PackageResponseV3).creative_assignments!;
   }
   if ((pkg as PackageResponseV2).creative_ids) {
-    return (pkg as PackageResponseV2).creative_ids!.map((id) => ({ creative_id: id }));
+    return (pkg as PackageResponseV2).creative_ids!.map(id => ({ creative_id: id }));
   }
   return [];
 }

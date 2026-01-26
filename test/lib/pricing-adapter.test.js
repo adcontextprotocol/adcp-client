@@ -18,7 +18,7 @@ const {
 describe('pricing adapter utilities', () => {
   describe('usesV2PricingFields', () => {
     test('should detect v2 rate field', () => {
-      assert.strictEqual(usesV2PricingFields({ rate: 5.00 }), true);
+      assert.strictEqual(usesV2PricingFields({ rate: 5.0 }), true);
     });
 
     test('should detect v2 is_fixed field', () => {
@@ -27,12 +27,12 @@ describe('pricing adapter utilities', () => {
     });
 
     test('should detect v2 price_guidance.floor field', () => {
-      assert.strictEqual(usesV2PricingFields({ price_guidance: { floor: 1.00 } }), true);
+      assert.strictEqual(usesV2PricingFields({ price_guidance: { floor: 1.0 } }), true);
     });
 
     test('should return false for v3-only fields', () => {
-      assert.strictEqual(usesV2PricingFields({ fixed_price: 5.00 }), false);
-      assert.strictEqual(usesV2PricingFields({ floor_price: 1.00 }), false);
+      assert.strictEqual(usesV2PricingFields({ fixed_price: 5.0 }), false);
+      assert.strictEqual(usesV2PricingFields({ floor_price: 1.0 }), false);
     });
 
     test('should return false for null/undefined', () => {
@@ -48,15 +48,15 @@ describe('pricing adapter utilities', () => {
 
   describe('usesV3PricingFields', () => {
     test('should detect v3 fixed_price field', () => {
-      assert.strictEqual(usesV3PricingFields({ fixed_price: 5.00 }), true);
+      assert.strictEqual(usesV3PricingFields({ fixed_price: 5.0 }), true);
     });
 
     test('should detect v3 floor_price field', () => {
-      assert.strictEqual(usesV3PricingFields({ floor_price: 1.00 }), true);
+      assert.strictEqual(usesV3PricingFields({ floor_price: 1.0 }), true);
     });
 
     test('should return false for v2-only fields', () => {
-      assert.strictEqual(usesV3PricingFields({ rate: 5.00 }), false);
+      assert.strictEqual(usesV3PricingFields({ rate: 5.0 }), false);
       assert.strictEqual(usesV3PricingFields({ is_fixed: true }), false);
     });
 
@@ -68,7 +68,7 @@ describe('pricing adapter utilities', () => {
 
   describe('isFixedPricing', () => {
     test('should return true for v3 fixed_price', () => {
-      assert.strictEqual(isFixedPricing({ fixed_price: 5.00 }), true);
+      assert.strictEqual(isFixedPricing({ fixed_price: 5.0 }), true);
     });
 
     test('should return true for v2 is_fixed: true', () => {
@@ -80,7 +80,7 @@ describe('pricing adapter utilities', () => {
     });
 
     test('should return true for v2 rate (implies fixed)', () => {
-      assert.strictEqual(isFixedPricing({ rate: 5.00 }), true);
+      assert.strictEqual(isFixedPricing({ rate: 5.0 }), true);
     });
 
     test('should return false when no indicators present', () => {
@@ -90,15 +90,15 @@ describe('pricing adapter utilities', () => {
 
   describe('getPrice', () => {
     test('should return v3 fixed_price', () => {
-      assert.strictEqual(getPrice({ fixed_price: 5.00 }), 5.00);
+      assert.strictEqual(getPrice({ fixed_price: 5.0 }), 5.0);
     });
 
     test('should return v2 rate', () => {
-      assert.strictEqual(getPrice({ rate: 3.50 }), 3.50);
+      assert.strictEqual(getPrice({ rate: 3.5 }), 3.5);
     });
 
     test('should prefer v3 fixed_price over v2 rate', () => {
-      assert.strictEqual(getPrice({ fixed_price: 5.00, rate: 3.50 }), 5.00);
+      assert.strictEqual(getPrice({ fixed_price: 5.0, rate: 3.5 }), 5.0);
     });
 
     test('should return undefined when neither field present', () => {
@@ -108,15 +108,15 @@ describe('pricing adapter utilities', () => {
 
   describe('getFloorPrice', () => {
     test('should return v3 floor_price', () => {
-      assert.strictEqual(getFloorPrice({ floor_price: 1.00 }), 1.00);
+      assert.strictEqual(getFloorPrice({ floor_price: 1.0 }), 1.0);
     });
 
     test('should return v2 price_guidance.floor', () => {
-      assert.strictEqual(getFloorPrice({ price_guidance: { floor: 0.50 } }), 0.50);
+      assert.strictEqual(getFloorPrice({ price_guidance: { floor: 0.5 } }), 0.5);
     });
 
     test('should prefer v3 floor_price over v2', () => {
-      assert.strictEqual(getFloorPrice({ floor_price: 1.00, price_guidance: { floor: 0.50 } }), 1.00);
+      assert.strictEqual(getFloorPrice({ floor_price: 1.0, price_guidance: { floor: 0.5 } }), 1.0);
     });
 
     test('should return undefined when neither field present', () => {
@@ -130,12 +130,12 @@ describe('pricing adapter utilities', () => {
         pricing_option_id: 'cpm_fixed',
         pricing_model: 'cpm',
         currency: 'USD',
-        fixed_price: 5.00,
+        fixed_price: 5.0,
       };
 
       const v2Option = adaptPricingOptionForV2(v3Option);
 
-      assert.strictEqual(v2Option.rate, 5.00);
+      assert.strictEqual(v2Option.rate, 5.0);
       assert.strictEqual(v2Option.is_fixed, true);
       assert.strictEqual(v2Option.fixed_price, undefined);
       assert.strictEqual(v2Option.pricing_option_id, 'cpm_fixed');
@@ -147,15 +147,15 @@ describe('pricing adapter utilities', () => {
         pricing_option_id: 'cpm_auction',
         pricing_model: 'cpm',
         currency: 'USD',
-        floor_price: 1.00,
-        price_guidance: { p50: 2.50 },
+        floor_price: 1.0,
+        price_guidance: { p50: 2.5 },
       };
 
       const v2Option = adaptPricingOptionForV2(v3Option);
 
       assert.strictEqual(v2Option.is_fixed, false);
-      assert.strictEqual(v2Option.price_guidance.floor, 1.00);
-      assert.strictEqual(v2Option.price_guidance.p50, 2.50);
+      assert.strictEqual(v2Option.price_guidance.floor, 1.0);
+      assert.strictEqual(v2Option.price_guidance.p50, 2.5);
       assert.strictEqual(v2Option.floor_price, undefined);
     });
 
@@ -164,13 +164,13 @@ describe('pricing adapter utilities', () => {
         pricing_option_id: 'cpm_fixed',
         pricing_model: 'cpm',
         currency: 'USD',
-        rate: 5.00,
+        rate: 5.0,
         is_fixed: true,
       };
 
       const result = adaptPricingOptionForV2(v2Option);
 
-      assert.strictEqual(result.rate, 5.00);
+      assert.strictEqual(result.rate, 5.0);
       assert.strictEqual(result.is_fixed, true);
     });
 
@@ -179,7 +179,7 @@ describe('pricing adapter utilities', () => {
         pricing_option_id: 'cpm_fixed',
         pricing_model: 'cpm',
         currency: 'USD',
-        fixed_price: 5.00,
+        fixed_price: 5.0,
         min_spend_per_package: 1000,
         custom_field: 'value',
       };
@@ -197,13 +197,13 @@ describe('pricing adapter utilities', () => {
         pricing_option_id: 'cpm_fixed',
         pricing_model: 'cpm',
         currency: 'USD',
-        rate: 5.00,
+        rate: 5.0,
         is_fixed: true,
       };
 
       const v3Option = normalizePricingOption(v2Option);
 
-      assert.strictEqual(v3Option.fixed_price, 5.00);
+      assert.strictEqual(v3Option.fixed_price, 5.0);
       assert.strictEqual(v3Option.rate, undefined);
       assert.strictEqual(v3Option.is_fixed, undefined);
     });
@@ -215,19 +215,19 @@ describe('pricing adapter utilities', () => {
         currency: 'USD',
         is_fixed: false,
         price_guidance: {
-          floor: 1.00,
-          p25: 1.50,
-          p50: 2.50,
-          p75: 3.50,
+          floor: 1.0,
+          p25: 1.5,
+          p50: 2.5,
+          p75: 3.5,
         },
       };
 
       const v3Option = normalizePricingOption(v2Option);
 
-      assert.strictEqual(v3Option.floor_price, 1.00);
-      assert.strictEqual(v3Option.price_guidance.p25, 1.50);
-      assert.strictEqual(v3Option.price_guidance.p50, 2.50);
-      assert.strictEqual(v3Option.price_guidance.p75, 3.50);
+      assert.strictEqual(v3Option.floor_price, 1.0);
+      assert.strictEqual(v3Option.price_guidance.p25, 1.5);
+      assert.strictEqual(v3Option.price_guidance.p50, 2.5);
+      assert.strictEqual(v3Option.price_guidance.p75, 3.5);
       assert.strictEqual(v3Option.price_guidance.floor, undefined);
     });
 
@@ -236,12 +236,12 @@ describe('pricing adapter utilities', () => {
         pricing_option_id: 'cpm_fixed',
         pricing_model: 'cpm',
         currency: 'USD',
-        fixed_price: 5.00,
+        fixed_price: 5.0,
       };
 
       const result = normalizePricingOption(v3Option);
 
-      assert.strictEqual(result.fixed_price, 5.00);
+      assert.strictEqual(result.fixed_price, 5.0);
     });
 
     test('should handle v2 rate without explicit is_fixed (implies fixed)', () => {
@@ -249,12 +249,12 @@ describe('pricing adapter utilities', () => {
         pricing_option_id: 'cpm_fixed',
         pricing_model: 'cpm',
         currency: 'USD',
-        rate: 5.00,
+        rate: 5.0,
       };
 
       const v3Option = normalizePricingOption(v2Option);
 
-      assert.strictEqual(v3Option.fixed_price, 5.00);
+      assert.strictEqual(v3Option.fixed_price, 5.0);
     });
 
     test('should not convert rate if is_fixed is false', () => {
@@ -262,7 +262,7 @@ describe('pricing adapter utilities', () => {
         pricing_option_id: 'cpm_auction',
         pricing_model: 'cpm',
         currency: 'USD',
-        rate: 5.00,
+        rate: 5.0,
         is_fixed: false,
       };
 
@@ -283,7 +283,7 @@ describe('pricing adapter utilities', () => {
             pricing_option_id: 'cpm_fixed',
             pricing_model: 'cpm',
             currency: 'USD',
-            rate: 5.00,
+            rate: 5.0,
             is_fixed: true,
           },
           {
@@ -291,15 +291,15 @@ describe('pricing adapter utilities', () => {
             pricing_model: 'cpm',
             currency: 'USD',
             is_fixed: false,
-            price_guidance: { floor: 1.00 },
+            price_guidance: { floor: 1.0 },
           },
         ],
       };
 
       const normalized = normalizeProductPricing(product);
 
-      assert.strictEqual(normalized.pricing_options[0].fixed_price, 5.00);
-      assert.strictEqual(normalized.pricing_options[1].floor_price, 1.00);
+      assert.strictEqual(normalized.pricing_options[0].fixed_price, 5.0);
+      assert.strictEqual(normalized.pricing_options[1].floor_price, 1.0);
     });
 
     test('should pass through products without pricing_options', () => {
@@ -326,13 +326,19 @@ describe('pricing adapter utilities', () => {
           {
             id: 'product-1',
             pricing_options: [
-              { pricing_option_id: 'opt1', rate: 5.00, is_fixed: true, pricing_model: 'cpm', currency: 'USD' },
+              { pricing_option_id: 'opt1', rate: 5.0, is_fixed: true, pricing_model: 'cpm', currency: 'USD' },
             ],
           },
           {
             id: 'product-2',
             pricing_options: [
-              { pricing_option_id: 'opt2', is_fixed: false, price_guidance: { floor: 1.00 }, pricing_model: 'cpm', currency: 'USD' },
+              {
+                pricing_option_id: 'opt2',
+                is_fixed: false,
+                price_guidance: { floor: 1.0 },
+                pricing_model: 'cpm',
+                currency: 'USD',
+              },
             ],
           },
         ],
@@ -340,8 +346,8 @@ describe('pricing adapter utilities', () => {
 
       const normalized = normalizeGetProductsResponse(response);
 
-      assert.strictEqual(normalized.products[0].pricing_options[0].fixed_price, 5.00);
-      assert.strictEqual(normalized.products[1].pricing_options[0].floor_price, 1.00);
+      assert.strictEqual(normalized.products[0].pricing_options[0].fixed_price, 5.0);
+      assert.strictEqual(normalized.products[1].pricing_options[0].floor_price, 1.0);
     });
 
     test('should pass through response without products array', () => {
@@ -355,7 +361,12 @@ describe('pricing adapter utilities', () => {
     test('should preserve other response fields', () => {
       const response = {
         products: [
-          { id: 'p1', pricing_options: [{ rate: 5.00, is_fixed: true, pricing_model: 'cpm', currency: 'USD', pricing_option_id: 'opt1' }] },
+          {
+            id: 'p1',
+            pricing_options: [
+              { rate: 5.0, is_fixed: true, pricing_model: 'cpm', currency: 'USD', pricing_option_id: 'opt1' },
+            ],
+          },
         ],
         total: 1,
         property_list_applied: true,

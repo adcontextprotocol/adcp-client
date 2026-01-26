@@ -9,13 +9,7 @@
  * Publishers should extend or replace this with their recommendation logic.
  */
 
-import type {
-  GetProductsRequest,
-  Proposal,
-  Product,
-  ProductAllocation,
-  BrandManifest,
-} from '../types/tools.generated';
+import type { GetProductsRequest, Proposal, Product, ProductAllocation, BrandManifest } from '../types/tools.generated';
 
 /**
  * Context for generating proposals
@@ -131,7 +125,11 @@ export class ProposalManager implements IProposalManager {
    * - Adjust allocations based on instructions
    * - Re-validate and return updated proposal
    */
-  async refineProposal(proposalId: string, refinementBrief: string, context: ProposalContext): Promise<Proposal | null> {
+  async refineProposal(
+    proposalId: string,
+    refinementBrief: string,
+    context: ProposalContext
+  ): Promise<Proposal | null> {
     if (!this.isSupported()) {
       return null;
     }
