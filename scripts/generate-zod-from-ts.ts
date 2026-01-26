@@ -7,142 +7,15 @@ import path from 'path';
 /**
  * Generate Zod v4 schemas from TypeScript types
  * Uses ts-to-zod to convert our generated TypeScript types to Zod schemas
+ *
+ * This script generates schemas for ALL types in the source files.
+ * Previously we used a whitelist approach, but that was fragile and caused
+ * missing dependency bugs. Generating everything is simpler and more reliable.
  */
 
 const CORE_SOURCE_FILE = path.join(__dirname, '../src/lib/types/core.generated.ts');
 const TOOLS_SOURCE_FILE = path.join(__dirname, '../src/lib/types/tools.generated.ts');
 const OUTPUT_FILE = path.join(__dirname, '../src/lib/types/schemas.generated.ts');
-
-// Types to generate Zod schemas for
-const TARGET_TYPES = [
-  // Core data structures
-  'MediaBuy',
-  'Package',
-  'CreativeAsset',
-  'Product',
-  'Product1',
-  'Product2',
-  'TargetingOverlay',
-  'FrequencyCap',
-  'CreativeAssignment',
-  'FormatID',
-
-  // Brand and offerings
-  'BrandManifest',
-  'BrandManifest1',
-  'BrandManifest2',
-  'BrandManifestReference',
-  'PromotedOfferings',
-  'PromotedProducts',
-
-  // Asset types (core)
-  'ImageAsset',
-  'VideoAsset',
-  'AudioAsset',
-  'TextAsset',
-  'HTMLAsset',
-  'CSSAsset',
-  'JavaScriptAsset',
-  'VASTAsset',
-  'VASTAsset1',
-  'VASTAsset2',
-  'DAASTAsset',
-  'DAASTAsset1',
-  'DAASTAsset2',
-  'URLAsset',
-  'WebhookAsset',
-
-  // Supporting types
-  'Property',
-  'Measurement',
-  'ReportingCapabilities',
-
-  // Pricing options
-  'CPMFixedRatePricingOption',
-  'CPMAuctionPricingOption',
-  'VCPMFixedRatePricingOption',
-  'VCPMAuctionPricingOption',
-  'CPCPricingOption',
-  'CPCVPricingOption',
-  'CPVPricingOption',
-  'CPPPricingOption',
-  'FlatRatePricingOption',
-
-  // Enums/Unions
-  'MediaBuyStatus',
-  'Pacing',
-  'PackageStatus',
-  'DeliveryType',
-  'PricingOption',
-  'PropertyIdentifierTypes',
-];
-
-// Tool request/response types to generate
-const TOOL_TYPES = [
-  // Error type (needed by many responses)
-  'Error',
-
-  // Media Buy tools
-  'GetProductsRequest',
-  'GetProductsResponse',
-  'ListCreativeFormatsRequest',
-  'ListCreativeFormatsResponse',
-  'Format', // Used by ListCreativeFormatsResponse
-  'CreateMediaBuyRequest',
-  'CreateMediaBuyResponse',
-  'UpdateMediaBuyRequest',
-  'UpdateMediaBuyRequest1',
-  'UpdateMediaBuyRequest2',
-  'UpdateMediaBuyResponse',
-  'GetMediaBuyDeliveryRequest',
-  'GetMediaBuyDeliveryResponse',
-
-  // Creative tools
-  'SyncCreativesRequest',
-  'SyncCreativesResponse',
-  'SyncCreativesSuccess', // Component of SyncCreativesResponse union
-  'SyncCreativesError', // Component of SyncCreativesResponse union
-  'ListCreativesRequest',
-  'ListCreativesResponse',
-  'SubAsset',
-  'SubAsset1',
-  'SubAsset2',
-  'BuildCreativeRequest',
-  'BuildCreativeResponse',
-  'PreviewCreativeRequest',
-  'PreviewCreativeResponse',
-  'PreviewCreativeSingleResponse', // Component of PreviewCreativeResponse union
-  'PreviewCreativeBatchResponse', // Component of PreviewCreativeResponse union
-
-  // Property tools
-  'ListAuthorizedPropertiesRequest',
-  'ListAuthorizedPropertiesResponse',
-
-  // Performance tools
-  'ProvidePerformanceFeedbackRequest',
-  'ProvidePerformanceFeedbackRequest1',
-  'ProvidePerformanceFeedbackRequest2',
-  'ProvidePerformanceFeedbackResponse',
-  'MetricType',
-  'FeedbackSource',
-
-  // Signals tools
-  'GetSignalsRequest',
-  'GetSignalsResponse',
-  'ActivateSignalRequest',
-  'ActivateSignalResponse',
-  'Destination', // Discriminated union: platform or agent destinations
-  'Deployment', // Discriminated union: platform or agent deployments
-
-  // Supporting types
-  'PackageRequest',
-  'CreativePolicy',
-  'PushNotificationConfig',
-  'CreativeFilters',
-  'ContextObject', // Used by many response types
-  'ExtensionObject', // Used by many response types
-  'CreativeAction', // Used by SyncCreativesSuccess
-];
 
 /**
  * Post-process generated Zod schemas to convert .optional() to .nullish() globally.
@@ -232,15 +105,13 @@ async function generateZodSchemas() {
 
     // Merge both sources so cross-file type dependencies can be resolved
     const combinedSource = `${coreContent}\n\n// ====== TOOL TYPES ======\n\n${toolsContent}`;
-    const allTypes = [...TARGET_TYPES, ...TOOL_TYPES];
 
-    console.log(
-      `📦 Generating ${allTypes.length} schemas from combined source (${TARGET_TYPES.length} core + ${TOOL_TYPES.length} tools)...`
-    );
+    console.log('📦 Generating Zod schemas for all types...');
 
+    // Generate schemas for ALL types - no filter needed
+    // This ensures all dependencies are available and avoids missing schema bugs
     const result = generate({
       sourceText: combinedSource,
-      nameFilter: name => allTypes.includes(name),
       skipParseJSDoc: false,
       getSchemaName: name => `${name}Schema`,
     });
@@ -293,9 +164,10 @@ async function generateZodSchemas() {
       console.log(`✅ Zod schemas are up to date: ${OUTPUT_FILE}`);
     }
 
-    const totalCount = allTypes.length;
-    console.log(`📊 Generated ${totalCount} Zod v4 schemas`);
-    console.log('✨ No errors!');
+    // Count schemas from output (each 'export const' is a schema)
+    const schemaCount = (zodSchemas.match(/export const/g) || []).length;
+    console.log(`📊 Generated ${schemaCount} Zod v4 schemas`);
+    console.log('✨ Done!');
   } catch (error) {
     console.error('❌ Failed to generate Zod schemas:', error);
     process.exit(1);

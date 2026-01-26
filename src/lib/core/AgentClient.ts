@@ -24,6 +24,8 @@ import type {
   GetSignalsResponse,
   ActivateSignalRequest,
   ActivateSignalResponse,
+  GetAdCPCapabilitiesRequest,
+  GetAdCPCapabilitiesResponse,
 } from '../types/tools.generated';
 
 /**
@@ -299,6 +301,28 @@ export class AgentClient {
     options?: TaskOptions
   ): Promise<TaskResult<ActivateSignalResponse>> {
     const result = await this.client.activateSignal(params, inputHandler, {
+      ...options,
+      contextId: this.currentContextId,
+    });
+
+    if (result.success) {
+      this.currentContextId = result.metadata.taskId;
+    }
+
+    return result;
+  }
+
+  // ====== PROTOCOL TASKS ======
+
+  /**
+   * Get AdCP capabilities
+   */
+  async getAdcpCapabilities(
+    params: GetAdCPCapabilitiesRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<GetAdCPCapabilitiesResponse>> {
+    const result = await this.client.getAdcpCapabilities(params, inputHandler, {
       ...options,
       contextId: this.currentContextId,
     });

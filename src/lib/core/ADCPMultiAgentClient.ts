@@ -64,6 +64,34 @@ export class AgentCollection {
     }
   }
 
+  private async executeAllSettled<T>(
+    operation: (client: AgentClient) => Promise<TaskResult<T>>
+  ): Promise<TaskResult<T>[]> {
+    const clients = Array.from(this.clients.values());
+    const results = await Promise.allSettled(clients.map(client => operation(client)));
+
+    return results.map((result, index) => {
+      if (result.status === 'fulfilled') {
+        return result.value;
+      }
+      const client = clients[index];
+      return {
+        success: false,
+        status: 'completed' as const,
+        error: result.reason instanceof Error ? result.reason.message : String(result.reason),
+        metadata: {
+          taskId: '',
+          taskName: '',
+          agent: client.getAgent(),
+          responseTimeMs: 0,
+          timestamp: new Date().toISOString(),
+          clarificationRounds: 0,
+          status: 'failed' as const,
+        },
+      };
+    });
+  }
+
   // ====== PARALLEL TASK EXECUTION ======
 
   /**
@@ -74,8 +102,7 @@ export class AgentCollection {
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<GetProductsResponse>[]> {
-    const promises = Array.from(this.clients.values()).map(client => client.getProducts(params, inputHandler, options));
-    return Promise.all(promises);
+    return this.executeAllSettled(client => client.getProducts(params, inputHandler, options));
   }
 
   /**
@@ -86,10 +113,7 @@ export class AgentCollection {
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<ListCreativeFormatsResponse>[]> {
-    const promises = Array.from(this.clients.values()).map(client =>
-      client.listCreativeFormats(params, inputHandler, options)
-    );
-    return Promise.all(promises);
+    return this.executeAllSettled(client => client.listCreativeFormats(params, inputHandler, options));
   }
 
   /**
@@ -101,10 +125,7 @@ export class AgentCollection {
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<CreateMediaBuyResponse>[]> {
-    const promises = Array.from(this.clients.values()).map(client =>
-      client.createMediaBuy(params, inputHandler, options)
-    );
-    return Promise.all(promises);
+    return this.executeAllSettled(client => client.createMediaBuy(params, inputHandler, options));
   }
 
   /**
@@ -115,10 +136,7 @@ export class AgentCollection {
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<UpdateMediaBuyResponse>[]> {
-    const promises = Array.from(this.clients.values()).map(client =>
-      client.updateMediaBuy(params, inputHandler, options)
-    );
-    return Promise.all(promises);
+    return this.executeAllSettled(client => client.updateMediaBuy(params, inputHandler, options));
   }
 
   /**
@@ -129,10 +147,7 @@ export class AgentCollection {
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<SyncCreativesResponse>[]> {
-    const promises = Array.from(this.clients.values()).map(client =>
-      client.syncCreatives(params, inputHandler, options)
-    );
-    return Promise.all(promises);
+    return this.executeAllSettled(client => client.syncCreatives(params, inputHandler, options));
   }
 
   /**
@@ -143,10 +158,7 @@ export class AgentCollection {
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<ListCreativesResponse>[]> {
-    const promises = Array.from(this.clients.values()).map(client =>
-      client.listCreatives(params, inputHandler, options)
-    );
-    return Promise.all(promises);
+    return this.executeAllSettled(client => client.listCreatives(params, inputHandler, options));
   }
 
   /**
@@ -157,10 +169,7 @@ export class AgentCollection {
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<GetMediaBuyDeliveryResponse>[]> {
-    const promises = Array.from(this.clients.values()).map(client =>
-      client.getMediaBuyDelivery(params, inputHandler, options)
-    );
-    return Promise.all(promises);
+    return this.executeAllSettled(client => client.getMediaBuyDelivery(params, inputHandler, options));
   }
 
   /**
@@ -171,10 +180,7 @@ export class AgentCollection {
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<ProvidePerformanceFeedbackResponse>[]> {
-    const promises = Array.from(this.clients.values()).map(client =>
-      client.providePerformanceFeedback(params, inputHandler, options)
-    );
-    return Promise.all(promises);
+    return this.executeAllSettled(client => client.providePerformanceFeedback(params, inputHandler, options));
   }
 
   /**
@@ -185,8 +191,7 @@ export class AgentCollection {
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<GetSignalsResponse>[]> {
-    const promises = Array.from(this.clients.values()).map(client => client.getSignals(params, inputHandler, options));
-    return Promise.all(promises);
+    return this.executeAllSettled(client => client.getSignals(params, inputHandler, options));
   }
 
   /**
@@ -197,10 +202,7 @@ export class AgentCollection {
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<ActivateSignalResponse>[]> {
-    const promises = Array.from(this.clients.values()).map(client =>
-      client.activateSignal(params, inputHandler, options)
-    );
-    return Promise.all(promises);
+    return this.executeAllSettled(client => client.activateSignal(params, inputHandler, options));
   }
 
   // ====== COLLECTION UTILITIES ======
@@ -254,11 +256,12 @@ export class AgentCollection {
   }
 
   /**
-   * Execute a custom function on all agents in parallel
+   * Execute a custom function on all agents in parallel.
+   * Returns PromiseSettledResult array so callers can handle partial failures.
    */
-  async execute<T>(executor: (agent: AgentClient) => Promise<T>): Promise<T[]> {
+  async execute<T>(executor: (agent: AgentClient) => Promise<T>): Promise<PromiseSettledResult<T>[]> {
     const promises = Array.from(this.clients.values()).map(executor);
-    return Promise.all(promises);
+    return Promise.allSettled(promises);
   }
 }
 
@@ -741,8 +744,10 @@ export class ADCPMultiAgentClient {
    */
   async listAllTasks(): Promise<TaskInfo[]> {
     const taskPromises = Array.from(this.agentClients.values()).map(agent => agent.listTasks());
-    const taskArrays = await Promise.all(taskPromises);
-    return taskArrays.flat();
+    const results = await Promise.allSettled(taskPromises);
+    return results
+      .filter((r): r is PromiseFulfilledResult<TaskInfo[]> => r.status === 'fulfilled')
+      .flatMap(r => r.value);
   }
 
   /**
@@ -756,8 +761,10 @@ export class ADCPMultiAgentClient {
       const agent = this.agentClients.get(agentId);
       return agent ? agent.listTasks() : Promise.resolve([]);
     });
-    const taskArrays = await Promise.all(taskPromises);
-    return taskArrays.flat();
+    const results = await Promise.allSettled(taskPromises);
+    return results
+      .filter((r): r is PromiseFulfilledResult<TaskInfo[]> => r.status === 'fulfilled')
+      .flatMap(r => r.value);
   }
 
   /**
@@ -841,7 +848,7 @@ export class ADCPMultiAgentClient {
     const promises = Array.from(this.agentClients.values()).map(agent =>
       agent.registerWebhook(`${webhookUrl}?agentId=${agent.getAgentId()}`, taskTypes)
     );
-    await Promise.all(promises);
+    await Promise.allSettled(promises);
   }
 
   /**
@@ -849,7 +856,7 @@ export class ADCPMultiAgentClient {
    */
   async unregisterAllWebhooks(): Promise<void> {
     const promises = Array.from(this.agentClients.values()).map(agent => agent.unregisterWebhook());
-    await Promise.all(promises);
+    await Promise.allSettled(promises);
   }
 
   /**

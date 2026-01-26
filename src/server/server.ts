@@ -1128,17 +1128,39 @@ app.post<{
   }
 });
 
-// List Authorized Properties
+// Get AdCP Capabilities
 app.post<{
   Params: { agentId: string };
   Body: { agentConfig?: AgentConfig; [key: string]: any };
-}>('/api/agents/:agentId/list-authorized-properties', async (request, reply) => {
-  // list_authorized_properties is deprecated in v3 - use get_adcp_capabilities instead
-  return reply.code(410).send({
-    success: false,
-    error: 'list_authorized_properties is deprecated. Use get_adcp_capabilities instead.',
-    timestamp: new Date().toISOString(),
-  });
+}>('/api/agents/:agentId/get-adcp-capabilities', async (request, reply) => {
+  try {
+    const { agentId } = request.params;
+    const body = request.body as any;
+
+    const agentConfig = body.agentConfig;
+    const params = { ...body };
+    delete params.agentConfig;
+
+    const client = getAgentClient(agentId, agentConfig);
+    const result = await client.getAdcpCapabilities(params, createDefaultInputHandler());
+
+    return reply.send({
+      success: result.success,
+      data: result.data,
+      error: result.error,
+      metadata: result.metadata,
+      debug_logs: result.debug_logs,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    app.log.error({ error }, 'Get AdCP capabilities error');
+    return reply.code(500).send({
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error',
+      debug_logs: createErrorDebugLog(error),
+      timestamp: new Date().toISOString(),
+    });
+  }
 });
 
 // Get Media Buy Delivery

@@ -3858,15 +3858,15 @@
             name: 'properties',
             task: async () => {
               try {
-                await loadAuthorizedProperties();
+                await loadCapabilities();
                 loadStatus.properties = true;
-                logEvent('success', '✅ Authorized properties loaded');
+                logEvent('success', '✅ AdCP capabilities loaded');
               } catch (error) {
-                logEvent('error', `❌ Authorized properties failed: ${error.message}`);
+                logEvent('error', `❌ Capabilities failed: ${error.message}`);
                 // Display error in the properties section
                 const contentDiv = document.getElementById('properties-content');
                 if (contentDiv) {
-                  contentDiv.innerHTML = `<p style="color: #d9534f; text-align: center;">Error loading properties: ${error.message}</p>`;
+                  contentDiv.innerHTML = `<p style="color: #d9534f; text-align: center;">Error loading capabilities: ${error.message}</p>`;
                 }
               }
               updateProgress();
@@ -5142,7 +5142,7 @@
           sync_creatives: 'sync-creatives',
           list_creatives: 'list-creatives',
           get_media_buy_delivery: 'get-media-buy-delivery',
-          list_authorized_properties: 'list-authorized-properties',
+          get_adcp_capabilities: 'get-adcp-capabilities',
         };
 
         const endpoint = toolEndpoints[toolName];
@@ -9879,138 +9879,117 @@
         }
       }
 
-      async function loadAuthorizedProperties() {
+      async function loadCapabilities() {
         const selectedAgent = agents.find(a => a.id === document.getElementById('agent-selector').value);
         if (!selectedAgent) {
           throw new Error('No agent selected');
         }
 
-        const result = await callADCPTool(selectedAgent, 'list_authorized_properties', {});
+        const result = await callADCPTool(selectedAgent, 'get_adcp_capabilities', {});
 
         // callADCPTool returns the data portion (unwrapped), not the full API response
-        // Check for actual data fields instead of result.success
-        if (result && (result.properties || result.publisher_domains)) {
-          displayPropertiesResults(result);
+        if (result && (result.adcp || result.supported_protocols)) {
+          displayCapabilitiesResults(result);
         } else {
-          throw new Error('No authorized properties returned');
+          throw new Error('No capabilities returned');
         }
       }
 
-      function displayPropertiesResults(data) {
+      function displayCapabilitiesResults(data) {
         const contentDiv = document.getElementById('properties-content');
         if (!contentDiv) {
           return;
         }
 
-        // callADCPTool returns the data portion directly (already unwrapped)
-        // Handle both response formats:
-        // 1. Property list: { properties: [...] }
-        // 2. Portfolio-level: { publisher_domains: [...], primary_channels: ..., etc. }
-        const properties = data.properties || [];
-        const publisherDomains = data.publisher_domains || [];
-
-        // Check if we have portfolio-level response
-        if (publisherDomains.length > 0 && properties.length === 0) {
-          let html = `
-                          <div style="padding: 20px;">
-                              <h4 style="margin-top: 0;">Portfolio-Level Response</h4>
-                              <table style="width: 100%; border-collapse: collapse;">
-                                  <tr style="border-bottom: 1px solid #ddd;">
-                                      <th style="padding: 10px; text-align: left; width: 200px;">Field</th>
-                                      <th style="padding: 10px; text-align: left;">Value</th>
-                                  </tr>
-                                  <tr style="border-bottom: 1px solid #eee;">
-                                      <td style="padding: 10px; font-weight: 600;">Publisher Domains</td>
-                                      <td style="padding: 10px; font-family: monospace; font-size: 12px;">${escapeHtml(
-                                        publisherDomains.join(', ')
-                                      )}</td>
-                                  </tr>
-                      `;
-
-          if (data.primary_channels) {
-            html += `
-                                  <tr style="border-bottom: 1px solid #eee;">
-                                      <td style="padding: 10px; font-weight: 600;">Primary Channels</td>
-                                      <td style="padding: 10px;">${escapeHtml(
-                                        Array.isArray(data.primary_channels)
-                                          ? data.primary_channels.join(', ')
-                                          : data.primary_channels
-                                      )}</td>
-                                  </tr>
-                          `;
-          }
-
-          if (data.primary_countries) {
-            html += `
-                                  <tr style="border-bottom: 1px solid #eee;">
-                                      <td style="padding: 10px; font-weight: 600;">Primary Countries</td>
-                                      <td style="padding: 10px;">${escapeHtml(
-                                        Array.isArray(data.primary_countries)
-                                          ? data.primary_countries.join(', ')
-                                          : data.primary_countries
-                                      )}</td>
-                                  </tr>
-                          `;
-          }
-
-          if (data.portfolio_description) {
-            html += `
-                                  <tr style="border-bottom: 1px solid #eee;">
-                                      <td style="padding: 10px; font-weight: 600;">Description</td>
-                                      <td style="padding: 10px;">${escapeHtml(data.portfolio_description)}</td>
-                                  </tr>
-                          `;
-          }
-
-          html += `
-                              </table>
-                          </div>
-                      `;
-          contentDiv.innerHTML = html;
-          return;
-        }
-
-        // Handle property list response
-        if (properties.length === 0) {
-          contentDiv.innerHTML = `
-                          <div style="padding: 20px; text-align: center;">
-                              <p style="color: #666;">No authorized properties found</p>
-                          </div>
-                      `;
-          return;
-        }
-
         let html = `
-                      <div style="max-height: 400px; overflow-y: auto;">
+                      <div style="padding: 20px;">
+                          <h4 style="margin-top: 0;">AdCP Capabilities</h4>
                           <table style="width: 100%; border-collapse: collapse;">
-                              <thead>
-                                  <tr style="border-bottom: 2px solid #ddd;">
-                                      <th style="padding: 10px; text-align: left;">Property ID</th>
-                                      <th style="padding: 10px; text-align: left;">Property Name</th>
-                                      <th style="padding: 10px; text-align: left;">Domain</th>
-                                      <th style="padding: 10px; text-align: left;">Type</th>
-                                  </tr>
-                              </thead>
-                              <tbody>
+                              <tr style="border-bottom: 1px solid #ddd;">
+                                  <th style="padding: 10px; text-align: left; width: 200px;">Field</th>
+                                  <th style="padding: 10px; text-align: left;">Value</th>
+                              </tr>
                   `;
 
-        properties.forEach(prop => {
+        // AdCP version info
+        if (data.adcp && data.adcp.major_versions) {
           html += `
-                          <tr style="border-bottom: 1px solid #eee;">
-                              <td style="padding: 10px; font-family: monospace; font-size: 12px;">${escapeHtml(
-                                prop.property_id || prop.id || 'N/A'
-                              )}</td>
-                              <td style="padding: 10px;">${escapeHtml(prop.property_name || prop.name || 'N/A')}</td>
-                              <td style="padding: 10px; font-family: monospace; font-size: 12px;">${escapeHtml(
-                                prop.domain || prop.publisher_domain || 'N/A'
-                              )}</td>
-                              <td style="padding: 10px;">${escapeHtml(prop.type || prop.property_type || 'N/A')}</td>
-                          </tr>
+                              <tr style="border-bottom: 1px solid #eee;">
+                                  <td style="padding: 10px; font-weight: 600;">AdCP Versions</td>
+                                  <td style="padding: 10px;">v${data.adcp.major_versions.join(', v')}</td>
+                              </tr>
                       `;
-        });
+        }
+
+        // Supported protocols
+        if (data.supported_protocols && data.supported_protocols.length > 0) {
+          html += `
+                              <tr style="border-bottom: 1px solid #eee;">
+                                  <td style="padding: 10px; font-weight: 600;">Supported Protocols</td>
+                                  <td style="padding: 10px;">${escapeHtml(data.supported_protocols.join(', '))}</td>
+                              </tr>
+                      `;
+        }
+
+        // Media buy capabilities
+        if (data.media_buy) {
+          const mb = data.media_buy;
+
+          if (mb.features) {
+            const features = [];
+            if (mb.features.human_in_the_loop) features.push('Human-in-the-loop');
+            if (mb.features.supports_updates) features.push('Supports updates');
+            if (mb.features.supports_cancellations) features.push('Supports cancellations');
+            if (features.length > 0) {
+              html += `
+                                  <tr style="border-bottom: 1px solid #eee;">
+                                      <td style="padding: 10px; font-weight: 600;">Media Buy Features</td>
+                                      <td style="padding: 10px;">${escapeHtml(features.join(', '))}</td>
+                                  </tr>
+                          `;
+            }
+          }
+
+          if (mb.execution) {
+            if (mb.execution.targeting && mb.execution.targeting.geos) {
+              html += `
+                                  <tr style="border-bottom: 1px solid #eee;">
+                                      <td style="padding: 10px; font-weight: 600;">Supported Geos</td>
+                                      <td style="padding: 10px;">${escapeHtml(mb.execution.targeting.geos.join(', '))}</td>
+                                  </tr>
+                          `;
+            }
+            if (mb.execution.creative_specs) {
+              const specs = [];
+              if (mb.execution.creative_specs.vast_versions) specs.push(`VAST ${mb.execution.creative_specs.vast_versions.join(', ')}`);
+              if (mb.execution.creative_specs.mraid_versions) specs.push(`MRAID ${mb.execution.creative_specs.mraid_versions.join(', ')}`);
+              if (mb.execution.creative_specs.vpaid) specs.push('VPAID');
+              if (mb.execution.creative_specs.simid) specs.push('SIMID');
+              if (specs.length > 0) {
+                html += `
+                                    <tr style="border-bottom: 1px solid #eee;">
+                                        <td style="padding: 10px; font-weight: 600;">Creative Specs</td>
+                                        <td style="padding: 10px;">${escapeHtml(specs.join(', '))}</td>
+                                    </tr>
+                            `;
+              }
+            }
+          }
+        }
+
+        // Signals capabilities
+        if (data.signals) {
+          if (data.signals.supported_signal_types && data.signals.supported_signal_types.length > 0) {
+            html += `
+                                <tr style="border-bottom: 1px solid #eee;">
+                                    <td style="padding: 10px; font-weight: 600;">Signal Types</td>
+                                    <td style="padding: 10px;">${escapeHtml(data.signals.supported_signal_types.join(', '))}</td>
+                                </tr>
+                        `;
+          }
+        }
 
         html += `
-                              </tbody>
                           </table>
                       </div>
                   `;

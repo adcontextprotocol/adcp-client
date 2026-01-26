@@ -26,6 +26,8 @@ import type {
   PreviewCreativeRequest,
   PreviewCreativeResponse,
   Format,
+  GetAdCPCapabilitiesRequest,
+  GetAdCPCapabilitiesResponse,
 } from '../types/tools.generated';
 
 import type {
@@ -1229,6 +1231,30 @@ export class SingleAgentClient {
     return this.executeAndHandle<ActivateSignalResponse>(
       'activate_signal',
       'onActivateSignalStatusChange',
+      params,
+      inputHandler,
+      options
+    );
+  }
+
+  // ====== PROTOCOL TASKS ======
+
+  /**
+   * Get AdCP capabilities
+   *
+   * @param params - Capabilities request parameters
+   * @param inputHandler - Handler for clarification requests
+   * @param options - Task execution options
+   */
+  async getAdcpCapabilities(
+    params: GetAdCPCapabilitiesRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<GetAdCPCapabilitiesResponse>> {
+    const agent = await this.ensureEndpointDiscovered();
+    return this.executor.executeTask<GetAdCPCapabilitiesResponse>(
+      agent,
+      'get_adcp_capabilities',
       params,
       inputHandler,
       options

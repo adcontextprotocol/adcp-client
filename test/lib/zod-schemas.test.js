@@ -38,29 +38,31 @@ describe('Zod Schema Validation', () => {
     );
   });
 
-  test(
-    'GetProductsRequestSchema validates valid request',
-    { skip: 'GetProductsRequestSchema not generated in v3 - tool request schemas are not auto-generated' },
-    async () => {
-      if (!schemas) {
-        schemas = await import('../../dist/lib/types/schemas.generated.js');
-      }
-
-      const validRequest = {
-        brief: 'Looking for premium display inventory in US',
-        brand_manifest: {
-          name: 'Nike',
-          url: 'https://nike.com',
-        },
-      };
-
-      const result = schemas.GetProductsRequestSchema.safeParse(validRequest);
-      assert.ok(
-        result.success,
-        `GetProductsRequest validation should succeed: ${JSON.stringify(result.error?.issues || result.error)}`
-      );
+  test('GetProductsRequestSchema validates valid request (if available)', async () => {
+    if (!schemas) {
+      schemas = await import('../../dist/lib/types/schemas.generated.js');
     }
-  );
+
+    // GetProductsRequestSchema may not be generated due to complex discriminated unions in v3 schemas
+    if (!schemas.GetProductsRequestSchema) {
+      console.log('⏭️  GetProductsRequestSchema not available - skipping validation test');
+      return;
+    }
+
+    const validRequest = {
+      brief: 'Looking for premium display inventory in US',
+      brand_manifest: {
+        name: 'Nike',
+        url: 'https://nike.com',
+      },
+    };
+
+    const result = schemas.GetProductsRequestSchema.safeParse(validRequest);
+    assert.ok(
+      result.success,
+      `GetProductsRequest validation should succeed: ${JSON.stringify(result.error?.issues || result.error)}`
+    );
+  });
 
   test('ProductSchema rejects invalid product', async () => {
     if (!schemas) {
@@ -76,25 +78,27 @@ describe('Zod Schema Validation', () => {
     assert.ok(!result.success, 'Product validation should fail for invalid data');
   });
 
-  test(
-    'GetProductsResponseSchema validates response',
-    { skip: 'GetProductsResponseSchema not generated in v3 - tool response schemas are not auto-generated' },
-    async () => {
-      if (!schemas) {
-        schemas = await import('../../dist/lib/types/schemas.generated.js');
-      }
-
-      const validResponse = {
-        products: [],
-      };
-
-      const result = schemas.GetProductsResponseSchema.safeParse(validResponse);
-      assert.ok(
-        result.success,
-        `GetProductsResponse validation should succeed: ${JSON.stringify(result.error?.issues || result.error)}`
-      );
+  test('GetProductsResponseSchema validates response (if available)', async () => {
+    if (!schemas) {
+      schemas = await import('../../dist/lib/types/schemas.generated.js');
     }
-  );
+
+    // GetProductsResponseSchema may not be generated due to complex discriminated unions in v3 schemas
+    if (!schemas.GetProductsResponseSchema) {
+      console.log('⏭️  GetProductsResponseSchema not available - skipping validation test');
+      return;
+    }
+
+    const validResponse = {
+      products: [],
+    };
+
+    const result = schemas.GetProductsResponseSchema.safeParse(validResponse);
+    assert.ok(
+      result.success,
+      `GetProductsResponse validation should succeed: ${JSON.stringify(result.error?.issues || result.error)}`
+    );
+  });
 
   test('CreativeAssetSchema is importable and has parse method', async () => {
     if (!schemas) {
