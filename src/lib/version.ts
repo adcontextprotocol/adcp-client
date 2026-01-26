@@ -4,12 +4,12 @@
 /**
  * AdCP client library version
  */
-export const LIBRARY_VERSION = '3.7.3';
+export const LIBRARY_VERSION = '3.7.4';
 
 /**
  * AdCP specification version this library is built for
  */
-export const ADCP_VERSION = '3.0.0-beta.1';
+export const ADCP_VERSION = 'v3';
 
 /**
  * AdCP versions this library maintains backward compatibility with
@@ -20,10 +20,10 @@ export const COMPATIBLE_ADCP_VERSIONS = ['v2.5', 'v2.6', 'v3', '3.0.0-beta.1'] a
  * Full version information
  */
 export const VERSION_INFO = {
-  library: '3.7.3',
-  adcp: '3.0.0-beta.1',
+  library: '3.7.4',
+  adcp: 'v3',
   compatibleVersions: COMPATIBLE_ADCP_VERSIONS,
-  generatedAt: '2026-01-26T13:18:42.417Z',
+  generatedAt: '2026-01-26T14:33:03.474Z',
 } as const;
 
 /**
