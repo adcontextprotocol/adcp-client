@@ -74,7 +74,7 @@ describe('Version Compatibility', () => {
   test('should recognize compatible versions', () => {
     assert.strictEqual(isCompatibleWith('v2.5'), true);
     assert.strictEqual(isCompatibleWith('v2.6'), true);
-    assert.strictEqual(isCompatibleWith('v3.0'), true);
+    assert.strictEqual(isCompatibleWith('v3'), true);
   });
 
   test('should reject incompatible versions', () => {
@@ -86,7 +86,7 @@ describe('Version Compatibility', () => {
   test('should include expected versions in COMPATIBLE_ADCP_VERSIONS', () => {
     assert.ok(COMPATIBLE_ADCP_VERSIONS.includes('v2.5'));
     assert.ok(COMPATIBLE_ADCP_VERSIONS.includes('v2.6'));
-    assert.ok(COMPATIBLE_ADCP_VERSIONS.includes('v3.0'));
+    assert.ok(COMPATIBLE_ADCP_VERSIONS.includes('v3'));
   });
 });
 
