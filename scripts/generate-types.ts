@@ -54,7 +54,7 @@ function loadCachedSchema(schemaRef: string): any {
       relativePath = relativePath.substring('/schemas/'.length);
       // Remove version segment (either v1 or X.Y.Z format)
       const segments = relativePath.split('/');
-      if (segments[0].match(/^(v\d+|\d+\.\d+\.\d+)$/)) {
+      if (segments[0].match(/^(v\d+|\d+\.\d+\.\d+(-[a-zA-Z0-9.]+)?|latest)$/)) {
         // First segment is a version, skip it
         relativePath = segments.slice(1).join('/');
       }
@@ -64,7 +64,28 @@ function loadCachedSchema(schemaRef: string): any {
     if (!existsSync(schemaPath)) {
       throw new Error(`Schema not found in cache: ${schemaPath}`);
     }
-    return JSON.parse(readFileSync(schemaPath, 'utf8'));
+
+    let schema = JSON.parse(readFileSync(schemaPath, 'utf8'));
+
+    // Apply deprecated field/enum removal based on schema name
+    // Extract schema name from path: core/format.json -> Format
+    const fileName = path.basename(relativePath, '.json');
+    const schemaName = fileName
+      .split('-')
+      .map(part => part.charAt(0).toUpperCase() + part.slice(1))
+      .join('');
+
+    // Check for deprecated enum values (uses kebab-case file name)
+    if (DEPRECATED_ENUM_VALUES[fileName]) {
+      schema = removeDeprecatedFields(schema, fileName);
+    }
+
+    // Check for deprecated object fields (uses PascalCase schema name)
+    if (DEPRECATED_SCHEMA_FIELDS[schemaName]) {
+      schema = removeDeprecatedFields(schema, schemaName);
+    }
+
+    return schema;
   } catch (error) {
     console.warn(`⚠️  Failed to load cached schema ${schemaRef}:`, error.message);
     return null;
@@ -165,7 +186,10 @@ function enforceStrictSchema(schema: any): any {
 }
 
 // Load AdCP tool schemas from cache
-function loadToolSchema(toolName: string, taskType: 'media-buy' | 'signals' | 'creative' = 'media-buy'): any {
+function loadToolSchema(
+  toolName: string,
+  taskType: 'media-buy' | 'signals' | 'creative' | 'governance' | 'sponsored-intelligence' | 'protocol' = 'media-buy'
+): any {
   try {
     console.log(`📥 Loading ${toolName} schema from cache (${taskType})...`);
 
@@ -223,11 +247,87 @@ function loadToolSchema(toolName: string, taskType: 'media-buy' | 'signals' | 'c
   }
 }
 
+// All domains with tasks
+const TASK_DOMAINS = ['media-buy', 'creative', 'signals', 'governance', 'sponsored-intelligence', 'protocol'] as const;
+type TaskDomain = (typeof TASK_DOMAINS)[number];
+
+// Deprecated tools that should be excluded from type generation
+// These tools are maintained in upstream for backward compatibility but should not be exposed in the public API
+const DEPRECATED_TOOLS = new Set([
+  'list_authorized_properties', // Replaced by get_adcp_capabilities
+  'list_property_features', // Never released
+]);
+
+// Deprecated fields to remove from schema during type generation
+// Format: { schemaName: ['field1', 'field2'] }
+const DEPRECATED_SCHEMA_FIELDS: Record<string, string[]> = {
+  Format: ['assets_required', 'preview_image'],
+};
+
+// Deprecated schemas that should be excluded entirely
+const DEPRECATED_SCHEMAS = new Set([
+  'adcp-extension', // Use get_adcp_capabilities tool instead
+]);
+
+// Deprecated enum values to filter from specific enum schemas
+// Format: { schemaFileName: ['value1', 'value2'] }
+const DEPRECATED_ENUM_VALUES: Record<string, string[]> = {
+  'task-type': ['list_property_features', 'list_authorized_properties'],
+};
+
+/**
+ * Remove deprecated fields from a schema based on DEPRECATED_SCHEMA_FIELDS config
+ * Also handles deprecated enum values
+ */
+function removeDeprecatedFields(schema: any, schemaName: string): any {
+  // Handle deprecated enum values
+  if (schema.enum && Array.isArray(schema.enum)) {
+    const enumValuesToRemove = DEPRECATED_ENUM_VALUES[schemaName];
+    if (enumValuesToRemove) {
+      const cleaned = { ...schema };
+      cleaned.enum = schema.enum.filter((v: string) => !enumValuesToRemove.includes(v));
+      // Also clean enumDescriptions if present
+      if (cleaned.enumDescriptions) {
+        cleaned.enumDescriptions = { ...cleaned.enumDescriptions };
+        for (const value of enumValuesToRemove) {
+          delete cleaned.enumDescriptions[value];
+        }
+      }
+      return cleaned;
+    }
+  }
+
+  const fieldsToRemove = DEPRECATED_SCHEMA_FIELDS[schemaName];
+  if (!fieldsToRemove || !schema || typeof schema !== 'object') {
+    return schema;
+  }
+
+  const cleaned = { ...schema };
+
+  // Remove deprecated fields from properties
+  if (cleaned.properties) {
+    cleaned.properties = { ...cleaned.properties };
+    for (const field of fieldsToRemove) {
+      delete cleaned.properties[field];
+    }
+  }
+
+  // Remove from required array if present
+  if (cleaned.required && Array.isArray(cleaned.required)) {
+    cleaned.required = cleaned.required.filter((r: string) => !fieldsToRemove.includes(r));
+  }
+
+  return cleaned;
+}
+
 // Load official AdCP tools from cached schema index
 function loadOfficialAdCPToolsWithTypes(): {
   mediaBuyTools: string[];
   creativeTools: string[];
   signalsTools: string[];
+  governanceTools: string[];
+  sponsoredIntelligenceTools: string[];
+  protocolTools: string[];
 } {
   try {
     console.log('📥 Loading official AdCP tools from cached schema index...');
@@ -241,45 +341,60 @@ function loadOfficialAdCPToolsWithTypes(): {
     const mediaBuyTools: string[] = [];
     const creativeTools: string[] = [];
     const signalsTools: string[] = [];
+    const governanceTools: string[] = [];
+    const sponsoredIntelligenceTools: string[] = [];
+    const protocolTools: string[] = [];
 
-    // Extract tools from media-buy tasks
-    if (schemaIndex.schemas?.['media-buy']?.tasks) {
-      const mediaBuyTasks = schemaIndex.schemas['media-buy'].tasks;
-      for (const taskName of Object.keys(mediaBuyTasks)) {
-        // Convert kebab-case to snake_case (e.g., "get-products" -> "get_products")
-        const toolName = taskName.replace(/-/g, '_');
-        mediaBuyTools.push(toolName);
+    // Extract tools from each domain's tasks (skipping deprecated tools)
+    const extractToolsFromDomain = (domain: string, targetArray: string[]) => {
+      const tasks = schemaIndex.schemas?.[domain]?.tasks;
+      if (tasks) {
+        for (const taskName of Object.keys(tasks)) {
+          // Convert kebab-case to snake_case (e.g., "get-products" -> "get_products")
+          const toolName = taskName.replace(/-/g, '_');
+
+          // Skip deprecated tools
+          if (DEPRECATED_TOOLS.has(toolName)) {
+            console.log(`   ⏭️  Skipping deprecated tool: ${toolName}`);
+            continue;
+          }
+
+          // Also skip if the task is explicitly marked deprecated in the schema
+          const task = tasks[taskName];
+          if (task.deprecated) {
+            console.log(`   ⏭️  Skipping deprecated tool: ${toolName} (marked in schema)`);
+            continue;
+          }
+
+          targetArray.push(toolName);
+        }
       }
-    }
+    };
 
-    // Extract tools from creative tasks
-    if (schemaIndex.schemas?.creative?.tasks) {
-      const creativeTasks = schemaIndex.schemas.creative.tasks;
-      for (const taskName of Object.keys(creativeTasks)) {
-        // Convert kebab-case to snake_case (e.g., "preview-creative" -> "preview_creative")
-        const toolName = taskName.replace(/-/g, '_');
-        creativeTools.push(toolName);
-      }
-    }
+    extractToolsFromDomain('media-buy', mediaBuyTools);
+    extractToolsFromDomain('creative', creativeTools);
+    extractToolsFromDomain('signals', signalsTools);
+    extractToolsFromDomain('governance', governanceTools);
+    extractToolsFromDomain('sponsored-intelligence', sponsoredIntelligenceTools);
+    extractToolsFromDomain('protocol', protocolTools);
 
-    // Extract tools from signals tasks
-    if (schemaIndex.schemas?.signals?.tasks) {
-      const signalsTasks = schemaIndex.schemas.signals.tasks;
-      for (const taskName of Object.keys(signalsTasks)) {
-        // Convert kebab-case to snake_case (e.g., "get-signals" -> "get_signals")
-        const toolName = taskName.replace(/-/g, '_');
-        signalsTools.push(toolName);
-      }
-    }
+    const totalTools =
+      mediaBuyTools.length +
+      creativeTools.length +
+      signalsTools.length +
+      governanceTools.length +
+      sponsoredIntelligenceTools.length +
+      protocolTools.length;
 
-    console.log(
-      `✅ Discovered ${mediaBuyTools.length + creativeTools.length + signalsTools.length} official AdCP tools:`
-    );
+    console.log(`✅ Discovered ${totalTools} official AdCP tools:`);
     console.log(`   📈 Media-buy tools: ${mediaBuyTools.join(', ')}`);
     console.log(`   🎨 Creative tools: ${creativeTools.join(', ')}`);
     console.log(`   🎯 Signals tools: ${signalsTools.join(', ')}`);
+    console.log(`   🏛️  Governance tools: ${governanceTools.join(', ')}`);
+    console.log(`   💬 Sponsored Intelligence tools: ${sponsoredIntelligenceTools.join(', ')}`);
+    console.log(`   🔧 Protocol tools: ${protocolTools.join(', ')}`);
 
-    return { mediaBuyTools, creativeTools, signalsTools };
+    return { mediaBuyTools, creativeTools, signalsTools, governanceTools, sponsoredIntelligenceTools, protocolTools };
   } catch (error) {
     console.warn(`⚠️  Failed to load cached tools, falling back to known tools:`, error.message);
     // Fallback to known tools if the cache fails
@@ -287,6 +402,9 @@ function loadOfficialAdCPToolsWithTypes(): {
       mediaBuyTools: ['get_products', 'list_creative_formats', 'create_media_buy', 'sync_creatives', 'list_creatives'],
       creativeTools: [],
       signalsTools: [],
+      governanceTools: [],
+      sponsoredIntelligenceTools: [],
+      protocolTools: [],
     };
   }
 }
@@ -297,102 +415,94 @@ function loadAdCPTools(): ToolDefinition[] {
   const processedTools = new Set<string>();
 
   // Get the official tools list from cached schema index
-  const { mediaBuyTools, creativeTools, signalsTools } = loadOfficialAdCPToolsWithTypes();
+  const { mediaBuyTools, creativeTools, signalsTools, governanceTools, sponsoredIntelligenceTools, protocolTools } =
+    loadOfficialAdCPToolsWithTypes();
 
-  // Process media-buy tools
-  for (const toolName of mediaBuyTools) {
-    if (processedTools.has(toolName)) {
-      console.log(`⏭️  Skipping ${toolName} - already processed`);
-      continue;
+  // Helper to process tools from a domain
+  const processToolsFromDomain = (
+    toolNames: string[],
+    domain: 'media-buy' | 'creative' | 'signals' | 'governance' | 'sponsored-intelligence' | 'protocol',
+    domainLabel: string,
+    singleAgentOnlyTools: string[] = []
+  ) => {
+    for (const toolName of toolNames) {
+      if (processedTools.has(toolName)) {
+        console.log(`⏭️  Skipping ${toolName} - already processed`);
+        continue;
+      }
+
+      const schema = loadToolSchema(toolName, domain as any);
+      if (schema) {
+        // Convert snake_case to camelCase for method names
+        const methodName = toolName.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase());
+
+        // Determine single-agent-only tools (transactional operations)
+        const singleAgentOnly = singleAgentOnlyTools.includes(toolName);
+
+        tools.push({
+          name: toolName,
+          methodName,
+          description: schema.description || `Execute ${toolName} operation`,
+          paramsSchema: schema.properties?.request || {},
+          responseSchema: schema.properties?.response || {},
+          singleAgentOnly,
+        });
+
+        processedTools.add(toolName);
+        console.log(`✅ Loaded ${toolName} from cached ${domainLabel} schema`);
+      } else {
+        console.warn(`⚠️  Skipping ${toolName} - no schema available`);
+      }
     }
+  };
 
-    const schema = loadToolSchema(toolName, 'media-buy');
-    if (schema) {
-      // Convert snake_case to camelCase for method names
-      const methodName = toolName.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase());
-
-      // Determine single-agent-only tools (transactional operations)
-      const singleAgentOnly = ['create_media_buy', 'update_media_buy'].includes(toolName);
-
-      tools.push({
-        name: toolName,
-        methodName,
-        description: schema.description || `Execute ${toolName} operation`,
-        paramsSchema: schema.properties?.request || {},
-        responseSchema: schema.properties?.response || {},
-        singleAgentOnly,
-      });
-
-      processedTools.add(toolName);
-      console.log(`✅ Loaded ${toolName} from cached media-buy schema`);
-    } else {
-      console.warn(`⚠️  Skipping ${toolName} - no schema available`);
-    }
-  }
-
-  // Process creative tools
-  for (const toolName of creativeTools) {
-    if (processedTools.has(toolName)) {
-      console.log(`⏭️  Skipping ${toolName} - already processed`);
-      continue;
-    }
-
-    const schema = loadToolSchema(toolName, 'creative');
-    if (schema) {
-      // Convert snake_case to camelCase for method names
-      const methodName = toolName.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase());
-
-      // Creative tools are typically single-agent
-      const singleAgentOnly = false;
-
-      tools.push({
-        name: toolName,
-        methodName,
-        description: schema.description || `Execute ${toolName} operation`,
-        paramsSchema: schema.properties?.request || {},
-        responseSchema: schema.properties?.response || {},
-        singleAgentOnly,
-      });
-
-      processedTools.add(toolName);
-      console.log(`✅ Loaded ${toolName} from cached creative schema`);
-    } else {
-      console.warn(`⚠️  Skipping ${toolName} - no schema available`);
-    }
-  }
-
-  // Process signals tools
-  for (const toolName of signalsTools) {
-    if (processedTools.has(toolName)) {
-      console.log(`⏭️  Skipping ${toolName} - already processed`);
-      continue;
-    }
-
-    const schema = loadToolSchema(toolName, 'signals');
-    if (schema) {
-      // Convert snake_case to camelCase for method names
-      const methodName = toolName.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase());
-
-      // Signals tools are typically multi-agent friendly
-      const singleAgentOnly = false;
-
-      tools.push({
-        name: toolName,
-        methodName,
-        description: schema.description || `Execute ${toolName} operation`,
-        paramsSchema: schema.properties?.request || {},
-        responseSchema: schema.properties?.response || {},
-        singleAgentOnly,
-      });
-
-      processedTools.add(toolName);
-      console.log(`✅ Loaded ${toolName} from cached signals schema`);
-    } else {
-      console.warn(`⚠️  Skipping ${toolName} - no schema available`);
-    }
-  }
+  // Process all domains
+  processToolsFromDomain(mediaBuyTools, 'media-buy', 'media-buy', ['create_media_buy', 'update_media_buy']);
+  processToolsFromDomain(creativeTools, 'creative', 'creative');
+  processToolsFromDomain(signalsTools, 'signals', 'signals');
+  processToolsFromDomain(governanceTools, 'governance', 'governance', [
+    'create_property_list',
+    'update_property_list',
+    'delete_property_list',
+    'create_content_standards',
+    'update_content_standards',
+  ]);
+  processToolsFromDomain(sponsoredIntelligenceTools, 'sponsored-intelligence', 'sponsored-intelligence', [
+    'si_initiate_session',
+    'si_terminate_session',
+  ]);
+  processToolsFromDomain(protocolTools, 'protocol', 'protocol');
 
   return tools;
+}
+
+// Load tool schema from any domain
+function loadToolSchemaFromDomain(
+  toolName: string,
+  domain: string,
+  schemaIndex: any
+): { paramsSchema: any; responseSchema: any } | null {
+  const kebabName = toolName.replace(/_/g, '-');
+
+  const task = schemaIndex.schemas?.[domain]?.tasks?.[kebabName];
+  if (!task) return null;
+
+  const requestRef = task.request?.$ref;
+  const responseRef = task.response?.$ref;
+
+  if (!requestRef || !responseRef) {
+    console.warn(`⚠️  Missing refs for ${toolName} in ${domain}`);
+    return null;
+  }
+
+  const requestSchema = loadCachedSchema(requestRef);
+  const responseSchema = loadCachedSchema(responseRef);
+
+  if (!requestSchema || !responseSchema) {
+    return null;
+  }
+
+  return { paramsSchema: requestSchema, responseSchema };
 }
 
 // Load schema from cache by name
@@ -455,6 +565,7 @@ async function generateToolTypes(tools: ToolDefinition[]) {
           bannerComment: '',
           style: { semi: true, singleQuote: true },
           additionalProperties: false, // Disable [k: string]: unknown for type safety
+          strictIndexSignatures: true, // Add | undefined to index signatures for optional property compatibility
           $refOptions: {
             resolve: {
               cache: refResolver,
@@ -477,6 +588,7 @@ async function generateToolTypes(tools: ToolDefinition[]) {
           bannerComment: '',
           style: { semi: true, singleQuote: true },
           additionalProperties: false, // Disable [k: string]: unknown for type safety
+          strictIndexSignatures: true, // Add | undefined to index signatures for optional property compatibility
           $refOptions: {
             resolve: {
               cache: refResolver,
@@ -515,6 +627,7 @@ async function generateToolTypes(tools: ToolDefinition[]) {
  * 1. Identifies types that are pure index signatures: { [k: string]: unknown }
  * 2. Removes those type definitions
  * 3. Removes references to them from intersection types (Foo1 & Foo2 becomes Foo1)
+ * 4. Cleans up inline index signature objects in intersection types
  */
 function removeIndexSignatureTypes(typeDefinitions: string): string {
   // Find all types that are pure index signatures
@@ -528,37 +641,46 @@ function removeIndexSignatureTypes(typeDefinitions: string): string {
     indexSigTypes.add(match[1]);
   }
 
-  if (indexSigTypes.size === 0) {
-    return typeDefinitions;
-  }
-
-  console.log(`🧹 Removing ${indexSigTypes.size} index signature types: ${Array.from(indexSigTypes).join(', ')}`);
-
   let result = typeDefinitions;
 
-  // Remove the index signature type definitions
-  for (const typeName of indexSigTypes) {
-    // Remove single-line pattern
-    result = result.replace(
-      new RegExp(`export type ${typeName} = \\{\\s*\\[k: string\\]: unknown;?\\s*\\};?\\n?`, 'g'),
-      ''
-    );
-    // Remove multi-line pattern
-    result = result.replace(
-      new RegExp(`export type ${typeName} = \\{\\n\\s*\\[k: string\\]: unknown;\\n\\};?\\n?`, 'g'),
-      ''
-    );
+  if (indexSigTypes.size > 0) {
+    console.log(`🧹 Removing ${indexSigTypes.size} index signature types: ${Array.from(indexSigTypes).join(', ')}`);
+
+    // Remove the index signature type definitions
+    for (const typeName of indexSigTypes) {
+      // Remove single-line pattern
+      result = result.replace(
+        new RegExp(`export type ${typeName} = \\{\\s*\\[k: string\\]: unknown;?\\s*\\};?\\n?`, 'g'),
+        ''
+      );
+      // Remove multi-line pattern
+      result = result.replace(
+        new RegExp(`export type ${typeName} = \\{\\n\\s*\\[k: string\\]: unknown;\\n\\};?\\n?`, 'g'),
+        ''
+      );
+    }
+
+    // Remove references to these types from intersection types
+    // Pattern: Type1 & IndexSigType becomes Type1
+    // Pattern: IndexSigType & Type1 becomes Type1
+    for (const typeName of indexSigTypes) {
+      // Remove " & TypeName" (when it comes after)
+      result = result.replace(new RegExp(` & ${typeName}(?=[;\\s])`, 'g'), '');
+      // Remove "TypeName & " (when it comes before)
+      result = result.replace(new RegExp(`${typeName} & `, 'g'), '');
+    }
   }
 
-  // Remove references to these types from intersection types
-  // Pattern: Type1 & IndexSigType becomes Type1
-  // Pattern: IndexSigType & Type1 becomes Type1
-  for (const typeName of indexSigTypes) {
-    // Remove " & TypeName" (when it comes after)
-    result = result.replace(new RegExp(` & ${typeName}(?=[;\\s])`, 'g'), '');
-    // Remove "TypeName & " (when it comes before)
-    result = result.replace(new RegExp(`${typeName} & `, 'g'), '');
-  }
+  // Also remove inline index signature objects from intersections
+  // Pattern: & {\n  [k: string]: unknown;\n}
+  result = result.replace(/\s*&\s*\{\s*\[k:\s*string\]:\s*unknown;?\s*\}/gm, '');
+
+  // Clean up malformed type aliases that end with semicolon followed by & (from incomplete removal)
+  // Pattern: export type Foo = Bar;\n & {...} -> export type Foo = Bar;
+  result = result.replace(/;\s*\n\s*&\s*\{[^}]*\}/gm, ';');
+
+  // Clean up any remaining orphaned & at the start of lines
+  result = result.replace(/;\s*\n\s*&/gm, ';');
 
   return result;
 }
@@ -624,14 +746,38 @@ function filterDuplicateTypeDefinitions(typeDefinitions: string, generatedTypes:
   return outputLines.join('\n');
 }
 
+/**
+ * Convert method name to proper type name, preserving acronyms.
+ * Examples:
+ *   siGetOffering -> SIGetOffering
+ *   getAdcpCapabilities -> GetAdCPCapabilities
+ *   createMediaBuy -> CreateMediaBuy
+ */
+function methodNameToTypeName(methodName: string): string {
+  // Known acronyms to preserve
+  const acronymReplacements: [RegExp, string][] = [
+    [/^si([A-Z])/i, 'SI$1'], // siGetOffering -> SIGetOffering
+    [/Adcp/g, 'AdCP'], // getAdcpCapabilities -> getAdCPCapabilities
+  ];
+
+  let typeName = methodName.charAt(0).toUpperCase() + methodName.slice(1);
+
+  for (const [pattern, replacement] of acronymReplacements) {
+    typeName = typeName.replace(pattern, replacement);
+  }
+
+  return typeName;
+}
+
 function generateAgentClasses(tools: ToolDefinition[]) {
   console.log('🔧 Generating Agent and AgentCollection classes...');
 
   // Generate imports for tool types
   const paramImports = tools
     .map(tool => {
-      const paramType = `${tool.methodName.charAt(0).toUpperCase() + tool.methodName.slice(1)}Request`;
-      const responseType = `${tool.methodName.charAt(0).toUpperCase() + tool.methodName.slice(1)}Response`;
+      const baseName = methodNameToTypeName(tool.methodName);
+      const paramType = `${baseName}Request`;
+      const responseType = `${baseName}Response`;
       return [paramType, responseType];
     })
     .flat();
@@ -690,19 +836,13 @@ export class Agent {
 
   // Generate typed methods for each tool
   for (const tool of tools) {
-    const paramType = tool.paramsSchema
-      ? `${tool.methodName.charAt(0).toUpperCase() + tool.methodName.slice(1)}Request`
-      : 'void';
-
-    const responseType = tool.responseSchema
-      ? `${tool.methodName.charAt(0).toUpperCase() + tool.methodName.slice(1)}Response`
-      : 'any';
-
+    const baseName = methodNameToTypeName(tool.methodName);
+    const paramType = tool.paramsSchema ? `${baseName}Request` : 'void';
+    const responseType = tool.responseSchema ? `${baseName}Response` : 'any';
     const paramDecl = paramType === 'void' ? '' : `params: ${paramType}`;
 
     agentClass += `  /**
    * ${tool.description}
-   * Official AdCP ${tool.name} tool schema
    */
   async ${tool.methodName}(${paramDecl}): Promise<${responseType}> {
     return this.callTool<${responseType}>('${tool.name}', ${paramType === 'void' ? '{}' : 'params'});
@@ -734,19 +874,13 @@ export class AgentCollection {
   for (const tool of tools) {
     if (tool.singleAgentOnly) continue;
 
-    const paramType = tool.paramsSchema
-      ? `${tool.methodName.charAt(0).toUpperCase() + tool.methodName.slice(1)}Request`
-      : 'void';
-
-    const responseType = tool.responseSchema
-      ? `${tool.methodName.charAt(0).toUpperCase() + tool.methodName.slice(1)}Response`
-      : 'any';
-
+    const baseName = methodNameToTypeName(tool.methodName);
+    const paramType = tool.paramsSchema ? `${baseName}Request` : 'void';
+    const responseType = tool.responseSchema ? `${baseName}Response` : 'any';
     const paramDecl = paramType === 'void' ? '' : `params: ${paramType}`;
 
     agentClass += `  /**
    * ${tool.description} (across multiple agents)
-   * Official AdCP ${tool.name} tool schema
    */
   async ${tool.methodName}(${paramDecl}): Promise<${responseType}[]> {
     return this.callToolOnAll<${responseType}>('${tool.name}', ${paramType === 'void' ? '{}' : 'params'});
@@ -815,6 +949,7 @@ async function generateTypes() {
             singleQuote: true,
           },
           additionalProperties: false, // Disable [k: string]: unknown for type safety
+          strictIndexSignatures: true, // Add | undefined to index signatures for optional property compatibility
           $refOptions: {
             resolve: {
               cache: refResolver,
@@ -866,6 +1001,7 @@ async function generateTypes() {
             singleQuote: true,
           },
           additionalProperties: false, // Disable [k: string]: unknown for type safety
+          strictIndexSignatures: true, // Add | undefined to index signatures for optional property compatibility
           $refOptions: {
             resolve: {
               cache: refResolver,
@@ -901,7 +1037,9 @@ async function generateTypes() {
 
   // Write files only if content changed
   const coreTypesPath = path.join(libOutputDir, 'core.generated.ts');
-  const coreChanged = writeFileIfChanged(coreTypesPath, removeIndexSignatureTypes(coreTypes));
+  // Remove index signature types that were incorrectly generated from oneOf schemas
+  const processedCoreTypes = removeIndexSignatureTypes(coreTypes);
+  const coreChanged = writeFileIfChanged(coreTypesPath, processedCoreTypes);
 
   const toolTypesPath = path.join(libOutputDir, 'tools.generated.ts');
   const toolsChanged = writeFileIfChanged(toolTypesPath, toolTypes);

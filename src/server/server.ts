@@ -463,9 +463,6 @@ async function executeTaskOnAgent(
       case 'get_media_buy_delivery':
         result = await client.getMediaBuyDelivery(args, handler);
         break;
-      case 'list_authorized_properties':
-        result = await client.listAuthorizedProperties(args, handler);
-        break;
       case 'provide_performance_feedback':
         result = await client.providePerformanceFeedback(args, handler);
         break;
@@ -1131,32 +1128,36 @@ app.post<{
   }
 });
 
-// List Authorized Properties
+// Get AdCP Capabilities (with v2/v3 fallback)
 app.post<{
   Params: { agentId: string };
   Body: { agentConfig?: AgentConfig; [key: string]: any };
-}>('/api/agents/:agentId/list-authorized-properties', async (request, reply) => {
+}>('/api/agents/:agentId/get-adcp-capabilities', async (request, reply) => {
   try {
     const { agentId } = request.params;
     const body = request.body as any;
-
     const agentConfig = body.agentConfig;
-    const params = { ...body };
-    delete params.agentConfig;
 
     const client = getAgentClient(agentId, agentConfig);
-    const result = await client.listAuthorizedProperties(params, createDefaultInputHandler());
+    // Use getCapabilities() which handles both v2 and v3 servers:
+    // - v3: calls get_adcp_capabilities tool
+    // - v2: builds synthetic capabilities from tool list
+    const capabilities = await client.getCapabilities();
 
     return reply.send({
-      success: result.success,
-      data: result.data,
-      error: result.error,
-      metadata: result.metadata,
-      debug_logs: result.debug_logs,
+      success: true,
+      data: {
+        adcp: {
+          major_versions: capabilities.majorVersions,
+        },
+        supported_protocols: capabilities.protocols,
+        // Include full capabilities for additional detail
+        _capabilities: capabilities,
+      },
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
-    app.log.error({ error }, 'List authorized properties error');
+    app.log.error({ error }, 'Get AdCP capabilities error');
     return reply.code(500).send({
       success: false,
       error: error instanceof Error ? error.message : 'Unknown error',

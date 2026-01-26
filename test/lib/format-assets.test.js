@@ -5,7 +5,6 @@ const assert = require('node:assert');
 // Import the format-assets utilities
 const {
   getFormatAssets,
-  normalizeAssetsRequired,
   getRequiredAssets,
   getOptionalAssets,
   getIndividualAssets,
@@ -96,37 +95,6 @@ describe('Format Assets Utilities', () => {
       const format = createV26Format([]);
       const assets = getFormatAssets(format);
       assert.deepStrictEqual(assets, []);
-    });
-  });
-
-  describe('normalizeAssetsRequired', () => {
-    test('should set required: true for all assets', () => {
-      const assetsRequired = [
-        { item_type: 'individual', asset_id: 'img1', asset_type: 'image' },
-        { item_type: 'individual', asset_id: 'img2', asset_type: 'image' },
-      ];
-
-      const normalized = normalizeAssetsRequired(assetsRequired);
-
-      assert.strictEqual(normalized[0].required, true);
-      assert.strictEqual(normalized[1].required, true);
-    });
-
-    test('should preserve other fields during normalization', () => {
-      const assetsRequired = [
-        {
-          item_type: 'individual',
-          asset_id: 'banner',
-          asset_type: 'image',
-          requirements: { min_width: 300 },
-        },
-      ];
-
-      const normalized = normalizeAssetsRequired(assetsRequired);
-
-      assert.strictEqual(normalized[0].asset_id, 'banner');
-      assert.strictEqual(normalized[0].asset_type, 'image');
-      assert.deepStrictEqual(normalized[0].requirements, { min_width: 300 });
     });
   });
 

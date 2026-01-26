@@ -24,7 +24,6 @@ import type {
   ListCreativesResponse,
   UpdateMediaBuyResponse,
   GetMediaBuyDeliveryResponse,
-  ListAuthorizedPropertiesResponse,
   ProvidePerformanceFeedbackResponse,
   BuildCreativeResponse,
   PreviewCreativeResponse,
@@ -44,7 +43,6 @@ export type AdCPResponse =
   | ListCreativesResponse
   | UpdateMediaBuyResponse
   | GetMediaBuyDeliveryResponse
-  | ListAuthorizedPropertiesResponse
   | ProvidePerformanceFeedbackResponse
   | BuildCreativeResponse
   | PreviewCreativeResponse
@@ -92,15 +90,15 @@ export type AdCPResponse =
  * Conclusion: Current approach provides best balance of simplicity, maintainability,
  * and runtime safety. TypeScript types are validated by Zod at runtime anyway.
  */
-const TOOL_RESPONSE_SCHEMAS: Record<string, z.ZodSchema<AdCPResponse>> = {
-  get_products: schemas.GetProductsResponseSchema as z.ZodSchema<AdCPResponse>,
+// Note: Some schemas not available due to complex discriminated unions (e.g., get_products)
+const TOOL_RESPONSE_SCHEMAS: Partial<Record<string, z.ZodSchema<AdCPResponse>>> = {
+  // get_products: uses complex discriminated unions - validation falls back to type checking
   list_creative_formats: schemas.ListCreativeFormatsResponseSchema as z.ZodSchema<AdCPResponse>,
   create_media_buy: schemas.CreateMediaBuyResponseSchema as z.ZodSchema<AdCPResponse>,
   update_media_buy: schemas.UpdateMediaBuyResponseSchema as z.ZodSchema<AdCPResponse>,
   sync_creatives: schemas.SyncCreativesResponseSchema as any, // Manually defined discriminated union
   list_creatives: schemas.ListCreativesResponseSchema as z.ZodSchema<AdCPResponse>,
   get_media_buy_delivery: schemas.GetMediaBuyDeliveryResponseSchema as z.ZodSchema<AdCPResponse>,
-  list_authorized_properties: schemas.ListAuthorizedPropertiesResponseSchema as z.ZodSchema<AdCPResponse>,
   provide_performance_feedback: schemas.ProvidePerformanceFeedbackResponseSchema as z.ZodSchema<AdCPResponse>,
   build_creative: schemas.BuildCreativeResponseSchema as z.ZodSchema<AdCPResponse>,
   preview_creative: schemas.PreviewCreativeResponseSchema as any, // Manually defined discriminated union

@@ -326,6 +326,163 @@ describe('PropertyCrawler', () => {
     });
   });
 
+  describe('Authoritative location redirects', () => {
+    test('should follow authoritative_location redirect', async () => {
+      let fetchCallCount = 0;
+      const responses = [
+        // First response: redirect to authoritative location
+        {
+          status: 200,
+          data: {
+            authoritative_location: 'https://central-registry.example.com/publisher/example.com.json',
+          },
+        },
+        // Second response: actual data from authoritative location
+        {
+          status: 200,
+          data: {
+            authorized_agents: [{ url: 'https://agent.example.com', authorized_for: 'Test' }],
+            properties: [
+              {
+                property_type: 'website',
+                name: 'Example Site',
+                identifiers: [{ type: 'domain', value: 'example.com' }],
+              },
+            ],
+          },
+        },
+      ];
+
+      global.fetch = async (url, options) => {
+        const response = responses[fetchCallCount++];
+        return {
+          ok: response.status >= 200 && response.status < 300,
+          status: response.status,
+          statusText: 'OK',
+          json: async () => response.data,
+        };
+      };
+
+      const { PropertyCrawler } = require('../../dist/lib/discovery/property-crawler.js');
+      const crawler = new PropertyCrawler({ logLevel: 'silent' });
+
+      const result = await crawler.fetchAdAgentsJson('example.com');
+
+      assert.strictEqual(fetchCallCount, 2, 'Should make two fetch calls');
+      assert.strictEqual(result.properties.length, 1);
+      assert.strictEqual(result.properties[0].name, 'Example Site');
+      // Should preserve original domain for publisher_domain
+      assert.strictEqual(result.properties[0].publisher_domain, 'example.com');
+    });
+
+    test('should detect redirect loops', async () => {
+      global.fetch = async url => {
+        // Always return a redirect back to the original URL
+        return {
+          ok: true,
+          status: 200,
+          statusText: 'OK',
+          json: async () => ({
+            authoritative_location: 'https://example.com/.well-known/adagents.json',
+          }),
+        };
+      };
+
+      const { PropertyCrawler } = require('../../dist/lib/discovery/property-crawler.js');
+      const crawler = new PropertyCrawler({ logLevel: 'silent' });
+
+      await assert.rejects(
+        async () => await crawler.fetchAdAgentsJson('example.com'),
+        /Redirect loop detected/,
+        'Should throw error for redirect loop'
+      );
+    });
+
+    test('should enforce maximum redirect depth', async () => {
+      let fetchCallCount = 0;
+
+      global.fetch = async url => {
+        fetchCallCount++;
+        // Each response redirects to a new unique URL
+        return {
+          ok: true,
+          status: 200,
+          statusText: 'OK',
+          json: async () => ({
+            authoritative_location: `https://redirect${fetchCallCount}.example.com/adagents.json`,
+          }),
+        };
+      };
+
+      const { PropertyCrawler } = require('../../dist/lib/discovery/property-crawler.js');
+      const crawler = new PropertyCrawler({ logLevel: 'silent' });
+
+      await assert.rejects(
+        async () => await crawler.fetchAdAgentsJson('example.com'),
+        /Maximum redirect depth.*exceeded/,
+        'Should throw error when max redirects exceeded'
+      );
+      // Should have made 6 calls (initial + 5 redirects before hitting limit)
+      assert.ok(fetchCallCount <= 7, `Should stop after max redirects, got ${fetchCallCount} calls`);
+    });
+
+    test('should reject non-HTTPS authoritative_location', async () => {
+      global.fetch = async () => ({
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        json: async () => ({
+          authoritative_location: 'http://insecure.example.com/adagents.json',
+        }),
+      });
+
+      const { PropertyCrawler } = require('../../dist/lib/discovery/property-crawler.js');
+      const crawler = new PropertyCrawler({ logLevel: 'silent' });
+
+      await assert.rejects(
+        async () => await crawler.fetchAdAgentsJson('example.com'),
+        /authoritative_location must use HTTPS/,
+        'Should reject HTTP redirect URLs'
+      );
+    });
+
+    test('should use local data when authorized_agents present alongside authoritative_location', async () => {
+      let fetchCallCount = 0;
+
+      global.fetch = async () => {
+        fetchCallCount++;
+        return {
+          ok: true,
+          status: 200,
+          statusText: 'OK',
+          json: async () => ({
+            // Both authoritative_location AND authorized_agents present
+            // Per spec, should use local data, not follow redirect
+            authoritative_location: 'https://central.example.com/adagents.json',
+            authorized_agents: [{ url: 'https://local-agent.example.com', authorized_for: 'Local' }],
+            properties: [
+              {
+                property_type: 'website',
+                name: 'Local Property',
+                identifiers: [{ type: 'domain', value: 'example.com' }],
+              },
+            ],
+          }),
+        };
+      };
+
+      const { PropertyCrawler } = require('../../dist/lib/discovery/property-crawler.js');
+      const crawler = new PropertyCrawler({ logLevel: 'silent' });
+
+      const result = await crawler.fetchAdAgentsJson('example.com');
+
+      // Should only make one fetch call (no redirect followed)
+      assert.strictEqual(fetchCallCount, 1, 'Should not follow redirect when authorized_agents present');
+      assert.strictEqual(result.properties.length, 1);
+      assert.strictEqual(result.properties[0].name, 'Local Property');
+    });
+  });
+
   describe('Backward compatibility', () => {
     test('should add publisher_domain if not present in property', async () => {
       global.fetch = async () => ({

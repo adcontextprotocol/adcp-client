@@ -125,14 +125,30 @@ function extractProtocolMessage(conversation, protocol) {
 }
 
 /**
- * Display agent info - just calls library method
+ * Display agent info - includes capabilities detection for v3.0
  */
 async function displayAgentInfo(agentConfig, jsonOutput) {
   const client = new AdCPClient([agentConfig]);
-  const info = await client.agent(agentConfig.id).getAgentInfo();
+  const agentClient = client.agent(agentConfig.id);
+  const info = await agentClient.getAgentInfo();
+
+  // Try to get capabilities (v3.0 feature detection)
+  let capabilities = null;
+  try {
+    if (typeof agentClient.getCapabilities === 'function') {
+      capabilities = await agentClient.getCapabilities();
+    }
+  } catch (e) {
+    // Capabilities detection failed - continue without
+  }
 
   if (jsonOutput) {
-    console.log(JSON.stringify(info, null, 2));
+    // Include capabilities in JSON output
+    const output = {
+      ...info,
+      ...(capabilities && { capabilities }),
+    };
+    console.log(JSON.stringify(output, null, 2));
   } else {
     console.log(`\n📋 Agent Information\n`);
     console.log(`Name: ${info.name}`);
@@ -141,6 +157,29 @@ async function displayAgentInfo(agentConfig, jsonOutput) {
     }
     console.log(`Protocol: ${info.protocol.toUpperCase()}`);
     console.log(`URL: ${info.url}`);
+
+    // Display capabilities if available
+    if (capabilities) {
+      console.log(`\n🔧 Capabilities:\n`);
+      console.log(`   AdCP Version: ${capabilities.version}${capabilities._synthetic ? ' (detected)' : ''}`);
+      if (capabilities.protocols && capabilities.protocols.length > 0) {
+        console.log(`   Supported Protocols: ${capabilities.protocols.join(', ')}`);
+      }
+      if (capabilities.features) {
+        const features = [];
+        if (capabilities.features.supportsCreativeAssignments) features.push('creative_assignments');
+        if (capabilities.features.supportsRenders) features.push('renders');
+        if (capabilities.features.supportsPropertyListFiltering) features.push('property_list_filtering');
+        if (capabilities.features.supportsContentStandards) features.push('content_standards');
+        if (features.length > 0) {
+          console.log(`   v3.0 Features: ${features.join(', ')}`);
+        }
+      }
+      if (capabilities.extensions && capabilities.extensions.length > 0) {
+        console.log(`   Extensions: ${capabilities.extensions.join(', ')}`);
+      }
+    }
+
     console.log(`\nAvailable Tools (${info.tools.length}):\n`);
 
     if (info.tools.length === 0) {

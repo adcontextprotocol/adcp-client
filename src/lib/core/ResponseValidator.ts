@@ -313,7 +313,6 @@ export class ResponseValidator {
       sync_creatives: schemas.SyncCreativesResponseSchema,
       list_creatives: schemas.ListCreativesResponseSchema,
       get_media_buy_delivery: schemas.GetMediaBuyDeliveryResponseSchema,
-      list_authorized_properties: schemas.ListAuthorizedPropertiesResponseSchema,
       provide_performance_feedback: schemas.ProvidePerformanceFeedbackResponseSchema,
       build_creative: schemas.BuildCreativeResponseSchema,
       preview_creative: schemas.PreviewCreativeResponseSchema,

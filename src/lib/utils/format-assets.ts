@@ -1,5 +1,5 @@
 // Format Asset Utilities
-// Provides backward-compatible access to format assets (v2.6 `assets` field replaces deprecated `assets_required`)
+// Provides access to format assets from the v3 `assets` field
 
 import type { Format } from '../types/tools.generated';
 
@@ -8,16 +8,20 @@ type FormatAsset = NonNullable<Format['assets']>[number];
 type IndividualAsset = Extract<FormatAsset, { item_type: 'individual' }>;
 type RepeatableAssetGroup = Extract<FormatAsset, { item_type: 'repeatable_group' }>;
 
+// Legacy support: v2 responses may still include assets_required (deprecated in v3)
+// This internal type allows runtime backward compatibility without exposing it in public API
+interface LegacyFormat extends Format {
+  assets_required?: unknown[];
+}
+
 /**
- * Get assets from a Format, preferring new `assets` field, falling back to `assets_required`
+ * Get assets from a Format
  *
- * This provides backward compatibility during the migration from `assets_required` to `assets`.
- * - If `assets` exists and has items, returns it directly
- * - If only `assets_required` exists, normalizes it to the new format (sets required: true)
- * - Returns empty array if neither field exists (flexible format)
+ * Returns the assets from the v3 `assets` field. For backward compatibility with v2 servers,
+ * this function also handles the deprecated `assets_required` field if present.
  *
  * @param format - The Format object from list_creative_formats response
- * @returns Array of assets in the new format structure
+ * @returns Array of assets
  *
  * @example
  * ```typescript
@@ -29,31 +33,37 @@ type RepeatableAssetGroup = Extract<FormatAsset, { item_type: 'repeatable_group'
  * ```
  */
 export function getFormatAssets(format: Format): FormatAsset[] {
-  // Prefer new `assets` field (v2.6+)
+  // Use v3 `assets` field
   if (format.assets && format.assets.length > 0) {
     return format.assets;
   }
 
-  // Fall back to deprecated `assets_required` and normalize
-  if (format.assets_required && format.assets_required.length > 0) {
-    return normalizeAssetsRequired(format.assets_required);
+  // Runtime backward compatibility: handle v2 responses with deprecated assets_required
+  const legacyFormat = format as LegacyFormat;
+  if (
+    legacyFormat.assets_required &&
+    Array.isArray(legacyFormat.assets_required) &&
+    legacyFormat.assets_required.length > 0
+  ) {
+    return normalizeAssetsRequired(legacyFormat.assets_required);
   }
 
   return [];
 }
 
 /**
- * Convert deprecated assets_required to new assets format
+ * Convert deprecated assets_required to new assets format (internal use)
  *
  * All assets in assets_required are required by definition (that's why they were in that array).
  * The new `assets` field has an explicit `required: boolean` to allow both required AND optional assets.
  *
  * @param assetsRequired - The deprecated assets_required array
  * @returns Normalized assets array with explicit required: true
+ * @internal
  */
-export function normalizeAssetsRequired(assetsRequired: NonNullable<Format['assets_required']>): FormatAsset[] {
+function normalizeAssetsRequired(assetsRequired: unknown[]): FormatAsset[] {
   return assetsRequired.map(asset => ({
-    ...asset,
+    ...(asset as Record<string, unknown>),
     required: true, // assets_required only contained required assets
   })) as FormatAsset[];
 }
@@ -129,7 +139,8 @@ export function getRepeatableGroups(format: Format): RepeatableAssetGroup[] {
  * ```
  */
 export function usesDeprecatedAssetsField(format: Format): boolean {
-  return !format.assets && !!format.assets_required;
+  const legacyFormat = format as LegacyFormat;
+  return !format.assets && !!(legacyFormat.assets_required && Array.isArray(legacyFormat.assets_required));
 }
 
 /**

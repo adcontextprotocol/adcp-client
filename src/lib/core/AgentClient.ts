@@ -3,6 +3,7 @@
 import type { AgentConfig } from '../types';
 import { SingleAgentClient, type SingleAgentClientConfig } from './SingleAgentClient';
 import type { InputHandler, TaskOptions, TaskResult, TaskInfo, Message } from './ConversationTypes';
+import type { AdcpCapabilities } from '../utils/capabilities';
 import type {
   GetProductsRequest,
   GetProductsResponse,
@@ -18,14 +19,14 @@ import type {
   ListCreativesResponse,
   GetMediaBuyDeliveryRequest,
   GetMediaBuyDeliveryResponse,
-  ListAuthorizedPropertiesRequest,
-  ListAuthorizedPropertiesResponse,
   ProvidePerformanceFeedbackRequest,
   ProvidePerformanceFeedbackResponse,
   GetSignalsRequest,
   GetSignalsResponse,
   ActivateSignalRequest,
   ActivateSignalResponse,
+  GetAdCPCapabilitiesRequest,
+  GetAdCPCapabilitiesResponse,
 } from '../types/tools.generated';
 
 /**
@@ -40,7 +41,6 @@ export type TaskResponseTypeMap = {
   sync_creatives: SyncCreativesResponse;
   list_creatives: ListCreativesResponse;
   get_media_buy_delivery: GetMediaBuyDeliveryResponse;
-  list_authorized_properties: ListAuthorizedPropertiesResponse;
   provide_performance_feedback: ProvidePerformanceFeedbackResponse;
   get_signals: GetSignalsResponse;
   activate_signal: ActivateSignalResponse;
@@ -255,26 +255,6 @@ export class AgentClient {
   }
 
   /**
-   * List authorized properties
-   */
-  async listAuthorizedProperties(
-    params: ListAuthorizedPropertiesRequest,
-    inputHandler?: InputHandler,
-    options?: TaskOptions
-  ): Promise<TaskResult<ListAuthorizedPropertiesResponse>> {
-    const result = await this.client.listAuthorizedProperties(params, inputHandler, {
-      ...options,
-      contextId: this.currentContextId,
-    });
-
-    if (result.success) {
-      this.currentContextId = result.metadata.taskId;
-    }
-
-    return result;
-  }
-
-  /**
    * Provide performance feedback
    */
   async providePerformanceFeedback(
@@ -331,6 +311,38 @@ export class AgentClient {
     }
 
     return result;
+  }
+
+  // ====== PROTOCOL TASKS ======
+
+  /**
+   * Get AdCP capabilities (v3 tool call)
+   */
+  async getAdcpCapabilities(
+    params: GetAdCPCapabilitiesRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<GetAdCPCapabilitiesResponse>> {
+    const result = await this.client.getAdcpCapabilities(params, inputHandler, {
+      ...options,
+      contextId: this.currentContextId,
+    });
+
+    if (result.success) {
+      this.currentContextId = result.metadata.taskId;
+    }
+
+    return result;
+  }
+
+  /**
+   * Get normalized capabilities with v2/v3 fallback
+   *
+   * For v3 servers: calls get_adcp_capabilities tool
+   * For v2 servers: builds synthetic capabilities from tool list
+   */
+  async getCapabilities(): Promise<AdcpCapabilities> {
+    return this.client.getCapabilities();
   }
 
   // ====== CONVERSATION MANAGEMENT ======

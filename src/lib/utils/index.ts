@@ -141,10 +141,9 @@ export type { AdCPResponse } from './response-unwrapper';
 // Re-export protocol detection utilities
 export { detectProtocol, detectProtocolWithTimeout } from './protocol-detection';
 
-// Re-export format asset utilities (v2.6 backward compatibility)
+// Re-export format asset utilities
 export {
   getFormatAssets,
-  normalizeAssetsRequired,
   getRequiredAssets,
   getOptionalAssets,
   getIndividualAssets,
@@ -153,3 +152,20 @@ export {
   getAssetCount,
   hasAssets,
 } from './format-assets';
+
+// Re-export pricing adapter utilities (v3 pricing field compatibility)
+export {
+  adaptPricingOptionForV2,
+  normalizePricingOption,
+  normalizeProductPricing,
+  normalizeGetProductsResponse,
+  usesV2PricingFields,
+  usesV3PricingFields,
+  isFixedPricing,
+  getPrice,
+  getFloorPrice,
+  type PricingOptionV2,
+  type PricingOptionV3,
+  type PriceGuidanceV2,
+  type PriceGuidanceV3,
+} from './pricing-adapter';

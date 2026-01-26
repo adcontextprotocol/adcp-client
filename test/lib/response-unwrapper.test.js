@@ -526,7 +526,8 @@ describe('Response Unwrapper', () => {
       assert.ok(result.errors[0].message.length < 200);
     });
 
-    test('should fail Zod validation for invalid product data', () => {
+    test('should validate get_products response with Zod schema', () => {
+      // GetProductsResponseSchema is now generated and validates responses
       const a2aResponse = {
         result: {
           artifacts: [
@@ -537,8 +538,16 @@ describe('Response Unwrapper', () => {
                   data: {
                     products: [
                       {
-                        // Missing required fields like product_id, name, etc.
-                        invalid_field: 'should fail validation',
+                        product_id: 'prod-1',
+                        name: 'Test Product',
+                        description: 'A test product',
+                        publisher_properties: [{ property_url: 'https://example.com' }],
+                        format_ids: [{ agent_url: 'https://agent.example.com', id: 'banner-300x250' }],
+                        delivery_type: 'impression',
+                        pricing_options: [
+                          { pricing_option_id: 'cpm-1', model: 'cpm', fixed_price: 5.0, currency: 'USD' },
+                        ],
+                        delivery_measurement: { provider: 'Internal' },
                       },
                     ],
                   },
@@ -549,10 +558,11 @@ describe('Response Unwrapper', () => {
         },
       };
 
-      assert.throws(
-        () => unwrapProtocolResponse(a2aResponse, 'get_products', 'a2a'),
-        /Response validation failed for get_products/
-      );
+      // Should validate successfully with GetProductsResponseSchema
+      const result = unwrapProtocolResponse(a2aResponse, 'get_products', 'a2a');
+      assert.ok(result.products, 'Should return validated products');
+      assert.strictEqual(result.products.length, 1);
+      assert.strictEqual(result.products[0].product_id, 'prod-1');
     });
 
     test('should fail Zod validation for missing required create_media_buy fields', () => {

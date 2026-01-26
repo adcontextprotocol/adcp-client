@@ -59,7 +59,13 @@ test('generated types maintain strict schema enforcement', () => {
   //   ImageAsset, VideoAsset, AudioAsset, VASTAsset, DAASTAsset, BrandManifest, ProductFilters,
   //   PublisherPropertySelector variants, and many others
   // - This is intentional for forward compatibility - allows agents to include custom fields
-  const MAX_ALLOWED = 105;
+  //
+  // Updated from 105 to 150 for AdCP v3.0.0-beta.1 schema changes:
+  // - Added governance domain (content-standards, property lists) with extensible types
+  // - Added sponsored-intelligence domain (SI sessions, offerings, messages) with context fields
+  // - Added protocol domain (get_adcp_capabilities) with capability declarations
+  // - These new domains follow the same extensibility patterns as existing domains
+  const MAX_ALLOWED = 150;
 
   console.log(`📊 Type strictness metrics:`);
   console.log(`   Index signatures found: ${count}`);
@@ -104,7 +110,11 @@ test('core types maintain strict schema enforcement', () => {
 
   // Updated from 15 to 75 for AdCP v2.6.0 schema changes:
   // - Upstream schema added additionalProperties: true to core types for extensibility
-  const MAX_CORE_ALLOWED = 75;
+  //
+  // Updated from 75 to 80 for AdCP v3.0.0-beta.1 schema changes:
+  // - Added SI types (SICapabilities, SIIdentity, SIUIElement) with extensible fields
+  // - Added protocol response types with capability declarations
+  const MAX_CORE_ALLOWED = 80;
 
   console.log(`📊 Core types strictness:`);
   console.log(`   Index signatures found: ${count}`);

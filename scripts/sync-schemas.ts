@@ -25,15 +25,15 @@ function getTargetAdCPVersion(): string {
   }
 }
 
+// Domain can have schemas (core types) and/or tasks (request/response pairs)
+interface DomainEntry {
+  schemas?: Record<string, { $ref: string; description?: string }>;
+  tasks?: Record<string, { request?: { $ref: string }; response?: { $ref: string } }>;
+}
+
 interface SchemaIndex {
   adcp_version: string;
-  schemas: {
-    core: { schemas: Record<string, { $ref: string; description: string }> };
-    enums: { schemas: Record<string, { $ref: string; description: string }> };
-    'media-buy': { tasks: Record<string, any> };
-    creative: { tasks: Record<string, any> };
-    signals: { tasks: Record<string, any> };
-  };
+  schemas: Record<string, DomainEntry>;
 }
 
 // Fetch and parse JSON from URL
@@ -156,44 +156,35 @@ async function syncSchemas(version?: string): Promise<void> {
   writeFileSync(indexPath, JSON.stringify(schemaIndex, null, 2));
   console.log(`✅ Cached schema index -> ${indexPath}`);
 
-  // Collect all schema references to download
+  // Collect all schema references to download by iterating over ALL domains
   const allRefs = new Set<string>();
 
-  // Add core schema refs
-  if (schemaIndex.schemas.core?.schemas) {
-    for (const schema of Object.values(schemaIndex.schemas.core.schemas)) {
-      allRefs.add(schema.$ref);
-    }
-  }
+  // Dynamically iterate over all domains in the schema index
+  for (const [domainName, domain] of Object.entries(schemaIndex.schemas)) {
+    if (!domain || typeof domain !== 'object') continue;
 
-  // Add enum schema refs
-  if (schemaIndex.schemas.enums?.schemas) {
-    for (const schema of Object.values(schemaIndex.schemas.enums.schemas)) {
-      allRefs.add(schema.$ref);
+    // Add schema refs (for domains with type definitions like core, enums)
+    if (domain.schemas && typeof domain.schemas === 'object') {
+      for (const schema of Object.values(domain.schemas)) {
+        if (schema && typeof schema === 'object' && '$ref' in schema && schema.$ref) {
+          allRefs.add(schema.$ref as string);
+        }
+      }
+      console.log(`📂 Found ${Object.keys(domain.schemas).length} schemas in ${domainName}`);
     }
-  }
 
-  // Add media-buy task schema refs
-  if (schemaIndex.schemas['media-buy']?.tasks) {
-    for (const task of Object.values(schemaIndex.schemas['media-buy'].tasks)) {
-      if (task.request?.$ref) allRefs.add(task.request.$ref);
-      if (task.response?.$ref) allRefs.add(task.response.$ref);
-    }
-  }
-
-  // Add creative task schema refs
-  if (schemaIndex.schemas.creative?.tasks) {
-    for (const task of Object.values(schemaIndex.schemas.creative.tasks)) {
-      if (task.request?.$ref) allRefs.add(task.request.$ref);
-      if (task.response?.$ref) allRefs.add(task.response.$ref);
-    }
-  }
-
-  // Add signals task schema refs
-  if (schemaIndex.schemas.signals?.tasks) {
-    for (const task of Object.values(schemaIndex.schemas.signals.tasks)) {
-      if (task.request?.$ref) allRefs.add(task.request.$ref);
-      if (task.response?.$ref) allRefs.add(task.response.$ref);
+    // Add task request/response refs (for domains with operations)
+    if (domain.tasks && typeof domain.tasks === 'object') {
+      let taskCount = 0;
+      for (const task of Object.values(domain.tasks)) {
+        if (task && typeof task === 'object') {
+          const taskObj = task as { request?: { $ref?: string }; response?: { $ref?: string } };
+          if (taskObj.request?.$ref) allRefs.add(taskObj.request.$ref);
+          if (taskObj.response?.$ref) allRefs.add(taskObj.response.$ref);
+          taskCount++;
+        }
+      }
+      console.log(`📂 Found ${taskCount} tasks in ${domainName}`);
     }
   }
 
@@ -276,16 +267,21 @@ async function syncSchemas(version?: string): Promise<void> {
     console.warn(`⚠️  Reached maximum recursion depth (${maxDepth})`);
   }
 
-  // Create latest symlink
-  const latestLink = path.join(SCHEMA_CACHE_DIR, 'latest');
-  try {
-    if (existsSync(latestLink)) {
-      require('fs').unlinkSync(latestLink);
+  // Create latest symlink (skip if version is already "latest" to avoid circular symlink)
+  if (adcpVersion !== 'latest') {
+    const latestLink = path.join(SCHEMA_CACHE_DIR, 'latest');
+    try {
+      if (existsSync(latestLink)) {
+        // Use rmSync with recursive:true to handle both symlinks and directories
+        require('fs').rmSync(latestLink, { recursive: true, force: true });
+      }
+      require('fs').symlinkSync(adcpVersion, latestLink);
+      console.log(`🔗 Created latest symlink -> ${adcpVersion}`);
+    } catch (error) {
+      console.warn(`⚠️  Failed to create latest symlink:`, error.message);
     }
-    require('fs').symlinkSync(adcpVersion, latestLink);
-    console.log(`🔗 Created latest symlink -> ${adcpVersion}`);
-  } catch (error) {
-    console.warn(`⚠️  Failed to create latest symlink:`, error.message);
+  } else {
+    console.log(`📁 Using 'latest' directly - no symlink needed`);
   }
 
   console.log(`✅ Schema sync completed for AdCP v${adcpVersion}`);
