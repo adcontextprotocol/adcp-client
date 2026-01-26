@@ -272,7 +272,8 @@ async function syncSchemas(version?: string): Promise<void> {
     const latestLink = path.join(SCHEMA_CACHE_DIR, 'latest');
     try {
       if (existsSync(latestLink)) {
-        require('fs').unlinkSync(latestLink);
+        // Use rmSync with recursive:true to handle both symlinks and directories
+        require('fs').rmSync(latestLink, { recursive: true, force: true });
       }
       require('fs').symlinkSync(adcpVersion, latestLink);
       console.log(`🔗 Created latest symlink -> ${adcpVersion}`);

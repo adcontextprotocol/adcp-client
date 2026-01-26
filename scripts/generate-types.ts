@@ -54,7 +54,7 @@ function loadCachedSchema(schemaRef: string): any {
       relativePath = relativePath.substring('/schemas/'.length);
       // Remove version segment (either v1 or X.Y.Z format)
       const segments = relativePath.split('/');
-      if (segments[0].match(/^(v\d+|\d+\.\d+\.\d+|latest)$/)) {
+      if (segments[0].match(/^(v\d+|\d+\.\d+\.\d+(-[a-zA-Z0-9.]+)?|latest)$/)) {
         // First segment is a version, skip it
         relativePath = segments.slice(1).join('/');
       }
