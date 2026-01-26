@@ -109,7 +109,7 @@ describe('SingleAgentClient Request Validation', () => {
   // that allows unknown properties, so strict mode doesn't reject extra fields
 
   describe('get_products validation', () => {
-    test('should validate get_products requests', async () => {
+    test('should validate get_products requests', { skip: 'v3 schemas use additionalProperties: true for extensibility - extra fields are allowed' }, async () => {
       const client = new AdCPClient([mockAgent]);
       const agent = client.agent(mockAgent.id);
 
@@ -129,7 +129,7 @@ describe('SingleAgentClient Request Validation', () => {
   });
 
   describe('update_media_buy validation', () => {
-    test('should reject update_media_buy with extra fields', async () => {
+    test('should reject update_media_buy with extra fields', { skip: 'v3 schemas use additionalProperties: true for extensibility - extra fields are allowed' }, async () => {
       const client = new AdCPClient([mockAgent]);
       const agent = client.agent(mockAgent.id);
 
