@@ -739,7 +739,6 @@ export class Agent {
 
     agentClass += `  /**
    * ${tool.description}
-   * Official AdCP ${tool.name} tool schema
    */
   async ${tool.methodName}(${paramDecl}): Promise<${responseType}> {
     return this.callTool<${responseType}>('${tool.name}', ${paramType === 'void' ? '{}' : 'params'});
@@ -778,7 +777,6 @@ export class AgentCollection {
 
     agentClass += `  /**
    * ${tool.description} (across multiple agents)
-   * Official AdCP ${tool.name} tool schema
    */
   async ${tool.methodName}(${paramDecl}): Promise<${responseType}[]> {
     return this.callToolOnAll<${responseType}>('${tool.name}', ${paramType === 'void' ? '{}' : 'params'});
