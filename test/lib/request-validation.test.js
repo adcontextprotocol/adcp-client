@@ -109,45 +109,53 @@ describe('SingleAgentClient Request Validation', () => {
   // that allows unknown properties, so strict mode doesn't reject extra fields
 
   describe('get_products validation', () => {
-    test('should validate get_products requests', { skip: 'v3 schemas use additionalProperties: true for extensibility - extra fields are allowed' }, async () => {
-      const client = new AdCPClient([mockAgent]);
-      const agent = client.agent(mockAgent.id);
+    test(
+      'should validate get_products requests',
+      { skip: 'v3 schemas use additionalProperties: true for extensibility - extra fields are allowed' },
+      async () => {
+        const client = new AdCPClient([mockAgent]);
+        const agent = client.agent(mockAgent.id);
 
-      await assert.rejects(
-        async () => {
-          // Invalid request with extra field
-          await agent.getProducts({
-            invalid_field: 'should fail',
-          });
-        },
-        err => {
-          return err.message.includes('Request validation failed for get_products');
-        },
-        'Should throw validation error for invalid get_products request'
-      );
-    });
+        await assert.rejects(
+          async () => {
+            // Invalid request with extra field
+            await agent.getProducts({
+              invalid_field: 'should fail',
+            });
+          },
+          err => {
+            return err.message.includes('Request validation failed for get_products');
+          },
+          'Should throw validation error for invalid get_products request'
+        );
+      }
+    );
   });
 
   describe('update_media_buy validation', () => {
-    test('should reject update_media_buy with extra fields', { skip: 'v3 schemas use additionalProperties: true for extensibility - extra fields are allowed' }, async () => {
-      const client = new AdCPClient([mockAgent]);
-      const agent = client.agent(mockAgent.id);
+    test(
+      'should reject update_media_buy with extra fields',
+      { skip: 'v3 schemas use additionalProperties: true for extensibility - extra fields are allowed' },
+      async () => {
+        const client = new AdCPClient([mockAgent]);
+        const agent = client.agent(mockAgent.id);
 
-      // AdCP spec has additionalProperties: false for update_media_buy
-      // Extra fields should be rejected (use ext field for extensions)
-      await assert.rejects(
-        async () => {
-          await agent.updateMediaBuy({
-            media_buy_id: 'mb123',
-            extra_field: 'should fail',
-          });
-        },
-        err => {
-          return err.message.includes('Request validation failed for update_media_buy');
-        },
-        'Should throw validation error for invalid update_media_buy request'
-      );
-    });
+        // AdCP spec has additionalProperties: false for update_media_buy
+        // Extra fields should be rejected (use ext field for extensions)
+        await assert.rejects(
+          async () => {
+            await agent.updateMediaBuy({
+              media_buy_id: 'mb123',
+              extra_field: 'should fail',
+            });
+          },
+          err => {
+            return err.message.includes('Request validation failed for update_media_buy');
+          },
+          'Should throw validation error for invalid update_media_buy request'
+        );
+      }
+    );
   });
 
   describe('list_creatives validation', () => {

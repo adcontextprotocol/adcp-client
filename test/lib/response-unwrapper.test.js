@@ -526,34 +526,38 @@ describe('Response Unwrapper', () => {
       assert.ok(result.errors[0].message.length < 200);
     });
 
-    test('should fail Zod validation for invalid product data', { skip: 'v3 ProductSchema allows additional properties for extensibility' }, () => {
-      const a2aResponse = {
-        result: {
-          artifacts: [
-            {
-              parts: [
-                {
-                  kind: 'data',
-                  data: {
-                    products: [
-                      {
-                        // Missing required fields like product_id, name, etc.
-                        invalid_field: 'should fail validation',
-                      },
-                    ],
+    test(
+      'should fail Zod validation for invalid product data',
+      { skip: 'v3 ProductSchema allows additional properties for extensibility' },
+      () => {
+        const a2aResponse = {
+          result: {
+            artifacts: [
+              {
+                parts: [
+                  {
+                    kind: 'data',
+                    data: {
+                      products: [
+                        {
+                          // Missing required fields like product_id, name, etc.
+                          invalid_field: 'should fail validation',
+                        },
+                      ],
+                    },
                   },
-                },
-              ],
-            },
-          ],
-        },
-      };
+                ],
+              },
+            ],
+          },
+        };
 
-      assert.throws(
-        () => unwrapProtocolResponse(a2aResponse, 'get_products', 'a2a'),
-        /Response validation failed for get_products/
-      );
-    });
+        assert.throws(
+          () => unwrapProtocolResponse(a2aResponse, 'get_products', 'a2a'),
+          /Response validation failed for get_products/
+        );
+      }
+    );
 
     test('should fail Zod validation for missing required create_media_buy fields', () => {
       const a2aResponse = {
