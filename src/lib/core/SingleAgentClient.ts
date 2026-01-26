@@ -928,6 +928,11 @@ export class SingleAgentClient {
       return null; // Proceed normally
     }
 
+    // Log warning about v2 downgrade
+    console.warn(
+      `[AdCP] v3-only features not supported by server "${this.agent.id}" (${capabilities.version}). Returning empty results.`
+    );
+
     // Return empty result - semantically "no products match this filter"
     const emptyResponse = {
       products: [],
