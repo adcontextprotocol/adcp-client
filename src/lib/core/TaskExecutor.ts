@@ -7,6 +7,7 @@ import { ProtocolClient } from '../protocols';
 import type { Storage } from '../storage/interfaces';
 import { responseValidator } from './ResponseValidator';
 import { unwrapProtocolResponse } from '../utils/response-unwrapper';
+import { normalizeGetProductsResponse } from '../utils/pricing-adapter';
 import type {
   Message,
   InputRequest,
@@ -1046,6 +1047,24 @@ export class TaskExecutor {
   }
 
   /**
+   * Normalize response data for schema validation
+   *
+   * Converts v2-style responses to v3 format before validation.
+   * This ensures validation passes for both v2 and v3 server responses.
+   */
+  private normalizeResponseForValidation(response: any, taskName: string): any {
+    if (!response) return response;
+
+    switch (taskName) {
+      case 'get_products':
+        // Normalize v2 pricing options to v3 format
+        return normalizeGetProductsResponse(response);
+      default:
+        return response;
+    }
+  }
+
+  /**
    * Validate response against AdCP schema and log any violations
    *
    * Respects config.strictSchemaValidation (default: true):
@@ -1061,7 +1080,14 @@ export class TaskExecutor {
     const logViolations = this.config.logSchemaViolations !== false; // Default: true
 
     try {
-      const validationResult = responseValidator.validate(response, taskName, { validateSchema: true, strict: false });
+      // Normalize response to v3 format before validation
+      // This ensures v2 server responses pass validation against v3 schemas
+      const normalizedResponse = this.normalizeResponseForValidation(response, taskName);
+
+      const validationResult = responseValidator.validate(normalizedResponse, taskName, {
+        validateSchema: true,
+        strict: false,
+      });
 
       if (!validationResult.valid) {
         // Log to debug logs if enabled
