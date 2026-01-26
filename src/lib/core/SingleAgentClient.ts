@@ -45,6 +45,46 @@ import { AsyncHandler } from './AsyncHandler';
 import { unwrapProtocolResponse } from '../utils/response-unwrapper';
 import * as crypto from 'crypto';
 
+// v3.0 compatibility utilities
+import type { AdcpCapabilities, ToolInfo } from '../utils/capabilities';
+import { buildSyntheticCapabilities, parseCapabilitiesResponse } from '../utils/capabilities';
+import {
+  adaptCreateMediaBuyRequestForV2,
+  adaptUpdateMediaBuyRequestForV2,
+  normalizeMediaBuyResponse,
+} from '../utils/creative-adapter';
+import { normalizeFormatsResponse } from '../utils/format-renders';
+import { normalizePreviewCreativeResponse } from '../utils/preview-normalizer';
+import { normalizeGetProductsResponse } from '../utils/pricing-adapter';
+
+/**
+ * Error class for v3 feature compatibility issues
+ *
+ * Note: The library no longer throws this error for get_products calls with
+ * unsupported v3 features. Instead, it returns an empty result (semantically
+ * "no products match this filter"). This error class is exported for use in
+ * custom validation logic or other scenarios.
+ *
+ * @example
+ * ```typescript
+ * // Custom validation before making requests
+ * const capabilities = await client.getCapabilities();
+ * if (params.property_list && !capabilities.features.propertyListFiltering) {
+ *   throw new UnsupportedFeatureError('property_list', capabilities.version);
+ * }
+ * ```
+ */
+export class UnsupportedFeatureError extends Error {
+  constructor(
+    public readonly feature: string,
+    public readonly serverVersion: 'v2' | 'v3',
+    message?: string
+  ) {
+    super(message || `Feature '${feature}' requires AdCP v3 but server is ${serverVersion}`);
+    this.name = 'UnsupportedFeatureError';
+  }
+}
+
 type NormalizedWebhookPayload = {
   operation_id: string;
   task_id: string;
@@ -134,6 +174,7 @@ export class SingleAgentClient {
   private normalizedAgent: AgentConfig;
   private discoveredEndpoint?: string; // Cache discovered MCP endpoint
   private canonicalBaseUrl?: string; // Cache canonical base URL (from agent card or stripped /mcp)
+  private cachedCapabilities?: AdcpCapabilities; // Cache detected server capabilities
 
   constructor(
     private agent: AgentConfig,
@@ -748,6 +789,8 @@ export class SingleAgentClient {
 
   /**
    * Execute task and call appropriate handler on completion
+   *
+   * Automatically adapts requests for v2 servers and normalizes responses.
    */
   private async executeAndHandle<T>(
     taskType: string,
@@ -759,8 +802,23 @@ export class SingleAgentClient {
     // Validate request params against schema
     this.validateRequest(taskType, params);
 
+    // Check for v3 features used against v2 servers - return empty result if unsupported
+    const earlyResult = await this.getEarlyResultForUnsupportedFeatures<T>(taskType, params);
+    if (earlyResult) {
+      return earlyResult;
+    }
+
     const agent = await this.ensureEndpointDiscovered();
-    const result = await this.executor.executeTask<T>(agent, taskType, params, inputHandler, options);
+
+    // Adapt request for v2 servers if needed
+    const adaptedParams = await this.adaptRequestForServerVersion(taskType, params);
+
+    const result = await this.executor.executeTask<T>(agent, taskType, adaptedParams, inputHandler, options);
+
+    // Normalize response to v3 format
+    if (result.success && result.data) {
+      result.data = this.normalizeResponseToV3(taskType, result.data) as T;
+    }
 
     // Call handler if task completed successfully and handler is configured
     if (result.status === 'completed' && result.success && this.asyncHandler) {
@@ -779,6 +837,125 @@ export class SingleAgentClient {
     }
 
     return result;
+  }
+
+  /**
+   * Adapt request parameters for the detected server version
+   *
+   * Converts v3-style requests to v2 format when talking to v2 servers.
+   */
+  private async adaptRequestForServerVersion(taskType: string, params: any): Promise<any> {
+    // Get server version (cached after first call)
+    const version = await this.detectServerVersion();
+
+    // If server is v3, no adaptation needed
+    if (version === 'v3') {
+      return params;
+    }
+
+    // Adapt v3 requests for v2 servers
+    switch (taskType) {
+      case 'create_media_buy':
+        return adaptCreateMediaBuyRequestForV2(params);
+
+      case 'update_media_buy':
+        return adaptUpdateMediaBuyRequestForV2(params);
+
+      default:
+        return params;
+    }
+  }
+
+  /**
+   * Normalize response to v3 format
+   *
+   * Converts v2 responses to v3 structure for consistent API surface.
+   */
+  private normalizeResponseToV3(taskType: string, data: any): any {
+    switch (taskType) {
+      case 'get_products':
+        return normalizeGetProductsResponse(data);
+
+      case 'list_creative_formats':
+        return normalizeFormatsResponse(data);
+
+      case 'preview_creative':
+        return normalizePreviewCreativeResponse(data);
+
+      case 'create_media_buy':
+      case 'update_media_buy':
+        return normalizeMediaBuyResponse(data);
+
+      default:
+        return data;
+    }
+  }
+
+  /**
+   * Check if request uses v3 features that the server doesn't support
+   *
+   * Returns an early empty result if the request requires v3 features
+   * that the server doesn't support. This treats "products matching unsupported
+   * capability" as an empty result set rather than an error.
+   *
+   * @returns TaskResult with empty data if v3 features are unsupported, null to proceed normally
+   */
+  private async getEarlyResultForUnsupportedFeatures<T>(
+    taskType: string,
+    params: any
+  ): Promise<TaskResult<T> | null> {
+    // Only check for tasks that have v3-specific features
+    if (taskType !== 'get_products') {
+      return null;
+    }
+
+    // Get capabilities to check what the server supports
+    const capabilities = await this.getCapabilities();
+
+    // If server is v3, all features are supported - proceed normally
+    if (capabilities.version === 'v3') {
+      return null;
+    }
+
+    // Check for v3-only features that would make this query return empty results
+    const usesUnsupportedFeature =
+      // property_list requires propertyListFiltering
+      (params.property_list && !capabilities.features.propertyListFiltering) ||
+      // required_features: content_standards requires contentStandards
+      (params.filters?.required_features?.includes('content_standards') &&
+        !capabilities.features.contentStandards) ||
+      // required_features: property_list_filtering requires propertyListFiltering
+      (params.filters?.required_features?.includes('property_list_filtering') &&
+        !capabilities.features.propertyListFiltering);
+
+    if (!usesUnsupportedFeature) {
+      return null; // Proceed normally
+    }
+
+    // Return empty result - semantically "no products match this filter"
+    const emptyResponse = {
+      products: [],
+      property_list_applied: false,
+    } as T;
+
+    return {
+      success: true,
+      status: 'completed',
+      data: emptyResponse,
+      metadata: {
+        taskId: `early_${Date.now()}`,
+        taskName: taskType,
+        agent: {
+          id: this.agent.id,
+          name: this.agent.name,
+          protocol: this.normalizedAgent.protocol,
+        },
+        responseTimeMs: 0,
+        timestamp: new Date().toISOString(),
+        clarificationRounds: 0,
+        status: 'completed',
+      },
+    };
   }
 
   // ====== MEDIA BUY TASKS ======
@@ -1597,6 +1774,85 @@ export class SingleAgentClient {
     throw new Error(`Unsupported protocol: ${this.normalizedAgent.protocol}`);
   }
 
+  /**
+   * Get agent capabilities, including AdCP version support
+   *
+   * For v3 servers, calls get_adcp_capabilities tool.
+   * For v2 servers, builds synthetic capabilities from available tools.
+   *
+   * @returns Promise resolving to normalized capabilities object
+   *
+   * @example
+   * ```typescript
+   * const capabilities = await client.getCapabilities();
+   *
+   * console.log(`Server version: ${capabilities.version}`);
+   * console.log(`Protocols: ${capabilities.protocols.join(', ')}`);
+   *
+   * if (capabilities.features.propertyListFiltering) {
+   *   // Use v3 property list features
+   * }
+   * ```
+   */
+  async getCapabilities(): Promise<AdcpCapabilities> {
+    // Return cached if available
+    if (this.cachedCapabilities) {
+      return this.cachedCapabilities;
+    }
+
+    // First get tool list to support both detection methods
+    const agentInfo = await this.getAgentInfo();
+    const tools: ToolInfo[] = agentInfo.tools.map((t) => ({
+      name: t.name,
+      description: t.description,
+    }));
+
+    // Check if agent supports get_adcp_capabilities (v3)
+    const hasCapabilitiesTool = tools.some((t) => t.name === 'get_adcp_capabilities');
+
+    if (hasCapabilitiesTool) {
+      try {
+        // Call get_adcp_capabilities tool
+        const agent = await this.ensureEndpointDiscovered();
+        const result = await this.executor.executeTask<any>(
+          agent,
+          'get_adcp_capabilities',
+          {},
+          undefined
+        );
+
+        if (result.success && result.data) {
+          this.cachedCapabilities = parseCapabilitiesResponse(result.data);
+          return this.cachedCapabilities;
+        }
+      } catch {
+        // Fall through to synthetic capabilities
+      }
+    }
+
+    // Build synthetic capabilities from tool list (v2)
+    this.cachedCapabilities = buildSyntheticCapabilities(tools);
+    return this.cachedCapabilities;
+  }
+
+  /**
+   * Detect server AdCP version
+   *
+   * @returns 'v2' or 'v3' based on server capabilities
+   */
+  async detectServerVersion(): Promise<'v2' | 'v3'> {
+    const capabilities = await this.getCapabilities();
+    return capabilities.version;
+  }
+
+  /**
+   * Check if server supports a specific AdCP major version
+   */
+  async supportsVersion(version: 2 | 3): Promise<boolean> {
+    const capabilities = await this.getCapabilities();
+    return capabilities.majorVersions.includes(version);
+  }
+
   // ====== STATIC HELPER METHODS ======
 
   /**
@@ -1681,14 +1937,16 @@ export class SingleAgentClient {
 
   /**
    * Get request schema for a given task type
+   * Note: Some schemas not available due to complex discriminated unions
    */
   private getRequestSchema(taskType: string): z.ZodSchema | null {
     // Only include schemas that exist in generated schemas
+    // Schemas with complex discriminated unions (get_products, update_media_buy) are not available
     const schemaMap: Partial<Record<string, z.ZodSchema>> = {
-      get_products: schemas.GetProductsRequestSchema,
+      // get_products: uses complex discriminated unions - validation falls back to type checking
       list_creative_formats: schemas.ListCreativeFormatsRequestSchema,
       create_media_buy: schemas.CreateMediaBuyRequestSchema,
-      update_media_buy: schemas.UpdateMediaBuyRequestSchema,
+      // update_media_buy: uses complex discriminated unions - validation falls back to type checking
       sync_creatives: schemas.SyncCreativesRequestSchema,
       list_creatives: schemas.ListCreativesRequestSchema,
       get_media_buy_delivery: schemas.GetMediaBuyDeliveryRequestSchema,

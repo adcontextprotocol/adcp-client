@@ -20,7 +20,7 @@ export type {
 
 // ====== CORE CONVERSATION-AWARE CLIENTS ======
 // New conversation-aware clients with input handler pattern
-export { SingleAgentClient, createSingleAgentClient } from './core/SingleAgentClient';
+export { SingleAgentClient, createSingleAgentClient, UnsupportedFeatureError } from './core/SingleAgentClient';
 export type { SingleAgentClientConfig } from './core/SingleAgentClient';
 export { AgentClient, type TaskResponseTypeMap, type AdcpTaskName } from './core/AgentClient';
 export { ADCPMultiAgentClient, createADCPMultiAgentClient } from './core/ADCPMultiAgentClient';
@@ -124,6 +124,7 @@ export * from './types';
 // ====== TOOL TYPES ======
 // All ADCP task request/response types
 export type {
+  // Media Buy Domain
   GetProductsRequest,
   GetProductsResponse,
   ListCreativeFormatsRequest,
@@ -142,13 +143,58 @@ export type {
   ListAuthorizedPropertiesResponse,
   ProvidePerformanceFeedbackRequest,
   ProvidePerformanceFeedbackResponse,
+  // Signals Domain
   GetSignalsRequest,
   GetSignalsResponse,
   ActivateSignalRequest,
   ActivateSignalResponse,
+  // Governance Domain - Property Lists
+  CreatePropertyListRequest,
+  CreatePropertyListResponse,
+  UpdatePropertyListRequest,
+  UpdatePropertyListResponse,
+  GetPropertyListRequest,
+  GetPropertyListResponse,
+  ListPropertyListsRequest,
+  ListPropertyListsResponse,
+  DeletePropertyListRequest,
+  DeletePropertyListResponse,
+  PropertyList,
+  PropertyListFilters,
+  // Governance Domain - Content Standards
+  ListContentStandardsRequest,
+  ListContentStandardsResponse,
+  GetContentStandardsRequest,
+  GetContentStandardsResponse,
+  CreateContentStandardsRequest,
+  CreateContentStandardsResponse,
+  UpdateContentStandardsRequest,
+  UpdateContentStandardsResponse,
+  CalibrateContentRequest,
+  CalibrateContentResponse,
+  ValidateContentDeliveryRequest,
+  ValidateContentDeliveryResponse,
+  ContentStandards,
+  Artifact,
+  // Sponsored Intelligence Domain
+  SIGetOfferingRequest,
+  SIGetOfferingResponse,
+  SIInitiateSessionRequest,
+  SIInitiateSessionResponse,
+  SISendMessageRequest,
+  SISendMessageResponse,
+  SITerminateSessionRequest,
+  SITerminateSessionResponse,
+  SICapabilities,
+  SIIdentity,
+  // Protocol Domain
+  GetAdCPCapabilitiesRequest,
+  GetAdCPCapabilitiesResponse,
   // Core data structures
   Format,
   Product,
+  Proposal,
+  ProductAllocation,
   PackageRequest,
   CreativeAsset,
   CreativePolicy,
@@ -187,6 +233,72 @@ export {
   getAssetCount,
   hasAssets,
 } from './utils/format-assets';
+
+// ====== V3.0 COMPATIBILITY UTILITIES ======
+// Capabilities detection and synthetic capabilities for v2 servers
+export {
+  buildSyntheticCapabilities,
+  parseCapabilitiesResponse,
+  supportsV3,
+  supportsProtocol,
+  supportsPropertyListFiltering,
+  supportsContentStandards,
+  MEDIA_BUY_TOOLS,
+  SIGNALS_TOOLS,
+  GOVERNANCE_TOOLS,
+  CREATIVE_TOOLS,
+  PROTOCOL_TOOLS,
+} from './utils/capabilities';
+export type {
+  AdcpCapabilities,
+  AdcpMajorVersion,
+  AdcpProtocol,
+  MediaBuyFeatures,
+  ToolInfo,
+} from './utils/capabilities';
+
+// Creative assignment adapter (v2 creative_ids ↔ v3 creative_assignments)
+export {
+  adaptPackageRequestForV2,
+  adaptCreateMediaBuyRequestForV2,
+  adaptUpdateMediaBuyRequestForV2,
+  normalizePackageResponse,
+  normalizeMediaBuyResponse,
+  usesV2CreativeIds,
+  usesV3CreativeAssignments,
+  getCreativeIds,
+  getCreativeAssignments,
+} from './utils/creative-adapter';
+export type { CreativeAssignment } from './utils/creative-adapter';
+
+// Format renders normalizer (v2 dimensions ↔ v3 renders)
+export {
+  normalizeFormatRenders,
+  normalizeFormatsResponse,
+  getFormatRenders,
+  getPrimaryRender,
+  getCompanionRenders,
+  isMultiRenderFormat,
+  usesV2Dimensions,
+  usesV3Renders,
+  getFormatDimensions,
+} from './utils/format-renders';
+export type { FormatRender, RenderDimensions } from './utils/format-renders';
+
+// Preview response normalizer (v2 output_id ↔ v3 render_id)
+export {
+  normalizePreviewRender,
+  normalizePreview,
+  normalizePreviewCreativeResponse,
+  usesV2RenderFields,
+  usesV3RenderFields,
+  getRenderId,
+  getRenderRole,
+  getPrimaryPreviewRender,
+  getPreviewUrl,
+  getPreviewHtml,
+} from './utils/preview-normalizer';
+export type { PreviewRenderV3 } from './utils/preview-normalizer';
 
 // ====== TYPE GUARD UTILITIES ======
 // Type guards for automatic TypeScript type narrowing in webhook handlers
@@ -239,6 +351,39 @@ export {
 // ====== AGENT CLASSES ======
 // Primary agent interface - returns raw AdCP responses
 export { Agent, AgentCollection } from './agents/index.generated';
+
+// ====== SERVER-SIDE ADAPTERS ======
+// Adapters for building AdCP servers with customizable business logic
+export {
+  // Content Standards
+  ContentStandardsAdapter,
+  type IContentStandardsAdapter,
+  type ContentEvaluationResult,
+  ContentStandardsErrorCodes,
+  isContentStandardsError,
+  defaultContentStandardsAdapter,
+  // Property Lists
+  PropertyListAdapter,
+  type IPropertyListAdapter,
+  type ResolvedProperty,
+  PropertyListErrorCodes,
+  isPropertyListError,
+  defaultPropertyListAdapter,
+  // Proposal Management
+  ProposalManager,
+  AIProposalManager,
+  type IProposalManager,
+  type ProposalContext,
+  ProposalErrorCodes,
+  defaultProposalManager,
+  // Sponsored Intelligence Sessions
+  SISessionManager,
+  AISISessionManager,
+  type ISISessionManager,
+  type SISession,
+  SIErrorCodes,
+  defaultSISessionManager,
+} from './adapters';
 
 // ====== BACKWARD COMPATIBILITY & ENVIRONMENT LOADING ======
 

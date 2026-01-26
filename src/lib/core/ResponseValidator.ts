@@ -305,8 +305,9 @@ export class ResponseValidator {
    */
   private getSchemaForTool(toolName: string): z.ZodSchema | null {
     // All AdCP response schemas mapped by tool name
+    // Some schemas may not be available due to complex discriminated unions that ts-to-zod can't generate
     const schemaMap: Partial<Record<string, z.ZodSchema>> = {
-      get_products: schemas.GetProductsResponseSchema,
+      // get_products schema uses complex discriminated unions - not available
       list_creative_formats: schemas.ListCreativeFormatsResponseSchema,
       create_media_buy: schemas.CreateMediaBuyResponseSchema,
       update_media_buy: schemas.UpdateMediaBuyResponseSchema,

@@ -199,14 +199,47 @@ export class PropertyCrawler {
     return PropertyCrawler.EXPECTED_FAILURE_PATTERNS.some(pattern => pattern.test(errorMessage));
   }
 
+  /** Maximum number of authoritative_location redirects to follow */
+  private static readonly MAX_REDIRECT_DEPTH = 5;
+
   /**
-   * Fetch and parse adagents.json from a publisher domain
+   * Fetch and parse adagents.json from a publisher domain.
+   * Handles authoritative_location redirects per AdCP spec.
    */
   async fetchAdAgentsJson(domain: string): Promise<{
     properties: Property[];
     warning?: string;
   }> {
-    const url = `https://${domain}/.well-known/adagents.json`;
+    const initialUrl = `https://${domain}/.well-known/adagents.json`;
+    return this.fetchAdAgentsJsonFromUrl(initialUrl, domain, new Set(), 0);
+  }
+
+  /**
+   * Internal method to fetch adagents.json with redirect handling.
+   * @param url - URL to fetch from
+   * @param originalDomain - The original publisher domain (for property defaults)
+   * @param visitedUrls - Set of URLs already visited (loop detection)
+   * @param depth - Current redirect depth
+   */
+  private async fetchAdAgentsJsonFromUrl(
+    url: string,
+    originalDomain: string,
+    visitedUrls: Set<string>,
+    depth: number
+  ): Promise<{
+    properties: Property[];
+    warning?: string;
+  }> {
+    // Loop detection
+    if (visitedUrls.has(url)) {
+      throw new Error(`Redirect loop detected: ${url} was already visited`);
+    }
+    visitedUrls.add(url);
+
+    // Max depth check
+    if (depth > PropertyCrawler.MAX_REDIRECT_DEPTH) {
+      throw new Error(`Maximum redirect depth (${PropertyCrawler.MAX_REDIRECT_DEPTH}) exceeded`);
+    }
 
     try {
       const response = await fetch(url, {
@@ -228,6 +261,20 @@ export class PropertyCrawler {
 
       const data = (await response.json()) as AdAgentsJson;
 
+      // Handle authoritative_location redirect (per AdCP spec)
+      // If authorized_agents is present, use it; otherwise follow the redirect
+      if (data.authoritative_location && !data.authorized_agents) {
+        const redirectUrl = data.authoritative_location;
+
+        // Validate HTTPS
+        if (!redirectUrl.startsWith('https://')) {
+          throw new Error(`authoritative_location must use HTTPS: ${redirectUrl}`);
+        }
+
+        this.logger.debug(`Following authoritative_location redirect: ${url} -> ${redirectUrl}`);
+        return this.fetchAdAgentsJsonFromUrl(redirectUrl, originalDomain, visitedUrls, depth + 1);
+      }
+
       // Graceful degradation: if properties array is missing but file is otherwise valid
       if (!data.properties || !Array.isArray(data.properties) || data.properties.length === 0) {
         const hasAuthorizedAgents =
@@ -235,18 +282,21 @@ export class PropertyCrawler {
 
         if (hasAuthorizedAgents) {
           // Valid adagents.json but missing properties - infer default property
-          this.logger.warn(`Domain ${domain} has adagents.json but no properties array - inferring default property`, {
-            domain,
-            has_authorized_agents: true,
-          });
+          this.logger.warn(
+            `Domain ${originalDomain} has adagents.json but no properties array - inferring default property`,
+            {
+              domain: originalDomain,
+              has_authorized_agents: true,
+            }
+          );
 
           return {
             properties: [
               {
                 property_type: 'website',
-                name: domain,
-                identifiers: [{ type: 'domain', value: domain }],
-                publisher_domain: domain,
+                name: originalDomain,
+                identifiers: [{ type: 'domain', value: originalDomain }],
+                publisher_domain: originalDomain,
               },
             ],
             warning: 'Inferred from domain - publisher should add explicit properties array',
@@ -261,7 +311,7 @@ export class PropertyCrawler {
       return {
         properties: data.properties.map(prop => ({
           ...prop,
-          publisher_domain: prop.publisher_domain || domain,
+          publisher_domain: prop.publisher_domain || originalDomain,
         })),
       };
     } catch (error) {

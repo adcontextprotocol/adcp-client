@@ -153,3 +153,20 @@ export {
   getAssetCount,
   hasAssets,
 } from './format-assets';
+
+// Re-export pricing adapter utilities (v3 pricing field compatibility)
+export {
+  adaptPricingOptionForV2,
+  normalizePricingOption,
+  normalizeProductPricing,
+  normalizeGetProductsResponse,
+  usesV2PricingFields,
+  usesV3PricingFields,
+  isFixedPricing,
+  getPrice,
+  getFloorPrice,
+  type PricingOptionV2,
+  type PricingOptionV3,
+  type PriceGuidanceV2,
+  type PriceGuidanceV3,
+} from './pricing-adapter';

@@ -9,21 +9,21 @@ export const LIBRARY_VERSION = '3.6.0';
 /**
  * AdCP specification version this library is built for
  */
-export const ADCP_VERSION = 'v2.6';
+export const ADCP_VERSION = 'v3.0';
 
 /**
  * AdCP versions this library maintains backward compatibility with
  */
-export const COMPATIBLE_ADCP_VERSIONS = ['v2.5', 'v2.6'] as const;
+export const COMPATIBLE_ADCP_VERSIONS = ['v2.5', 'v2.6', 'v3.0'] as const;
 
 /**
  * Full version information
  */
 export const VERSION_INFO = {
   library: '3.6.0',
-  adcp: 'v2.6',
+  adcp: 'v3.0',
   compatibleVersions: COMPATIBLE_ADCP_VERSIONS,
-  generatedAt: '2026-01-06T21:14:13.710Z',
+  generatedAt: new Date().toISOString(),
 } as const;
 
 /**

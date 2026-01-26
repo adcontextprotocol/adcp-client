@@ -53,7 +53,13 @@ export interface AuthorizedAgent {
 /** adagents.json structure */
 export interface AdAgentsJson {
   $schema?: string;
-  authorized_agents: AuthorizedAgent[];
+  /**
+   * URL pointing to the authoritative adagents.json file.
+   * When present, the client should fetch from this URL instead.
+   * Used by publishers who centralize their authorization files.
+   */
+  authoritative_location?: string;
+  authorized_agents?: AuthorizedAgent[];
   properties?: Property[];
   last_updated?: string;
 }
