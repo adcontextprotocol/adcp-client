@@ -18,8 +18,6 @@ import type {
   ListCreativesResponse,
   GetMediaBuyDeliveryRequest,
   GetMediaBuyDeliveryResponse,
-  ListAuthorizedPropertiesRequest,
-  ListAuthorizedPropertiesResponse,
   ProvidePerformanceFeedbackRequest,
   ProvidePerformanceFeedbackResponse,
   GetSignalsRequest,
@@ -40,7 +38,6 @@ export type TaskResponseTypeMap = {
   sync_creatives: SyncCreativesResponse;
   list_creatives: ListCreativesResponse;
   get_media_buy_delivery: GetMediaBuyDeliveryResponse;
-  list_authorized_properties: ListAuthorizedPropertiesResponse;
   provide_performance_feedback: ProvidePerformanceFeedbackResponse;
   get_signals: GetSignalsResponse;
   activate_signal: ActivateSignalResponse;
@@ -243,26 +240,6 @@ export class AgentClient {
     options?: TaskOptions
   ): Promise<TaskResult<GetMediaBuyDeliveryResponse>> {
     const result = await this.client.getMediaBuyDelivery(params, inputHandler, {
-      ...options,
-      contextId: this.currentContextId,
-    });
-
-    if (result.success) {
-      this.currentContextId = result.metadata.taskId;
-    }
-
-    return result;
-  }
-
-  /**
-   * List authorized properties
-   */
-  async listAuthorizedProperties(
-    params: ListAuthorizedPropertiesRequest,
-    inputHandler?: InputHandler,
-    options?: TaskOptions
-  ): Promise<TaskResult<ListAuthorizedPropertiesResponse>> {
-    const result = await this.client.listAuthorizedProperties(params, inputHandler, {
       ...options,
       contextId: this.currentContextId,
     });

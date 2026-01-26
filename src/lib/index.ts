@@ -139,8 +139,6 @@ export type {
   ListCreativesResponse,
   GetMediaBuyDeliveryRequest,
   GetMediaBuyDeliveryResponse,
-  ListAuthorizedPropertiesRequest,
-  ListAuthorizedPropertiesResponse,
   ProvidePerformanceFeedbackRequest,
   ProvidePerformanceFeedbackResponse,
   // Signals Domain
@@ -221,10 +219,9 @@ export { REQUEST_TIMEOUT, MAX_CONCURRENT, STANDARD_FORMATS } from './utils';
 export { detectProtocol, detectProtocolWithTimeout } from './utils';
 
 // ====== FORMAT ASSET UTILITIES ======
-// Backward-compatible access to format assets (v2.6 `assets` field replaces deprecated `assets_required`)
+// Access to format assets (v3 `assets` field)
 export {
   getFormatAssets,
-  normalizeAssetsRequired,
   getRequiredAssets,
   getOptionalAssets,
   getIndividualAssets,

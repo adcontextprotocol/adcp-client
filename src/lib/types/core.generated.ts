@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas vlatest
-// Generated at: 2026-01-26T11:56:28.095Z
+// Generated at: 2026-01-26T14:58:22.678Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -1860,7 +1860,6 @@ export type TaskType =
   | 'sync_creatives'
   | 'activate_signal'
   | 'get_signals'
-  | 'list_property_features'
   | 'create_property_list'
   | 'update_property_list'
   | 'get_property_list'

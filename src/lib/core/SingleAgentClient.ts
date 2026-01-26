@@ -17,8 +17,6 @@ import type {
   ListCreativesResponse,
   GetMediaBuyDeliveryRequest,
   GetMediaBuyDeliveryResponse,
-  ListAuthorizedPropertiesRequest,
-  ListAuthorizedPropertiesResponse,
   ProvidePerformanceFeedbackRequest,
   ProvidePerformanceFeedbackResponse,
   GetSignalsRequest,
@@ -1173,27 +1171,6 @@ export class SingleAgentClient {
   }
 
   /**
-   * List authorized properties
-   *
-   * @param params - Property listing parameters
-   * @param inputHandler - Handler for clarification requests
-   * @param options - Task execution options
-   */
-  async listAuthorizedProperties(
-    params: ListAuthorizedPropertiesRequest,
-    inputHandler?: InputHandler,
-    options?: TaskOptions
-  ): Promise<TaskResult<ListAuthorizedPropertiesResponse>> {
-    return this.executeAndHandle<ListAuthorizedPropertiesResponse>(
-      'list_authorized_properties',
-      'onListAuthorizedPropertiesStatusChange',
-      params,
-      inputHandler,
-      options
-    );
-  }
-
-  /**
    * Provide performance feedback
    *
    * @param params - Performance feedback parameters
@@ -1951,7 +1928,6 @@ export class SingleAgentClient {
       sync_creatives: schemas.SyncCreativesRequestSchema,
       list_creatives: schemas.ListCreativesRequestSchema,
       get_media_buy_delivery: schemas.GetMediaBuyDeliveryRequestSchema,
-      list_authorized_properties: schemas.ListAuthorizedPropertiesRequestSchema,
       get_signals: schemas.GetSignalsRequestSchema,
       activate_signal: schemas.ActivateSignalRequestSchema,
     };

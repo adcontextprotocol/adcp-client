@@ -64,7 +64,28 @@ function loadCachedSchema(schemaRef: string): any {
     if (!existsSync(schemaPath)) {
       throw new Error(`Schema not found in cache: ${schemaPath}`);
     }
-    return JSON.parse(readFileSync(schemaPath, 'utf8'));
+
+    let schema = JSON.parse(readFileSync(schemaPath, 'utf8'));
+
+    // Apply deprecated field/enum removal based on schema name
+    // Extract schema name from path: core/format.json -> Format
+    const fileName = path.basename(relativePath, '.json');
+    const schemaName = fileName
+      .split('-')
+      .map(part => part.charAt(0).toUpperCase() + part.slice(1))
+      .join('');
+
+    // Check for deprecated enum values (uses kebab-case file name)
+    if (DEPRECATED_ENUM_VALUES[fileName]) {
+      schema = removeDeprecatedFields(schema, fileName);
+    }
+
+    // Check for deprecated object fields (uses PascalCase schema name)
+    if (DEPRECATED_SCHEMA_FIELDS[schemaName]) {
+      schema = removeDeprecatedFields(schema, schemaName);
+    }
+
+    return schema;
   } catch (error) {
     console.warn(`⚠️  Failed to load cached schema ${schemaRef}:`, error.message);
     return null;
@@ -230,6 +251,75 @@ function loadToolSchema(
 const TASK_DOMAINS = ['media-buy', 'creative', 'signals', 'governance', 'sponsored-intelligence', 'protocol'] as const;
 type TaskDomain = (typeof TASK_DOMAINS)[number];
 
+// Deprecated tools that should be excluded from type generation
+// These tools are maintained in upstream for backward compatibility but should not be exposed in the public API
+const DEPRECATED_TOOLS = new Set([
+  'list_authorized_properties', // Replaced by get_adcp_capabilities
+  'list_property_features', // Never released
+]);
+
+// Deprecated fields to remove from schema during type generation
+// Format: { schemaName: ['field1', 'field2'] }
+const DEPRECATED_SCHEMA_FIELDS: Record<string, string[]> = {
+  Format: ['assets_required', 'preview_image'],
+};
+
+// Deprecated schemas that should be excluded entirely
+const DEPRECATED_SCHEMAS = new Set([
+  'adcp-extension', // Use get_adcp_capabilities tool instead
+]);
+
+// Deprecated enum values to filter from specific enum schemas
+// Format: { schemaFileName: ['value1', 'value2'] }
+const DEPRECATED_ENUM_VALUES: Record<string, string[]> = {
+  'task-type': ['list_property_features', 'list_authorized_properties'],
+};
+
+/**
+ * Remove deprecated fields from a schema based on DEPRECATED_SCHEMA_FIELDS config
+ * Also handles deprecated enum values
+ */
+function removeDeprecatedFields(schema: any, schemaName: string): any {
+  // Handle deprecated enum values
+  if (schema.enum && Array.isArray(schema.enum)) {
+    const enumValuesToRemove = DEPRECATED_ENUM_VALUES[schemaName];
+    if (enumValuesToRemove) {
+      const cleaned = { ...schema };
+      cleaned.enum = schema.enum.filter((v: string) => !enumValuesToRemove.includes(v));
+      // Also clean enumDescriptions if present
+      if (cleaned.enumDescriptions) {
+        cleaned.enumDescriptions = { ...cleaned.enumDescriptions };
+        for (const value of enumValuesToRemove) {
+          delete cleaned.enumDescriptions[value];
+        }
+      }
+      return cleaned;
+    }
+  }
+
+  const fieldsToRemove = DEPRECATED_SCHEMA_FIELDS[schemaName];
+  if (!fieldsToRemove || !schema || typeof schema !== 'object') {
+    return schema;
+  }
+
+  const cleaned = { ...schema };
+
+  // Remove deprecated fields from properties
+  if (cleaned.properties) {
+    cleaned.properties = { ...cleaned.properties };
+    for (const field of fieldsToRemove) {
+      delete cleaned.properties[field];
+    }
+  }
+
+  // Remove from required array if present
+  if (cleaned.required && Array.isArray(cleaned.required)) {
+    cleaned.required = cleaned.required.filter((r: string) => !fieldsToRemove.includes(r));
+  }
+
+  return cleaned;
+}
+
 // Load official AdCP tools from cached schema index
 function loadOfficialAdCPToolsWithTypes(): {
   mediaBuyTools: string[];
@@ -255,13 +345,27 @@ function loadOfficialAdCPToolsWithTypes(): {
     const sponsoredIntelligenceTools: string[] = [];
     const protocolTools: string[] = [];
 
-    // Extract tools from each domain's tasks
+    // Extract tools from each domain's tasks (skipping deprecated tools)
     const extractToolsFromDomain = (domain: string, targetArray: string[]) => {
       const tasks = schemaIndex.schemas?.[domain]?.tasks;
       if (tasks) {
         for (const taskName of Object.keys(tasks)) {
           // Convert kebab-case to snake_case (e.g., "get-products" -> "get_products")
           const toolName = taskName.replace(/-/g, '_');
+
+          // Skip deprecated tools
+          if (DEPRECATED_TOOLS.has(toolName)) {
+            console.log(`   ⏭️  Skipping deprecated tool: ${toolName}`);
+            continue;
+          }
+
+          // Also skip if the task is explicitly marked deprecated in the schema
+          const task = tasks[taskName];
+          if (task.deprecated) {
+            console.log(`   ⏭️  Skipping deprecated tool: ${toolName} (marked in schema)`);
+            continue;
+          }
+
           targetArray.push(toolName);
         }
       }

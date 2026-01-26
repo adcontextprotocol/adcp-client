@@ -609,14 +609,14 @@ describe('TaskExecutor Error Scenarios', { skip: process.env.CI ? 'Slow tests - 
   describe('MCP Error Response Handling', () => {
     test('should extract error message from MCP isError response', async () => {
       ProtocolClient.callTool = mock.fn(async () => {
-        throw new Error("Error calling tool 'list_authorized_properties': name 'get_testing_context' is not defined");
+        throw new Error("Error calling tool 'get_products': name 'get_testing_context' is not defined");
       });
 
       const executor = new TaskExecutor();
       const result = await executor.executeTask(mockAgent, 'errorTask', {});
 
       assert.strictEqual(result.success, false);
-      assert(result.error.includes("Error calling tool 'list_authorized_properties'"));
+      assert(result.error.includes("Error calling tool 'get_products'"));
       assert(result.error.includes("name 'get_testing_context' is not defined"));
     });
 

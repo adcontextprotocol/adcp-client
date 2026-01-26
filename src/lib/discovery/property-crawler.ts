@@ -114,7 +114,7 @@ export class PropertyCrawler {
   }
 
   /**
-   * Crawl a single agent to get its authorized publisher domains
+   * Crawl a single agent to get its authorized publisher domains via capabilities
    */
   async crawlAgent(agentInfo: AgentInfo): Promise<string[]> {
     const client = new SingleAgentClient({
@@ -126,13 +126,15 @@ export class PropertyCrawler {
     });
 
     try {
-      const result = await client.listAuthorizedProperties({});
+      // Use capabilities API which replaced list_authorized_properties
+      const capabilities = await client.getCapabilities();
 
-      if (!result.success || !result.data) {
-        throw new Error(result.error || 'Failed to fetch publisher domains');
+      if (!capabilities.publisherDomains) {
+        // Agent may not report publisher domains in capabilities
+        return [];
       }
 
-      return result.data.publisher_domains || [];
+      return capabilities.publisherDomains;
     } catch (error) {
       throw new Error(`Failed to crawl agent: ${error instanceof Error ? error.message : String(error)}`);
     }

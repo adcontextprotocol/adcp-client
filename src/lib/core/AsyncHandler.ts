@@ -8,7 +8,6 @@ import type {
   ListCreativesResponse,
   PreviewCreativeResponse,
   GetMediaBuyDeliveryResponse,
-  ListAuthorizedPropertiesResponse,
   ProvidePerformanceFeedbackResponse,
   GetSignalsResponse,
   ActivateSignalResponse,
@@ -178,10 +177,6 @@ export interface AsyncHandlerConfig {
     response: GetMediaBuyDeliveryResponse,
     metadata: WebhookMetadata
   ) => void | Promise<void>;
-  onListAuthorizedPropertiesStatusChange?: (
-    response: ListAuthorizedPropertiesResponse,
-    metadata: WebhookMetadata
-  ) => void | Promise<void>;
   onProvidePerformanceFeedbackStatusChange?: (
     response: ProvidePerformanceFeedbackResponse,
     metadata: WebhookMetadata
@@ -298,10 +293,6 @@ export class AsyncHandler {
 
       case 'get_media_buy_delivery':
         handler = this.config.onGetMediaBuyDeliveryStatusChange;
-        break;
-
-      case 'list_authorized_properties':
-        handler = this.config.onListAuthorizedPropertiesStatusChange;
         break;
 
       case 'provide_performance_feedback':

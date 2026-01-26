@@ -463,9 +463,6 @@ async function executeTaskOnAgent(
       case 'get_media_buy_delivery':
         result = await client.getMediaBuyDelivery(args, handler);
         break;
-      case 'list_authorized_properties':
-        result = await client.listAuthorizedProperties(args, handler);
-        break;
       case 'provide_performance_feedback':
         result = await client.providePerformanceFeedback(args, handler);
         break;
@@ -1136,34 +1133,12 @@ app.post<{
   Params: { agentId: string };
   Body: { agentConfig?: AgentConfig; [key: string]: any };
 }>('/api/agents/:agentId/list-authorized-properties', async (request, reply) => {
-  try {
-    const { agentId } = request.params;
-    const body = request.body as any;
-
-    const agentConfig = body.agentConfig;
-    const params = { ...body };
-    delete params.agentConfig;
-
-    const client = getAgentClient(agentId, agentConfig);
-    const result = await client.listAuthorizedProperties(params, createDefaultInputHandler());
-
-    return reply.send({
-      success: result.success,
-      data: result.data,
-      error: result.error,
-      metadata: result.metadata,
-      debug_logs: result.debug_logs,
-      timestamp: new Date().toISOString(),
-    });
-  } catch (error) {
-    app.log.error({ error }, 'List authorized properties error');
-    return reply.code(500).send({
-      success: false,
-      error: error instanceof Error ? error.message : 'Unknown error',
-      debug_logs: createErrorDebugLog(error),
-      timestamp: new Date().toISOString(),
-    });
-  }
+  // list_authorized_properties is deprecated in v3 - use get_adcp_capabilities instead
+  return reply.code(410).send({
+    success: false,
+    error: 'list_authorized_properties is deprecated. Use get_adcp_capabilities instead.',
+    timestamp: new Date().toISOString(),
+  });
 });
 
 // Get Media Buy Delivery

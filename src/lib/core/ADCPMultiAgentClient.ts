@@ -22,8 +22,6 @@ import type {
   ListCreativesResponse,
   GetMediaBuyDeliveryRequest,
   GetMediaBuyDeliveryResponse,
-  ListAuthorizedPropertiesRequest,
-  ListAuthorizedPropertiesResponse,
   ProvidePerformanceFeedbackRequest,
   ProvidePerformanceFeedbackResponse,
   GetSignalsRequest,
@@ -161,20 +159,6 @@ export class AgentCollection {
   ): Promise<TaskResult<GetMediaBuyDeliveryResponse>[]> {
     const promises = Array.from(this.clients.values()).map(client =>
       client.getMediaBuyDelivery(params, inputHandler, options)
-    );
-    return Promise.all(promises);
-  }
-
-  /**
-   * Execute listAuthorizedProperties on all agents in parallel
-   */
-  async listAuthorizedProperties(
-    params: ListAuthorizedPropertiesRequest,
-    inputHandler?: InputHandler,
-    options?: TaskOptions
-  ): Promise<TaskResult<ListAuthorizedPropertiesResponse>[]> {
-    const promises = Array.from(this.clients.values()).map(client =>
-      client.listAuthorizedProperties(params, inputHandler, options)
     );
     return Promise.all(promises);
   }

@@ -24,7 +24,6 @@ import type {
   ListCreativesResponse,
   UpdateMediaBuyResponse,
   GetMediaBuyDeliveryResponse,
-  ListAuthorizedPropertiesResponse,
   ProvidePerformanceFeedbackResponse,
   BuildCreativeResponse,
   PreviewCreativeResponse,
@@ -44,7 +43,6 @@ export type AdCPResponse =
   | ListCreativesResponse
   | UpdateMediaBuyResponse
   | GetMediaBuyDeliveryResponse
-  | ListAuthorizedPropertiesResponse
   | ProvidePerformanceFeedbackResponse
   | BuildCreativeResponse
   | PreviewCreativeResponse
@@ -101,7 +99,6 @@ const TOOL_RESPONSE_SCHEMAS: Partial<Record<string, z.ZodSchema<AdCPResponse>>> 
   sync_creatives: schemas.SyncCreativesResponseSchema as any, // Manually defined discriminated union
   list_creatives: schemas.ListCreativesResponseSchema as z.ZodSchema<AdCPResponse>,
   get_media_buy_delivery: schemas.GetMediaBuyDeliveryResponseSchema as z.ZodSchema<AdCPResponse>,
-  list_authorized_properties: schemas.ListAuthorizedPropertiesResponseSchema as z.ZodSchema<AdCPResponse>,
   provide_performance_feedback: schemas.ProvidePerformanceFeedbackResponseSchema as z.ZodSchema<AdCPResponse>,
   build_creative: schemas.BuildCreativeResponseSchema as z.ZodSchema<AdCPResponse>,
   preview_creative: schemas.PreviewCreativeResponseSchema as any, // Manually defined discriminated union

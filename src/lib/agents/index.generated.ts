@@ -20,8 +20,6 @@ import type {
   UpdateMediaBuyResponse,
   GetMediaBuyDeliveryRequest,
   GetMediaBuyDeliveryResponse,
-  ListAuthorizedPropertiesRequest,
-  ListAuthorizedPropertiesResponse,
   ProvidePerformanceFeedbackRequest,
   ProvidePerformanceFeedbackResponse,
   BuildCreativeRequest,
@@ -154,13 +152,6 @@ export class Agent {
    */
   async getMediaBuyDelivery(params: GetMediaBuyDeliveryRequest): Promise<GetMediaBuyDeliveryResponse> {
     return this.callTool<GetMediaBuyDeliveryResponse>('get_media_buy_delivery', params);
-  }
-
-  /**
-   * Official AdCP list_authorized_properties tool schema
-   */
-  async listAuthorizedProperties(params: ListAuthorizedPropertiesRequest): Promise<ListAuthorizedPropertiesResponse> {
-    return this.callTool<ListAuthorizedPropertiesResponse>('list_authorized_properties', params);
   }
 
   /**
@@ -367,13 +358,6 @@ export class AgentCollection {
    */
   async getMediaBuyDelivery(params: GetMediaBuyDeliveryRequest): Promise<GetMediaBuyDeliveryResponse[]> {
     return this.callToolOnAll<GetMediaBuyDeliveryResponse>('get_media_buy_delivery', params);
-  }
-
-  /**
-   * Official AdCP list_authorized_properties tool schema (across multiple agents)
-   */
-  async listAuthorizedProperties(params: ListAuthorizedPropertiesRequest): Promise<ListAuthorizedPropertiesResponse[]> {
-    return this.callToolOnAll<ListAuthorizedPropertiesResponse>('list_authorized_properties', params);
   }
 
   /**

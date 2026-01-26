@@ -87,7 +87,6 @@ export const MEDIA_BUY_TOOLS = [
   'sync_creatives',
   'list_creatives',
   'get_media_buy_delivery',
-  'list_authorized_properties',
   'provide_performance_feedback',
 ] as const;
 

@@ -1478,40 +1478,6 @@ export type AssetContentType1 =
   | 'url'
   | 'webhook';
 /**
- * Type of asset
- */
-export type AssetContentType2 =
-  | 'image'
-  | 'video'
-  | 'audio'
-  | 'text'
-  | 'markdown'
-  | 'html'
-  | 'css'
-  | 'javascript'
-  | 'vast'
-  | 'daast'
-  | 'promoted_offerings'
-  | 'url'
-  | 'webhook';
-/**
- * Type of asset
- */
-export type AssetContentType3 =
-  | 'image'
-  | 'video'
-  | 'audio'
-  | 'text'
-  | 'markdown'
-  | 'html'
-  | 'css'
-  | 'javascript'
-  | 'vast'
-  | 'daast'
-  | 'promoted_offerings'
-  | 'url'
-  | 'webhook';
-/**
  * Capabilities supported by creative agents for format handling
  */
 export type CreativeAgentCapability = 'validation' | 'assembly' | 'generation' | 'preview';
@@ -1562,10 +1528,6 @@ export interface Format {
    */
   description?: string;
   /**
-   * DEPRECATED: Use format_card instead. Optional preview image URL for format browsing/discovery UI. Should be 400x300px (4:3 aspect ratio) PNG or JPG. Used as thumbnail/card image in format browsers. This field is maintained for backward compatibility but format_card provides a more flexible, structured approach.
-   */
-  preview_image?: string;
-  /**
    * Optional URL to showcase page with examples and interactive demos of this format
    */
   example_url?: string;
@@ -1598,79 +1560,6 @@ export interface Format {
     )[]
   ];
   /**
-   * @deprecated
-   * DEPRECATED: Use 'assets' instead. Array of required assets or asset groups for this format. Each asset is identified by its asset_id, which must be used as the key in creative manifests. Can contain individual assets or repeatable asset sequences (e.g., carousel products, slideshow frames). This field is maintained for backward compatibility; new implementations should use 'assets' with the 'required' boolean on each asset.
-   */
-  assets_required?: (
-    | {
-        /**
-         * Discriminator indicating this is an individual asset requirement
-         */
-        item_type: 'individual';
-        /**
-         * Unique identifier for this asset. Creative manifests MUST use this exact value as the key in the assets object.
-         */
-        asset_id: string;
-        asset_type: AssetContentType;
-        /**
-         * Optional descriptive label for this asset's purpose (e.g., 'hero_image', 'logo'). Not used for referencing assets in manifests—use asset_id instead. This field is for human-readable documentation and UI display only.
-         */
-        asset_role?: string;
-        /**
-         * Whether this asset is required
-         */
-        required?: boolean;
-        /**
-         * Technical requirements for this asset (dimensions, file size, duration, etc.). For template formats, use parameters_from_format_id: true to indicate asset parameters must match the format_id parameters (width/height/unit and/or duration_ms).
-         */
-        requirements?: {
-          [k: string]: unknown | undefined;
-        };
-      }
-    | {
-        /**
-         * Discriminator indicating this is a repeatable asset group
-         */
-        item_type: 'repeatable_group';
-        /**
-         * Identifier for this asset group (e.g., 'product', 'slide', 'card')
-         */
-        asset_group_id: string;
-        /**
-         * Minimum number of repetitions required
-         */
-        min_count: number;
-        /**
-         * Maximum number of repetitions allowed
-         */
-        max_count: number;
-        /**
-         * Assets within each repetition of this group
-         */
-        assets: {
-          /**
-           * Identifier for this asset within the group
-           */
-          asset_id: string;
-          asset_type: AssetContentType1;
-          /**
-           * Optional descriptive label for this asset's purpose (e.g., 'hero_image', 'logo'). Not used for referencing assets in manifests—use asset_id instead. This field is for human-readable documentation and UI display only.
-           */
-          asset_role?: string;
-          /**
-           * Whether this asset is required in each repetition
-           */
-          required?: boolean;
-          /**
-           * Technical requirements for this asset. For template formats, use parameters_from_format_id: true to indicate asset parameters must match the format_id parameters (width/height/unit and/or duration_ms).
-           */
-          requirements?: {
-            [k: string]: unknown | undefined;
-          };
-        }[];
-      }
-  )[];
-  /**
    * Array of all assets supported for this format. Each asset is identified by its asset_id, which must be used as the key in creative manifests. Use the 'required' boolean on each asset to indicate whether it's mandatory. This field replaces the deprecated 'assets_required' and enables full asset discovery for buyers and AI agents.
    */
   assets?: (
@@ -1683,7 +1572,7 @@ export interface Format {
          * Unique identifier for this asset. Creative manifests MUST use this exact value as the key in the assets object.
          */
         asset_id: string;
-        asset_type: AssetContentType2;
+        asset_type: AssetContentType;
         /**
          * Optional descriptive label for this asset's purpose (e.g., 'hero_image', 'logo', 'third_party_tracking'). Not used for referencing assets in manifests—use asset_id instead. This field is for human-readable documentation and UI display only.
          */
@@ -1728,7 +1617,7 @@ export interface Format {
            * Identifier for this asset within the group
            */
           asset_id: string;
-          asset_type: AssetContentType3;
+          asset_type: AssetContentType1;
           /**
            * Optional descriptive label for this asset's purpose. Not used for referencing assets in manifests—use asset_id instead. This field is for human-readable documentation and UI display only.
            */
@@ -3703,62 +3592,6 @@ export interface DeliveryMetrics {
     [k: string]: unknown | undefined;
   };
   [k: string]: unknown | undefined;
-}
-/**
- * Standard error structure for task-specific errors and warnings
- */
-
-// list_authorized_properties parameters
-/**
- * Request parameters for discovering which publishers this agent is authorized to represent
- */
-export interface ListAuthorizedPropertiesRequest {
-  /**
-   * Filter to specific publisher domains (optional). If omitted, returns all publishers this agent represents.
-   */
-  publisher_domains?: string[];
-  context?: ContextObject;
-  ext?: ExtensionObject;
-}
-/**
- * Opaque correlation data that is echoed unchanged in responses. Used for internal tracking, UI session IDs, trace IDs, and other caller-specific identifiers that don't affect protocol behavior. Context data is never parsed by AdCP agents - it's simply preserved and returned.
- */
-
-// list_authorized_properties response
-/**
- * Standardized advertising media channels describing how buyers allocate budget. Channels are planning abstractions, not technical substrates. See the Media Channel Taxonomy specification for detailed definitions.
- */
-export interface ListAuthorizedPropertiesResponse {
-  /**
-   * Publisher domains this agent is authorized to represent. Buyers should fetch each publisher's adagents.json to see property definitions and verify this agent is in their authorized_agents list with authorization scope.
-   */
-  publisher_domains: string[];
-  /**
-   * Primary advertising channels represented in this property portfolio. Helps buying agents quickly filter relevance.
-   */
-  primary_channels?: MediaChannel[];
-  /**
-   * Primary countries (ISO 3166-1 alpha-2 codes) where properties are concentrated. Helps buying agents quickly filter relevance.
-   */
-  primary_countries?: string[];
-  /**
-   * Markdown-formatted description of the property portfolio, including inventory types, audience characteristics, and special features.
-   */
-  portfolio_description?: string;
-  /**
-   * Publisher's advertising content policies, restrictions, and guidelines in natural language. May include prohibited categories, blocked advertisers, restricted tactics, brand safety requirements, or links to full policy documentation.
-   */
-  advertising_policies?: string;
-  /**
-   * ISO 8601 timestamp of when the agent's publisher authorization list was last updated. Buyers can use this to determine if their cached publisher adagents.json files might be stale.
-   */
-  last_updated?: string;
-  /**
-   * Task-specific errors and warnings (e.g., property availability issues)
-   */
-  errors?: Error[];
-  context?: ContextObject;
-  ext?: ExtensionObject;
 }
 /**
  * Standard error structure for task-specific errors and warnings
