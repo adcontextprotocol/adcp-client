@@ -79,10 +79,14 @@ export interface ToolInfo {
 /**
  * Known AdCP tool names for protocol detection.
  * These map to task names in the AdCP schema index (kebab-case -> snake_case).
+ *
+ * Note: Some tools appear in multiple arrays (e.g., list_creative_formats is in
+ * both MEDIA_BUY_TOOLS and CREATIVE_TOOLS). This is intentional - these tools
+ * serve multiple domains, and their presence should activate all relevant protocols.
  */
 export const MEDIA_BUY_TOOLS = [
   'get_products',
-  'list_creative_formats',
+  'list_creative_formats', // Also in CREATIVE_TOOLS - serves both domains
   'create_media_buy',
   'update_media_buy',
   'sync_creatives',

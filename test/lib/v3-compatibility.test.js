@@ -180,8 +180,8 @@ describe('parseCapabilitiesResponse', () => {
 });
 
 describe('Capability Checks', () => {
-  test('supportsV3 should return true for v3.0', () => {
-    const capabilities = { version: 'v3.0', majorVersions: [3] };
+  test('supportsV3 should return true for v3', () => {
+    const capabilities = { version: 'v3', majorVersions: [3] };
     assert.strictEqual(supportsV3(capabilities), true);
   });
 
@@ -648,8 +648,7 @@ describe('Tool Constants', () => {
   });
 
   test('SIGNALS_TOOLS should contain expected tools', () => {
-    // Note: Tool names are discover_signals and activate_signal
-    assert.ok(SIGNALS_TOOLS.includes('discover_signals'));
+    assert.ok(SIGNALS_TOOLS.includes('get_signals'));
     assert.ok(SIGNALS_TOOLS.includes('activate_signal'));
   });
 

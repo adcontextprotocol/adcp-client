@@ -1936,17 +1936,27 @@ export class SingleAgentClient {
   }
 
   /**
-   * Get request schema for a given task type
-   * Note: Some schemas not available due to complex discriminated unions
+   * Get request schema for a given task type.
+   *
+   * Note: Schema validation is not available for all task types. The following
+   * tasks use complex discriminated unions that cannot be represented in Zod
+   * without significant runtime overhead:
+   *
+   * - `get_products`: Uses conditional fields based on brief vs proposal_id
+   * - `update_media_buy`: Uses conditional package update operations
+   *
+   * For these tasks, TypeScript compile-time checking is still enforced via
+   * the generated types, but runtime validation falls back to basic type checks.
+   * Invalid requests will still be rejected by the server with descriptive errors.
+   *
+   * @internal
    */
   private getRequestSchema(taskType: string): z.ZodSchema | null {
-    // Only include schemas that exist in generated schemas
-    // Schemas with complex discriminated unions (get_products, update_media_buy) are not available
     const schemaMap: Partial<Record<string, z.ZodSchema>> = {
-      // get_products: uses complex discriminated unions - validation falls back to type checking
+      // get_products: excluded - complex discriminated unions (brief vs proposal_id)
       list_creative_formats: schemas.ListCreativeFormatsRequestSchema,
       create_media_buy: schemas.CreateMediaBuyRequestSchema,
-      // update_media_buy: uses complex discriminated unions - validation falls back to type checking
+      // update_media_buy: excluded - complex discriminated unions (package operations)
       sync_creatives: schemas.SyncCreativesRequestSchema,
       list_creatives: schemas.ListCreativesRequestSchema,
       get_media_buy_delivery: schemas.GetMediaBuyDeliveryRequestSchema,
