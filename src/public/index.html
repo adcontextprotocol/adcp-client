@@ -9916,7 +9916,9 @@
 
         // Detection method (synthetic = v2, native = v3)
         if (caps._synthetic !== undefined) {
-          const method = caps._synthetic ? 'Synthetic (v2 - built from tool list)' : 'Native (v3 - get_adcp_capabilities)';
+          const method = caps._synthetic
+            ? 'Synthetic (v2 - built from tool list)'
+            : 'Native (v3 - get_adcp_capabilities)';
           html += `
                               <tr style="border-bottom: 1px solid #eee;">
                                   <td style="padding: 10px; font-weight: 600;">Detection Method</td>
@@ -9995,8 +9997,10 @@
             }
             if (mb.execution.creative_specs) {
               const specs = [];
-              if (mb.execution.creative_specs.vast_versions) specs.push(`VAST ${mb.execution.creative_specs.vast_versions.join(', ')}`);
-              if (mb.execution.creative_specs.mraid_versions) specs.push(`MRAID ${mb.execution.creative_specs.mraid_versions.join(', ')}`);
+              if (mb.execution.creative_specs.vast_versions)
+                specs.push(`VAST ${mb.execution.creative_specs.vast_versions.join(', ')}`);
+              if (mb.execution.creative_specs.mraid_versions)
+                specs.push(`MRAID ${mb.execution.creative_specs.mraid_versions.join(', ')}`);
               if (mb.execution.creative_specs.vpaid) specs.push('VPAID');
               if (mb.execution.creative_specs.simid) specs.push('SIMID');
               if (specs.length > 0) {

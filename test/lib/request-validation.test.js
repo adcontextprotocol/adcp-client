@@ -122,10 +122,7 @@ describe('SingleAgentClient Request Validation', () => {
         });
       } catch (err) {
         // Network error is expected (mock agent), but validation error is not
-        assert.ok(
-          !err.message.includes('Request validation failed'),
-          'Should not reject extra fields in v3 schemas'
-        );
+        assert.ok(!err.message.includes('Request validation failed'), 'Should not reject extra fields in v3 schemas');
       }
     });
   });
@@ -144,10 +141,7 @@ describe('SingleAgentClient Request Validation', () => {
         });
       } catch (err) {
         // Network error is expected (mock agent), but validation error is not
-        assert.ok(
-          !err.message.includes('Request validation failed'),
-          'Should not reject extra fields in v3 schemas'
-        );
+        assert.ok(!err.message.includes('Request validation failed'), 'Should not reject extra fields in v3 schemas');
       }
     });
   });

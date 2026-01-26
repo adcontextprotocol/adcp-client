@@ -544,7 +544,9 @@ describe('Response Unwrapper', () => {
                         publisher_properties: [{ property_url: 'https://example.com' }],
                         format_ids: [{ agent_url: 'https://agent.example.com', id: 'banner-300x250' }],
                         delivery_type: 'impression',
-                        pricing_options: [{ pricing_option_id: 'cpm-1', model: 'cpm', fixed_price: 5.0, currency: 'USD' }],
+                        pricing_options: [
+                          { pricing_option_id: 'cpm-1', model: 'cpm', fixed_price: 5.0, currency: 'USD' },
+                        ],
                         delivery_measurement: { provider: 'Internal' },
                       },
                     ],
