@@ -41,7 +41,7 @@ const TEST_SCENARIOS = [
 // Note: These tokens are intentionally public for the AdCP test infrastructure.
 // They provide rate-limited access to test agents for SDK development and examples.
 const BUILT_IN_AGENTS = {
-  test: {
+  'test-mcp': {
     url: 'https://test-agent.adcontextprotocol.org/mcp/',
     protocol: 'mcp',
     auth_token: '1v8tAhASaUYYp4odoQ1PnMpdqNaMiTrCRqYo9OJp6IQ',
@@ -318,7 +318,7 @@ async function handleTestCommand(args) {
     agentUrl = agentArg;
   } else {
     console.error(`ERROR: '${agentArg}' is not a valid agent alias or URL\n`);
-    console.error('Built-in aliases: test, test-a2a, creative');
+    console.error('Built-in aliases: test-mcp, test-a2a, creative');
     console.error(`Saved aliases: ${Object.keys(listAgents()).join(', ') || 'none'}\n`);
     process.exit(2);
   }
@@ -402,7 +402,7 @@ USAGE:
   npx @adcp/client <agent-alias|url> [tool-name] [payload] [options]
 
 ARGUMENTS:
-  agent-alias|url   Saved agent alias (e.g., 'test') or full URL to agent endpoint
+  agent-alias|url   Saved agent alias (e.g., 'test-mcp') or full URL to agent endpoint
   tool-name         Name of the tool to call (optional - omit to list available tools)
   payload           JSON payload for the tool (default: {})
                     - Can be inline JSON: '{"brief":"text"}'
@@ -420,7 +420,7 @@ OPTIONS:
   --debug           Show debug information
 
 BUILT-IN TEST AGENTS:
-  test                        AdCP public test agent (MCP, with auth)
+  test-mcp                    AdCP public test agent (MCP, with auth)
   test-a2a                    AdCP public test agent (A2A, with auth)
   test-no-auth                AdCP public test agent (MCP, no auth - demonstrates errors)
   test-a2a-no-auth            AdCP public test agent (A2A, no auth - demonstrates errors)
@@ -443,8 +443,8 @@ AGENT TESTING:
 
 EXAMPLES:
   # Use built-in test agent (zero config!)
-  npx @adcp/client test
-  npx @adcp/client test get_products '{"brief":"coffee brands"}'
+  npx @adcp/client test-mcp
+  npx @adcp/client test-mcp get_products '{"brief":"coffee brands"}'
   npx @adcp/client creative list_creative_formats
 
   # Use built-in test agent with A2A protocol
@@ -490,9 +490,9 @@ EXAMPLES:
   adcp myagent get_products '{"brief":"travel"}' --json | jq '.products[0]'
 
   # Run agent tests
-  adcp test test                          # Test built-in test agent with discovery scenario
-  adcp test test discovery                # Explicit discovery scenario
-  adcp test test full_sales_flow          # Full media buy lifecycle test
+  adcp test test-mcp                      # Test built-in test agent with discovery scenario
+  adcp test test-mcp discovery            # Explicit discovery scenario
+  adcp test test-mcp full_sales_flow      # Full media buy lifecycle test
   adcp test https://my-agent.com discovery --auth $TOKEN
   adcp test myagent error_handling --json # JSON output for CI
   adcp test --list-scenarios              # Show all available scenarios
