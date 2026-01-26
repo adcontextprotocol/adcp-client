@@ -3,6 +3,7 @@
 import type { AgentConfig } from '../types';
 import { SingleAgentClient, type SingleAgentClientConfig } from './SingleAgentClient';
 import type { InputHandler, TaskOptions, TaskResult, TaskInfo, Message } from './ConversationTypes';
+import type { AdcpCapabilities } from '../utils/capabilities';
 import type {
   GetProductsRequest,
   GetProductsResponse,
@@ -315,7 +316,7 @@ export class AgentClient {
   // ====== PROTOCOL TASKS ======
 
   /**
-   * Get AdCP capabilities
+   * Get AdCP capabilities (v3 tool call)
    */
   async getAdcpCapabilities(
     params: GetAdCPCapabilitiesRequest,
@@ -332,6 +333,16 @@ export class AgentClient {
     }
 
     return result;
+  }
+
+  /**
+   * Get normalized capabilities with v2/v3 fallback
+   *
+   * For v3 servers: calls get_adcp_capabilities tool
+   * For v2 servers: builds synthetic capabilities from tool list
+   */
+  async getCapabilities(): Promise<AdcpCapabilities> {
+    return this.client.getCapabilities();
   }
 
   // ====== CONVERSATION MANAGEMENT ======

@@ -9901,6 +9901,9 @@
           return;
         }
 
+        // Get normalized capabilities object if available
+        const caps = data._capabilities || {};
+
         let html = `
                       <div style="padding: 20px;">
                           <h4 style="margin-top: 0;">AdCP Capabilities</h4>
@@ -9910,6 +9913,27 @@
                                   <th style="padding: 10px; text-align: left;">Value</th>
                               </tr>
                   `;
+
+        // Detection method (synthetic = v2, native = v3)
+        if (caps._synthetic !== undefined) {
+          const method = caps._synthetic ? 'Synthetic (v2 - built from tool list)' : 'Native (v3 - get_adcp_capabilities)';
+          html += `
+                              <tr style="border-bottom: 1px solid #eee;">
+                                  <td style="padding: 10px; font-weight: 600;">Detection Method</td>
+                                  <td style="padding: 10px;">${escapeHtml(method)}</td>
+                              </tr>
+                      `;
+        }
+
+        // Version string
+        if (caps.version) {
+          html += `
+                              <tr style="border-bottom: 1px solid #eee;">
+                                  <td style="padding: 10px; font-weight: 600;">Server Version</td>
+                                  <td style="padding: 10px;">${escapeHtml(caps.version)}</td>
+                              </tr>
+                      `;
+        }
 
         // AdCP version info
         if (data.adcp && data.adcp.major_versions) {
@@ -9927,6 +9951,16 @@
                               <tr style="border-bottom: 1px solid #eee;">
                                   <td style="padding: 10px; font-weight: 600;">Supported Protocols</td>
                                   <td style="padding: 10px;">${escapeHtml(data.supported_protocols.join(', '))}</td>
+                              </tr>
+                      `;
+        }
+
+        // Available tools (useful for v2 synthetic mode)
+        if (caps.availableTools && caps.availableTools.length > 0) {
+          html += `
+                              <tr style="border-bottom: 1px solid #eee;">
+                                  <td style="padding: 10px; font-weight: 600;">Available Tools</td>
+                                  <td style="padding: 10px;">${escapeHtml(caps.availableTools.join(', '))}</td>
                               </tr>
                       `;
         }

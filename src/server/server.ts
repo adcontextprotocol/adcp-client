@@ -1128,7 +1128,7 @@ app.post<{
   }
 });
 
-// Get AdCP Capabilities
+// Get AdCP Capabilities (with v2/v3 fallback)
 app.post<{
   Params: { agentId: string };
   Body: { agentConfig?: AgentConfig; [key: string]: any };
@@ -1136,20 +1136,24 @@ app.post<{
   try {
     const { agentId } = request.params;
     const body = request.body as any;
-
     const agentConfig = body.agentConfig;
-    const params = { ...body };
-    delete params.agentConfig;
 
     const client = getAgentClient(agentId, agentConfig);
-    const result = await client.getAdcpCapabilities(params, createDefaultInputHandler());
+    // Use getCapabilities() which handles both v2 and v3 servers:
+    // - v3: calls get_adcp_capabilities tool
+    // - v2: builds synthetic capabilities from tool list
+    const capabilities = await client.getCapabilities();
 
     return reply.send({
-      success: result.success,
-      data: result.data,
-      error: result.error,
-      metadata: result.metadata,
-      debug_logs: result.debug_logs,
+      success: true,
+      data: {
+        adcp: {
+          major_versions: capabilities.majorVersions,
+        },
+        supported_protocols: capabilities.protocols,
+        // Include full capabilities for additional detail
+        _capabilities: capabilities,
+      },
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
