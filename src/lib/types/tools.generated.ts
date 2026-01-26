@@ -5919,16 +5919,7 @@ export interface UpdateContentStandardsResponse {
   /**
    * Errors that occurred during the update
    */
-  errors?: {
-    /**
-     * Error code (e.g., STANDARDS_NOT_FOUND, SCOPE_CONFLICT)
-     */
-    code: string;
-    /**
-     * Human-readable error message
-     */
-    message: string;
-  }[];
+  errors?: Error[];
   /**
    * If scope change conflicts with another configuration, the ID of the conflicting standards
    */
@@ -5937,7 +5928,7 @@ export interface UpdateContentStandardsResponse {
   ext?: ExtensionObject;
 }
 /**
- * Opaque correlation data that is echoed unchanged in responses. Used for internal tracking, UI session IDs, trace IDs, and other caller-specific identifiers that don't affect protocol behavior. Context data is never parsed by AdCP agents - it's simply preserved and returned.
+ * Standard error structure for task-specific errors and warnings
  */
 
 // calibrate_content parameters
