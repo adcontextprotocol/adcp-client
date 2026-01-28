@@ -22,7 +22,15 @@ export type TestScenario =
   // Behavioral analysis scenarios
   | 'behavior_analysis' // Analyze agent behavior: auth requirements, brief relevance, filtering
   // Response consistency scenarios
-  | 'response_consistency'; // Check for schema errors, pagination bugs, data mismatches
+  | 'response_consistency' // Check for schema errors, pagination bugs, data mismatches
+  // v3 Governance protocol scenarios
+  | 'governance_property_lists' // Property list CRUD operations
+  | 'governance_content_standards' // Content standards lifecycle
+  // v3 SI (Sponsored Intelligence) protocol scenarios
+  | 'si_session_lifecycle' // Full SI session: initiate -> messages -> terminate
+  | 'si_availability' // Check SI offering availability
+  // v3 Capability discovery
+  | 'capability_discovery'; // Verify get_adcp_capabilities response
 
 export interface TestOptions {
   // Protocol to use for testing (default: 'mcp')
@@ -68,6 +76,14 @@ export interface TestOptions {
   max_formats_to_test?: number;
   // For signals testing: specific signal types to test
   signal_types?: string[];
+  // For governance testing: name for test property list
+  property_list_name?: string;
+  // For governance testing: specific content standards to test
+  content_standards_id?: string;
+  // For SI testing: specific offering ID to test
+  si_offering_id?: string;
+  // For SI testing: initial conversation context
+  si_context?: string;
 }
 
 export interface TestStepResult {
@@ -105,6 +121,11 @@ export interface AgentProfile {
     name?: string;
     type?: string;
   }>;
+  // v3 capabilities
+  adcp_version?: 'v2' | 'v3';
+  supported_protocols?: string[];
+  supports_governance?: boolean;
+  supports_si?: boolean;
 }
 
 export interface TestResult {

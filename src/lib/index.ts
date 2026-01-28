@@ -212,6 +212,10 @@ export { getAuthToken, createAdCPHeaders, createMCPAuthHeaders, createAuthentica
 // Schema validation for requests/responses
 export { validateAgentUrl, validateAdCPResponse, getExpectedSchema, handleAdCPResponse } from './validation';
 
+// ====== PROTOCOL CLIENTS ======
+// Low-level protocol clients for MCP and A2A (primarily for testing)
+export { ProtocolClient, callMCPTool, callA2ATool, createMCPClient, createA2AClient } from './protocols';
+
 // ====== RESPONSE UTILITIES ======
 // Public utilities for working with AdCP responses
 export { getStandardFormats, unwrapProtocolResponse, isAdcpError, isAdcpSuccess } from './utils';

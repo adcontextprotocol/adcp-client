@@ -44,6 +44,16 @@ export {
   testTemporalValidation,
   testBehaviorAnalysis,
   testResponseConsistency,
+  // v3 scenarios
+  testGovernancePropertyLists,
+  testGovernanceContentStandards,
+  testSISessionLifecycle,
+  testSIAvailability,
+  testCapabilityDiscovery,
+  // v3 helpers
+  hasGovernanceTools,
+  hasSITools,
+  likelySupportsV3,
   // Types
   type TestScenario,
   type TestOptions,
