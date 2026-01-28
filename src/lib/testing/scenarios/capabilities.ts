@@ -136,10 +136,9 @@ export async function testCapabilityDiscovery(
     });
 
     // Check for v3 upgrade potential
-    const v3ToolsPresent = [
-      ...GOVERNANCE_TOOLS,
-      ...SPONSORED_INTELLIGENCE_TOOLS,
-    ].filter(t => profile.tools.includes(t));
+    const v3ToolsPresent = [...GOVERNANCE_TOOLS, ...SPONSORED_INTELLIGENCE_TOOLS].filter(t =>
+      profile.tools.includes(t)
+    );
 
     if (v3ToolsPresent.length > 0) {
       steps.push({
@@ -164,10 +163,7 @@ export async function testCapabilityDiscovery(
 /**
  * Validate the structure and content of a get_adcp_capabilities response
  */
-function validateCapabilitiesResponse(
-  response: any,
-  tools: string[]
-): { steps: TestStepResult[] } {
+function validateCapabilitiesResponse(response: any, tools: string[]): { steps: TestStepResult[] } {
   const steps: TestStepResult[] = [];
 
   // Check for required fields
@@ -178,9 +174,10 @@ function validateCapabilitiesResponse(
     step: 'Validate capabilities structure',
     passed: hasAdcp && hasProtocols,
     duration_ms: 0,
-    details: hasAdcp && hasProtocols
-      ? 'Response has required fields (adcp.major_versions, supported_protocols)'
-      : `Missing fields: ${!hasAdcp ? 'adcp.major_versions' : ''} ${!hasProtocols ? 'supported_protocols' : ''}`,
+    details:
+      hasAdcp && hasProtocols
+        ? 'Response has required fields (adcp.major_versions, supported_protocols)'
+        : `Missing fields: ${!hasAdcp ? 'adcp.major_versions' : ''} ${!hasProtocols ? 'supported_protocols' : ''}`,
   });
 
   // Check for v3 version
@@ -229,10 +226,7 @@ function validateCapabilitiesResponse(
 /**
  * Cross-validate that reported protocols match available tools
  */
-function crossValidateProtocolsAndTools(
-  capabilities: AdcpCapabilities,
-  tools: string[]
-): { steps: TestStepResult[] } {
+function crossValidateProtocolsAndTools(capabilities: AdcpCapabilities, tools: string[]): { steps: TestStepResult[] } {
   const steps: TestStepResult[] = [];
   const issues: string[] = [];
 
@@ -280,7 +274,10 @@ function crossValidateProtocolsAndTools(
   if (!capabilities.protocols.includes('creative') && CREATIVE_TOOLS.some(t => tools.includes(t))) {
     unreportedProtocols.push('creative');
   }
-  if (!capabilities.protocols.includes('sponsored_intelligence') && SPONSORED_INTELLIGENCE_TOOLS.some(t => tools.includes(t))) {
+  if (
+    !capabilities.protocols.includes('sponsored_intelligence') &&
+    SPONSORED_INTELLIGENCE_TOOLS.some(t => tools.includes(t))
+  ) {
     unreportedProtocols.push('sponsored_intelligence');
   }
 
@@ -292,9 +289,7 @@ function crossValidateProtocolsAndTools(
     step: 'Cross-validate protocols and tools',
     passed: issues.length === 0,
     duration_ms: 0,
-    details: issues.length === 0
-      ? 'Reported protocols match available tools'
-      : issues.join('; '),
+    details: issues.length === 0 ? 'Reported protocols match available tools' : issues.join('; '),
     warnings: issues.length > 0 ? issues : undefined,
   });
 
@@ -305,7 +300,9 @@ function crossValidateProtocolsAndTools(
  * Check if agent likely supports v3 capabilities
  */
 export function likelySupportsV3(tools: string[]): boolean {
-  return tools.includes('get_adcp_capabilities') ||
+  return (
+    tools.includes('get_adcp_capabilities') ||
     GOVERNANCE_TOOLS.some(t => tools.includes(t)) ||
-    SPONSORED_INTELLIGENCE_TOOLS.some(t => tools.includes(t));
+    SPONSORED_INTELLIGENCE_TOOLS.some(t => tools.includes(t))
+  );
 }

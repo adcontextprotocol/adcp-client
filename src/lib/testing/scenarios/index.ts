@@ -38,21 +38,10 @@ export {
 } from './edge-cases';
 
 // v3 Governance protocol testing
-export {
-  testGovernancePropertyLists,
-  testGovernanceContentStandards,
-  hasGovernanceTools,
-} from './governance';
+export { testGovernancePropertyLists, testGovernanceContentStandards, hasGovernanceTools } from './governance';
 
 // v3 SI (Sponsored Intelligence) protocol testing
-export {
-  testSISessionLifecycle,
-  testSIAvailability,
-  hasSITools,
-} from './sponsored-intelligence';
+export { testSISessionLifecycle, testSIAvailability, hasSITools } from './sponsored-intelligence';
 
 // v3 Capability discovery testing
-export {
-  testCapabilityDiscovery,
-  likelySupportsV3,
-} from './capabilities';
+export { testCapabilityDiscovery, likelySupportsV3 } from './capabilities';

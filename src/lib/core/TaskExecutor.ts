@@ -635,20 +635,12 @@ export class TaskExecutor {
       wasFieldDiscussed: field =>
         // Check if any agent message requested this field via input-required
         messages.some(
-          m =>
-            m.role === 'agent' &&
-            m.content &&
-            typeof m.content === 'object' &&
-            (m.content as any).field === field
+          m => m.role === 'agent' && m.content && typeof m.content === 'object' && (m.content as any).field === field
         ),
       getPreviousResponse: field => {
         // Find the agent message that requested this field
         const fieldRequestIndex = messages.findIndex(
-          m =>
-            m.role === 'agent' &&
-            m.content &&
-            typeof m.content === 'object' &&
-            (m.content as any).field === field
+          m => m.role === 'agent' && m.content && typeof m.content === 'object' && (m.content as any).field === field
         );
         // The response is the next user message after the field request
         if (fieldRequestIndex >= 0) {

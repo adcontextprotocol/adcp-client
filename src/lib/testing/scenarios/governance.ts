@@ -10,9 +10,7 @@
 
 import type { TestOptions, TestStepResult, AgentProfile, TaskResult } from '../types';
 import { createTestClient, runStep, discoverAgentProfile } from '../client';
-import {
-  GOVERNANCE_TOOLS,
-} from '../../utils/capabilities';
+import { GOVERNANCE_TOOLS } from '../../utils/capabilities';
 
 // Property list tools
 const PROPERTY_LIST_TOOLS = [
