@@ -47,6 +47,12 @@ import {
   testTemporalValidation,
   testBehaviorAnalysis,
   testResponseConsistency,
+  // v3 scenarios
+  testGovernancePropertyLists,
+  testGovernanceContentStandards,
+  testSISessionLifecycle,
+  testSIAvailability,
+  testCapabilityDiscovery,
 } from './scenarios';
 
 // Import types
@@ -181,6 +187,39 @@ export async function testAgent(
         profile = result.profile;
         break;
 
+      // v3 Governance protocol scenarios
+      case 'governance_property_lists':
+        result = await testGovernancePropertyLists(agentUrl, effectiveOptions);
+        steps = result.steps;
+        profile = result.profile;
+        break;
+
+      case 'governance_content_standards':
+        result = await testGovernanceContentStandards(agentUrl, effectiveOptions);
+        steps = result.steps;
+        profile = result.profile;
+        break;
+
+      // v3 SI protocol scenarios
+      case 'si_session_lifecycle':
+        result = await testSISessionLifecycle(agentUrl, effectiveOptions);
+        steps = result.steps;
+        profile = result.profile;
+        break;
+
+      case 'si_availability':
+        result = await testSIAvailability(agentUrl, effectiveOptions);
+        steps = result.steps;
+        profile = result.profile;
+        break;
+
+      // v3 Capability discovery
+      case 'capability_discovery':
+        result = await testCapabilityDiscovery(agentUrl, effectiveOptions);
+        steps = result.steps;
+        profile = result.profile;
+        break;
+
       default:
         steps = [
           {
@@ -249,4 +288,14 @@ export {
   testTemporalValidation,
   testBehaviorAnalysis,
   testResponseConsistency,
+  // v3 scenarios
+  testGovernancePropertyLists,
+  testGovernanceContentStandards,
+  testSISessionLifecycle,
+  testSIAvailability,
+  testCapabilityDiscovery,
+  // v3 helpers
+  hasGovernanceTools,
+  hasSITools,
+  likelySupportsV3,
 } from './scenarios';

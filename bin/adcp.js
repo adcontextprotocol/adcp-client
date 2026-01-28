@@ -35,6 +35,12 @@ const TEST_SCENARIOS = [
   'temporal_validation',
   'behavior_analysis',
   'response_consistency',
+  // v3 protocol scenarios
+  'capability_discovery',
+  'governance_property_lists',
+  'governance_content_standards',
+  'si_session_lifecycle',
+  'si_availability',
 ];
 
 // Built-in test agent aliases (shared between main CLI and test command)
@@ -221,6 +227,12 @@ async function handleTestCommand(args) {
       temporal_validation: 'Test date/time ordering and format validation',
       behavior_analysis: 'Analyze agent behavior: auth, brief relevance, filtering',
       response_consistency: 'Check for schema errors, pagination bugs, data mismatches',
+      // v3 protocol scenarios
+      capability_discovery: 'Test get_adcp_capabilities and verify v3 protocol support',
+      governance_property_lists: 'Test property list CRUD (create, get, update, delete)',
+      governance_content_standards: 'Test content standards listing and calibration',
+      si_session_lifecycle: 'Test full SI session: initiate → messages → terminate',
+      si_availability: 'Quick check for SI offering availability',
     };
 
     for (const scenario of TEST_SCENARIOS) {

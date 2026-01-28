@@ -633,12 +633,23 @@ export class TaskExecutor {
       },
       getSummary: () => messages.map(m => `${m.role}: ${JSON.stringify(m.content)}`).join('\n'),
       wasFieldDiscussed: field =>
-        messages.some(m => m.content && typeof m.content === 'object' && m.content[field] !== undefined),
+        // Check if any agent message requested this field via input-required
+        messages.some(
+          m => m.role === 'agent' && m.content && typeof m.content === 'object' && (m.content as any).field === field
+        ),
       getPreviousResponse: field => {
-        const msg = messages.find(
-          m => m.role === 'user' && m.content && typeof m.content === 'object' && m.content[field] !== undefined
+        // Find the agent message that requested this field
+        const fieldRequestIndex = messages.findIndex(
+          m => m.role === 'agent' && m.content && typeof m.content === 'object' && (m.content as any).field === field
         );
-        return msg?.content[field];
+        // The response is the next user message after the field request
+        if (fieldRequestIndex >= 0) {
+          const responseMsg = messages
+            .slice(fieldRequestIndex + 1)
+            .find(m => m.role === 'user' && m.metadata?.type === 'input_response');
+          return responseMsg?.content;
+        }
+        return undefined;
       },
     };
 
@@ -695,6 +706,7 @@ export class TaskExecutor {
       response.contextId,
       handlerResponse,
       messages,
+      inputHandler, // Pass handler for multi-round clarification
       options,
       debugLogs,
       startTime
@@ -765,7 +777,7 @@ export class TaskExecutor {
       throw new Error(`Deferred task not found: ${token}`);
     }
 
-    // Continue task with the provided input
+    // Continue task with the provided input (no handler for resumed deferred tasks)
     return this.continueTaskWithInput<T>(
       state.agent,
       state.taskId,
@@ -773,7 +785,8 @@ export class TaskExecutor {
       state.params,
       state.contextId,
       input,
-      state.messages
+      state.messages,
+      undefined // No handler for deferred tasks - input was provided by human
     );
   }
 
@@ -788,6 +801,7 @@ export class TaskExecutor {
     contextId: string,
     input: any,
     messages: Message[],
+    inputHandler: InputHandler | undefined,
     options: TaskOptions = {},
     debugLogs: any[] = [],
     startTime: number = Date.now()
@@ -823,7 +837,7 @@ export class TaskExecutor {
     };
     messages.push(responseMessage);
 
-    // Handle the continued response
+    // Handle the continued response (pass inputHandler for multi-round clarification)
     return this.handleAsyncResponse<T>(
       agent,
       taskId,
@@ -831,7 +845,7 @@ export class TaskExecutor {
       params,
       response,
       messages,
-      undefined,
+      inputHandler,
       options,
       debugLogs,
       startTime
