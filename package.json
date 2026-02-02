@@ -23,6 +23,11 @@
       "import": "./dist/lib/testing/index.js",
       "require": "./dist/lib/testing/index.js",
       "types": "./dist/lib/testing/index.d.ts"
+    },
+    "./auth": {
+      "import": "./dist/lib/auth/index.js",
+      "require": "./dist/lib/auth/index.js",
+      "types": "./dist/lib/auth/index.d.ts"
     }
   },
   "bin": {
