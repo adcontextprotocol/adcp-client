@@ -1,5 +1,27 @@
 # Changelog
 
+## 3.10.0
+
+### Minor Changes
+
+- d7f6ce7: Add OAuth discovery utilities for checking if MCP servers support OAuth authentication.
+
+  New exports:
+  - `discoverOAuthMetadata(agentUrl)` - Fetches OAuth Authorization Server Metadata from `/.well-known/oauth-authorization-server`
+  - `supportsOAuth(agentUrl)` - Simple boolean check if server supports OAuth
+  - `supportsDynamicRegistration(agentUrl)` - Check if server supports dynamic client registration
+  - `OAuthMetadata` type - RFC 8414 Authorization Server Metadata structure
+  - `DiscoveryOptions` type - Options for discovery requests (timeout, custom fetch)
+
+### Patch Changes
+
+- d7f6ce7: Export Account domain types from main entry point
+  - `Account` - billing account interface
+  - `ListAccountsRequest` - request params for listing accounts
+  - `ListAccountsResponse` - response payload with accounts array
+
+  The types existed in tools.generated.ts but weren't explicitly exported from @adcp/client.
+
 ## 3.9.0
 
 ### Minor Changes
