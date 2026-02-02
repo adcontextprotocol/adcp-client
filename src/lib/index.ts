@@ -198,6 +198,10 @@ export type {
   CreativePolicy,
   BrandManifest,
   BrandManifestReference,
+  // Account Domain
+  Account,
+  ListAccountsRequest,
+  ListAccountsResponse,
 } from './types/tools.generated';
 
 // ====== ZOD SCHEMAS (for runtime validation) ======
