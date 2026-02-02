@@ -76,6 +76,10 @@ export interface GetProductsRequest {
    */
   proposal_id?: string;
   brand_manifest?: BrandManifestReference;
+  /**
+   * Account context for product lookup. When provided, returns products with pricing specific to this account's rate card. Optional if the agent has a single account.
+   */
+  account_id?: string;
   filters?: ProductFilters;
   property_list?: PropertyListReference;
   context?: ContextObject;
@@ -694,6 +698,10 @@ export interface Product {
    */
   is_custom?: boolean;
   /**
+   * Whether buyers can filter this product to a subset of its publisher_properties. When false (default), the product is 'all or nothing' - buyers must accept all properties or the product is excluded from property_list filtering results.
+   */
+  property_targeting_allowed?: boolean;
+  /**
    * Explanation of why this product matches the brief (only included when brief is provided)
    */
   brief_relevance?: string;
@@ -778,31 +786,33 @@ export interface CPMPricingOption {
    * Minimum acceptable bid for auction pricing (mutually exclusive with fixed_price). Bids below this value will be rejected.
    */
   floor_price?: number;
-  /**
-   * Optional pricing guidance for auction-based bidding. Helps buyers calibrate bids with historical percentiles.
-   */
-  price_guidance?: {
-    /**
-     * 25th percentile winning price
-     */
-    p25?: number;
-    /**
-     * Median winning price
-     */
-    p50?: number;
-    /**
-     * 75th percentile winning price
-     */
-    p75?: number;
-    /**
-     * 90th percentile winning price
-     */
-    p90?: number;
-  };
+  price_guidance?: PriceGuidance;
   /**
    * Minimum spend requirement per package using this pricing option, in the specified currency
    */
   min_spend_per_package?: number;
+  [k: string]: unknown | undefined;
+}
+/**
+ * Optional pricing guidance for auction-based bidding
+ */
+export interface PriceGuidance {
+  /**
+   * 25th percentile of recent winning bids
+   */
+  p25?: number;
+  /**
+   * Median of recent winning bids
+   */
+  p50?: number;
+  /**
+   * 75th percentile of recent winning bids
+   */
+  p75?: number;
+  /**
+   * 90th percentile of recent winning bids
+   */
+  p90?: number;
   [k: string]: unknown | undefined;
 }
 /**
@@ -829,31 +839,33 @@ export interface VCPMPricingOption {
    * Minimum acceptable bid for auction pricing (mutually exclusive with fixed_price). Bids below this value will be rejected.
    */
   floor_price?: number;
-  /**
-   * Optional pricing guidance for auction-based bidding. Helps buyers calibrate bids with historical percentiles.
-   */
-  price_guidance?: {
-    /**
-     * 25th percentile of recent winning bids
-     */
-    p25?: number;
-    /**
-     * Median of recent winning bids
-     */
-    p50?: number;
-    /**
-     * 75th percentile of recent winning bids
-     */
-    p75?: number;
-    /**
-     * 90th percentile of recent winning bids
-     */
-    p90?: number;
-  };
+  price_guidance?: PriceGuidance1;
   /**
    * Minimum spend requirement per package using this pricing option, in the specified currency
    */
   min_spend_per_package?: number;
+  [k: string]: unknown | undefined;
+}
+/**
+ * Optional pricing guidance for auction-based bidding
+ */
+export interface PriceGuidance1 {
+  /**
+   * 25th percentile of recent winning bids
+   */
+  p25?: number;
+  /**
+   * Median of recent winning bids
+   */
+  p50?: number;
+  /**
+   * 75th percentile of recent winning bids
+   */
+  p75?: number;
+  /**
+   * 90th percentile of recent winning bids
+   */
+  p90?: number;
   [k: string]: unknown | undefined;
 }
 /**
@@ -880,31 +892,33 @@ export interface CPCPricingOption {
    * Minimum acceptable bid for auction pricing (mutually exclusive with fixed_price). Bids below this value will be rejected.
    */
   floor_price?: number;
-  /**
-   * Optional pricing guidance for auction-based bidding. Helps buyers calibrate bids with historical percentiles.
-   */
-  price_guidance?: {
-    /**
-     * 25th percentile of recent winning bids
-     */
-    p25?: number;
-    /**
-     * Median of recent winning bids
-     */
-    p50?: number;
-    /**
-     * 75th percentile of recent winning bids
-     */
-    p75?: number;
-    /**
-     * 90th percentile of recent winning bids
-     */
-    p90?: number;
-  };
+  price_guidance?: PriceGuidance2;
   /**
    * Minimum spend requirement per package using this pricing option, in the specified currency
    */
   min_spend_per_package?: number;
+  [k: string]: unknown | undefined;
+}
+/**
+ * Optional pricing guidance for auction-based bidding
+ */
+export interface PriceGuidance2 {
+  /**
+   * 25th percentile of recent winning bids
+   */
+  p25?: number;
+  /**
+   * Median of recent winning bids
+   */
+  p50?: number;
+  /**
+   * 75th percentile of recent winning bids
+   */
+  p75?: number;
+  /**
+   * 90th percentile of recent winning bids
+   */
+  p90?: number;
   [k: string]: unknown | undefined;
 }
 /**
@@ -931,31 +945,33 @@ export interface CPCVPricingOption {
    * Minimum acceptable bid for auction pricing (mutually exclusive with fixed_price). Bids below this value will be rejected.
    */
   floor_price?: number;
-  /**
-   * Optional pricing guidance for auction-based bidding. Helps buyers calibrate bids with historical percentiles.
-   */
-  price_guidance?: {
-    /**
-     * 25th percentile of recent winning bids
-     */
-    p25?: number;
-    /**
-     * Median of recent winning bids
-     */
-    p50?: number;
-    /**
-     * 75th percentile of recent winning bids
-     */
-    p75?: number;
-    /**
-     * 90th percentile of recent winning bids
-     */
-    p90?: number;
-  };
+  price_guidance?: PriceGuidance3;
   /**
    * Minimum spend requirement per package using this pricing option, in the specified currency
    */
   min_spend_per_package?: number;
+  [k: string]: unknown | undefined;
+}
+/**
+ * Optional pricing guidance for auction-based bidding
+ */
+export interface PriceGuidance3 {
+  /**
+   * 25th percentile of recent winning bids
+   */
+  p25?: number;
+  /**
+   * Median of recent winning bids
+   */
+  p50?: number;
+  /**
+   * 75th percentile of recent winning bids
+   */
+  p75?: number;
+  /**
+   * 90th percentile of recent winning bids
+   */
+  p90?: number;
   [k: string]: unknown | undefined;
 }
 /**
@@ -982,27 +998,7 @@ export interface CPVPricingOption {
    * Minimum acceptable bid for auction pricing (mutually exclusive with fixed_price). Bids below this value will be rejected.
    */
   floor_price?: number;
-  /**
-   * Optional pricing guidance for auction-based bidding. Helps buyers calibrate bids with historical percentiles.
-   */
-  price_guidance?: {
-    /**
-     * 25th percentile of recent winning bids
-     */
-    p25?: number;
-    /**
-     * Median of recent winning bids
-     */
-    p50?: number;
-    /**
-     * 75th percentile of recent winning bids
-     */
-    p75?: number;
-    /**
-     * 90th percentile of recent winning bids
-     */
-    p90?: number;
-  };
+  price_guidance?: PriceGuidance4;
   /**
    * CPV-specific parameters defining the view threshold
    */
@@ -1022,6 +1018,28 @@ export interface CPVPricingOption {
    * Minimum spend requirement per package using this pricing option, in the specified currency
    */
   min_spend_per_package?: number;
+  [k: string]: unknown | undefined;
+}
+/**
+ * Optional pricing guidance for auction-based bidding
+ */
+export interface PriceGuidance4 {
+  /**
+   * 25th percentile of recent winning bids
+   */
+  p25?: number;
+  /**
+   * Median of recent winning bids
+   */
+  p50?: number;
+  /**
+   * 75th percentile of recent winning bids
+   */
+  p75?: number;
+  /**
+   * 90th percentile of recent winning bids
+   */
+  p90?: number;
   [k: string]: unknown | undefined;
 }
 /**
@@ -1048,27 +1066,7 @@ export interface CPPPricingOption {
    * Minimum acceptable bid for auction pricing (mutually exclusive with fixed_price). Bids below this value will be rejected.
    */
   floor_price?: number;
-  /**
-   * Optional pricing guidance for auction-based bidding. Helps buyers calibrate bids with historical percentiles.
-   */
-  price_guidance?: {
-    /**
-     * 25th percentile of recent winning bids
-     */
-    p25?: number;
-    /**
-     * Median of recent winning bids
-     */
-    p50?: number;
-    /**
-     * 75th percentile of recent winning bids
-     */
-    p75?: number;
-    /**
-     * 90th percentile of recent winning bids
-     */
-    p90?: number;
-  };
+  price_guidance?: PriceGuidance5;
   /**
    * CPP-specific parameters for demographic targeting
    */
@@ -1087,6 +1085,28 @@ export interface CPPPricingOption {
    * Minimum spend requirement per package using this pricing option, in the specified currency
    */
   min_spend_per_package?: number;
+  [k: string]: unknown | undefined;
+}
+/**
+ * Optional pricing guidance for auction-based bidding
+ */
+export interface PriceGuidance5 {
+  /**
+   * 25th percentile of recent winning bids
+   */
+  p25?: number;
+  /**
+   * Median of recent winning bids
+   */
+  p50?: number;
+  /**
+   * 75th percentile of recent winning bids
+   */
+  p75?: number;
+  /**
+   * 90th percentile of recent winning bids
+   */
+  p90?: number;
   [k: string]: unknown | undefined;
 }
 /**
@@ -1113,27 +1133,7 @@ export interface FlatRatePricingOption {
    * Minimum acceptable bid for auction pricing (mutually exclusive with fixed_price). Bids below this value will be rejected.
    */
   floor_price?: number;
-  /**
-   * Optional pricing guidance for auction-based bidding. Helps buyers calibrate bids with historical percentiles.
-   */
-  price_guidance?: {
-    /**
-     * 25th percentile of recent winning bids
-     */
-    p25?: number;
-    /**
-     * Median of recent winning bids
-     */
-    p50?: number;
-    /**
-     * 75th percentile of recent winning bids
-     */
-    p75?: number;
-    /**
-     * 90th percentile of recent winning bids
-     */
-    p90?: number;
-  };
+  price_guidance?: PriceGuidance6;
   /**
    * Flat rate parameters for DOOH and time-based campaigns
    */
@@ -1172,6 +1172,28 @@ export interface FlatRatePricingOption {
    * Minimum spend requirement per package using this pricing option, in the specified currency
    */
   min_spend_per_package?: number;
+  [k: string]: unknown | undefined;
+}
+/**
+ * Optional pricing guidance for auction-based bidding
+ */
+export interface PriceGuidance6 {
+  /**
+   * 25th percentile of recent winning bids
+   */
+  p25?: number;
+  /**
+   * Median of recent winning bids
+   */
+  p50?: number;
+  /**
+   * 75th percentile of recent winning bids
+   */
+  p75?: number;
+  /**
+   * 90th percentile of recent winning bids
+   */
+  p90?: number;
   [k: string]: unknown | undefined;
 }
 /**
@@ -1560,7 +1582,7 @@ export interface Format {
     )[]
   ];
   /**
-   * Array of all assets supported for this format. Each asset is identified by its asset_id, which must be used as the key in creative manifests. Use the 'required' boolean on each asset to indicate whether it's mandatory. This field replaces the deprecated 'assets_required' and enables full asset discovery for buyers and AI agents.
+   * Array of all assets supported for this format. Each asset is identified by its asset_id, which must be used as the key in creative manifests. Use the 'required' boolean on each asset to indicate whether it's mandatory.
    */
   assets?: (
     | {
@@ -1913,6 +1935,10 @@ export interface CreateMediaBuyRequest {
    */
   buyer_ref: string;
   /**
+   * Account to bill for this media buy. Optional if the agent has a single account or the seller can determine the account from context (brand + agent). Required if the agent has multiple accounts and the seller cannot route automatically.
+   */
+  account_id?: string;
+  /**
    * ID of a proposal from get_products to execute. When provided with total_budget, the publisher converts the proposal's allocation percentages into packages automatically. Alternative to providing packages array.
    */
   proposal_id?: string;
@@ -2085,6 +2111,7 @@ export interface TargetingOverlay {
    */
   axe_exclude_segment?: string;
   frequency_cap?: FrequencyCap;
+  property_list?: PropertyListReference;
   [k: string]: unknown | undefined;
 }
 /**
@@ -2098,7 +2125,7 @@ export interface FrequencyCap {
   [k: string]: unknown | undefined;
 }
 /**
- * Assignment of a creative asset to a package with optional placement targeting. Used in create_media_buy and update_media_buy requests. Note: sync_creatives does not support placement_ids - use create/update_media_buy for placement-level targeting.
+ * Reference to a property list for targeting specific properties within this product. The package runs on the intersection of the product's publisher_properties and this list. Sellers SHOULD return a validation error if the product has property_targeting_allowed: false.
  */
 export interface CreativeAssignment {
   /**
@@ -2200,7 +2227,7 @@ export interface ImageAsset {
   [k: string]: unknown | undefined;
 }
 /**
- * Video asset with URL and specifications
+ * Video asset with URL and technical specifications including audio track properties
  */
 export interface VideoAsset {
   /**
@@ -2220,17 +2247,97 @@ export interface VideoAsset {
    */
   duration_ms?: number;
   /**
-   * Video file format (mp4, webm, mov, etc.)
+   * File size in bytes
    */
-  format?: string;
+  file_size_bytes?: number;
   /**
-   * Video bitrate in kilobits per second
+   * Video container format (mp4, webm, mov, etc.)
    */
-  bitrate_kbps?: number;
+  container_format?: string;
+  /**
+   * Video codec used (h264, h265, vp9, av1, prores, etc.)
+   */
+  video_codec?: string;
+  /**
+   * Video stream bitrate in kilobits per second
+   */
+  video_bitrate_kbps?: number;
+  /**
+   * Frame rate as string to preserve precision (e.g., '23.976', '29.97', '30')
+   */
+  frame_rate?: string;
+  /**
+   * Whether the video uses constant (CFR) or variable (VFR) frame rate
+   */
+  frame_rate_type?: 'constant' | 'variable';
+  /**
+   * Scan type of the video
+   */
+  scan_type?: 'progressive' | 'interlaced';
+  /**
+   * Color space of the video
+   */
+  color_space?: 'rec709' | 'rec2020' | 'rec2100' | 'srgb' | 'dci_p3';
+  /**
+   * HDR format if applicable, or 'sdr' for standard dynamic range
+   */
+  hdr_format?: 'sdr' | 'hdr10' | 'hdr10_plus' | 'hlg' | 'dolby_vision';
+  /**
+   * Chroma subsampling format
+   */
+  chroma_subsampling?: '4:2:0' | '4:2:2' | '4:4:4';
+  /**
+   * Video bit depth
+   */
+  video_bit_depth?: 8 | 10 | 12;
+  /**
+   * GOP/keyframe interval in seconds
+   */
+  gop_interval_seconds?: number;
+  /**
+   * GOP structure type
+   */
+  gop_type?: 'closed' | 'open';
+  /**
+   * Position of moov atom in MP4 container
+   */
+  moov_atom_position?: 'start' | 'end';
+  /**
+   * Whether the video contains an audio track
+   */
+  has_audio?: boolean;
+  /**
+   * Audio codec used (aac, aac_lc, he_aac, pcm, mp3, ac3, eac3, etc.)
+   */
+  audio_codec?: string;
+  /**
+   * Audio sampling rate in Hz (e.g., 44100, 48000)
+   */
+  audio_sampling_rate_hz?: number;
+  /**
+   * Audio channel configuration
+   */
+  audio_channels?: 'mono' | 'stereo' | '5.1' | '7.1';
+  /**
+   * Audio bit depth
+   */
+  audio_bit_depth?: 16 | 24 | 32;
+  /**
+   * Audio bitrate in kilobits per second
+   */
+  audio_bitrate_kbps?: number;
+  /**
+   * Integrated loudness in LUFS
+   */
+  audio_loudness_lufs?: number;
+  /**
+   * True peak level in dBFS
+   */
+  audio_true_peak_dbfs?: number;
   [k: string]: unknown | undefined;
 }
 /**
- * Audio asset with URL and specifications
+ * Audio asset with URL and technical specifications
  */
 export interface AudioAsset {
   /**
@@ -2242,13 +2349,41 @@ export interface AudioAsset {
    */
   duration_ms?: number;
   /**
-   * Audio file format (mp3, wav, aac, etc.)
+   * File size in bytes
    */
-  format?: string;
+  file_size_bytes?: number;
   /**
-   * Audio bitrate in kilobits per second
+   * Audio container/file format (mp3, m4a, aac, wav, ogg, flac, etc.)
+   */
+  container_format?: string;
+  /**
+   * Audio codec used (aac, aac_lc, he_aac, pcm, mp3, vorbis, opus, flac, ac3, eac3, etc.)
+   */
+  codec?: string;
+  /**
+   * Sampling rate in Hz (e.g., 44100, 48000, 96000)
+   */
+  sampling_rate_hz?: number;
+  /**
+   * Channel configuration
+   */
+  channels?: 'mono' | 'stereo' | '5.1' | '7.1';
+  /**
+   * Bit depth
+   */
+  bit_depth?: 16 | 24 | 32;
+  /**
+   * Bitrate in kilobits per second
    */
   bitrate_kbps?: number;
+  /**
+   * Integrated loudness in LUFS
+   */
+  loudness_lufs?: number;
+  /**
+   * True peak level in dBFS
+   */
+  true_peak_dbfs?: number;
   [k: string]: unknown | undefined;
 }
 /**
@@ -2503,6 +2638,7 @@ export interface CreateMediaBuySuccess {
    * Buyer's reference identifier for this media buy
    */
   buyer_ref: string;
+  account?: Account;
   /**
    * ISO 8601 timestamp for creative upload deadline
    */
@@ -2515,7 +2651,48 @@ export interface CreateMediaBuySuccess {
   ext?: ExtensionObject;
 }
 /**
- * A specific product within a media buy (line item)
+ * Account billed for this media buy. Includes advertiser, billing proxy (if any), and rate card applied.
+ */
+export interface Account {
+  /**
+   * Unique identifier for this account
+   */
+  account_id: string;
+  /**
+   * Human-readable account name (e.g., 'Coke', 'Coke c/o Publicis')
+   */
+  name: string;
+  /**
+   * The advertiser whose rates apply to this account
+   */
+  advertiser?: string;
+  /**
+   * Optional intermediary who receives invoices on behalf of the advertiser (e.g., agency)
+   */
+  billing_proxy?: string;
+  /**
+   * Account status
+   */
+  status: 'active' | 'suspended' | 'closed';
+  /**
+   * Identifier for the rate card applied to this account
+   */
+  rate_card?: string;
+  /**
+   * Payment terms (e.g., 'net_30', 'prepay')
+   */
+  payment_terms?: string;
+  /**
+   * Maximum outstanding balance allowed
+   */
+  credit_limit?: {
+    amount: number;
+    currency: string;
+  };
+  ext?: ExtensionObject;
+}
+/**
+ * Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.
  */
 export interface Package {
   /**
@@ -2587,6 +2764,10 @@ export type ValidationMode = 'strict' | 'lenient';
  * Authentication schemes for push notification endpoints
  */
 export interface SyncCreativesRequest {
+  /**
+   * Account that owns these creatives. Optional if the agent has a single account or the seller can determine the account from context. Required if the agent has multiple accounts and the seller cannot route automatically.
+   */
+  account_id?: string;
   /**
    * Array of creative assets to sync (create or update)
    *
@@ -2683,6 +2864,7 @@ export interface SyncCreativesSuccess {
      * Creative ID from the request
      */
     creative_id: string;
+    account?: Account;
     action: CreativeAction;
     /**
      * Platform-specific ID assigned to the creative
@@ -2729,7 +2911,7 @@ export interface SyncCreativesSuccess {
   ext?: ExtensionObject;
 }
 /**
- * Opaque correlation data that is echoed unchanged in responses. Used for internal tracking, UI session IDs, trace IDs, and other caller-specific identifiers that don't affect protocol behavior. Context data is never parsed by AdCP agents - it's simply preserved and returned.
+ * Account that owns this creative
  */
 export interface SyncCreativesError {
   /**
@@ -2818,6 +3000,10 @@ export interface ListCreativesRequest {
  * Filter criteria for querying creative assets from the centralized library. By default, archived creatives are excluded from results. To include archived creatives, explicitly filter by status='archived' or include 'archived' in the statuses array.
  */
 export interface CreativeFilters {
+  /**
+   * Filter creatives by owning accounts. Useful for agencies managing multiple client accounts.
+   */
+  account_ids?: string[];
   /**
    * Filter by creative format types (e.g., video, audio, display)
    */
@@ -2991,6 +3177,7 @@ export interface ListCreativesResponse {
      * Unique identifier for the creative
      */
     creative_id: string;
+    account?: Account;
     /**
      * Human-readable creative name
      */
@@ -3131,7 +3318,7 @@ export interface ListCreativesResponse {
   ext?: ExtensionObject;
 }
 /**
- * Format identifier specifying which format this creative conforms to
+ * Account that owns this creative
  */
 
 // update_media_buy parameters
@@ -3735,7 +3922,7 @@ export interface CreativeManifest {
    */
   promoted_offering?: string;
   /**
-   * Map of asset IDs to actual asset content. Each key MUST match an asset_id from the format's assets_required array (e.g., 'banner_image', 'clickthrough_url', 'video_file', 'vast_tag'). The asset_id is the technical identifier used to match assets to format requirements.
+   * Map of asset IDs to actual asset content. Each key MUST match an asset_id from the format's assets array (e.g., 'banner_image', 'clickthrough_url', 'video_file', 'vast_tag'). The asset_id is the technical identifier used to match assets to format requirements.
    *
    * IMPORTANT: Creative manifest validation MUST be performed in the context of the format specification. The format defines what type each asset_id should be, which eliminates any validation ambiguity.
    */
@@ -3919,7 +4106,7 @@ export interface CreativeManifest1 {
    */
   promoted_offering?: string;
   /**
-   * Map of asset IDs to actual asset content. Each key MUST match an asset_id from the format's assets_required array (e.g., 'banner_image', 'clickthrough_url', 'video_file', 'vast_tag'). The asset_id is the technical identifier used to match assets to format requirements.
+   * Map of asset IDs to actual asset content. Each key MUST match an asset_id from the format's assets array (e.g., 'banner_image', 'clickthrough_url', 'video_file', 'vast_tag'). The asset_id is the technical identifier used to match assets to format requirements.
    *
    * IMPORTANT: Creative manifest validation MUST be performed in the context of the format specification. The format defines what type each asset_id should be, which eliminates any validation ambiguity.
    */
@@ -4640,7 +4827,7 @@ export interface PropertyListFilters {
  */
 export interface FeatureRequirement {
   /**
-   * Feature to evaluate (discovered via list_property_features)
+   * Feature to evaluate (discovered via get_adcp_capabilities)
    */
   feature_id: string;
   /**
@@ -6456,6 +6643,24 @@ export interface SICapabilities {
     acp_checkout?: boolean;
     [k: string]: unknown | undefined;
   };
+  /**
+   * A2UI (Agent-to-UI) capabilities
+   */
+  a2ui?: {
+    /**
+     * Supports A2UI surface rendering
+     */
+    supported?: boolean;
+    /**
+     * Supported A2UI component catalogs (e.g., 'si-standard', 'standard')
+     */
+    catalogs?: string[];
+    [k: string]: unknown | undefined;
+  };
+  /**
+   * Supports MCP Apps for rendering A2UI surfaces in iframes
+   */
+  mcp_apps?: boolean;
   [k: string]: unknown | undefined;
 }
 /**
@@ -6574,11 +6779,17 @@ export interface SISendMessageResponse {
      * Conversational message from brand agent
      */
     message?: string;
+    surface?: A2UISurface;
     /**
-     * Visual components to render
+     * @deprecated
+     * Visual components to render (DEPRECATED: use surface instead)
      */
     ui_elements?: SIUIElement[];
   };
+  /**
+   * MCP resource URI for hosts with MCP Apps support (e.g., ui://si/session-abc123)
+   */
+  mcp_resource_uri?: string;
   /**
    * Current session status
    */
@@ -6627,6 +6838,57 @@ export interface SISendMessageResponse {
   };
   errors?: Error[];
   ext?: ExtensionObject;
+}
+/**
+ * A2UI surface with interactive components
+ */
+export interface A2UISurface {
+  /**
+   * Unique identifier for this surface
+   */
+  surfaceId: string;
+  /**
+   * Component catalog to use for rendering
+   */
+  catalogId?: string;
+  /**
+   * Flat list of components (adjacency list structure)
+   */
+  components: A2UIComponent[];
+  /**
+   * ID of the root component (if not specified, first component is root)
+   */
+  rootId?: string;
+  /**
+   * Application data that components can bind to
+   */
+  dataModel?: {
+    [k: string]: unknown | undefined;
+  };
+  [k: string]: unknown | undefined;
+}
+/**
+ * A component in an A2UI surface
+ */
+export interface A2UIComponent {
+  /**
+   * Unique identifier for this component within the surface
+   */
+  id: string;
+  /**
+   * ID of the parent component (null for root)
+   */
+  parentId?: string;
+  /**
+   * Component definition (keyed by component type)
+   */
+  component: {
+    /**
+     * Component properties
+     */
+    [k: string]: {} | undefined;
+  };
+  [k: string]: unknown | undefined;
 }
 /**
  * Standard error structure for task-specific errors and warnings
@@ -6729,7 +6991,7 @@ export interface GetAdCPCapabilitiesRequest {
   /**
    * Specific protocols to query capabilities for. If omitted, returns capabilities for all supported protocols.
    */
-  protocols?: ('media_buy' | 'signals' | 'sponsored_intelligence')[];
+  protocols?: ('media_buy' | 'signals' | 'governance' | 'sponsored_intelligence' | 'creative')[];
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -6754,7 +7016,7 @@ export interface GetAdCPCapabilitiesResponse {
   /**
    * Which AdCP domain protocols this seller supports
    */
-  supported_protocols: ('media_buy' | 'signals' | 'governance' | 'sponsored_intelligence')[];
+  supported_protocols: ('media_buy' | 'signals' | 'governance' | 'sponsored_intelligence' | 'creative')[];
   /**
    * Media-buy protocol capabilities. Only present if media_buy is in supported_protocols.
    */
@@ -6994,4 +7256,40 @@ export interface GetAdCPCapabilitiesResponse {
 }
 /**
  * Optional media-buy protocol features. Used in capability declarations (seller declares support) and product filters (buyer requires support). If a seller declares a feature as true, they MUST honor requests using that feature.
+ */
+
+// list_accounts parameters
+/**
+ * Request parameters for listing accounts accessible to the authenticated agent
+ */
+export interface ListAccountsRequest {
+  /**
+   * Filter accounts by status
+   */
+  status?: 'active' | 'suspended' | 'closed' | 'all';
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Opaque correlation data that is echoed unchanged in responses. Used for internal tracking, UI session IDs, trace IDs, and other caller-specific identifiers that don't affect protocol behavior. Context data is never parsed by AdCP agents - it's simply preserved and returned.
+ */
+
+// list_accounts response
+/**
+ * Response payload for list_accounts task
+ */
+export interface ListAccountsResponse {
+  /**
+   * Array of accounts accessible to the authenticated agent
+   */
+  accounts: Account[];
+  /**
+   * Task-specific errors and warnings
+   */
+  errors?: Error[];
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * A billing account representing the relationship between a buyer and seller. The account determines rate cards, payment terms, and billing entity.
  */

@@ -188,7 +188,7 @@ function enforceStrictSchema(schema: any): any {
 // Load AdCP tool schemas from cache
 function loadToolSchema(
   toolName: string,
-  taskType: 'media-buy' | 'signals' | 'creative' | 'governance' | 'sponsored-intelligence' | 'protocol' = 'media-buy'
+  taskType: 'media-buy' | 'signals' | 'creative' | 'governance' | 'sponsored-intelligence' | 'protocol' | 'account' = 'media-buy'
 ): any {
   try {
     console.log(`📥 Loading ${toolName} schema from cache (${taskType})...`);
@@ -248,7 +248,7 @@ function loadToolSchema(
 }
 
 // All domains with tasks
-const TASK_DOMAINS = ['media-buy', 'creative', 'signals', 'governance', 'sponsored-intelligence', 'protocol'] as const;
+const TASK_DOMAINS = ['media-buy', 'creative', 'signals', 'governance', 'sponsored-intelligence', 'protocol', 'account'] as const;
 type TaskDomain = (typeof TASK_DOMAINS)[number];
 
 // Deprecated tools that should be excluded from type generation
@@ -328,6 +328,7 @@ function loadOfficialAdCPToolsWithTypes(): {
   governanceTools: string[];
   sponsoredIntelligenceTools: string[];
   protocolTools: string[];
+  accountTools: string[];
 } {
   try {
     console.log('📥 Loading official AdCP tools from cached schema index...');
@@ -344,6 +345,7 @@ function loadOfficialAdCPToolsWithTypes(): {
     const governanceTools: string[] = [];
     const sponsoredIntelligenceTools: string[] = [];
     const protocolTools: string[] = [];
+    const accountTools: string[] = [];
 
     // Extract tools from each domain's tasks (skipping deprecated tools)
     const extractToolsFromDomain = (domain: string, targetArray: string[]) => {
@@ -377,6 +379,7 @@ function loadOfficialAdCPToolsWithTypes(): {
     extractToolsFromDomain('governance', governanceTools);
     extractToolsFromDomain('sponsored-intelligence', sponsoredIntelligenceTools);
     extractToolsFromDomain('protocol', protocolTools);
+    extractToolsFromDomain('account', accountTools);
 
     const totalTools =
       mediaBuyTools.length +
@@ -384,7 +387,8 @@ function loadOfficialAdCPToolsWithTypes(): {
       signalsTools.length +
       governanceTools.length +
       sponsoredIntelligenceTools.length +
-      protocolTools.length;
+      protocolTools.length +
+      accountTools.length;
 
     console.log(`✅ Discovered ${totalTools} official AdCP tools:`);
     console.log(`   📈 Media-buy tools: ${mediaBuyTools.join(', ')}`);
@@ -393,8 +397,9 @@ function loadOfficialAdCPToolsWithTypes(): {
     console.log(`   🏛️  Governance tools: ${governanceTools.join(', ')}`);
     console.log(`   💬 Sponsored Intelligence tools: ${sponsoredIntelligenceTools.join(', ')}`);
     console.log(`   🔧 Protocol tools: ${protocolTools.join(', ')}`);
+    console.log(`   💳 Account tools: ${accountTools.join(', ')}`);
 
-    return { mediaBuyTools, creativeTools, signalsTools, governanceTools, sponsoredIntelligenceTools, protocolTools };
+    return { mediaBuyTools, creativeTools, signalsTools, governanceTools, sponsoredIntelligenceTools, protocolTools, accountTools };
   } catch (error) {
     console.warn(`⚠️  Failed to load cached tools, falling back to known tools:`, error.message);
     // Fallback to known tools if the cache fails
@@ -405,6 +410,7 @@ function loadOfficialAdCPToolsWithTypes(): {
       governanceTools: [],
       sponsoredIntelligenceTools: [],
       protocolTools: [],
+      accountTools: [],
     };
   }
 }
@@ -415,13 +421,13 @@ function loadAdCPTools(): ToolDefinition[] {
   const processedTools = new Set<string>();
 
   // Get the official tools list from cached schema index
-  const { mediaBuyTools, creativeTools, signalsTools, governanceTools, sponsoredIntelligenceTools, protocolTools } =
+  const { mediaBuyTools, creativeTools, signalsTools, governanceTools, sponsoredIntelligenceTools, protocolTools, accountTools } =
     loadOfficialAdCPToolsWithTypes();
 
   // Helper to process tools from a domain
   const processToolsFromDomain = (
     toolNames: string[],
-    domain: 'media-buy' | 'creative' | 'signals' | 'governance' | 'sponsored-intelligence' | 'protocol',
+    domain: 'media-buy' | 'creative' | 'signals' | 'governance' | 'sponsored-intelligence' | 'protocol' | 'account',
     domainLabel: string,
     singleAgentOnlyTools: string[] = []
   ) => {
@@ -472,6 +478,7 @@ function loadAdCPTools(): ToolDefinition[] {
     'si_terminate_session',
   ]);
   processToolsFromDomain(protocolTools, 'protocol', 'protocol');
+  processToolsFromDomain(accountTools, 'account', 'account');
 
   return tools;
 }
