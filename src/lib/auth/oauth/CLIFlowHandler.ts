@@ -71,7 +71,7 @@ export class CLIFlowHandler implements OAuthFlowHandler {
    * The URL is passed as an argument, not interpolated into a shell command.
    */
   private async openBrowser(url: string): Promise<void> {
-    return new Promise((resolve) => {
+    return new Promise(resolve => {
       let command: string;
       let args: string[];
 
@@ -95,7 +95,7 @@ export class CLIFlowHandler implements OAuthFlowHandler {
         stdio: 'ignore',
       });
 
-      child.on('error', (error) => {
+      child.on('error', error => {
         if (!this.quiet) {
           console.error(`Failed to open browser: ${error.message}`);
           console.log(`Please manually open: ${url}`);
@@ -147,11 +147,9 @@ export class CLIFlowHandler implements OAuthFlowHandler {
         this.handleRequest(req, res);
       });
 
-      this.server.on('error', (error) => {
+      this.server.on('error', error => {
         if (this.pendingCallback) {
-          this.pendingCallback.reject(
-            new Error(`Callback server error: ${error.message}`)
-          );
+          this.pendingCallback.reject(new Error(`Callback server error: ${error.message}`));
         }
       });
 
@@ -309,7 +307,7 @@ export class CLIFlowHandler implements OAuthFlowHandler {
 
   async cleanup(): Promise<void> {
     if (this.server) {
-      return new Promise((resolve) => {
+      return new Promise(resolve => {
         this.server!.close(() => {
           this.server = null;
           resolve();

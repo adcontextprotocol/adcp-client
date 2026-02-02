@@ -103,10 +103,7 @@ async function main() {
   try {
     console.log('');
     console.log('Listing tools...');
-    const result = await client.request(
-      { method: 'tools/list', params: {} },
-      { tools: [] } as any
-    );
+    const result = await client.request({ method: 'tools/list', params: {} }, { tools: [] } as any);
 
     console.log('Available tools:');
     for (const tool of (result as any).tools || []) {

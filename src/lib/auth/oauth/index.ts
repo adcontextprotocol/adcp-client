@@ -151,11 +151,7 @@ export function isOAuthRequired(error: unknown): boolean {
   if (error instanceof Error) {
     if (error.name === 'UnauthorizedError') return true;
     const msg = error.message.toLowerCase();
-    if (
-      msg.includes('unauthorized') ||
-      msg.includes('authentication required') ||
-      msg.includes('oauth')
-    ) {
+    if (msg.includes('unauthorized') || msg.includes('authentication required') || msg.includes('oauth')) {
       return true;
     }
   }

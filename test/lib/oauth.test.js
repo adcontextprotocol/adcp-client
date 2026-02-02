@@ -443,10 +443,7 @@ describe('MCPOAuthProvider', () => {
       },
     });
 
-    await assert.rejects(
-      () => provider.codeVerifier(),
-      /No PKCE code verifier found/
-    );
+    await assert.rejects(() => provider.codeVerifier(), /No PKCE code verifier found/);
   });
 
   test('invalidates all credentials', async () => {
@@ -529,7 +526,7 @@ describe('MCPOAuthProvider', () => {
     let savedAgent = null;
     const mockStorage = {
       loadAgent: async () => agent,
-      saveAgent: async (a) => {
+      saveAgent: async a => {
         savedAgent = a;
       },
     };

@@ -16,13 +16,7 @@ import type {
   OAuthConfigStorage,
   AgentConfig,
 } from './types';
-import {
-  DEFAULT_CLIENT_METADATA,
-  toMCPTokens,
-  fromMCPTokens,
-  toMCPClientInfo,
-  fromMCPClientInfo,
-} from './types';
+import { DEFAULT_CLIENT_METADATA, toMCPTokens, fromMCPTokens, toMCPClientInfo, fromMCPClientInfo } from './types';
 import { randomBytes } from 'crypto';
 
 /**
@@ -181,9 +175,7 @@ export class MCPOAuthProvider implements OAuthClientProvider {
   /**
    * Invalidate credentials when server indicates they're invalid
    */
-  async invalidateCredentials(
-    scope: 'all' | 'client' | 'tokens' | 'verifier'
-  ): Promise<void> {
+  async invalidateCredentials(scope: 'all' | 'client' | 'tokens' | 'verifier'): Promise<void> {
     switch (scope) {
       case 'all':
         delete this.agent.oauth_tokens;

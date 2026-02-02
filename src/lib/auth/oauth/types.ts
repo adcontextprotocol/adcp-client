@@ -15,12 +15,7 @@ import type {
 import type { AgentConfig, AgentOAuthTokens, AgentOAuthClient } from '../../types/adcp';
 
 // Re-export MCP SDK types for convenience
-export type {
-  OAuthClientInformation,
-  OAuthClientInformationFull,
-  OAuthClientMetadata,
-  OAuthTokens,
-};
+export type { OAuthClientInformation, OAuthClientInformationFull, OAuthClientMetadata, OAuthTokens };
 
 // Re-export agent types
 export type { AgentConfig, AgentOAuthTokens, AgentOAuthClient };
@@ -137,11 +132,7 @@ export class OAuthCancelledError extends OAuthError {
 
 export class OAuthTimeoutError extends OAuthError {
   constructor(agentId?: string, timeoutMs?: number) {
-    super(
-      `OAuth flow timed out${timeoutMs ? ` after ${timeoutMs}ms` : ''}`,
-      'timeout',
-      agentId
-    );
+    super(`OAuth flow timed out${timeoutMs ? ` after ${timeoutMs}ms` : ''}`, 'timeout', agentId);
     this.name = 'OAuthTimeoutError';
   }
 }

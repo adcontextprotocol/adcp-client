@@ -17,8 +17,21 @@
 const { AdCPClient, detectProtocol, usesDeprecatedAssetsField } = require('../dist/lib/index.js');
 const { readFileSync } = require('fs');
 const { AsyncWebhookHandler } = require('./adcp-async-handler.js');
-const { getAgent, listAgents, isAlias, interactiveSetup, removeAgent, getConfigPath, saveAgent } = require('./adcp-config.js');
-const { createCLIOAuthProvider, hasValidOAuthTokens, clearOAuthTokens, getEffectiveAuthToken } = require('../dist/lib/auth/oauth/index.js');
+const {
+  getAgent,
+  listAgents,
+  isAlias,
+  interactiveSetup,
+  removeAgent,
+  getConfigPath,
+  saveAgent,
+} = require('./adcp-config.js');
+const {
+  createCLIOAuthProvider,
+  hasValidOAuthTokens,
+  clearOAuthTokens,
+  getEffectiveAuthToken,
+} = require('../dist/lib/auth/oauth/index.js');
 
 // Test scenarios available
 const TEST_SCENARIOS = [
@@ -993,7 +1006,8 @@ async function main() {
 
         const oauthProvider = createCLIOAuthProvider(agentConfig, { quiet: jsonOutput });
         const mcpClient = new MCPClient({ name: 'adcp-cli', version: '1.0.0' });
-        const createTransport = () => new StreamableHTTPClientTransport(new URL(agentUrl), { authProvider: oauthProvider });
+        const createTransport = () =>
+          new StreamableHTTPClientTransport(new URL(agentUrl), { authProvider: oauthProvider });
 
         let transport = createTransport();
 
@@ -1213,14 +1227,20 @@ async function main() {
         }
 
         if (jsonOutput) {
-          console.log(JSON.stringify({
-            data: resultData,
-            metadata: {
-              protocol: 'mcp',
-              responseTimeMs: responseTime,
-              oauth: true,
-            },
-          }, null, 2));
+          console.log(
+            JSON.stringify(
+              {
+                data: resultData,
+                metadata: {
+                  protocol: 'mcp',
+                  responseTimeMs: responseTime,
+                  oauth: true,
+                },
+              },
+              null,
+              2
+            )
+          );
         } else {
           console.log('\n✅ SUCCESS\n');
           console.log('Response:');
@@ -1390,7 +1410,8 @@ async function main() {
     }
   } catch (error) {
     // Check if this is an OAuth-required error for MCP and offer auto-authentication
-    const isUnauthorized = error.name === 'UnauthorizedError' ||
+    const isUnauthorized =
+      error.name === 'UnauthorizedError' ||
       error.message?.toLowerCase().includes('unauthorized') ||
       error.message?.includes('401');
 
@@ -1405,7 +1426,8 @@ async function main() {
 
       const oauthProvider = createCLIOAuthProvider(agentConfig, { quiet: jsonOutput });
       const mcpClient = new MCPClient({ name: 'adcp-cli', version: '1.0.0' });
-      const createTransport = () => new StreamableHTTPClientTransport(new URL(agentUrl), { authProvider: oauthProvider });
+      const createTransport = () =>
+        new StreamableHTTPClientTransport(new URL(agentUrl), { authProvider: oauthProvider });
 
       let transport = createTransport();
 
@@ -1455,10 +1477,16 @@ async function main() {
             }
 
             if (jsonOutput) {
-              console.log(JSON.stringify({
-                data: resultData,
-                metadata: { protocol: 'mcp', responseTimeMs: responseTime, oauth: true },
-              }, null, 2));
+              console.log(
+                JSON.stringify(
+                  {
+                    data: resultData,
+                    metadata: { protocol: 'mcp', responseTimeMs: responseTime, oauth: true },
+                  },
+                  null,
+                  2
+                )
+              );
             } else {
               console.log('\n✅ SUCCESS\n');
               console.log('Response:');
