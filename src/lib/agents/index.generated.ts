@@ -63,7 +63,9 @@ import type {
   SITerminateSessionRequest,
   SITerminateSessionResponse,
   GetAdCPCapabilitiesRequest,
-  GetAdCPCapabilitiesResponse
+  GetAdCPCapabilitiesResponse,
+  ListAccountsRequest,
+  ListAccountsResponse
 } from '../types/tools.generated';
 
 /**
@@ -308,6 +310,13 @@ export class Agent {
     return this.callTool<GetAdCPCapabilitiesResponse>('get_adcp_capabilities', params);
   }
 
+  /**
+   * Official AdCP list_accounts tool schema
+   */
+  async listAccounts(params: ListAccountsRequest): Promise<ListAccountsResponse> {
+    return this.callTool<ListAccountsResponse>('list_accounts', params);
+  }
+
 }
 
 /**
@@ -463,6 +472,13 @@ export class AgentCollection {
    */
   async getAdcpCapabilities(params: GetAdCPCapabilitiesRequest): Promise<GetAdCPCapabilitiesResponse[]> {
     return this.callToolOnAll<GetAdCPCapabilitiesResponse>('get_adcp_capabilities', params);
+  }
+
+  /**
+   * Official AdCP list_accounts tool schema (across multiple agents)
+   */
+  async listAccounts(params: ListAccountsRequest): Promise<ListAccountsResponse[]> {
+    return this.callToolOnAll<ListAccountsResponse>('list_accounts', params);
   }
 
 }

@@ -65,7 +65,13 @@ test('generated types maintain strict schema enforcement', () => {
   // - Added sponsored-intelligence domain (SI sessions, offerings, messages) with context fields
   // - Added protocol domain (get_adcp_capabilities) with capability declarations
   // - These new domains follow the same extensibility patterns as existing domains
-  const MAX_ALLOWED = 150;
+  //
+  // Updated from 150 to 160 for AdCP v3.0.0-beta.2 schema changes:
+  // - Added account domain with list_accounts tool
+  // - Added A2UI surface types for agent-to-UI rendering
+  // - Enhanced video/audio asset schemas with detailed technical specs
+  // - Added property_list targeting on products
+  const MAX_ALLOWED = 160;
 
   console.log(`📊 Type strictness metrics:`);
   console.log(`   Index signatures found: ${count}`);
@@ -114,7 +120,12 @@ test('core types maintain strict schema enforcement', () => {
   // Updated from 75 to 80 for AdCP v3.0.0-beta.1 schema changes:
   // - Added SI types (SICapabilities, SIIdentity, SIUIElement) with extensible fields
   // - Added protocol response types with capability declarations
-  const MAX_CORE_ALLOWED = 80;
+  //
+  // Updated from 80 to 85 for AdCP v3.0.0-beta.2 schema changes:
+  // - Added Account type with extensible fields
+  // - Added A2UI component/surface types
+  // - Added PropertyListReference type
+  const MAX_CORE_ALLOWED = 85;
 
   console.log(`📊 Core types strictness:`);
   console.log(`   Index signatures found: ${count}`);

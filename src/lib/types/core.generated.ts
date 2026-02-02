@@ -1,5 +1,5 @@
-// Generated AdCP core types from official schemas v3.0.0-beta.1
-// Generated at: 2026-01-26T16:30:53.458Z
+// Generated AdCP core types from official schemas vlatest
+// Generated at: 2026-02-02T14:00:27.160Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -40,6 +40,7 @@ export interface MediaBuy {
    * Buyer's reference identifier for this media buy
    */
   buyer_ref?: string;
+  account?: Account;
   status: MediaBuyStatus;
   /**
    * Description of advertiser and what is being promoted
@@ -66,6 +67,53 @@ export interface MediaBuy {
    */
   updated_at?: string;
   ext?: ExtensionObject;
+}
+/**
+ * Account billed for this media buy
+ */
+export interface Account {
+  /**
+   * Unique identifier for this account
+   */
+  account_id: string;
+  /**
+   * Human-readable account name (e.g., 'Coke', 'Coke c/o Publicis')
+   */
+  name: string;
+  /**
+   * The advertiser whose rates apply to this account
+   */
+  advertiser?: string;
+  /**
+   * Optional intermediary who receives invoices on behalf of the advertiser (e.g., agency)
+   */
+  billing_proxy?: string;
+  /**
+   * Account status
+   */
+  status: 'active' | 'suspended' | 'closed';
+  /**
+   * Identifier for the rate card applied to this account
+   */
+  rate_card?: string;
+  /**
+   * Payment terms (e.g., 'net_30', 'prepay')
+   */
+  payment_terms?: string;
+  /**
+   * Maximum outstanding balance allowed
+   */
+  credit_limit?: {
+    amount: number;
+    currency: string;
+  };
+  ext?: ExtensionObject;
+}
+/**
+ * Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.
+ */
+export interface ExtensionObject {
+  [k: string]: unknown | undefined;
 }
 /**
  * A specific product within a media buy (line item)
@@ -161,6 +209,7 @@ export interface TargetingOverlay {
    */
   axe_exclude_segment?: string;
   frequency_cap?: FrequencyCap;
+  property_list?: PropertyListReference;
   [k: string]: unknown | undefined;
 }
 /**
@@ -172,6 +221,23 @@ export interface FrequencyCap {
    */
   suppress_minutes: number;
   [k: string]: unknown | undefined;
+}
+/**
+ * Reference to a property list for targeting specific properties within this product. The package runs on the intersection of the product's publisher_properties and this list. Sellers SHOULD return a validation error if the product has property_targeting_allowed: false.
+ */
+export interface PropertyListReference {
+  /**
+   * URL of the agent managing the property list
+   */
+  agent_url: string;
+  /**
+   * Identifier for the property list within the agent
+   */
+  list_id: string;
+  /**
+   * JWT or other authorization token for accessing the list. Optional if the list is public or caller has implicit access.
+   */
+  auth_token?: string;
 }
 /**
  * Assignment of a creative asset to a package with optional placement targeting. Used in create_media_buy and update_media_buy requests. Note: sync_creatives does not support placement_ids - use create/update_media_buy for placement-level targeting.
@@ -217,12 +283,6 @@ export interface FormatID {
    * Duration in milliseconds for time-based formats (video, audio). When specified, creates a parameterized format ID. Omit to reference a template format without parameters.
    */
   duration_ms?: number;
-  [k: string]: unknown | undefined;
-}
-/**
- * Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.
- */
-export interface ExtensionObject {
   [k: string]: unknown | undefined;
 }
 
@@ -510,7 +570,7 @@ export interface ImageAsset {
   [k: string]: unknown | undefined;
 }
 /**
- * Video asset with URL and specifications
+ * Video asset with URL and technical specifications including audio track properties
  */
 export interface VideoAsset {
   /**
@@ -530,17 +590,97 @@ export interface VideoAsset {
    */
   duration_ms?: number;
   /**
-   * Video file format (mp4, webm, mov, etc.)
+   * File size in bytes
    */
-  format?: string;
+  file_size_bytes?: number;
   /**
-   * Video bitrate in kilobits per second
+   * Video container format (mp4, webm, mov, etc.)
    */
-  bitrate_kbps?: number;
+  container_format?: string;
+  /**
+   * Video codec used (h264, h265, vp9, av1, prores, etc.)
+   */
+  video_codec?: string;
+  /**
+   * Video stream bitrate in kilobits per second
+   */
+  video_bitrate_kbps?: number;
+  /**
+   * Frame rate as string to preserve precision (e.g., '23.976', '29.97', '30')
+   */
+  frame_rate?: string;
+  /**
+   * Whether the video uses constant (CFR) or variable (VFR) frame rate
+   */
+  frame_rate_type?: 'constant' | 'variable';
+  /**
+   * Scan type of the video
+   */
+  scan_type?: 'progressive' | 'interlaced';
+  /**
+   * Color space of the video
+   */
+  color_space?: 'rec709' | 'rec2020' | 'rec2100' | 'srgb' | 'dci_p3';
+  /**
+   * HDR format if applicable, or 'sdr' for standard dynamic range
+   */
+  hdr_format?: 'sdr' | 'hdr10' | 'hdr10_plus' | 'hlg' | 'dolby_vision';
+  /**
+   * Chroma subsampling format
+   */
+  chroma_subsampling?: '4:2:0' | '4:2:2' | '4:4:4';
+  /**
+   * Video bit depth
+   */
+  video_bit_depth?: 8 | 10 | 12;
+  /**
+   * GOP/keyframe interval in seconds
+   */
+  gop_interval_seconds?: number;
+  /**
+   * GOP structure type
+   */
+  gop_type?: 'closed' | 'open';
+  /**
+   * Position of moov atom in MP4 container
+   */
+  moov_atom_position?: 'start' | 'end';
+  /**
+   * Whether the video contains an audio track
+   */
+  has_audio?: boolean;
+  /**
+   * Audio codec used (aac, aac_lc, he_aac, pcm, mp3, ac3, eac3, etc.)
+   */
+  audio_codec?: string;
+  /**
+   * Audio sampling rate in Hz (e.g., 44100, 48000)
+   */
+  audio_sampling_rate_hz?: number;
+  /**
+   * Audio channel configuration
+   */
+  audio_channels?: 'mono' | 'stereo' | '5.1' | '7.1';
+  /**
+   * Audio bit depth
+   */
+  audio_bit_depth?: 16 | 24 | 32;
+  /**
+   * Audio bitrate in kilobits per second
+   */
+  audio_bitrate_kbps?: number;
+  /**
+   * Integrated loudness in LUFS
+   */
+  audio_loudness_lufs?: number;
+  /**
+   * True peak level in dBFS
+   */
+  audio_true_peak_dbfs?: number;
   [k: string]: unknown | undefined;
 }
 /**
- * Audio asset with URL and specifications
+ * Audio asset with URL and technical specifications
  */
 export interface AudioAsset {
   /**
@@ -552,13 +692,41 @@ export interface AudioAsset {
    */
   duration_ms?: number;
   /**
-   * Audio file format (mp3, wav, aac, etc.)
+   * File size in bytes
    */
-  format?: string;
+  file_size_bytes?: number;
   /**
-   * Audio bitrate in kilobits per second
+   * Audio container/file format (mp3, m4a, aac, wav, ogg, flac, etc.)
+   */
+  container_format?: string;
+  /**
+   * Audio codec used (aac, aac_lc, he_aac, pcm, mp3, vorbis, opus, flac, ac3, eac3, etc.)
+   */
+  codec?: string;
+  /**
+   * Sampling rate in Hz (e.g., 44100, 48000, 96000)
+   */
+  sampling_rate_hz?: number;
+  /**
+   * Channel configuration
+   */
+  channels?: 'mono' | 'stereo' | '5.1' | '7.1';
+  /**
+   * Bit depth
+   */
+  bit_depth?: 16 | 24 | 32;
+  /**
+   * Bitrate in kilobits per second
    */
   bitrate_kbps?: number;
+  /**
+   * Integrated loudness in LUFS
+   */
+  loudness_lufs?: number;
+  /**
+   * True peak level in dBFS
+   */
+  true_peak_dbfs?: number;
   [k: string]: unknown | undefined;
 }
 /**
@@ -1190,6 +1358,10 @@ export interface Product {
    */
   is_custom?: boolean;
   /**
+   * Whether buyers can filter this product to a subset of its publisher_properties. When false (default), the product is 'all or nothing' - buyers must accept all properties or the product is excluded from property_list filtering results.
+   */
+  property_targeting_allowed?: boolean;
+  /**
    * Explanation of why this product matches the brief (only included when brief is provided)
    */
   brief_relevance?: string;
@@ -1267,31 +1439,33 @@ export interface CPMPricingOption {
    * Minimum acceptable bid for auction pricing (mutually exclusive with fixed_price). Bids below this value will be rejected.
    */
   floor_price?: number;
-  /**
-   * Optional pricing guidance for auction-based bidding. Helps buyers calibrate bids with historical percentiles.
-   */
-  price_guidance?: {
-    /**
-     * 25th percentile winning price
-     */
-    p25?: number;
-    /**
-     * Median winning price
-     */
-    p50?: number;
-    /**
-     * 75th percentile winning price
-     */
-    p75?: number;
-    /**
-     * 90th percentile winning price
-     */
-    p90?: number;
-  };
+  price_guidance?: PriceGuidance;
   /**
    * Minimum spend requirement per package using this pricing option, in the specified currency
    */
   min_spend_per_package?: number;
+  [k: string]: unknown | undefined;
+}
+/**
+ * Optional pricing guidance for auction-based bidding
+ */
+export interface PriceGuidance {
+  /**
+   * 25th percentile of recent winning bids
+   */
+  p25?: number;
+  /**
+   * Median of recent winning bids
+   */
+  p50?: number;
+  /**
+   * 75th percentile of recent winning bids
+   */
+  p75?: number;
+  /**
+   * 90th percentile of recent winning bids
+   */
+  p90?: number;
   [k: string]: unknown | undefined;
 }
 /**
@@ -1318,31 +1492,33 @@ export interface VCPMPricingOption {
    * Minimum acceptable bid for auction pricing (mutually exclusive with fixed_price). Bids below this value will be rejected.
    */
   floor_price?: number;
-  /**
-   * Optional pricing guidance for auction-based bidding. Helps buyers calibrate bids with historical percentiles.
-   */
-  price_guidance?: {
-    /**
-     * 25th percentile of recent winning bids
-     */
-    p25?: number;
-    /**
-     * Median of recent winning bids
-     */
-    p50?: number;
-    /**
-     * 75th percentile of recent winning bids
-     */
-    p75?: number;
-    /**
-     * 90th percentile of recent winning bids
-     */
-    p90?: number;
-  };
+  price_guidance?: PriceGuidance1;
   /**
    * Minimum spend requirement per package using this pricing option, in the specified currency
    */
   min_spend_per_package?: number;
+  [k: string]: unknown | undefined;
+}
+/**
+ * Optional pricing guidance for auction-based bidding
+ */
+export interface PriceGuidance1 {
+  /**
+   * 25th percentile of recent winning bids
+   */
+  p25?: number;
+  /**
+   * Median of recent winning bids
+   */
+  p50?: number;
+  /**
+   * 75th percentile of recent winning bids
+   */
+  p75?: number;
+  /**
+   * 90th percentile of recent winning bids
+   */
+  p90?: number;
   [k: string]: unknown | undefined;
 }
 /**
@@ -1369,31 +1545,33 @@ export interface CPCPricingOption {
    * Minimum acceptable bid for auction pricing (mutually exclusive with fixed_price). Bids below this value will be rejected.
    */
   floor_price?: number;
-  /**
-   * Optional pricing guidance for auction-based bidding. Helps buyers calibrate bids with historical percentiles.
-   */
-  price_guidance?: {
-    /**
-     * 25th percentile of recent winning bids
-     */
-    p25?: number;
-    /**
-     * Median of recent winning bids
-     */
-    p50?: number;
-    /**
-     * 75th percentile of recent winning bids
-     */
-    p75?: number;
-    /**
-     * 90th percentile of recent winning bids
-     */
-    p90?: number;
-  };
+  price_guidance?: PriceGuidance2;
   /**
    * Minimum spend requirement per package using this pricing option, in the specified currency
    */
   min_spend_per_package?: number;
+  [k: string]: unknown | undefined;
+}
+/**
+ * Optional pricing guidance for auction-based bidding
+ */
+export interface PriceGuidance2 {
+  /**
+   * 25th percentile of recent winning bids
+   */
+  p25?: number;
+  /**
+   * Median of recent winning bids
+   */
+  p50?: number;
+  /**
+   * 75th percentile of recent winning bids
+   */
+  p75?: number;
+  /**
+   * 90th percentile of recent winning bids
+   */
+  p90?: number;
   [k: string]: unknown | undefined;
 }
 /**
@@ -1420,31 +1598,33 @@ export interface CPCVPricingOption {
    * Minimum acceptable bid for auction pricing (mutually exclusive with fixed_price). Bids below this value will be rejected.
    */
   floor_price?: number;
-  /**
-   * Optional pricing guidance for auction-based bidding. Helps buyers calibrate bids with historical percentiles.
-   */
-  price_guidance?: {
-    /**
-     * 25th percentile of recent winning bids
-     */
-    p25?: number;
-    /**
-     * Median of recent winning bids
-     */
-    p50?: number;
-    /**
-     * 75th percentile of recent winning bids
-     */
-    p75?: number;
-    /**
-     * 90th percentile of recent winning bids
-     */
-    p90?: number;
-  };
+  price_guidance?: PriceGuidance3;
   /**
    * Minimum spend requirement per package using this pricing option, in the specified currency
    */
   min_spend_per_package?: number;
+  [k: string]: unknown | undefined;
+}
+/**
+ * Optional pricing guidance for auction-based bidding
+ */
+export interface PriceGuidance3 {
+  /**
+   * 25th percentile of recent winning bids
+   */
+  p25?: number;
+  /**
+   * Median of recent winning bids
+   */
+  p50?: number;
+  /**
+   * 75th percentile of recent winning bids
+   */
+  p75?: number;
+  /**
+   * 90th percentile of recent winning bids
+   */
+  p90?: number;
   [k: string]: unknown | undefined;
 }
 /**
@@ -1471,27 +1651,7 @@ export interface CPVPricingOption {
    * Minimum acceptable bid for auction pricing (mutually exclusive with fixed_price). Bids below this value will be rejected.
    */
   floor_price?: number;
-  /**
-   * Optional pricing guidance for auction-based bidding. Helps buyers calibrate bids with historical percentiles.
-   */
-  price_guidance?: {
-    /**
-     * 25th percentile of recent winning bids
-     */
-    p25?: number;
-    /**
-     * Median of recent winning bids
-     */
-    p50?: number;
-    /**
-     * 75th percentile of recent winning bids
-     */
-    p75?: number;
-    /**
-     * 90th percentile of recent winning bids
-     */
-    p90?: number;
-  };
+  price_guidance?: PriceGuidance4;
   /**
    * CPV-specific parameters defining the view threshold
    */
@@ -1511,6 +1671,28 @@ export interface CPVPricingOption {
    * Minimum spend requirement per package using this pricing option, in the specified currency
    */
   min_spend_per_package?: number;
+  [k: string]: unknown | undefined;
+}
+/**
+ * Optional pricing guidance for auction-based bidding
+ */
+export interface PriceGuidance4 {
+  /**
+   * 25th percentile of recent winning bids
+   */
+  p25?: number;
+  /**
+   * Median of recent winning bids
+   */
+  p50?: number;
+  /**
+   * 75th percentile of recent winning bids
+   */
+  p75?: number;
+  /**
+   * 90th percentile of recent winning bids
+   */
+  p90?: number;
   [k: string]: unknown | undefined;
 }
 /**
@@ -1537,27 +1719,7 @@ export interface CPPPricingOption {
    * Minimum acceptable bid for auction pricing (mutually exclusive with fixed_price). Bids below this value will be rejected.
    */
   floor_price?: number;
-  /**
-   * Optional pricing guidance for auction-based bidding. Helps buyers calibrate bids with historical percentiles.
-   */
-  price_guidance?: {
-    /**
-     * 25th percentile of recent winning bids
-     */
-    p25?: number;
-    /**
-     * Median of recent winning bids
-     */
-    p50?: number;
-    /**
-     * 75th percentile of recent winning bids
-     */
-    p75?: number;
-    /**
-     * 90th percentile of recent winning bids
-     */
-    p90?: number;
-  };
+  price_guidance?: PriceGuidance5;
   /**
    * CPP-specific parameters for demographic targeting
    */
@@ -1576,6 +1738,28 @@ export interface CPPPricingOption {
    * Minimum spend requirement per package using this pricing option, in the specified currency
    */
   min_spend_per_package?: number;
+  [k: string]: unknown | undefined;
+}
+/**
+ * Optional pricing guidance for auction-based bidding
+ */
+export interface PriceGuidance5 {
+  /**
+   * 25th percentile of recent winning bids
+   */
+  p25?: number;
+  /**
+   * Median of recent winning bids
+   */
+  p50?: number;
+  /**
+   * 75th percentile of recent winning bids
+   */
+  p75?: number;
+  /**
+   * 90th percentile of recent winning bids
+   */
+  p90?: number;
   [k: string]: unknown | undefined;
 }
 /**
@@ -1602,27 +1786,7 @@ export interface FlatRatePricingOption {
    * Minimum acceptable bid for auction pricing (mutually exclusive with fixed_price). Bids below this value will be rejected.
    */
   floor_price?: number;
-  /**
-   * Optional pricing guidance for auction-based bidding. Helps buyers calibrate bids with historical percentiles.
-   */
-  price_guidance?: {
-    /**
-     * 25th percentile of recent winning bids
-     */
-    p25?: number;
-    /**
-     * Median of recent winning bids
-     */
-    p50?: number;
-    /**
-     * 75th percentile of recent winning bids
-     */
-    p75?: number;
-    /**
-     * 90th percentile of recent winning bids
-     */
-    p90?: number;
-  };
+  price_guidance?: PriceGuidance6;
   /**
    * Flat rate parameters for DOOH and time-based campaigns
    */
@@ -1661,6 +1825,28 @@ export interface FlatRatePricingOption {
    * Minimum spend requirement per package using this pricing option, in the specified currency
    */
   min_spend_per_package?: number;
+  [k: string]: unknown | undefined;
+}
+/**
+ * Optional pricing guidance for auction-based bidding
+ */
+export interface PriceGuidance6 {
+  /**
+   * 25th percentile of recent winning bids
+   */
+  p25?: number;
+  /**
+   * Median of recent winning bids
+   */
+  p50?: number;
+  /**
+   * 75th percentile of recent winning bids
+   */
+  p75?: number;
+  /**
+   * 90th percentile of recent winning bids
+   */
+  p90?: number;
   [k: string]: unknown | undefined;
 }
 /**
@@ -1845,7 +2031,7 @@ export interface Property {
    */
   tags?: PropertyTag[];
   /**
-   * Domain where adagents.json should be checked for authorization validation. Required for list_authorized_properties response. Optional in adagents.json (file location implies domain).
+   * Domain where adagents.json should be checked for authorization validation. Optional in adagents.json (file location implies domain).
    */
   publisher_domain?: string;
 }
@@ -2164,6 +2350,7 @@ export interface CreateMediaBuySuccess {
    * Buyer's reference identifier for this media buy
    */
   buyer_ref: string;
+  account?: Account;
   /**
    * ISO 8601 timestamp for creative upload deadline
    */
@@ -2177,7 +2364,7 @@ export interface CreateMediaBuySuccess {
   [k: string]: unknown | undefined;
 }
 /**
- * A specific product within a media buy (line item)
+ * Account billed for this media buy. Includes advertiser, billing proxy (if any), and rate card applied.
  */
 export interface CreateMediaBuyError {
   /**
@@ -2336,6 +2523,7 @@ export interface SyncCreativesSuccess {
      * Creative ID from the request
      */
     creative_id: string;
+    account?: Account1;
     action: CreativeAction;
     /**
      * Platform-specific ID assigned to the creative
@@ -2376,6 +2564,47 @@ export interface SyncCreativesSuccess {
   context?: ContextObject;
   ext?: ExtensionObject;
   [k: string]: unknown | undefined;
+}
+/**
+ * Account that owns this creative
+ */
+export interface Account1 {
+  /**
+   * Unique identifier for this account
+   */
+  account_id: string;
+  /**
+   * Human-readable account name (e.g., 'Coke', 'Coke c/o Publicis')
+   */
+  name: string;
+  /**
+   * The advertiser whose rates apply to this account
+   */
+  advertiser?: string;
+  /**
+   * Optional intermediary who receives invoices on behalf of the advertiser (e.g., agency)
+   */
+  billing_proxy?: string;
+  /**
+   * Account status
+   */
+  status: 'active' | 'suspended' | 'closed';
+  /**
+   * Identifier for the rate card applied to this account
+   */
+  rate_card?: string;
+  /**
+   * Payment terms (e.g., 'net_30', 'prepay')
+   */
+  payment_terms?: string;
+  /**
+   * Maximum outstanding balance allowed
+   */
+  credit_limit?: {
+    amount: number;
+    currency: string;
+  };
+  ext?: ExtensionObject;
 }
 /**
  * Error response - operation failed completely, no creatives were processed
