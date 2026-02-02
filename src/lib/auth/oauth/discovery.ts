@@ -116,10 +116,7 @@ export async function discoverOAuthMetadata(
  * }
  * ```
  */
-export async function supportsOAuth(
-  agentUrl: string,
-  options: DiscoveryOptions = {}
-): Promise<boolean> {
+export async function supportsOAuth(agentUrl: string, options: DiscoveryOptions = {}): Promise<boolean> {
   const metadata = await discoverOAuthMetadata(agentUrl, options);
   return metadata !== null;
 }
@@ -141,10 +138,7 @@ export async function supportsOAuth(
  * }
  * ```
  */
-export async function supportsDynamicRegistration(
-  agentUrl: string,
-  options: DiscoveryOptions = {}
-): Promise<boolean> {
+export async function supportsDynamicRegistration(agentUrl: string, options: DiscoveryOptions = {}): Promise<boolean> {
   const metadata = await discoverOAuthMetadata(agentUrl, options);
   return metadata?.registration_endpoint !== undefined;
 }
