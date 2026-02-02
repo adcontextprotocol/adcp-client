@@ -112,10 +112,13 @@ export {
   MissingInputHandlerError,
   InvalidContextError,
   ConfigurationError,
+  AuthenticationRequiredError,
   isADCPError,
   isErrorOfType,
   extractErrorInfo,
+  is401Error,
 } from './errors';
+export type { OAuthMetadataInfo } from './errors';
 export { InputRequiredError } from './core/TaskExecutor';
 
 // ====== CORE TYPES ======
