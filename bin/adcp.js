@@ -17,7 +17,8 @@
 const { AdCPClient, detectProtocol, usesDeprecatedAssetsField } = require('../dist/lib/index.js');
 const { readFileSync } = require('fs');
 const { AsyncWebhookHandler } = require('./adcp-async-handler.js');
-const { getAgent, listAgents, isAlias, interactiveSetup, removeAgent, getConfigPath } = require('./adcp-config.js');
+const { getAgent, listAgents, isAlias, interactiveSetup, removeAgent, getConfigPath, saveAgent } = require('./adcp-config.js');
+const { createCLIOAuthProvider, hasValidOAuthTokens, clearOAuthTokens, getEffectiveAuthToken } = require('../dist/lib/auth/oauth/index.js');
 
 // Test scenarios available
 const TEST_SCENARIOS = [
@@ -424,6 +425,8 @@ ARGUMENTS:
 OPTIONS:
   --protocol PROTO  Force protocol: 'mcp' or 'a2a' (default: auto-detect)
   --auth TOKEN      Authentication token for the agent
+  --oauth           Use OAuth for authentication (MCP only, opens browser)
+  --clear-oauth     Clear saved OAuth tokens for an agent
   --wait            Wait for async/webhook responses (requires ngrok or --local)
   --local           Use local webhook without ngrok (for local agents only)
   --timeout MS      Webhook timeout in milliseconds (default: 300000 = 5min)
@@ -439,9 +442,11 @@ BUILT-IN TEST AGENTS:
   creative                    Official AdCP creative agent (MCP only)
 
 AGENT MANAGEMENT:
-  --save-auth <alias> [url] [protocol] [--auth token | --no-auth]
+  --save-auth <alias> [url] [protocol] [--auth token | --no-auth | --oauth]
                               Save agent configuration with an alias name
-                              Requires --auth or --no-auth for non-interactive mode
+                              --auth TOKEN: Save with static auth token
+                              --no-auth: Save without authentication
+                              --oauth: Authenticate via OAuth and save tokens (MCP only)
   --list-agents               List all saved agents
   --remove-agent <alias>      Remove saved agent configuration
   --show-config               Show config file location
@@ -471,6 +476,9 @@ EXAMPLES:
   # Non-interactive: save without auth
   adcp --save-auth myagent https://test-agent.adcontextprotocol.org --no-auth
 
+  # Save with OAuth (opens browser, saves tokens)
+  adcp --save-auth myagent https://oauth-server.com/mcp --oauth
+
   # Interactive setup (prompts for URL, protocol, and auth)
   adcp --save-auth myagent
 
@@ -490,6 +498,17 @@ EXAMPLES:
 
   # Override saved auth token
   adcp myagent get_products '{"brief":"..."}' --auth different-token
+
+  # OAuth authentication (opens browser for login)
+  adcp https://oauth-agent.example.com/mcp --oauth
+  adcp myagent get_products '{"brief":"..."}' --oauth    # Saves tokens to alias
+
+  # Auto-detect OAuth (automatically starts OAuth if server requires it)
+  adcp https://oauth-server.com/mcp get_products '{"brief":"..."}'  # Auto-detects!
+
+  # Clear OAuth tokens and re-authenticate
+  adcp myagent --clear-oauth
+  adcp myagent --oauth
 
   # Wait for async response (requires ngrok)
   adcp myagent create_media_buy @payload.json --wait
@@ -538,12 +557,13 @@ async function main() {
     // Parse flags first
     const authFlagIndex = args.indexOf('--auth');
     const noAuthFlag = args.includes('--no-auth');
+    const oauthFlag = args.includes('--oauth');
     const providedAuthToken = authFlagIndex !== -1 ? args[authFlagIndex + 1] : null;
 
     // Filter out flags to get positional args
     const saveAuthPositional = args
       .slice(1)
-      .filter(arg => arg !== '--auth' && arg !== '--no-auth' && arg !== providedAuthToken);
+      .filter(arg => arg !== '--auth' && arg !== '--no-auth' && arg !== '--oauth' && arg !== providedAuthToken);
 
     let alias = saveAuthPositional[0];
     let url = saveAuthPositional[1] || null;
@@ -551,8 +571,9 @@ async function main() {
 
     if (!alias) {
       console.error('ERROR: --save-auth requires an alias\n');
-      console.error('Usage: adcp --save-auth <alias> [url] [protocol] [--auth token | --no-auth]\n');
+      console.error('Usage: adcp --save-auth <alias> [url] [protocol] [--auth token | --no-auth | --oauth]\n');
       console.error('Example: adcp --save-auth myagent https://agent.example.com --auth your_token\n');
+      console.error('         adcp --save-auth myagent https://oauth-server.com/mcp --oauth\n');
       process.exit(2);
     }
 
@@ -566,10 +587,96 @@ async function main() {
       process.exit(2);
     }
 
-    // Validate flags
-    if (providedAuthToken && noAuthFlag) {
-      console.error('ERROR: Cannot use both --auth and --no-auth\n');
+    // Validate flags - only one auth method allowed
+    const authMethods = [providedAuthToken !== null, noAuthFlag, oauthFlag].filter(Boolean).length;
+    if (authMethods > 1) {
+      console.error('ERROR: Cannot use multiple auth methods (--auth, --no-auth, --oauth)\n');
       process.exit(2);
+    }
+
+    // Handle OAuth save flow
+    if (oauthFlag) {
+      if (!url) {
+        console.error('ERROR: --oauth requires a URL\n');
+        console.error('Usage: adcp --save-auth <alias> <url> --oauth\n');
+        process.exit(2);
+      }
+
+      // OAuth is only for MCP
+      const detectedProtocol = protocol || (url.includes('/mcp') ? 'mcp' : null);
+      if (detectedProtocol && detectedProtocol !== 'mcp') {
+        console.error('ERROR: OAuth is only supported for MCP protocol\n');
+        process.exit(2);
+      }
+
+      console.log(`\n🔐 Setting up OAuth for '${alias}'...`);
+      console.log(`URL: ${url}\n`);
+
+      // Create a temporary agent config for OAuth
+      const tempAgent = {
+        id: alias,
+        name: alias,
+        agent_uri: url,
+        protocol: 'mcp',
+      };
+
+      const { Client: MCPClient } = require('@modelcontextprotocol/sdk/client/index.js');
+      const { StreamableHTTPClientTransport } = require('@modelcontextprotocol/sdk/client/streamableHttp.js');
+      const { UnauthorizedError } = require('@modelcontextprotocol/sdk/client/auth.js');
+
+      const oauthProvider = createCLIOAuthProvider(tempAgent);
+      const mcpClient = new MCPClient({ name: 'adcp-cli', version: '1.0.0' });
+      const createTransport = () => new StreamableHTTPClientTransport(new URL(url), { authProvider: oauthProvider });
+
+      let transport = createTransport();
+
+      try {
+        console.log('Connecting to verify OAuth support...');
+        await mcpClient.connect(transport);
+        // If we connected without OAuth, the server doesn't require it
+        console.log('\n⚠️  Server connected without requiring OAuth.');
+        console.log('Saving agent without OAuth tokens.\n');
+        await oauthProvider.cleanup();
+        await mcpClient.close();
+        saveAgent(alias, { url, protocol: 'mcp' });
+        console.log(`✅ Agent '${alias}' saved.`);
+        console.log(`Use: adcp ${alias} <tool> <payload>\n`);
+      } catch (error) {
+        if (error instanceof UnauthorizedError || error.name === 'UnauthorizedError') {
+          console.log('OAuth authorization required.');
+          console.log('Opening browser for authentication...\n');
+
+          try {
+            const code = await oauthProvider.waitForCallback();
+            console.log('Authorization received!');
+            await transport.finishAuth(code);
+
+            // Save agent with OAuth tokens
+            const agentConfig = {
+              url,
+              protocol: 'mcp',
+              oauth_tokens: tempAgent.oauth_tokens,
+              oauth_client: tempAgent.oauth_client,
+            };
+            saveAgent(alias, agentConfig);
+
+            console.log(`\n✅ Agent '${alias}' saved with OAuth tokens.`);
+            console.log(`Use: adcp ${alias} <tool> <payload>\n`);
+
+            await oauthProvider.cleanup();
+            await mcpClient.close();
+          } catch (authError) {
+            await oauthProvider.cleanup();
+            console.error('\n❌ OAuth failed:', authError.message);
+            process.exit(1);
+          }
+        } else {
+          await oauthProvider.cleanup();
+          console.error('\n❌ Connection failed:', error.message);
+          process.exit(1);
+        }
+      }
+      process.exit(0);
     }
 
     // Determine mode:
@@ -601,7 +708,11 @@ async function main() {
         console.log(`    Protocol: ${agent.protocol}`);
       }
       if (agent.auth_token) {
-        console.log(`    Auth: configured`);
+        console.log(`    Auth: token configured`);
+      }
+      if (agent.oauth_tokens) {
+        const hasValid = hasValidOAuthTokens(agent);
+        console.log(`    OAuth: ${hasValid ? 'valid tokens' : 'expired (use --oauth to refresh)'}`);
       }
       console.log('');
     });
@@ -631,6 +742,39 @@ async function main() {
     process.exit(0);
   }
 
+  // Handle --clear-oauth command
+  if (args.includes('--clear-oauth')) {
+    const positionalArgs = args.filter(arg => !arg.startsWith('--'));
+    const alias = positionalArgs[0];
+
+    if (!alias) {
+      console.error('ERROR: --clear-oauth requires an agent alias\n');
+      console.error('Usage: adcp <alias> --clear-oauth\n');
+      process.exit(2);
+    }
+
+    if (!isAlias(alias)) {
+      console.error(`ERROR: '${alias}' is not a saved agent alias\n`);
+      process.exit(2);
+    }
+
+    const agentConfig = getAgent(alias);
+    if (!agentConfig.oauth_tokens) {
+      console.log(`\nAgent '${alias}' has no OAuth tokens to clear.\n`);
+      process.exit(0);
+    }
+
+    // Clear OAuth tokens from agent config
+    delete agentConfig.oauth_tokens;
+    delete agentConfig.oauth_client;
+    delete agentConfig.oauth_code_verifier;
+    saveAgent(alias, agentConfig);
+
+    console.log(`\n✅ Cleared OAuth tokens for '${alias}'`);
+    console.log('Use --oauth to re-authenticate.\n');
+    process.exit(0);
+  }
+
   // Handle test command (handleTestCommand calls process.exit internally)
   if (args[0] === 'test') {
     await handleTestCommand(args.slice(1));
@@ -655,6 +799,8 @@ async function main() {
   const useLocalWebhook = args.includes('--local');
   const timeoutIndex = args.indexOf('--timeout');
   const timeout = timeoutIndex !== -1 ? parseInt(args[timeoutIndex + 1]) : 300000;
+  const useOAuth = args.includes('--oauth');
+  const clearOAuth = args.includes('--clear-oauth');
 
   // Validate protocol flag if provided
   if (protocolFlag && protocolFlag !== 'mcp' && protocolFlag !== 'a2a') {
@@ -790,9 +936,35 @@ async function main() {
     console.error(`  Protocol: ${protocol}`);
     console.error(`  Agent URL: ${agentUrl}`);
     console.error(`  Tool: ${toolName || '(list tools)'}`);
-    console.error(`  Auth: ${authToken ? 'provided' : 'none'}`);
+    console.error(`  Auth: ${authToken ? 'provided' : useOAuth ? 'oauth' : 'none'}`);
     console.error(`  Payload: ${JSON.stringify(payload, null, 2)}`);
     console.error('');
+  }
+
+  // Check OAuth requirements
+  if (useOAuth && protocol !== 'mcp') {
+    console.error('\n❌ ERROR: OAuth is only supported for MCP protocol\n');
+    console.error('Use --auth TOKEN for A2A protocol authentication.\n');
+    process.exit(2);
+  }
+
+  // Build agent config
+  // If using OAuth with a saved alias, we need to load existing OAuth tokens
+  let agentOAuthTokens = null;
+  let agentOAuthClient = null;
+  let agentAlias = null;
+
+  if (useOAuth && savedAgent && isAlias(firstArg)) {
+    agentAlias = firstArg;
+    // Reload the full saved config to get OAuth tokens
+    const fullSavedConfig = getAgent(firstArg);
+    if (fullSavedConfig.oauth_tokens) {
+      agentOAuthTokens = fullSavedConfig.oauth_tokens;
+      agentOAuthClient = fullSavedConfig.oauth_client;
+      if (!jsonOutput && hasValidOAuthTokens({ oauth_tokens: agentOAuthTokens })) {
+        console.log('Using saved OAuth tokens...\n');
+      }
+    }
   }
 
   // Create agent config
@@ -801,7 +973,9 @@ async function main() {
     name: 'CLI Agent',
     agent_uri: agentUrl,
     protocol: protocol,
-    ...(authToken && { auth_token: authToken, requiresAuth: true }),
+    ...(authToken && !useOAuth && { auth_token: authToken, requiresAuth: true }),
+    ...(agentOAuthTokens && { oauth_tokens: agentOAuthTokens }),
+    ...(agentOAuthClient && { oauth_client: agentOAuthClient }),
   };
 
   try {
@@ -809,6 +983,75 @@ async function main() {
     if (!toolName) {
       if (debug) {
         console.error('DEBUG: No tool specified, displaying agent info...\n');
+      }
+
+      // For OAuth without a tool, just authenticate and list tools
+      if (useOAuth && protocol === 'mcp') {
+        const { Client: MCPClient } = require('@modelcontextprotocol/sdk/client/index.js');
+        const { StreamableHTTPClientTransport } = require('@modelcontextprotocol/sdk/client/streamableHttp.js');
+        const { UnauthorizedError } = require('@modelcontextprotocol/sdk/client/auth.js');
+
+        const oauthProvider = createCLIOAuthProvider(agentConfig, { quiet: jsonOutput });
+        const mcpClient = new MCPClient({ name: 'adcp-cli', version: '1.0.0' });
+        const createTransport = () => new StreamableHTTPClientTransport(new URL(agentUrl), { authProvider: oauthProvider });
+
+        let transport = createTransport();
+
+        try {
+          if (!jsonOutput) {
+            console.log('Connecting to MCP agent...');
+          }
+          await mcpClient.connect(transport);
+        } catch (error) {
+          if (error instanceof UnauthorizedError || error.name === 'UnauthorizedError') {
+            if (!jsonOutput) {
+              console.log('\nOAuth authorization required.');
+              console.log('Opening browser for authentication...\n');
+            }
+            const code = await oauthProvider.waitForCallback();
+            await transport.finishAuth(code);
+            if (agentAlias && agentConfig.oauth_tokens) {
+              const savedConfig = getAgent(agentAlias);
+              savedConfig.oauth_tokens = agentConfig.oauth_tokens;
+              savedConfig.oauth_client = agentConfig.oauth_client;
+              saveAgent(agentAlias, savedConfig);
+              if (!jsonOutput) {
+                console.log(`OAuth tokens saved to '${agentAlias}'.\n`);
+              }
+            }
+            transport = createTransport();
+            await mcpClient.connect(transport);
+          } else {
+            await oauthProvider.cleanup();
+            throw error;
+          }
+        }
+
+        if (!jsonOutput) {
+          console.log('Connected!\n');
+        }
+
+        // List tools
+        const toolsResult = await mcpClient.listTools();
+        await oauthProvider.cleanup();
+        await mcpClient.close();
+
+        if (jsonOutput) {
+          console.log(JSON.stringify({ tools: toolsResult.tools, protocol: 'mcp', oauth: true }, null, 2));
+        } else {
+          console.log(`\n📋 Agent Information (OAuth)\n`);
+          console.log(`Protocol: MCP`);
+          console.log(`URL: ${agentUrl}`);
+          console.log(`\nAvailable Tools (${toolsResult.tools.length}):\n`);
+          toolsResult.tools.forEach((tool, i) => {
+            console.log(`${i + 1}. ${tool.name}`);
+            if (tool.description) {
+              console.log(`   ${tool.description}`);
+            }
+            console.log('');
+          });
+        }
+        process.exit(0);
       }
 
       await displayAgentInfo(agentConfig, jsonOutput);
@@ -865,6 +1108,132 @@ async function main() {
           console.error(error.stack);
         }
         process.exit(1);
+      }
+    }
+
+    // Handle OAuth flow for MCP if --oauth is specified
+    if (useOAuth && protocol === 'mcp') {
+      const { Client: MCPClient } = require('@modelcontextprotocol/sdk/client/index.js');
+      const { StreamableHTTPClientTransport } = require('@modelcontextprotocol/sdk/client/streamableHttp.js');
+      const { UnauthorizedError } = require('@modelcontextprotocol/sdk/client/auth.js');
+
+      // Create OAuth provider
+      const oauthProvider = createCLIOAuthProvider(agentConfig, {
+        quiet: jsonOutput,
+      });
+
+      // Create MCP client
+      const mcpClient = new MCPClient({
+        name: 'adcp-cli',
+        version: '1.0.0',
+      });
+
+      const createTransport = () =>
+        new StreamableHTTPClientTransport(new URL(agentUrl), {
+          authProvider: oauthProvider,
+        });
+
+      let transport = createTransport();
+      let needsOAuth = !hasValidOAuthTokens(agentConfig);
+
+      try {
+        if (!jsonOutput) {
+          console.log('Connecting to MCP agent...');
+        }
+        await mcpClient.connect(transport);
+      } catch (error) {
+        if (error instanceof UnauthorizedError || error.name === 'UnauthorizedError') {
+          needsOAuth = true;
+          if (!jsonOutput) {
+            console.log('\nOAuth authorization required.');
+            console.log('Opening browser for authentication...\n');
+          }
+
+          try {
+            // Wait for user to complete OAuth in browser
+            const code = await oauthProvider.waitForCallback();
+            if (!jsonOutput) {
+              console.log('Authorization received!');
+            }
+
+            // Finish OAuth flow
+            await transport.finishAuth(code);
+
+            // Save tokens to alias if using a saved agent
+            if (agentAlias && agentConfig.oauth_tokens) {
+              const savedConfig = getAgent(agentAlias);
+              savedConfig.oauth_tokens = agentConfig.oauth_tokens;
+              savedConfig.oauth_client = agentConfig.oauth_client;
+              saveAgent(agentAlias, savedConfig);
+              if (!jsonOutput) {
+                console.log(`OAuth tokens saved to '${agentAlias}'.\n`);
+              }
+            }
+
+            // Reconnect with new tokens
+            if (!jsonOutput) {
+              console.log('Reconnecting with OAuth tokens...');
+            }
+            transport = createTransport();
+            await mcpClient.connect(transport);
+          } catch (authError) {
+            await oauthProvider.cleanup();
+            throw authError;
+          }
+        } else {
+          await oauthProvider.cleanup();
+          throw error;
+        }
+      }
+
+      if (!jsonOutput) {
+        console.log('Connected!\n');
+      }
+
+      // Execute tool call directly via MCP
+      try {
+        const startTime = Date.now();
+        const toolResult = await mcpClient.callTool({ name: toolName, arguments: payload });
+        const responseTime = Date.now() - startTime;
+
+        await oauthProvider.cleanup();
+        await mcpClient.close();
+
+        // Format result similar to AdCPClient response
+        let resultData = toolResult;
+        if (toolResult.content && Array.isArray(toolResult.content)) {
+          const textContent = toolResult.content.find(c => c.type === 'text');
+          if (textContent && textContent.text) {
+            try {
+              resultData = JSON.parse(textContent.text);
+            } catch {
+              resultData = textContent.text;
+            }
+          }
+        }
+
+        if (jsonOutput) {
+          console.log(JSON.stringify({
+            data: resultData,
+            metadata: {
+              protocol: 'mcp',
+              responseTimeMs: responseTime,
+              oauth: true,
+            },
+          }, null, 2));
+        } else {
+          console.log('\n✅ SUCCESS\n');
+          console.log('Response:');
+          console.log(JSON.stringify(resultData, null, 2));
+          console.log('');
+          console.log(`Protocol: MCP (OAuth)`);
+          console.log(`Response Time: ${responseTime}ms`);
+        }
+        process.exit(0);
+      } catch (toolError) {
+        await oauthProvider.cleanup();
+        await mcpClient.close();
+        throw toolError;
       }
     }
 
@@ -1020,6 +1389,113 @@ async function main() {
       process.exit(3);
     }
   } catch (error) {
+    // Check if this is an OAuth-required error for MCP and offer auto-authentication
+    const isUnauthorized = error.name === 'UnauthorizedError' ||
+      error.message?.toLowerCase().includes('unauthorized') ||
+      error.message?.includes('401');
+
+    if (isUnauthorized && protocol === 'mcp' && !useOAuth && !authToken) {
+      console.log('\n🔐 Server requires authentication.');
+      console.log('Starting OAuth authentication...\n');
+
+      // Run OAuth flow automatically
+      const { Client: MCPClient } = require('@modelcontextprotocol/sdk/client/index.js');
+      const { StreamableHTTPClientTransport } = require('@modelcontextprotocol/sdk/client/streamableHttp.js');
+      const { UnauthorizedError } = require('@modelcontextprotocol/sdk/client/auth.js');
+
+      const oauthProvider = createCLIOAuthProvider(agentConfig, { quiet: jsonOutput });
+      const mcpClient = new MCPClient({ name: 'adcp-cli', version: '1.0.0' });
+      const createTransport = () => new StreamableHTTPClientTransport(new URL(agentUrl), { authProvider: oauthProvider });
+
+      let transport = createTransport();
+
+      try {
+        await mcpClient.connect(transport);
+      } catch (connectError) {
+        if (connectError instanceof UnauthorizedError || connectError.name === 'UnauthorizedError') {
+          console.log('Opening browser for authentication...\n');
+          const code = await oauthProvider.waitForCallback();
+          console.log('Authorization received!');
+          await transport.finishAuth(code);
+
+          // Save tokens if using a saved alias
+          if (agentAlias && agentConfig.oauth_tokens) {
+            const savedConfig = getAgent(agentAlias);
+            savedConfig.oauth_tokens = agentConfig.oauth_tokens;
+            savedConfig.oauth_client = agentConfig.oauth_client;
+            saveAgent(agentAlias, savedConfig);
+            console.log(`OAuth tokens saved to '${agentAlias}'.\n`);
+          }
+
+          // Reconnect and execute
+          console.log('Reconnecting with OAuth tokens...');
+          transport = createTransport();
+          await mcpClient.connect(transport);
+          console.log('Connected!\n');
+
+          // Execute the tool if specified
+          if (toolName) {
+            const startTime = Date.now();
+            const toolResult = await mcpClient.callTool({ name: toolName, arguments: payload });
+            const responseTime = Date.now() - startTime;
+
+            await oauthProvider.cleanup();
+            await mcpClient.close();
+
+            let resultData = toolResult;
+            if (toolResult.content && Array.isArray(toolResult.content)) {
+              const textContent = toolResult.content.find(c => c.type === 'text');
+              if (textContent && textContent.text) {
+                try {
+                  resultData = JSON.parse(textContent.text);
+                } catch {
+                  resultData = textContent.text;
+                }
+              }
+            }
+
+            if (jsonOutput) {
+              console.log(JSON.stringify({
+                data: resultData,
+                metadata: { protocol: 'mcp', responseTimeMs: responseTime, oauth: true },
+              }, null, 2));
+            } else {
+              console.log('\n✅ SUCCESS\n');
+              console.log('Response:');
+              console.log(JSON.stringify(resultData, null, 2));
+              console.log('');
+              console.log(`Protocol: MCP (OAuth)`);
+              console.log(`Response Time: ${responseTime}ms`);
+            }
+            process.exit(0);
+          } else {
+            // List tools
+            const toolsResult = await mcpClient.listTools();
+            await oauthProvider.cleanup();
+            await mcpClient.close();
+
+            if (jsonOutput) {
+              console.log(JSON.stringify({ tools: toolsResult.tools, protocol: 'mcp', oauth: true }, null, 2));
+            } else {
+              console.log(`\n📋 Agent Information (OAuth)\n`);
+              console.log(`Protocol: MCP`);
+              console.log(`URL: ${agentUrl}`);
+              console.log(`\nAvailable Tools (${toolsResult.tools.length}):\n`);
+              toolsResult.tools.forEach((tool, i) => {
+                console.log(`${i + 1}. ${tool.name}`);
+                if (tool.description) console.log(`   ${tool.description}`);
+                console.log('');
+              });
+            }
+            process.exit(0);
+          }
+        } else {
+          await oauthProvider.cleanup();
+          throw connectError;
+        }
+      }
+    }
+
     console.error('\n❌ ERROR\n');
     console.error(error.message);
     if (debug) {
