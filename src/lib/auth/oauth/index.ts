@@ -197,3 +197,12 @@ export function getEffectiveAuthToken(agent: AgentConfig): string | undefined {
   // Fall back to static token
   return agent.auth_token;
 }
+
+// OAuth discovery
+export {
+  discoverOAuthMetadata,
+  supportsOAuth,
+  supportsDynamicRegistration,
+  type OAuthMetadata,
+  type DiscoveryOptions,
+} from './discovery';
