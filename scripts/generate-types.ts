@@ -188,7 +188,14 @@ function enforceStrictSchema(schema: any): any {
 // Load AdCP tool schemas from cache
 function loadToolSchema(
   toolName: string,
-  taskType: 'media-buy' | 'signals' | 'creative' | 'governance' | 'sponsored-intelligence' | 'protocol' | 'account' = 'media-buy'
+  taskType:
+    | 'media-buy'
+    | 'signals'
+    | 'creative'
+    | 'governance'
+    | 'sponsored-intelligence'
+    | 'protocol'
+    | 'account' = 'media-buy'
 ): any {
   try {
     console.log(`📥 Loading ${toolName} schema from cache (${taskType})...`);
@@ -248,7 +255,15 @@ function loadToolSchema(
 }
 
 // All domains with tasks
-const TASK_DOMAINS = ['media-buy', 'creative', 'signals', 'governance', 'sponsored-intelligence', 'protocol', 'account'] as const;
+const TASK_DOMAINS = [
+  'media-buy',
+  'creative',
+  'signals',
+  'governance',
+  'sponsored-intelligence',
+  'protocol',
+  'account',
+] as const;
 type TaskDomain = (typeof TASK_DOMAINS)[number];
 
 // Deprecated tools that should be excluded from type generation
@@ -399,7 +414,15 @@ function loadOfficialAdCPToolsWithTypes(): {
     console.log(`   🔧 Protocol tools: ${protocolTools.join(', ')}`);
     console.log(`   💳 Account tools: ${accountTools.join(', ')}`);
 
-    return { mediaBuyTools, creativeTools, signalsTools, governanceTools, sponsoredIntelligenceTools, protocolTools, accountTools };
+    return {
+      mediaBuyTools,
+      creativeTools,
+      signalsTools,
+      governanceTools,
+      sponsoredIntelligenceTools,
+      protocolTools,
+      accountTools,
+    };
   } catch (error) {
     console.warn(`⚠️  Failed to load cached tools, falling back to known tools:`, error.message);
     // Fallback to known tools if the cache fails
@@ -421,8 +444,15 @@ function loadAdCPTools(): ToolDefinition[] {
   const processedTools = new Set<string>();
 
   // Get the official tools list from cached schema index
-  const { mediaBuyTools, creativeTools, signalsTools, governanceTools, sponsoredIntelligenceTools, protocolTools, accountTools } =
-    loadOfficialAdCPToolsWithTypes();
+  const {
+    mediaBuyTools,
+    creativeTools,
+    signalsTools,
+    governanceTools,
+    sponsoredIntelligenceTools,
+    protocolTools,
+    accountTools,
+  } = loadOfficialAdCPToolsWithTypes();
 
   // Helper to process tools from a domain
   const processToolsFromDomain = (
