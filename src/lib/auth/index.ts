@@ -1,5 +1,8 @@
 import type { AgentConfig } from '../types';
 
+// ====== OAuth Support ======
+export * from './oauth';
+
 /**
  * Generate UUID for request tracking
  */

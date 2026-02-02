@@ -177,14 +177,66 @@ export interface DayParting {
   };
 }
 
+/**
+ * OAuth tokens for agent authentication
+ */
+export interface AgentOAuthTokens {
+  /** OAuth access token */
+  access_token: string;
+  /** OAuth refresh token (for token renewal) */
+  refresh_token?: string;
+  /** Token type (usually "Bearer") */
+  token_type?: string;
+  /** Seconds until access_token expires */
+  expires_in?: number;
+  /** ISO timestamp when access_token expires */
+  expires_at?: string;
+  /** OAuth scope */
+  scope?: string;
+}
+
+/**
+ * OAuth client information (from dynamic registration)
+ */
+export interface AgentOAuthClient {
+  /** OAuth client ID */
+  client_id: string;
+  /** OAuth client secret (for confidential clients) */
+  client_secret?: string;
+  /** When client_secret expires */
+  client_secret_expires_at?: number;
+}
+
 // Agent Configuration Types
 export interface AgentConfig {
   id: string;
   name: string;
   agent_uri: string;
   protocol: 'mcp' | 'a2a';
-  /** Authentication token - if provided, will be sent with requests */
+
+  /**
+   * Static authentication token
+   * Use this for API keys or pre-issued bearer tokens
+   */
   auth_token?: string;
+
+  /**
+   * OAuth tokens for dynamic authentication
+   * The client will automatically refresh tokens when they expire
+   */
+  oauth_tokens?: AgentOAuthTokens;
+
+  /**
+   * OAuth client registration info
+   * Stored after dynamic client registration
+   */
+  oauth_client?: AgentOAuthClient;
+
+  /**
+   * PKCE code verifier (temporary, during OAuth flow)
+   * @internal
+   */
+  oauth_code_verifier?: string;
 }
 
 // Testing Types
