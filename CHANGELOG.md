@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.11.0
+
+### Minor Changes
+
+- cdcf3a7: Add `@adcp/client/auth` export path for OAuth and authentication utilities
+
 ## 3.10.0
 
 ### Minor Changes
