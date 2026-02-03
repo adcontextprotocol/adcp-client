@@ -175,6 +175,107 @@ export class ConfigurationError extends ADCPError {
 }
 
 /**
+ * OAuth metadata for authentication guidance
+ */
+export interface OAuthMetadataInfo {
+  /** URL of the authorization endpoint */
+  authorization_endpoint: string;
+  /** URL of the token endpoint */
+  token_endpoint: string;
+  /** URL of the dynamic client registration endpoint (optional) */
+  registration_endpoint?: string;
+  /** Issuer identifier */
+  issuer?: string;
+}
+
+/**
+ * Error thrown when authentication is required to access an MCP endpoint
+ *
+ * This error is thrown during MCP endpoint discovery when the server returns
+ * a 401 Unauthorized response. If the server supports OAuth, the error includes
+ * the OAuth metadata to help clients initiate the authentication flow.
+ *
+ * @example
+ * ```typescript
+ * try {
+ *   await client.getProducts({ brief: 'test' });
+ * } catch (error) {
+ *   if (error instanceof AuthenticationRequiredError) {
+ *     if (error.oauthMetadata) {
+ *       // Redirect user to OAuth flow
+ *       const authUrl = error.oauthMetadata.authorization_endpoint;
+ *       console.log(`Please authenticate at: ${authUrl}`);
+ *     } else {
+ *       console.log('Authentication required but OAuth not available');
+ *     }
+ *   }
+ * }
+ * ```
+ */
+export class AuthenticationRequiredError extends ADCPError {
+  readonly code = 'AUTHENTICATION_REQUIRED';
+
+  constructor(
+    public readonly agentUrl: string,
+    public readonly oauthMetadata?: OAuthMetadataInfo,
+    message?: string
+  ) {
+    const defaultMessage = oauthMetadata
+      ? `Authentication required for ${agentUrl}. OAuth available at: ${oauthMetadata.authorization_endpoint}`
+      : `Authentication required for ${agentUrl}. No OAuth metadata available - provide auth_token in agent config.`;
+    super(message || defaultMessage);
+    this.details = { agentUrl, oauthMetadata };
+  }
+
+  /**
+   * Check if OAuth authentication is available
+   */
+  get hasOAuth(): boolean {
+    return this.oauthMetadata !== undefined;
+  }
+
+  /**
+   * Get the authorization URL if OAuth is available
+   */
+  get authorizationUrl(): string | undefined {
+    return this.oauthMetadata?.authorization_endpoint;
+  }
+}
+
+/**
+ * Check if an error indicates a 401 Unauthorized response
+ *
+ * This helper centralizes the fragile logic of detecting 401 errors from
+ * various sources (HTTP status codes, error messages, wrapped errors).
+ * Used during endpoint discovery to detect authentication requirements.
+ *
+ * @param error - The error to check
+ * @param got401Flag - Optional flag that was set by tracking HTTP responses
+ * @returns true if the error appears to be a 401 authentication error
+ */
+export function is401Error(error: unknown, got401Flag = false): boolean {
+  if (got401Flag) {
+    return true;
+  }
+
+  if (!error) {
+    return false;
+  }
+
+  // Check for status property (common in HTTP errors)
+  const errorObj = error as any;
+  const status = errorObj?.status || errorObj?.response?.status || errorObj?.cause?.status;
+  if (status === 401) {
+    return true;
+  }
+
+  // Fall back to string matching in error message
+  // This is fragile but necessary since different SDKs format errors differently
+  const message = errorObj?.message || '';
+  return message.includes('401') || message.includes('Unauthorized');
+}
+
+/**
  * Type guard to check if an error is an ADCP error
  */
 export function isADCPError(error: unknown): error is ADCPError {

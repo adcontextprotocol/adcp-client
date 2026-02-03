@@ -39,6 +39,7 @@ import type {
 import type { Task as A2ATask, TaskStatusUpdateEvent } from '@a2a-js/sdk';
 
 import { TaskExecutor, DeferredTaskError } from './TaskExecutor';
+import { AuthenticationRequiredError, is401Error } from '../errors';
 import type { InputHandler, TaskOptions, TaskResult, ConversationConfig, TaskInfo } from './ConversationTypes';
 import type { Activity, AsyncHandlerConfig, WebhookMetadata } from './AsyncHandler';
 import { AsyncHandler } from './AsyncHandler';
@@ -268,38 +269,64 @@ export class SingleAgentClient {
 
   /**
    * Fetch the canonical URL from an A2A agent card
+   *
+   * Special handling for authentication errors (401):
+   * - If the agent card fetch returns 401, throw AuthenticationRequiredError
+   * - Check for OAuth metadata to provide helpful guidance
    */
   private async fetchA2ACanonicalUrl(agentUri: string): Promise<string> {
     const clientModule = require('@a2a-js/sdk/client');
     const A2AClient = clientModule.A2AClient;
+    const { discoverOAuthMetadata } = await import('../auth/oauth/discovery');
 
     const authToken = this.normalizedAgent.auth_token;
-    const fetchImpl = authToken
-      ? async (url: string | URL | Request, options?: RequestInit) => {
-          const headers: Record<string, string> = {
-            ...(options?.headers as Record<string, string>),
-            Authorization: `Bearer ${authToken}`,
-            'x-adcp-auth': authToken,
-          };
-          return fetch(url, { ...options, headers });
-        }
-      : undefined;
+    let got401 = false;
+
+    const fetchImpl = async (url: string | URL | Request, options?: RequestInit) => {
+      const headers: Record<string, string> = {
+        ...(options?.headers as Record<string, string>),
+        ...(authToken && {
+          Authorization: `Bearer ${authToken}`,
+          'x-adcp-auth': authToken,
+        }),
+      };
+
+      const response = await fetch(url, { ...options, headers });
+
+      // Track 401 errors for later handling
+      if (response.status === 401) {
+        got401 = true;
+      }
+
+      return response;
+    };
 
     // Construct agent card URL
     const cardUrl = agentUri.endsWith('/.well-known/agent-card.json')
       ? agentUri
       : agentUri.replace(/\/$/, '') + '/.well-known/agent-card.json';
 
-    const client = await A2AClient.fromCardUrl(cardUrl, fetchImpl ? { fetchImpl } : {});
-    const agentCard = client.agentCardPromise ? await client.agentCardPromise : client.agentCard;
+    try {
+      const client = await A2AClient.fromCardUrl(cardUrl, { fetchImpl });
+      const agentCard = client.agentCardPromise ? await client.agentCardPromise : client.agentCard;
 
-    // Use the canonical URL from the agent card, falling back to computed base URL
-    if (agentCard?.url) {
-      return agentCard.url;
+      // Use the canonical URL from the agent card, falling back to computed base URL
+      if (agentCard?.url) {
+        return agentCard.url;
+      }
+
+      // Fallback: strip .well-known/agent-card.json if present
+      return this.computeBaseUrl(agentUri);
+    } catch (error: any) {
+      // If we got a 401, throw AuthenticationRequiredError
+      if (is401Error(error, got401)) {
+        const oauthMetadata = await discoverOAuthMetadata(agentUri);
+        throw new AuthenticationRequiredError(agentUri, oauthMetadata || undefined);
+      }
+
+      // Re-throw other errors
+      throw error;
     }
-
-    // Fallback: strip .well-known/agent-card.json if present
-    return this.computeBaseUrl(agentUri);
   }
 
   /**
@@ -348,15 +375,27 @@ export class SingleAgentClient {
    * 2. If that fails, try with/without trailing slash
    * 3. If still fails and doesn't end with /mcp, try adding /mcp
    *
+   * Special handling for authentication errors (401):
+   * - If any endpoint returns 401, we know the server exists but requires auth
+   * - We fetch OAuth metadata and throw AuthenticationRequiredError
+   * - This gives consumers clear guidance on how to authenticate
+   *
    * Note: This is async and called lazily on first agent interaction
    */
   private async discoverMCPEndpoint(providedUri: string): Promise<string> {
     const { Client: MCPClient } = await import('@modelcontextprotocol/sdk/client/index.js');
     const { StreamableHTTPClientTransport } = await import('@modelcontextprotocol/sdk/client/streamableHttp.js');
+    const { discoverOAuthMetadata } = await import('../auth/oauth/discovery');
 
     const authToken = this.agent.auth_token;
 
-    const testEndpoint = async (url: string): Promise<boolean> => {
+    type EndpointTestResult = {
+      success: boolean;
+      status?: number;
+      error?: Error;
+    };
+
+    const testEndpoint = async (url: string): Promise<EndpointTestResult> => {
       try {
         const mcpClient = new MCPClient({
           name: 'AdCP-Client',
@@ -381,9 +420,17 @@ export class SingleAgentClient {
 
         await mcpClient.connect(transport);
         await mcpClient.close();
-        return true;
-      } catch {
-        return false;
+        return { success: true };
+      } catch (error: any) {
+        // Check for HTTP status in the error
+        // MCP SDK may throw errors with status code or wrap Response errors
+        const status = error?.status || error?.response?.status || error?.cause?.status;
+
+        return {
+          success: false,
+          status: is401Error(error) ? 401 : status,
+          error,
+        };
       }
     };
 
@@ -409,14 +456,37 @@ export class SingleAgentClient {
     // Remove duplicates while preserving order
     const uniqueUrls = [...new Set(urlsToTry)];
 
+    // Track results and whether we got any 401s
+    let got401 = false;
+    let firstWorkingUrl: string | undefined;
+
     // Test each URL
     for (const url of uniqueUrls) {
-      if (await testEndpoint(url)) {
-        return url;
+      const result = await testEndpoint(url);
+
+      if (result.success) {
+        firstWorkingUrl = url;
+        break;
+      }
+
+      if (result.status === 401) {
+        got401 = true;
       }
     }
 
-    // None worked
+    if (firstWorkingUrl) {
+      return firstWorkingUrl;
+    }
+
+    // If we got 401 from any endpoint, throw AuthenticationRequiredError
+    if (got401) {
+      // Try to fetch OAuth metadata to provide helpful guidance
+      const oauthMetadata = await discoverOAuthMetadata(providedUri);
+
+      throw new AuthenticationRequiredError(providedUri, oauthMetadata || undefined);
+    }
+
+    // None worked and no 401 - generic discovery failure
     throw new Error(
       `Failed to discover MCP endpoint. Tried:\n` +
         uniqueUrls.map((url, i) => `  ${i + 1}. ${url}`).join('\n') +
