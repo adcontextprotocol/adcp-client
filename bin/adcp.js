@@ -350,14 +350,29 @@ async function handleTestCommand(args) {
         if (!finalAuthToken && oauthTokens.access_token) {
           finalAuthToken = oauthTokens.access_token;
         }
-      } else if (!jsonOutput) {
-        console.error(`⚠️  OAuth tokens for '${agentArg}' are expired.`);
-        console.error(`Run: adcp ${agentArg} --oauth to refresh.\n`);
+      } else {
+        // Tokens expired
+        if (jsonOutput) {
+          console.log(
+            JSON.stringify({
+              success: false,
+              error: 'OAuth tokens expired',
+              message: `Run: adcp ${agentArg} --oauth to refresh`,
+            })
+          );
+        } else {
+          console.error(`⚠️  OAuth tokens for '${agentArg}' are expired.`);
+          console.error(`Run: adcp ${agentArg} --oauth to refresh.\n`);
+        }
         process.exit(2);
       }
     }
   } else if (agentArg.startsWith('http://') || agentArg.startsWith('https://')) {
     agentUrl = agentArg;
+    if (useOAuth && !jsonOutput) {
+      console.error('⚠️  --oauth flag only works with saved agent aliases, not URLs.');
+      console.error('   Save the agent first: adcp --save-auth <alias> <url> --oauth\n');
+    }
   } else {
     console.error(`ERROR: '${agentArg}' is not a valid agent alias or URL\n`);
     console.error('Built-in aliases: test-mcp, test-a2a, creative');
