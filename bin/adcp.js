@@ -294,6 +294,7 @@ async function handleTestCommand(args) {
   const jsonOutput = args.includes('--json');
   const debug = args.includes('--debug') || process.env.ADCP_DEBUG === 'true';
   const dryRun = !args.includes('--no-dry-run');
+  const useOAuth = args.includes('--oauth');
 
   // Filter out flag arguments to find positional arguments
   const positionalArgs = args.filter(
@@ -328,6 +329,7 @@ async function handleTestCommand(args) {
   let agentUrl;
   let protocol = protocolFlag;
   let finalAuthToken = authToken;
+  let oauthTokens = null;
 
   // Resolve agent
   if (BUILT_IN_AGENTS[agentArg]) {
@@ -340,6 +342,20 @@ async function handleTestCommand(args) {
     agentUrl = savedAgent.url;
     protocol = protocol || savedAgent.protocol;
     finalAuthToken = finalAuthToken || savedAgent.auth_token;
+    // Load OAuth tokens if available and --oauth flag is set
+    if (useOAuth && savedAgent.oauth_tokens) {
+      if (hasValidOAuthTokens(savedAgent)) {
+        oauthTokens = savedAgent.oauth_tokens;
+        // Use OAuth access token as bearer token for testing
+        if (!finalAuthToken && oauthTokens.access_token) {
+          finalAuthToken = oauthTokens.access_token;
+        }
+      } else if (!jsonOutput) {
+        console.error(`⚠️  OAuth tokens for '${agentArg}' are expired.`);
+        console.error(`Run: adcp ${agentArg} --oauth to refresh.\n`);
+        process.exit(2);
+      }
+    }
   } else if (agentArg.startsWith('http://') || agentArg.startsWith('https://')) {
     agentUrl = agentArg;
   } else {
@@ -378,7 +394,7 @@ async function handleTestCommand(args) {
     console.log(`\n🧪 Running '${scenario}' tests against ${agentUrl}`);
     console.log(`   Protocol: ${protocol.toUpperCase()}`);
     console.log(`   Dry Run: ${dryRun ? 'Yes (safe mode)' : 'No (real operations)'}`);
-    console.log(`   Auth: ${finalAuthToken ? 'configured' : 'none'}\n`);
+    console.log(`   Auth: ${oauthTokens ? 'oauth' : finalAuthToken ? 'configured' : 'none'}\n`);
   }
 
   // Import and run tests
