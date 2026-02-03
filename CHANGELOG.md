@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.11.1
+
+### Patch Changes
+
+- 6ec7e3e: Extract shared `is401Error` helper for centralized 401 authentication error detection
+
 ## 3.11.0
 
 ### Minor Changes
