@@ -1952,7 +1952,7 @@ app.get('/standard', async (request, reply) => {
 // Removed unused /query endpoint that was causing 404 errors
 
 // Error handler
-app.setErrorHandler((error, request, reply) => {
+app.setErrorHandler((error: Error, request, reply) => {
   app.log.error('Unhandled error: ' + error.message);
   reply.status(500).send({
     success: false,

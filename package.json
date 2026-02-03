@@ -133,7 +133,7 @@
     "axios": "^1.12.0",
     "cors": "^2.8.5",
     "express": "^5.1.0",
-    "fastify": "^4.24.3",
+    "fastify": "^5.7.2",
     "json-schema-to-ts": "^3.1.1",
     "json-schema-to-typescript": "^15.0.4",
     "json-schema-to-zod": "^2.6.1",
