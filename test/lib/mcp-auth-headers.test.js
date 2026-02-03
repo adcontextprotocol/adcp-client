@@ -23,20 +23,24 @@ test('MCP: x-adcp-auth header is included in requests', async t => {
     assert.ok(authHeaders['Accept']);
   });
 
-  await t.test('createMCPAuthHeaders includes x-adcp-auth when token provided', () => {
+  await t.test('createMCPAuthHeaders includes both Authorization and x-adcp-auth when token provided', () => {
     const { createMCPAuthHeaders } = require('../../dist/lib/auth/index.js');
 
     const headers = createMCPAuthHeaders(testToken);
 
+    // Should include standard OAuth Authorization header
+    assert.strictEqual(headers['Authorization'], `Bearer ${testToken}`);
+    // Should also include legacy x-adcp-auth for backwards compatibility
     assert.strictEqual(headers['x-adcp-auth'], testToken);
     assert.ok(headers['Accept']);
   });
 
-  await t.test('createMCPAuthHeaders does not include x-adcp-auth when token is undefined', () => {
+  await t.test('createMCPAuthHeaders does not include auth headers when token is undefined', () => {
     const { createMCPAuthHeaders } = require('../../dist/lib/auth/index.js');
 
     const headers = createMCPAuthHeaders();
 
+    assert.strictEqual(headers['Authorization'], undefined);
     assert.strictEqual(headers['x-adcp-auth'], undefined);
     assert.ok(headers['Accept']);
   });

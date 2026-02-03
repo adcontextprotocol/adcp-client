@@ -57,6 +57,10 @@ export function createAuthenticatedFetch(authToken: string) {
 
 /**
  * Create MCP authentication headers
+ *
+ * Sends both:
+ * - Authorization: Bearer (standard OAuth, required by OAuth-protected MCP servers)
+ * - x-adcp-auth (AdCP-specific header for backwards compatibility)
  */
 export function createMCPAuthHeaders(authToken?: string): Record<string, string> {
   const headers: Record<string, string> = {
@@ -64,6 +68,7 @@ export function createMCPAuthHeaders(authToken?: string): Record<string, string>
   };
 
   if (authToken) {
+    headers['Authorization'] = `Bearer ${authToken}`;
     headers['x-adcp-auth'] = authToken;
   }
 
