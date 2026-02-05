@@ -62,6 +62,154 @@ export type MediaChannel =
  * Geographic targeting level (country, region, metro, postal_area)
  */
 export type GeographicTargetingLevel = 'country' | 'region' | 'metro' | 'postal_area';
+/**
+ * Targeting constraint for a specific signal. Uses value_type as discriminator to determine the targeting expression format.
+ */
+export type SignalTargeting =
+  | {
+      signal_id: SignalID;
+      /**
+       * Discriminator for binary signals
+       */
+      value_type: 'binary';
+      /**
+       * Whether to include (true) or exclude (false) users matching this signal
+       */
+      value: boolean;
+      [k: string]: unknown | undefined;
+    }
+  | {
+      signal_id: SignalID1;
+      /**
+       * Discriminator for categorical signals
+       */
+      value_type: 'categorical';
+      /**
+       * Values to target. Users with any of these values will be included.
+       *
+       * @minItems 1
+       */
+      values: [string, ...string[]];
+      [k: string]: unknown | undefined;
+    }
+  | {
+      signal_id: SignalID2;
+      /**
+       * Discriminator for numeric signals
+       */
+      value_type: 'numeric';
+      /**
+       * Minimum value (inclusive). Omit for no minimum. Must be <= max_value when both are provided. Should be >= signal's range.min if defined.
+       */
+      min_value?: number;
+      /**
+       * Maximum value (inclusive). Omit for no maximum. Must be >= min_value when both are provided. Should be <= signal's range.max if defined.
+       */
+      max_value?: number;
+      [k: string]: unknown | undefined;
+    };
+/**
+ * The signal to target
+ */
+export type SignalID =
+  | {
+      /**
+       * Discriminator indicating this signal is from a data provider's published catalog
+       */
+      source: 'catalog';
+      /**
+       * Domain of the data provider that owns this signal (e.g., 'polk.com', 'experian.com'). The signal definition is published at this domain's /.well-known/adagents.json
+       */
+      data_provider_domain: string;
+      /**
+       * Signal identifier within the data provider's catalog (e.g., 'likely_tesla_buyers', 'income_100k_plus')
+       */
+      id: string;
+      [k: string]: unknown | undefined;
+    }
+  | {
+      /**
+       * Discriminator indicating this signal is native to the agent (not from a data provider catalog)
+       */
+      source: 'agent';
+      /**
+       * URL of the signals agent that provides this signal (e.g., 'https://liveramp.com/.well-known/adcp/signals')
+       */
+      agent_url: string;
+      /**
+       * Signal identifier within the agent's signal set (e.g., 'custom_auto_intenders')
+       */
+      id: string;
+      [k: string]: unknown | undefined;
+    };
+/**
+ * The signal to target
+ */
+export type SignalID1 =
+  | {
+      /**
+       * Discriminator indicating this signal is from a data provider's published catalog
+       */
+      source: 'catalog';
+      /**
+       * Domain of the data provider that owns this signal (e.g., 'polk.com', 'experian.com'). The signal definition is published at this domain's /.well-known/adagents.json
+       */
+      data_provider_domain: string;
+      /**
+       * Signal identifier within the data provider's catalog (e.g., 'likely_tesla_buyers', 'income_100k_plus')
+       */
+      id: string;
+      [k: string]: unknown | undefined;
+    }
+  | {
+      /**
+       * Discriminator indicating this signal is native to the agent (not from a data provider catalog)
+       */
+      source: 'agent';
+      /**
+       * URL of the signals agent that provides this signal (e.g., 'https://liveramp.com/.well-known/adcp/signals')
+       */
+      agent_url: string;
+      /**
+       * Signal identifier within the agent's signal set (e.g., 'custom_auto_intenders')
+       */
+      id: string;
+      [k: string]: unknown | undefined;
+    };
+/**
+ * The signal to target
+ */
+export type SignalID2 =
+  | {
+      /**
+       * Discriminator indicating this signal is from a data provider's published catalog
+       */
+      source: 'catalog';
+      /**
+       * Domain of the data provider that owns this signal (e.g., 'polk.com', 'experian.com'). The signal definition is published at this domain's /.well-known/adagents.json
+       */
+      data_provider_domain: string;
+      /**
+       * Signal identifier within the data provider's catalog (e.g., 'likely_tesla_buyers', 'income_100k_plus')
+       */
+      id: string;
+      [k: string]: unknown | undefined;
+    }
+  | {
+      /**
+       * Discriminator indicating this signal is native to the agent (not from a data provider catalog)
+       */
+      source: 'agent';
+      /**
+       * URL of the signals agent that provides this signal (e.g., 'https://liveramp.com/.well-known/adcp/signals')
+       */
+      agent_url: string;
+      /**
+       * Signal identifier within the agent's signal set (e.g., 'custom_auto_intenders')
+       */
+      id: string;
+      [k: string]: unknown | undefined;
+    };
 
 /**
  * Request parameters for discovering available advertising products
@@ -102,7 +250,7 @@ export interface BrandManifest {
    */
   name: string;
   /**
-   * Brand logo assets with semantic tags for different use cases
+   * Brand logo assets with structured fields for orientation, background compatibility, and variant type. Use the orientation, background, and variant enum fields for reliable filtering by creative agents.
    */
   logos?: {
     /**
@@ -110,9 +258,25 @@ export interface BrandManifest {
      */
     url: string;
     /**
-     * Semantic tags describing the logo variant (e.g., 'dark', 'light', 'square', 'horizontal', 'icon')
+     * Logo aspect ratio orientation. square: ~1:1, horizontal: wide, vertical: tall, stacked: vertically arranged elements
+     */
+    orientation?: 'square' | 'horizontal' | 'vertical' | 'stacked';
+    /**
+     * Background compatibility. dark-bg: use on dark backgrounds, light-bg: use on light backgrounds, transparent-bg: has transparent background
+     */
+    background?: 'dark-bg' | 'light-bg' | 'transparent-bg';
+    /**
+     * Logo variant type. primary: main logo, secondary: alternative, icon: symbol only, wordmark: text only, full-lockup: complete logo
+     */
+    variant?: 'primary' | 'secondary' | 'icon' | 'wordmark' | 'full-lockup';
+    /**
+     * Additional semantic tags for custom categorization beyond the standard orientation, background, and variant fields.
      */
     tags?: string[];
+    /**
+     * Human-readable description of when to use this logo variant (e.g., 'Primary logo for use on light backgrounds', 'Icon-only variant for small formats')
+     */
+    usage?: string;
     /**
      * Logo width in pixels
      */
@@ -165,9 +329,26 @@ export interface BrandManifest {
     font_urls?: string[];
   };
   /**
-   * Brand voice and messaging tone (e.g., 'professional', 'casual', 'humorous', 'trustworthy', 'innovative')
+   * Brand voice and messaging tone guidelines for creative agents.
    */
-  tone?: string;
+  tone?: {
+    /**
+     * High-level voice descriptor (e.g., 'warm and inviting', 'professional and trustworthy')
+     */
+    voice?: string;
+    /**
+     * Personality traits that characterize the brand voice
+     */
+    attributes?: string[];
+    /**
+     * Specific guidance for copy generation - what TO do
+     */
+    dos?: string[];
+    /**
+     * Guardrails to avoid brand violations - what NOT to do
+     */
+    donts?: string[];
+  };
   /**
    * Brand voice configuration for audio/conversational experiences
    */
@@ -439,6 +620,10 @@ export interface ProductFilters {
      */
     system?: string;
   }[];
+  /**
+   * Filter to products supporting specific signals from data provider catalogs. Products must have the requested signals in their data_provider_signals and signal_targeting_allowed must be true (or all signals requested).
+   */
+  signal_targeting?: SignalTargeting[];
   [k: string]: unknown | undefined;
 }
 /**
@@ -610,6 +795,55 @@ export type CoBrandingRequirement = 'required' | 'optional' | 'none';
  * Landing page requirements
  */
 export type LandingPageRequirement = 'any' | 'retailer_site_only' | 'must_include_retailer';
+/**
+ * Selects signals from a data provider's adagents.json catalog. Used for product definitions and agent authorization. Supports three selection patterns: all signals, specific IDs, or by tags.
+ */
+export type DataProviderSignalSelector =
+  | {
+      /**
+       * Domain where data provider's adagents.json is hosted (e.g., 'polk.com')
+       */
+      data_provider_domain: string;
+      /**
+       * Discriminator indicating all signals from this data provider are included
+       */
+      selection_type: 'all';
+      [k: string]: unknown | undefined;
+    }
+  | {
+      /**
+       * Domain where data provider's adagents.json is hosted (e.g., 'polk.com')
+       */
+      data_provider_domain: string;
+      /**
+       * Discriminator indicating selection by specific signal IDs
+       */
+      selection_type: 'by_id';
+      /**
+       * Specific signal IDs from the data provider's catalog
+       *
+       * @minItems 1
+       */
+      signal_ids: [string, ...string[]];
+      [k: string]: unknown | undefined;
+    }
+  | {
+      /**
+       * Domain where data provider's adagents.json is hosted (e.g., 'polk.com')
+       */
+      data_provider_domain: string;
+      /**
+       * Discriminator indicating selection by signal tags
+       */
+      selection_type: 'by_tag';
+      /**
+       * Signal tags from the data provider's catalog. Selector covers all signals with these tags
+       *
+       * @minItems 1
+       */
+      signal_tags: [string, ...string[]];
+      [k: string]: unknown | undefined;
+    };
 
 /**
  * Response payload for get_products task
@@ -701,6 +935,14 @@ export interface Product {
    * Whether buyers can filter this product to a subset of its publisher_properties. When false (default), the product is 'all or nothing' - buyers must accept all properties or the product is excluded from property_list filtering results.
    */
   property_targeting_allowed?: boolean;
+  /**
+   * Data provider signals available for this product. Buyers fetch signal definitions from each data provider's adagents.json and can verify agent authorization.
+   */
+  data_provider_signals?: DataProviderSignalSelector[];
+  /**
+   * Whether buyers can filter this product to a subset of its data_provider_signals. When false (default), the product includes all listed signals as a bundle. When true, buyers can target specific signals.
+   */
+  signal_targeting_allowed?: boolean;
   /**
    * Explanation of why this product matches the brief (only included when brief is provided)
    */
@@ -1483,23 +1725,6 @@ export interface ListCreativeFormatsRequest {
  */
 export type FormatIDParameter = 'dimensions' | 'duration';
 /**
- * Type of asset
- */
-export type AssetContentType1 =
-  | 'image'
-  | 'video'
-  | 'audio'
-  | 'text'
-  | 'markdown'
-  | 'html'
-  | 'css'
-  | 'javascript'
-  | 'vast'
-  | 'daast'
-  | 'promoted_offerings'
-  | 'url'
-  | 'webhook';
-/**
  * Capabilities supported by creative agents for format handling
  */
 export type CreativeAgentCapability = 'validation' | 'assembly' | 'generation' | 'preview';
@@ -1585,31 +1810,7 @@ export interface Format {
    * Array of all assets supported for this format. Each asset is identified by its asset_id, which must be used as the key in creative manifests. Use the 'required' boolean on each asset to indicate whether it's mandatory.
    */
   assets?: (
-    | {
-        /**
-         * Discriminator indicating this is an individual asset
-         */
-        item_type: 'individual';
-        /**
-         * Unique identifier for this asset. Creative manifests MUST use this exact value as the key in the assets object.
-         */
-        asset_id: string;
-        asset_type: AssetContentType;
-        /**
-         * Optional descriptive label for this asset's purpose (e.g., 'hero_image', 'logo', 'third_party_tracking'). Not used for referencing assets in manifests—use asset_id instead. This field is for human-readable documentation and UI display only.
-         */
-        asset_role?: string;
-        /**
-         * Whether this asset is required (true) or optional (false). Required assets must be provided for a valid creative. Optional assets enhance the creative but are not mandatory.
-         */
-        required: boolean;
-        /**
-         * Technical requirements for this asset (dimensions, file size, duration, etc.). For template formats, use parameters_from_format_id: true to indicate asset parameters must match the format_id parameters (width/height/unit and/or duration_ms).
-         */
-        requirements?: {
-          [k: string]: unknown | undefined;
-        };
-      }
+    | BaseIndividualAsset
     | {
         /**
          * Discriminator indicating this is a repeatable asset group
@@ -1634,27 +1835,7 @@ export interface Format {
         /**
          * Assets within each repetition of this group
          */
-        assets: {
-          /**
-           * Identifier for this asset within the group
-           */
-          asset_id: string;
-          asset_type: AssetContentType1;
-          /**
-           * Optional descriptive label for this asset's purpose. Not used for referencing assets in manifests—use asset_id instead. This field is for human-readable documentation and UI display only.
-           */
-          asset_role?: string;
-          /**
-           * Whether this asset is required within each repetition of the group
-           */
-          required: boolean;
-          /**
-           * Technical requirements for this asset. For template formats, use parameters_from_format_id: true to indicate asset parameters must match the format_id parameters (width/height/unit and/or duration_ms).
-           */
-          requirements?: {
-            [k: string]: unknown | undefined;
-          };
-        }[];
+        assets: BaseGroupAsset[];
       }
   )[];
   /**
@@ -1702,6 +1883,41 @@ export interface Format {
 /**
  * Structured format identifier with agent URL and format name
  */
+export interface BaseIndividualAsset {
+  /**
+   * Discriminator indicating this is an individual asset
+   */
+  item_type: 'individual';
+  /**
+   * Unique identifier for this asset. Creative manifests MUST use this exact value as the key in the assets object.
+   */
+  asset_id: string;
+  /**
+   * Optional descriptive label for this asset's purpose (e.g., 'hero_image', 'logo', 'third_party_tracking'). Not used for referencing assets in manifests—use asset_id instead. This field is for human-readable documentation and UI display only.
+   */
+  asset_role?: string;
+  /**
+   * Whether this asset is required (true) or optional (false). Required assets must be provided for a valid creative. Optional assets enhance the creative but are not mandatory.
+   */
+  required: boolean;
+}
+export interface BaseGroupAsset {
+  /**
+   * Identifier for this asset within the group
+   */
+  asset_id: string;
+  /**
+   * Optional descriptive label for this asset's purpose. Not used for referencing assets in manifests—use asset_id instead. This field is for human-readable documentation and UI display only.
+   */
+  asset_role?: string;
+  /**
+   * Whether this asset is required within each repetition of the group
+   */
+  required: boolean;
+}
+/**
+ * Structured format identifier with agent URL and format name. Can reference: (1) a concrete format with fixed dimensions (id only), (2) a template format without parameters (id only), or (3) a template format with parameters (id + dimensions/duration). Template formats accept parameters in format_id while concrete formats have fixed dimensions in their definition. Parameterized format IDs create unique, specific format variants.
+ */
 export interface FormatID3 {
   /**
    * URL of the agent that defines this format (e.g., 'https://creatives.adcontextprotocol.org' for standard formats, or 'https://publisher.com/.well-known/adcp/sales' for custom formats)
@@ -1747,6 +1963,26 @@ export type PostalCodeSystem =
   | 'de_plz'
   | 'fr_code_postal'
   | 'au_postcode';
+/**
+ * Methods for verifying user age for compliance. Does not include 'inferred' as it is not accepted for regulatory compliance.
+ */
+export type AgeVerificationMethod = 'facial_age_estimation' | 'id_document' | 'digital_id' | 'credit_card' | 'world_id';
+/**
+ * Operating system platforms for device targeting. Browser values from Sec-CH-UA-Platform standard, extended for CTV.
+ */
+export type DevicePlatform =
+  | 'ios'
+  | 'android'
+  | 'windows'
+  | 'macos'
+  | 'linux'
+  | 'chromeos'
+  | 'tvos'
+  | 'tizen'
+  | 'webos'
+  | 'fire_os'
+  | 'roku_os'
+  | 'unknown';
 /**
  * JavaScript module type
  */
@@ -2112,6 +2348,35 @@ export interface TargetingOverlay {
   axe_exclude_segment?: string;
   frequency_cap?: FrequencyCap;
   property_list?: PropertyListReference;
+  /**
+   * Age restriction for compliance. Use for legal requirements (alcohol, gambling), not audience targeting.
+   */
+  age_restriction?: {
+    /**
+     * Minimum age required
+     */
+    min: number;
+    /**
+     * Whether verified age (not inferred) is required for compliance
+     */
+    verification_required?: boolean;
+    /**
+     * Accepted verification methods. If omitted, any method the platform supports is acceptable.
+     */
+    accepted_methods?: AgeVerificationMethod[];
+  };
+  /**
+   * Restrict to specific platforms. Use for technical compatibility (app only works on iOS). Values from Sec-CH-UA-Platform standard, extended for CTV.
+   *
+   * @minItems 1
+   */
+  device_platform?: [DevicePlatform, ...DevicePlatform[]];
+  /**
+   * Restrict to users with specific language preferences. ISO 639-1 codes (e.g., 'en', 'es', 'fr').
+   *
+   * @minItems 1
+   */
+  language?: [string, ...string[]];
   [k: string]: unknown | undefined;
 }
 /**
@@ -2741,7 +3006,7 @@ export interface Package {
   [k: string]: unknown | undefined;
 }
 /**
- * Optional geographic refinements for media buys. Most targeting should be expressed in the brief and handled by the publisher. These fields are primarily for geographic restrictions (RCT testing, regulatory compliance).
+ * Optional restriction overlays for media buys. Most targeting should be expressed in the brief and handled by the publisher. These fields are for functional restrictions: geographic (RCT testing, regulatory compliance), age verification (alcohol, gambling), device platform (app compatibility), and language (localization).
  */
 export interface CreateMediaBuyError {
   /**
@@ -4349,7 +4614,42 @@ export interface PreviewBatchResultError {
 
 // get_signals parameters
 /**
- * A deployment target where signals can be activated (DSP, sales agent, etc.)
+ * Request parameters for discovering signals. Use signal_spec for natural language discovery, signal_ids for exact lookups, or both (signal_ids take precedence for exact matches, signal_spec provides additional discovery context).
+ */
+export type GetSignalsRequest = {
+  [k: string]: unknown | undefined;
+} & {
+  /**
+   * Natural language description of the desired signals. When used alone, enables semantic discovery. When combined with signal_ids, provides context for the agent but signal_ids matches are returned first.
+   */
+  signal_spec?: string;
+  /**
+   * Specific signals to look up by data provider and ID. Returns exact matches from the data provider's catalog. Takes precedence over signal_spec when both are provided.
+   */
+  signal_ids?: SignalID[];
+  /**
+   * Deployment targets where signals need to be activated
+   */
+  deliver_to: {
+    /**
+     * List of deployment targets (DSPs, sales agents, etc.). If the authenticated caller matches one of these deployment targets, activation keys will be included in the response.
+     */
+    deployments: Destination[];
+    /**
+     * Countries where signals will be used (ISO codes)
+     */
+    countries: string[];
+  };
+  filters?: SignalFilters;
+  /**
+   * Maximum number of results to return
+   */
+  max_results?: number;
+  context?: ContextObject;
+  ext?: ExtensionObject;
+};
+/**
+ * Universal signal identifier. Uses 'source' as discriminator: 'catalog' for signals from a data provider's published catalog (verifiable), 'agent' for agent-native signals (not externally verifiable).
  */
 export type Destination =
   | {
@@ -4388,35 +4688,6 @@ export type Destination =
 export type SignalCatalogType = 'marketplace' | 'custom' | 'owned';
 
 /**
- * Request parameters for discovering signals based on description
- */
-export interface GetSignalsRequest {
-  /**
-   * Natural language description of the desired signals
-   */
-  signal_spec: string;
-  /**
-   * Deployment targets where signals need to be activated
-   */
-  deliver_to: {
-    /**
-     * List of deployment targets (DSPs, sales agents, etc.). If the authenticated caller matches one of these deployment targets, activation keys will be included in the response.
-     */
-    deployments: Destination[];
-    /**
-     * Countries where signals will be used (ISO codes)
-     */
-    countries: string[];
-  };
-  filters?: SignalFilters;
-  /**
-   * Maximum number of results to return
-   */
-  max_results?: number;
-  context?: ContextObject;
-  ext?: ExtensionObject;
-}
-/**
  * Filters to refine signal discovery results
  */
 export interface SignalFilters {
@@ -4444,7 +4715,11 @@ export interface SignalFilters {
 
 // get_signals response
 /**
- * Type of signal
+ * Universal signal identifier referencing the data provider's catalog. Use this to verify authorization and look up signal definitions.
+ */
+export type SignalValueType = 'binary' | 'categorical' | 'numeric';
+/**
+ * Catalog type of signal (marketplace, custom, owned)
  */
 export type Deployment =
   | {
@@ -4572,8 +4847,9 @@ export interface GetSignalsResponse {
    * Array of matching signals
    */
   signals: {
+    signal_id?: SignalID;
     /**
-     * Unique identifier for the signal
+     * Opaque identifier used for activation. This is the signals agent's internal segment ID.
      */
     signal_agent_segment_id: string;
     /**
@@ -4584,9 +4860,10 @@ export interface GetSignalsResponse {
      * Detailed signal description
      */
     description: string;
+    value_type?: SignalValueType;
     signal_type: SignalCatalogType;
     /**
-     * Name of the data provider
+     * Human-readable name of the data provider
      */
     data_provider: string;
     /**
@@ -7001,7 +7278,7 @@ export interface GetAdCPCapabilitiesRequest {
 
 // get_adcp_capabilities response
 /**
- * Standardized advertising media channels describing how buyers allocate budget. Channels are planning abstractions, not technical substrates. See the Media Channel Taxonomy specification for detailed definitions.
+ * Methods for verifying user age for compliance. Does not include 'inferred' as it is not accepted for regulatory compliance.
  */
 export interface GetAdCPCapabilitiesResponse {
   /**
@@ -7125,6 +7402,27 @@ export interface GetAdCPCapabilitiesResponse {
            */
           au_postcode?: boolean;
         };
+        /**
+         * Age restriction capabilities for compliance (alcohol, gambling)
+         */
+        age_restriction?: {
+          /**
+           * Whether platform supports age restrictions
+           */
+          supported?: boolean;
+          /**
+           * Age verification methods this platform supports
+           */
+          verification_methods?: AgeVerificationMethod[];
+        };
+        /**
+         * Whether platform supports device platform targeting (Sec-CH-UA-Platform values)
+         */
+        device_platform?: boolean;
+        /**
+         * Whether platform supports language targeting (ISO 639-1 codes)
+         */
+        language?: boolean;
       };
     };
     /**
@@ -7154,13 +7452,21 @@ export interface GetAdCPCapabilitiesResponse {
     };
   };
   /**
-   * Signals protocol capabilities. Only present if signals is in supported_protocols. Reserved for future use.
+   * Signals protocol capabilities. Only present if signals is in supported_protocols.
    */
   signals?: {
+    /**
+     * Data provider domains this signals agent is authorized to resell. Buyers should fetch each data provider's adagents.json for signal catalog definitions and to verify authorization.
+     */
+    data_provider_domains?: string[];
     /**
      * Optional signals features supported
      */
     features?: {
+      /**
+       * Supports signals from data provider catalogs with structured signal_id references
+       */
+      catalog_signals?: boolean;
       [k: string]: boolean | undefined;
     };
   };

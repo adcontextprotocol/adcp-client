@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas vlatest
-// Generated at: 2026-02-02T14:00:27.160Z
+// Generated at: 2026-02-05T11:34:29.050Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -27,6 +27,26 @@ export type PostalCodeSystem =
   | 'de_plz'
   | 'fr_code_postal'
   | 'au_postcode';
+/**
+ * Methods for verifying user age for compliance. Does not include 'inferred' as it is not accepted for regulatory compliance.
+ */
+export type AgeVerificationMethod = 'facial_age_estimation' | 'id_document' | 'digital_id' | 'credit_card' | 'world_id';
+/**
+ * Operating system platforms for device targeting. Browser values from Sec-CH-UA-Platform standard, extended for CTV.
+ */
+export type DevicePlatform =
+  | 'ios'
+  | 'android'
+  | 'windows'
+  | 'macos'
+  | 'linux'
+  | 'chromeos'
+  | 'tvos'
+  | 'tizen'
+  | 'webos'
+  | 'fire_os'
+  | 'roku_os'
+  | 'unknown';
 
 /**
  * Represents a purchased advertising campaign
@@ -165,7 +185,7 @@ export interface Package {
   [k: string]: unknown | undefined;
 }
 /**
- * Optional geographic refinements for media buys. Most targeting should be expressed in the brief and handled by the publisher. These fields are primarily for geographic restrictions (RCT testing, regulatory compliance).
+ * Optional restriction overlays for media buys. Most targeting should be expressed in the brief and handled by the publisher. These fields are for functional restrictions: geographic (RCT testing, regulatory compliance), age verification (alcohol, gambling), device platform (app compatibility), and language (localization).
  */
 export interface TargetingOverlay {
   /**
@@ -210,6 +230,35 @@ export interface TargetingOverlay {
   axe_exclude_segment?: string;
   frequency_cap?: FrequencyCap;
   property_list?: PropertyListReference;
+  /**
+   * Age restriction for compliance. Use for legal requirements (alcohol, gambling), not audience targeting.
+   */
+  age_restriction?: {
+    /**
+     * Minimum age required
+     */
+    min: number;
+    /**
+     * Whether verified age (not inferred) is required for compliance
+     */
+    verification_required?: boolean;
+    /**
+     * Accepted verification methods. If omitted, any method the platform supports is acceptable.
+     */
+    accepted_methods?: AgeVerificationMethod[];
+  };
+  /**
+   * Restrict to specific platforms. Use for technical compatibility (app only works on iOS). Values from Sec-CH-UA-Platform standard, extended for CTV.
+   *
+   * @minItems 1
+   */
+  device_platform?: [DevicePlatform, ...DevicePlatform[]];
+  /**
+   * Restrict to users with specific language preferences. ISO 639-1 codes (e.g., 'en', 'es', 'fr').
+   *
+   * @minItems 1
+   */
+  language?: [string, ...string[]];
   [k: string]: unknown | undefined;
 }
 /**
@@ -845,7 +894,7 @@ export interface BrandManifest {
    */
   name: string;
   /**
-   * Brand logo assets with semantic tags for different use cases
+   * Brand logo assets with structured fields for orientation, background compatibility, and variant type. Use the orientation, background, and variant enum fields for reliable filtering by creative agents.
    */
   logos?: {
     /**
@@ -853,9 +902,25 @@ export interface BrandManifest {
      */
     url: string;
     /**
-     * Semantic tags describing the logo variant (e.g., 'dark', 'light', 'square', 'horizontal', 'icon')
+     * Logo aspect ratio orientation. square: ~1:1, horizontal: wide, vertical: tall, stacked: vertically arranged elements
+     */
+    orientation?: 'square' | 'horizontal' | 'vertical' | 'stacked';
+    /**
+     * Background compatibility. dark-bg: use on dark backgrounds, light-bg: use on light backgrounds, transparent-bg: has transparent background
+     */
+    background?: 'dark-bg' | 'light-bg' | 'transparent-bg';
+    /**
+     * Logo variant type. primary: main logo, secondary: alternative, icon: symbol only, wordmark: text only, full-lockup: complete logo
+     */
+    variant?: 'primary' | 'secondary' | 'icon' | 'wordmark' | 'full-lockup';
+    /**
+     * Additional semantic tags for custom categorization beyond the standard orientation, background, and variant fields.
      */
     tags?: string[];
+    /**
+     * Human-readable description of when to use this logo variant (e.g., 'Primary logo for use on light backgrounds', 'Icon-only variant for small formats')
+     */
+    usage?: string;
     /**
      * Logo width in pixels
      */
@@ -908,9 +973,26 @@ export interface BrandManifest {
     font_urls?: string[];
   };
   /**
-   * Brand voice and messaging tone (e.g., 'professional', 'casual', 'humorous', 'trustworthy', 'innovative')
+   * Brand voice and messaging tone guidelines for creative agents.
    */
-  tone?: string;
+  tone?: {
+    /**
+     * High-level voice descriptor (e.g., 'warm and inviting', 'professional and trustworthy')
+     */
+    voice?: string;
+    /**
+     * Personality traits that characterize the brand voice
+     */
+    attributes?: string[];
+    /**
+     * Specific guidance for copy generation - what TO do
+     */
+    dos?: string[];
+    /**
+     * Guardrails to avoid brand violations - what NOT to do
+     */
+    donts?: string[];
+  };
   /**
    * Brand voice configuration for audio/conversational experiences
    */
@@ -1299,6 +1381,55 @@ export type CoBrandingRequirement = 'required' | 'optional' | 'none';
  * Landing page requirements
  */
 export type LandingPageRequirement = 'any' | 'retailer_site_only' | 'must_include_retailer';
+/**
+ * Selects signals from a data provider's adagents.json catalog. Used for product definitions and agent authorization. Supports three selection patterns: all signals, specific IDs, or by tags.
+ */
+export type DataProviderSignalSelector =
+  | {
+      /**
+       * Domain where data provider's adagents.json is hosted (e.g., 'polk.com')
+       */
+      data_provider_domain: string;
+      /**
+       * Discriminator indicating all signals from this data provider are included
+       */
+      selection_type: 'all';
+      [k: string]: unknown | undefined;
+    }
+  | {
+      /**
+       * Domain where data provider's adagents.json is hosted (e.g., 'polk.com')
+       */
+      data_provider_domain: string;
+      /**
+       * Discriminator indicating selection by specific signal IDs
+       */
+      selection_type: 'by_id';
+      /**
+       * Specific signal IDs from the data provider's catalog
+       *
+       * @minItems 1
+       */
+      signal_ids: [string, ...string[]];
+      [k: string]: unknown | undefined;
+    }
+  | {
+      /**
+       * Domain where data provider's adagents.json is hosted (e.g., 'polk.com')
+       */
+      data_provider_domain: string;
+      /**
+       * Discriminator indicating selection by signal tags
+       */
+      selection_type: 'by_tag';
+      /**
+       * Signal tags from the data provider's catalog. Selector covers all signals with these tags
+       *
+       * @minItems 1
+       */
+      signal_tags: [string, ...string[]];
+      [k: string]: unknown | undefined;
+    };
 
 /**
  * Represents available advertising inventory
@@ -1361,6 +1492,14 @@ export interface Product {
    * Whether buyers can filter this product to a subset of its publisher_properties. When false (default), the product is 'all or nothing' - buyers must accept all properties or the product is excluded from property_list filtering results.
    */
   property_targeting_allowed?: boolean;
+  /**
+   * Data provider signals available for this product. Buyers fetch signal definitions from each data provider's adagents.json and can verify agent authorization.
+   */
+  data_provider_signals?: DataProviderSignalSelector[];
+  /**
+   * Whether buyers can filter this product to a subset of its data_provider_signals. When false (default), the product includes all listed signals as a bundle. When true, buyers can target specific signals.
+   */
+  signal_targeting_allowed?: boolean;
   /**
    * Explanation of why this product matches the brief (only included when brief is provided)
    */

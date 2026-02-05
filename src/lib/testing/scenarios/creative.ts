@@ -265,9 +265,19 @@ function getDefaultBrandManifest() {
     logos: [
       {
         url: 'https://via.placeholder.com/200x50.png?text=Logo',
-        tags: ['primary'],
+        orientation: 'horizontal',
+        background: 'light-bg',
+        variant: 'primary',
+        width: 200,
+        height: 50,
       },
     ],
+    tone: {
+      voice: 'Professional and trustworthy',
+      attributes: ['innovative', 'reliable', 'customer-focused'],
+      dos: ['Use clear, direct language', 'Emphasize value proposition'],
+      donts: ['Use jargon', 'Make unsubstantiated claims'],
+    },
     colors: {
       primary: '#0066CC',
       secondary: '#FFFFFF',
