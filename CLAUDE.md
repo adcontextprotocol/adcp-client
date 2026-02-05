@@ -472,6 +472,8 @@ gh run list --workflow=release.yml
 
 ### Emergency Manual Release (Use ONLY if automated process fails)
 
+**Prerequisite**: You must be logged in to npm locally (`npm login`).
+
 ```bash
 # 1. Version packages
 npm run version
@@ -484,6 +486,8 @@ gh release create v$(node -p "require('./package.json').version") --generate-not
 ```
 
 **Remember**: Always create a changeset for library changes. The automation handles the rest.
+
+**Note**: CI uses OIDC publishing (no NPM_TOKEN needed). The package is linked to this GitHub repo on npm for tokenless publishing.
 
 ### Troubleshooting
 
@@ -540,9 +544,9 @@ gh run view <run-id>
 ```
 
 **Common issues**:
-- NPM_TOKEN secret expired or incorrect
 - Package.json version already exists on npm
 - Build failed during publish
+- OIDC publishing not configured on npm (check package access settings)
 
 ### Quick Reference
 
@@ -570,6 +574,6 @@ gh run view <run-id>
 
 ---
 
-*Last updated: 2025-10-19 (Added release troubleshooting and version management warnings)*
+*Last updated: 2026-02-05 (Switched to OIDC publishing, no NPM_TOKEN needed)*
 *Project: AdCP Testing Framework*
 *Environment: Fly.io Production*
