@@ -4788,7 +4788,7 @@ export interface CreativeManifest {
   /**
    * Map of asset IDs to actual asset content. Each key MUST match an asset_id from the format's assets array (e.g., 'banner_image', 'clickthrough_url', 'video_file', 'vast_tag'). The asset_id is the technical identifier used to match assets to format requirements.
    *
-   * IMPORTANT: Creative manifest validation MUST be performed in the context of the format specification. The format defines what type each asset_id should be, which eliminates any validation ambiguity.
+   * IMPORTANT: Full validation requires format context. The format defines what type each asset_id should be. Standalone schema validation only checks structural conformance — each asset must match at least one valid asset type schema.
    */
   assets: {
     [k: string]: unknown | undefined;
@@ -4876,7 +4876,7 @@ export type PreviewCreativeRequest =
        * Discriminator indicating this is a single preview request
        */
       request_type: 'single';
-      format_id: FormatID;
+      format_id?: FormatID;
       creative_manifest: CreativeManifest;
       /**
        * Array of input sets for generating multiple preview variants. Each input set defines macros and context values for one preview rendering. If not provided, creative agent will generate default previews.
@@ -4916,7 +4916,7 @@ export type PreviewCreativeRequest =
        * @maxItems 50
        */
       requests: {
-        format_id: FormatID2;
+        format_id?: FormatID2;
         creative_manifest: CreativeManifest1;
         /**
          * Array of input sets for generating multiple preview variants
@@ -4961,7 +4961,7 @@ export type PreviewOutputFormat1 = 'url' | 'html';
 export type PreviewOutputFormat2 = 'url' | 'html';
 
 /**
- * Format identifier for rendering the preview
+ * Format identifier for rendering the preview. Optional — defaults to creative_manifest.format_id if omitted.
  */
 export interface CreativeManifest1 {
   format_id: FormatID1;
@@ -4972,7 +4972,7 @@ export interface CreativeManifest1 {
   /**
    * Map of asset IDs to actual asset content. Each key MUST match an asset_id from the format's assets array (e.g., 'banner_image', 'clickthrough_url', 'video_file', 'vast_tag'). The asset_id is the technical identifier used to match assets to format requirements.
    *
-   * IMPORTANT: Creative manifest validation MUST be performed in the context of the format specification. The format defines what type each asset_id should be, which eliminates any validation ambiguity.
+   * IMPORTANT: Full validation requires format context. The format defines what type each asset_id should be. Standalone schema validation only checks structural conformance — each asset must match at least one valid asset type schema.
    */
   assets: {
     [k: string]: unknown | undefined;

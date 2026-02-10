@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-02-10T13:07:54.065Z
+// Generated at: 2026-02-10T21:23:48.198Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -2409,7 +2409,7 @@ export const BuildCreativeResponseSchema = z.union([BuildCreativeSuccessSchema, 
 
 export const PreviewCreativeRequestSchema = z.union([z.object({
         request_type: z.literal("single"),
-        format_id: FormatIDSchema,
+        format_id: FormatIDSchema.nullish(),
         creative_manifest: CreativeManifestSchema,
         inputs: z.array(z.object({
             name: z.string(),
@@ -2423,7 +2423,7 @@ export const PreviewCreativeRequestSchema = z.union([z.object({
     }), z.object({
         request_type: z.literal("batch"),
         requests: z.array(z.object({
-            format_id: FormatID2Schema,
+            format_id: FormatID2Schema.nullish(),
             creative_manifest: CreativeManifest1Schema,
             inputs: z.array(z.object({
                 name: z.string(),
