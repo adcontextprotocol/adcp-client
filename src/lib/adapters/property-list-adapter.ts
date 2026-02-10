@@ -205,7 +205,11 @@ export class PropertyListAdapter implements IPropertyListAdapter {
     // Resolve property identifiers if requested
     let identifiers: any[] | undefined;
     if (request.resolve !== false) {
-      const resolved = await this.resolveList(request.list_id, request.pagination?.max_results, request.pagination?.cursor);
+      const resolved = await this.resolveList(
+        request.list_id,
+        request.pagination?.max_results,
+        request.pagination?.cursor
+      );
       identifiers = resolved.map(p => ({
         identifier_type: p.identifier_type,
         identifier_value: p.identifier_value,
