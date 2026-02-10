@@ -1531,6 +1531,10 @@ export interface ReportingCapabilities {
    * Metrics available in reporting. Impressions and spend are always implicitly included.
    */
   available_metrics: AvailableMetric[];
+  /**
+   * Whether delivery data can be filtered to arbitrary date ranges. 'date_range' means the platform supports start_date/end_date parameters. 'lifetime_only' means the platform returns campaign lifetime totals and date range parameters are not accepted.
+   */
+  date_range_support: 'date_range' | 'lifetime_only';
   [k: string]: unknown | undefined;
 }
 /**
@@ -3907,11 +3911,11 @@ export interface GetMediaBuyDeliveryRequest {
    */
   status_filter?: MediaBuyStatus | MediaBuyStatus[];
   /**
-   * Start date for reporting period (YYYY-MM-DD)
+   * Start date for reporting period (YYYY-MM-DD). When omitted along with end_date, returns campaign lifetime data. Only accepted when the product's reporting_capabilities.date_range_support is 'date_range'.
    */
   start_date?: string;
   /**
-   * End date for reporting period (YYYY-MM-DD)
+   * End date for reporting period (YYYY-MM-DD). When omitted along with start_date, returns campaign lifetime data. Only accepted when the product's reporting_capabilities.date_range_support is 'date_range'.
    */
   end_date?: string;
   context?: ContextObject;

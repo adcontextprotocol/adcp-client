@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas vlatest
-// Generated at: 2026-02-10T02:40:19.088Z
+// Generated at: 2026-02-10T11:20:48.015Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -2134,6 +2134,10 @@ export interface ReportingCapabilities {
    * Metrics available in reporting. Impressions and spend are always implicitly included.
    */
   available_metrics: AvailableMetric[];
+  /**
+   * Whether delivery data can be filtered to arbitrary date ranges. 'date_range' means the platform supports start_date/end_date parameters. 'lifetime_only' means the platform returns campaign lifetime totals and date range parameters are not accepted.
+   */
+  date_range_support: 'date_range' | 'lifetime_only';
   [k: string]: unknown | undefined;
 }
 /**

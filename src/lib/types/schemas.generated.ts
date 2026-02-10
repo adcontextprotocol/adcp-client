@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-02-10T02:40:20.209Z
+// Generated at: 2026-02-10T11:20:49.038Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -365,7 +365,8 @@ export const ReportingCapabilitiesSchema = z.record(z.string(), z.union([z.unkno
     expected_delay_minutes: z.number(),
     timezone: z.string(),
     supports_webhooks: z.boolean(),
-    available_metrics: z.array(AvailableMetricSchema)
+    available_metrics: z.array(AvailableMetricSchema),
+    date_range_support: z.union([z.literal("date_range"), z.literal("lifetime_only")])
 }));
 
 export const CreativePolicySchema = z.record(z.string(), z.union([z.unknown(), z.undefined()])).and(z.object({
