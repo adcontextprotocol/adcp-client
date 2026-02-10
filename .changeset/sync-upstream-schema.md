@@ -25,4 +25,10 @@ Update to latest AdCP schema with new features:
 - `UniversalMacro` typed enum for creative tracking macro placeholders
 - `BaseIndividualAsset` / `BaseGroupAsset` extracted as named interfaces
 
+**Pagination:**
+- Standardized `PaginationRequest` / `PaginationResponse` types across all list endpoints
+- New `paginate()` utility to auto-collect all items across pages
+- New `paginatePages()` async generator for progressive page-by-page loading
+- Deprecated legacy `PaginationOptions` (offset/limit pattern)
+
 **Capabilities**: Added `age_restriction`, `device_platform`, `language`, and `conversion_tracking`

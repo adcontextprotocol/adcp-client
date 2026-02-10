@@ -205,6 +205,9 @@ export type {
   Account,
   ListAccountsRequest,
   ListAccountsResponse,
+  // Pagination
+  PaginationRequest,
+  PaginationResponse,
 } from './types/tools.generated';
 
 // ====== ZOD SCHEMAS (for runtime validation) ======
@@ -228,6 +231,10 @@ export { ProtocolClient, callMCPTool, callA2ATool, createMCPClient, createA2ACli
 export { getStandardFormats, unwrapProtocolResponse, isAdcpError, isAdcpSuccess } from './utils';
 export { REQUEST_TIMEOUT, MAX_CONCURRENT, STANDARD_FORMATS } from './utils';
 export { detectProtocol, detectProtocolWithTimeout } from './utils';
+
+// ====== PAGINATION UTILITIES ======
+// Auto-pagination helpers for cursor-based AdCP endpoints
+export { paginate, paginatePages, type PaginateOptions } from './utils';
 
 // ====== FORMAT ASSET UTILITIES ======
 // Access to format assets (v3 `assets` field)

@@ -169,3 +169,6 @@ export {
   type PriceGuidanceV2,
   type PriceGuidanceV3,
 } from './pricing-adapter';
+
+// Re-export pagination utilities
+export { paginate, paginatePages, type PaginateOptions } from './pagination';
