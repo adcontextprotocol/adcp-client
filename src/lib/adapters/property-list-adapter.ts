@@ -205,7 +205,7 @@ export class PropertyListAdapter implements IPropertyListAdapter {
     // Resolve property identifiers if requested
     let identifiers: any[] | undefined;
     if (request.resolve !== false) {
-      const resolved = await this.resolveList(request.list_id, request.max_results, request.cursor);
+      const resolved = await this.resolveList(request.list_id, request.pagination?.max_results, request.pagination?.cursor);
       identifiers = resolved.map(p => ({
         identifier_type: p.identifier_type,
         identifier_value: p.identifier_value,
@@ -218,7 +218,10 @@ export class PropertyListAdapter implements IPropertyListAdapter {
         property_count: identifiers?.length ?? list.property_count,
       },
       identifiers,
-      total_count: identifiers?.length,
+      pagination: {
+        has_more: false,
+        total_count: identifiers?.length,
+      },
       resolved_at: new Date().toISOString(),
     };
   }
@@ -244,13 +247,15 @@ export class PropertyListAdapter implements IPropertyListAdapter {
     }
 
     // Apply pagination
-    const maxResults = request.max_results ?? 100;
+    const maxResults = request.pagination?.max_results ?? 100;
     const paginatedLists = lists.slice(0, maxResults);
 
     return {
       lists: paginatedLists,
-      total_count: lists.length,
-      returned_count: paginatedLists.length,
+      pagination: {
+        has_more: paginatedLists.length < lists.length,
+        total_count: lists.length,
+      },
     };
   }
 

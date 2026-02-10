@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas vlatest
-// Generated at: 2026-02-10T11:20:48.015Z
+// Generated at: 2026-02-10T13:07:53.111Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -2397,6 +2397,7 @@ export interface GetProductsResponse {
    * [AdCP 3.0] Indicates whether property_list filtering was applied. True if the agent filtered products based on the provided property_list. Absent or false if property_list was not provided or not supported by this agent.
    */
   property_list_applied?: boolean;
+  pagination?: PaginationResponse;
   context?: ContextObject;
   ext?: ExtensionObject;
   [k: string]: unknown | undefined;
@@ -2518,6 +2519,23 @@ export interface Error {
     [k: string]: unknown | undefined;
   };
   [k: string]: unknown | undefined;
+}
+/**
+ * Standard cursor-based pagination metadata for list responses
+ */
+export interface PaginationResponse {
+  /**
+   * Whether more results are available beyond this page
+   */
+  has_more: boolean;
+  /**
+   * Opaque cursor to pass in the next request to fetch the next page. Only present when has_more is true.
+   */
+  cursor?: string;
+  /**
+   * Total number of items matching the query across all pages. Optional because not all backends can efficiently compute this.
+   */
+  total_count?: number;
 }
 /**
  * Opaque correlation data that is echoed unchanged in responses. Used for internal tracking, UI session IDs, trace IDs, and other caller-specific identifiers that don't affect protocol behavior. Context data is never parsed by AdCP agents - it's simply preserved and returned.

@@ -230,6 +230,7 @@ export interface GetProductsRequest {
   account_id?: string;
   filters?: ProductFilters;
   property_list?: PropertyListReference;
+  pagination?: PaginationRequest;
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -692,6 +693,19 @@ export interface PropertyListReference {
   auth_token?: string;
 }
 /**
+ * Standard cursor-based pagination parameters for list operations
+ */
+export interface PaginationRequest {
+  /**
+   * Maximum number of items to return per page
+   */
+  max_results?: number;
+  /**
+   * Opaque cursor from a previous response to fetch the next page
+   */
+  cursor?: string;
+}
+/**
  * Opaque correlation data that is echoed unchanged in responses. Used for internal tracking, UI session IDs, trace IDs, and other caller-specific identifiers that don't affect protocol behavior. Context data is never parsed by AdCP agents - it's simply preserved and returned.
  */
 export interface ContextObject {
@@ -885,6 +899,7 @@ export interface GetProductsResponse {
    * [AdCP 3.0] Indicates whether property_list filtering was applied. True if the agent filtered products based on the provided property_list. Absent or false if property_list was not provided or not supported by this agent.
    */
   property_list_applied?: boolean;
+  pagination?: PaginationResponse;
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -1720,6 +1735,23 @@ export interface Error {
   [k: string]: unknown | undefined;
 }
 /**
+ * Standard cursor-based pagination metadata for list responses
+ */
+export interface PaginationResponse {
+  /**
+   * Whether more results are available beyond this page
+   */
+  has_more: boolean;
+  /**
+   * Opaque cursor to pass in the next request to fetch the next page. Only present when has_more is true.
+   */
+  cursor?: string;
+  /**
+   * Total number of items matching the query across all pages. Optional because not all backends can efficiently compute this.
+   */
+  total_count?: number;
+}
+/**
  * Opaque correlation data that is echoed unchanged in responses. Used for internal tracking, UI session IDs, trace IDs, and other caller-specific identifiers that don't affect protocol behavior. Context data is never parsed by AdCP agents - it's simply preserved and returned.
  */
 
@@ -1761,6 +1793,7 @@ export interface ListCreativeFormatsRequest {
    * Search for formats by name (case-insensitive partial match)
    */
   name_search?: string;
+  pagination?: PaginationRequest;
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -1865,6 +1898,7 @@ export interface ListCreativeFormatsResponse {
    * Task-specific errors and warnings (e.g., format availability issues)
    */
   errors?: Error[];
+  pagination?: PaginationResponse;
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -3391,19 +3425,7 @@ export interface ListCreativesRequest {
     field?: CreativeSortField;
     direction?: SortDirection;
   };
-  /**
-   * Pagination parameters
-   */
-  pagination?: {
-    /**
-     * Maximum number of creatives to return
-     */
-    limit?: number;
-    /**
-     * Number of creatives to skip
-     */
-    offset?: number;
-  };
+  pagination?: PaginationRequest;
   /**
    * Include package assignment information in response
    */
@@ -3507,7 +3529,7 @@ export interface CreativeFilters {
   [k: string]: unknown | undefined;
 }
 /**
- * Opaque correlation data that is echoed unchanged in responses. Used for internal tracking, UI session IDs, trace IDs, and other caller-specific identifiers that don't affect protocol behavior. Context data is never parsed by AdCP agents - it's simply preserved and returned.
+ * Standard cursor-based pagination parameters for list operations
  */
 
 // list_creatives response
@@ -3565,11 +3587,11 @@ export interface ListCreativesResponse {
     /**
      * Total number of creatives matching filters (across all pages)
      */
-    total_matching: number;
+    total_matching?: number;
     /**
      * Number of creatives returned in this response
      */
-    returned: number;
+    returned?: number;
     /**
      * List of filters that were applied to the query
      */
@@ -3582,31 +3604,7 @@ export interface ListCreativesResponse {
       direction?: SortDirection;
     };
   };
-  /**
-   * Pagination information for navigating results
-   */
-  pagination: {
-    /**
-     * Maximum number of results requested
-     */
-    limit: number;
-    /**
-     * Number of results skipped
-     */
-    offset: number;
-    /**
-     * Whether more results are available
-     */
-    has_more: boolean;
-    /**
-     * Total number of pages available
-     */
-    total_pages?: number;
-    /**
-     * Current page number (1-based)
-     */
-    current_page?: number;
-  };
+  pagination: PaginationResponse;
   /**
    * Array of creative assets matching the query
    */
@@ -3756,7 +3754,7 @@ export interface ListCreativesResponse {
   ext?: ExtensionObject;
 }
 /**
- * Account that owns this creative
+ * Standard cursor-based pagination metadata for list responses
  */
 
 // update_media_buy parameters
@@ -5246,6 +5244,7 @@ export type GetSignalsRequest = {
    * Maximum number of results to return
    */
   max_results?: number;
+  pagination?: PaginationRequest;
   context?: ContextObject;
   ext?: ExtensionObject;
 };
@@ -5311,7 +5310,7 @@ export interface SignalFilters {
   [k: string]: unknown | undefined;
 }
 /**
- * Opaque correlation data that is echoed unchanged in responses. Used for internal tracking, UI session IDs, trace IDs, and other caller-specific identifiers that don't affect protocol behavior. Context data is never parsed by AdCP agents - it's simply preserved and returned.
+ * Standard cursor-based pagination parameters for list operations
  */
 
 // get_signals response
@@ -5493,6 +5492,7 @@ export interface GetSignalsResponse {
    * Task-specific errors and warnings (e.g., signal discovery or pricing issues)
    */
   errors?: Error[];
+  pagination?: PaginationResponse;
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -5852,13 +5852,18 @@ export interface GetPropertyListRequest {
    */
   resolve?: boolean;
   /**
-   * Maximum identifiers to return (for large lists)
+   * Pagination parameters. Uses higher limits than standard pagination because property lists can contain tens of thousands of identifiers.
    */
-  max_results?: number;
-  /**
-   * Pagination cursor for large result sets
-   */
-  cursor?: string;
+  pagination?: {
+    /**
+     * Maximum number of identifiers to return per page
+     */
+    max_results?: number;
+    /**
+     * Opaque cursor from a previous response to fetch the next page
+     */
+    cursor?: string;
+  };
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -5876,27 +5881,7 @@ export interface GetPropertyListResponse {
    * Resolved identifiers that passed filters (if resolve=true). Cache these locally for real-time use.
    */
   identifiers?: Identifier[];
-  /**
-   * Total number of identifiers in resolved list
-   */
-  total_count?: number;
-  /**
-   * Number of identifiers returned in this response
-   */
-  returned_count?: number;
-  /**
-   * Pagination information
-   */
-  pagination?: {
-    /**
-     * Whether more results are available
-     */
-    has_more?: boolean;
-    /**
-     * Cursor for next page
-     */
-    cursor?: string;
-  };
+  pagination?: PaginationResponse;
   /**
    * When the list was resolved
    */
@@ -5930,19 +5915,12 @@ export interface ListPropertyListsRequest {
    * Filter to lists whose name contains this string
    */
   name_contains?: string;
-  /**
-   * Maximum lists to return
-   */
-  max_results?: number;
-  /**
-   * Pagination cursor
-   */
-  cursor?: string;
+  pagination?: PaginationRequest;
   context?: ContextObject;
   ext?: ExtensionObject;
 }
 /**
- * Opaque correlation data that is echoed unchanged in responses. Used for internal tracking, UI session IDs, trace IDs, and other caller-specific identifiers that don't affect protocol behavior. Context data is never parsed by AdCP agents - it's simply preserved and returned.
+ * Standard cursor-based pagination parameters for list operations
  */
 
 // list_property_lists response
@@ -5954,27 +5932,7 @@ export interface ListPropertyListsResponse {
    * Array of property lists (metadata only, not resolved properties)
    */
   lists: PropertyList[];
-  /**
-   * Total number of lists matching criteria
-   */
-  total_count?: number;
-  /**
-   * Number of lists returned in this response
-   */
-  returned_count?: number;
-  /**
-   * Pagination information
-   */
-  pagination?: {
-    /**
-     * Whether more results are available
-     */
-    has_more?: boolean;
-    /**
-     * Cursor for next page
-     */
-    cursor?: string;
-  };
+  pagination?: PaginationResponse;
   ext?: ExtensionObject;
 }
 /**
@@ -6033,11 +5991,12 @@ export interface ListContentStandardsRequest {
    * Filter by ISO 3166-1 alpha-2 country codes
    */
   countries?: string[];
+  pagination?: PaginationRequest;
   context?: ContextObject;
   ext?: ExtensionObject;
 }
 /**
- * Opaque correlation data that is echoed unchanged in responses. Used for internal tracking, UI session IDs, trace IDs, and other caller-specific identifiers that don't affect protocol behavior. Context data is never parsed by AdCP agents - it's simply preserved and returned.
+ * Standard cursor-based pagination parameters for list operations
  */
 
 // list_content_standards response
@@ -6056,6 +6015,7 @@ export type ListContentStandardsResponse =
       errors?: {
         [k: string]: unknown | undefined;
       };
+      pagination?: PaginationResponse;
       context?: ContextObject;
       ext?: ExtensionObject;
     }
@@ -7074,13 +7034,18 @@ export interface GetMediaBuyArtifactsRequest {
     end?: string;
   };
   /**
-   * Maximum artifacts to return per request
+   * Pagination parameters. Uses higher limits than standard pagination because artifact result sets can be very large.
    */
-  limit?: number;
-  /**
-   * Pagination cursor for fetching subsequent pages
-   */
-  cursor?: string;
+  pagination?: {
+    /**
+     * Maximum number of artifacts to return per page
+     */
+    max_results?: number;
+    /**
+     * Opaque cursor from a previous response to fetch the next page
+     */
+    cursor?: string;
+  };
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -7162,19 +7127,7 @@ export type GetMediaBuyArtifactsResponse =
          */
         method?: 'random' | 'stratified' | 'recent' | 'failures_only';
       };
-      /**
-       * Pagination information for large result sets
-       */
-      pagination?: {
-        /**
-         * Cursor for fetching the next page
-         */
-        cursor?: string;
-        /**
-         * Whether more results are available
-         */
-        has_more?: boolean;
-      };
+      pagination?: PaginationResponse;
       /**
        * Field must not be present in success response
        */
@@ -8245,11 +8198,12 @@ export interface ListAccountsRequest {
    * Filter accounts by status
    */
   status?: 'active' | 'suspended' | 'closed' | 'all';
+  pagination?: PaginationRequest;
   context?: ContextObject;
   ext?: ExtensionObject;
 }
 /**
- * Opaque correlation data that is echoed unchanged in responses. Used for internal tracking, UI session IDs, trace IDs, and other caller-specific identifiers that don't affect protocol behavior. Context data is never parsed by AdCP agents - it's simply preserved and returned.
+ * Standard cursor-based pagination parameters for list operations
  */
 
 // list_accounts response
@@ -8265,6 +8219,7 @@ export interface ListAccountsResponse {
    * Task-specific errors and warnings
    */
   errors?: Error[];
+  pagination?: PaginationResponse;
   context?: ContextObject;
   ext?: ExtensionObject;
 }

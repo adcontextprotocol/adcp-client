@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-02-10T11:20:49.038Z
+// Generated at: 2026-02-10T13:07:54.065Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -473,6 +473,12 @@ export const ErrorSchema = z.record(z.string(), z.union([z.unknown(), z.undefine
     details: z.record(z.string(), z.union([z.unknown(), z.undefined()])).nullish()
 }));
 
+export const PaginationResponseSchema = z.object({
+    has_more: z.boolean(),
+    cursor: z.string().nullish(),
+    total_count: z.number().nullish()
+});
+
 export const ContextObjectSchema = z.record(z.string(), z.union([z.unknown(), z.undefined()]));
 
 export const ProductAllocationSchema = z.record(z.string(), z.union([z.unknown(), z.undefined()])).and(z.object({
@@ -653,6 +659,11 @@ export const SignalID2Schema = z.union([z.record(z.string(), z.union([z.unknown(
         id: z.string()
     }))]);
 
+export const PaginationRequestSchema = z.object({
+    max_results: z.number().nullish(),
+    cursor: z.string().nullish()
+});
+
 export const MediaBuyFeaturesSchema = z.record(z.string(), z.union([z.boolean(), z.undefined()])).and(z.object({
     inline_creative_management: z.boolean().nullish(),
     property_list_filtering: z.boolean().nullish(),
@@ -791,6 +802,7 @@ export const ListCreativeFormatsRequestSchema = z.object({
     min_height: z.number().nullish(),
     is_responsive: z.boolean().nullish(),
     name_search: z.string().nullish(),
+    pagination: PaginationRequestSchema.nullish(),
     context: ContextObjectSchema.nullish(),
     ext: ExtensionObjectSchema.nullish()
 });
@@ -967,21 +979,15 @@ export const SubAssetSchema = z.union([z.record(z.string(), z.union([z.unknown()
 
 export const ListCreativesResponseSchema = z.object({
     query_summary: z.object({
-        total_matching: z.number(),
-        returned: z.number(),
+        total_matching: z.number().nullish(),
+        returned: z.number().nullish(),
         filters_applied: z.array(z.string()).nullish(),
         sort_applied: z.object({
             field: z.string().nullish(),
             direction: SortDirectionSchema.nullish()
         }).nullish()
     }),
-    pagination: z.object({
-        limit: z.number(),
-        offset: z.number(),
-        has_more: z.boolean(),
-        total_pages: z.number().nullish(),
-        current_page: z.number().nullish()
-    }),
+    pagination: PaginationResponseSchema,
     creatives: z.array(z.object({
         creative_id: z.string(),
         account: AccountSchema.nullish(),
@@ -1461,8 +1467,10 @@ export const PropertyListFiltersSchema = z.object({
 export const GetPropertyListRequestSchema = z.object({
     list_id: z.string(),
     resolve: z.boolean().nullish(),
-    max_results: z.number().nullish(),
-    cursor: z.string().nullish(),
+    pagination: z.object({
+        max_results: z.number().nullish(),
+        cursor: z.string().nullish()
+    }).nullish(),
     context: ContextObjectSchema.nullish(),
     ext: ExtensionObjectSchema.nullish()
 });
@@ -1470,8 +1478,7 @@ export const GetPropertyListRequestSchema = z.object({
 export const ListPropertyListsRequestSchema = z.object({
     principal: z.string().nullish(),
     name_contains: z.string().nullish(),
-    max_results: z.number().nullish(),
-    cursor: z.string().nullish(),
+    pagination: PaginationRequestSchema.nullish(),
     context: ContextObjectSchema.nullish(),
     ext: ExtensionObjectSchema.nullish()
 });
@@ -1492,6 +1499,7 @@ export const ListContentStandardsRequestSchema = z.object({
     channels: z.array(MediaChannelSchema).nullish(),
     languages: z.array(z.string()).nullish(),
     countries: z.array(z.string()).nullish(),
+    pagination: PaginationRequestSchema.nullish(),
     context: ContextObjectSchema.nullish(),
     ext: ExtensionObjectSchema.nullish()
 });
@@ -1784,8 +1792,10 @@ export const GetMediaBuyArtifactsRequestSchema = z.object({
         start: z.string().nullish(),
         end: z.string().nullish()
     }).nullish(),
-    limit: z.number().nullish(),
-    cursor: z.string().nullish(),
+    pagination: z.object({
+        max_results: z.number().nullish(),
+        cursor: z.string().nullish()
+    }).nullish(),
     context: ContextObjectSchema.nullish(),
     ext: ExtensionObjectSchema.nullish()
 });
@@ -1811,10 +1821,7 @@ export const GetMediaBuyArtifactsResponseSchema = z.union([z.object({
             effective_rate: z.number().nullish(),
             method: z.union([z.literal("random"), z.literal("stratified"), z.literal("recent"), z.literal("failures_only")]).nullish()
         }).nullish(),
-        pagination: z.object({
-            cursor: z.string().nullish(),
-            has_more: z.boolean().nullish()
-        }).nullish(),
+        pagination: PaginationResponseSchema.nullish(),
         errors: z.record(z.string(), z.union([z.unknown(), z.undefined()])).nullish(),
         context: ContextObjectSchema.nullish(),
         ext: ExtensionObjectSchema.nullish()
@@ -2089,6 +2096,7 @@ export const GetAdCPCapabilitiesResponseSchema = z.object({
 
 export const ListAccountsRequestSchema = z.object({
     status: z.union([z.literal("active"), z.literal("suspended"), z.literal("closed"), z.literal("all")]).nullish(),
+    pagination: PaginationRequestSchema.nullish(),
     context: ContextObjectSchema.nullish(),
     ext: ExtensionObjectSchema.nullish()
 });
@@ -2096,6 +2104,7 @@ export const ListAccountsRequestSchema = z.object({
 export const ListAccountsResponseSchema = z.object({
     accounts: z.array(AccountSchema),
     errors: z.array(ErrorSchema).nullish(),
+    pagination: PaginationResponseSchema.nullish(),
     context: ContextObjectSchema.nullish(),
     ext: ExtensionObjectSchema.nullish()
 });
@@ -2158,6 +2167,7 @@ export const GetProductsResponseSchema = z.object({
     proposals: z.array(ProposalSchema).nullish(),
     errors: z.array(ErrorSchema).nullish(),
     property_list_applied: z.boolean().nullish(),
+    pagination: PaginationResponseSchema.nullish(),
     context: ContextObjectSchema.nullish(),
     ext: ExtensionObjectSchema.nullish()
 });
@@ -2278,10 +2288,7 @@ export const ListCreativesRequestSchema = z.object({
         field: CreativeSortFieldSchema.nullish(),
         direction: SortDirectionSchema.nullish()
     }).nullish(),
-    pagination: z.object({
-        limit: z.number().nullish(),
-        offset: z.number().nullish()
-    }).nullish(),
+    pagination: PaginationRequestSchema.nullish(),
     include_assignments: z.boolean().nullish(),
     include_performance: z.boolean().nullish(),
     include_sub_assets: z.boolean().nullish(),
@@ -2447,6 +2454,7 @@ export const GetSignalsRequestSchema = z.record(z.string(), z.union([z.unknown()
     }),
     filters: SignalFiltersSchema.nullish(),
     max_results: z.number().nullish(),
+    pagination: PaginationRequestSchema.nullish(),
     context: ContextObjectSchema.nullish(),
     ext: ExtensionObjectSchema.nullish()
 }));
@@ -2468,6 +2476,7 @@ export const GetSignalsResponseSchema = z.object({
         })
     })),
     errors: z.array(ErrorSchema).nullish(),
+    pagination: PaginationResponseSchema.nullish(),
     context: ContextObjectSchema.nullish(),
     ext: ExtensionObjectSchema.nullish()
 });
@@ -2516,12 +2525,7 @@ export const UpdatePropertyListResponseSchema = z.object({
 export const GetPropertyListResponseSchema = z.object({
     list: PropertyListSchema,
     identifiers: z.array(IdentifierSchema).nullish(),
-    total_count: z.number().nullish(),
-    returned_count: z.number().nullish(),
-    pagination: z.object({
-        has_more: z.boolean().nullish(),
-        cursor: z.string().nullish()
-    }).nullish(),
+    pagination: PaginationResponseSchema.nullish(),
     resolved_at: z.string().nullish(),
     cache_valid_until: z.string().nullish(),
     coverage_gaps: z.record(z.string(), z.union([z.array(IdentifierSchema), z.undefined()])).nullish(),
@@ -2530,18 +2534,14 @@ export const GetPropertyListResponseSchema = z.object({
 
 export const ListPropertyListsResponseSchema = z.object({
     lists: z.array(PropertyListSchema),
-    total_count: z.number().nullish(),
-    returned_count: z.number().nullish(),
-    pagination: z.object({
-        has_more: z.boolean().nullish(),
-        cursor: z.string().nullish()
-    }).nullish(),
+    pagination: PaginationResponseSchema.nullish(),
     ext: ExtensionObjectSchema.nullish()
 });
 
 export const ListContentStandardsResponseSchema = z.union([z.object({
         standards: z.array(ContentStandardsSchema),
         errors: z.record(z.string(), z.union([z.unknown(), z.undefined()])).nullish(),
+        pagination: PaginationResponseSchema.nullish(),
         context: ContextObjectSchema.nullish(),
         ext: ExtensionObjectSchema.nullish()
     }), z.object({
@@ -2622,6 +2622,7 @@ export const GetProductsRequestSchema = z.object({
     account_id: z.string().nullish(),
     filters: ProductFiltersSchema.nullish(),
     property_list: PropertyListReferenceSchema.nullish(),
+    pagination: PaginationRequestSchema.nullish(),
     context: ContextObjectSchema.nullish(),
     ext: ExtensionObjectSchema.nullish()
 });
@@ -2634,6 +2635,7 @@ export const ListCreativeFormatsResponseSchema = z.object({
         capabilities: z.array(CreativeAgentCapabilitySchema).nullish()
     })).nullish(),
     errors: z.array(ErrorSchema).nullish(),
+    pagination: PaginationResponseSchema.nullish(),
     context: ContextObjectSchema.nullish(),
     ext: ExtensionObjectSchema.nullish()
 });
