@@ -28,7 +28,7 @@ export type AssetContentType =
  */
 export type DeliveryType = 'guaranteed' | 'non_guaranteed';
 /**
- * High-level categories for creative formats based on media type and delivery channel. Describes WHERE and HOW a creative displays, not what content it contains.
+ * DEPRECATED: High-level categories for creative formats. These categories are lossy abstractions that don't scale well to emerging ad formats. Use the assets array in Format objects to understand creative requirements instead - it provides precise information about what asset types are needed (video, image, text, etc.).
  */
 export type FormatCategory = 'audio' | 'video' | 'display' | 'native' | 'dooh' | 'rich_media' | 'universal';
 /**
@@ -668,6 +668,10 @@ export interface MediaBuyFeatures {
    * Full support for content_standards configuration including sampling rates and category filtering
    */
   content_standards?: boolean;
+  /**
+   * Supports sync_event_sources and log_event tasks for conversion event tracking
+   */
+  conversion_tracking?: boolean;
   [k: string]: boolean | undefined;
 }
 /**
@@ -785,6 +789,9 @@ export type AvailableMetric =
   | 'video_completions'
   | 'completion_rate'
   | 'conversions'
+  | 'conversion_value'
+  | 'roas'
+  | 'cost_per_acquisition'
   | 'viewability'
   | 'engagement_rate';
 /**
@@ -844,6 +851,19 @@ export type DataProviderSignalSelector =
       signal_tags: [string, ...string[]];
       [k: string]: unknown | undefined;
     };
+/**
+ * Where the conversion event originated
+ */
+export type ActionSource =
+  | 'website'
+  | 'app'
+  | 'offline'
+  | 'phone_call'
+  | 'chat'
+  | 'email'
+  | 'in_store'
+  | 'system_generated'
+  | 'other';
 
 /**
  * Response payload for get_products task
@@ -943,6 +963,31 @@ export interface Product {
    * Whether buyers can filter this product to a subset of its data_provider_signals. When false (default), the product includes all listed signals as a bundle. When true, buyers can target specific signals.
    */
   signal_targeting_allowed?: boolean;
+  /**
+   * Conversion tracking for this product. Presence indicates the product supports conversion-optimized delivery. Seller-level capabilities (supported event types, UID types, attribution windows) are declared in get_adcp_capabilities.
+   */
+  conversion_tracking?: {
+    /**
+     * Action sources relevant to this product (e.g. a retail media product might have 'in_store' and 'website', while a display product might only have 'website')
+     *
+     * @minItems 1
+     */
+    action_sources?: [ActionSource, ...ActionSource[]];
+    /**
+     * Optimization strategies this product supports when an optimization_goal is set on a package
+     *
+     * @minItems 1
+     */
+    supported_optimization_strategies?: [
+      'maximize_conversions' | 'target_cpa' | 'target_roas',
+      ...('maximize_conversions' | 'target_cpa' | 'target_roas')[]
+    ];
+    /**
+     * Whether the seller provides its own always-on measurement (e.g. Amazon sales attribution for Amazon advertisers). When true, sync_event_sources response will include seller-managed event sources with managed_by='seller'.
+     */
+    platform_managed?: boolean;
+    [k: string]: unknown | undefined;
+  };
   /**
    * Explanation of why this product matches the brief (only included when brief is provided)
    */
@@ -1721,9 +1766,67 @@ export interface ListCreativeFormatsRequest {
 
 // list_creative_formats response
 /**
- * Media type of this format - determines rendering method and asset requirements
+ * DEPRECATED: High-level category for this format. Use the assets array to understand creative requirements instead - it provides precise information about what asset types are needed.
  */
 export type FormatIDParameter = 'dimensions' | 'duration';
+/**
+ * Standardized macro placeholders for dynamic value substitution in creative tracking URLs. Macros are replaced with actual values at impression time. See docs/creative/universal-macros.mdx for detailed documentation.
+ */
+export type UniversalMacro =
+  | 'MEDIA_BUY_ID'
+  | 'PACKAGE_ID'
+  | 'CREATIVE_ID'
+  | 'CACHEBUSTER'
+  | 'TIMESTAMP'
+  | 'CLICK_URL'
+  | 'GDPR'
+  | 'GDPR_CONSENT'
+  | 'US_PRIVACY'
+  | 'GPP_STRING'
+  | 'GPP_SID'
+  | 'IP_ADDRESS'
+  | 'LIMIT_AD_TRACKING'
+  | 'DEVICE_TYPE'
+  | 'OS'
+  | 'OS_VERSION'
+  | 'DEVICE_MAKE'
+  | 'DEVICE_MODEL'
+  | 'USER_AGENT'
+  | 'APP_BUNDLE'
+  | 'APP_NAME'
+  | 'COUNTRY'
+  | 'REGION'
+  | 'CITY'
+  | 'ZIP'
+  | 'DMA'
+  | 'LAT'
+  | 'LONG'
+  | 'DEVICE_ID'
+  | 'DEVICE_ID_TYPE'
+  | 'DOMAIN'
+  | 'PAGE_URL'
+  | 'REFERRER'
+  | 'KEYWORDS'
+  | 'PLACEMENT_ID'
+  | 'FOLD_POSITION'
+  | 'AD_WIDTH'
+  | 'AD_HEIGHT'
+  | 'VIDEO_ID'
+  | 'VIDEO_TITLE'
+  | 'VIDEO_DURATION'
+  | 'VIDEO_CATEGORY'
+  | 'CONTENT_GENRE'
+  | 'CONTENT_RATING'
+  | 'PLAYER_WIDTH'
+  | 'PLAYER_HEIGHT'
+  | 'POD_POSITION'
+  | 'POD_SIZE'
+  | 'AD_BREAK_ID'
+  | 'STATION_ID'
+  | 'SHOW_NAME'
+  | 'EPISODE_ID'
+  | 'AUDIO_DURATION'
+  | 'AXEM';
 /**
  * Capabilities supported by creative agents for format handling
  */
@@ -1778,7 +1881,7 @@ export interface Format {
    * Optional URL to showcase page with examples and interactive demos of this format
    */
   example_url?: string;
-  type: FormatCategory;
+  type?: FormatCategory;
   /**
    * List of parameters this format accepts in format_id. Template formats define which parameters (dimensions, duration, etc.) can be specified when instantiating the format. Empty or omitted means this is a concrete format with fixed parameters.
    */
@@ -1845,9 +1948,9 @@ export interface Format {
     [k: string]: unknown | undefined;
   };
   /**
-   * List of universal macros supported by this format (e.g., MEDIA_BUY_ID, CACHEBUSTER, DEVICE_ID). Used for validation and developer tooling.
+   * List of universal macros supported by this format (e.g., MEDIA_BUY_ID, CACHEBUSTER, DEVICE_ID). Used for validation and developer tooling. See docs/creative/universal-macros.mdx for full documentation.
    */
-  supported_macros?: string[];
+  supported_macros?: (UniversalMacro | string)[];
   /**
    * For generative formats: array of format IDs that this format can generate. When a format accepts inputs like brand_manifest and message, this specifies what concrete output formats can be produced (e.g., a generative banner format might output standard image banner formats).
    */
@@ -2894,6 +2997,39 @@ export type CreateMediaBuyResponse = CreateMediaBuySuccess | CreateMediaBuyError
 /**
  * Budget pacing strategy
  */
+export type EventType =
+  | 'page_view'
+  | 'view_content'
+  | 'select_content'
+  | 'select_item'
+  | 'search'
+  | 'share'
+  | 'add_to_cart'
+  | 'remove_from_cart'
+  | 'viewed_cart'
+  | 'add_to_wishlist'
+  | 'initiate_checkout'
+  | 'add_payment_info'
+  | 'purchase'
+  | 'refund'
+  | 'lead'
+  | 'qualify_lead'
+  | 'close_convert_lead'
+  | 'disqualify_lead'
+  | 'complete_registration'
+  | 'subscribe'
+  | 'start_trial'
+  | 'app_install'
+  | 'app_launch'
+  | 'contact'
+  | 'schedule'
+  | 'donate'
+  | 'submit_application'
+  | 'custom';
+
+/**
+ * Success response - media buy created successfully
+ */
 export interface CreateMediaBuySuccess {
   /**
    * Publisher's unique identifier for the created media buy
@@ -2998,6 +3134,39 @@ export interface Package {
    * Format IDs that creative assets will be provided for this package
    */
   format_ids_to_provide?: FormatID[];
+  /**
+   * Conversion optimization goal for this package. Tells the seller which event source and event type to optimize delivery against. Provide at most one of target_roas or target_cpa. If neither is provided, the seller optimizes for maximum conversions within budget.
+   */
+  optimization_goal?: {
+    /**
+     * Event source to optimize against (must be configured on this account via sync_event_sources)
+     */
+    event_source_id: string;
+    event_type: EventType;
+    /**
+     * Target return on ad spend (e.g. 4.0 = $4 conversion value per $1 spent). Mutually exclusive with target_cpa.
+     */
+    target_roas?: number;
+    /**
+     * Target cost per acquisition in the buy currency. Mutually exclusive with target_roas.
+     */
+    target_cpa?: number;
+    /**
+     * Attribution window for this optimization goal. Values must match an option declared in the seller's conversion_tracking.attribution_windows capability. When omitted, the seller uses their default window.
+     */
+    attribution_window?: {
+      /**
+       * Click-through attribution window (e.g. '7d', '28d', '30d')
+       */
+      click_through: string;
+      /**
+       * View-through attribution window (e.g. '1d', '7d')
+       */
+      view_through?: string;
+      [k: string]: unknown | undefined;
+    };
+    [k: string]: unknown | undefined;
+  };
   /**
    * Whether this package is paused by the buyer. Paused packages do not deliver impressions. Defaults to false.
    */
@@ -3722,6 +3891,10 @@ export type MediaBuyStatus = 'pending_activation' | 'active' | 'paused' | 'compl
  */
 export interface GetMediaBuyDeliveryRequest {
   /**
+   * Filter delivery data to a specific account. When provided, only returns media buys belonging to this account. When omitted, returns data across all accessible accounts. Optional if the agent has a single account.
+   */
+  account_id?: string;
+  /**
    * Array of publisher media buy IDs to get delivery data for
    */
   media_buy_ids?: string[];
@@ -3754,7 +3927,7 @@ export interface GetMediaBuyDeliveryRequest {
  */
 export type PricingModel = 'cpm' | 'vcpm' | 'cpc' | 'cpcv' | 'cpv' | 'cpp' | 'flat_rate';
 /**
- * The pricing model used for this package (e.g., cpm, cpcv, cpp). Indicates how the package is billed and which metrics are most relevant for optimization.
+ * The event type
  */
 export type PricingModel1 = 'cpm' | 'vcpm' | 'cpc' | 'cpcv' | 'cpv' | 'cpp' | 'flat_rate';
 
@@ -3819,6 +3992,14 @@ export interface GetMediaBuyDeliveryResponse {
      * Total video completions across all media buys (if applicable)
      */
     video_completions?: number;
+    /**
+     * Total conversions across all media buys (if applicable)
+     */
+    conversions?: number;
+    /**
+     * Total conversion value across all media buys (if applicable)
+     */
+    conversion_value?: number;
     /**
      * Number of media buys included in the response
      */
@@ -3905,6 +4086,14 @@ export interface GetMediaBuyDeliveryResponse {
        * Daily spend
        */
       spend: number;
+      /**
+       * Daily conversions
+       */
+      conversions?: number;
+      /**
+       * Daily conversion value
+       */
+      conversion_value?: number;
     }[];
   }[];
   /**
@@ -3947,13 +4136,44 @@ export interface DeliveryMetrics {
    */
   completion_rate?: number;
   /**
-   * Conversions (reserved for future CPA pricing support)
+   * Total conversions attributed to this delivery. When by_event_type is present, this equals the sum of all by_event_type[].count entries.
    */
   conversions?: number;
   /**
-   * Leads generated (reserved for future CPL pricing support)
+   * Total monetary value of attributed conversions (in the reporting currency)
+   */
+  conversion_value?: number;
+  /**
+   * Return on ad spend (conversion_value / spend)
+   */
+  roas?: number;
+  /**
+   * Cost per conversion (spend / conversions)
+   */
+  cost_per_acquisition?: number;
+  /**
+   * Leads generated (convenience alias for by_event_type where event_type='lead')
    */
   leads?: number;
+  /**
+   * Conversion metrics broken down by event type. Spend-derived metrics (ROAS, CPA) are only available at the package/totals level since spend cannot be attributed to individual event types.
+   */
+  by_event_type?: {
+    event_type: EventType;
+    /**
+     * Event source that produced these conversions (for disambiguation when multiple event sources are configured)
+     */
+    event_source_id?: string;
+    /**
+     * Number of events of this type
+     */
+    count: number;
+    /**
+     * Total monetary value of events of this type
+     */
+    value?: number;
+    [k: string]: unknown | undefined;
+  }[];
   /**
    * Gross Rating Points delivered (for CPP)
    */
@@ -4043,6 +4263,25 @@ export interface DeliveryMetrics {
     }[];
     [k: string]: unknown | undefined;
   };
+  /**
+   * Conversion metrics broken down by action source (website, app, in_store, etc.). Useful for omnichannel sellers where conversions occur across digital and physical channels.
+   */
+  by_action_source?: {
+    action_source: ActionSource;
+    /**
+     * Event source that produced these conversions (for disambiguation when multiple event sources are configured)
+     */
+    event_source_id?: string;
+    /**
+     * Number of conversions from this action source
+     */
+    count: number;
+    /**
+     * Total monetary value of conversions from this action source
+     */
+    value?: number;
+    [k: string]: unknown | undefined;
+  }[];
   [k: string]: unknown | undefined;
 }
 /**
@@ -4151,13 +4390,371 @@ export interface ProvidePerformanceFeedbackError {
  * Standard error structure for task-specific errors and warnings
  */
 
+// sync_event_sources parameters
+/**
+ * Standard marketing event types for event logging, aligned with IAB ECAPI
+ */
+export interface SyncEventSourcesRequest {
+  /**
+   * Account to configure event sources for
+   */
+  account_id: string;
+  /**
+   * Event sources to sync (create or update). When omitted, the call is discovery-only and returns all existing event sources on the account without modification.
+   */
+  event_sources?: {
+    /**
+     * Unique identifier for this event source
+     */
+    event_source_id: string;
+    /**
+     * Human-readable name for this event source
+     */
+    name?: string;
+    /**
+     * Event types this source handles (e.g. purchase, lead). If omitted, accepts all event types.
+     */
+    event_types?: EventType[];
+    /**
+     * Domains authorized to send events for this event source
+     */
+    allowed_domains?: string[];
+  }[];
+  /**
+   * When true, event sources not included in this sync will be removed
+   */
+  delete_missing?: boolean;
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Opaque correlation data that is echoed unchanged in responses. Used for internal tracking, UI session IDs, trace IDs, and other caller-specific identifiers that don't affect protocol behavior. Context data is never parsed by AdCP agents - it's simply preserved and returned.
+ */
+
+// sync_event_sources response
+/**
+ * Response from event source sync operation. Returns either per-source results OR operation-level errors.
+ */
+export type SyncEventSourcesResponse = SyncEventSourcesSuccess | SyncEventSourcesError;
+/**
+ * Standard marketing event types for event logging, aligned with IAB ECAPI
+ */
+export interface SyncEventSourcesSuccess {
+  /**
+   * Results for each event source, including both synced and seller-managed sources on the account
+   */
+  event_sources: {
+    /**
+     * Event source ID from the request
+     */
+    event_source_id: string;
+    /**
+     * Name of the event source
+     */
+    name?: string;
+    /**
+     * Seller-assigned identifier for this event source (the ID in the seller's ad platform)
+     */
+    seller_id?: string;
+    /**
+     * Event types this source handles
+     */
+    event_types?: EventType[];
+    action_source?: ActionSource;
+    /**
+     * Who manages this event source. 'buyer' = configured via this sync. 'seller' = always-on, managed by the seller (e.g. Amazon sales attribution for Amazon advertisers).
+     */
+    managed_by?: 'buyer' | 'seller';
+    /**
+     * Implementation details for activating this event source (e.g. JavaScript tag, pixel URL)
+     */
+    setup?: {
+      /**
+       * Code snippet to place on the site (JavaScript, HTML pixel, etc.)
+       */
+      snippet?: string;
+      /**
+       * Type of implementation. 'server_only' means no client-side tag is needed.
+       */
+      snippet_type?: 'javascript' | 'html' | 'pixel_url' | 'server_only';
+      /**
+       * Human/agent-readable setup instructions
+       */
+      instructions?: string;
+    };
+    /**
+     * Action taken for this event source
+     */
+    action: 'created' | 'updated' | 'unchanged' | 'deleted' | 'failed';
+    /**
+     * Errors for this event source (only present when action='failed')
+     */
+    errors?: string[];
+  }[];
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Opaque correlation data that is echoed unchanged in responses. Used for internal tracking, UI session IDs, trace IDs, and other caller-specific identifiers that don't affect protocol behavior. Context data is never parsed by AdCP agents - it's simply preserved and returned.
+ */
+export interface SyncEventSourcesError {
+  /**
+   * Operation-level errors that prevented processing
+   */
+  errors: Error[];
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Standard error structure for task-specific errors and warnings
+ */
+
+// log_event parameters
+/**
+ * Standard event type
+ */
+export type UserMatch = {
+  [k: string]: unknown | undefined;
+} & {
+  /**
+   * Universal ID values for user matching
+   *
+   * @minItems 1
+   */
+  uids?: [
+    {
+      type: UIDType;
+      /**
+       * Universal ID value
+       */
+      value: string;
+      [k: string]: unknown | undefined;
+    },
+    ...{
+      type: UIDType;
+      /**
+       * Universal ID value
+       */
+      value: string;
+      [k: string]: unknown | undefined;
+    }[]
+  ];
+  /**
+   * SHA-256 hash of lowercase, trimmed email address. Buyer must normalize before hashing: lowercase, trim whitespace.
+   */
+  hashed_email?: string;
+  /**
+   * SHA-256 hash of E.164-formatted phone number (e.g. +12065551234). Buyer must normalize to E.164 before hashing.
+   */
+  hashed_phone?: string;
+  /**
+   * Platform click identifier (fbclid, gclid, ttclid, ScCid, etc.)
+   */
+  click_id?: string;
+  /**
+   * Type of click identifier (e.g. fbclid, gclid, ttclid, msclkid, ScCid)
+   */
+  click_id_type?: string;
+  /**
+   * Client IP address for probabilistic matching
+   */
+  client_ip?: string;
+  /**
+   * Client user agent string for probabilistic matching
+   */
+  client_user_agent?: string;
+  ext?: ExtensionObject;
+  [k: string]: unknown | undefined;
+};
+/**
+ * Universal ID type
+ */
+export type UIDType = 'rampid' | 'id5' | 'uid2' | 'euid' | 'pairid' | 'external_id' | 'maid' | 'other';
+/**
+ * Where the event originated
+ */
+export interface LogEventRequest {
+  /**
+   * Event source configured on the account via sync_event_sources
+   */
+  event_source_id: string;
+  /**
+   * Test event code for validation without affecting production data. Events with this code appear in the platform's test events UI.
+   */
+  test_event_code?: string;
+  /**
+   * Events to log
+   *
+   * @maxItems 10000
+   */
+  events: Event[];
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * A marketing event (conversion, engagement, or custom) for attribution and optimization
+ */
+export interface Event {
+  /**
+   * Unique identifier for deduplication (scoped to event_type + event_source_id)
+   */
+  event_id: string;
+  event_type: EventType;
+  /**
+   * ISO 8601 timestamp when the event occurred
+   */
+  event_time: string;
+  user_match?: UserMatch;
+  custom_data?: EventCustomData;
+  action_source?: ActionSource;
+  /**
+   * URL where the event occurred (required when action_source is 'website')
+   */
+  event_source_url?: string;
+  /**
+   * Name for custom events (used when event_type is 'custom')
+   */
+  custom_event_name?: string;
+  ext?: ExtensionObject;
+  [k: string]: unknown | undefined;
+}
+/**
+ * Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.
+ */
+export interface EventCustomData {
+  /**
+   * Monetary value of the event (should be accompanied by currency)
+   */
+  value?: number;
+  /**
+   * ISO 4217 currency code
+   */
+  currency?: string;
+  /**
+   * Unique order or transaction identifier
+   */
+  order_id?: string;
+  /**
+   * Product or content identifiers
+   */
+  content_ids?: string[];
+  /**
+   * Category of content (product, service, etc.)
+   */
+  content_type?: string;
+  /**
+   * Name of the product or content
+   */
+  content_name?: string;
+  /**
+   * Category of the product or content
+   */
+  content_category?: string;
+  /**
+   * Number of items in the event
+   */
+  num_items?: number;
+  /**
+   * Search query for search events
+   */
+  search_string?: string;
+  /**
+   * Per-item details for e-commerce events
+   */
+  contents?: {
+    /**
+     * Product or content identifier
+     */
+    id: string;
+    /**
+     * Quantity of this item
+     */
+    quantity?: number;
+    /**
+     * Price per unit of this item
+     */
+    price?: number;
+    /**
+     * Brand name of this item
+     */
+    brand?: string;
+    [k: string]: unknown | undefined;
+  }[];
+  ext?: ExtensionObject;
+  [k: string]: unknown | undefined;
+}
+/**
+ * Opaque correlation data that is echoed unchanged in responses. Used for internal tracking, UI session IDs, trace IDs, and other caller-specific identifiers that don't affect protocol behavior. Context data is never parsed by AdCP agents - it's simply preserved and returned.
+ */
+
+// log_event response
+/**
+ * Response from event logging operation. Returns either event processing results OR operation-level errors.
+ */
+export type LogEventResponse = LogEventSuccess | LogEventError;
+
+/**
+ * Success response - events received and queued for processing
+ */
+export interface LogEventSuccess {
+  /**
+   * Number of events received
+   */
+  events_received: number;
+  /**
+   * Number of events successfully queued for processing
+   */
+  events_processed: number;
+  /**
+   * Events that failed validation
+   */
+  partial_failures?: {
+    /**
+     * ID of the failed event
+     */
+    event_id: string;
+    /**
+     * Error code
+     */
+    code: string;
+    /**
+     * Human-readable error message
+     */
+    message: string;
+  }[];
+  /**
+   * Non-fatal issues (low match quality, missing recommended fields, deprecation notices)
+   */
+  warnings?: string[];
+  /**
+   * Overall match quality score for the batch (0.0 = no matches, 1.0 = all matched)
+   */
+  match_quality?: number;
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Opaque correlation data that is echoed unchanged in responses. Used for internal tracking, UI session IDs, trace IDs, and other caller-specific identifiers that don't affect protocol behavior. Context data is never parsed by AdCP agents - it's simply preserved and returned.
+ */
+export interface LogEventError {
+  /**
+   * Operation-level errors
+   */
+  errors: Error[];
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Standard error structure for task-specific errors and warnings
+ */
+
 // build_creative parameters
 /**
  * VAST (Video Ad Serving Template) tag for third-party video ad serving
  */
 export type HTTPMethod = 'GET' | 'POST';
 /**
- * Expected content type of webhook response
+ * Standardized macro placeholders for dynamic value substitution in creative tracking URLs. Macros are replaced with actual values at impression time. See docs/creative/universal-macros.mdx for detailed documentation.
  */
 export type WebhookResponseType = 'html' | 'json' | 'xml' | 'javascript';
 /**
@@ -4211,13 +4808,13 @@ export interface WebhookAsset {
    */
   timeout_ms?: number;
   /**
-   * Universal macros that can be passed to webhook (e.g., {DEVICE_TYPE}, {COUNTRY})
+   * Universal macros that can be passed to webhook (e.g., DEVICE_TYPE, COUNTRY). See docs/creative/universal-macros.mdx for full list.
    */
-  supported_macros?: string[];
+  supported_macros?: (UniversalMacro | string)[];
   /**
    * Universal macros that must be provided for webhook to function
    */
-  required_macros?: string[];
+  required_macros?: (UniversalMacro | string)[];
   response_type: WebhookResponseType;
   /**
    * Security configuration for webhook calls
@@ -6435,6 +7032,10 @@ export type ValidateContentDeliveryResponse =
  */
 export interface GetMediaBuyArtifactsRequest {
   /**
+   * Filter artifacts to a specific account. When provided, only returns artifacts for media buys belonging to this account. When omitted, returns artifacts across all accessible accounts. Optional if the agent has a single account.
+   */
+  account_id?: string;
+  /**
    * Media buy to get artifacts from
    */
   media_buy_id: string;
@@ -7280,6 +7881,38 @@ export interface GetAdCPCapabilitiesRequest {
 /**
  * Methods for verifying user age for compliance. Does not include 'inferred' as it is not accepted for regulatory compliance.
  */
+export type EventType1 =
+  | 'page_view'
+  | 'view_content'
+  | 'select_content'
+  | 'select_item'
+  | 'search'
+  | 'share'
+  | 'add_to_cart'
+  | 'remove_from_cart'
+  | 'viewed_cart'
+  | 'add_to_wishlist'
+  | 'initiate_checkout'
+  | 'add_payment_info'
+  | 'purchase'
+  | 'refund'
+  | 'lead'
+  | 'qualify_lead'
+  | 'close_convert_lead'
+  | 'disqualify_lead'
+  | 'complete_registration'
+  | 'subscribe'
+  | 'start_trial'
+  | 'app_install'
+  | 'app_launch'
+  | 'contact'
+  | 'schedule'
+  | 'donate'
+  | 'submit_application'
+  | 'custom';
+/**
+ * Standardized advertising media channels describing how buyers allocate budget. Channels are planning abstractions, not technical substrates. See the Media Channel Taxonomy specification for detailed definitions.
+ */
 export interface GetAdCPCapabilitiesResponse {
   /**
    * Core AdCP protocol information
@@ -7407,23 +8040,58 @@ export interface GetAdCPCapabilitiesResponse {
          */
         age_restriction?: {
           /**
-           * Whether platform supports age restrictions
+           * Whether seller supports age restrictions
            */
           supported?: boolean;
           /**
-           * Age verification methods this platform supports
+           * Age verification methods this seller supports
            */
           verification_methods?: AgeVerificationMethod[];
         };
         /**
-         * Whether platform supports device platform targeting (Sec-CH-UA-Platform values)
+         * Whether seller supports device platform targeting (Sec-CH-UA-Platform values)
          */
         device_platform?: boolean;
         /**
-         * Whether platform supports language targeting (ISO 639-1 codes)
+         * Whether seller supports language targeting (ISO 639-1 codes)
          */
         language?: boolean;
       };
+    };
+    /**
+     * Seller-level conversion tracking capabilities. Only present when features.conversion_tracking is true.
+     */
+    conversion_tracking?: {
+      /**
+       * Event types this seller can track and attribute. If omitted, all standard event types are supported.
+       */
+      supported_event_types?: EventType[];
+      /**
+       * Universal ID types accepted for user matching
+       */
+      supported_uid_types?: UIDType[];
+      /**
+       * Hashed PII types accepted for user matching. Buyers must hash before sending (SHA-256, normalized).
+       */
+      supported_hashed_identifiers?: ('hashed_email' | 'hashed_phone')[];
+      /**
+       * Action sources this seller accepts events from
+       */
+      supported_action_sources?: ActionSource[];
+      /**
+       * Attribution windows available from this seller. Single-element arrays indicate fixed windows; multi-element arrays indicate configurable options the buyer can choose from via optimization_goal.attribution_window on packages.
+       */
+      attribution_windows?: {
+        event_type?: EventType1;
+        /**
+         * Available click-through attribution windows (e.g. ["7d"], ["7d", "14d", "30d"])
+         */
+        click_through: string[];
+        /**
+         * Available view-through attribution windows (e.g. ["1d"], ["1d", "7d", "14d"])
+         */
+        view_through?: string[];
+      }[];
     };
     /**
      * Information about the seller's media inventory portfolio

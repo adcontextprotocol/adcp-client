@@ -22,6 +22,10 @@ import type {
   GetMediaBuyDeliveryResponse,
   ProvidePerformanceFeedbackRequest,
   ProvidePerformanceFeedbackResponse,
+  SyncEventSourcesRequest,
+  SyncEventSourcesResponse,
+  LogEventRequest,
+  LogEventResponse,
   BuildCreativeRequest,
   BuildCreativeResponse,
   PreviewCreativeRequest,
@@ -161,6 +165,20 @@ export class Agent {
    */
   async providePerformanceFeedback(params: ProvidePerformanceFeedbackRequest): Promise<ProvidePerformanceFeedbackResponse> {
     return this.callTool<ProvidePerformanceFeedbackResponse>('provide_performance_feedback', params);
+  }
+
+  /**
+   * Official AdCP sync_event_sources tool schema
+   */
+  async syncEventSources(params: SyncEventSourcesRequest): Promise<SyncEventSourcesResponse> {
+    return this.callTool<SyncEventSourcesResponse>('sync_event_sources', params);
+  }
+
+  /**
+   * Official AdCP log_event tool schema
+   */
+  async logEvent(params: LogEventRequest): Promise<LogEventResponse> {
+    return this.callTool<LogEventResponse>('log_event', params);
   }
 
   /**
@@ -374,6 +392,20 @@ export class AgentCollection {
    */
   async providePerformanceFeedback(params: ProvidePerformanceFeedbackRequest): Promise<ProvidePerformanceFeedbackResponse[]> {
     return this.callToolOnAll<ProvidePerformanceFeedbackResponse>('provide_performance_feedback', params);
+  }
+
+  /**
+   * Official AdCP sync_event_sources tool schema (across multiple agents)
+   */
+  async syncEventSources(params: SyncEventSourcesRequest): Promise<SyncEventSourcesResponse[]> {
+    return this.callToolOnAll<SyncEventSourcesResponse>('sync_event_sources', params);
+  }
+
+  /**
+   * Official AdCP log_event tool schema (across multiple agents)
+   */
+  async logEvent(params: LogEventRequest): Promise<LogEventResponse[]> {
+    return this.callToolOnAll<LogEventResponse>('log_event', params);
   }
 
   /**

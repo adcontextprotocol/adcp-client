@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas vlatest
-// Generated at: 2026-02-05T11:34:29.050Z
+// Generated at: 2026-02-10T02:40:19.088Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -47,6 +47,38 @@ export type DevicePlatform =
   | 'fire_os'
   | 'roku_os'
   | 'unknown';
+/**
+ * Event type to optimize for (e.g. purchase, lead)
+ */
+export type EventType =
+  | 'page_view'
+  | 'view_content'
+  | 'select_content'
+  | 'select_item'
+  | 'search'
+  | 'share'
+  | 'add_to_cart'
+  | 'remove_from_cart'
+  | 'viewed_cart'
+  | 'add_to_wishlist'
+  | 'initiate_checkout'
+  | 'add_payment_info'
+  | 'purchase'
+  | 'refund'
+  | 'lead'
+  | 'qualify_lead'
+  | 'close_convert_lead'
+  | 'disqualify_lead'
+  | 'complete_registration'
+  | 'subscribe'
+  | 'start_trial'
+  | 'app_install'
+  | 'app_launch'
+  | 'contact'
+  | 'schedule'
+  | 'donate'
+  | 'submit_application'
+  | 'custom';
 
 /**
  * Represents a purchased advertising campaign
@@ -177,6 +209,39 @@ export interface Package {
    * Format IDs that creative assets will be provided for this package
    */
   format_ids_to_provide?: FormatID[];
+  /**
+   * Conversion optimization goal for this package. Tells the seller which event source and event type to optimize delivery against. Provide at most one of target_roas or target_cpa. If neither is provided, the seller optimizes for maximum conversions within budget.
+   */
+  optimization_goal?: {
+    /**
+     * Event source to optimize against (must be configured on this account via sync_event_sources)
+     */
+    event_source_id: string;
+    event_type: EventType;
+    /**
+     * Target return on ad spend (e.g. 4.0 = $4 conversion value per $1 spent). Mutually exclusive with target_cpa.
+     */
+    target_roas?: number;
+    /**
+     * Target cost per acquisition in the buy currency. Mutually exclusive with target_roas.
+     */
+    target_cpa?: number;
+    /**
+     * Attribution window for this optimization goal. Values must match an option declared in the seller's conversion_tracking.attribution_windows capability. When omitted, the seller uses their default window.
+     */
+    attribution_window?: {
+      /**
+       * Click-through attribution window (e.g. '7d', '28d', '30d')
+       */
+      click_through: string;
+      /**
+       * View-through attribution window (e.g. '1d', '7d')
+       */
+      view_through?: string;
+      [k: string]: unknown | undefined;
+    };
+    [k: string]: unknown | undefined;
+  };
   /**
    * Whether this package is paused by the buyer. Paused packages do not deliver impressions. Defaults to false.
    */
@@ -1371,6 +1436,9 @@ export type AvailableMetric =
   | 'video_completions'
   | 'completion_rate'
   | 'conversions'
+  | 'conversion_value'
+  | 'roas'
+  | 'cost_per_acquisition'
   | 'viewability'
   | 'engagement_rate';
 /**
@@ -1430,6 +1498,19 @@ export type DataProviderSignalSelector =
       signal_tags: [string, ...string[]];
       [k: string]: unknown | undefined;
     };
+/**
+ * Where the conversion event originated
+ */
+export type ActionSource =
+  | 'website'
+  | 'app'
+  | 'offline'
+  | 'phone_call'
+  | 'chat'
+  | 'email'
+  | 'in_store'
+  | 'system_generated'
+  | 'other';
 
 /**
  * Represents available advertising inventory
@@ -1500,6 +1581,23 @@ export interface Product {
    * Whether buyers can filter this product to a subset of its data_provider_signals. When false (default), the product includes all listed signals as a bundle. When true, buyers can target specific signals.
    */
   signal_targeting_allowed?: boolean;
+  /**
+   * Conversion tracking for this product. Presence indicates the product supports conversion-optimized delivery. Seller-level capabilities (supported event types, UID types, attribution windows) are declared in get_adcp_capabilities.
+   */
+  conversion_tracking?: {
+    /**
+     * Action sources relevant to this product (e.g. a retail media product might have 'in_store' and 'website', while a display product might only have 'website')
+     */
+    action_sources?: ActionSource[];
+    /**
+     * Optimization strategies this product supports when an optimization_goal is set on a package
+     */
+    supported_optimization_strategies?: ('maximize_conversions' | 'target_cpa' | 'target_roas')[];
+    /**
+     * Whether the seller provides its own always-on measurement (e.g. Amazon sales attribution for Amazon advertisers). When true, sync_event_sources response will include seller-managed event sources with managed_by='seller'.
+     */
+    platform_managed?: boolean;
+  };
   /**
    * Explanation of why this product matches the brief (only included when brief is provided)
    */
@@ -2189,7 +2287,9 @@ export type TaskType =
   | 'update_property_list'
   | 'get_property_list'
   | 'list_property_lists'
-  | 'delete_property_list';
+  | 'delete_property_list'
+  | 'sync_event_sources'
+  | 'log_event';
 /**
  * AdCP domain this task belongs to. Helps classify the operation type at a high level.
  */
