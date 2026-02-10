@@ -4,12 +4,25 @@
 
 Update to latest AdCP schema with new features:
 
-- **TargetingOverlay**: Added `age_restriction` (for compliance), `device_platform` (OS targeting), and `language` fields
-- **BrandManifest logos**: Added structured fields (`orientation`, `background`, `variant`) for reliable filtering by creative agents
-- **BrandManifest tone**: Changed from string to object with `voice`, `attributes`, `dos`, `donts` for richer brand voice guidelines
-- **Data Provider Signals**: New `DataProviderSignalSelector` type for selecting signals from data provider catalogs
-- **Signal Targeting**: New `SignalTargeting` types supporting binary, categorical, and numeric signal targeting
-- **get_signals**: Now supports `signal_ids` for exact lookups in addition to `signal_spec` semantic discovery
-- **Capabilities**: Added `age_restriction`, `device_platform`, and `language` capability reporting
+**Breaking type changes:**
+- **BrandManifest tone**: Changed from `string` to object with `voice`, `attributes`, `dos`, `donts`
+- **Format.type**: Now optional (`FormatCategory` deprecated in favor of assets array)
 
-Updated test files to use new structured logo and tone fields.
+**Targeting & Signals:**
+- **TargetingOverlay**: Added `age_restriction`, `device_platform`, and `language` fields
+- **BrandManifest logos**: Added structured fields (`orientation`, `background`, `variant`)
+- **Data Provider Signals**: New `DataProviderSignalSelector` and `SignalTargeting` types
+- **get_signals**: Now supports `signal_ids` for exact lookups in addition to `signal_spec`
+
+**Conversion Tracking:**
+- New `EventType` and `ActionSource` enums
+- `Package.optimization_goal` for target ROAS/CPA with attribution windows
+- `Product.conversion_tracking` for conversion-optimized delivery
+- New `sync_event_sources` and `log_event` tools (with Agent class methods)
+- Delivery metrics: `conversion_value`, `roas`, `cost_per_acquisition`, event type breakdowns
+
+**Creative:**
+- `UniversalMacro` typed enum for creative tracking macro placeholders
+- `BaseIndividualAsset` / `BaseGroupAsset` extracted as named interfaces
+
+**Capabilities**: Added `age_restriction`, `device_platform`, `language`, and `conversion_tracking`
