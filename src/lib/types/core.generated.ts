@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas vlatest
-// Generated at: 2026-02-10T13:07:53.111Z
+// Generated at: 2026-02-11T15:44:42.842Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -15,9 +15,26 @@ export type Pacing = 'even' | 'asap' | 'front_loaded';
  */
 export type MetroAreaSystem = 'nielsen_dma' | 'uk_itl1' | 'uk_itl2' | 'eurostat_nuts2' | 'custom';
 /**
+ * Metro area classification system (e.g., 'nielsen_dma', 'uk_itl2')
+ */
+export type MetroAreaSystem1 = 'nielsen_dma' | 'uk_itl1' | 'uk_itl2' | 'eurostat_nuts2' | 'custom';
+/**
  * Postal code system (e.g., 'us_zip', 'gb_outward'). System name encodes country and precision.
  */
 export type PostalCodeSystem =
+  | 'us_zip'
+  | 'us_zip_plus_four'
+  | 'gb_outward'
+  | 'gb_full'
+  | 'ca_fsa'
+  | 'ca_full'
+  | 'de_plz'
+  | 'fr_code_postal'
+  | 'au_postcode';
+/**
+ * Postal code system (e.g., 'us_zip', 'gb_outward'). System name encodes country and precision.
+ */
+export type PostalCodeSystem1 =
   | 'us_zip'
   | 'us_zip_plus_four'
   | 'gb_outward'
@@ -255,36 +272,128 @@ export interface Package {
 export interface TargetingOverlay {
   /**
    * Restrict delivery to specific countries. ISO 3166-1 alpha-2 codes (e.g., 'US', 'GB', 'DE').
+   *
+   * @minItems 1
    */
-  geo_countries?: string[];
+  geo_countries?: [string, ...string[]];
+  /**
+   * Exclude specific countries from delivery. ISO 3166-1 alpha-2 codes (e.g., 'US', 'GB', 'DE').
+   *
+   * @minItems 1
+   */
+  geo_countries_exclude?: [string, ...string[]];
   /**
    * Restrict delivery to specific regions/states. ISO 3166-2 subdivision codes (e.g., 'US-CA', 'GB-SCT').
+   *
+   * @minItems 1
    */
-  geo_regions?: string[];
+  geo_regions?: [string, ...string[]];
+  /**
+   * Exclude specific regions/states from delivery. ISO 3166-2 subdivision codes (e.g., 'US-CA', 'GB-SCT').
+   *
+   * @minItems 1
+   */
+  geo_regions_exclude?: [string, ...string[]];
   /**
    * Restrict delivery to specific metro areas. Each entry specifies the classification system and target values. Seller must declare supported systems in get_adcp_capabilities.
+   *
+   * @minItems 1
    */
-  geo_metros?: {
-    system: MetroAreaSystem;
-    /**
-     * Metro codes within the system (e.g., ['501', '602'] for Nielsen DMAs)
-     *
-     * @minItems 1
-     */
-    values: [string, ...string[]];
-  }[];
+  geo_metros?: [
+    {
+      system: MetroAreaSystem;
+      /**
+       * Metro codes within the system (e.g., ['501', '602'] for Nielsen DMAs)
+       *
+       * @minItems 1
+       */
+      values: [string, ...string[]];
+    },
+    ...{
+      system: MetroAreaSystem;
+      /**
+       * Metro codes within the system (e.g., ['501', '602'] for Nielsen DMAs)
+       *
+       * @minItems 1
+       */
+      values: [string, ...string[]];
+    }[]
+  ];
+  /**
+   * Exclude specific metro areas from delivery. Each entry specifies the classification system and excluded values. Seller must declare supported systems in get_adcp_capabilities.
+   *
+   * @minItems 1
+   */
+  geo_metros_exclude?: [
+    {
+      system: MetroAreaSystem1;
+      /**
+       * Metro codes to exclude within the system (e.g., ['501', '602'] for Nielsen DMAs)
+       *
+       * @minItems 1
+       */
+      values: [string, ...string[]];
+    },
+    ...{
+      system: MetroAreaSystem1;
+      /**
+       * Metro codes to exclude within the system (e.g., ['501', '602'] for Nielsen DMAs)
+       *
+       * @minItems 1
+       */
+      values: [string, ...string[]];
+    }[]
+  ];
   /**
    * Restrict delivery to specific postal areas. Each entry specifies the postal system and target values. Seller must declare supported systems in get_adcp_capabilities.
+   *
+   * @minItems 1
    */
-  geo_postal_areas?: {
-    system: PostalCodeSystem;
-    /**
-     * Postal codes within the system (e.g., ['10001', '10002'] for us_zip)
-     *
-     * @minItems 1
-     */
-    values: [string, ...string[]];
-  }[];
+  geo_postal_areas?: [
+    {
+      system: PostalCodeSystem;
+      /**
+       * Postal codes within the system (e.g., ['10001', '10002'] for us_zip)
+       *
+       * @minItems 1
+       */
+      values: [string, ...string[]];
+    },
+    ...{
+      system: PostalCodeSystem;
+      /**
+       * Postal codes within the system (e.g., ['10001', '10002'] for us_zip)
+       *
+       * @minItems 1
+       */
+      values: [string, ...string[]];
+    }[]
+  ];
+  /**
+   * Exclude specific postal areas from delivery. Each entry specifies the postal system and excluded values. Seller must declare supported systems in get_adcp_capabilities.
+   *
+   * @minItems 1
+   */
+  geo_postal_areas_exclude?: [
+    {
+      system: PostalCodeSystem1;
+      /**
+       * Postal codes to exclude within the system (e.g., ['10001', '10002'] for us_zip)
+       *
+       * @minItems 1
+       */
+      values: [string, ...string[]];
+    },
+    ...{
+      system: PostalCodeSystem1;
+      /**
+       * Postal codes to exclude within the system (e.g., ['10001', '10002'] for us_zip)
+       *
+       * @minItems 1
+       */
+      values: [string, ...string[]];
+    }[]
+  ];
   /**
    * AXE segment ID to include for targeting
    */
@@ -1258,6 +1367,10 @@ export interface BrandManifest {
  */
 export interface PromotedProducts {
   /**
+   * GTIN product identifiers for cross-retailer catalog matching. Accepts standard GTIN formats (GTIN-8, UPC-A/GTIN-12, EAN-13/GTIN-13, GTIN-14).
+   */
+  manifest_gtins?: string[];
+  /**
    * Direct product SKU references from the brand manifest product catalog
    */
   manifest_skus?: string[];
@@ -1407,6 +1520,29 @@ export type PropertyID = string;
  */
 export type PropertyTag = string;
 /**
+ * Standardized advertising media channels describing how buyers allocate budget. Channels are planning abstractions, not technical substrates. See the Media Channel Taxonomy specification for detailed definitions.
+ */
+export type MediaChannel =
+  | 'display'
+  | 'olv'
+  | 'social'
+  | 'search'
+  | 'ctv'
+  | 'linear_tv'
+  | 'radio'
+  | 'streaming_audio'
+  | 'podcast'
+  | 'dooh'
+  | 'ooh'
+  | 'print'
+  | 'cinema'
+  | 'email'
+  | 'gaming'
+  | 'retail_media'
+  | 'influencer'
+  | 'affiliate'
+  | 'product_placement';
+/**
  * Type of inventory delivery
  */
 export type DeliveryType = 'guaranteed' | 'non_guaranteed';
@@ -1420,9 +1556,10 @@ export type PricingOption =
   | CPCVPricingOption
   | CPVPricingOption
   | CPPPricingOption
+  | CPAPricingOption
   | FlatRatePricingOption;
 /**
- * Available frequencies for delivery reports and metrics updates
+ * Standard marketing event types for event logging, aligned with IAB ECAPI
  */
 export type ReportingFrequency = 'hourly' | 'daily' | 'monthly';
 /**
@@ -1532,6 +1669,10 @@ export interface Product {
    * Publisher properties covered by this product. Buyers fetch actual property definitions from each publisher's adagents.json and validate agent authorization. Selection patterns mirror the authorization patterns in adagents.json for consistency.
    */
   publisher_properties: PublisherPropertySelector[];
+  /**
+   * Advertising channels this product is sold as. Products inherit from their properties' supported_channels but may narrow the scope. For example, a product covering YouTube properties might be sold as ['ctv'] even though those properties support ['olv', 'social', 'ctv'].
+   */
+  channels?: MediaChannel[];
   /**
    * Array of supported creative format IDs - structured format_id objects with agent_url and id
    */
@@ -2000,6 +2141,44 @@ export interface PriceGuidance5 {
   [k: string]: unknown | undefined;
 }
 /**
+ * Cost Per Acquisition pricing. Advertiser pays a fixed price when a specified conversion event occurs. The event_type field declares which event triggers billing (e.g., purchase, lead, app_install).
+ */
+export interface CPAPricingOption {
+  /**
+   * Unique identifier for this pricing option within the product
+   */
+  pricing_option_id: string;
+  /**
+   * Cost per acquisition (conversion event)
+   */
+  pricing_model: 'cpa';
+  /**
+   * The conversion event type that triggers billing (e.g., purchase, lead, app_install)
+   */
+  event_type: EventType;
+  /**
+   * Name of the custom event when event_type is 'custom'. Required when event_type is 'custom', ignored otherwise.
+   */
+  custom_event_name?: string;
+  /**
+   * When present, only events from this specific event source count toward billing. Allows different CPA rates for different sources (e.g., online vs in-store purchases). Must match an event source configured via sync_event_sources.
+   */
+  event_source_id?: string;
+  /**
+   * ISO 4217 currency code
+   */
+  currency: string;
+  /**
+   * Fixed price per acquisition in the specified currency
+   */
+  fixed_price: number;
+  /**
+   * Minimum spend requirement per package using this pricing option, in the specified currency
+   */
+  min_spend_per_package?: number;
+  [k: string]: unknown | undefined;
+}
+/**
  * Flat rate pricing for DOOH, sponsorships, and time-based campaigns. If fixed_price is present, it's fixed pricing. If absent, it's auction-based.
  */
 export interface FlatRatePricingOption {
@@ -2272,6 +2451,10 @@ export interface Property {
    */
   tags?: PropertyTag[];
   /**
+   * Advertising channels this property supports (e.g., ['display', 'olv', 'social']). Publishers declare which channels their inventory aligns with. Properties may support multiple channels. See the Media Channel Taxonomy for definitions.
+   */
+  supported_channels?: MediaChannel[];
+  /**
    * Domain where adagents.json should be checked for authorization validation. Optional in adagents.json (file location implies domain).
    */
   publisher_domain?: string;
@@ -2338,6 +2521,38 @@ export type CreateMediaBuyResponse = CreateMediaBuySuccess | CreateMediaBuyError
 /**
  * Budget pacing strategy
  */
+export type EventType1 =
+  | 'page_view'
+  | 'view_content'
+  | 'select_content'
+  | 'select_item'
+  | 'search'
+  | 'share'
+  | 'add_to_cart'
+  | 'remove_from_cart'
+  | 'viewed_cart'
+  | 'add_to_wishlist'
+  | 'initiate_checkout'
+  | 'add_payment_info'
+  | 'purchase'
+  | 'refund'
+  | 'lead'
+  | 'qualify_lead'
+  | 'close_convert_lead'
+  | 'disqualify_lead'
+  | 'complete_registration'
+  | 'subscribe'
+  | 'start_trial'
+  | 'app_install'
+  | 'app_launch'
+  | 'contact'
+  | 'schedule'
+  | 'donate'
+  | 'submit_application'
+  | 'custom';
+/**
+ * Response for completed or failed update_media_buy
+ */
 export type UpdateMediaBuyResponse = UpdateMediaBuySuccess | UpdateMediaBuyError;
 /**
  * Response for completed or failed sync_creatives
@@ -2397,6 +2612,10 @@ export interface GetProductsResponse {
    * [AdCP 3.0] Indicates whether property_list filtering was applied. True if the agent filtered products based on the provided property_list. Absent or false if property_list was not provided or not supported by this agent.
    */
   property_list_applied?: boolean;
+  /**
+   * Indicates whether product_selectors filtering was applied. True if the seller filtered results based on the provided product_selectors. Absent or false if product_selectors was not provided or not supported by this agent.
+   */
+  product_selectors_applied?: boolean;
   pagination?: PaginationResponse;
   context?: ContextObject;
   ext?: ExtensionObject;
