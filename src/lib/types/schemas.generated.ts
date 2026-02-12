@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-02-12T02:01:07.632Z
+// Generated at: 2026-02-12T10:23:24.293Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -2477,6 +2477,11 @@ export const ProductSchema = z.record(z.string(), z.union([z.unknown(), z.undefi
         supported_optimization_strategies: z.tuple([z.union([z.literal("maximize_conversions"), z.literal("target_cpa"), z.literal("target_roas")])]).rest(z.union([z.literal("maximize_conversions"), z.literal("target_cpa"), z.literal("target_roas")])).nullish(),
         platform_managed: z.boolean().nullish()
     })).nullish(),
+    catalog_match: z.object({
+        matched_gtins: z.array(z.string()).nullish(),
+        matched_skus: z.array(z.string()).nullish(),
+        submitted_count: z.number()
+    }).nullish(),
     brief_relevance: z.string().nullish(),
     expires_at: z.string().nullish(),
     product_card: z.record(z.string(), z.union([z.unknown(), z.undefined()])).and(z.object({

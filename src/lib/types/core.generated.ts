@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas vlatest
-// Generated at: 2026-02-12T02:01:06.318Z
+// Generated at: 2026-02-12T10:23:23.064Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -1853,6 +1853,23 @@ export interface Product {
      * Whether the seller provides its own always-on measurement (e.g. Amazon sales attribution for Amazon advertisers). When true, sync_event_sources response will include seller-managed event sources with managed_by='seller'.
      */
     platform_managed?: boolean;
+  };
+  /**
+   * When the buyer provides a brand_manifest with product_catalog, indicates which of the buyer's catalog items are eligible for this product. Enables buyers to make informed product_selector choices in create_media_buy. Only present for products where catalog matching is relevant (e.g. sponsored product listings on retail media). Sellers SHOULD include at least one of matched_gtins or matched_skus.
+   */
+  catalog_match?: {
+    /**
+     * GTINs from the buyer's catalog that are eligible on this product's inventory. Buyers can use these values in product_selectors.manifest_gtins when creating media buys. Standard GTIN formats (GTIN-8 through GTIN-14).
+     */
+    matched_gtins?: string[];
+    /**
+     * SKUs from the buyer's catalog that are eligible on this product's inventory. Buyers can use these values in product_selectors.manifest_skus when creating media buys.
+     */
+    matched_skus?: string[];
+    /**
+     * Total catalog items evaluated from the buyer's feed.
+     */
+    submitted_count: number;
   };
   /**
    * Explanation of why this product matches the brief (only included when brief is provided)
