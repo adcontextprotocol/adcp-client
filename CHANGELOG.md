@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.13.0
+
+### Minor Changes
+
+- cc02dc8: Sync AdCP schema to 3.0.0-beta.3 with daypart targeting, delivery forecasting, demographic systems, and optional account_id
+
 ## 3.12.0
 
 ### Minor Changes
