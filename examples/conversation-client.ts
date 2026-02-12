@@ -11,7 +11,7 @@ import {
   type AgentConfig,
   type InputHandler,
   type ConversationContext,
-} from '../src/lib';
+} from '@adcp/client';
 
 // Example agent configurations
 const agents: AgentConfig[] = [
@@ -20,15 +20,13 @@ const agents: AgentConfig[] = [
     name: 'Premium Ad Agent',
     agent_uri: 'https://premium-agent.example.com/mcp/',
     protocol: 'mcp',
-    requiresAuth: true,
-    auth_token_env: 'PREMIUM_AGENT_TOKEN',
+    auth_token: process.env.PREMIUM_AGENT_TOKEN,
   },
   {
     id: 'budget-agent',
     name: 'Budget Ad Agent',
     agent_uri: 'https://budget-agent.example.com/a2a/',
     protocol: 'a2a',
-    requiresAuth: false,
   },
 ];
 

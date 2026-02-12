@@ -2,10 +2,8 @@
 
 ## Installation
 
-Install the package and its peer dependencies:
-
 ```bash
-npm install @adcp/client @a2a-js/sdk @modelcontextprotocol/sdk
+npm install @adcp/client
 ```
 
 ## Basic Usage
@@ -15,21 +13,21 @@ npm install @adcp/client @a2a-js/sdk @modelcontextprotocol/sdk
 The easiest way to get started is with the simple client:
 
 ```typescript
-import { AdCPClient } from '@adcp/client';
+import { ADCPMultiAgentClient } from '@adcp/client';
 
 // Create a client for a single agent
-const client = AdCPClient.simple('https://agent.example.com/mcp/', {
+const client = ADCPMultiAgentClient.simple('https://agent.example.com/mcp/', {
   authToken: 'YOUR_AUTH_TOKEN_HERE'
 });
 
-// Execute a task
-const result = await client.executeTask('get_products', {
-  brief: 'Looking for advertising opportunities',
-  promoted_offering: 'Premium products'
+// simple() creates an agent with id 'default-agent'
+const agent = client.agent('default-agent');
+const result = await agent.getProducts({
+  brief: 'Looking for advertising opportunities'
 });
 
-if (result.success) {
-  console.log('Products:', result.data.products);
+if (result.success && result.status === 'completed') {
+  console.log('Products:', result.data?.products);
 } else {
   console.error('Error:', result.error);
 }
@@ -37,7 +35,7 @@ if (result.success) {
 
 ### Multi-Agent Setup
 
-For testing multiple agents:
+For working with multiple agents:
 
 ```typescript
 import { ADCPMultiAgentClient } from '@adcp/client';
@@ -48,28 +46,23 @@ const client = new ADCPMultiAgentClient([
     name: 'MCP Test Agent',
     agent_uri: 'https://agent1.example.com/mcp/',
     protocol: 'mcp',
-    requiresAuth: true,
-    auth_token_env: 'MCP_TOKEN'
+    auth_token: process.env.MCP_TOKEN
   },
   {
     id: 'a2a-agent',
-    name: 'A2A Test Agent', 
+    name: 'A2A Test Agent',
     agent_uri: 'https://agent2.example.com',
     protocol: 'a2a',
-    requiresAuth: true,
-    auth_token_env: 'A2A_TOKEN'
+    auth_token: process.env.A2A_TOKEN
   }
 ]);
 
 // Execute on specific agent
-const result = await client.executeTask('mcp-agent', 'get_products', {
-  brief: 'Tech products'
-});
+const agent = client.agent('mcp-agent');
+const result = await agent.getProducts({ brief: 'Tech products' });
 
-// Execute on all agents
-const results = await client.executeTaskOnAll('get_products', {
-  brief: 'Tech products'
-});
+// Execute on all agents in parallel
+const results = await client.allAgents().getProducts({ brief: 'Tech products' });
 ```
 
 ## Authentication
@@ -93,86 +86,85 @@ const agents = [
     name: 'Test Agent',
     agent_uri: 'https://agent.example.com',
     protocol: 'mcp',
-    auth_token_env: 'MCP_TOKEN', // References env variable
-    requiresAuth: true
+    auth_token: process.env.MCP_TOKEN
   }
 ];
 ```
 
-### Direct Token
+### Simple Factory with Token
 
-For testing, you can provide tokens directly:
+For quick testing:
 
 ```typescript
-const client = AdCPClient.simple('https://agent.example.com', {
+const client = ADCPMultiAgentClient.simple('https://agent.example.com', {
   authToken: 'YOUR_BEARER_TOKEN_HERE'
 });
 ```
 
 ## Handling Async Tasks
 
-The client supports various async patterns:
-
 ### Input-Required Tasks
 
+When an agent needs clarification, provide an input handler:
+
 ```typescript
-const client = AdCPClient.simple('https://agent.example.com', {
-  authToken: 'token',
-  inputHandler: async (request) => {
-    console.log('Agent needs input:', request);
-    
-    // Provide input immediately
-    if (request.type === 'confirmation') {
-      return { confirmed: true };
+const result = await agent.getProducts(
+  { brief: 'Premium products' },
+  (context) => {
+    // Agent needs input
+    console.log('Agent asks:', context.inputRequest.question);
+
+    if (context.inputRequest.field === 'budget') {
+      return 50000;
     }
-    
-    // Or defer for later
-    return { defer: true };
+    return context.deferToHuman();
   }
-});
+);
+
+if (result.status === 'input-required') {
+  // Continue the conversation
+  const refined = await agent.continueConversation('Only premium brands');
+}
 ```
 
 ### Long-Running Tasks
 
 ```typescript
-const result = await client.executeTask('analyze_campaign', {
-  campaign_id: '12345'
+const result = await agent.createMediaBuy({
+  buyer_ref: 'campaign-123',
+  account_id: 'acct-456',
+  packages: [...]
 });
 
-// Check the status
 if (result.status === 'submitted') {
-  // Task is running on server
-  const { taskId, webhookUrl } = result.submitted;
-  console.log(`Task ${taskId} submitted, webhook: ${webhookUrl}`);
-  
-  // Poll for completion
-  const finalResult = await client.pollTaskCompletion(taskId, {
-    maxAttempts: 10,
-    intervalMs: 5000
-  });
+  // Task is running on server, will complete via webhook
+  console.log(`Task submitted, webhook: ${result.submitted?.webhookUrl}`);
+
+  // Or poll for completion (interval in ms, default 60000)
+  const finalResult = await result.submitted.waitForCompletion(5000);
 }
 ```
 
 ## Error Handling
 
-Always handle errors appropriately:
-
 ```typescript
+import { isADCPError, isErrorOfType, TaskTimeoutError } from '@adcp/client';
+
 try {
-  const result = await client.executeTask('get_products', params);
-  
+  const result = await agent.getProducts({ brief: 'test' });
+
   if (!result.success) {
-    // Agent returned an error
     console.error('Task failed:', result.error);
     return;
   }
-  
-  // Process successful result
+
   console.log('Data:', result.data);
-  
 } catch (error) {
-  // Network or client error
-  console.error('Client error:', error);
+  if (isErrorOfType(error, TaskTimeoutError)) {
+    console.error('Operation timed out');
+  } else if (isADCPError(error)) {
+    console.error('AdCP error:', error.message);
+  }
 }
 ```
 
@@ -181,4 +173,4 @@ try {
 - Explore [Real-World Examples](./guides/REAL-WORLD-EXAMPLES.md)
 - Learn about [Async Patterns](./guides/ASYNC-DEVELOPER-GUIDE.md)
 - Read the [API Reference](./api/index.html)
-- Try the [Interactive Testing UI](#testing-ui)
+- Try the Interactive Testing UI (`npm run dev`)

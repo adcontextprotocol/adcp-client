@@ -3,13 +3,13 @@ import { AdCPClient } from '@adcp/client';
 
 async function envConfigExample() {
   // Load agents from environment using factory method
-  // Set SALES_AGENTS_CONFIG in your .env file like:
-  // SALES_AGENTS_CONFIG='{"agents":[{"id":"test-agent","name":"Test Agent","agent_uri":"https://test-agent.example.com","protocol":"mcp","auth_token_env":"TEST_AUTH_TOKEN","requiresAuth":true}]}'
+  // Set ADCP_AGENTS_CONFIG (or SALES_AGENTS_CONFIG) in your .env file like:
+  // ADCP_AGENTS_CONFIG='[{"id":"test-agent","name":"Test Agent","agent_uri":"https://test-agent.example.com","protocol":"mcp","auth_token":"your-token"}]'
 
   const client = AdCPClient.fromEnv();
 
   if (client.agentCount === 0) {
-    console.log('No agents configured. Set SALES_AGENTS_CONFIG environment variable.');
+    console.log('No agents configured. Set ADCP_AGENTS_CONFIG environment variable.');
     return;
   }
 
@@ -29,9 +29,9 @@ async function envConfigExample() {
     console.log('\nTest Results:');
     results.forEach(result => {
       if (result.status === 'completed') {
-        console.log(`${result.agent.name}: ✅ (${result.data.products?.length || 0} products)`);
+        console.log(`${result.metadata.agent.name}: ✅ (${result.data?.products?.length || 0} products)`);
       } else {
-        console.log(`${result.agent.name}: ❌ Error: ${result.error?.message || 'Unknown error'}`);
+        console.log(`${result.metadata.agent.name}: ❌ Error: ${result.error || 'Unknown error'}`);
       }
     });
 

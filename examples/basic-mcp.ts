@@ -26,16 +26,15 @@ async function configuredMCPExample() {
     name: 'Test MCP Agent',
     agent_uri: 'https://test-agent.adcontextprotocol.org/mcp/',
     protocol: 'mcp',
-    auth_token_env: 'MCP_AUTH_TOKEN',
-    requiresAuth: true,
+    auth_token: process.env.MCP_AUTH_TOKEN,
   };
 
   const client = new AdCPClient([agent]);
 
   try {
-    const result = await client.callTool('test-mcp-agent', 'get_products', {
+    const agentClient = client.agent('test-mcp-agent');
+    const result = await agentClient.getProducts({
       brief: 'Sustainable fashion brands',
-      promoted_offering: 'Eco-friendly clothing',
     });
 
     console.log('Test Result:', result);

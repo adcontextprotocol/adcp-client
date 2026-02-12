@@ -5,23 +5,20 @@
       "name": "Premium Ad Network",
       "agent_uri": "https://premium-ads.example.com/mcp/",
       "protocol": "mcp",
-      "requiresAuth": true,
-      "auth_token_env": "PREMIUM_AGENT_TOKEN"
+      "auth_token": "your-premium-token-here"
     },
     {
       "id": "budget-network",
       "name": "Budget Ad Network",
       "agent_uri": "https://budget-ads.example.com/a2a/",
-      "protocol": "a2a",
-      "requiresAuth": false
+      "protocol": "a2a"
     },
     {
       "id": "social-network",
       "name": "Social Media Ad Network",
       "agent_uri": "https://social-ads.example.com/mcp/",
       "protocol": "mcp",
-      "requiresAuth": true,
-      "auth_token_env": "SOCIAL_AGENT_TOKEN"
+      "auth_token": "your-social-token-here"
     }
   ],
   "defaults": {

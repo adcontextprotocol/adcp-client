@@ -2,7 +2,7 @@
 
 [![npm version](https://badge.fury.io/js/@adcp%2Fclient.svg)](https://badge.fury.io/js/@adcp%2Fclient)
 [![npm downloads](https://img.shields.io/npm/dm/@adcp/client.svg)](https://www.npmjs.com/package/@adcp/client)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://www.apache.org/licenses/LICENSE-2.0)
 [![TypeScript](https://img.shields.io/badge/TypeScript-Ready-blue.svg)](https://www.typescriptlang.org/)
 [![API Documentation](https://img.shields.io/badge/API-Documentation-blue.svg)](https://adcontextprotocol.github.io/adcp-client/api/)
 [![GitHub Workflow Status](https://img.shields.io/github/actions/workflow/status/adcontextprotocol/adcp-client/ci.yml?branch=main)](https://github.com/adcontextprotocol/adcp-client/actions)
@@ -52,7 +52,7 @@ const client = new ADCPMultiAgentClient([
     // Log to monitoring, update UI, etc.
   },
 
-  // Status change handlers - called for ALL status changes (completed, failed, needs_input, working, etc)
+  // Status change handlers - called for ALL status changes (completed, failed, input-required, working, etc)
   handlers: {
     onGetProductsStatusChange: (response, metadata) => {
       // Called for sync completion, async webhook, AND status changes
@@ -61,10 +61,10 @@ const client = new ADCPMultiAgentClient([
       if (metadata.status === 'completed') {
         db.saveProducts(metadata.operation_id, response.products);
       } else if (metadata.status === 'failed') {
-        db.markFailed(metadata.operation_id, metadata.error);
-      } else if (metadata.status === 'needs_input') {
+        db.markFailed(metadata.operation_id, metadata.message);
+      } else if (metadata.status === 'input-required') {
         // Handle clarification needed
-        console.log('Needs input:', response.message);
+        console.log('Needs input:', metadata.message);
       }
     }
   }
@@ -91,16 +91,16 @@ if (result.status === 'submitted') {
 }
 ```
 
-### Handling Clarifications (needs_input)
+### Handling Clarifications (input-required)
 
 When an agent needs more information, you can continue the conversation:
 
 ```typescript
 const result = await agent.getProducts({ brief: 'Coffee brands' });
 
-if (result.status === 'needs_input') {
-  console.log('❓ Agent needs clarification:', result.needs_input?.message);
-  // onActivity fired: status_change (needs_input)
+if (result.status === 'input-required') {
+  console.log('❓ Agent needs clarification:', result.metadata.inputRequest?.question);
+  // onActivity fired: status_change (input-required)
 
   // Continue the conversation with the same agent
   const refined = await agent.continueConversation('Only premium brands above $50');
@@ -143,16 +143,15 @@ const client = new ADCPMultiAgentClient(agents, {
 app.post('/webhook/:task_type/:agent_id/:operation_id', async (req, res) => {
   const { task_type, agent_id, operation_id } = req.params;
 
-  // Inject URL parameters into payload
-  const payload = {
-    ...req.body,
-    task_type,
-    operation_id
-  };
-
   // Route to agent client - handlers fire automatically
   const agent = client.agent(agent_id);
-  await agent.handleWebhook(payload, req.headers['x-adcp-signature']);
+  await agent.handleWebhook(
+    req.body,
+    task_type,
+    operation_id,
+    req.headers['x-adcp-signature'],
+    req.headers['x-adcp-timestamp']
+  );
 
   res.json({ received: true });
 });
@@ -190,8 +189,8 @@ const client = new ADCPMultiAgentClient(agents, {
 Activity types:
 - `protocol_request` - Request sent to agent
 - `protocol_response` - Response received from agent
+- `status_change` - Task status changed
 - `webhook_received` - Webhook received from agent
-- `handler_called` - Completion handler fired
 
 ## Notifications (Agent-Initiated)
 
@@ -252,10 +251,12 @@ if (result.success) {
 
 // Handlers receive typed responses
 handlers: {
-  onCreateMediaBuyComplete: (response, metadata) => {
-    // response: CreateMediaBuyResponse
+  onCreateMediaBuyStatusChange: (response, metadata) => {
+    // response: CreateMediaBuyResponse | CreateMediaBuyAsyncWorking | ...
     // metadata: WebhookMetadata
-    const buyId = response.media_buy_id; // Typed!
+    if (metadata.status === 'completed') {
+      const buyId = (response as CreateMediaBuyResponse).media_buy_id; // Typed!
+    }
   }
 }
 ```
@@ -268,15 +269,15 @@ Execute across multiple agents simultaneously:
 const client = new ADCPMultiAgentClient([agentX, agentY, agentZ]);
 
 // Parallel execution across all agents
-const results = await client.getProducts({ brief: 'Coffee brands' });
+const results = await client.allAgents().getProducts({ brief: 'Coffee brands' });
 // results: TaskResult<GetProductsResponse>[]
 
+const agentIds = client.getAgentIds();
 results.forEach((result, i) => {
-  const agentId = client.agentIds[i];
-  console.log(`${agentId}: ${result.status}`);
+  console.log(`${agentIds[i]}: ${result.status}`);
 
   if (result.status === 'completed') {
-    console.log(`  Sync: ${result.data.products?.length} products`);
+    console.log(`  Sync: ${result.data?.products?.length} products`);
   } else if (result.status === 'submitted') {
     console.log(`  Async: webhook to ${result.submitted?.webhookUrl}`);
   }
@@ -301,10 +302,10 @@ const client = new ADCPMultiAgentClient(agents, {
 ```typescript
 const agents = [{
   id: 'agent_x',
+  name: 'Agent X',
   agent_uri: 'https://agent-x.com',
   protocol: 'a2a',
-  auth_token_env: process.env.AGENT_X_TOKEN, // ✅ Secure
-  requiresAuth: true
+  auth_token: process.env.AGENT_X_TOKEN // ✅ Secure - load from env
 }];
 ```
 
@@ -315,15 +316,15 @@ const agents = [{
 WEBHOOK_URL_TEMPLATE="https://myapp.com/webhook/{task_type}/{agent_id}/{operation_id}"
 WEBHOOK_SECRET="your-webhook-secret"
 
-ADCP_AGENTS='[
+ADCP_AGENTS_CONFIG='[
   {
     "id": "agent_x",
+    "name": "Agent X",
     "agent_uri": "https://agent-x.com",
     "protocol": "a2a",
-    "auth_token_env": "AGENT_X_TOKEN"
+    "auth_token": "actual-token-here"
   }
 ]'
-AGENT_X_TOKEN="actual-token-here"
 ```
 
 ```typescript
@@ -345,10 +346,12 @@ All AdCP tools with full type safety:
 - `getMediaBuyDelivery()` - Get delivery performance
 
 **Audience & Targeting:**
-- `listAuthorizedProperties()` - Get authorized properties
 - `getSignals()` - Get audience signals
 - `activateSignal()` - Activate audience signals
 - `providePerformanceFeedback()` - Send performance feedback
+
+**Protocol:**
+- `getAdcpCapabilities()` - Get agent capabilities (v3)
 
 ## Property Discovery (AdCP v2.2.0)
 
@@ -563,7 +566,7 @@ const result = await agent.getProducts({ brief: 'Coffee brands' });
 ### With Clarification Handler
 ```typescript
 const result = await agent.createMediaBuy(
-  { brief: 'Coffee campaign' },
+  { buyer_ref: 'campaign-123', account_id: 'acct-456', packages: [...] },
   (context) => {
     // Agent needs more info
     if (context.inputRequest.field === 'budget') {
