@@ -1,5 +1,5 @@
-// Generated AdCP core types from official schemas vlatest
-// Generated at: 2026-02-12T10:23:23.064Z
+// Generated AdCP core types from official schemas v3.0.0-beta.3
+// Generated at: 2026-02-12T12:46:41.840Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -44,6 +44,10 @@ export type PostalCodeSystem1 =
   | 'de_plz'
   | 'fr_code_postal'
   | 'au_postcode';
+/**
+ * Days of the week for daypart targeting
+ */
+export type DayOfWeek = 'monday' | 'tuesday' | 'wednesday' | 'thursday' | 'friday' | 'saturday' | 'sunday';
 /**
  * Methods for verifying user age for compliance. Does not include 'inferred' as it is not accepted for regulatory compliance.
  */
@@ -146,7 +150,7 @@ export interface Account {
    */
   account_id: string;
   /**
-   * Human-readable account name (e.g., 'Coke', 'Coke c/o Publicis')
+   * Human-readable account name (e.g., 'Acme', 'Acme c/o Pinnacle')
    */
   name: string;
   /**
@@ -380,6 +384,12 @@ export interface TargetingOverlay {
     }[]
   ];
   /**
+   * Restrict delivery to specific time windows. Each entry specifies days of week and an hour range.
+   *
+   * @minItems 1
+   */
+  daypart_targets?: [DaypartTarget, ...DaypartTarget[]];
+  /**
    * AXE segment ID to include for targeting
    */
   axe_include_segment?: string;
@@ -421,6 +431,29 @@ export interface TargetingOverlay {
    */
   language?: [string, ...string[]];
   [k: string]: unknown | undefined;
+}
+/**
+ * A time window for daypart targeting. Specifies days of week and an hour range. start_hour is inclusive, end_hour is exclusive (e.g., 6-10 = 6:00am to 10:00am). Follows the Google Ads AdScheduleInfo / DV360 DayPartTargeting pattern.
+ */
+export interface DaypartTarget {
+  /**
+   * Days of week this window applies to. Use multiple days for compact targeting (e.g., monday-friday in one object).
+   *
+   * @minItems 1
+   */
+  days: [DayOfWeek, ...DayOfWeek[]];
+  /**
+   * Start hour (inclusive), 0-23 in 24-hour format. 0 = midnight, 6 = 6:00am, 18 = 6:00pm.
+   */
+  start_hour: number;
+  /**
+   * End hour (exclusive), 1-24 in 24-hour format. 10 = 10:00am, 24 = midnight. Must be greater than start_hour.
+   */
+  end_hour: number;
+  /**
+   * Optional human-readable name for this time window (e.g., 'Morning Drive', 'Prime Time')
+   */
+  label?: string;
 }
 /**
  * Frequency capping settings for package-level application
@@ -1664,6 +1697,10 @@ export type PricingOption =
   | FlatRatePricingOption
   | TimeBasedPricingOption;
 /**
+ * Measurement system for the demographic field. Defaults to nielsen when omitted.
+ */
+export type DemographicSystem = 'nielsen' | 'barb' | 'agf' | 'oztam' | 'mediametrie' | 'custom';
+/**
  * Standard marketing event types for event logging, aligned with IAB ECAPI
  */
 export type ReportingFrequency = 'hourly' | 'daily' | 'monthly';
@@ -2234,8 +2271,9 @@ export interface CPPPricingOption {
    * CPP-specific parameters for demographic targeting
    */
   parameters: {
+    demographic_system?: DemographicSystem;
     /**
-     * Target demographic in Nielsen format (P18-49, M25-54, W35+, etc.)
+     * Target demographic code within the specified demographic_system (e.g., P18-49 for Nielsen, ABC1 Adults for BARB)
      */
     demographic: string;
     /**
@@ -2726,6 +2764,22 @@ export type AdCPAsyncResponseData =
 /**
  * Selects properties from a publisher's adagents.json. Used for both product definitions and agent authorization. Supports three selection patterns: all properties, specific IDs, or by tags.
  */
+export type ForecastRangeUnit = 'spend' | 'reach_freq' | 'weekly' | 'daily' | 'clicks' | 'conversions';
+/**
+ * Method used to produce this forecast
+ */
+export type ForecastMethod = 'estimate' | 'modeled' | 'guaranteed';
+/**
+ * Measurement system for the demographic field. Ensures buyer and seller agree on demographic notation.
+ */
+export type DemographicSystem1 = 'nielsen' | 'barb' | 'agf' | 'oztam' | 'mediametrie' | 'custom';
+/**
+ * Unit of measurement for reach and audience_size metrics in this forecast. Required for cross-channel forecast comparison.
+ */
+export type ReachUnit = 'individuals' | 'households' | 'devices' | 'accounts' | 'cookies' | 'custom';
+/**
+ * Response for completed or failed create_media_buy
+ */
 export type CreateMediaBuyResponse = CreateMediaBuySuccess | CreateMediaBuyError;
 /**
  * Budget pacing strategy
@@ -2882,6 +2936,7 @@ export interface Proposal {
    * Explanation of how this proposal aligns with the campaign brief
    */
   brief_alignment?: string;
+  forecast?: DeliveryForecast1;
   ext?: ExtensionObject;
   [k: string]: unknown | undefined;
 }
@@ -2913,6 +2968,113 @@ export interface ProductAllocation {
    * Categorical tags for this allocation (e.g., 'desktop', 'german', 'mobile') - useful for grouping/filtering allocations by dimension
    */
   tags?: string[];
+  /**
+   * Recommended time windows for this allocation in spot-plan proposals.
+   *
+   * @minItems 1
+   */
+  daypart_targets?: [DaypartTarget, ...DaypartTarget[]];
+  forecast?: DeliveryForecast;
+  ext?: ExtensionObject;
+  [k: string]: unknown | undefined;
+}
+/**
+ * A time window for daypart targeting. Specifies days of week and an hour range. start_hour is inclusive, end_hour is exclusive (e.g., 6-10 = 6:00am to 10:00am). Follows the Google Ads AdScheduleInfo / DV360 DayPartTargeting pattern.
+ */
+export interface DeliveryForecast {
+  /**
+   * Forecasted delivery at one or more budget levels. A single point is a standard forecast; multiple points ordered by ascending budget form a curve showing how metrics scale with spend. Each point pairs a budget with metric ranges.
+   *
+   * @minItems 1
+   */
+  points: [ForecastPoint, ...ForecastPoint[]];
+  forecast_range_unit?: ForecastRangeUnit;
+  method: ForecastMethod;
+  /**
+   * ISO 4217 currency code for monetary values in this forecast (spend, budget)
+   */
+  currency: string;
+  demographic_system?: DemographicSystem1;
+  /**
+   * Target demographic code within the specified demographic_system. For Nielsen: P18-49, M25-54, W35+. For BARB: ABC1 Adults, 16-34. For AGF: E 14-49.
+   */
+  demographic?: string;
+  reach_unit?: ReachUnit;
+  /**
+   * When this forecast was computed
+   */
+  generated_at?: string;
+  /**
+   * When this forecast expires. After this time, the forecast should be refreshed. Forecast expiry does not affect proposal executability.
+   */
+  valid_until?: string;
+  ext?: ExtensionObject;
+  [k: string]: unknown | undefined;
+}
+/**
+ * A forecast at a specific budget level. A single point represents a standard forecast; multiple points ordered by ascending budget form a curve showing how delivery metrics scale with spend.
+ */
+export interface ForecastPoint {
+  /**
+   * Budget amount for this forecast point. For allocation-level forecasts, this is the absolute budget for that allocation (not the percentage). For proposal-level forecasts, this is the total proposal budget.
+   */
+  budget: number;
+  /**
+   * Forecasted metric values at this budget level. Keys are either forecastable-metric values for delivery/engagement (impressions, reach, spend, etc.) or event-type values for outcomes (purchase, lead, app_install, etc.). Values are ForecastRange objects (low/mid/high). Use { "mid": value } for point estimates. Include spend when the platform predicts it will differ from budget.
+   */
+  metrics: {
+    [k: string]: ForecastRange | undefined;
+  };
+  [k: string]: unknown | undefined;
+}
+/**
+ * A forecast value with optional low/high bounds. The mid value represents the most likely outcome. When low and high are provided, they represent conservative and optimistic estimates respectively.
+ */
+export interface ForecastRange {
+  /**
+   * Conservative (low-end) forecast value
+   */
+  low?: number;
+  /**
+   * Expected (most likely) forecast value
+   */
+  mid: number;
+  /**
+   * Optimistic (high-end) forecast value
+   */
+  high?: number;
+  [k: string]: unknown | undefined;
+}
+/**
+ * Aggregate forecasted delivery metrics for the entire proposal. When both proposal-level and allocation-level forecasts are present, the proposal-level forecast is authoritative for total delivery estimation.
+ */
+export interface DeliveryForecast1 {
+  /**
+   * Forecasted delivery at one or more budget levels. A single point is a standard forecast; multiple points ordered by ascending budget form a curve showing how metrics scale with spend. Each point pairs a budget with metric ranges.
+   *
+   * @minItems 1
+   */
+  points: [ForecastPoint, ...ForecastPoint[]];
+  forecast_range_unit?: ForecastRangeUnit;
+  method: ForecastMethod;
+  /**
+   * ISO 4217 currency code for monetary values in this forecast (spend, budget)
+   */
+  currency: string;
+  demographic_system?: DemographicSystem1;
+  /**
+   * Target demographic code within the specified demographic_system. For Nielsen: P18-49, M25-54, W35+. For BARB: ABC1 Adults, 16-34. For AGF: E 14-49.
+   */
+  demographic?: string;
+  reach_unit?: ReachUnit;
+  /**
+   * When this forecast was computed
+   */
+  generated_at?: string;
+  /**
+   * When this forecast expires. After this time, the forecast should be refreshed. Forecast expiry does not affect proposal executability.
+   */
+  valid_until?: string;
   ext?: ExtensionObject;
   [k: string]: unknown | undefined;
 }
@@ -3263,7 +3425,7 @@ export interface Account1 {
    */
   account_id: string;
   /**
-   * Human-readable account name (e.g., 'Coke', 'Coke c/o Publicis')
+   * Human-readable account name (e.g., 'Acme', 'Acme c/o Pinnacle')
    */
   name: string;
   /**
