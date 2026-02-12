@@ -106,6 +106,13 @@ export function isFixedPricing(option: PricingOptionV2 | PricingOptionV3): boole
 }
 
 /**
+ * Detect if a pricing option is CPA (cost per acquisition) pricing
+ */
+export function isCPAPricing(option: PricingOptionV2 | PricingOptionV3): boolean {
+  return option?.pricing_model === 'cpa';
+}
+
+/**
  * Get the price value from a pricing option (works with v2 or v3)
  */
 export function getPrice(option: PricingOptionV2 | PricingOptionV3): number | undefined {

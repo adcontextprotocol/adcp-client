@@ -162,6 +162,7 @@ export {
   usesV2PricingFields,
   usesV3PricingFields,
   isFixedPricing,
+  isCPAPricing,
   getPrice,
   getFloorPrice,
   type PricingOptionV2,

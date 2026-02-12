@@ -31,4 +31,17 @@ Update to latest AdCP schema with new features:
 - New `paginatePages()` async generator for progressive page-by-page loading
 - Deprecated legacy `PaginationOptions` (offset/limit pattern)
 
-**Capabilities**: Added `age_restriction`, `device_platform`, `language`, and `conversion_tracking`
+**Product Discovery & Pricing:**
+- `PromotedProducts` interface for product selector queries
+- `CPAPricingOption` for cost-per-acquisition pricing model
+- `isCPAPricing()` helper to detect CPA pricing options
+- Geo exclusion fields (`geo_countries_exclude`, `geo_regions_exclude`, etc.)
+
+**Capabilities:**
+- `EVENT_TRACKING_TOOLS` constant for conversion tracking tool detection
+- `conversionTracking` feature flag in `MediaBuyFeatures`
+- Added `age_restriction`, `device_platform`, `language` feature flags
+
+**Exports:**
+- All new types exported from main barrel: `PromotedProducts`, `CPAPricingOption`, `EventType`, `ActionSource`, `SyncEventSourcesRequest/Response`, `LogEventRequest/Response`
+- `isCPAPricing` utility exported alongside existing pricing helpers
