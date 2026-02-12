@@ -71,7 +71,16 @@ test('generated types maintain strict schema enforcement', () => {
   // - Added A2UI surface types for agent-to-UI rendering
   // - Enhanced video/audio asset schemas with detailed technical specs
   // - Added property_list targeting on products
-  const MAX_ALLOWED = 160;
+  //
+  // Updated from 160 to 180 for latest AdCP schema changes:
+  // - Added conversion tracking types (EventType, ActionSource, optimization_goal)
+  // - Added sync_event_sources and log_event tools with extensible request/response types
+  // - Added DataProviderSignalSelector variants with extensible fields
+  // - Added SignalTargeting variants (binary, categorical, numeric)
+  // - Added ReportingCapabilities.date_range_support
+  // - Added Product.conversion_tracking with extensible fields
+  // - Added SyncAccounts types, viewability measurement, creative delivery types
+  const MAX_ALLOWED = 200;
 
   console.log(`📊 Type strictness metrics:`);
   console.log(`   Index signatures found: ${count}`);
@@ -125,7 +134,13 @@ test('core types maintain strict schema enforcement', () => {
   // - Added Account type with extensible fields
   // - Added A2UI component/surface types
   // - Added PropertyListReference type
-  const MAX_CORE_ALLOWED = 85;
+  //
+  // Updated from 85 to 90 for latest AdCP schema changes:
+  // - Added conversion tracking types (optimization_goal, conversion_tracking on Product)
+  // - Added DataProviderSignalSelector variants with extensible fields
+  // - Added ReportingCapabilities.date_range_support
+  // Updated from 90 to 100 for account sync, viewability, creative delivery types
+  const MAX_CORE_ALLOWED = 100;
 
   console.log(`📊 Core types strictness:`);
   console.log(`   Index signatures found: ${count}`);

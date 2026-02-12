@@ -26,6 +26,8 @@ export interface MediaBuyFeatures {
   propertyListFiltering?: boolean;
   /** Agent supports content standards validation */
   contentStandards?: boolean;
+  /** Agent supports conversion event tracking (sync_event_sources, log_event) */
+  conversionTracking?: boolean;
 }
 
 /**
@@ -118,6 +120,10 @@ export const SPONSORED_INTELLIGENCE_TOOLS = [
   'si_terminate_session',
 ] as const;
 
+export const EVENT_TRACKING_TOOLS = ['sync_event_sources', 'log_event'] as const;
+
+export const ACCOUNT_TOOLS = ['list_accounts', 'sync_accounts'] as const;
+
 export const PROTOCOL_TOOLS = ['get_adcp_capabilities'] as const;
 
 /**
@@ -163,6 +169,8 @@ export function buildSyntheticCapabilities(tools: ToolInfo[]): AdcpCapabilities 
     propertyListFiltering: false,
     // Content standards is v3 only
     contentStandards: false,
+    // Conversion tracking if event tracking tools are available
+    conversionTracking: EVENT_TRACKING_TOOLS.some(t => toolNames.has(t)),
   };
 
   return {
@@ -188,6 +196,7 @@ export function parseCapabilitiesResponse(response: any): AdcpCapabilities {
     inlineCreativeManagement: response.media_buy?.features?.inline_creative_management ?? false,
     propertyListFiltering: response.media_buy?.features?.property_list_filtering ?? false,
     contentStandards: response.media_buy?.features?.content_standards ?? false,
+    conversionTracking: response.media_buy?.features?.conversion_tracking ?? false,
   };
 
   return {

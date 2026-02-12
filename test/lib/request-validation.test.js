@@ -178,6 +178,7 @@ describe('SingleAgentClient Request Validation', () => {
         try {
           await agent.createMediaBuy({
             buyer_ref: 'buyer123',
+            account_id: 'test-account',
             packages: [
               {
                 buyer_ref: 'pkg123',
@@ -220,6 +221,7 @@ describe('SingleAgentClient Request Validation', () => {
         try {
           await agent.createMediaBuy({
             buyer_ref: 'buyer123',
+            account_id: 'test-account',
             packages: [
               {
                 buyer_ref: 'pkg123',
@@ -321,6 +323,7 @@ describe('SingleAgentClient Request Validation', () => {
         try {
           await agent.createMediaBuy({
             buyer_ref: 'buyer123',
+            account_id: 'test-account',
             packages: [],
             brand_manifest: 'https://example.com/brand',
             start_time: 'immediate',

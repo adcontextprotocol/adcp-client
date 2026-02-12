@@ -162,6 +162,7 @@ export {
   usesV2PricingFields,
   usesV3PricingFields,
   isFixedPricing,
+  isCPAPricing,
   getPrice,
   getFloorPrice,
   type PricingOptionV2,
@@ -169,3 +170,6 @@ export {
   type PriceGuidanceV2,
   type PriceGuidanceV3,
 } from './pricing-adapter';
+
+// Re-export pagination utilities
+export { paginate, paginatePages, type PaginateOptions } from './pagination';

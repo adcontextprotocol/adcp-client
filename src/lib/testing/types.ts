@@ -59,8 +59,23 @@ export interface TestOptions {
     name: string;
     url?: string;
     tagline?: string;
-    logos?: Array<{ url: string; tags?: string[] }>;
+    logos?: Array<{
+      url: string;
+      orientation?: 'square' | 'horizontal' | 'vertical' | 'stacked';
+      background?: 'dark-bg' | 'light-bg' | 'transparent-bg';
+      variant?: 'primary' | 'secondary' | 'icon' | 'wordmark' | 'full-lockup';
+      tags?: string[];
+      usage?: string;
+      width?: number;
+      height?: number;
+    }>;
     colors?: Record<string, string>;
+    tone?: {
+      voice?: string;
+      attributes?: string[];
+      dos?: string[];
+      donts?: string[];
+    };
     assets?: Array<{
       asset_id: string;
       asset_type: string;

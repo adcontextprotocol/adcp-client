@@ -380,6 +380,7 @@ export interface CreativeFilters {
   performance_score_max?: number;
 }
 
+/** @deprecated Use PaginationRequest from tools.generated instead */
 export interface PaginationOptions {
   offset?: number;
   limit?: number;

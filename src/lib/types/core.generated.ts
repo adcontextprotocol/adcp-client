@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas vlatest
-// Generated at: 2026-02-02T14:00:27.160Z
+// Generated at: 2026-02-12T02:01:06.318Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -15,6 +15,10 @@ export type Pacing = 'even' | 'asap' | 'front_loaded';
  */
 export type MetroAreaSystem = 'nielsen_dma' | 'uk_itl1' | 'uk_itl2' | 'eurostat_nuts2' | 'custom';
 /**
+ * Metro area classification system (e.g., 'nielsen_dma', 'uk_itl2')
+ */
+export type MetroAreaSystem1 = 'nielsen_dma' | 'uk_itl1' | 'uk_itl2' | 'eurostat_nuts2' | 'custom';
+/**
  * Postal code system (e.g., 'us_zip', 'gb_outward'). System name encodes country and precision.
  */
 export type PostalCodeSystem =
@@ -27,6 +31,71 @@ export type PostalCodeSystem =
   | 'de_plz'
   | 'fr_code_postal'
   | 'au_postcode';
+/**
+ * Postal code system (e.g., 'us_zip', 'gb_outward'). System name encodes country and precision.
+ */
+export type PostalCodeSystem1 =
+  | 'us_zip'
+  | 'us_zip_plus_four'
+  | 'gb_outward'
+  | 'gb_full'
+  | 'ca_fsa'
+  | 'ca_full'
+  | 'de_plz'
+  | 'fr_code_postal'
+  | 'au_postcode';
+/**
+ * Methods for verifying user age for compliance. Does not include 'inferred' as it is not accepted for regulatory compliance.
+ */
+export type AgeVerificationMethod = 'facial_age_estimation' | 'id_document' | 'digital_id' | 'credit_card' | 'world_id';
+/**
+ * Operating system platforms for device targeting. Browser values from Sec-CH-UA-Platform standard, extended for CTV.
+ */
+export type DevicePlatform =
+  | 'ios'
+  | 'android'
+  | 'windows'
+  | 'macos'
+  | 'linux'
+  | 'chromeos'
+  | 'tvos'
+  | 'tizen'
+  | 'webos'
+  | 'fire_os'
+  | 'roku_os'
+  | 'unknown';
+/**
+ * Event type to optimize for (e.g. purchase, lead)
+ */
+export type EventType =
+  | 'page_view'
+  | 'view_content'
+  | 'select_content'
+  | 'select_item'
+  | 'search'
+  | 'share'
+  | 'add_to_cart'
+  | 'remove_from_cart'
+  | 'viewed_cart'
+  | 'add_to_wishlist'
+  | 'initiate_checkout'
+  | 'add_payment_info'
+  | 'purchase'
+  | 'refund'
+  | 'lead'
+  | 'qualify_lead'
+  | 'close_convert_lead'
+  | 'disqualify_lead'
+  | 'complete_registration'
+  | 'subscribe'
+  | 'start_trial'
+  | 'app_install'
+  | 'app_launch'
+  | 'contact'
+  | 'schedule'
+  | 'donate'
+  | 'submit_application'
+  | 'custom';
 
 /**
  * Represents a purchased advertising campaign
@@ -89,9 +158,25 @@ export interface Account {
    */
   billing_proxy?: string;
   /**
-   * Account status
+   * Account status. pending_approval: seller reviewing (credit, contracts). payment_required: credit limit reached or funds depleted. suspended: was active, now paused. closed: terminated.
    */
-  status: 'active' | 'suspended' | 'closed';
+  status: 'active' | 'pending_approval' | 'payment_required' | 'suspended' | 'closed';
+  /**
+   * House domain where brand.json is hosted. Canonical identity anchor for the brand.
+   */
+  house?: string;
+  /**
+   * Brand ID within the house portfolio (from brand.json)
+   */
+  brand_id?: string;
+  /**
+   * Domain of the entity operating this account
+   */
+  operator?: string;
+  /**
+   * Who is invoiced on this account. brand: seller invoices the brand directly. operator: seller invoices the operator (agency). agent: agent consolidates billing.
+   */
+  billing?: 'brand' | 'operator' | 'agent';
   /**
    * Identifier for the rate card applied to this account
    */
@@ -108,6 +193,7 @@ export interface Account {
     currency: string;
   };
   ext?: ExtensionObject;
+  [k: string]: unknown | undefined;
 }
 /**
  * Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.
@@ -157,6 +243,7 @@ export interface Package {
    * Format IDs that creative assets will be provided for this package
    */
   format_ids_to_provide?: FormatID[];
+  optimization_goal?: OptimizationGoal;
   /**
    * Whether this package is paused by the buyer. Paused packages do not deliver impressions. Defaults to false.
    */
@@ -165,41 +252,133 @@ export interface Package {
   [k: string]: unknown | undefined;
 }
 /**
- * Optional geographic refinements for media buys. Most targeting should be expressed in the brief and handled by the publisher. These fields are primarily for geographic restrictions (RCT testing, regulatory compliance).
+ * Optional restriction overlays for media buys. Most targeting should be expressed in the brief and handled by the publisher. These fields are for functional restrictions: geographic (RCT testing, regulatory compliance), age verification (alcohol, gambling), device platform (app compatibility), and language (localization).
  */
 export interface TargetingOverlay {
   /**
    * Restrict delivery to specific countries. ISO 3166-1 alpha-2 codes (e.g., 'US', 'GB', 'DE').
+   *
+   * @minItems 1
    */
-  geo_countries?: string[];
+  geo_countries?: [string, ...string[]];
+  /**
+   * Exclude specific countries from delivery. ISO 3166-1 alpha-2 codes (e.g., 'US', 'GB', 'DE').
+   *
+   * @minItems 1
+   */
+  geo_countries_exclude?: [string, ...string[]];
   /**
    * Restrict delivery to specific regions/states. ISO 3166-2 subdivision codes (e.g., 'US-CA', 'GB-SCT').
+   *
+   * @minItems 1
    */
-  geo_regions?: string[];
+  geo_regions?: [string, ...string[]];
+  /**
+   * Exclude specific regions/states from delivery. ISO 3166-2 subdivision codes (e.g., 'US-CA', 'GB-SCT').
+   *
+   * @minItems 1
+   */
+  geo_regions_exclude?: [string, ...string[]];
   /**
    * Restrict delivery to specific metro areas. Each entry specifies the classification system and target values. Seller must declare supported systems in get_adcp_capabilities.
+   *
+   * @minItems 1
    */
-  geo_metros?: {
-    system: MetroAreaSystem;
-    /**
-     * Metro codes within the system (e.g., ['501', '602'] for Nielsen DMAs)
-     *
-     * @minItems 1
-     */
-    values: [string, ...string[]];
-  }[];
+  geo_metros?: [
+    {
+      system: MetroAreaSystem;
+      /**
+       * Metro codes within the system (e.g., ['501', '602'] for Nielsen DMAs)
+       *
+       * @minItems 1
+       */
+      values: [string, ...string[]];
+    },
+    ...{
+      system: MetroAreaSystem;
+      /**
+       * Metro codes within the system (e.g., ['501', '602'] for Nielsen DMAs)
+       *
+       * @minItems 1
+       */
+      values: [string, ...string[]];
+    }[]
+  ];
+  /**
+   * Exclude specific metro areas from delivery. Each entry specifies the classification system and excluded values. Seller must declare supported systems in get_adcp_capabilities.
+   *
+   * @minItems 1
+   */
+  geo_metros_exclude?: [
+    {
+      system: MetroAreaSystem1;
+      /**
+       * Metro codes to exclude within the system (e.g., ['501', '602'] for Nielsen DMAs)
+       *
+       * @minItems 1
+       */
+      values: [string, ...string[]];
+    },
+    ...{
+      system: MetroAreaSystem1;
+      /**
+       * Metro codes to exclude within the system (e.g., ['501', '602'] for Nielsen DMAs)
+       *
+       * @minItems 1
+       */
+      values: [string, ...string[]];
+    }[]
+  ];
   /**
    * Restrict delivery to specific postal areas. Each entry specifies the postal system and target values. Seller must declare supported systems in get_adcp_capabilities.
+   *
+   * @minItems 1
    */
-  geo_postal_areas?: {
-    system: PostalCodeSystem;
-    /**
-     * Postal codes within the system (e.g., ['10001', '10002'] for us_zip)
-     *
-     * @minItems 1
-     */
-    values: [string, ...string[]];
-  }[];
+  geo_postal_areas?: [
+    {
+      system: PostalCodeSystem;
+      /**
+       * Postal codes within the system (e.g., ['10001', '10002'] for us_zip)
+       *
+       * @minItems 1
+       */
+      values: [string, ...string[]];
+    },
+    ...{
+      system: PostalCodeSystem;
+      /**
+       * Postal codes within the system (e.g., ['10001', '10002'] for us_zip)
+       *
+       * @minItems 1
+       */
+      values: [string, ...string[]];
+    }[]
+  ];
+  /**
+   * Exclude specific postal areas from delivery. Each entry specifies the postal system and excluded values. Seller must declare supported systems in get_adcp_capabilities.
+   *
+   * @minItems 1
+   */
+  geo_postal_areas_exclude?: [
+    {
+      system: PostalCodeSystem1;
+      /**
+       * Postal codes to exclude within the system (e.g., ['10001', '10002'] for us_zip)
+       *
+       * @minItems 1
+       */
+      values: [string, ...string[]];
+    },
+    ...{
+      system: PostalCodeSystem1;
+      /**
+       * Postal codes to exclude within the system (e.g., ['10001', '10002'] for us_zip)
+       *
+       * @minItems 1
+       */
+      values: [string, ...string[]];
+    }[]
+  ];
   /**
    * AXE segment ID to include for targeting
    */
@@ -210,6 +389,37 @@ export interface TargetingOverlay {
   axe_exclude_segment?: string;
   frequency_cap?: FrequencyCap;
   property_list?: PropertyListReference;
+  /**
+   * Age restriction for compliance. Use for legal requirements (alcohol, gambling), not audience targeting.
+   */
+  age_restriction?: {
+    /**
+     * Minimum age required
+     */
+    min: number;
+    /**
+     * Whether verified age (not inferred) is required for compliance
+     */
+    verification_required?: boolean;
+    /**
+     * Accepted verification methods. If omitted, any method the platform supports is acceptable.
+     *
+     * @minItems 1
+     */
+    accepted_methods?: [AgeVerificationMethod, ...AgeVerificationMethod[]];
+  };
+  /**
+   * Restrict to specific platforms. Use for technical compatibility (app only works on iOS). Values from Sec-CH-UA-Platform standard, extended for CTV.
+   *
+   * @minItems 1
+   */
+  device_platform?: [DevicePlatform, ...DevicePlatform[]];
+  /**
+   * Restrict to users with specific language preferences. ISO 639-1 codes (e.g., 'en', 'es', 'fr').
+   *
+   * @minItems 1
+   */
+  language?: [string, ...string[]];
   [k: string]: unknown | undefined;
 }
 /**
@@ -285,6 +495,39 @@ export interface FormatID {
   duration_ms?: number;
   [k: string]: unknown | undefined;
 }
+/**
+ * Conversion optimization goal for a package. Tells the seller which event source and event type to optimize delivery against. Provide at most one of target_roas or target_cpa. If neither is provided, the seller optimizes for maximum conversions within budget.
+ */
+export interface OptimizationGoal {
+  /**
+   * Event source to optimize against (must be configured on this account via sync_event_sources)
+   */
+  event_source_id: string;
+  event_type: EventType;
+  /**
+   * Target return on ad spend (e.g. 4.0 = $4 conversion value per $1 spent). Mutually exclusive with target_cpa.
+   */
+  target_roas?: number;
+  /**
+   * Target cost per acquisition in the buy currency. Mutually exclusive with target_roas.
+   */
+  target_cpa?: number;
+  /**
+   * Attribution window for this optimization goal. Values must match an option declared in the seller's conversion_tracking.attribution_windows capability. When omitted, the seller uses their default window.
+   */
+  attribution_window?: {
+    /**
+     * Click-through attribution window (e.g. '7d', '28d', '30d')
+     */
+    click_through: string;
+    /**
+     * View-through attribution window (e.g. '1d', '7d')
+     */
+    view_through?: string;
+    [k: string]: unknown | undefined;
+  };
+  [k: string]: unknown | undefined;
+}
 
 // CREATIVE-ASSET SCHEMA
 /**
@@ -317,6 +560,14 @@ export type VASTAsset =
        * Tracking events supported by this VAST tag
        */
       tracking_events?: VASTTrackingEvent[];
+      /**
+       * URL to captions file (WebVTT, SRT, etc.)
+       */
+      captions_url?: string;
+      /**
+       * URL to audio description track for visually impaired users
+       */
+      audio_description_url?: string;
       [k: string]: unknown | undefined;
     }
   | {
@@ -341,6 +592,14 @@ export type VASTAsset =
        * Tracking events supported by this VAST tag
        */
       tracking_events?: VASTTrackingEvent[];
+      /**
+       * URL to captions file (WebVTT, SRT, etc.)
+       */
+      captions_url?: string;
+      /**
+       * URL to audio description track for visually impaired users
+       */
+      audio_description_url?: string;
       [k: string]: unknown | undefined;
     };
 /**
@@ -397,6 +656,10 @@ export type DAASTAsset =
        * Whether companion display ads are included
        */
       companion_ads?: boolean;
+      /**
+       * URL to text transcript of the audio content
+       */
+      transcript_url?: string;
       [k: string]: unknown | undefined;
     }
   | {
@@ -421,6 +684,10 @@ export type DAASTAsset =
        * Whether companion display ads are included
        */
       companion_ads?: boolean;
+      /**
+       * URL to text transcript of the audio content
+       */
+      transcript_url?: string;
       [k: string]: unknown | undefined;
     };
 /**
@@ -677,6 +944,18 @@ export interface VideoAsset {
    * True peak level in dBFS
    */
   audio_true_peak_dbfs?: number;
+  /**
+   * URL to captions file (WebVTT, SRT, etc.)
+   */
+  captions_url?: string;
+  /**
+   * URL to text transcript of the video content
+   */
+  transcript_url?: string;
+  /**
+   * URL to audio description track for visually impaired users
+   */
+  audio_description_url?: string;
   [k: string]: unknown | undefined;
 }
 /**
@@ -727,6 +1006,10 @@ export interface AudioAsset {
    * True peak level in dBFS
    */
   true_peak_dbfs?: number;
+  /**
+   * URL to text transcript of the audio content
+   */
+  transcript_url?: string;
   [k: string]: unknown | undefined;
 }
 /**
@@ -755,6 +1038,27 @@ export interface HTMLAsset {
    * HTML version (e.g., 'HTML5')
    */
   version?: string;
+  /**
+   * Self-declared accessibility properties for this opaque creative
+   */
+  accessibility?: {
+    /**
+     * Text alternative describing the creative content
+     */
+    alt_text?: string;
+    /**
+     * Whether the creative can be fully operated via keyboard
+     */
+    keyboard_navigable?: boolean;
+    /**
+     * Whether the creative respects prefers-reduced-motion or provides pause/stop controls
+     */
+    motion_control?: boolean;
+    /**
+     * Whether the creative has been tested with screen readers
+     */
+    screen_reader_tested?: boolean;
+  };
   [k: string]: unknown | undefined;
 }
 /**
@@ -780,6 +1084,27 @@ export interface JavaScriptAsset {
    */
   content: string;
   module_type?: JavaScriptModuleType;
+  /**
+   * Self-declared accessibility properties for this opaque creative
+   */
+  accessibility?: {
+    /**
+     * Text alternative describing the creative content
+     */
+    alt_text?: string;
+    /**
+     * Whether the creative can be fully operated via keyboard
+     */
+    keyboard_navigable?: boolean;
+    /**
+     * Whether the creative respects prefers-reduced-motion or provides pause/stop controls
+     */
+    motion_control?: boolean;
+    /**
+     * Whether the creative has been tested with screen readers
+     */
+    screen_reader_tested?: boolean;
+  };
   [k: string]: unknown | undefined;
 }
 /**
@@ -845,7 +1170,7 @@ export interface BrandManifest {
    */
   name: string;
   /**
-   * Brand logo assets with semantic tags for different use cases
+   * Brand logo assets with structured fields for orientation, background compatibility, and variant type. Use the orientation, background, and variant enum fields for reliable filtering by creative agents.
    */
   logos?: {
     /**
@@ -853,9 +1178,25 @@ export interface BrandManifest {
      */
     url: string;
     /**
-     * Semantic tags describing the logo variant (e.g., 'dark', 'light', 'square', 'horizontal', 'icon')
+     * Logo aspect ratio orientation. square: ~1:1, horizontal: wide, vertical: tall, stacked: vertically arranged elements
+     */
+    orientation?: 'square' | 'horizontal' | 'vertical' | 'stacked';
+    /**
+     * Background compatibility. dark-bg: use on dark backgrounds, light-bg: use on light backgrounds, transparent-bg: has transparent background
+     */
+    background?: 'dark-bg' | 'light-bg' | 'transparent-bg';
+    /**
+     * Logo variant type. primary: main logo, secondary: alternative, icon: symbol only, wordmark: text only, full-lockup: complete logo
+     */
+    variant?: 'primary' | 'secondary' | 'icon' | 'wordmark' | 'full-lockup';
+    /**
+     * Additional semantic tags for custom categorization beyond the standard orientation, background, and variant fields.
      */
     tags?: string[];
+    /**
+     * Human-readable description of when to use this logo variant (e.g., 'Primary logo for use on light backgrounds', 'Icon-only variant for small formats')
+     */
+    usage?: string;
     /**
      * Logo width in pixels
      */
@@ -866,29 +1207,29 @@ export interface BrandManifest {
     height?: number;
   }[];
   /**
-   * Brand color palette
+   * Brand color palette. Each role accepts a single hex color or an array of hex colors for brands with multiple values per role.
    */
   colors?: {
     /**
-     * Primary brand color (hex format)
+     * Primary brand color(s)
      */
-    primary?: string;
+    primary?: string | [string, ...string[]];
     /**
-     * Secondary brand color (hex format)
+     * Secondary brand color(s)
      */
-    secondary?: string;
+    secondary?: string | [string, ...string[]];
     /**
-     * Accent color (hex format)
+     * Accent color(s)
      */
-    accent?: string;
+    accent?: string | [string, ...string[]];
     /**
-     * Background color (hex format)
+     * Background color(s)
      */
-    background?: string;
+    background?: string | [string, ...string[]];
     /**
-     * Text color (hex format)
+     * Text color(s)
      */
-    text?: string;
+    text?: string | [string, ...string[]];
   };
   /**
    * Brand typography guidelines
@@ -908,9 +1249,28 @@ export interface BrandManifest {
     font_urls?: string[];
   };
   /**
-   * Brand voice and messaging tone (e.g., 'professional', 'casual', 'humorous', 'trustworthy', 'innovative')
+   * Brand voice and messaging tone guidelines for creative agents.
    */
-  tone?: string;
+  tone?:
+    | string
+    | {
+        /**
+         * High-level voice descriptor (e.g., 'warm and inviting', 'professional and trustworthy')
+         */
+        voice?: string;
+        /**
+         * Personality traits that characterize the brand voice
+         */
+        attributes?: string[];
+        /**
+         * Specific guidance for copy generation - what TO do
+         */
+        dos?: string[];
+        /**
+         * Guardrails to avoid brand violations - what NOT to do
+         */
+        donts?: string[];
+      };
   /**
    * Brand voice configuration for audio/conversational experiences
    */
@@ -1111,6 +1471,10 @@ export interface BrandManifest {
  */
 export interface PromotedProducts {
   /**
+   * GTIN product identifiers for cross-retailer catalog matching. Accepts standard GTIN formats (GTIN-8, UPC-A/GTIN-12, EAN-13/GTIN-13, GTIN-14).
+   */
+  manifest_gtins?: string[];
+  /**
    * Direct product SKU references from the brand manifest product catalog
    */
   manifest_skus?: string[];
@@ -1260,6 +1624,29 @@ export type PropertyID = string;
  */
 export type PropertyTag = string;
 /**
+ * Standardized advertising media channels describing how buyers allocate budget. Channels are planning abstractions, not technical substrates. See the Media Channel Taxonomy specification for detailed definitions.
+ */
+export type MediaChannel =
+  | 'display'
+  | 'olv'
+  | 'social'
+  | 'search'
+  | 'ctv'
+  | 'linear_tv'
+  | 'radio'
+  | 'streaming_audio'
+  | 'podcast'
+  | 'dooh'
+  | 'ooh'
+  | 'print'
+  | 'cinema'
+  | 'email'
+  | 'gaming'
+  | 'retail_media'
+  | 'influencer'
+  | 'affiliate'
+  | 'product_placement';
+/**
  * Type of inventory delivery
  */
 export type DeliveryType = 'guaranteed' | 'non_guaranteed';
@@ -1273,9 +1660,11 @@ export type PricingOption =
   | CPCVPricingOption
   | CPVPricingOption
   | CPPPricingOption
-  | FlatRatePricingOption;
+  | CPAPricingOption
+  | FlatRatePricingOption
+  | TimeBasedPricingOption;
 /**
- * Available frequencies for delivery reports and metrics updates
+ * Standard marketing event types for event logging, aligned with IAB ECAPI
  */
 export type ReportingFrequency = 'hourly' | 'daily' | 'monthly';
 /**
@@ -1289,8 +1678,21 @@ export type AvailableMetric =
   | 'video_completions'
   | 'completion_rate'
   | 'conversions'
+  | 'conversion_value'
+  | 'roas'
+  | 'cost_per_acquisition'
+  | 'new_to_brand_rate'
   | 'viewability'
-  | 'engagement_rate';
+  | 'engagement_rate'
+  | 'views'
+  | 'completed_views'
+  | 'leads'
+  | 'reach'
+  | 'frequency'
+  | 'grps'
+  | 'quartile_data'
+  | 'dooh_metrics'
+  | 'cost_per_click';
 /**
  * Co-branding requirement
  */
@@ -1299,6 +1701,68 @@ export type CoBrandingRequirement = 'required' | 'optional' | 'none';
  * Landing page requirements
  */
 export type LandingPageRequirement = 'any' | 'retailer_site_only' | 'must_include_retailer';
+/**
+ * Selects signals from a data provider's adagents.json catalog. Used for product definitions and agent authorization. Supports three selection patterns: all signals, specific IDs, or by tags.
+ */
+export type DataProviderSignalSelector =
+  | {
+      /**
+       * Domain where data provider's adagents.json is hosted (e.g., 'polk.com')
+       */
+      data_provider_domain: string;
+      /**
+       * Discriminator indicating all signals from this data provider are included
+       */
+      selection_type: 'all';
+      [k: string]: unknown | undefined;
+    }
+  | {
+      /**
+       * Domain where data provider's adagents.json is hosted (e.g., 'polk.com')
+       */
+      data_provider_domain: string;
+      /**
+       * Discriminator indicating selection by specific signal IDs
+       */
+      selection_type: 'by_id';
+      /**
+       * Specific signal IDs from the data provider's catalog
+       *
+       * @minItems 1
+       */
+      signal_ids: [string, ...string[]];
+      [k: string]: unknown | undefined;
+    }
+  | {
+      /**
+       * Domain where data provider's adagents.json is hosted (e.g., 'polk.com')
+       */
+      data_provider_domain: string;
+      /**
+       * Discriminator indicating selection by signal tags
+       */
+      selection_type: 'by_tag';
+      /**
+       * Signal tags from the data provider's catalog. Selector covers all signals with these tags
+       *
+       * @minItems 1
+       */
+      signal_tags: [string, ...string[]];
+      [k: string]: unknown | undefined;
+    };
+/**
+ * Where the conversion event originated
+ */
+export type ActionSource =
+  | 'website'
+  | 'app'
+  | 'offline'
+  | 'phone_call'
+  | 'chat'
+  | 'email'
+  | 'in_store'
+  | 'system_generated'
+  | 'other';
 
 /**
  * Represents available advertising inventory
@@ -1320,6 +1784,10 @@ export interface Product {
    * Publisher properties covered by this product. Buyers fetch actual property definitions from each publisher's adagents.json and validate agent authorization. Selection patterns mirror the authorization patterns in adagents.json for consistency.
    */
   publisher_properties: PublisherPropertySelector[];
+  /**
+   * Advertising channels this product is sold as. Products inherit from their properties' supported_channels but may narrow the scope. For example, a product covering YouTube properties might be sold as ['ctv'] even though those properties support ['olv', 'social', 'ctv'].
+   */
+  channels?: MediaChannel[];
   /**
    * Array of supported creative format IDs - structured format_id objects with agent_url and id
    */
@@ -1361,6 +1829,31 @@ export interface Product {
    * Whether buyers can filter this product to a subset of its publisher_properties. When false (default), the product is 'all or nothing' - buyers must accept all properties or the product is excluded from property_list filtering results.
    */
   property_targeting_allowed?: boolean;
+  /**
+   * Data provider signals available for this product. Buyers fetch signal definitions from each data provider's adagents.json and can verify agent authorization.
+   */
+  data_provider_signals?: DataProviderSignalSelector[];
+  /**
+   * Whether buyers can filter this product to a subset of its data_provider_signals. When false (default), the product includes all listed signals as a bundle. When true, buyers can target specific signals.
+   */
+  signal_targeting_allowed?: boolean;
+  /**
+   * Conversion tracking for this product. Presence indicates the product supports conversion-optimized delivery. Seller-level capabilities (supported event types, UID types, attribution windows) are declared in get_adcp_capabilities.
+   */
+  conversion_tracking?: {
+    /**
+     * Action sources relevant to this product (e.g. a retail media product might have 'in_store' and 'website', while a display product might only have 'website')
+     */
+    action_sources?: ActionSource[];
+    /**
+     * Optimization strategies this product supports when an optimization_goal is set on a package
+     */
+    supported_optimization_strategies?: ('maximize_conversions' | 'target_cpa' | 'target_roas')[];
+    /**
+     * Whether the seller provides its own always-on measurement (e.g. Amazon sales attribution for Amazon advertisers). When true, sync_event_sources response will include seller-managed event sources with managed_by='seller'.
+     */
+    platform_managed?: boolean;
+  };
   /**
    * Explanation of why this product matches the brief (only included when brief is provided)
    */
@@ -1763,6 +2256,44 @@ export interface PriceGuidance5 {
   [k: string]: unknown | undefined;
 }
 /**
+ * Cost Per Acquisition pricing. Advertiser pays a fixed price when a specified conversion event occurs. The event_type field declares which event triggers billing (e.g., purchase, lead, app_install).
+ */
+export interface CPAPricingOption {
+  /**
+   * Unique identifier for this pricing option within the product
+   */
+  pricing_option_id: string;
+  /**
+   * Cost per acquisition (conversion event)
+   */
+  pricing_model: 'cpa';
+  /**
+   * The conversion event type that triggers billing (e.g., purchase, lead, app_install)
+   */
+  event_type: EventType;
+  /**
+   * Name of the custom event when event_type is 'custom'. Required when event_type is 'custom', ignored otherwise.
+   */
+  custom_event_name?: string;
+  /**
+   * When present, only events from this specific event source count toward billing. Allows different CPA rates for different sources (e.g., online vs in-store purchases). Must match an event source configured via sync_event_sources.
+   */
+  event_source_id?: string;
+  /**
+   * ISO 4217 currency code
+   */
+  currency: string;
+  /**
+   * Fixed price per acquisition in the specified currency
+   */
+  fixed_price: number;
+  /**
+   * Minimum spend requirement per package using this pricing option, in the specified currency
+   */
+  min_spend_per_package?: number;
+  [k: string]: unknown | undefined;
+}
+/**
  * Flat rate pricing for DOOH, sponsorships, and time-based campaigns. If fixed_price is present, it's fixed pricing. If absent, it's auction-based.
  */
 export interface FlatRatePricingOption {
@@ -1850,6 +2381,77 @@ export interface PriceGuidance6 {
   [k: string]: unknown | undefined;
 }
 /**
+ * Cost per time unit (hour, day, week, or month) - rate scales with campaign duration. If fixed_price is present, it's fixed pricing. If absent, it's auction-based.
+ */
+export interface TimeBasedPricingOption {
+  /**
+   * Unique identifier for this pricing option within the product
+   */
+  pricing_option_id: string;
+  /**
+   * Cost per time unit - rate scales with campaign duration
+   */
+  pricing_model: 'time';
+  /**
+   * ISO 4217 currency code
+   */
+  currency: string;
+  /**
+   * Cost per time unit. If present, this is fixed pricing. If absent, auction-based.
+   */
+  fixed_price?: number;
+  /**
+   * Minimum acceptable bid per time unit for auction pricing (mutually exclusive with fixed_price). Bids below this value will be rejected.
+   */
+  floor_price?: number;
+  price_guidance?: PriceGuidance7;
+  /**
+   * Time-based pricing parameters
+   */
+  parameters: {
+    /**
+     * The time unit for pricing. Total cost = fixed_price × number of time_units in the campaign flight.
+     */
+    time_unit: 'hour' | 'day' | 'week' | 'month';
+    /**
+     * Minimum booking duration in time_units
+     */
+    min_duration?: number;
+    /**
+     * Maximum booking duration in time_units. Must be >= min_duration when both are present.
+     */
+    max_duration?: number;
+    [k: string]: unknown | undefined;
+  };
+  /**
+   * Minimum spend requirement per package using this pricing option, in the specified currency
+   */
+  min_spend_per_package?: number;
+  [k: string]: unknown | undefined;
+}
+/**
+ * Optional pricing guidance for auction-based bidding
+ */
+export interface PriceGuidance7 {
+  /**
+   * 25th percentile of recent winning bids
+   */
+  p25?: number;
+  /**
+   * Median of recent winning bids
+   */
+  p50?: number;
+  /**
+   * 75th percentile of recent winning bids
+   */
+  p75?: number;
+  /**
+   * 90th percentile of recent winning bids
+   */
+  p90?: number;
+  [k: string]: unknown | undefined;
+}
+/**
  * Measurement capabilities included with a product
  */
 export interface Measurement {
@@ -1894,9 +2496,17 @@ export interface ReportingCapabilities {
    */
   supports_webhooks: boolean;
   /**
-   * Metrics available in reporting. Impressions and spend are always implicitly included.
+   * Metrics available in reporting. Impressions and spend are always implicitly included. When a creative format declares reported_metrics, buyers receive the intersection of these product-level metrics and the format's reported_metrics.
    */
   available_metrics: AvailableMetric[];
+  /**
+   * Whether this product supports creative-level metric breakdowns in delivery reporting (by_creative within by_package)
+   */
+  supports_creative_breakdown?: boolean;
+  /**
+   * Whether delivery data can be filtered to arbitrary date ranges. 'date_range' means the platform supports start_date/end_date parameters. 'lifetime_only' means the platform returns campaign lifetime totals and date range parameters are not accepted.
+   */
+  date_range_support: 'date_range' | 'lifetime_only';
   [k: string]: unknown | undefined;
 }
 /**
@@ -2031,6 +2641,10 @@ export interface Property {
    */
   tags?: PropertyTag[];
   /**
+   * Advertising channels this property supports (e.g., ['display', 'olv', 'social']). Publishers declare which channels their inventory aligns with. Properties may support multiple channels. See the Media Channel Taxonomy for definitions.
+   */
+  supported_channels?: MediaChannel[];
+  /**
    * Domain where adagents.json should be checked for authorization validation. Optional in adagents.json (file location implies domain).
    */
   publisher_domain?: string;
@@ -2050,7 +2664,11 @@ export type TaskType =
   | 'update_property_list'
   | 'get_property_list'
   | 'list_property_lists'
-  | 'delete_property_list';
+  | 'delete_property_list'
+  | 'sync_accounts'
+  | 'get_creative_delivery'
+  | 'sync_event_sources'
+  | 'log_event';
 /**
  * AdCP domain this task belongs to. Helps classify the operation type at a high level.
  */
@@ -2094,6 +2712,38 @@ export type AdCPAsyncResponseData =
 export type CreateMediaBuyResponse = CreateMediaBuySuccess | CreateMediaBuyError;
 /**
  * Budget pacing strategy
+ */
+export type EventType1 =
+  | 'page_view'
+  | 'view_content'
+  | 'select_content'
+  | 'select_item'
+  | 'search'
+  | 'share'
+  | 'add_to_cart'
+  | 'remove_from_cart'
+  | 'viewed_cart'
+  | 'add_to_wishlist'
+  | 'initiate_checkout'
+  | 'add_payment_info'
+  | 'purchase'
+  | 'refund'
+  | 'lead'
+  | 'qualify_lead'
+  | 'close_convert_lead'
+  | 'disqualify_lead'
+  | 'complete_registration'
+  | 'subscribe'
+  | 'start_trial'
+  | 'app_install'
+  | 'app_launch'
+  | 'contact'
+  | 'schedule'
+  | 'donate'
+  | 'submit_application'
+  | 'custom';
+/**
+ * Response for completed or failed update_media_buy
  */
 export type UpdateMediaBuyResponse = UpdateMediaBuySuccess | UpdateMediaBuyError;
 /**
@@ -2154,6 +2804,11 @@ export interface GetProductsResponse {
    * [AdCP 3.0] Indicates whether property_list filtering was applied. True if the agent filtered products based on the provided property_list. Absent or false if property_list was not provided or not supported by this agent.
    */
   property_list_applied?: boolean;
+  /**
+   * Indicates whether product_selectors filtering was applied. True if the seller filtered results based on the provided product_selectors. Absent or false if product_selectors was not provided or not supported by this agent.
+   */
+  product_selectors_applied?: boolean;
+  pagination?: PaginationResponse;
   context?: ContextObject;
   ext?: ExtensionObject;
   [k: string]: unknown | undefined;
@@ -2275,6 +2930,23 @@ export interface Error {
     [k: string]: unknown | undefined;
   };
   [k: string]: unknown | undefined;
+}
+/**
+ * Standard cursor-based pagination metadata for list responses
+ */
+export interface PaginationResponse {
+  /**
+   * Whether more results are available beyond this page
+   */
+  has_more: boolean;
+  /**
+   * Opaque cursor to pass in the next request to fetch the next page. Only present when has_more is true.
+   */
+  cursor?: string;
+  /**
+   * Total number of items matching the query across all pages. Optional because not all backends can efficiently compute this.
+   */
+  total_count?: number;
 }
 /**
  * Opaque correlation data that is echoed unchanged in responses. Used for internal tracking, UI session IDs, trace IDs, and other caller-specific identifiers that don't affect protocol behavior. Context data is never parsed by AdCP agents - it's simply preserved and returned.
@@ -2586,9 +3258,25 @@ export interface Account1 {
    */
   billing_proxy?: string;
   /**
-   * Account status
+   * Account status. pending_approval: seller reviewing (credit, contracts). payment_required: credit limit reached or funds depleted. suspended: was active, now paused. closed: terminated.
    */
-  status: 'active' | 'suspended' | 'closed';
+  status: 'active' | 'pending_approval' | 'payment_required' | 'suspended' | 'closed';
+  /**
+   * House domain where brand.json is hosted. Canonical identity anchor for the brand.
+   */
+  house?: string;
+  /**
+   * Brand ID within the house portfolio (from brand.json)
+   */
+  brand_id?: string;
+  /**
+   * Domain of the entity operating this account
+   */
+  operator?: string;
+  /**
+   * Who is invoiced on this account. brand: seller invoices the brand directly. operator: seller invoices the operator (agency). agent: agent consolidates billing.
+   */
+  billing?: 'brand' | 'operator' | 'agent';
   /**
    * Identifier for the rate card applied to this account
    */
@@ -2605,6 +3293,7 @@ export interface Account1 {
     currency: string;
   };
   ext?: ExtensionObject;
+  [k: string]: unknown | undefined;
 }
 /**
  * Error response - operation failed completely, no creatives were processed

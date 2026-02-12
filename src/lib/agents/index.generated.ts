@@ -22,10 +22,16 @@ import type {
   GetMediaBuyDeliveryResponse,
   ProvidePerformanceFeedbackRequest,
   ProvidePerformanceFeedbackResponse,
+  SyncEventSourcesRequest,
+  SyncEventSourcesResponse,
+  LogEventRequest,
+  LogEventResponse,
   BuildCreativeRequest,
   BuildCreativeResponse,
   PreviewCreativeRequest,
   PreviewCreativeResponse,
+  GetCreativeDeliveryRequest,
+  GetCreativeDeliveryResponse,
   GetSignalsRequest,
   GetSignalsResponse,
   ActivateSignalRequest,
@@ -65,7 +71,9 @@ import type {
   GetAdCPCapabilitiesRequest,
   GetAdCPCapabilitiesResponse,
   ListAccountsRequest,
-  ListAccountsResponse
+  ListAccountsResponse,
+  SyncAccountsRequest,
+  SyncAccountsResponse
 } from '../types/tools.generated';
 
 /**
@@ -164,6 +172,20 @@ export class Agent {
   }
 
   /**
+   * Official AdCP sync_event_sources tool schema
+   */
+  async syncEventSources(params: SyncEventSourcesRequest): Promise<SyncEventSourcesResponse> {
+    return this.callTool<SyncEventSourcesResponse>('sync_event_sources', params);
+  }
+
+  /**
+   * Official AdCP log_event tool schema
+   */
+  async logEvent(params: LogEventRequest): Promise<LogEventResponse> {
+    return this.callTool<LogEventResponse>('log_event', params);
+  }
+
+  /**
    * Official AdCP build_creative tool schema
    */
   async buildCreative(params: BuildCreativeRequest): Promise<BuildCreativeResponse> {
@@ -175,6 +197,13 @@ export class Agent {
    */
   async previewCreative(params: PreviewCreativeRequest): Promise<PreviewCreativeResponse> {
     return this.callTool<PreviewCreativeResponse>('preview_creative', params);
+  }
+
+  /**
+   * Official AdCP get_creative_delivery tool schema
+   */
+  async getCreativeDelivery(params: GetCreativeDeliveryRequest): Promise<GetCreativeDeliveryResponse> {
+    return this.callTool<GetCreativeDeliveryResponse>('get_creative_delivery', params);
   }
 
   /**
@@ -317,6 +346,13 @@ export class Agent {
     return this.callTool<ListAccountsResponse>('list_accounts', params);
   }
 
+  /**
+   * Official AdCP sync_accounts tool schema
+   */
+  async syncAccounts(params: SyncAccountsRequest): Promise<SyncAccountsResponse> {
+    return this.callTool<SyncAccountsResponse>('sync_accounts', params);
+  }
+
 }
 
 /**
@@ -377,6 +413,20 @@ export class AgentCollection {
   }
 
   /**
+   * Official AdCP sync_event_sources tool schema (across multiple agents)
+   */
+  async syncEventSources(params: SyncEventSourcesRequest): Promise<SyncEventSourcesResponse[]> {
+    return this.callToolOnAll<SyncEventSourcesResponse>('sync_event_sources', params);
+  }
+
+  /**
+   * Official AdCP log_event tool schema (across multiple agents)
+   */
+  async logEvent(params: LogEventRequest): Promise<LogEventResponse[]> {
+    return this.callToolOnAll<LogEventResponse>('log_event', params);
+  }
+
+  /**
    * Official AdCP build_creative tool schema (across multiple agents)
    */
   async buildCreative(params: BuildCreativeRequest): Promise<BuildCreativeResponse[]> {
@@ -388,6 +438,13 @@ export class AgentCollection {
    */
   async previewCreative(params: PreviewCreativeRequest): Promise<PreviewCreativeResponse[]> {
     return this.callToolOnAll<PreviewCreativeResponse>('preview_creative', params);
+  }
+
+  /**
+   * Official AdCP get_creative_delivery tool schema (across multiple agents)
+   */
+  async getCreativeDelivery(params: GetCreativeDeliveryRequest): Promise<GetCreativeDeliveryResponse[]> {
+    return this.callToolOnAll<GetCreativeDeliveryResponse>('get_creative_delivery', params);
   }
 
   /**
@@ -479,6 +536,13 @@ export class AgentCollection {
    */
   async listAccounts(params: ListAccountsRequest): Promise<ListAccountsResponse[]> {
     return this.callToolOnAll<ListAccountsResponse>('list_accounts', params);
+  }
+
+  /**
+   * Official AdCP sync_accounts tool schema (across multiple agents)
+   */
+  async syncAccounts(params: SyncAccountsRequest): Promise<SyncAccountsResponse[]> {
+    return this.callToolOnAll<SyncAccountsResponse>('sync_accounts', params);
   }
 
 }

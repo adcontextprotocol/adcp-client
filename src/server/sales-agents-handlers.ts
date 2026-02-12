@@ -258,6 +258,7 @@ export class SalesAgentsHandlers {
 
         const params: CreateMediaBuyRequest = {
           buyer_ref: additionalParams.buyer_ref || `test-${Date.now()}`,
+          account_id: additionalParams.account_id || `test-account-${Date.now()}`,
           brand_manifest: brandManifestForBuy,
           packages: additionalParams.packages || [],
           start_time: additionalParams.start_time || 'asap',
