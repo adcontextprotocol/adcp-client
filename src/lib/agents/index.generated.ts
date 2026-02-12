@@ -30,6 +30,8 @@ import type {
   BuildCreativeResponse,
   PreviewCreativeRequest,
   PreviewCreativeResponse,
+  GetCreativeDeliveryRequest,
+  GetCreativeDeliveryResponse,
   GetSignalsRequest,
   GetSignalsResponse,
   ActivateSignalRequest,
@@ -69,7 +71,9 @@ import type {
   GetAdCPCapabilitiesRequest,
   GetAdCPCapabilitiesResponse,
   ListAccountsRequest,
-  ListAccountsResponse
+  ListAccountsResponse,
+  SyncAccountsRequest,
+  SyncAccountsResponse
 } from '../types/tools.generated';
 
 /**
@@ -193,6 +197,13 @@ export class Agent {
    */
   async previewCreative(params: PreviewCreativeRequest): Promise<PreviewCreativeResponse> {
     return this.callTool<PreviewCreativeResponse>('preview_creative', params);
+  }
+
+  /**
+   * Official AdCP get_creative_delivery tool schema
+   */
+  async getCreativeDelivery(params: GetCreativeDeliveryRequest): Promise<GetCreativeDeliveryResponse> {
+    return this.callTool<GetCreativeDeliveryResponse>('get_creative_delivery', params);
   }
 
   /**
@@ -335,6 +346,13 @@ export class Agent {
     return this.callTool<ListAccountsResponse>('list_accounts', params);
   }
 
+  /**
+   * Official AdCP sync_accounts tool schema
+   */
+  async syncAccounts(params: SyncAccountsRequest): Promise<SyncAccountsResponse> {
+    return this.callTool<SyncAccountsResponse>('sync_accounts', params);
+  }
+
 }
 
 /**
@@ -420,6 +438,13 @@ export class AgentCollection {
    */
   async previewCreative(params: PreviewCreativeRequest): Promise<PreviewCreativeResponse[]> {
     return this.callToolOnAll<PreviewCreativeResponse>('preview_creative', params);
+  }
+
+  /**
+   * Official AdCP get_creative_delivery tool schema (across multiple agents)
+   */
+  async getCreativeDelivery(params: GetCreativeDeliveryRequest): Promise<GetCreativeDeliveryResponse[]> {
+    return this.callToolOnAll<GetCreativeDeliveryResponse>('get_creative_delivery', params);
   }
 
   /**
@@ -511,6 +536,13 @@ export class AgentCollection {
    */
   async listAccounts(params: ListAccountsRequest): Promise<ListAccountsResponse[]> {
     return this.callToolOnAll<ListAccountsResponse>('list_accounts', params);
+  }
+
+  /**
+   * Official AdCP sync_accounts tool schema (across multiple agents)
+   */
+  async syncAccounts(params: SyncAccountsRequest): Promise<SyncAccountsResponse[]> {
+    return this.callToolOnAll<SyncAccountsResponse>('sync_accounts', params);
   }
 
 }

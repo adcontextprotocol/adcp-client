@@ -122,6 +122,8 @@ export const SPONSORED_INTELLIGENCE_TOOLS = [
 
 export const EVENT_TRACKING_TOOLS = ['sync_event_sources', 'log_event'] as const;
 
+export const ACCOUNT_TOOLS = ['list_accounts', 'sync_accounts'] as const;
+
 export const PROTOCOL_TOOLS = ['get_adcp_capabilities'] as const;
 
 /**

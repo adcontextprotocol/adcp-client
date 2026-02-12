@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas vlatest
-// Generated at: 2026-02-11T15:44:42.842Z
+// Generated at: 2026-02-12T02:01:06.318Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -158,9 +158,25 @@ export interface Account {
    */
   billing_proxy?: string;
   /**
-   * Account status
+   * Account status. pending_approval: seller reviewing (credit, contracts). payment_required: credit limit reached or funds depleted. suspended: was active, now paused. closed: terminated.
    */
-  status: 'active' | 'suspended' | 'closed';
+  status: 'active' | 'pending_approval' | 'payment_required' | 'suspended' | 'closed';
+  /**
+   * House domain where brand.json is hosted. Canonical identity anchor for the brand.
+   */
+  house?: string;
+  /**
+   * Brand ID within the house portfolio (from brand.json)
+   */
+  brand_id?: string;
+  /**
+   * Domain of the entity operating this account
+   */
+  operator?: string;
+  /**
+   * Who is invoiced on this account. brand: seller invoices the brand directly. operator: seller invoices the operator (agency). agent: agent consolidates billing.
+   */
+  billing?: 'brand' | 'operator' | 'agent';
   /**
    * Identifier for the rate card applied to this account
    */
@@ -177,6 +193,7 @@ export interface Account {
     currency: string;
   };
   ext?: ExtensionObject;
+  [k: string]: unknown | undefined;
 }
 /**
  * Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.
@@ -226,39 +243,7 @@ export interface Package {
    * Format IDs that creative assets will be provided for this package
    */
   format_ids_to_provide?: FormatID[];
-  /**
-   * Conversion optimization goal for this package. Tells the seller which event source and event type to optimize delivery against. Provide at most one of target_roas or target_cpa. If neither is provided, the seller optimizes for maximum conversions within budget.
-   */
-  optimization_goal?: {
-    /**
-     * Event source to optimize against (must be configured on this account via sync_event_sources)
-     */
-    event_source_id: string;
-    event_type: EventType;
-    /**
-     * Target return on ad spend (e.g. 4.0 = $4 conversion value per $1 spent). Mutually exclusive with target_cpa.
-     */
-    target_roas?: number;
-    /**
-     * Target cost per acquisition in the buy currency. Mutually exclusive with target_roas.
-     */
-    target_cpa?: number;
-    /**
-     * Attribution window for this optimization goal. Values must match an option declared in the seller's conversion_tracking.attribution_windows capability. When omitted, the seller uses their default window.
-     */
-    attribution_window?: {
-      /**
-       * Click-through attribution window (e.g. '7d', '28d', '30d')
-       */
-      click_through: string;
-      /**
-       * View-through attribution window (e.g. '1d', '7d')
-       */
-      view_through?: string;
-      [k: string]: unknown | undefined;
-    };
-    [k: string]: unknown | undefined;
-  };
+  optimization_goal?: OptimizationGoal;
   /**
    * Whether this package is paused by the buyer. Paused packages do not deliver impressions. Defaults to false.
    */
@@ -418,8 +403,10 @@ export interface TargetingOverlay {
     verification_required?: boolean;
     /**
      * Accepted verification methods. If omitted, any method the platform supports is acceptable.
+     *
+     * @minItems 1
      */
-    accepted_methods?: AgeVerificationMethod[];
+    accepted_methods?: [AgeVerificationMethod, ...AgeVerificationMethod[]];
   };
   /**
    * Restrict to specific platforms. Use for technical compatibility (app only works on iOS). Values from Sec-CH-UA-Platform standard, extended for CTV.
@@ -508,6 +495,39 @@ export interface FormatID {
   duration_ms?: number;
   [k: string]: unknown | undefined;
 }
+/**
+ * Conversion optimization goal for a package. Tells the seller which event source and event type to optimize delivery against. Provide at most one of target_roas or target_cpa. If neither is provided, the seller optimizes for maximum conversions within budget.
+ */
+export interface OptimizationGoal {
+  /**
+   * Event source to optimize against (must be configured on this account via sync_event_sources)
+   */
+  event_source_id: string;
+  event_type: EventType;
+  /**
+   * Target return on ad spend (e.g. 4.0 = $4 conversion value per $1 spent). Mutually exclusive with target_cpa.
+   */
+  target_roas?: number;
+  /**
+   * Target cost per acquisition in the buy currency. Mutually exclusive with target_roas.
+   */
+  target_cpa?: number;
+  /**
+   * Attribution window for this optimization goal. Values must match an option declared in the seller's conversion_tracking.attribution_windows capability. When omitted, the seller uses their default window.
+   */
+  attribution_window?: {
+    /**
+     * Click-through attribution window (e.g. '7d', '28d', '30d')
+     */
+    click_through: string;
+    /**
+     * View-through attribution window (e.g. '1d', '7d')
+     */
+    view_through?: string;
+    [k: string]: unknown | undefined;
+  };
+  [k: string]: unknown | undefined;
+}
 
 // CREATIVE-ASSET SCHEMA
 /**
@@ -540,6 +560,14 @@ export type VASTAsset =
        * Tracking events supported by this VAST tag
        */
       tracking_events?: VASTTrackingEvent[];
+      /**
+       * URL to captions file (WebVTT, SRT, etc.)
+       */
+      captions_url?: string;
+      /**
+       * URL to audio description track for visually impaired users
+       */
+      audio_description_url?: string;
       [k: string]: unknown | undefined;
     }
   | {
@@ -564,6 +592,14 @@ export type VASTAsset =
        * Tracking events supported by this VAST tag
        */
       tracking_events?: VASTTrackingEvent[];
+      /**
+       * URL to captions file (WebVTT, SRT, etc.)
+       */
+      captions_url?: string;
+      /**
+       * URL to audio description track for visually impaired users
+       */
+      audio_description_url?: string;
       [k: string]: unknown | undefined;
     };
 /**
@@ -620,6 +656,10 @@ export type DAASTAsset =
        * Whether companion display ads are included
        */
       companion_ads?: boolean;
+      /**
+       * URL to text transcript of the audio content
+       */
+      transcript_url?: string;
       [k: string]: unknown | undefined;
     }
   | {
@@ -644,6 +684,10 @@ export type DAASTAsset =
        * Whether companion display ads are included
        */
       companion_ads?: boolean;
+      /**
+       * URL to text transcript of the audio content
+       */
+      transcript_url?: string;
       [k: string]: unknown | undefined;
     };
 /**
@@ -900,6 +944,18 @@ export interface VideoAsset {
    * True peak level in dBFS
    */
   audio_true_peak_dbfs?: number;
+  /**
+   * URL to captions file (WebVTT, SRT, etc.)
+   */
+  captions_url?: string;
+  /**
+   * URL to text transcript of the video content
+   */
+  transcript_url?: string;
+  /**
+   * URL to audio description track for visually impaired users
+   */
+  audio_description_url?: string;
   [k: string]: unknown | undefined;
 }
 /**
@@ -950,6 +1006,10 @@ export interface AudioAsset {
    * True peak level in dBFS
    */
   true_peak_dbfs?: number;
+  /**
+   * URL to text transcript of the audio content
+   */
+  transcript_url?: string;
   [k: string]: unknown | undefined;
 }
 /**
@@ -978,6 +1038,27 @@ export interface HTMLAsset {
    * HTML version (e.g., 'HTML5')
    */
   version?: string;
+  /**
+   * Self-declared accessibility properties for this opaque creative
+   */
+  accessibility?: {
+    /**
+     * Text alternative describing the creative content
+     */
+    alt_text?: string;
+    /**
+     * Whether the creative can be fully operated via keyboard
+     */
+    keyboard_navigable?: boolean;
+    /**
+     * Whether the creative respects prefers-reduced-motion or provides pause/stop controls
+     */
+    motion_control?: boolean;
+    /**
+     * Whether the creative has been tested with screen readers
+     */
+    screen_reader_tested?: boolean;
+  };
   [k: string]: unknown | undefined;
 }
 /**
@@ -1003,6 +1084,27 @@ export interface JavaScriptAsset {
    */
   content: string;
   module_type?: JavaScriptModuleType;
+  /**
+   * Self-declared accessibility properties for this opaque creative
+   */
+  accessibility?: {
+    /**
+     * Text alternative describing the creative content
+     */
+    alt_text?: string;
+    /**
+     * Whether the creative can be fully operated via keyboard
+     */
+    keyboard_navigable?: boolean;
+    /**
+     * Whether the creative respects prefers-reduced-motion or provides pause/stop controls
+     */
+    motion_control?: boolean;
+    /**
+     * Whether the creative has been tested with screen readers
+     */
+    screen_reader_tested?: boolean;
+  };
   [k: string]: unknown | undefined;
 }
 /**
@@ -1105,29 +1207,29 @@ export interface BrandManifest {
     height?: number;
   }[];
   /**
-   * Brand color palette
+   * Brand color palette. Each role accepts a single hex color or an array of hex colors for brands with multiple values per role.
    */
   colors?: {
     /**
-     * Primary brand color (hex format)
+     * Primary brand color(s)
      */
-    primary?: string;
+    primary?: string | [string, ...string[]];
     /**
-     * Secondary brand color (hex format)
+     * Secondary brand color(s)
      */
-    secondary?: string;
+    secondary?: string | [string, ...string[]];
     /**
-     * Accent color (hex format)
+     * Accent color(s)
      */
-    accent?: string;
+    accent?: string | [string, ...string[]];
     /**
-     * Background color (hex format)
+     * Background color(s)
      */
-    background?: string;
+    background?: string | [string, ...string[]];
     /**
-     * Text color (hex format)
+     * Text color(s)
      */
-    text?: string;
+    text?: string | [string, ...string[]];
   };
   /**
    * Brand typography guidelines
@@ -1149,24 +1251,26 @@ export interface BrandManifest {
   /**
    * Brand voice and messaging tone guidelines for creative agents.
    */
-  tone?: {
-    /**
-     * High-level voice descriptor (e.g., 'warm and inviting', 'professional and trustworthy')
-     */
-    voice?: string;
-    /**
-     * Personality traits that characterize the brand voice
-     */
-    attributes?: string[];
-    /**
-     * Specific guidance for copy generation - what TO do
-     */
-    dos?: string[];
-    /**
-     * Guardrails to avoid brand violations - what NOT to do
-     */
-    donts?: string[];
-  };
+  tone?:
+    | string
+    | {
+        /**
+         * High-level voice descriptor (e.g., 'warm and inviting', 'professional and trustworthy')
+         */
+        voice?: string;
+        /**
+         * Personality traits that characterize the brand voice
+         */
+        attributes?: string[];
+        /**
+         * Specific guidance for copy generation - what TO do
+         */
+        dos?: string[];
+        /**
+         * Guardrails to avoid brand violations - what NOT to do
+         */
+        donts?: string[];
+      };
   /**
    * Brand voice configuration for audio/conversational experiences
    */
@@ -1557,7 +1661,8 @@ export type PricingOption =
   | CPVPricingOption
   | CPPPricingOption
   | CPAPricingOption
-  | FlatRatePricingOption;
+  | FlatRatePricingOption
+  | TimeBasedPricingOption;
 /**
  * Standard marketing event types for event logging, aligned with IAB ECAPI
  */
@@ -1576,8 +1681,18 @@ export type AvailableMetric =
   | 'conversion_value'
   | 'roas'
   | 'cost_per_acquisition'
+  | 'new_to_brand_rate'
   | 'viewability'
-  | 'engagement_rate';
+  | 'engagement_rate'
+  | 'views'
+  | 'completed_views'
+  | 'leads'
+  | 'reach'
+  | 'frequency'
+  | 'grps'
+  | 'quartile_data'
+  | 'dooh_metrics'
+  | 'cost_per_click';
 /**
  * Co-branding requirement
  */
@@ -2266,6 +2381,77 @@ export interface PriceGuidance6 {
   [k: string]: unknown | undefined;
 }
 /**
+ * Cost per time unit (hour, day, week, or month) - rate scales with campaign duration. If fixed_price is present, it's fixed pricing. If absent, it's auction-based.
+ */
+export interface TimeBasedPricingOption {
+  /**
+   * Unique identifier for this pricing option within the product
+   */
+  pricing_option_id: string;
+  /**
+   * Cost per time unit - rate scales with campaign duration
+   */
+  pricing_model: 'time';
+  /**
+   * ISO 4217 currency code
+   */
+  currency: string;
+  /**
+   * Cost per time unit. If present, this is fixed pricing. If absent, auction-based.
+   */
+  fixed_price?: number;
+  /**
+   * Minimum acceptable bid per time unit for auction pricing (mutually exclusive with fixed_price). Bids below this value will be rejected.
+   */
+  floor_price?: number;
+  price_guidance?: PriceGuidance7;
+  /**
+   * Time-based pricing parameters
+   */
+  parameters: {
+    /**
+     * The time unit for pricing. Total cost = fixed_price × number of time_units in the campaign flight.
+     */
+    time_unit: 'hour' | 'day' | 'week' | 'month';
+    /**
+     * Minimum booking duration in time_units
+     */
+    min_duration?: number;
+    /**
+     * Maximum booking duration in time_units. Must be >= min_duration when both are present.
+     */
+    max_duration?: number;
+    [k: string]: unknown | undefined;
+  };
+  /**
+   * Minimum spend requirement per package using this pricing option, in the specified currency
+   */
+  min_spend_per_package?: number;
+  [k: string]: unknown | undefined;
+}
+/**
+ * Optional pricing guidance for auction-based bidding
+ */
+export interface PriceGuidance7 {
+  /**
+   * 25th percentile of recent winning bids
+   */
+  p25?: number;
+  /**
+   * Median of recent winning bids
+   */
+  p50?: number;
+  /**
+   * 75th percentile of recent winning bids
+   */
+  p75?: number;
+  /**
+   * 90th percentile of recent winning bids
+   */
+  p90?: number;
+  [k: string]: unknown | undefined;
+}
+/**
  * Measurement capabilities included with a product
  */
 export interface Measurement {
@@ -2310,9 +2496,13 @@ export interface ReportingCapabilities {
    */
   supports_webhooks: boolean;
   /**
-   * Metrics available in reporting. Impressions and spend are always implicitly included.
+   * Metrics available in reporting. Impressions and spend are always implicitly included. When a creative format declares reported_metrics, buyers receive the intersection of these product-level metrics and the format's reported_metrics.
    */
   available_metrics: AvailableMetric[];
+  /**
+   * Whether this product supports creative-level metric breakdowns in delivery reporting (by_creative within by_package)
+   */
+  supports_creative_breakdown?: boolean;
   /**
    * Whether delivery data can be filtered to arbitrary date ranges. 'date_range' means the platform supports start_date/end_date parameters. 'lifetime_only' means the platform returns campaign lifetime totals and date range parameters are not accepted.
    */
@@ -2475,6 +2665,8 @@ export type TaskType =
   | 'get_property_list'
   | 'list_property_lists'
   | 'delete_property_list'
+  | 'sync_accounts'
+  | 'get_creative_delivery'
   | 'sync_event_sources'
   | 'log_event';
 /**
@@ -3066,9 +3258,25 @@ export interface Account1 {
    */
   billing_proxy?: string;
   /**
-   * Account status
+   * Account status. pending_approval: seller reviewing (credit, contracts). payment_required: credit limit reached or funds depleted. suspended: was active, now paused. closed: terminated.
    */
-  status: 'active' | 'suspended' | 'closed';
+  status: 'active' | 'pending_approval' | 'payment_required' | 'suspended' | 'closed';
+  /**
+   * House domain where brand.json is hosted. Canonical identity anchor for the brand.
+   */
+  house?: string;
+  /**
+   * Brand ID within the house portfolio (from brand.json)
+   */
+  brand_id?: string;
+  /**
+   * Domain of the entity operating this account
+   */
+  operator?: string;
+  /**
+   * Who is invoiced on this account. brand: seller invoices the brand directly. operator: seller invoices the operator (agency). agent: agent consolidates billing.
+   */
+  billing?: 'brand' | 'operator' | 'agent';
   /**
    * Identifier for the rate card applied to this account
    */
@@ -3085,6 +3293,7 @@ export interface Account1 {
     currency: string;
   };
   ext?: ExtensionObject;
+  [k: string]: unknown | undefined;
 }
 /**
  * Error response - operation failed completely, no creatives were processed

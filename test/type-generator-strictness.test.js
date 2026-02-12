@@ -79,7 +79,8 @@ test('generated types maintain strict schema enforcement', () => {
   // - Added SignalTargeting variants (binary, categorical, numeric)
   // - Added ReportingCapabilities.date_range_support
   // - Added Product.conversion_tracking with extensible fields
-  const MAX_ALLOWED = 180;
+  // - Added SyncAccounts types, viewability measurement, creative delivery types
+  const MAX_ALLOWED = 200;
 
   console.log(`📊 Type strictness metrics:`);
   console.log(`   Index signatures found: ${count}`);
@@ -138,7 +139,8 @@ test('core types maintain strict schema enforcement', () => {
   // - Added conversion tracking types (optimization_goal, conversion_tracking on Product)
   // - Added DataProviderSignalSelector variants with extensible fields
   // - Added ReportingCapabilities.date_range_support
-  const MAX_CORE_ALLOWED = 90;
+  // Updated from 90 to 100 for account sync, viewability, creative delivery types
+  const MAX_CORE_ALLOWED = 100;
 
   console.log(`📊 Core types strictness:`);
   console.log(`   Index signatures found: ${count}`);

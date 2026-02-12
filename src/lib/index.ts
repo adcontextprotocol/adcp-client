@@ -210,10 +210,15 @@ export type {
   CPAPricingOption,
   EventType,
   ActionSource,
+  // Creative Delivery Domain
+  GetCreativeDeliveryRequest,
+  GetCreativeDeliveryResponse,
   // Account Domain
   Account,
   ListAccountsRequest,
   ListAccountsResponse,
+  SyncAccountsRequest,
+  SyncAccountsResponse,
   // Pagination
   PaginationRequest,
   PaginationResponse,
@@ -276,6 +281,7 @@ export {
   GOVERNANCE_TOOLS,
   CREATIVE_TOOLS,
   EVENT_TRACKING_TOOLS,
+  ACCOUNT_TOOLS,
   PROTOCOL_TOOLS,
 } from './utils/capabilities';
 export type {
