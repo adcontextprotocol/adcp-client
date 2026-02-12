@@ -8,8 +8,7 @@ async function configuredA2AExample() {
     name: 'Test A2A Agent',
     agent_uri: 'https://test-agent.adcontextprotocol.org',
     protocol: 'a2a',
-    auth_token_env: 'A2A_AUTH_TOKEN',
-    requiresAuth: true,
+    auth_token: process.env.A2A_AUTH_TOKEN,
   };
 
   const client = new AdCPClient([agent]);
@@ -35,16 +34,14 @@ async function multiAgentExample() {
       name: 'MCP Test Agent',
       agent_uri: 'https://test-agent.adcontextprotocol.org/mcp/',
       protocol: 'mcp',
-      auth_token_env: 'MCP_AUTH_TOKEN',
-      requiresAuth: true,
+      auth_token: process.env.MCP_AUTH_TOKEN,
     },
     {
       id: 'a2a-agent',
       name: 'A2A Test Agent',
       agent_uri: 'https://test-agent.adcontextprotocol.org',
       protocol: 'a2a',
-      auth_token_env: 'A2A_AUTH_TOKEN',
-      requiresAuth: true,
+      auth_token: process.env.A2A_AUTH_TOKEN,
     },
   ];
 
@@ -60,10 +57,10 @@ async function multiAgentExample() {
     console.log('Results from both agents:', results);
     results.forEach(result => {
       if (result.status === 'completed') {
-        console.log(`${result.agent.name}: Success`);
+        console.log(`${result.metadata.agent.name}: Success`);
         console.log('  Data:', result.data);
       } else {
-        console.log(`${result.agent.name}: Failed`);
+        console.log(`${result.metadata.agent.name}: Failed`);
         console.log('  Error:', result.error);
       }
     });

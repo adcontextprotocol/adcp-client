@@ -33,42 +33,51 @@ if (result.status === 'completed') {
 
 The library provides flexible client patterns for different use cases:
 
-- **[`ADCPMultiAgentClient`](./classes/ADCPMultiAgentClient.md)** - Main entry point supporting single and multi-agent operations
-- **[`AgentClient`](./classes/AgentClient.md)** - Individual agent operations with full AdCP method support
-- **[`AgentCollection`](./classes/AgentCollection.md)** - Parallel operations across multiple agents
+- **[`ADCPMultiAgentClient`](./classes/ADCPMultiAgentClient.html)** - Main entry point supporting single and multi-agent operations
+- **[`AgentClient`](./classes/AgentClient.html)** - Individual agent operations with full AdCP method support
+- **[`AgentCollection`](./classes/AgentCollection.html)** - Parallel operations across multiple agents
 
 ### 📦 Request/Response Types
 
 All AdCP operations have strongly-typed request and response interfaces:
 
 **Product Discovery:**
-- [`GetProductsRequest`](./interfaces/GetProductsRequest.md) / [`GetProductsResponse`](./interfaces/GetProductsResponse.md)
-- [`ListCreativeFormatsRequest`](./interfaces/ListCreativeFormatsRequest.md) / [`ListCreativeFormatsResponse`](./interfaces/ListCreativeFormatsResponse.md)
+- [`GetProductsRequest`](./interfaces/GetProductsRequest.html) / [`GetProductsResponse`](./interfaces/GetProductsResponse.html)
+- [`ListCreativeFormatsRequest`](./interfaces/ListCreativeFormatsRequest.html) / [`ListCreativeFormatsResponse`](./interfaces/ListCreativeFormatsResponse.html)
 
 **Media Buy Lifecycle:**
-- [`CreateMediaBuyRequest`](./interfaces/CreateMediaBuyRequest.md) / [`CreateMediaBuyResponse`](./interfaces/CreateMediaBuyResponse.md)
-- [`UpdateMediaBuyRequest`](./type-aliases/UpdateMediaBuyRequest.md) / [`UpdateMediaBuyResponse`](./interfaces/UpdateMediaBuyResponse.md)
-- [`SyncCreativesRequest`](./interfaces/SyncCreativesRequest.md) / [`SyncCreativesResponse`](./interfaces/SyncCreativesResponse.md)
+- [`CreateMediaBuyRequest`](./interfaces/CreateMediaBuyRequest.html) / [`CreateMediaBuyResponse`](./interfaces/CreateMediaBuyResponse.html)
+- [`UpdateMediaBuyRequest`](./type-aliases/UpdateMediaBuyRequest.html) / [`UpdateMediaBuyResponse`](./interfaces/UpdateMediaBuyResponse.html)
+- [`SyncCreativesRequest`](./interfaces/SyncCreativesRequest.html) / [`SyncCreativesResponse`](./interfaces/SyncCreativesResponse.html)
 
 **Targeting & Signals:**
-- [`GetSignalsRequest`](./interfaces/GetSignalsRequest.md) / [`GetSignalsResponse`](./interfaces/GetSignalsResponse.md)
-- [`ActivateSignalRequest`](./interfaces/ActivateSignalRequest.md) / [`ActivateSignalResponse`](./interfaces/ActivateSignalResponse.md)
+- [`GetSignalsRequest`](./interfaces/GetSignalsRequest.html) / [`GetSignalsResponse`](./interfaces/GetSignalsResponse.html)
+- [`ActivateSignalRequest`](./interfaces/ActivateSignalRequest.html) / [`ActivateSignalResponse`](./interfaces/ActivateSignalResponse.html)
 
-[View all request/response types →](./README.md#interfaces)
+[View all request/response types →](./index.html#interfaces)
 
 ### 🔄 Task Results
 
-All operations return a [`TaskResult<T>`](./interfaces/TaskResult.md) with status tracking:
+All operations return a [`TaskResult<T>`](./interfaces/TaskResult.html) with status tracking:
 
 ```typescript
-type TaskStatus = 'completed' | 'submitted' | 'needs_input' | 'failed' | 'aborted';
-
 interface TaskResult<T> {
-  status: TaskStatus;
+  success: boolean;
+  status: 'completed' | 'deferred' | 'submitted' | 'input-required' | 'working';
   data?: T;              // Present when status === 'completed'
-  error?: Error;         // Present when status === 'failed'
-  needs_input?: {...};   // Present when status === 'needs_input'
+  error?: string;        // Present when success is false
+  deferred?: {...};      // Present when status === 'deferred'
   submitted?: {...};     // Present when status === 'submitted'
+  metadata: {
+    taskId: string;
+    taskName: string;
+    agent: { id: string; name: string; protocol: 'mcp' | 'a2a' };
+    responseTimeMs: number;
+    timestamp: string;
+    clarificationRounds: number;
+    status: TaskStatus;
+    inputRequest?: InputRequest;  // Present when status === 'input-required'
+  };
 }
 ```
 
@@ -93,7 +102,7 @@ const client = ADCPMultiAgentClient.fromFile('./agents.json');
 const client = ADCPMultiAgentClient.simple('https://agent.example.com');
 ```
 
-See [`ConfigurationManager`](./classes/ConfigurationManager.md) for configuration file formats and environment variable names.
+See [`ConfigurationManager`](./classes/ConfigurationManager.html) for configuration file formats and environment variable names.
 
 ## Usage Patterns
 
@@ -105,7 +114,7 @@ const agent = client.agent('sales_agent');
 const products = await agent.getProducts({ brief: 'Coffee brands' });
 
 // Continue conversation if clarification needed
-if (products.status === 'needs_input') {
+if (products.status === 'input-required') {
   const refined = await agent.continueConversation('Premium brands only');
 }
 ```
@@ -150,17 +159,17 @@ const index = getPropertyIndex();
 const matches = index.findAgentsForProperty('domain', 'cnn.com');
 ```
 
-See [`PropertyCrawler`](./classes/PropertyCrawler.md) and [`PropertyIndex`](./classes/PropertyIndex.md) for details.
+See [`PropertyCrawler`](./classes/PropertyCrawler.html) and [`PropertyIndex`](./classes/PropertyIndex.html) for details.
 
 ## Error Handling
 
 The library provides specific error types for different failure modes:
 
-- [`ADCPError`](./classes/ADCPError.md) - Base error class
-- [`ProtocolError`](./classes/ProtocolError.md) - Protocol-level failures
-- [`TaskTimeoutError`](./classes/TaskTimeoutError.md) - Operation timeouts
-- [`AgentNotFoundError`](./classes/AgentNotFoundError.md) - Invalid agent ID
-- [`ValidationError`](./classes/ADCPValidationError.md) - Schema validation failures
+- [`ADCPError`](./classes/ADCPError.html) - Base error class
+- [`ProtocolError`](./classes/ProtocolError.html) - Protocol-level failures
+- [`TaskTimeoutError`](./classes/TaskTimeoutError.html) - Operation timeouts
+- [`AgentNotFoundError`](./classes/AgentNotFoundError.html) - Invalid agent ID
+- [`ValidationError`](./classes/ADCPValidationError.html) - Schema validation failures
 
 ```typescript
 import { isADCPError, isErrorOfType, TaskTimeoutError } from '@adcp/client';
@@ -213,7 +222,7 @@ const validRequest = GetProductsRequestSchema.parse(requestData);
 const validResponse = GetProductsResponseSchema.parse(responseData);
 ```
 
-See [`schemas.generated`](./README.md#type-aliases) for all available Zod schemas.
+See [`schemas.generated`](./index.html#type-aliases) for all available Zod schemas.
 
 ## Advanced Features
 
@@ -235,27 +244,28 @@ const client = new ADCPMultiAgentClient(agents, {
 });
 ```
 
-See [`AsyncHandler`](./classes/AsyncHandler.md) for webhook configuration.
+See [`AsyncHandler`](./classes/AsyncHandler.html) for webhook configuration.
 
 ### Creative Agent Integration
 
-Work with creative generation agents:
+Work with creative format agents:
 
 ```typescript
 import { CreativeAgentClient, STANDARD_CREATIVE_AGENTS } from '@adcp/client';
 
 const creativeClient = new CreativeAgentClient({
-  agents: STANDARD_CREATIVE_AGENTS
+  agentUrl: STANDARD_CREATIVE_AGENTS.ADCP_REFERENCE,
+  protocol: 'mcp'
 });
 
-const creative = await creativeClient.generateCreative({
-  format: 'banner_300x250',
-  brand_manifest: { name: 'Acme' },
-  targeting: { demographics: { age_ranges: ['25-34'] } }
-});
+// List available formats
+const formats = await creativeClient.listFormats();
+
+// Find formats by type
+const videoFormats = await creativeClient.findByType('video');
 ```
 
-See [`CreativeAgentClient`](./classes/CreativeAgentClient.md) for details.
+See [`CreativeAgentClient`](./classes/CreativeAgentClient.html) for details.
 
 ## Protocol Support
 

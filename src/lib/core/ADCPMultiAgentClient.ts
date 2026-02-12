@@ -342,7 +342,6 @@ export class AgentCollection {
  * - `syncCreatives()` - Upload/sync creative assets
  * - `listCreatives()` - List creative assets
  * - `getMediaBuyDelivery()` - Get delivery performance
- * - `listAuthorizedProperties()` - Get authorized properties
  * - `getSignals()` - Get audience signals
  * - `activateSignal()` - Activate audience signals
  * - `providePerformanceFeedback()` - Send performance feedback
