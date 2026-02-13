@@ -1,6 +1,10 @@
 // AdCP Client Library - Main Exports
 // A comprehensive type-safe client library for the AdContext Protocol
 
+// ====== REGISTRY LOOKUPS ======
+export { RegistryClient } from './registry';
+export type { ResolvedBrand, PropertyInfo, RegistryClientConfig } from './registry';
+
 // ====== PROPERTY DISCOVERY (AdCP v2.2.0) ======
 export {
   PropertyIndex,
