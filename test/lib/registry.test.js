@@ -46,7 +46,7 @@ describe('RegistryClient', () => {
 
   describe('lookupBrand', () => {
     test('resolves a domain to a brand', async () => {
-      restore = mockFetch(async (url) => {
+      restore = mockFetch(async url => {
         assert.ok(url.includes('/api/brands/resolve?domain=nike.com'));
         return new Response(JSON.stringify(BRAND), { status: 200 });
       });
@@ -77,7 +77,7 @@ describe('RegistryClient', () => {
       const client = new RegistryClient();
       await assert.rejects(
         () => client.lookupBrand('error.com'),
-        (err) => {
+        err => {
           assert.ok(err.message.includes('500'));
           return true;
         }
@@ -86,7 +86,7 @@ describe('RegistryClient', () => {
 
     test('encodes domain in URL', async () => {
       let capturedUrl;
-      restore = mockFetch(async (url) => {
+      restore = mockFetch(async url => {
         capturedUrl = url;
         return new Response(JSON.stringify(BRAND), { status: 200 });
       });
@@ -99,7 +99,7 @@ describe('RegistryClient', () => {
 
     test('uses custom base URL', async () => {
       let capturedUrl;
-      restore = mockFetch(async (url) => {
+      restore = mockFetch(async url => {
         capturedUrl = url;
         return new Response(JSON.stringify(BRAND), { status: 200 });
       });
@@ -112,7 +112,7 @@ describe('RegistryClient', () => {
 
     test('strips trailing slash from base URL', async () => {
       let capturedUrl;
-      restore = mockFetch(async (url) => {
+      restore = mockFetch(async url => {
         capturedUrl = url;
         return new Response(JSON.stringify(BRAND), { status: 200 });
       });
@@ -159,7 +159,7 @@ describe('RegistryClient', () => {
 
       await assert.rejects(
         () => client.lookupBrands(domains),
-        (err) => {
+        err => {
           assert.ok(err.message.includes('100'));
           return true;
         }
@@ -174,7 +174,7 @@ describe('RegistryClient', () => {
       const client = new RegistryClient();
       await assert.rejects(
         () => client.lookupBrands(['x.com']),
-        (err) => {
+        err => {
           assert.ok(err.message.includes('400'));
           return true;
         }
@@ -186,7 +186,7 @@ describe('RegistryClient', () => {
 
   describe('lookupProperty', () => {
     test('resolves a domain to property info', async () => {
-      restore = mockFetch(async (url) => {
+      restore = mockFetch(async url => {
         assert.ok(url.includes('/api/properties/resolve?domain=nytimes.com'));
         return new Response(JSON.stringify(PROPERTY), { status: 200 });
       });
@@ -218,7 +218,7 @@ describe('RegistryClient', () => {
       const client = new RegistryClient();
       await assert.rejects(
         () => client.lookupProperty('error.com'),
-        (err) => {
+        err => {
           assert.ok(err.message.includes('500'));
           return true;
         }
@@ -260,7 +260,7 @@ describe('RegistryClient', () => {
 
       await assert.rejects(
         () => client.lookupProperties(domains),
-        (err) => {
+        err => {
           assert.ok(err.message.includes('100'));
           return true;
         }
@@ -275,7 +275,7 @@ describe('RegistryClient', () => {
       const client = new RegistryClient();
       await assert.rejects(
         () => client.lookupProperties(['x.com']),
-        (err) => {
+        err => {
           assert.ok(err.message.includes('503'));
           return true;
         }
@@ -290,7 +290,7 @@ describe('RegistryClient', () => {
       const client = new RegistryClient();
       await assert.rejects(
         () => client.lookupBrand(''),
-        (err) => {
+        err => {
           assert.ok(err.message.includes('domain is required'));
           return true;
         }
@@ -301,7 +301,7 @@ describe('RegistryClient', () => {
       const client = new RegistryClient();
       await assert.rejects(
         () => client.lookupBrand('   '),
-        (err) => {
+        err => {
           assert.ok(err.message.includes('domain is required'));
           return true;
         }
@@ -312,7 +312,7 @@ describe('RegistryClient', () => {
       const client = new RegistryClient();
       await assert.rejects(
         () => client.lookupProperty(''),
-        (err) => {
+        err => {
           assert.ok(err.message.includes('domain is required'));
           return true;
         }
@@ -331,7 +331,7 @@ describe('RegistryClient', () => {
       const client = new RegistryClient();
       await assert.rejects(
         () => client.lookupBrand('test.com'),
-        (err) => {
+        err => {
           assert.ok(err.message.includes('invalid JSON'));
           return true;
         }
@@ -346,7 +346,7 @@ describe('RegistryClient', () => {
       const client = new RegistryClient();
       await assert.rejects(
         () => client.lookupBrands(['test.com']),
-        (err) => {
+        err => {
           assert.ok(err.message.includes('invalid JSON'));
           return true;
         }
