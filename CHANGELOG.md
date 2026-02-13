@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.14.0
+
+### Minor Changes
+
+- 094a10b: Add brand and property registry lookup methods via RegistryClient
+
 ## 3.13.0
 
 ### Minor Changes
