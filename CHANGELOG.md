@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.15.0
+
+### Minor Changes
+
+- 1fb8afc: Sync upstream AdCP schema changes: add CreativeBrief type to BuildCreativeRequest, replace estimated_exposures with forecast on Product, remove proposal_id from GetProductsRequest. Track ADCP_VERSION 'latest' for schema sync.
+
 ## 3.14.1
 
 ### Patch Changes
