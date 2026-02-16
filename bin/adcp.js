@@ -26,6 +26,7 @@ const {
   getConfigPath,
   saveAgent,
 } = require('./adcp-config.js');
+const { handleRegistryCommand } = require('./adcp-registry.js');
 const {
   createCLIOAuthProvider,
   hasValidOAuthTokens,
@@ -502,6 +503,28 @@ AGENT TESTING:
                               Default scenario: discovery
   test --list-scenarios       List all available test scenarios
 
+REGISTRY:
+  registry brand <domain>                          Look up a brand
+  registry brands <d1> <d2> ...                    Bulk brand lookup
+  registry brand-json <domain>                     Get raw brand.json data
+  registry enrich-brand <domain>                   Enrich brand via Brandfetch
+  registry property <domain>                       Look up a property
+  registry properties <d1> <d2> ...                Bulk property lookup
+  registry save-brand <domain> <name> [manifest]   Save a brand (auth required)
+  registry save-property <domain> <agent-url>      Save a property (auth required)
+  registry list-brands [--search term]             List/search brands
+  registry list-properties [--search term]         List/search properties
+  registry search <query>                          Search brands, publishers, properties
+  registry agents [--type sales] [--health]        List registered agents
+  registry publishers                              List publishers
+  registry stats                                   Registry statistics
+  registry validate <domain>                       Validate adagents.json
+  registry validate-publisher <domain>             Validate publisher config
+  registry lookup <domain>                         Look up authorized agents
+  registry discover <agent-url>                    Probe live agent endpoint
+  registry check-auth <url> <type> <value>         Check property authorization
+  registry --help                                  Show full registry help
+
 EXAMPLES:
   # Use built-in test agent (zero config!)
   npx @adcp/client test-mcp
@@ -572,9 +595,16 @@ EXAMPLES:
   adcp test myagent error_handling --json # JSON output for CI
   adcp test --list-scenarios              # Show all available scenarios
 
+  # Registry lookups
+  adcp registry brand nike.com
+  adcp registry brands nike.com adidas.com coca-cola.com --json
+  adcp registry property nytimes.com --auth sk_your_api_key
+  adcp registry properties nytimes.com wsj.com
+
 ENVIRONMENT VARIABLES:
-  ADCP_AUTH_TOKEN    Default authentication token (overridden by --auth)
-  ADCP_DEBUG         Enable debug mode (set to 'true')
+  ADCP_AUTH_TOKEN          Default authentication token (overridden by --auth)
+  ADCP_REGISTRY_API_KEY    API key for registry lookups
+  ADCP_DEBUG               Enable debug mode (set to 'true')
 
 CONFIG FILE:
   Agents are saved to ~/.adcp/config.json
@@ -589,6 +619,12 @@ EXIT CODES:
 
 async function main() {
   const args = process.argv.slice(2);
+
+  // Handle registry command (before global --help so registry --help works)
+  if (args[0] === 'registry') {
+    const code = await handleRegistryCommand(args.slice(1));
+    process.exit(code);
+  }
 
   // Handle help
   if (args.includes('--help') || args.includes('-h') || args.length === 0) {
