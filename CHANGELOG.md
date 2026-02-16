@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.14.1
+
+### Patch Changes
+
+- 45b1229: Upgrade @fastify/cors and @fastify/static for Fastify 5 compatibility, fixing production server crash loop
+- d22c3b2: Fix OAuth discovery to use RFC 8414 path-aware resolution, trying `{origin}/.well-known/oauth-authorization-server{path}` before falling back to root
+
 ## 3.14.0
 
 ### Minor Changes
