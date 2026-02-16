@@ -118,6 +118,106 @@ describe('CLI registry command', () => {
     });
   });
 
+  // ============ brand-json subcommand ============
+
+  describe('brand-json', () => {
+    const BRAND_JSON = { name: 'Nike', domain: 'nike.com', colors: { primary: '#111' } };
+
+    test('fetches and pretty-prints brand.json data', async () => {
+      restoreFetch = mockFetch(async () => new Response(JSON.stringify(BRAND_JSON), { status: 200 }));
+      output = captureOutput();
+
+      const code = await handleRegistryCommand(['brand-json', 'nike.com']);
+
+      assert.strictEqual(code, 0);
+      assert.ok(output.stdout.includes('Brand JSON: nike.com'));
+      assert.ok(output.stdout.includes('name'));
+      assert.ok(output.stdout.includes('Nike'));
+    });
+
+    test('prints not-found when brand.json does not exist', async () => {
+      restoreFetch = mockFetch(async () => new Response('', { status: 404 }));
+      output = captureOutput();
+
+      const code = await handleRegistryCommand(['brand-json', 'unknown.com']);
+
+      assert.strictEqual(code, 0);
+      assert.ok(output.stdout.includes("No brand.json found for 'unknown.com'"));
+    });
+
+    test('outputs JSON with --json flag', async () => {
+      restoreFetch = mockFetch(async () => new Response(JSON.stringify(BRAND_JSON), { status: 200 }));
+      output = captureOutput();
+
+      const code = await handleRegistryCommand(['brand-json', 'nike.com', '--json']);
+
+      assert.strictEqual(code, 0);
+      const parsed = JSON.parse(output.stdout);
+      assert.strictEqual(parsed.name, 'Nike');
+    });
+
+    test('returns exit code 2 when domain is missing', async () => {
+      output = captureOutput();
+
+      const code = await handleRegistryCommand(['brand-json']);
+
+      assert.strictEqual(code, 2);
+      assert.ok(output.stderr.includes('domain is required'));
+    });
+  });
+
+  // ============ enrich-brand subcommand ============
+
+  describe('enrich-brand', () => {
+    const ENRICHED = { domain: 'nike.com', logo: 'https://logo.url/nike.png', industry: 'Apparel' };
+
+    test('enriches and pretty-prints brand data', async () => {
+      restoreFetch = mockFetch(async () => new Response(JSON.stringify(ENRICHED), { status: 200 }));
+      output = captureOutput();
+
+      const code = await handleRegistryCommand(['enrich-brand', 'nike.com']);
+
+      assert.strictEqual(code, 0);
+      assert.ok(output.stdout.includes('Enriched brand: nike.com'));
+      assert.ok(output.stdout.includes('logo'));
+      assert.ok(output.stdout.includes('industry'));
+    });
+
+    test('outputs JSON with --json flag', async () => {
+      restoreFetch = mockFetch(async () => new Response(JSON.stringify(ENRICHED), { status: 200 }));
+      output = captureOutput();
+
+      const code = await handleRegistryCommand(['enrich-brand', 'nike.com', '--json']);
+
+      assert.strictEqual(code, 0);
+      const parsed = JSON.parse(output.stdout);
+      assert.strictEqual(parsed.domain, 'nike.com');
+      assert.strictEqual(parsed.logo, 'https://logo.url/nike.png');
+    });
+
+    test('returns exit code 2 when domain is missing', async () => {
+      output = captureOutput();
+
+      const code = await handleRegistryCommand(['enrich-brand']);
+
+      assert.strictEqual(code, 2);
+      assert.ok(output.stderr.includes('domain is required'));
+    });
+
+    test('calls the correct API endpoint', async () => {
+      let capturedUrl;
+      restoreFetch = mockFetch(async url => {
+        capturedUrl = url;
+        return new Response(JSON.stringify(ENRICHED), { status: 200 });
+      });
+      output = captureOutput();
+
+      await handleRegistryCommand(['enrich-brand', 'nike.com']);
+
+      assert.ok(capturedUrl.includes('/api/brands/enrich?domain=nike.com'));
+    });
+  });
+
   // ============ property subcommand ============
 
   describe('property', () => {

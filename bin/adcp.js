@@ -506,6 +506,8 @@ AGENT TESTING:
 REGISTRY:
   registry brand <domain>                          Look up a brand
   registry brands <d1> <d2> ...                    Bulk brand lookup
+  registry brand-json <domain>                     Get raw brand.json data
+  registry enrich-brand <domain>                   Enrich brand via Brandfetch
   registry property <domain>                       Look up a property
   registry properties <d1> <d2> ...                Bulk property lookup
   registry save-brand <domain> <name> [manifest]   Save a brand (auth required)

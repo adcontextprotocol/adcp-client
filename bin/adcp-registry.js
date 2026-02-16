@@ -12,6 +12,8 @@ const VALID_COMMANDS = [
   // Lookup
   'brand',
   'brands',
+  'brand-json',
+  'enrich-brand',
   'property',
   'properties',
   // Save
@@ -203,6 +205,8 @@ USAGE:
 LOOKUP COMMANDS:
   brand <domain>                Look up a brand by domain
   brands <domain> [domain...]   Bulk brand lookup (max 100)
+  brand-json <domain>           Get raw brand.json data for a domain
+  enrich-brand <domain>         Enrich brand data via Brandfetch
   property <domain>             Look up a property by domain
   properties <domain> [d...]    Bulk property lookup (max 100)
 
@@ -257,6 +261,8 @@ EXAMPLES:
   # Lookups
   adcp registry brand nike.com
   adcp registry brands nike.com adidas.com --json
+  adcp registry brand-json nike.com
+  adcp registry enrich-brand nike.com --json
   adcp registry property nytimes.com
 
   # List & Search
@@ -344,6 +350,42 @@ async function handleRegistryCommand(args) {
             const [domain, brand] = entries[i];
             prettyPrintBrand(brand, domain);
             if (i < entries.length - 1) console.log('');
+          }
+        }
+        break;
+      }
+      case 'brand-json': {
+        const domain = positional[1];
+        if (!domain) {
+          console.error('Error: domain is required\n');
+          return 2;
+        }
+        const result = await client.getBrandJson(domain);
+        if (flags.json) {
+          console.log(JSON.stringify(result, null, 2));
+        } else if (!result) {
+          console.log(`No brand.json found for '${domain}'`);
+        } else {
+          console.log(`Brand JSON: ${domain}`);
+          for (const [key, value] of Object.entries(result)) {
+            console.log(`  ${key}: ${JSON.stringify(value)}`);
+          }
+        }
+        break;
+      }
+      case 'enrich-brand': {
+        const domain = positional[1];
+        if (!domain) {
+          console.error('Error: domain is required\n');
+          return 2;
+        }
+        const result = await client.enrichBrand(domain);
+        if (flags.json) {
+          console.log(JSON.stringify(result, null, 2));
+        } else {
+          console.log(`Enriched brand: ${domain}`);
+          for (const [key, value] of Object.entries(result)) {
+            console.log(`  ${key}: ${JSON.stringify(value)}`);
           }
         }
         break;
