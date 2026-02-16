@@ -40,13 +40,10 @@ jobs:
     - name: Install dependencies
       run: npm ci
       
-    - name: Sync schemas from AdCP
-      run: npm run sync-schemas
-      
     - name: Check for schema changes
       id: schema-check
       run: |
-        # Generate types from fresh schemas
+        # Generate types from committed cached schemas
         npm run generate-types
         
         # Check if generated files have changed
@@ -78,9 +75,11 @@ jobs:
         echo "❌ PR blocked: Generated types or version are out of sync with AdCP schemas"
         echo ""
         echo "Please run the following commands locally and commit the changes:"
+        echo "  npm run generate-types"
+        echo ""
+        echo "If schemas need updating from upstream:"
         echo "  npm run sync-schemas"
         echo "  npm run sync-version --auto-update"
-        echo "  npm run generate-types"
         echo ""
         exit 1
         

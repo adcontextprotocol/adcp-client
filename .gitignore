@@ -9,8 +9,8 @@ dist/
 build/
 *.tsbuildinfo
 
-# Schema cache
-schemas/cache/
+# Schema cache symlink (actual cache is committed for reproducible builds)
+schemas/cache/latest
 
 # Environment variables
 .env
