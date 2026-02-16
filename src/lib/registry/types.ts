@@ -34,22 +34,16 @@ export type { paths, operations, components } from './types.generated';
 import type { operations } from './types.generated';
 
 /** Request body for POST /api/brands/save */
-export type SaveBrandRequest = NonNullable<
-  operations['saveBrand']['requestBody']
->['content']['application/json'];
+export type SaveBrandRequest = NonNullable<operations['saveBrand']['requestBody']>['content']['application/json'];
 
 /** Response from POST /api/brands/save (200) */
-export type SaveBrandResponse =
-  operations['saveBrand']['responses']['200']['content']['application/json'];
+export type SaveBrandResponse = operations['saveBrand']['responses']['200']['content']['application/json'];
 
 /** Request body for POST /api/properties/save */
-export type SavePropertyRequest = NonNullable<
-  operations['saveProperty']['requestBody']
->['content']['application/json'];
+export type SavePropertyRequest = NonNullable<operations['saveProperty']['requestBody']>['content']['application/json'];
 
 /** Response from POST /api/properties/save (200) */
-export type SavePropertyResponse =
-  operations['saveProperty']['responses']['200']['content']['application/json'];
+export type SavePropertyResponse = operations['saveProperty']['responses']['200']['content']['application/json'];
 
 /** Request body for POST /api/adagents/validate */
 export type ValidateAdagentsRequest = NonNullable<

@@ -152,7 +152,9 @@ export class RegistryClient {
   }
 
   /** List properties in the registry with optional search and pagination. */
-  async listProperties(options?: ListOptions): Promise<{ properties: PropertyRegistryItem[]; stats: Record<string, unknown> }> {
+  async listProperties(
+    options?: ListOptions
+  ): Promise<{ properties: PropertyRegistryItem[]; stats: Record<string, unknown> }> {
     const params = this.buildParams(options);
     return this.get(`${this.baseUrl}/api/properties/registry${params}`);
   }
@@ -174,7 +176,9 @@ export class RegistryClient {
   // ====== Agent Discovery ======
 
   /** List registered agents with optional filtering. */
-  async listAgents(options?: ListAgentsOptions): Promise<{ agents: FederatedAgentWithDetails[]; count: number; sources: Record<string, unknown> }> {
+  async listAgents(
+    options?: ListAgentsOptions
+  ): Promise<{ agents: FederatedAgentWithDetails[]; count: number; sources: Record<string, unknown> }> {
     const params = new URLSearchParams();
     if (options?.type) params.set('type', options.type);
     if (options?.health) params.set('health', 'true');
@@ -185,7 +189,11 @@ export class RegistryClient {
   }
 
   /** List publishers in the registry. */
-  async listPublishers(): Promise<{ publishers: FederatedPublisher[]; count: number; sources: Record<string, unknown> }> {
+  async listPublishers(): Promise<{
+    publishers: FederatedPublisher[];
+    count: number;
+    sources: Record<string, unknown>;
+  }> {
     return this.get(`${this.baseUrl}/api/registry/publishers`);
   }
 
@@ -217,7 +225,17 @@ export class RegistryClient {
   }
 
   /** Check if an agent is authorized for a specific property identifier. */
-  async validatePropertyAuthorization(agentUrl: string, identifierType: string, identifierValue: string): Promise<{ agent_url: string; identifier_type: string; identifier_value: string; authorized: boolean; checked_at: string }> {
+  async validatePropertyAuthorization(
+    agentUrl: string,
+    identifierType: string,
+    identifierValue: string
+  ): Promise<{
+    agent_url: string;
+    identifier_type: string;
+    identifier_value: string;
+    authorized: boolean;
+    checked_at: string;
+  }> {
     if (!agentUrl?.trim()) throw new Error('agentUrl is required');
     const params = new URLSearchParams({
       agent_url: agentUrl,
@@ -228,7 +246,10 @@ export class RegistryClient {
   }
 
   /** Validate product authorization for an agent across publisher properties. */
-  async validateProductAuthorization(agentUrl: string, publisherProperties: PublisherPropertySelector[]): Promise<Record<string, unknown>> {
+  async validateProductAuthorization(
+    agentUrl: string,
+    publisherProperties: PublisherPropertySelector[]
+  ): Promise<Record<string, unknown>> {
     return this.post(`${this.baseUrl}/api/registry/validate/product-authorization`, {
       agent_url: agentUrl,
       publisher_properties: publisherProperties,
@@ -236,7 +257,10 @@ export class RegistryClient {
   }
 
   /** Expand product identifiers for an agent across publisher properties. */
-  async expandProductIdentifiers(agentUrl: string, publisherProperties: PublisherPropertySelector[]): Promise<Record<string, unknown>> {
+  async expandProductIdentifiers(
+    agentUrl: string,
+    publisherProperties: PublisherPropertySelector[]
+  ): Promise<Record<string, unknown>> {
     return this.post(`${this.baseUrl}/api/registry/expand/product-identifiers`, {
       agent_url: agentUrl,
       publisher_properties: publisherProperties,

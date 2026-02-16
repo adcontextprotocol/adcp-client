@@ -97,7 +97,7 @@ export type DomainLookupResult = components['schemas']['DomainLookupResult'];
   }
 }
 
-generate().catch((err) => {
+generate().catch(err => {
   console.error('Error generating registry types:', err.message);
   process.exit(1);
 });

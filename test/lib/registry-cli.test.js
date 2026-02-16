@@ -44,8 +44,12 @@ function captureOutput() {
   console.log = (...args) => lines.push(args.join(' '));
   console.error = (...args) => errLines.push(args.join(' '));
   return {
-    get stdout() { return lines.join('\n'); },
-    get stderr() { return errLines.join('\n'); },
+    get stdout() {
+      return lines.join('\n');
+    },
+    get stderr() {
+      return errLines.join('\n');
+    },
     restore() {
       console.log = origLog;
       console.error = origErr;
@@ -66,9 +70,7 @@ describe('CLI registry command', () => {
 
   describe('brand', () => {
     test('looks up a single brand and pretty-prints', async () => {
-      restoreFetch = mockFetch(async () =>
-        new Response(JSON.stringify(BRAND), { status: 200 })
-      );
+      restoreFetch = mockFetch(async () => new Response(JSON.stringify(BRAND), { status: 200 }));
       output = captureOutput();
 
       const code = await handleRegistryCommand(['brand', 'nike.com']);
@@ -79,9 +81,7 @@ describe('CLI registry command', () => {
     });
 
     test('outputs JSON with --json flag', async () => {
-      restoreFetch = mockFetch(async () =>
-        new Response(JSON.stringify(BRAND), { status: 200 })
-      );
+      restoreFetch = mockFetch(async () => new Response(JSON.stringify(BRAND), { status: 200 }));
       output = captureOutput();
 
       const code = await handleRegistryCommand(['brand', 'nike.com', '--json']);
@@ -92,9 +92,7 @@ describe('CLI registry command', () => {
     });
 
     test('prints not-found for null result', async () => {
-      restoreFetch = mockFetch(async () =>
-        new Response('', { status: 404 })
-      );
+      restoreFetch = mockFetch(async () => new Response('', { status: 404 }));
       output = captureOutput();
 
       const code = await handleRegistryCommand(['brand', 'unknown.com']);
@@ -109,9 +107,7 @@ describe('CLI registry command', () => {
   describe('brands', () => {
     test('bulk looks up brands', async () => {
       const results = { 'nike.com': BRAND, 'unknown.com': null };
-      restoreFetch = mockFetch(async () =>
-        new Response(JSON.stringify({ results }), { status: 200 })
-      );
+      restoreFetch = mockFetch(async () => new Response(JSON.stringify({ results }), { status: 200 }));
       output = captureOutput();
 
       const code = await handleRegistryCommand(['brands', 'nike.com', 'unknown.com']);
@@ -126,9 +122,7 @@ describe('CLI registry command', () => {
 
   describe('property', () => {
     test('looks up a single property and pretty-prints', async () => {
-      restoreFetch = mockFetch(async () =>
-        new Response(JSON.stringify(PROPERTY), { status: 200 })
-      );
+      restoreFetch = mockFetch(async () => new Response(JSON.stringify(PROPERTY), { status: 200 }));
       output = captureOutput();
 
       const code = await handleRegistryCommand(['property', 'nytimes.com']);
@@ -140,9 +134,7 @@ describe('CLI registry command', () => {
     });
 
     test('prints not-found for null result', async () => {
-      restoreFetch = mockFetch(async () =>
-        new Response('', { status: 404 })
-      );
+      restoreFetch = mockFetch(async () => new Response('', { status: 404 }));
       output = captureOutput();
 
       const code = await handleRegistryCommand(['property', 'unknown.com']);
@@ -157,9 +149,7 @@ describe('CLI registry command', () => {
   describe('properties', () => {
     test('bulk looks up properties', async () => {
       const results = { 'nytimes.com': PROPERTY, 'unknown.com': null };
-      restoreFetch = mockFetch(async () =>
-        new Response(JSON.stringify({ results }), { status: 200 })
-      );
+      restoreFetch = mockFetch(async () => new Response(JSON.stringify({ results }), { status: 200 }));
       output = captureOutput();
 
       const code = await handleRegistryCommand(['properties', 'nytimes.com', 'unknown.com']);
@@ -215,7 +205,7 @@ describe('CLI registry command', () => {
   describe('--registry-url', () => {
     test('uses custom registry URL', async () => {
       let capturedUrl;
-      restoreFetch = mockFetch(async (url) => {
+      restoreFetch = mockFetch(async url => {
         capturedUrl = url;
         return new Response(JSON.stringify(BRAND), { status: 200 });
       });
@@ -246,9 +236,7 @@ describe('CLI registry command', () => {
       });
       output = captureOutput();
 
-      const code = await handleRegistryCommand([
-        'save-brand', 'acme.com', 'Acme Corp', '--auth', 'sk_test',
-      ]);
+      const code = await handleRegistryCommand(['save-brand', 'acme.com', 'Acme Corp', '--auth', 'sk_test']);
 
       assert.strictEqual(code, 0);
       assert.strictEqual(capturedBody.domain, 'acme.com');
@@ -266,9 +254,12 @@ describe('CLI registry command', () => {
       output = captureOutput();
 
       const code = await handleRegistryCommand([
-        'save-brand', 'acme.com', 'Acme Corp',
+        'save-brand',
+        'acme.com',
+        'Acme Corp',
         '{"colors":{"primary":"#FF0000"}}',
-        '--auth', 'sk_test',
+        '--auth',
+        'sk_test',
       ]);
 
       assert.strictEqual(code, 0);
@@ -276,14 +267,10 @@ describe('CLI registry command', () => {
     });
 
     test('outputs JSON with --json flag', async () => {
-      restoreFetch = mockFetch(async () =>
-        new Response(JSON.stringify(SAVE_RESULT), { status: 200 })
-      );
+      restoreFetch = mockFetch(async () => new Response(JSON.stringify(SAVE_RESULT), { status: 200 }));
       output = captureOutput();
 
-      const code = await handleRegistryCommand([
-        'save-brand', 'acme.com', 'Acme Corp', '--auth', 'sk_test', '--json',
-      ]);
+      const code = await handleRegistryCommand(['save-brand', 'acme.com', 'Acme Corp', '--auth', 'sk_test', '--json']);
 
       assert.strictEqual(code, 0);
       const parsed = JSON.parse(output.stdout);
@@ -319,9 +306,7 @@ describe('CLI registry command', () => {
       });
       output = captureOutput();
 
-      await handleRegistryCommand([
-        'save-brand', 'acme.com', 'Acme Corp', '--auth', 'sk_save_key',
-      ]);
+      await handleRegistryCommand(['save-brand', 'acme.com', 'Acme Corp', '--auth', 'sk_save_key']);
 
       assert.strictEqual(capturedHeaders['Authorization'], 'Bearer sk_save_key');
     });
@@ -346,7 +331,11 @@ describe('CLI registry command', () => {
       output = captureOutput();
 
       const code = await handleRegistryCommand([
-        'save-property', 'example.com', 'https://agent.example.com', '--auth', 'sk_test',
+        'save-property',
+        'example.com',
+        'https://agent.example.com',
+        '--auth',
+        'sk_test',
       ]);
 
       assert.strictEqual(code, 0);
@@ -365,9 +354,12 @@ describe('CLI registry command', () => {
       output = captureOutput();
 
       const code = await handleRegistryCommand([
-        'save-property', 'example.com', 'https://agent.example.com',
+        'save-property',
+        'example.com',
+        'https://agent.example.com',
         '{"contact":{"email":"admin@example.com"}}',
-        '--auth', 'sk_test',
+        '--auth',
+        'sk_test',
       ]);
 
       assert.strictEqual(code, 0);
@@ -376,14 +368,16 @@ describe('CLI registry command', () => {
     });
 
     test('outputs JSON with --json flag', async () => {
-      restoreFetch = mockFetch(async () =>
-        new Response(JSON.stringify(SAVE_RESULT), { status: 200 })
-      );
+      restoreFetch = mockFetch(async () => new Response(JSON.stringify(SAVE_RESULT), { status: 200 }));
       output = captureOutput();
 
       const code = await handleRegistryCommand([
-        'save-property', 'example.com', 'https://agent.example.com',
-        '--auth', 'sk_test', '--json',
+        'save-property',
+        'example.com',
+        'https://agent.example.com',
+        '--auth',
+        'sk_test',
+        '--json',
       ]);
 
       assert.strictEqual(code, 0);
@@ -404,9 +398,7 @@ describe('CLI registry command', () => {
       output = captureOutput();
 
       try {
-        const code = await handleRegistryCommand([
-          'save-property', 'example.com', 'https://agent.example.com',
-        ]);
+        const code = await handleRegistryCommand(['save-property', 'example.com', 'https://agent.example.com']);
         assert.strictEqual(code, 1);
         assert.ok(output.stderr.includes('apiKey is required'));
       } finally {
@@ -463,9 +455,7 @@ describe('CLI registry command', () => {
     };
 
     test('lists brands and pretty-prints', async () => {
-      restoreFetch = mockFetch(async () =>
-        new Response(JSON.stringify(LIST_BRANDS_RESULT), { status: 200 })
-      );
+      restoreFetch = mockFetch(async () => new Response(JSON.stringify(LIST_BRANDS_RESULT), { status: 200 }));
       output = captureOutput();
 
       const code = await handleRegistryCommand(['list-brands']);
@@ -478,7 +468,7 @@ describe('CLI registry command', () => {
 
     test('passes --search to the API as a query parameter', async () => {
       let capturedUrl;
-      restoreFetch = mockFetch(async (url) => {
+      restoreFetch = mockFetch(async url => {
         capturedUrl = url;
         return new Response(JSON.stringify(LIST_BRANDS_RESULT), { status: 200 });
       });
@@ -491,9 +481,7 @@ describe('CLI registry command', () => {
     });
 
     test('outputs JSON with --json flag', async () => {
-      restoreFetch = mockFetch(async () =>
-        new Response(JSON.stringify(LIST_BRANDS_RESULT), { status: 200 })
-      );
+      restoreFetch = mockFetch(async () => new Response(JSON.stringify(LIST_BRANDS_RESULT), { status: 200 }));
       output = captureOutput();
 
       const code = await handleRegistryCommand(['list-brands', '--json']);
@@ -517,9 +505,7 @@ describe('CLI registry command', () => {
     };
 
     test('lists properties and pretty-prints', async () => {
-      restoreFetch = mockFetch(async () =>
-        new Response(JSON.stringify(LIST_PROPS_RESULT), { status: 200 })
-      );
+      restoreFetch = mockFetch(async () => new Response(JSON.stringify(LIST_PROPS_RESULT), { status: 200 }));
       output = captureOutput();
 
       const code = await handleRegistryCommand(['list-properties']);
@@ -532,7 +518,7 @@ describe('CLI registry command', () => {
 
     test('passes --search to the API as a query parameter', async () => {
       let capturedUrl;
-      restoreFetch = mockFetch(async (url) => {
+      restoreFetch = mockFetch(async url => {
         capturedUrl = url;
         return new Response(JSON.stringify(LIST_PROPS_RESULT), { status: 200 });
       });
@@ -545,9 +531,7 @@ describe('CLI registry command', () => {
     });
 
     test('outputs JSON with --json flag', async () => {
-      restoreFetch = mockFetch(async () =>
-        new Response(JSON.stringify(LIST_PROPS_RESULT), { status: 200 })
-      );
+      restoreFetch = mockFetch(async () => new Response(JSON.stringify(LIST_PROPS_RESULT), { status: 200 }));
       output = captureOutput();
 
       const code = await handleRegistryCommand(['list-properties', '--json']);
@@ -569,9 +553,7 @@ describe('CLI registry command', () => {
     };
 
     test('searches and pretty-prints result counts', async () => {
-      restoreFetch = mockFetch(async () =>
-        new Response(JSON.stringify(SEARCH_RESULT), { status: 200 })
-      );
+      restoreFetch = mockFetch(async () => new Response(JSON.stringify(SEARCH_RESULT), { status: 200 }));
       output = captureOutput();
 
       const code = await handleRegistryCommand(['search', 'nike']);
@@ -584,9 +566,7 @@ describe('CLI registry command', () => {
     });
 
     test('outputs JSON with --json flag', async () => {
-      restoreFetch = mockFetch(async () =>
-        new Response(JSON.stringify(SEARCH_RESULT), { status: 200 })
-      );
+      restoreFetch = mockFetch(async () => new Response(JSON.stringify(SEARCH_RESULT), { status: 200 }));
       output = captureOutput();
 
       const code = await handleRegistryCommand(['search', 'nike', '--json']);
@@ -621,9 +601,7 @@ describe('CLI registry command', () => {
     };
 
     test('lists agents and pretty-prints', async () => {
-      restoreFetch = mockFetch(async () =>
-        new Response(JSON.stringify(AGENTS_RESULT), { status: 200 })
-      );
+      restoreFetch = mockFetch(async () => new Response(JSON.stringify(AGENTS_RESULT), { status: 200 }));
       output = captureOutput();
 
       const code = await handleRegistryCommand(['agents']);
@@ -636,7 +614,7 @@ describe('CLI registry command', () => {
 
     test('passes --type filter to the API', async () => {
       let capturedUrl;
-      restoreFetch = mockFetch(async (url) => {
+      restoreFetch = mockFetch(async url => {
         capturedUrl = url;
         return new Response(JSON.stringify(AGENTS_RESULT), { status: 200 });
       });
@@ -650,7 +628,7 @@ describe('CLI registry command', () => {
 
     test('passes --health flag to the API', async () => {
       let capturedUrl;
-      restoreFetch = mockFetch(async (url) => {
+      restoreFetch = mockFetch(async url => {
         capturedUrl = url;
         return new Response(JSON.stringify(AGENTS_RESULT), { status: 200 });
       });
@@ -663,9 +641,7 @@ describe('CLI registry command', () => {
     });
 
     test('outputs JSON with --json flag', async () => {
-      restoreFetch = mockFetch(async () =>
-        new Response(JSON.stringify(AGENTS_RESULT), { status: 200 })
-      );
+      restoreFetch = mockFetch(async () => new Response(JSON.stringify(AGENTS_RESULT), { status: 200 }));
       output = captureOutput();
 
       const code = await handleRegistryCommand(['agents', '--json']);
@@ -681,18 +657,13 @@ describe('CLI registry command', () => {
 
   describe('publishers', () => {
     const PUBLISHERS_RESULT = {
-      publishers: [
-        { domain: 'nytimes.com' },
-        { domain: 'washpost.com' },
-      ],
+      publishers: [{ domain: 'nytimes.com' }, { domain: 'washpost.com' }],
       count: 2,
       sources: {},
     };
 
     test('lists publishers and pretty-prints', async () => {
-      restoreFetch = mockFetch(async () =>
-        new Response(JSON.stringify(PUBLISHERS_RESULT), { status: 200 })
-      );
+      restoreFetch = mockFetch(async () => new Response(JSON.stringify(PUBLISHERS_RESULT), { status: 200 }));
       output = captureOutput();
 
       const code = await handleRegistryCommand(['publishers']);
@@ -704,9 +675,7 @@ describe('CLI registry command', () => {
     });
 
     test('outputs JSON with --json flag', async () => {
-      restoreFetch = mockFetch(async () =>
-        new Response(JSON.stringify(PUBLISHERS_RESULT), { status: 200 })
-      );
+      restoreFetch = mockFetch(async () => new Response(JSON.stringify(PUBLISHERS_RESULT), { status: 200 }));
       output = captureOutput();
 
       const code = await handleRegistryCommand(['publishers', '--json']);
@@ -729,9 +698,7 @@ describe('CLI registry command', () => {
     };
 
     test('prints registry statistics', async () => {
-      restoreFetch = mockFetch(async () =>
-        new Response(JSON.stringify(STATS_RESULT), { status: 200 })
-      );
+      restoreFetch = mockFetch(async () => new Response(JSON.stringify(STATS_RESULT), { status: 200 }));
       output = captureOutput();
 
       const code = await handleRegistryCommand(['stats']);
@@ -743,9 +710,7 @@ describe('CLI registry command', () => {
     });
 
     test('outputs JSON with --json flag', async () => {
-      restoreFetch = mockFetch(async () =>
-        new Response(JSON.stringify(STATS_RESULT), { status: 200 })
-      );
+      restoreFetch = mockFetch(async () => new Response(JSON.stringify(STATS_RESULT), { status: 200 }));
       output = captureOutput();
 
       const code = await handleRegistryCommand(['stats', '--json']);
@@ -773,9 +738,7 @@ describe('CLI registry command', () => {
     };
 
     test('prints PASS for valid adagents.json', async () => {
-      restoreFetch = mockFetch(async () =>
-        new Response(JSON.stringify(VALIDATE_PASS), { status: 200 })
-      );
+      restoreFetch = mockFetch(async () => new Response(JSON.stringify(VALIDATE_PASS), { status: 200 }));
       output = captureOutput();
 
       const code = await handleRegistryCommand(['validate', 'nytimes.com']);
@@ -786,9 +749,7 @@ describe('CLI registry command', () => {
     });
 
     test('prints FAIL with errors and warnings', async () => {
-      restoreFetch = mockFetch(async () =>
-        new Response(JSON.stringify(VALIDATE_FAIL), { status: 200 })
-      );
+      restoreFetch = mockFetch(async () => new Response(JSON.stringify(VALIDATE_FAIL), { status: 200 }));
       output = captureOutput();
 
       const code = await handleRegistryCommand(['validate', 'bad.com']);
@@ -802,9 +763,7 @@ describe('CLI registry command', () => {
     });
 
     test('outputs JSON with --json flag', async () => {
-      restoreFetch = mockFetch(async () =>
-        new Response(JSON.stringify(VALIDATE_PASS), { status: 200 })
-      );
+      restoreFetch = mockFetch(async () => new Response(JSON.stringify(VALIDATE_PASS), { status: 200 }));
       output = captureOutput();
 
       const code = await handleRegistryCommand(['validate', 'nytimes.com', '--json']);
@@ -848,9 +807,7 @@ describe('CLI registry command', () => {
     };
 
     test('prints publisher validation result', async () => {
-      restoreFetch = mockFetch(async () =>
-        new Response(JSON.stringify(VALIDATE_PUB_RESULT), { status: 200 })
-      );
+      restoreFetch = mockFetch(async () => new Response(JSON.stringify(VALIDATE_PUB_RESULT), { status: 200 }));
       output = captureOutput();
 
       const code = await handleRegistryCommand(['validate-publisher', 'nytimes.com']);
@@ -862,9 +819,7 @@ describe('CLI registry command', () => {
     });
 
     test('outputs JSON with --json flag', async () => {
-      restoreFetch = mockFetch(async () =>
-        new Response(JSON.stringify(VALIDATE_PUB_RESULT), { status: 200 })
-      );
+      restoreFetch = mockFetch(async () => new Response(JSON.stringify(VALIDATE_PUB_RESULT), { status: 200 }));
       output = captureOutput();
 
       const code = await handleRegistryCommand(['validate-publisher', 'nytimes.com', '--json']);
@@ -889,16 +844,11 @@ describe('CLI registry command', () => {
 
   describe('lookup', () => {
     const LOOKUP_RESULT = {
-      authorized_agents: [
-        { url: 'https://agent1.example.com' },
-        { url: 'https://agent2.example.com' },
-      ],
+      authorized_agents: [{ url: 'https://agent1.example.com' }, { url: 'https://agent2.example.com' }],
     };
 
     test('looks up domain and pretty-prints authorized agents', async () => {
-      restoreFetch = mockFetch(async () =>
-        new Response(JSON.stringify(LOOKUP_RESULT), { status: 200 })
-      );
+      restoreFetch = mockFetch(async () => new Response(JSON.stringify(LOOKUP_RESULT), { status: 200 }));
       output = captureOutput();
 
       const code = await handleRegistryCommand(['lookup', 'nytimes.com']);
@@ -911,9 +861,7 @@ describe('CLI registry command', () => {
     });
 
     test('outputs JSON with --json flag', async () => {
-      restoreFetch = mockFetch(async () =>
-        new Response(JSON.stringify(LOOKUP_RESULT), { status: 200 })
-      );
+      restoreFetch = mockFetch(async () => new Response(JSON.stringify(LOOKUP_RESULT), { status: 200 }));
       output = captureOutput();
 
       const code = await handleRegistryCommand(['lookup', 'nytimes.com', '--json']);
@@ -934,7 +882,7 @@ describe('CLI registry command', () => {
 
     test('calls the correct API endpoint with encoded domain', async () => {
       let capturedUrl;
-      restoreFetch = mockFetch(async (url) => {
+      restoreFetch = mockFetch(async url => {
         capturedUrl = url;
         return new Response(JSON.stringify(LOOKUP_RESULT), { status: 200 });
       });
@@ -957,9 +905,7 @@ describe('CLI registry command', () => {
     };
 
     test('discovers agent and pretty-prints key-value pairs', async () => {
-      restoreFetch = mockFetch(async () =>
-        new Response(JSON.stringify(DISCOVER_RESULT), { status: 200 })
-      );
+      restoreFetch = mockFetch(async () => new Response(JSON.stringify(DISCOVER_RESULT), { status: 200 }));
       output = captureOutput();
 
       const code = await handleRegistryCommand(['discover', 'https://test-agent.adcontextprotocol.org']);
@@ -971,9 +917,7 @@ describe('CLI registry command', () => {
     });
 
     test('outputs JSON with --json flag', async () => {
-      restoreFetch = mockFetch(async () =>
-        new Response(JSON.stringify(DISCOVER_RESULT), { status: 200 })
-      );
+      restoreFetch = mockFetch(async () => new Response(JSON.stringify(DISCOVER_RESULT), { status: 200 }));
       output = captureOutput();
 
       const code = await handleRegistryCommand(['discover', 'https://test-agent.adcontextprotocol.org', '--json']);
@@ -995,7 +939,7 @@ describe('CLI registry command', () => {
 
     test('calls the correct API endpoint with encoded URL', async () => {
       let capturedUrl;
-      restoreFetch = mockFetch(async (url) => {
+      restoreFetch = mockFetch(async url => {
         capturedUrl = url;
         return new Response(JSON.stringify(DISCOVER_RESULT), { status: 200 });
       });
@@ -1020,14 +964,10 @@ describe('CLI registry command', () => {
     };
 
     test('checks authorization and pretty-prints', async () => {
-      restoreFetch = mockFetch(async () =>
-        new Response(JSON.stringify(CHECK_AUTH_RESULT), { status: 200 })
-      );
+      restoreFetch = mockFetch(async () => new Response(JSON.stringify(CHECK_AUTH_RESULT), { status: 200 }));
       output = captureOutput();
 
-      const code = await handleRegistryCommand([
-        'check-auth', 'https://agent.example.com', 'domain', 'nytimes.com',
-      ]);
+      const code = await handleRegistryCommand(['check-auth', 'https://agent.example.com', 'domain', 'nytimes.com']);
 
       assert.strictEqual(code, 0);
       assert.ok(output.stdout.includes('Authorization check:'));
@@ -1040,27 +980,25 @@ describe('CLI registry command', () => {
 
     test('prints Authorized: No when not authorized', async () => {
       const unauthorized = { ...CHECK_AUTH_RESULT, authorized: false };
-      restoreFetch = mockFetch(async () =>
-        new Response(JSON.stringify(unauthorized), { status: 200 })
-      );
+      restoreFetch = mockFetch(async () => new Response(JSON.stringify(unauthorized), { status: 200 }));
       output = captureOutput();
 
-      const code = await handleRegistryCommand([
-        'check-auth', 'https://agent.example.com', 'domain', 'evil.com',
-      ]);
+      const code = await handleRegistryCommand(['check-auth', 'https://agent.example.com', 'domain', 'evil.com']);
 
       assert.strictEqual(code, 0);
       assert.ok(output.stdout.includes('Authorized: No'));
     });
 
     test('outputs JSON with --json flag', async () => {
-      restoreFetch = mockFetch(async () =>
-        new Response(JSON.stringify(CHECK_AUTH_RESULT), { status: 200 })
-      );
+      restoreFetch = mockFetch(async () => new Response(JSON.stringify(CHECK_AUTH_RESULT), { status: 200 }));
       output = captureOutput();
 
       const code = await handleRegistryCommand([
-        'check-auth', 'https://agent.example.com', 'domain', 'nytimes.com', '--json',
+        'check-auth',
+        'https://agent.example.com',
+        'domain',
+        'nytimes.com',
+        '--json',
       ]);
 
       assert.strictEqual(code, 0);
@@ -1100,15 +1038,13 @@ describe('CLI registry command', () => {
 
     test('passes correct query parameters to the API', async () => {
       let capturedUrl;
-      restoreFetch = mockFetch(async (url) => {
+      restoreFetch = mockFetch(async url => {
         capturedUrl = url;
         return new Response(JSON.stringify(CHECK_AUTH_RESULT), { status: 200 });
       });
       output = captureOutput();
 
-      await handleRegistryCommand([
-        'check-auth', 'https://agent.example.com', 'domain', 'nytimes.com',
-      ]);
+      await handleRegistryCommand(['check-auth', 'https://agent.example.com', 'domain', 'nytimes.com']);
 
       assert.ok(capturedUrl.includes('/api/registry/validate/property-authorization'));
       assert.ok(capturedUrl.includes('agent_url='));

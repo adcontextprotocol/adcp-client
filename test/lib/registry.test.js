@@ -428,9 +428,15 @@ describe('RegistryClient', () => {
       restore = mockFetch(async (url, opts) => {
         capturedUrl = url;
         capturedOpts = opts;
-        return new Response(JSON.stringify({
-          success: true, message: 'Brand saved', domain: 'acme.com', id: 'br_123',
-        }), { status: 200 });
+        return new Response(
+          JSON.stringify({
+            success: true,
+            message: 'Brand saved',
+            domain: 'acme.com',
+            id: 'br_123',
+          }),
+          { status: 200 }
+        );
       });
 
       const client = new RegistryClient({ apiKey: 'sk_test' });
@@ -505,7 +511,9 @@ describe('RegistryClient', () => {
       let capturedOpts;
       restore = mockFetch(async (url, opts) => {
         capturedOpts = opts;
-        return new Response(JSON.stringify({ success: true, message: 'ok', domain: 'acme.com', id: 'br_123' }), { status: 200 });
+        return new Response(JSON.stringify({ success: true, message: 'ok', domain: 'acme.com', id: 'br_123' }), {
+          status: 200,
+        });
       });
 
       const client = new RegistryClient({ apiKey: 'sk_test' });
@@ -528,9 +536,14 @@ describe('RegistryClient', () => {
       restore = mockFetch(async (url, opts) => {
         capturedUrl = url;
         capturedOpts = opts;
-        return new Response(JSON.stringify({
-          success: true, message: 'Property saved', id: 'pr_456',
-        }), { status: 200 });
+        return new Response(
+          JSON.stringify({
+            success: true,
+            message: 'Property saved',
+            id: 'pr_456',
+          }),
+          { status: 200 }
+        );
       });
 
       const client = new RegistryClient({ apiKey: 'sk_test' });
@@ -554,10 +567,11 @@ describe('RegistryClient', () => {
       try {
         const client = new RegistryClient();
         await assert.rejects(
-          () => client.saveProperty({
-            publisher_domain: 'example.com',
-            authorized_agents: [{ url: 'https://agent.example.com' }],
-          }),
+          () =>
+            client.saveProperty({
+              publisher_domain: 'example.com',
+              authorized_agents: [{ url: 'https://agent.example.com' }],
+            }),
           err => {
             assert.ok(err.message.includes('apiKey is required'));
             return true;
@@ -571,10 +585,11 @@ describe('RegistryClient', () => {
     test('throws without publisher_domain', async () => {
       const client = new RegistryClient({ apiKey: 'sk_test' });
       await assert.rejects(
-        () => client.saveProperty({
-          publisher_domain: '',
-          authorized_agents: [{ url: 'https://agent.example.com' }],
-        }),
+        () =>
+          client.saveProperty({
+            publisher_domain: '',
+            authorized_agents: [{ url: 'https://agent.example.com' }],
+          }),
         err => {
           assert.ok(err.message.includes('publisher_domain is required'));
           return true;
@@ -585,10 +600,11 @@ describe('RegistryClient', () => {
     test('throws without authorized_agents', async () => {
       const client = new RegistryClient({ apiKey: 'sk_test' });
       await assert.rejects(
-        () => client.saveProperty({
-          publisher_domain: 'example.com',
-          authorized_agents: [],
-        }),
+        () =>
+          client.saveProperty({
+            publisher_domain: 'example.com',
+            authorized_agents: [],
+          }),
         err => {
           assert.ok(err.message.includes('authorized_agents is required'));
           return true;
@@ -603,10 +619,11 @@ describe('RegistryClient', () => {
 
       const client = new RegistryClient({ apiKey: 'sk_bad' });
       await assert.rejects(
-        () => client.saveProperty({
-          publisher_domain: 'example.com',
-          authorized_agents: [{ url: 'https://agent.example.com' }],
-        }),
+        () =>
+          client.saveProperty({
+            publisher_domain: 'example.com',
+            authorized_agents: [{ url: 'https://agent.example.com' }],
+          }),
         err => {
           assert.ok(err.message.includes('401'));
           return true;
@@ -1033,9 +1050,7 @@ describe('RegistryClient', () => {
       });
 
       const client = new RegistryClient();
-      const result = await client.validatePropertyAuthorization(
-        'https://agent.example.com', 'domain', 'nytimes.com'
-      );
+      const result = await client.validatePropertyAuthorization('https://agent.example.com', 'domain', 'nytimes.com');
 
       assert.ok(capturedUrl.includes('/api/registry/validate/property-authorization'));
       assert.ok(capturedUrl.includes('identifier_type=domain'));
@@ -1069,9 +1084,7 @@ describe('RegistryClient', () => {
 
       const publisherProperties = [{ publisher_domain: 'nytimes.com', property_ids: ['prop_1'] }];
       const client = new RegistryClient();
-      const result = await client.validateProductAuthorization(
-        'https://agent.example.com', publisherProperties
-      );
+      const result = await client.validateProductAuthorization('https://agent.example.com', publisherProperties);
 
       assert.ok(capturedUrl.includes('/api/registry/validate/product-authorization'));
       assert.strictEqual(capturedOpts.method, 'POST');
@@ -1096,9 +1109,7 @@ describe('RegistryClient', () => {
 
       const publisherProperties = [{ publisher_domain: 'nytimes.com', property_ids: ['prop_1'] }];
       const client = new RegistryClient();
-      const result = await client.expandProductIdentifiers(
-        'https://agent.example.com', publisherProperties
-      );
+      const result = await client.expandProductIdentifiers('https://agent.example.com', publisherProperties);
 
       assert.ok(capturedUrl.includes('/api/registry/expand/product-identifiers'));
       assert.strictEqual(capturedOpts.method, 'POST');

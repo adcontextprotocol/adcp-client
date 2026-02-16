@@ -10,15 +10,28 @@ const { RegistryClient } = require('../dist/lib/registry/index.js');
 
 const VALID_COMMANDS = [
   // Lookup
-  'brand', 'brands', 'property', 'properties',
+  'brand',
+  'brands',
+  'property',
+  'properties',
   // Save
-  'save-brand', 'save-property',
+  'save-brand',
+  'save-property',
   // List & Search
-  'list-brands', 'list-properties', 'search', 'agents', 'publishers', 'stats',
+  'list-brands',
+  'list-properties',
+  'search',
+  'agents',
+  'publishers',
+  'stats',
   // Validation
-  'validate', 'validate-publisher',
+  'validate',
+  'validate-publisher',
   // Discovery
-  'lookup', 'discover', 'agent-formats', 'agent-products',
+  'lookup',
+  'discover',
+  'agent-formats',
+  'agent-products',
   // Authorization
   'check-auth',
 ];
