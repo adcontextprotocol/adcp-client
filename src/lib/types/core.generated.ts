@@ -1,5 +1,5 @@
-// Generated AdCP core types from official schemas v3.0.0-beta.3
-// Generated at: 2026-02-16T19:25:40.117Z
+// Generated AdCP core types from official schemas vlatest
+// Generated at: 2026-02-16T20:55:54.088Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -2926,7 +2926,7 @@ export interface GetProductsResponse {
    */
   products: Product[];
   /**
-   * Optional array of proposed media plans with budget allocations across products. Publishers include proposals when they can provide strategic guidance based on the brief. Proposals are actionable - buyers can refine them via subsequent get_products calls or execute them directly via create_media_buy.
+   * Optional array of proposed media plans with budget allocations across products. Publishers include proposals when they can provide strategic guidance based on the brief. Proposals are actionable - buyers can refine them via follow-up get_products calls within the same session, or execute them directly via create_media_buy.
    */
   proposals?: Proposal[];
   /**

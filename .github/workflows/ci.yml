@@ -24,6 +24,9 @@ jobs:
     - name: Install dependencies
       run: npm ci
 
+    - name: Sync schemas from AdCP
+      run: npm run sync-schemas
+
     - name: Validate generated files are in sync
       run: |
         # Regenerate types from schemas
@@ -39,10 +42,10 @@ jobs:
           git diff --name-only src/lib/types/*.generated.ts src/lib/agents/index.generated.ts 2>/dev/null || true
           echo ""
           echo "🔧 To fix, run locally:"
+          echo "  npm run sync-schemas"
           echo "  npm run generate-types"
           echo ""
           echo "Then commit the updated generated files."
-          echo "If schemas need updating, run: npm run sync-schemas"
           exit 1
         fi
 
