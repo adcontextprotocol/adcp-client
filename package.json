@@ -1,6 +1,6 @@
 {
   "name": "@adcp/client",
-  "version": "3.14.1",
+  "version": "3.14.2",
   "description": "AdCP client library with protocol support for MCP and A2A, includes testing framework",
   "main": "dist/lib/index.js",
   "types": "dist/lib/index.d.ts",
@@ -158,5 +158,5 @@
       "js-yaml": "^3.14.1"
     }
   },
-  "adcp_version": "3.0.0-beta.3"
+  "adcp_version": "latest"
 }
