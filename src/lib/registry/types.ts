@@ -1,59 +1,102 @@
 /**
- * A brand resolved from the AdCP registry via domain lookup.
+ * AdCP Registry Types
+ *
+ * Generated types are in types.generated.ts (from OpenAPI spec).
+ * This file re-exports them with ergonomic names and adds client-specific types.
  */
-export interface ResolvedBrand {
-  /** Canonical identifier, e.g. "nike.com" or "nike.com#air-jordan" */
-  canonical_id: string;
-  /** Canonical domain for this brand */
-  canonical_domain: string;
-  /** Human-readable brand name */
-  brand_name: string;
-  /** Localized name variants keyed by language code */
-  names?: Array<Record<string, string>>;
-  /** Brand architecture classification (Keller's theory) */
-  keller_type?: 'master' | 'sub_brand' | 'endorsed' | 'independent';
-  /** Parent brand canonical ID, if this is a sub-brand */
-  parent_brand?: string;
-  /** Corporate house domain that owns this brand */
-  house_domain?: string;
-  /** Corporate house name */
-  house_name?: string;
-  /** URL to the brand's AdCP agent */
-  brand_agent_url?: string;
-  /** Brand manifest data (logos, colors, etc.) */
-  brand_manifest?: Record<string, unknown>;
-  /** How this brand record was sourced */
-  source: 'brand_json' | 'community' | 'enriched';
-}
 
-/**
- * A property (publisher) resolved from the AdCP registry via domain lookup.
- */
-export interface PropertyInfo {
-  /** Publisher domain that owns this property */
-  publisher_domain: string;
-  /** How this property record was sourced */
-  source: 'hosted' | 'adagents_json';
-  /** Agents authorized to sell inventory on this property */
-  authorized_agents: Array<{ url: string }>;
-  /** Properties associated with this domain */
-  properties: Array<{
-    id: string;
-    type: string;
-    name: string;
-    identifiers: Array<{ type: string; value: string; include_subdomains?: boolean }>;
-    tags?: string[];
-  }>;
-  /** Publisher contact information */
-  contact?: Record<string, unknown>;
-  /** Whether domain ownership has been verified */
-  verified: boolean;
-}
+// Re-export generated component schema types
+export type {
+  ResolvedBrand,
+  LocalizedName,
+  BrandRegistryItem,
+  ResolvedProperty,
+  PropertyIdentifier,
+  PropertyRegistryItem,
+  ValidationResult,
+  RegistryError,
+  PublisherPropertySelector,
+  FederatedAgentWithDetails,
+  AgentHealth,
+  AgentStats,
+  AgentCapabilities,
+  PropertySummary,
+  FederatedPublisher,
+  DomainLookupResult,
+} from './types.generated';
 
-/**
- * Configuration for the registry client.
- */
+// Re-export the full generated module for advanced usage (paths, operations, etc.)
+export type { paths, operations, components } from './types.generated';
+
+// ====== Operation-derived types ======
+// Types extracted from inline OpenAPI operation schemas
+
+import type { operations } from './types.generated';
+
+/** Request body for POST /api/brands/save */
+export type SaveBrandRequest = NonNullable<
+  operations['saveBrand']['requestBody']
+>['content']['application/json'];
+
+/** Response from POST /api/brands/save (200) */
+export type SaveBrandResponse =
+  operations['saveBrand']['responses']['200']['content']['application/json'];
+
+/** Request body for POST /api/properties/save */
+export type SavePropertyRequest = NonNullable<
+  operations['saveProperty']['requestBody']
+>['content']['application/json'];
+
+/** Response from POST /api/properties/save (200) */
+export type SavePropertyResponse =
+  operations['saveProperty']['responses']['200']['content']['application/json'];
+
+/** Request body for POST /api/adagents/validate */
+export type ValidateAdagentsRequest = NonNullable<
+  operations['validateAdagents']['requestBody']
+>['content']['application/json'];
+
+/** Request body for POST /api/adagents/create */
+export type CreateAdagentsRequest = NonNullable<
+  operations['createAdagents']['requestBody']
+>['content']['application/json'];
+
+/** Request body for POST /api/registry/validate/product-authorization */
+export type ValidateProductAuthorizationRequest = NonNullable<
+  operations['validateProductAuthorization']['requestBody']
+>['content']['application/json'];
+
+/** Request body for POST /api/registry/expand/product-identifiers */
+export type ExpandProductIdentifiersRequest = NonNullable<
+  operations['expandProductIdentifiers']['requestBody']
+>['content']['application/json'];
+
+// ====== Backward compatibility ======
+
+/** @deprecated Use ResolvedProperty instead */
+export type PropertyInfo = import('./types.generated').ResolvedProperty;
+
+// ====== Client-specific types (not in the API schema) ======
+
+/** Configuration for the registry client. */
 export interface RegistryClientConfig {
   /** Base URL of the AdCP registry. Defaults to https://adcontextprotocol.org */
   baseUrl?: string;
+  /** API key for authenticated registry access. Falls back to ADCP_REGISTRY_API_KEY env var. */
+  apiKey?: string;
+}
+
+/** Options for list/search endpoints with pagination. */
+export interface ListOptions {
+  search?: string;
+  limit?: number;
+  offset?: number;
+}
+
+/** Options for listing agents with filtering. */
+export interface ListAgentsOptions {
+  type?: 'creative' | 'signals' | 'sales' | 'governance' | 'si';
+  health?: boolean;
+  capabilities?: boolean;
+  properties?: boolean;
 }

@@ -3,7 +3,25 @@
 
 // ====== REGISTRY LOOKUPS ======
 export { RegistryClient } from './registry';
-export type { ResolvedBrand, PropertyInfo, RegistryClientConfig } from './registry';
+export type {
+  ResolvedBrand,
+  ResolvedProperty as ResolvedRegistryProperty,
+  PropertyInfo,
+  RegistryClientConfig,
+  SaveBrandRequest,
+  SaveBrandResponse,
+  SavePropertyRequest,
+  SavePropertyResponse,
+  BrandRegistryItem,
+  PropertyRegistryItem,
+  ValidationResult as RegistryValidationResult,
+  FederatedAgentWithDetails,
+  FederatedPublisher,
+  DomainLookupResult,
+  ListOptions,
+  ListAgentsOptions,
+  PublisherPropertySelector,
+} from './registry';
 
 // ====== PROPERTY DISCOVERY (AdCP v2.2.0) ======
 export {
