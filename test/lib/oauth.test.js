@@ -640,11 +640,17 @@ describe('discoverOAuthMetadata', () => {
   test('path URL tries path-aware discovery first', async () => {
     const fetched = [];
     const metadata = await discoverOAuthMetadata('https://example.com/mcp', {
-      fetch: mockFetch({
-        'https://example.com/.well-known/oauth-authorization-server/mcp': validMetadata,
-      }),
+      fetch: async url => {
+        fetched.push(url);
+        if (url === 'https://example.com/.well-known/oauth-authorization-server/mcp') {
+          return { ok: true, json: async () => validMetadata };
+        }
+        return { ok: false, status: 404, json: async () => ({}) };
+      },
     });
     assert.deepStrictEqual(metadata, validMetadata);
+    assert.strictEqual(fetched.length, 1);
+    assert.strictEqual(fetched[0], 'https://example.com/.well-known/oauth-authorization-server/mcp');
   });
 
   test('path URL falls back to root when path-aware returns 404', async () => {
@@ -680,6 +686,18 @@ describe('discoverOAuthMetadata', () => {
       }),
     });
     assert.strictEqual(metadata, null);
+  });
+
+  test('falls back to root when path-aware URL returns malformed JSON', async () => {
+    const metadata = await discoverOAuthMetadata('https://example.com/mcp', {
+      fetch: async url => {
+        if (url === 'https://example.com/.well-known/oauth-authorization-server/mcp') {
+          return { ok: true, json: async () => { throw new SyntaxError('Unexpected token'); } };
+        }
+        return { ok: true, json: async () => validMetadata };
+      },
+    });
+    assert.deepStrictEqual(metadata, validMetadata);
   });
 
   test('returns null for network errors', async () => {

@@ -106,6 +106,9 @@ export async function discoverOAuthMetadata(
         }
 
         return metadata;
+      } catch {
+        // Parse error, timeout, or network error on this URL -- try next
+        continue;
       } finally {
         clearTimeout(timeoutId);
       }
