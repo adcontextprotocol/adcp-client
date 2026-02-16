@@ -67,32 +67,51 @@ export async function discoverOAuthMetadata(
 
   try {
     const baseUrl = new URL(agentUrl);
-    const metadataUrl = new URL('/.well-known/oauth-authorization-server', baseUrl.origin);
 
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), timeout);
+    // RFC 8414 path-aware discovery: try path-suffixed URL first, then fall back to root.
+    // For https://example.com/mcp, try:
+    //   1. https://example.com/.well-known/oauth-authorization-server/mcp
+    //   2. https://example.com/.well-known/oauth-authorization-server (fallback)
+    const pathname = baseUrl.pathname.endsWith('/')
+      ? baseUrl.pathname.slice(0, -1)
+      : baseUrl.pathname;
+    const hasPath = pathname !== '' && pathname !== '/';
 
-    try {
-      const response = await customFetch(metadataUrl.toString(), {
-        headers: { Accept: 'application/json' },
-        signal: controller.signal,
-      });
+    const pathAwareUrl = hasPath
+      ? new URL(`/.well-known/oauth-authorization-server${pathname}`, baseUrl.origin)
+      : null;
+    const rootUrl = new URL('/.well-known/oauth-authorization-server', baseUrl.origin);
 
-      if (!response.ok) {
-        return null;
+    const urlsToTry = pathAwareUrl ? [pathAwareUrl, rootUrl] : [rootUrl];
+
+    for (const metadataUrl of urlsToTry) {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), timeout);
+
+      try {
+        const response = await customFetch(metadataUrl.toString(), {
+          headers: { Accept: 'application/json' },
+          signal: controller.signal,
+        });
+
+        if (!response.ok) {
+          continue;
+        }
+
+        const metadata = (await response.json()) as OAuthMetadata;
+
+        // Validate required fields
+        if (!metadata.authorization_endpoint || !metadata.token_endpoint) {
+          continue;
+        }
+
+        return metadata;
+      } finally {
+        clearTimeout(timeoutId);
       }
-
-      const metadata = (await response.json()) as OAuthMetadata;
-
-      // Validate required fields
-      if (!metadata.authorization_endpoint || !metadata.token_endpoint) {
-        return null;
-      }
-
-      return metadata;
-    } finally {
-      clearTimeout(timeoutId);
     }
+
+    return null;
   } catch {
     // Network error, timeout, or invalid URL - agent doesn't support OAuth
     return null;
