@@ -72,14 +72,10 @@ export async function discoverOAuthMetadata(
     // For https://example.com/mcp, try:
     //   1. https://example.com/.well-known/oauth-authorization-server/mcp
     //   2. https://example.com/.well-known/oauth-authorization-server (fallback)
-    const pathname = baseUrl.pathname.endsWith('/')
-      ? baseUrl.pathname.slice(0, -1)
-      : baseUrl.pathname;
+    const pathname = baseUrl.pathname.endsWith('/') ? baseUrl.pathname.slice(0, -1) : baseUrl.pathname;
     const hasPath = pathname !== '' && pathname !== '/';
 
-    const pathAwareUrl = hasPath
-      ? new URL(`/.well-known/oauth-authorization-server${pathname}`, baseUrl.origin)
-      : null;
+    const pathAwareUrl = hasPath ? new URL(`/.well-known/oauth-authorization-server${pathname}`, baseUrl.origin) : null;
     const rootUrl = new URL('/.well-known/oauth-authorization-server', baseUrl.origin);
 
     const urlsToTry = pathAwareUrl ? [pathAwareUrl, rootUrl] : [rootUrl];

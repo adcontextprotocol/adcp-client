@@ -692,7 +692,12 @@ describe('discoverOAuthMetadata', () => {
     const metadata = await discoverOAuthMetadata('https://example.com/mcp', {
       fetch: async url => {
         if (url === 'https://example.com/.well-known/oauth-authorization-server/mcp') {
-          return { ok: true, json: async () => { throw new SyntaxError('Unexpected token'); } };
+          return {
+            ok: true,
+            json: async () => {
+              throw new SyntaxError('Unexpected token');
+            },
+          };
         }
         return { ok: true, json: async () => validMetadata };
       },
