@@ -18,6 +18,7 @@ const {
   toMCPClientInfo,
   fromMCPClientInfo,
   DEFAULT_CLIENT_METADATA,
+  discoverOAuthMetadata,
 } = require('../../dist/lib/auth/oauth');
 
 describe('OAuth Types', () => {
@@ -607,6 +608,110 @@ describe('createCLIOAuthProvider', () => {
     });
 
     assert.strictEqual(provider.clientMetadata.client_name, 'Custom Client');
+  });
+});
+
+describe('discoverOAuthMetadata', () => {
+  const validMetadata = {
+    authorization_endpoint: 'https://auth.example.com/authorize',
+    token_endpoint: 'https://auth.example.com/token',
+  };
+
+  function mockFetch(urlToResponse) {
+    return async url => {
+      const entry = urlToResponse[url];
+      if (!entry) return { ok: false, status: 404, json: async () => ({}) };
+      return { ok: true, status: 200, json: async () => entry };
+    };
+  }
+
+  test('root URL discovers at /.well-known/oauth-authorization-server', async () => {
+    let fetchedUrl;
+    const metadata = await discoverOAuthMetadata('https://example.com', {
+      fetch: async url => {
+        fetchedUrl = url;
+        return { ok: true, json: async () => validMetadata };
+      },
+    });
+    assert.strictEqual(fetchedUrl, 'https://example.com/.well-known/oauth-authorization-server');
+    assert.deepStrictEqual(metadata, validMetadata);
+  });
+
+  test('path URL tries path-aware discovery first', async () => {
+    const fetched = [];
+    const metadata = await discoverOAuthMetadata('https://example.com/mcp', {
+      fetch: async url => {
+        fetched.push(url);
+        if (url === 'https://example.com/.well-known/oauth-authorization-server/mcp') {
+          return { ok: true, json: async () => validMetadata };
+        }
+        return { ok: false, status: 404, json: async () => ({}) };
+      },
+    });
+    assert.deepStrictEqual(metadata, validMetadata);
+    assert.strictEqual(fetched.length, 1);
+    assert.strictEqual(fetched[0], 'https://example.com/.well-known/oauth-authorization-server/mcp');
+  });
+
+  test('path URL falls back to root when path-aware returns 404', async () => {
+    const metadata = await discoverOAuthMetadata('https://example.com/mcp', {
+      fetch: mockFetch({
+        'https://example.com/.well-known/oauth-authorization-server': validMetadata,
+      }),
+    });
+    assert.deepStrictEqual(metadata, validMetadata);
+  });
+
+  test('trailing slash is stripped from path', async () => {
+    const metadata = await discoverOAuthMetadata('https://example.com/mcp/', {
+      fetch: mockFetch({
+        'https://example.com/.well-known/oauth-authorization-server/mcp': validMetadata,
+      }),
+    });
+    assert.deepStrictEqual(metadata, validMetadata);
+  });
+
+  test('returns null when no endpoint responds', async () => {
+    const metadata = await discoverOAuthMetadata('https://example.com/mcp', {
+      fetch: mockFetch({}),
+    });
+    assert.strictEqual(metadata, null);
+  });
+
+  test('returns null when metadata lacks required fields', async () => {
+    const metadata = await discoverOAuthMetadata('https://example.com', {
+      fetch: async () => ({
+        ok: true,
+        json: async () => ({ issuer: 'https://example.com' }),
+      }),
+    });
+    assert.strictEqual(metadata, null);
+  });
+
+  test('falls back to root when path-aware URL returns malformed JSON', async () => {
+    const metadata = await discoverOAuthMetadata('https://example.com/mcp', {
+      fetch: async url => {
+        if (url === 'https://example.com/.well-known/oauth-authorization-server/mcp') {
+          return {
+            ok: true,
+            json: async () => {
+              throw new SyntaxError('Unexpected token');
+            },
+          };
+        }
+        return { ok: true, json: async () => validMetadata };
+      },
+    });
+    assert.deepStrictEqual(metadata, validMetadata);
+  });
+
+  test('returns null for network errors', async () => {
+    const metadata = await discoverOAuthMetadata('https://example.com', {
+      fetch: async () => {
+        throw new Error('network error');
+      },
+    });
+    assert.strictEqual(metadata, null);
   });
 });
 
