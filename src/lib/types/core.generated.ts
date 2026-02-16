@@ -1,5 +1,5 @@
-// Generated AdCP core types from official schemas v3.0.0-beta.3
-// Generated at: 2026-02-12T12:46:41.840Z
+// Generated AdCP core types from official schemas vlatest
+// Generated at: 2026-02-16T20:55:54.088Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -1703,6 +1703,22 @@ export type DemographicSystem = 'nielsen' | 'barb' | 'agf' | 'oztam' | 'mediamet
 /**
  * Standard marketing event types for event logging, aligned with IAB ECAPI
  */
+export type ForecastRangeUnit = 'spend' | 'reach_freq' | 'weekly' | 'daily' | 'clicks' | 'conversions';
+/**
+ * Method used to produce this forecast
+ */
+export type ForecastMethod = 'estimate' | 'modeled' | 'guaranteed';
+/**
+ * Measurement system for the demographic field. Ensures buyer and seller agree on demographic notation.
+ */
+export type DemographicSystem1 = 'nielsen' | 'barb' | 'agf' | 'oztam' | 'mediametrie' | 'custom';
+/**
+ * Unit of measurement for reach and audience_size metrics in this forecast. Required for cross-channel forecast comparison.
+ */
+export type ReachUnit = 'individuals' | 'households' | 'devices' | 'accounts' | 'cookies' | 'custom';
+/**
+ * Available frequencies for delivery reports and metrics updates
+ */
 export type ReportingFrequency = 'hourly' | 'daily' | 'monthly';
 /**
  * Standard delivery and performance metrics available for reporting
@@ -1838,10 +1854,7 @@ export interface Product {
    * Available pricing models for this product
    */
   pricing_options: PricingOption[];
-  /**
-   * Estimated exposures/impressions for guaranteed products
-   */
-  estimated_exposures?: number;
+  forecast?: DeliveryForecast;
   measurement?: Measurement;
   /**
    * Measurement provider and methodology for delivery metrics. The buyer accepts the declared provider as the source of truth for the buy. REQUIRED for all products.
@@ -2507,7 +2520,74 @@ export interface PriceGuidance7 {
   [k: string]: unknown | undefined;
 }
 /**
- * Measurement capabilities included with a product
+ * Forecasted delivery metrics for this product. Gives buyers an estimate of expected performance before requesting a proposal.
+ */
+export interface DeliveryForecast {
+  /**
+   * Forecasted delivery at one or more budget levels. A single point is a standard forecast; multiple points ordered by ascending budget form a curve showing how metrics scale with spend. Each point pairs a budget with metric ranges.
+   *
+   * @minItems 1
+   */
+  points: [ForecastPoint, ...ForecastPoint[]];
+  forecast_range_unit?: ForecastRangeUnit;
+  method: ForecastMethod;
+  /**
+   * ISO 4217 currency code for monetary values in this forecast (spend, budget)
+   */
+  currency: string;
+  demographic_system?: DemographicSystem1;
+  /**
+   * Target demographic code within the specified demographic_system. For Nielsen: P18-49, M25-54, W35+. For BARB: ABC1 Adults, 16-34. For AGF: E 14-49.
+   */
+  demographic?: string;
+  reach_unit?: ReachUnit;
+  /**
+   * When this forecast was computed
+   */
+  generated_at?: string;
+  /**
+   * When this forecast expires. After this time, the forecast should be refreshed. Forecast expiry does not affect proposal executability.
+   */
+  valid_until?: string;
+  ext?: ExtensionObject;
+  [k: string]: unknown | undefined;
+}
+/**
+ * A forecast at a specific budget level. A single point represents a standard forecast; multiple points ordered by ascending budget form a curve showing how delivery metrics scale with spend.
+ */
+export interface ForecastPoint {
+  /**
+   * Budget amount for this forecast point. For allocation-level forecasts, this is the absolute budget for that allocation (not the percentage). For proposal-level forecasts, this is the total proposal budget.
+   */
+  budget: number;
+  /**
+   * Forecasted metric values at this budget level. Keys are either forecastable-metric values for delivery/engagement (impressions, reach, spend, etc.) or event-type values for outcomes (purchase, lead, app_install, etc.). Values are ForecastRange objects (low/mid/high). Use { "mid": value } for point estimates. Include spend when the platform predicts it will differ from budget.
+   */
+  metrics: {
+    [k: string]: ForecastRange | undefined;
+  };
+  [k: string]: unknown | undefined;
+}
+/**
+ * A forecast value with optional low/high bounds. The mid value represents the most likely outcome. When low and high are provided, they represent conservative and optimistic estimates respectively.
+ */
+export interface ForecastRange {
+  /**
+   * Conservative (low-end) forecast value
+   */
+  low?: number;
+  /**
+   * Expected (most likely) forecast value
+   */
+  mid: number;
+  /**
+   * Optimistic (high-end) forecast value
+   */
+  high?: number;
+  [k: string]: unknown | undefined;
+}
+/**
+ * Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.
  */
 export interface Measurement {
   /**
@@ -2628,9 +2708,7 @@ export interface FormatID2 {
   duration_ms?: number;
   [k: string]: unknown | undefined;
 }
-/**
- * Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.
- */
+
 // TARGETING SCHEMA
 /**
  * Metro area classification system (e.g., 'nielsen_dma', 'uk_itl2')
@@ -2764,22 +2842,6 @@ export type AdCPAsyncResponseData =
 /**
  * Selects properties from a publisher's adagents.json. Used for both product definitions and agent authorization. Supports three selection patterns: all properties, specific IDs, or by tags.
  */
-export type ForecastRangeUnit = 'spend' | 'reach_freq' | 'weekly' | 'daily' | 'clicks' | 'conversions';
-/**
- * Method used to produce this forecast
- */
-export type ForecastMethod = 'estimate' | 'modeled' | 'guaranteed';
-/**
- * Measurement system for the demographic field. Ensures buyer and seller agree on demographic notation.
- */
-export type DemographicSystem1 = 'nielsen' | 'barb' | 'agf' | 'oztam' | 'mediametrie' | 'custom';
-/**
- * Unit of measurement for reach and audience_size metrics in this forecast. Required for cross-channel forecast comparison.
- */
-export type ReachUnit = 'individuals' | 'households' | 'devices' | 'accounts' | 'cookies' | 'custom';
-/**
- * Response for completed or failed create_media_buy
- */
 export type CreateMediaBuyResponse = CreateMediaBuySuccess | CreateMediaBuyError;
 /**
  * Budget pacing strategy
@@ -2864,7 +2926,7 @@ export interface GetProductsResponse {
    */
   products: Product[];
   /**
-   * Optional array of proposed media plans with budget allocations across products. Publishers include proposals when they can provide strategic guidance based on the brief. Proposals are actionable - buyers can refine them via subsequent get_products calls or execute them directly via create_media_buy.
+   * Optional array of proposed media plans with budget allocations across products. Publishers include proposals when they can provide strategic guidance based on the brief. Proposals are actionable - buyers can refine them via follow-up get_products calls within the same session, or execute them directly via create_media_buy.
    */
   proposals?: Proposal[];
   /**
@@ -2889,7 +2951,7 @@ export interface GetProductsResponse {
  */
 export interface Proposal {
   /**
-   * Unique identifier for this proposal. Used to refine the proposal in subsequent get_products calls or to execute it via create_media_buy.
+   * Unique identifier for this proposal. Used to execute it via create_media_buy.
    */
   proposal_id: string;
   /**
@@ -2936,7 +2998,7 @@ export interface Proposal {
    * Explanation of how this proposal aligns with the campaign brief
    */
   brief_alignment?: string;
-  forecast?: DeliveryForecast1;
+  forecast?: DeliveryForecast2;
   ext?: ExtensionObject;
   [k: string]: unknown | undefined;
 }
@@ -2974,14 +3036,14 @@ export interface ProductAllocation {
    * @minItems 1
    */
   daypart_targets?: [DaypartTarget, ...DaypartTarget[]];
-  forecast?: DeliveryForecast;
+  forecast?: DeliveryForecast1;
   ext?: ExtensionObject;
   [k: string]: unknown | undefined;
 }
 /**
  * A time window for daypart targeting. Specifies days of week and an hour range. start_hour is inclusive, end_hour is exclusive (e.g., 6-10 = 6:00am to 10:00am). Follows the Google Ads AdScheduleInfo / DV360 DayPartTargeting pattern.
  */
-export interface DeliveryForecast {
+export interface DeliveryForecast1 {
   /**
    * Forecasted delivery at one or more budget levels. A single point is a standard forecast; multiple points ordered by ascending budget form a curve showing how metrics scale with spend. Each point pairs a budget with metric ranges.
    *
@@ -3012,43 +3074,9 @@ export interface DeliveryForecast {
   [k: string]: unknown | undefined;
 }
 /**
- * A forecast at a specific budget level. A single point represents a standard forecast; multiple points ordered by ascending budget form a curve showing how delivery metrics scale with spend.
- */
-export interface ForecastPoint {
-  /**
-   * Budget amount for this forecast point. For allocation-level forecasts, this is the absolute budget for that allocation (not the percentage). For proposal-level forecasts, this is the total proposal budget.
-   */
-  budget: number;
-  /**
-   * Forecasted metric values at this budget level. Keys are either forecastable-metric values for delivery/engagement (impressions, reach, spend, etc.) or event-type values for outcomes (purchase, lead, app_install, etc.). Values are ForecastRange objects (low/mid/high). Use { "mid": value } for point estimates. Include spend when the platform predicts it will differ from budget.
-   */
-  metrics: {
-    [k: string]: ForecastRange | undefined;
-  };
-  [k: string]: unknown | undefined;
-}
-/**
- * A forecast value with optional low/high bounds. The mid value represents the most likely outcome. When low and high are provided, they represent conservative and optimistic estimates respectively.
- */
-export interface ForecastRange {
-  /**
-   * Conservative (low-end) forecast value
-   */
-  low?: number;
-  /**
-   * Expected (most likely) forecast value
-   */
-  mid: number;
-  /**
-   * Optimistic (high-end) forecast value
-   */
-  high?: number;
-  [k: string]: unknown | undefined;
-}
-/**
  * Aggregate forecasted delivery metrics for the entire proposal. When both proposal-level and allocation-level forecasts are present, the proposal-level forecast is authoritative for total delivery estimation.
  */
-export interface DeliveryForecast1 {
+export interface DeliveryForecast2 {
   /**
    * Forecasted delivery at one or more budget levels. A single point is a standard forecast; multiple points ordered by ascending budget form a curve showing how metrics scale with spend. Each point pairs a budget with metric ranges.
    *

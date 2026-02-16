@@ -216,13 +216,9 @@ export type SignalID2 =
  */
 export interface GetProductsRequest {
   /**
-   * Natural language description of campaign requirements. When refining a proposal, can include instructions like 'focus more on German speakers' or 'increase mobile allocation'.
+   * Natural language description of campaign requirements.
    */
   brief?: string;
-  /**
-   * Optional proposal ID to refine. When provided with a brief, the publisher will use the brief as refinement instructions for the specified proposal and return an updated version.
-   */
-  proposal_id?: string;
   brand_manifest?: BrandManifestReference;
   product_selectors?: PromotedProducts;
   /**
@@ -892,6 +888,22 @@ export type EventType =
   | 'submit_application'
   | 'custom';
 /**
+ * How to interpret the points array. 'spend' (default when omitted): points at ascending budget levels. 'reach_freq': points at ascending reach/frequency targets. 'weekly'/'daily': metrics are per-period values. 'clicks'/'conversions': points at ascending outcome targets.
+ */
+export type ForecastRangeUnit = 'spend' | 'reach_freq' | 'weekly' | 'daily' | 'clicks' | 'conversions';
+/**
+ * Method used to produce this forecast
+ */
+export type ForecastMethod = 'estimate' | 'modeled' | 'guaranteed';
+/**
+ * Measurement system for the demographic field. Ensures buyer and seller agree on demographic notation.
+ */
+export type DemographicSystem1 = 'nielsen' | 'barb' | 'agf' | 'oztam' | 'mediametrie' | 'custom';
+/**
+ * Unit of measurement for reach and audience_size metrics in this forecast. Required for cross-channel forecast comparison.
+ */
+export type ReachUnit = 'individuals' | 'households' | 'devices' | 'accounts' | 'cookies' | 'custom';
+/**
  * Available frequencies for delivery reports and metrics updates
  */
 export type ReportingFrequency = 'hourly' | 'daily' | 'monthly';
@@ -995,22 +1007,6 @@ export type ActionSource =
  * Days of the week for daypart targeting
  */
 export type DayOfWeek = 'monday' | 'tuesday' | 'wednesday' | 'thursday' | 'friday' | 'saturday' | 'sunday';
-/**
- * How to interpret the points array. 'spend' (default when omitted): points at ascending budget levels. 'reach_freq': points at ascending reach/frequency targets. 'weekly'/'daily': metrics are per-period values. 'clicks'/'conversions': points at ascending outcome targets.
- */
-export type ForecastRangeUnit = 'spend' | 'reach_freq' | 'weekly' | 'daily' | 'clicks' | 'conversions';
-/**
- * Method used to produce this forecast
- */
-export type ForecastMethod = 'estimate' | 'modeled' | 'guaranteed';
-/**
- * Measurement system for the demographic field. Ensures buyer and seller agree on demographic notation.
- */
-export type DemographicSystem1 = 'nielsen' | 'barb' | 'agf' | 'oztam' | 'mediametrie' | 'custom';
-/**
- * Unit of measurement for reach and audience_size metrics in this forecast. Required for cross-channel forecast comparison.
- */
-export type ReachUnit = 'individuals' | 'households' | 'devices' | 'accounts' | 'cookies' | 'custom';
 
 /**
  * Response payload for get_products task
@@ -1021,7 +1017,7 @@ export interface GetProductsResponse {
    */
   products: Product[];
   /**
-   * Optional array of proposed media plans with budget allocations across products. Publishers include proposals when they can provide strategic guidance based on the brief. Proposals are actionable - buyers can refine them via subsequent get_products calls or execute them directly via create_media_buy.
+   * Optional array of proposed media plans with budget allocations across products. Publishers include proposals when they can provide strategic guidance based on the brief. Proposals are actionable - buyers can refine them via follow-up get_products calls within the same session, or execute them directly via create_media_buy.
    */
   proposals?: Proposal[];
   /**
@@ -1083,10 +1079,7 @@ export interface Product {
    * @minItems 1
    */
   pricing_options: [PricingOption, ...PricingOption[]];
-  /**
-   * Estimated exposures/impressions for guaranteed products
-   */
-  estimated_exposures?: number;
+  forecast?: DeliveryForecast;
   measurement?: Measurement;
   /**
    * Measurement provider and methodology for delivery metrics. The buyer accepts the declared provider as the source of truth for the buy. REQUIRED for all products.
@@ -1767,7 +1760,74 @@ export interface PriceGuidance7 {
   [k: string]: unknown | undefined;
 }
 /**
- * Measurement capabilities included with a product
+ * Forecasted delivery metrics for this product. Gives buyers an estimate of expected performance before requesting a proposal.
+ */
+export interface DeliveryForecast {
+  /**
+   * Forecasted delivery at one or more budget levels. A single point is a standard forecast; multiple points ordered by ascending budget form a curve showing how metrics scale with spend. Each point pairs a budget with metric ranges.
+   *
+   * @minItems 1
+   */
+  points: [ForecastPoint, ...ForecastPoint[]];
+  forecast_range_unit?: ForecastRangeUnit;
+  method: ForecastMethod;
+  /**
+   * ISO 4217 currency code for monetary values in this forecast (spend, budget)
+   */
+  currency: string;
+  demographic_system?: DemographicSystem1;
+  /**
+   * Target demographic code within the specified demographic_system. For Nielsen: P18-49, M25-54, W35+. For BARB: ABC1 Adults, 16-34. For AGF: E 14-49.
+   */
+  demographic?: string;
+  reach_unit?: ReachUnit;
+  /**
+   * When this forecast was computed
+   */
+  generated_at?: string;
+  /**
+   * When this forecast expires. After this time, the forecast should be refreshed. Forecast expiry does not affect proposal executability.
+   */
+  valid_until?: string;
+  ext?: ExtensionObject;
+  [k: string]: unknown | undefined;
+}
+/**
+ * A forecast at a specific budget level. A single point represents a standard forecast; multiple points ordered by ascending budget form a curve showing how delivery metrics scale with spend.
+ */
+export interface ForecastPoint {
+  /**
+   * Budget amount for this forecast point. For allocation-level forecasts, this is the absolute budget for that allocation (not the percentage). For proposal-level forecasts, this is the total proposal budget.
+   */
+  budget: number;
+  /**
+   * Forecasted metric values at this budget level. Keys are either forecastable-metric values for delivery/engagement (impressions, reach, spend, etc.) or event-type values for outcomes (purchase, lead, app_install, etc.). Values are ForecastRange objects (low/mid/high). Use { "mid": value } for point estimates. Include spend when the platform predicts it will differ from budget.
+   */
+  metrics: {
+    [k: string]: ForecastRange | undefined;
+  };
+  [k: string]: unknown | undefined;
+}
+/**
+ * A forecast value with optional low/high bounds. The mid value represents the most likely outcome. When low and high are provided, they represent conservative and optimistic estimates respectively.
+ */
+export interface ForecastRange {
+  /**
+   * Conservative (low-end) forecast value
+   */
+  low?: number;
+  /**
+   * Expected (most likely) forecast value
+   */
+  mid: number;
+  /**
+   * Optimistic (high-end) forecast value
+   */
+  high?: number;
+  [k: string]: unknown | undefined;
+}
+/**
+ * Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.
  */
 export interface Measurement {
   /**
@@ -1889,11 +1949,11 @@ export interface FormatID2 {
   [k: string]: unknown | undefined;
 }
 /**
- * Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.
+ * A proposed media plan with budget allocations across products. Represents the publisher's strategic recommendation for how to structure a campaign based on the brief. Proposals are actionable - buyers can execute them directly via create_media_buy by providing the proposal_id.
  */
 export interface Proposal {
   /**
-   * Unique identifier for this proposal. Used to refine the proposal in subsequent get_products calls or to execute it via create_media_buy.
+   * Unique identifier for this proposal. Used to execute it via create_media_buy.
    */
   proposal_id: string;
   /**
@@ -1940,7 +2000,7 @@ export interface Proposal {
    * Explanation of how this proposal aligns with the campaign brief
    */
   brief_alignment?: string;
-  forecast?: DeliveryForecast1;
+  forecast?: DeliveryForecast2;
   ext?: ExtensionObject;
   [k: string]: unknown | undefined;
 }
@@ -1978,7 +2038,7 @@ export interface ProductAllocation {
    * @minItems 1
    */
   daypart_targets?: [DaypartTarget, ...DaypartTarget[]];
-  forecast?: DeliveryForecast;
+  forecast?: DeliveryForecast1;
   ext?: ExtensionObject;
   [k: string]: unknown | undefined;
 }
@@ -2008,7 +2068,7 @@ export interface DaypartTarget {
 /**
  * Forecasted delivery metrics for this allocation
  */
-export interface DeliveryForecast {
+export interface DeliveryForecast1 {
   /**
    * Forecasted delivery at one or more budget levels. A single point is a standard forecast; multiple points ordered by ascending budget form a curve showing how metrics scale with spend. Each point pairs a budget with metric ranges.
    *
@@ -2039,43 +2099,9 @@ export interface DeliveryForecast {
   [k: string]: unknown | undefined;
 }
 /**
- * A forecast at a specific budget level. A single point represents a standard forecast; multiple points ordered by ascending budget form a curve showing how delivery metrics scale with spend.
- */
-export interface ForecastPoint {
-  /**
-   * Budget amount for this forecast point. For allocation-level forecasts, this is the absolute budget for that allocation (not the percentage). For proposal-level forecasts, this is the total proposal budget.
-   */
-  budget: number;
-  /**
-   * Forecasted metric values at this budget level. Keys are either forecastable-metric values for delivery/engagement (impressions, reach, spend, etc.) or event-type values for outcomes (purchase, lead, app_install, etc.). Values are ForecastRange objects (low/mid/high). Use { "mid": value } for point estimates. Include spend when the platform predicts it will differ from budget.
-   */
-  metrics: {
-    [k: string]: ForecastRange | undefined;
-  };
-  [k: string]: unknown | undefined;
-}
-/**
- * A forecast value with optional low/high bounds. The mid value represents the most likely outcome. When low and high are provided, they represent conservative and optimistic estimates respectively.
- */
-export interface ForecastRange {
-  /**
-   * Conservative (low-end) forecast value
-   */
-  low?: number;
-  /**
-   * Expected (most likely) forecast value
-   */
-  mid: number;
-  /**
-   * Optimistic (high-end) forecast value
-   */
-  high?: number;
-  [k: string]: unknown | undefined;
-}
-/**
  * Aggregate forecasted delivery metrics for the entire proposal. When both proposal-level and allocation-level forecasts are present, the proposal-level forecast is authoritative for total delivery estimation.
  */
-export interface DeliveryForecast1 {
+export interface DeliveryForecast2 {
   /**
    * Forecasted delivery at one or more budget levels. A single point is a standard forecast; multiple points ordered by ascending budget form a curve showing how metrics scale with spend. Each point pairs a budget with metric ranges.
    *
@@ -5467,6 +5493,11 @@ export type WebhookSecurityMethod = 'hmac_sha256' | 'api_key' | 'none';
 /**
  * DAAST (Digital Audio Ad Serving Template) tag for third-party audio ad serving
  */
+export type CreativeBriefReference = CreativeBrief | string;
+
+/**
+ * Request to transform or generate a creative manifest. Takes a source manifest (which may be minimal for pure generation) and produces a target manifest in the specified format. The source manifest should include all assets required by the target format (e.g., promoted_offerings for generative formats).
+ */
 export interface BuildCreativeRequest {
   /**
    * Natural language instructions for the transformation or generation. For pure generation, this is the creative brief. For transformation, this provides guidance on how to adapt the creative.
@@ -5474,6 +5505,8 @@ export interface BuildCreativeRequest {
   message?: string;
   creative_manifest?: CreativeManifest;
   target_format_id: FormatID1;
+  brand_manifest?: BrandManifestReference1;
+  creative_brief?: CreativeBriefReference;
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -5537,6 +5570,76 @@ export interface WebhookAsset {
 }
 /**
  * CSS stylesheet asset
+ */
+export interface CreativeBrief {
+  /**
+   * Campaign or flight name for identification
+   */
+  name: string;
+  /**
+   * Campaign objective that guides creative tone and call-to-action strategy
+   */
+  objective?: 'awareness' | 'consideration' | 'conversion' | 'retention' | 'engagement';
+  /**
+   * Desired tone for this campaign, modulating the brand's base tone (e.g., 'playful and festive', 'premium and aspirational')
+   */
+  tone?: string;
+  /**
+   * Target audience description for this campaign
+   */
+  audience?: string;
+  /**
+   * Creative territory or positioning the campaign should occupy
+   */
+  territory?: string;
+  /**
+   * Messaging framework for the campaign
+   */
+  messaging?: {
+    /**
+     * Primary headline
+     */
+    headline?: string;
+    /**
+     * Supporting tagline or sub-headline
+     */
+    tagline?: string;
+    /**
+     * Call-to-action text
+     */
+    cta?: string;
+    /**
+     * Key messages to communicate in priority order
+     */
+    key_messages?: string[];
+    [k: string]: unknown | undefined;
+  };
+  /**
+   * Visual and strategic reference materials such as mood boards, product shots, example creatives, and strategy documents
+   */
+  reference_assets?: ReferenceAsset[];
+  [k: string]: unknown | undefined;
+}
+/**
+ * A reference asset that provides creative context. Carries visual materials (mood boards, product shots, example creatives) with semantic roles that tell creative agents how to use them.
+ */
+export interface ReferenceAsset {
+  /**
+   * URL to the reference asset (image, video, or document)
+   */
+  url: string;
+  /**
+   * How the creative agent should use this asset. style_reference: match the visual style; product_shot: include this product; mood_board: overall look and feel; example_creative: example of a similar execution; logo: logo to use; strategy_doc: strategy or planning document for context
+   */
+  role: 'style_reference' | 'product_shot' | 'mood_board' | 'example_creative' | 'logo' | 'strategy_doc';
+  /**
+   * Human-readable description of the asset and how it should inform creative generation
+   */
+  description?: string;
+  [k: string]: unknown | undefined;
+}
+/**
+ * Opaque correlation data that is echoed unchanged in responses. Used for internal tracking, UI session IDs, trace IDs, and other caller-specific identifiers that don't affect protocol behavior. Context data is never parsed by AdCP agents - it's simply preserved and returned.
  */
 
 // build_creative response
@@ -9373,6 +9476,15 @@ export interface GetAdCPCapabilitiesResponse {
      * URL to brand manifest with colors, fonts, logos, tone
      */
     brand_manifest_url?: string;
+  };
+  /**
+   * Creative protocol capabilities. Only present if creative is in supported_protocols.
+   */
+  creative?: {
+    /**
+     * Whether this creative agent accepts creative_brief in build_creative requests for structured campaign-level creative direction
+     */
+    supports_brief?: boolean;
   };
   /**
    * Extension namespaces this agent supports. Buyers can expect meaningful data in ext.{namespace} fields on responses from this agent. Extension schemas are published in the AdCP extension registry.

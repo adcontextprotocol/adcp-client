@@ -9,7 +9,7 @@ dist/
 build/
 *.tsbuildinfo
 
-# Schema cache
+# Schema cache (downloaded by sync-schemas)
 schemas/cache/
 
 # Environment variables

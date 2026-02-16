@@ -42,11 +42,11 @@ jobs:
       
     - name: Sync schemas from AdCP
       run: npm run sync-schemas
-      
+
     - name: Check for schema changes
       id: schema-check
       run: |
-        # Generate types from fresh schemas
+        # Generate types from synced schemas
         npm run generate-types
         
         # Check if generated files have changed

@@ -2011,7 +2011,6 @@ export class SingleAgentClient {
    * tasks use complex discriminated unions that cannot be represented in Zod
    * without significant runtime overhead:
    *
-   * - `get_products`: Uses conditional fields based on brief vs proposal_id
    * - `update_media_buy`: Uses conditional package update operations
    *
    * For these tasks, TypeScript compile-time checking is still enforced via
@@ -2022,7 +2021,7 @@ export class SingleAgentClient {
    */
   private getRequestSchema(taskType: string): z.ZodSchema | null {
     const schemaMap: Partial<Record<string, z.ZodSchema>> = {
-      // get_products: excluded - complex discriminated unions (brief vs proposal_id)
+      get_products: schemas.GetProductsRequestSchema,
       list_creative_formats: schemas.ListCreativeFormatsRequestSchema,
       create_media_buy: schemas.CreateMediaBuyRequestSchema,
       // update_media_buy: excluded - complex discriminated unions (package operations)
