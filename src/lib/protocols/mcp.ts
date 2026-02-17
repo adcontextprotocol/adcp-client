@@ -118,8 +118,7 @@ export async function callMCPTool(
     // Detect session errors — the server supports StreamableHTTP but the session
     // was stale/expired. Retry with a fresh StreamableHTTP connection instead of
     // falling back to SSE.
-    const isSessionError =
-      errorMessage.includes('Session not found') || errorMessage.includes('please reconnect');
+    const isSessionError = errorMessage.includes('Session not found') || errorMessage.includes('please reconnect');
 
     if (isSessionError) {
       debugLogs.push({
