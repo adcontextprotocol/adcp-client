@@ -115,31 +115,63 @@ export async function callMCPTool(
       error: error,
     });
 
-    // If StreamableHTTP fails, fall back to SSE transport
-    debugLogs.push({
-      type: 'info',
-      message: `MCP: Falling back to SSE transport for ${toolName}`,
-      timestamp: new Date().toISOString(),
-    });
+    // Detect session errors — the server supports StreamableHTTP but the session
+    // was stale/expired. Retry with a fresh StreamableHTTP connection instead of
+    // falling back to SSE.
+    const isSessionError =
+      errorMessage.includes('Session not found') || errorMessage.includes('please reconnect');
 
-    mcpClient = new MCPClient({
-      name: 'AdCP-Testing-Framework',
-      version: '1.0.0',
-    });
+    if (isSessionError) {
+      debugLogs.push({
+        type: 'info',
+        message: `MCP: Session error detected, retrying StreamableHTTP for ${toolName}`,
+        timestamp: new Date().toISOString(),
+      });
 
-    // For SSE fallback, add auth to URL (if SSE transport supports it)
-    if (authToken) {
-      baseUrl.searchParams.set('auth', authToken);
+      mcpClient = new MCPClient({
+        name: 'AdCP-Testing-Framework',
+        version: '1.0.0',
+      });
+
+      const retryTransport = new StreamableHTTPClientTransport(baseUrl, {
+        requestInit: {
+          headers: authHeaders,
+        },
+      });
+      await mcpClient.connect(retryTransport);
+
+      debugLogs.push({
+        type: 'success',
+        message: `MCP: Connected using StreamableHTTP transport (retry) for ${toolName}`,
+        timestamp: new Date().toISOString(),
+      });
+    } else {
+      // Non-session error — fall back to SSE transport
+      debugLogs.push({
+        type: 'info',
+        message: `MCP: Falling back to SSE transport for ${toolName}`,
+        timestamp: new Date().toISOString(),
+      });
+
+      mcpClient = new MCPClient({
+        name: 'AdCP-Testing-Framework',
+        version: '1.0.0',
+      });
+
+      // For SSE fallback, add auth to URL (if SSE transport supports it)
+      if (authToken) {
+        baseUrl.searchParams.set('auth', authToken);
+      }
+
+      const sseTransport = new SSEClientTransport(baseUrl);
+      await mcpClient.connect(sseTransport);
+
+      debugLogs.push({
+        type: 'success',
+        message: `MCP: Connected using SSE transport for ${toolName}`,
+        timestamp: new Date().toISOString(),
+      });
     }
-
-    const sseTransport = new SSEClientTransport(baseUrl);
-    await mcpClient.connect(sseTransport);
-
-    debugLogs.push({
-      type: 'success',
-      message: `MCP: Connected using SSE transport for ${toolName}`,
-      timestamp: new Date().toISOString(),
-    });
   }
 
   try {
