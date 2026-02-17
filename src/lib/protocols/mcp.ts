@@ -2,6 +2,7 @@
 import { Client as MCPClient } from '@modelcontextprotocol/sdk/client/index.js';
 import {
   StreamableHTTPClientTransport,
+  StreamableHTTPError,
   type StreamableHTTPClientTransportOptions,
 } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
@@ -115,10 +116,11 @@ export async function callMCPTool(
       error: error,
     });
 
-    // Detect session errors — the server supports StreamableHTTP but the session
-    // was stale/expired. Retry with a fresh StreamableHTTP connection instead of
-    // falling back to SSE.
-    const isSessionError = errorMessage.includes('Session not found') || errorMessage.includes('please reconnect');
+    // A 404 StreamableHTTPError means the server supports StreamableHTTP but the
+    // session was stale/expired (the initialize POST succeeded, then the GET SSE
+    // stream got a 404 for the new session ID). Retry with a fresh connection
+    // instead of falling back to SSE.
+    const isSessionError = error instanceof StreamableHTTPError && error.code === 404;
 
     if (isSessionError) {
       debugLogs.push({
