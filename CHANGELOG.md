@@ -1,5 +1,17 @@
 # Changelog
 
+## 3.16.0
+
+### Minor Changes
+
+- 03d47c6: Add full AdCP Registry client with 28 SDK methods and 17 CLI commands
+
+  Generates TypeScript types from the registry OpenAPI spec using openapi-typescript. Expands RegistryClient with methods for brand/property listing, agent discovery, authorization validation, search, and adagents tooling. Adds corresponding CLI commands including list-brands, list-properties, search, agents, publishers, stats, validate, lookup, discover, and check-auth.
+
+### Patch Changes
+
+- 253c86b: Fix: retry StreamableHTTP on session errors instead of falling back to SSE. When a server returns 404 "Session not found", the client now retries with a fresh StreamableHTTP connection rather than incorrectly falling back to SSE transport.
+
 ## 3.15.0
 
 ### Minor Changes
