@@ -5,6 +5,23 @@
 import { ADCPMultiAgentClient } from '../core/ADCPMultiAgentClient';
 import { getFormatAssets, usesDeprecatedAssetsField } from '../utils/format-assets';
 import type { TestOptions, TestStepResult, AgentProfile, TaskResult, Logger } from './types';
+import { brandManifestToBrandReference } from '../types/compat';
+import type { BrandReference } from '../types/tools.generated';
+
+const DEFAULT_BRAND_REF: BrandReference = { domain: 'test.example.com' };
+
+/**
+ * Resolve the brand option for a test request.
+ * Prefers `options.brand`, falls back to converting a deprecated
+ * `options.brand_manifest` via URL extraction, then the default test domain.
+ */
+export function resolveBrand(options: TestOptions): BrandReference {
+  return (
+    options.brand ||
+    (options.brand_manifest && brandManifestToBrandReference(options.brand_manifest)) ||
+    DEFAULT_BRAND_REF
+  );
+}
 
 // Default console-based logger
 const defaultLogger: Logger = {
@@ -157,13 +174,9 @@ export async function discoverAgentCapabilities(
   }
 
   const brief = options.brief || 'Show me all available advertising products across all channels';
-  // Include brand_manifest as some agents require it (e.g., tenant-specific agents)
   const getProductsParams: Record<string, unknown> = {
     brief,
-    brand_manifest: options.brand_manifest || {
-      name: 'E2E Test Brand',
-      url: 'https://test.example.com',
-    },
+    brand: resolveBrand(options),
   };
   const { result, step } = await runStep<TaskResult>(
     'Discover products for capability analysis',

@@ -361,24 +361,19 @@ function buildToolArgs(toolName: string, brief?: string, promotedOffering?: stri
     'activate_signal',
   ];
 
-  // Tools that accept brand_manifest parameter
-  const brandManifestAcceptingTools = ['get_products', 'create_media_buy'];
+  // Tools that accept brand parameter
+  const brandAcceptingTools = ['get_products', 'create_media_buy'];
 
   // Only add parameters that the tool accepts
   if (briefAcceptingTools.includes(toolName) && brief) {
     args.brief = brief;
   }
 
-  if (brandManifestAcceptingTools.includes(toolName) && promotedOffering) {
-    // brand_manifest must be either a valid URL or a BrandManifest object
+  if (brandAcceptingTools.includes(toolName) && promotedOffering) {
     try {
-      new URL(promotedOffering);
-      args.brand_manifest = promotedOffering; // It's a valid URL
+      args.brand = { domain: new URL(promotedOffering).hostname };
     } catch {
-      // Not a URL, create a BrandManifest object
-      args.brand_manifest = {
-        name: promotedOffering,
-      };
+      // Not a URL — skip brand, rely on brief for context
     }
   }
 

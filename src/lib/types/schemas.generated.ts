@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-02-16T19:25:41.393Z
+// Generated at: 2026-02-18T15:43:49.354Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -107,7 +107,7 @@ export const DAASTTrackingEventSchema = z.union([z.literal("start"), z.literal("
 
 export const DAASTVersion1Schema = z.union([z.literal("1.0"), z.literal("1.1")]);
 
-export const AssetContentTypeSchema = z.union([z.literal("image"), z.literal("video"), z.literal("audio"), z.literal("text"), z.literal("markdown"), z.literal("html"), z.literal("css"), z.literal("javascript"), z.literal("vast"), z.literal("daast"), z.literal("promoted_offerings"), z.literal("url"), z.literal("webhook")]);
+export const BrandIDSchema = z.string();
 
 export const URLAssetTypeSchema = z.union([z.literal("clickthrough"), z.literal("tracker_pixel"), z.literal("tracker_script")]);
 
@@ -244,6 +244,11 @@ export const URLAssetSchema = z.record(z.string(), z.union([z.unknown(), z.undef
     description: z.string().nullish()
 }));
 
+export const BrandReferenceSchema = z.object({
+    domain: z.string(),
+    brand_id: BrandIDSchema.nullish()
+});
+
 export const PromotedProductsSchema = z.record(z.string(), z.union([z.unknown(), z.undefined()])).and(z.object({
     manifest_gtins: z.array(z.string()).nullish(),
     manifest_skus: z.array(z.string()).nullish(),
@@ -266,93 +271,6 @@ export const OfferingSchema = z.record(z.string(), z.union([z.unknown(), z.undef
     keywords: z.array(z.string()).nullish(),
     categories: z.array(z.string()).nullish(),
     ext: ExtensionObjectSchema.nullish()
-}));
-
-export const BrandManifestSchema = z.record(z.string(), z.union([z.unknown(), z.undefined()])).and(z.object({
-    url: z.string().nullish(),
-    privacy_policy_url: z.string().nullish(),
-    name: z.string(),
-    logos: z.array(z.object({
-        url: z.string(),
-        orientation: z.union([z.literal("square"), z.literal("horizontal"), z.literal("vertical"), z.literal("stacked")]).nullish(),
-        background: z.union([z.literal("dark-bg"), z.literal("light-bg"), z.literal("transparent-bg")]).nullish(),
-        variant: z.union([z.literal("primary"), z.literal("secondary"), z.literal("icon"), z.literal("wordmark"), z.literal("full-lockup")]).nullish(),
-        tags: z.array(z.string()).nullish(),
-        usage: z.string().nullish(),
-        width: z.number().nullish(),
-        height: z.number().nullish()
-    })).nullish(),
-    colors: z.object({
-        primary: z.union([z.string(), z.array(z.string())]).nullish(),
-        secondary: z.union([z.string(), z.array(z.string())]).nullish(),
-        accent: z.union([z.string(), z.array(z.string())]).nullish(),
-        background: z.union([z.string(), z.array(z.string())]).nullish(),
-        text: z.union([z.string(), z.array(z.string())]).nullish()
-    }).nullish(),
-    fonts: z.object({
-        primary: z.string().nullish(),
-        secondary: z.string().nullish(),
-        font_urls: z.array(z.string()).nullish()
-    }).nullish(),
-    tone: z.union([z.string(), z.object({
-            voice: z.string().nullish(),
-            attributes: z.array(z.string()).nullish(),
-            dos: z.array(z.string()).nullish(),
-            donts: z.array(z.string()).nullish()
-        })]).nullish(),
-    voice: z.object({
-        provider: z.string().nullish(),
-        voice_id: z.string().nullish(),
-        settings: z.record(z.string(), z.union([z.unknown(), z.undefined()])).nullish()
-    }).nullish(),
-    avatar: z.object({
-        provider: z.string().nullish(),
-        avatar_id: z.string().nullish(),
-        settings: z.record(z.string(), z.union([z.unknown(), z.undefined()])).nullish()
-    }).nullish(),
-    tagline: z.string().nullish(),
-    assets: z.array(z.record(z.string(), z.union([z.unknown(), z.undefined()])).and(z.object({
-        asset_id: z.string(),
-        asset_type: AssetContentTypeSchema,
-        url: z.string(),
-        tags: z.array(z.string()).nullish(),
-        name: z.string().nullish(),
-        description: z.string().nullish(),
-        width: z.number().nullish(),
-        height: z.number().nullish(),
-        duration_seconds: z.number().nullish(),
-        file_size_bytes: z.number().nullish(),
-        format: z.string().nullish(),
-        metadata: z.record(z.string(), z.union([z.unknown(), z.undefined()])).nullish()
-    }))).nullish(),
-    product_catalog: z.record(z.string(), z.union([z.unknown(), z.undefined()])).and(z.object({
-        feed_url: z.string(),
-        feed_format: z.union([z.literal("google_merchant_center"), z.literal("facebook_catalog"), z.literal("openai_product_feed"), z.literal("custom")]).nullish(),
-        categories: z.array(z.string()).nullish(),
-        last_updated: z.string().nullish(),
-        update_frequency: z.union([z.literal("realtime"), z.literal("hourly"), z.literal("daily"), z.literal("weekly")]).nullish(),
-        agentic_checkout: z.object({
-            endpoint: z.string(),
-            spec: z.literal("openai_agentic_checkout_v1"),
-            supported_payment_providers: z.array(z.string()).nullish()
-        }).nullish()
-    })).nullish(),
-    disclaimers: z.array(z.object({
-        text: z.string(),
-        context: z.string().nullish(),
-        required: z.boolean().nullish()
-    })).nullish(),
-    industry: z.string().nullish(),
-    target_audience: z.string().nullish(),
-    contact: z.object({
-        email: z.string().nullish(),
-        phone: z.string().nullish()
-    }).nullish(),
-    metadata: z.object({
-        created_date: z.string().nullish(),
-        updated_date: z.string().nullish(),
-        version: z.string().nullish()
-    }).nullish()
 }));
 
 export const PropertyIDSchema = z.string();
@@ -724,8 +642,6 @@ export const SyncCreativesAsyncSubmittedSchema = z.record(z.string(), z.union([z
     ext: ExtensionObjectSchema.nullish()
 }));
 
-export const BrandManifestReferenceSchema = z.union([BrandManifestSchema, z.string()]);
-
 export const FormatCategorySchema = z.union([z.literal("audio"), z.literal("video"), z.literal("display"), z.literal("native"), z.literal("dooh"), z.literal("rich_media"), z.literal("universal")]);
 
 export const GeographicTargetingLevelSchema = z.union([z.literal("country"), z.literal("region"), z.literal("metro"), z.literal("postal_area")]);
@@ -919,6 +835,8 @@ export const DeliveryForecast1Schema = z.record(z.string(), z.union([z.unknown()
     ext: ExtensionObjectSchema.nullish()
 }));
 
+export const AssetContentTypeSchema = z.union([z.literal("image"), z.literal("video"), z.literal("audio"), z.literal("text"), z.literal("markdown"), z.literal("html"), z.literal("css"), z.literal("javascript"), z.literal("vast"), z.literal("daast"), z.literal("promoted_offerings"), z.literal("url"), z.literal("webhook")]);
+
 export const WCAGLevelSchema = z.union([z.literal("A"), z.literal("AA"), z.literal("AAA")]);
 
 export const ListCreativeFormatsRequestSchema = z.object({
@@ -964,11 +882,14 @@ export const FormatID3Schema = z.record(z.string(), z.union([z.unknown(), z.unde
     duration_ms: z.number().nullish()
 }));
 
-export const BrandManifestReference1Schema = z.union([BrandManifestSchema, z.string()]);
-
 export const StartTimingSchema = z.union([z.literal("asap"), z.string()]);
 
 export const AuthenticationSchemeSchema = z.union([z.literal("Bearer"), z.literal("HMAC-SHA256")]);
+
+export const BrandReference1Schema = z.object({
+    domain: z.string(),
+    brand_id: BrandIDSchema.nullish()
+});
 
 export const ReportingWebhookSchema = z.record(z.string(), z.union([z.unknown(), z.undefined()])).and(z.object({
     url: z.string(),
@@ -1045,7 +966,7 @@ export const CreativeAssetSchema = z.record(z.string(), z.union([z.unknown(), z.
 }));
 
 export const PromotedOfferingsSchema = z.record(z.string(), z.union([z.unknown(), z.undefined()])).and(z.object({
-    brand_manifest: BrandManifestReferenceSchema,
+    brand: BrandReferenceSchema,
     si_agent_url: z.string().nullish(),
     product_selectors: PromotedProductsSchema.nullish(),
     offerings: z.array(OfferingSchema).nullish(),
@@ -1750,7 +1671,7 @@ export const UpdatePropertyListRequestSchema = z.object({
     description: z.string().nullish(),
     base_properties: z.array(BasePropertySourceSchema).nullish(),
     filters: PropertyListFiltersSchema.nullish(),
-    brand_manifest: BrandManifestSchema.nullish(),
+    brand: BrandReferenceSchema.nullish(),
     webhook_url: z.string().nullish(),
     context: ContextObjectSchema.nullish(),
     ext: ExtensionObjectSchema.nullish()
@@ -1763,7 +1684,7 @@ export const PropertyListSchema = z.object({
     principal: z.string().nullish(),
     base_properties: z.array(BasePropertySourceSchema).nullish(),
     filters: PropertyListFiltersSchema.nullish(),
-    brand_manifest: BrandManifestSchema.nullish(),
+    brand: BrandReferenceSchema.nullish(),
     webhook_url: z.string().nullish(),
     cache_duration_hours: z.number().nullish(),
     created_at: z.string().nullish(),
@@ -2413,7 +2334,7 @@ export const GetAdCPCapabilitiesResponseSchema = z.object({
             preferred: z.union([z.literal("mcp"), z.literal("a2a")]).nullish()
         }),
         capabilities: SICapabilitiesSchema,
-        brand_manifest_url: z.string().nullish()
+        brand_url: z.string().nullish()
     }).nullish(),
     creative: z.object({
         supports_brief: z.boolean().nullish()
@@ -2962,7 +2883,7 @@ export const CreatePropertyListRequestSchema = z.object({
     description: z.string().nullish(),
     base_properties: z.array(BasePropertySourceSchema).nullish(),
     filters: PropertyListFiltersSchema.nullish(),
-    brand_manifest: BrandManifestSchema.nullish(),
+    brand: BrandReferenceSchema.nullish(),
     context: ContextObjectSchema.nullish(),
     ext: ExtensionObjectSchema.nullish()
 });
@@ -3058,7 +2979,7 @@ export const AdCPAsyncResponseDataSchema = z.union([GetProductsResponseSchema, G
 
 export const GetProductsRequestSchema = z.object({
     brief: z.string().nullish(),
-    brand_manifest: BrandManifestReferenceSchema.nullish(),
+    brand: BrandReferenceSchema.nullish(),
     product_selectors: PromotedProductsSchema.nullish(),
     account_id: z.string().nullish(),
     filters: ProductFiltersSchema.nullish(),
@@ -3090,7 +3011,7 @@ export const CreateMediaBuyRequestSchema = z.object({
         currency: z.string()
     }).nullish(),
     packages: z.array(PackageRequestSchema).nullish(),
-    brand_manifest: BrandManifestReference1Schema,
+    brand: BrandReference1Schema,
     po_number: z.string().nullish(),
     start_time: StartTimingSchema,
     end_time: z.string(),
@@ -3122,7 +3043,7 @@ export const BuildCreativeRequestSchema = z.object({
     message: z.string().nullish(),
     creative_manifest: CreativeManifestSchema.nullish(),
     target_format_id: FormatID1Schema,
-    brand_manifest: BrandManifestReference1Schema.nullish(),
+    brand: BrandReference1Schema.nullish(),
     creative_brief: CreativeBriefReferenceSchema.nullish(),
     context: ContextObjectSchema.nullish(),
     ext: ExtensionObjectSchema.nullish()

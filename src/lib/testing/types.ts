@@ -2,6 +2,9 @@
  * Types for AdCP Agent E2E Testing
  */
 
+import type { BrandReference } from '../types/tools.generated';
+import type { BrandManifest } from '../types/compat';
+
 // Test scenarios that can be run
 export type TestScenario =
   | 'health_check' // Just check if agent responds
@@ -54,37 +57,14 @@ export interface TestOptions {
     type: 'bearer';
     token: string;
   };
-  // Brand manifest for creative testing
-  brand_manifest?: {
-    name: string;
-    url?: string;
-    tagline?: string;
-    logos?: Array<{
-      url: string;
-      orientation?: 'square' | 'horizontal' | 'vertical' | 'stacked';
-      background?: 'dark-bg' | 'light-bg' | 'transparent-bg';
-      variant?: 'primary' | 'secondary' | 'icon' | 'wordmark' | 'full-lockup';
-      tags?: string[];
-      usage?: string;
-      width?: number;
-      height?: number;
-    }>;
-    colors?: Record<string, string>;
-    tone?: {
-      voice?: string;
-      attributes?: string[];
-      dos?: string[];
-      donts?: string[];
-    };
-    assets?: Array<{
-      asset_id: string;
-      asset_type: string;
-      url: string;
-      width?: number;
-      height?: number;
-      tags?: string[];
-    }>;
-  };
+  // Brand reference for product discovery and creative generation
+  brand?: BrandReference;
+  /**
+   * @deprecated Use brand instead. Inline brand manifests are no longer supported
+   * by the AdCP protocol. Provide a BrandReference with a domain that hosts
+   * /.well-known/brand.json instead.
+   */
+  brand_manifest?: BrandManifest;
   // For creative testing: test multiple formats programmatically
   test_all_formats?: boolean;
   // For creative testing: max formats to test when test_all_formats is true

@@ -226,8 +226,8 @@ export type {
   PackageRequest,
   CreativeAsset,
   CreativePolicy,
-  BrandManifest,
-  BrandManifestReference,
+  BrandReference,
+  BrandID,
   PromotedProducts,
   CPAPricingOption,
   EventType,
@@ -245,6 +245,11 @@ export type {
   PaginationRequest,
   PaginationResponse,
 } from './types/tools.generated';
+
+// ====== BACKWARDS COMPATIBILITY ======
+// Deprecated types from the BrandManifest -> BrandReference migration
+export type { BrandManifest, BrandManifestReference, AssetContentType } from './types/compat';
+export { brandManifestToBrandReference } from './types/compat';
 
 // ====== ZOD SCHEMAS (for runtime validation) ======
 // Re-export all Zod schemas for user validation needs

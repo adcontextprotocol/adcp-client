@@ -13,7 +13,7 @@
  */
 
 import type { TestOptions, TestStepResult, AgentProfile, TaskResult } from '../types';
-import { createTestClient, runStep, discoverAgentProfile, discoverCreativeFormats } from '../client';
+import { createTestClient, runStep, discoverAgentProfile, discoverCreativeFormats, resolveBrand } from '../client';
 
 /**
  * Test: Creative Flow (for creative agents)
@@ -58,7 +58,7 @@ export async function testCreativeFlow(
         async () =>
           client.executeTask('build_creative', {
             format_id: format.format_id,
-            brand_manifest: options.brand_manifest || getDefaultBrandManifest(),
+            brand: resolveBrand(options),
             prompt: `Create a ${format.type || 'display'} ad for an e-commerce brand promoting summer sale`,
           }) as Promise<TaskResult>
       );
@@ -254,34 +254,3 @@ function getTestAssetUrl(assetName: string): string {
   }
 }
 
-/**
- * Get default brand manifest for testing
- */
-function getDefaultBrandManifest() {
-  return {
-    name: 'E2E Test Brand',
-    url: 'https://test.example.com',
-    tagline: 'Testing the future of advertising',
-    logos: [
-      {
-        url: 'https://via.placeholder.com/200x50.png?text=Logo',
-        orientation: 'horizontal',
-        background: 'light-bg',
-        variant: 'primary',
-        width: 200,
-        height: 50,
-      },
-    ],
-    tone: {
-      voice: 'Professional and trustworthy',
-      attributes: ['innovative', 'reliable', 'customer-focused'],
-      dos: ['Use clear, direct language', 'Emphasize value proposition'],
-      donts: ['Use jargon', 'Make unsubstantiated claims'],
-    },
-    colors: {
-      primary: '#0066CC',
-      secondary: '#FFFFFF',
-      accent: '#FF6600',
-    },
-  };
-}

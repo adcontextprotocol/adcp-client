@@ -14,8 +14,10 @@
  */
 
 import type { TestOptions, TestStepResult, AgentProfile, TaskResult } from '../types';
-import { createTestClient, runStep, discoverAgentProfile, discoverAgentCapabilities } from '../client';
+import { createTestClient, runStep, discoverAgentProfile, discoverAgentCapabilities, resolveBrand } from '../client';
 import { testDiscovery } from './discovery';
+
+const DEFAULT_BRAND_REF = { domain: 'test.example.com' };
 
 /**
  * Test: Error Handling
@@ -43,10 +45,7 @@ export async function testErrorHandling(
       async () =>
         client.executeTask('create_media_buy', {
           buyer_ref: `error-test-${Date.now()}`,
-          brand_manifest: {
-            name: 'Error Test Brand',
-            url: 'https://test.example.com',
-          },
+          brand: DEFAULT_BRAND_REF,
           start_time: new Date(Date.now() + 86400000).toISOString(),
           end_time: new Date(Date.now() + 604800000).toISOString(),
           packages: [
@@ -87,7 +86,7 @@ export async function testErrorHandling(
       step.details = 'Agent accepts empty get_products request (permissive)';
     } else if (result && !result.success && result.error) {
       step.passed = true;
-      step.details = 'Agent requires brief/brand_manifest (stricter validation)';
+      step.details = 'Agent requires brief/brand (stricter validation)';
       step.response_preview = JSON.stringify({ error: result.error }, null, 2);
     } else {
       step.passed = false;
@@ -196,7 +195,7 @@ export async function testValidation(
       async () =>
         client.executeTask('create_media_buy', {
           buyer_ref: `validation-test-${Date.now()}`,
-          brand_manifest: { name: 'Validation Test', url: 'https://test.example.com' },
+          brand: DEFAULT_BRAND_REF,
           start_time: new Date(Date.now() + 86400000).toISOString(),
           end_time: new Date(Date.now() + 604800000).toISOString(),
           packages: [
@@ -232,7 +231,7 @@ export async function testValidation(
       async () =>
         client.executeTask('create_media_buy', {
           buyer_ref: `negative-budget-test-${Date.now()}`,
-          brand_manifest: { name: 'Negative Budget Test', url: 'https://test.example.com' },
+          brand: DEFAULT_BRAND_REF,
           start_time: new Date(Date.now() + 86400000).toISOString(),
           end_time: new Date(Date.now() + 604800000).toISOString(),
           packages: [
@@ -356,10 +355,7 @@ export async function testPricingEdgeCases(
     async () =>
       client.executeTask('get_products', {
         brief: 'Show all products with pricing details',
-        brand_manifest: options.brand_manifest || {
-          name: 'Pricing Test',
-          url: 'https://test.example.com',
-        },
+        brand: resolveBrand(options),
       }) as Promise<TaskResult>
   );
 
@@ -412,7 +408,7 @@ export async function testPricingEdgeCases(
       async () =>
         client.executeTask('create_media_buy', {
           buyer_ref: `auction-no-bid-${Date.now()}`,
-          brand_manifest: { name: 'Auction Test', url: 'https://test.example.com' },
+          brand: DEFAULT_BRAND_REF,
           start_time: new Date(Date.now() + 86400000).toISOString(),
           end_time: new Date(Date.now() + 604800000).toISOString(),
           packages: [
@@ -450,7 +446,7 @@ export async function testPricingEdgeCases(
       async () =>
         client.executeTask('create_media_buy', {
           buyer_ref: `under-min-spend-${Date.now()}`,
-          brand_manifest: { name: 'Min Spend Test', url: 'https://test.example.com' },
+          brand: DEFAULT_BRAND_REF,
           start_time: new Date(Date.now() + 86400000).toISOString(),
           end_time: new Date(Date.now() + 604800000).toISOString(),
           packages: [
@@ -505,7 +501,7 @@ export async function testTemporalValidation(
     async () =>
       client.executeTask('create_media_buy', {
         buyer_ref: `temporal-test-${Date.now()}`,
-        brand_manifest: { name: 'Temporal Test', url: 'https://test.example.com' },
+        brand: DEFAULT_BRAND_REF,
         start_time: new Date(Date.now() + 604800000).toISOString(), // 7 days from now
         end_time: new Date(Date.now() + 86400000).toISOString(), // 1 day from now (before start!)
         packages: [
@@ -538,7 +534,7 @@ export async function testTemporalValidation(
     async () =>
       client.executeTask('create_media_buy', {
         buyer_ref: `past-start-${Date.now()}`,
-        brand_manifest: { name: 'Past Start Test', url: 'https://test.example.com' },
+        brand: DEFAULT_BRAND_REF,
         start_time: new Date(Date.now() - 86400000).toISOString(), // Yesterday
         end_time: new Date(Date.now() + 604800000).toISOString(), // 7 days from now
         packages: [
@@ -588,7 +584,7 @@ export async function testBehaviorAnalysis(
   // Test 1: Does get_products require brand_manifest?
   if (profile.tools.includes('get_products')) {
     const { result: withoutManifest, step: step1 } = await runStep<TaskResult>(
-      'get_products without brand_manifest',
+      'get_products without brand',
       'get_products',
       async () =>
         client.executeTask('get_products', {
@@ -597,9 +593,9 @@ export async function testBehaviorAnalysis(
     );
 
     if (withoutManifest?.success && withoutManifest?.data?.products?.length) {
-      step1.details = `Returns ${withoutManifest.data.products.length} products without brand_manifest`;
+      step1.details = `Returns ${withoutManifest.data.products.length} products without brand`;
     } else if (withoutManifest && !withoutManifest.success) {
-      step1.details = 'Requires brand_manifest for product discovery';
+      step1.details = 'Requires brand for product discovery';
     }
     steps.push(step1);
 
@@ -610,10 +606,7 @@ export async function testBehaviorAnalysis(
       async () =>
         client.executeTask('get_products', {
           brief: 'Looking specifically for podcast audio advertising only',
-          brand_manifest: options.brand_manifest || {
-            name: 'Brief Filter Test',
-            url: 'https://test.example.com',
-          },
+          brand: resolveBrand(options),
         }) as Promise<TaskResult>
     );
 
@@ -623,10 +616,7 @@ export async function testBehaviorAnalysis(
       async () =>
         client.executeTask('get_products', {
           brief: 'Show all products across all channels and formats',
-          brand_manifest: options.brand_manifest || {
-            name: 'Brief Filter Test',
-            url: 'https://test.example.com',
-          },
+          brand: resolveBrand(options),
         }) as Promise<TaskResult>
     );
 

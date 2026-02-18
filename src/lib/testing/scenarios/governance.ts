@@ -9,7 +9,7 @@
  */
 
 import type { TestOptions, TestStepResult, AgentProfile, TaskResult } from '../types';
-import { createTestClient, runStep, discoverAgentProfile } from '../client';
+import { createTestClient, runStep, discoverAgentProfile, resolveBrand } from '../client';
 import { GOVERNANCE_TOOLS } from '../../utils/capabilities';
 
 // Property list tools
@@ -93,10 +93,7 @@ export async function testGovernancePropertyLists(
               min_score: 0.7,
             },
           },
-          brand_manifest: options.brand_manifest || {
-            name: 'E2E Test Brand',
-            url: 'https://test.example.com',
-          },
+          brand: resolveBrand(options),
         }) as Promise<TaskResult>
     );
 

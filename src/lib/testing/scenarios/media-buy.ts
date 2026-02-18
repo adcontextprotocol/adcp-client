@@ -9,7 +9,7 @@
  */
 
 import type { TestOptions, TestStepResult, AgentProfile, TaskResult } from '../types';
-import { createTestClient, runStep, discoverAgentProfile, discoverAgentCapabilities } from '../client';
+import { createTestClient, runStep, discoverAgentProfile, discoverAgentCapabilities, resolveBrand } from '../client';
 import { testDiscovery } from './discovery';
 
 /**
@@ -92,10 +92,7 @@ export function buildCreateMediaBuyRequest(
 
   return {
     buyer_ref: `e2e-test-${Date.now()}`,
-    brand_manifest: options.brand_manifest || {
-      name: 'E2E Test Brand',
-      url: 'https://test.example.com',
-    },
+    brand: resolveBrand(options),
     start_time: startTime.toISOString(),
     end_time: endTime.toISOString(),
     packages: [packageRequest],
@@ -135,10 +132,7 @@ export async function testCreateMediaBuy(
     async () =>
       client.executeTask('get_products', {
         brief: options.brief || 'Looking for display advertising products',
-        brand_manifest: options.brand_manifest || {
-          name: 'E2E Test Brand',
-          url: 'https://test.example.com',
-        },
+        brand: resolveBrand(options),
       }) as Promise<TaskResult>
   );
 
@@ -465,10 +459,7 @@ export async function testCreativeInline(
     async () =>
       client.executeTask('get_products', {
         brief: options.brief || 'Looking for display advertising products',
-        brand_manifest: options.brand_manifest || {
-          name: 'E2E Test Brand',
-          url: 'https://test.example.com',
-        },
+        brand: resolveBrand(options),
       }) as Promise<TaskResult>
   );
 
