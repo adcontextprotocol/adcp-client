@@ -653,10 +653,7 @@ export async function testSyncAudiences(
           {
             audience_id: testAudienceId,
             name: 'AdCP E2E Test Audience',
-            add: [
-              { hashed_email: TEST_HASHED_EMAIL },
-              { hashed_phone: TEST_HASHED_PHONE },
-            ],
+            add: [{ hashed_email: TEST_HASHED_EMAIL }, { hashed_phone: TEST_HASHED_PHONE }],
           },
         ],
       }) as Promise<TaskResult>

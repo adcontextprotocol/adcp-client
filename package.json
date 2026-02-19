@@ -158,7 +158,9 @@
     "js-yaml": "^4.1.1",
     "@changesets/parse": {
       "js-yaml": "^3.14.1"
-    }
+    },
+    "minimatch": "^10.2.1",
+    "qs": "^6.14.0"
   },
   "adcp_version": "latest"
 }

@@ -9,7 +9,13 @@
  * Publishers should extend or replace this with their recommendation logic.
  */
 
-import type { GetProductsRequest, Proposal, Product, ProductAllocation, BrandReference } from '../types/tools.generated';
+import type {
+  GetProductsRequest,
+  Proposal,
+  Product,
+  ProductAllocation,
+  BrandReference,
+} from '../types/tools.generated';
 
 /**
  * Context for generating proposals
