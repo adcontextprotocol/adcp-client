@@ -253,4 +253,3 @@ function getTestAssetUrl(assetName: string): string {
       return 'https://via.placeholder.com/300x250.png?text=Test+Asset';
   }
 }
-
