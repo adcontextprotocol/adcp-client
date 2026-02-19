@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas vlatest
-// Generated at: 2026-02-16T20:55:54.088Z
+// Generated at: 2026-02-19T11:49:54.677Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -397,6 +397,18 @@ export interface TargetingOverlay {
    * AXE segment ID to exclude from targeting
    */
   axe_exclude_segment?: string;
+  /**
+   * Restrict delivery to members of these first-party CRM audiences. Only users present in the uploaded lists are eligible. References audience_id values from sync_audiences on the same seller account — audience IDs are not portable across sellers. Not for lookalike expansion — express that intent in the campaign brief. Seller must declare support in get_adcp_capabilities.
+   *
+   * @minItems 1
+   */
+  audience_include?: [string, ...string[]];
+  /**
+   * Suppress delivery to members of these first-party CRM audiences. Matched users are excluded regardless of other targeting. References audience_id values from sync_audiences on the same seller account — audience IDs are not portable across sellers. Seller must declare support in get_adcp_capabilities.
+   *
+   * @minItems 1
+   */
+  audience_exclude?: [string, ...string[]];
   frequency_cap?: FrequencyCap;
   property_list?: PropertyListReference;
   /**
@@ -747,26 +759,9 @@ export type DAASTTrackingEvent =
  */
 export type DAASTVersion1 = '1.0' | '1.1';
 /**
- * Brand information manifest containing assets, themes, and guidelines. Can be provided inline or as a URL reference to a hosted manifest.
+ * Brand identifier within the house portfolio. Optional for single-brand domains.
  */
-export type BrandManifestReference = BrandManifest | string;
-/**
- * Type of asset. Note: Brand manifests typically contain basic media assets (image, video, audio, text). Code assets (html, javascript, css) and ad markup (vast, daast) are usually not part of brand asset libraries.
- */
-export type AssetContentType =
-  | 'image'
-  | 'video'
-  | 'audio'
-  | 'text'
-  | 'markdown'
-  | 'html'
-  | 'css'
-  | 'javascript'
-  | 'vast'
-  | 'daast'
-  | 'promoted_offerings'
-  | 'url'
-  | 'webhook';
+export type BrandID = string;
 /**
  * Type of URL asset: 'clickthrough' for user click destination (landing page), 'tracker_pixel' for impression/event tracking via HTTP request (fires GET, expects pixel/204 response), 'tracker_script' for measurement SDKs that must load as <script> tag (OMID verification, native event trackers using method:2)
  */
@@ -1141,10 +1136,10 @@ export interface JavaScriptAsset {
   [k: string]: unknown | undefined;
 }
 /**
- * Complete offering specification combining brand manifest, product selectors, and optional SI agent endpoint. Provides all context needed for creative generation and/or conversational experiences about what is being promoted. When si_agent_url is present, hosts can connect users to conversational experiences about any of the offerings.
+ * Complete offering specification combining brand reference, product selectors, and optional SI agent endpoint. Provides all context needed for creative generation and/or conversational experiences about what is being promoted. When si_agent_url is present, hosts can connect users to conversational experiences about any of the offerings.
  */
 export interface PromotedOfferings {
-  brand_manifest: BrandManifestReference;
+  brand: BrandReference;
   /**
    * MCP endpoint URL for the brand's SI agent. When present, hosts can connect users to conversational experiences about any of the offerings. The agent handles si_get_offering lookups and full conversations.
    */
@@ -1155,7 +1150,7 @@ export interface PromotedOfferings {
    */
   offerings?: Offering[];
   /**
-   * Selectors to choose specific assets from the brand manifest
+   * Selectors to choose specific assets from the brand's asset library
    */
   asset_selectors?: {
     /**
@@ -1187,320 +1182,17 @@ export interface PromotedOfferings {
   [k: string]: unknown | undefined;
 }
 /**
- * Inline brand manifest object
+ * Brand reference. Resolved to full brand identity (logos, colors, tone, assets) at execution time for creative generation.
  */
-export interface BrandManifest {
+export interface BrandReference {
   /**
-   * Primary brand URL for context and asset discovery. Creative agents can infer brand information from this URL.
+   * Domain where /.well-known/brand.json is hosted, or the brand's operating domain
    */
-  url?: string;
-  /**
-   * URL to the brand's privacy policy. Used for consumer consent flows when personal data may be shared with the advertiser. AI platforms can use this to present explicit privacy choices to users before data handoff.
-   */
-  privacy_policy_url?: string;
-  /**
-   * Brand or business name
-   */
-  name: string;
-  /**
-   * Brand logo assets with structured fields for orientation, background compatibility, and variant type. Use the orientation, background, and variant enum fields for reliable filtering by creative agents.
-   */
-  logos?: {
-    /**
-     * URL to the logo asset
-     */
-    url: string;
-    /**
-     * Logo aspect ratio orientation. square: ~1:1, horizontal: wide, vertical: tall, stacked: vertically arranged elements
-     */
-    orientation?: 'square' | 'horizontal' | 'vertical' | 'stacked';
-    /**
-     * Background compatibility. dark-bg: use on dark backgrounds, light-bg: use on light backgrounds, transparent-bg: has transparent background
-     */
-    background?: 'dark-bg' | 'light-bg' | 'transparent-bg';
-    /**
-     * Logo variant type. primary: main logo, secondary: alternative, icon: symbol only, wordmark: text only, full-lockup: complete logo
-     */
-    variant?: 'primary' | 'secondary' | 'icon' | 'wordmark' | 'full-lockup';
-    /**
-     * Additional semantic tags for custom categorization beyond the standard orientation, background, and variant fields.
-     */
-    tags?: string[];
-    /**
-     * Human-readable description of when to use this logo variant (e.g., 'Primary logo for use on light backgrounds', 'Icon-only variant for small formats')
-     */
-    usage?: string;
-    /**
-     * Logo width in pixels
-     */
-    width?: number;
-    /**
-     * Logo height in pixels
-     */
-    height?: number;
-  }[];
-  /**
-   * Brand color palette. Each role accepts a single hex color or an array of hex colors for brands with multiple values per role.
-   */
-  colors?: {
-    /**
-     * Primary brand color(s)
-     */
-    primary?: string | [string, ...string[]];
-    /**
-     * Secondary brand color(s)
-     */
-    secondary?: string | [string, ...string[]];
-    /**
-     * Accent color(s)
-     */
-    accent?: string | [string, ...string[]];
-    /**
-     * Background color(s)
-     */
-    background?: string | [string, ...string[]];
-    /**
-     * Text color(s)
-     */
-    text?: string | [string, ...string[]];
-  };
-  /**
-   * Brand typography guidelines
-   */
-  fonts?: {
-    /**
-     * Primary font family name
-     */
-    primary?: string;
-    /**
-     * Secondary font family name
-     */
-    secondary?: string;
-    /**
-     * URLs to web font files if using custom fonts
-     */
-    font_urls?: string[];
-  };
-  /**
-   * Brand voice and messaging tone guidelines for creative agents.
-   */
-  tone?:
-    | string
-    | {
-        /**
-         * High-level voice descriptor (e.g., 'warm and inviting', 'professional and trustworthy')
-         */
-        voice?: string;
-        /**
-         * Personality traits that characterize the brand voice
-         */
-        attributes?: string[];
-        /**
-         * Specific guidance for copy generation - what TO do
-         */
-        dos?: string[];
-        /**
-         * Guardrails to avoid brand violations - what NOT to do
-         */
-        donts?: string[];
-      };
-  /**
-   * Brand voice configuration for audio/conversational experiences
-   */
-  voice?: {
-    /**
-     * TTS provider (e.g., 'elevenlabs', 'openai', 'amazon_polly')
-     */
-    provider?: string;
-    /**
-     * Provider-specific voice identifier
-     */
-    voice_id?: string;
-    /**
-     * Provider-specific voice settings (speed, pitch, etc.)
-     */
-    settings?: {
-      [k: string]: unknown | undefined;
-    };
-  };
-  /**
-   * Brand avatar configuration for visual conversational experiences
-   */
-  avatar?: {
-    /**
-     * Avatar provider (e.g., 'd-id', 'heygen', 'synthesia')
-     */
-    provider?: string;
-    /**
-     * Provider-specific avatar identifier
-     */
-    avatar_id?: string;
-    /**
-     * Provider-specific avatar settings
-     */
-    settings?: {
-      [k: string]: unknown | undefined;
-    };
-  };
-  /**
-   * Brand tagline or slogan
-   */
-  tagline?: string;
-  /**
-   * Brand asset library with explicit assets and tags. Assets are referenced inline with URLs pointing to CDN-hosted files.
-   */
-  assets?: {
-    /**
-     * Unique identifier for this asset
-     */
-    asset_id: string;
-    asset_type: AssetContentType;
-    /**
-     * URL to CDN-hosted asset file
-     */
-    url: string;
-    /**
-     * Tags for asset discovery (e.g., 'holiday', 'lifestyle', 'product_shot')
-     */
-    tags?: string[];
-    /**
-     * Human-readable asset name
-     */
-    name?: string;
-    /**
-     * Asset description or usage notes
-     */
-    description?: string;
-    /**
-     * Image/video width in pixels
-     */
-    width?: number;
-    /**
-     * Image/video height in pixels
-     */
-    height?: number;
-    /**
-     * Video/audio duration in seconds
-     */
-    duration_seconds?: number;
-    /**
-     * File size in bytes
-     */
-    file_size_bytes?: number;
-    /**
-     * File format (e.g., 'jpg', 'mp4', 'mp3')
-     */
-    format?: string;
-    /**
-     * Additional asset-specific metadata
-     */
-    metadata?: {
-      [k: string]: unknown | undefined;
-    };
-    [k: string]: unknown | undefined;
-  }[];
-  /**
-   * Product catalog information for e-commerce advertisers. Enables SKU-level creative generation and product selection.
-   */
-  product_catalog?: {
-    /**
-     * URL to product catalog feed
-     */
-    feed_url: string;
-    /**
-     * Format of the product feed. Use 'openai_product_feed' for feeds conforming to the OpenAI Commerce Product Feed specification.
-     */
-    feed_format?: 'google_merchant_center' | 'facebook_catalog' | 'openai_product_feed' | 'custom';
-    /**
-     * Product categories available in the catalog (for filtering)
-     */
-    categories?: string[];
-    /**
-     * When the product catalog was last updated
-     */
-    last_updated?: string;
-    /**
-     * How frequently the product catalog is updated
-     */
-    update_frequency?: 'realtime' | 'hourly' | 'daily' | 'weekly';
-    /**
-     * Agentic checkout endpoint configuration. Enables AI agents to complete purchases on behalf of users through a structured checkout API.
-     */
-    agentic_checkout?: {
-      /**
-       * Base URL for checkout session API (e.g., https://merchant.com/api/checkout_sessions)
-       */
-      endpoint: string;
-      /**
-       * Checkout API specification implemented by the endpoint
-       */
-      spec: 'openai_agentic_checkout_v1';
-      /**
-       * Payment providers supported by this checkout endpoint
-       */
-      supported_payment_providers?: string[];
-    };
-    [k: string]: unknown | undefined;
-  };
-  /**
-   * Legal disclaimers or required text that must appear in creatives
-   */
-  disclaimers?: {
-    /**
-     * Disclaimer text
-     */
-    text: string;
-    /**
-     * When this disclaimer applies (e.g., 'financial_products', 'health_claims', 'all')
-     */
-    context?: string;
-    /**
-     * Whether this disclaimer must appear
-     */
-    required?: boolean;
-  }[];
-  /**
-   * Industry or vertical (e.g., 'retail', 'automotive', 'finance', 'healthcare')
-   */
-  industry?: string;
-  /**
-   * Primary target audience description
-   */
-  target_audience?: string;
-  /**
-   * Brand contact information
-   */
-  contact?: {
-    /**
-     * Contact email
-     */
-    email?: string;
-    /**
-     * Contact phone number
-     */
-    phone?: string;
-  };
-  /**
-   * Additional brand metadata
-   */
-  metadata?: {
-    /**
-     * When this brand manifest was created
-     */
-    created_date?: string;
-    /**
-     * When this brand manifest was last updated
-     */
-    updated_date?: string;
-    /**
-     * Brand card version number
-     */
-    version?: string;
-  };
-  [k: string]: unknown | undefined;
+  domain: string;
+  brand_id?: BrandID;
 }
 /**
- * Selectors to choose which products/offerings from the brand manifest product catalog to promote
+ * Selectors to choose which products/offerings from the brand's product catalog to promote
  */
 export interface PromotedProducts {
   /**
@@ -1508,19 +1200,19 @@ export interface PromotedProducts {
    */
   manifest_gtins?: string[];
   /**
-   * Direct product SKU references from the brand manifest product catalog
+   * Direct product SKU references from the brand's product catalog
    */
   manifest_skus?: string[];
   /**
-   * Select products by tags from the brand manifest product catalog (e.g., 'organic', 'sauces', 'holiday')
+   * Select products by tags from the brand's product catalog (e.g., 'organic', 'sauces', 'holiday')
    */
   manifest_tags?: string[];
   /**
-   * Select products from a specific category in the brand manifest product catalog (e.g., 'beverages/soft-drinks', 'food/sauces')
+   * Select products from a specific category in the brand's product catalog (e.g., 'beverages/soft-drinks', 'food/sauces')
    */
   manifest_category?: string;
   /**
-   * Natural language query to select products from the brand manifest (e.g., 'all Kraft Heinz pasta sauces', 'organic products under $20')
+   * Natural language query to select products from the brand's catalog (e.g., 'all pasta sauces', 'organic products under $20')
    */
   manifest_query?: string;
   [k: string]: unknown | undefined;
@@ -1905,7 +1597,7 @@ export interface Product {
     platform_managed?: boolean;
   };
   /**
-   * When the buyer provides a brand_manifest with product_catalog, indicates which of the buyer's catalog items are eligible for this product. Enables buyers to make informed product_selector choices in create_media_buy. Only present for products where catalog matching is relevant (e.g. sponsored product listings on retail media). Sellers SHOULD include at least one of matched_gtins or matched_skus.
+   * When the buyer provides a brand with product_catalog, indicates which of the buyer's catalog items are eligible for this product. Enables buyers to make informed product_selector choices in create_media_buy. Only present for products where catalog matching is relevant (e.g. sponsored product listings on retail media). Sellers SHOULD include at least one of matched_gtins or matched_skus.
    */
   catalog_match?: {
     /**
@@ -2801,6 +2493,7 @@ export type TaskType =
   | 'sync_accounts'
   | 'get_creative_delivery'
   | 'sync_event_sources'
+  | 'sync_audiences'
   | 'log_event';
 /**
  * AdCP domain this task belongs to. Helps classify the operation type at a high level.

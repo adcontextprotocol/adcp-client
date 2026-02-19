@@ -9,7 +9,7 @@
  */
 
 import type { TestOptions, TestStepResult, AgentProfile, TaskResult } from '../types';
-import { createTestClient, runStep, discoverAgentProfile, discoverAgentCapabilities } from '../client';
+import { createTestClient, runStep, discoverAgentProfile, discoverAgentCapabilities, resolveBrand } from '../client';
 import { testDiscovery } from './discovery';
 
 /**
@@ -92,10 +92,7 @@ export function buildCreateMediaBuyRequest(
 
   return {
     buyer_ref: `e2e-test-${Date.now()}`,
-    brand_manifest: options.brand_manifest || {
-      name: 'E2E Test Brand',
-      url: 'https://test.example.com',
-    },
+    brand: resolveBrand(options),
     start_time: startTime.toISOString(),
     end_time: endTime.toISOString(),
     packages: [packageRequest],
@@ -135,10 +132,7 @@ export async function testCreateMediaBuy(
     async () =>
       client.executeTask('get_products', {
         brief: options.brief || 'Looking for display advertising products',
-        brand_manifest: options.brand_manifest || {
-          name: 'E2E Test Brand',
-          url: 'https://test.example.com',
-        },
+        brand: resolveBrand(options),
       }) as Promise<TaskResult>
   );
 
@@ -465,10 +459,7 @@ export async function testCreativeInline(
     async () =>
       client.executeTask('get_products', {
         brief: options.brief || 'Looking for display advertising products',
-        brand_manifest: options.brand_manifest || {
-          name: 'E2E Test Brand',
-          url: 'https://test.example.com',
-        },
+        brand: resolveBrand(options),
       }) as Promise<TaskResult>
   );
 
@@ -553,6 +544,182 @@ export async function testCreativeInline(
     createStep.error = createResult.error || 'create_media_buy with inline creatives failed';
   }
   steps.push(createStep);
+
+  return { steps, profile };
+}
+
+// SHA-256 lookalike placeholder for test email/phone hashes (not a real hash)
+const TEST_HASHED_EMAIL = 'a' + '0'.repeat(63);
+const TEST_HASHED_PHONE = 'b' + '0'.repeat(63);
+
+/**
+ * Test: Audience Sync
+ * Tests sync_audiences: discovery -> create audience -> delete audience
+ */
+export async function testSyncAudiences(
+  agentUrl: string,
+  options: TestOptions
+): Promise<{ steps: TestStepResult[]; profile?: AgentProfile }> {
+  const steps: TestStepResult[] = [];
+  const client = createTestClient(agentUrl, options.protocol || 'mcp', options);
+
+  // Discover agent profile
+  const { profile, step: profileStep } = await discoverAgentProfile(client);
+  steps.push(profileStep);
+
+  if (!profileStep.passed) {
+    return { steps, profile };
+  }
+
+  if (!profile.tools.includes('sync_audiences')) {
+    steps.push({
+      step: 'Sync audiences',
+      task: 'sync_audiences',
+      passed: false,
+      duration_ms: 0,
+      error: 'Agent does not support sync_audiences',
+    });
+    return { steps, profile };
+  }
+
+  // Resolve account_id: use option, or discover via list_accounts
+  let accountId = options.audience_account_id;
+
+  if (!accountId && profile.tools.includes('list_accounts')) {
+    const { result: accountsResult } = await runStep<TaskResult>(
+      'Discover accounts for audience sync',
+      'list_accounts',
+      async () => client.executeTask('list_accounts', {}) as Promise<TaskResult>
+    );
+
+    if (accountsResult?.success && accountsResult?.data) {
+      const accounts = (accountsResult.data as any).accounts ?? [];
+      accountId = accounts[0]?.account_id;
+    }
+  }
+
+  if (!accountId) {
+    steps.push({
+      step: 'Sync audiences',
+      task: 'sync_audiences',
+      passed: false,
+      duration_ms: 0,
+      error: 'No account_id available. Provide audience_account_id in options or ensure list_accounts is supported.',
+    });
+    return { steps, profile };
+  }
+
+  // Step 1: Discovery call — list existing audiences without modification
+  const { result: discoveryResult, step: discoveryStep } = await runStep<TaskResult>(
+    'Discover existing audiences (discovery-only)',
+    'sync_audiences',
+    async () =>
+      client.executeTask('sync_audiences', {
+        account_id: accountId,
+      }) as Promise<TaskResult>
+  );
+
+  if (discoveryResult?.success && discoveryResult?.data) {
+    const audiences = (discoveryResult.data as any).audiences ?? [];
+    discoveryStep.details = `Found ${audiences.length} existing audience(s)`;
+    discoveryStep.response_preview = JSON.stringify(
+      {
+        existing_audiences: audiences.length,
+        audience_ids: audiences.map((a: any) => a.audience_id).slice(0, 5),
+      },
+      null,
+      2
+    );
+  } else if (discoveryResult && !discoveryResult.success) {
+    discoveryStep.passed = false;
+    discoveryStep.error = discoveryResult.error || 'sync_audiences discovery call failed';
+  }
+  steps.push(discoveryStep);
+
+  if (!discoveryResult?.success) {
+    return { steps, profile };
+  }
+
+  // Step 2: Create a test audience
+  const testAudienceId = `adcp-test-audience-${Date.now()}`;
+
+  const { result: createResult, step: createStep } = await runStep<TaskResult>(
+    'Create test audience',
+    'sync_audiences',
+    async () =>
+      client.executeTask('sync_audiences', {
+        account_id: accountId,
+        audiences: [
+          {
+            audience_id: testAudienceId,
+            name: 'AdCP E2E Test Audience',
+            add: [
+              { hashed_email: TEST_HASHED_EMAIL },
+              { hashed_phone: TEST_HASHED_PHONE },
+            ],
+          },
+        ],
+      }) as Promise<TaskResult>
+  );
+
+  if (createResult?.success && createResult?.data) {
+    const audiences = (createResult.data as any).audiences ?? [];
+    const testAudience = audiences.find((a: any) => a.audience_id === testAudienceId);
+    createStep.details = `Created audience "${testAudienceId}", action: ${testAudience?.action}, status: ${testAudience?.status ?? 'n/a'}`;
+    createStep.created_id = testAudienceId;
+    createStep.response_preview = JSON.stringify(
+      {
+        audience_id: testAudience?.audience_id,
+        action: testAudience?.action,
+        status: testAudience?.status,
+        uploaded_count: testAudience?.uploaded_count,
+      },
+      null,
+      2
+    );
+  } else if (createResult && !createResult.success) {
+    createStep.passed = false;
+    createStep.error = createResult.error || 'sync_audiences create call failed';
+  }
+  steps.push(createStep);
+
+  if (!createResult?.success) {
+    return { steps, profile };
+  }
+
+  // Step 3: Delete the test audience
+  const { result: deleteResult, step: deleteStep } = await runStep<TaskResult>(
+    'Delete test audience',
+    'sync_audiences',
+    async () =>
+      client.executeTask('sync_audiences', {
+        account_id: accountId,
+        audiences: [
+          {
+            audience_id: testAudienceId,
+            delete: true,
+          },
+        ],
+      }) as Promise<TaskResult>
+  );
+
+  if (deleteResult?.success && deleteResult?.data) {
+    const audiences = (deleteResult.data as any).audiences ?? [];
+    const deleted = audiences.find((a: any) => a.audience_id === testAudienceId);
+    deleteStep.details = `Deleted audience "${testAudienceId}", action: ${deleted?.action}`;
+    deleteStep.response_preview = JSON.stringify(
+      {
+        audience_id: deleted?.audience_id,
+        action: deleted?.action,
+      },
+      null,
+      2
+    );
+  } else if (deleteResult && !deleteResult.success) {
+    deleteStep.passed = false;
+    deleteStep.error = deleteResult.error || 'sync_audiences delete call failed';
+  }
+  steps.push(deleteStep);
 
   return { steps, profile };
 }

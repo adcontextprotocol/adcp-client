@@ -91,7 +91,7 @@ describe('SingleAgentClient Request Validation', () => {
           await agent.createMediaBuy({
             buyer_ref: 'buyer123',
             packages: [],
-            brand_manifest: 'https://example.com/brand',
+            brand: { domain: 'example.com' },
             start_time: 'immediate',
             end_time: '2025-12-31T23:59:59Z',
             invalid_field: 'should fail', // This extra field should trigger strict validation
@@ -201,7 +201,7 @@ describe('SingleAgentClient Request Validation', () => {
                 pricing_option_id: 'cpm-fixed',
               },
             ],
-            brand_manifest: 'https://example.com/brand',
+            brand: { domain: 'example.com' },
             start_time: 'asap',
             end_time: '2025-12-31T23:59:59Z',
           });
@@ -241,7 +241,7 @@ describe('SingleAgentClient Request Validation', () => {
                 pricing_option_id: 'cpm-fixed',
               },
             ],
-            brand_manifest: 'https://example.com/brand',
+            brand: { domain: 'example.com' },
             start_time: 'asap',
             end_time: '2025-12-31T23:59:59Z',
           });
@@ -328,7 +328,7 @@ describe('SingleAgentClient Request Validation', () => {
             buyer_ref: 'buyer123',
             account_id: 'test-account',
             packages: [],
-            brand_manifest: 'https://example.com/brand',
+            brand: { domain: 'example.com' },
             start_time: 'immediate',
             end_time: '2025-12-31T23:59:59Z',
             context: {

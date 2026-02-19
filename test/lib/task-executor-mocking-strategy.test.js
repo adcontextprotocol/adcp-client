@@ -109,9 +109,14 @@ describe('TaskExecutor Mocking Strategies', { skip: process.env.CI ? 'Slow tests
         processWebhook: mock.fn(),
       };
 
+      let pollCount = 0;
       ProtocolClient.callTool = mock.fn(async (agent, taskName, params) => {
         if (taskName === 'tasks/get') {
-          // Always return working status (webhook never comes)
+          pollCount++;
+          // Return working a few times then complete to avoid infinite loop
+          if (pollCount > 3) {
+            return { task: { status: 'completed', result: { data: 'completed after polls' } } };
+          }
           return { task: { status: 'working' } };
         } else {
           return { status: 'submitted' };
@@ -126,14 +131,10 @@ describe('TaskExecutor Mocking Strategies', { skip: process.env.CI ? 'Slow tests
 
       assert.strictEqual(result.status, 'submitted');
 
-      // Simulate polling with timeout
-      const startTime = Date.now();
-      try {
-        await result.submitted.waitForCompletion(50); // 50ms poll interval
-      } catch (error) {
-        // Should eventually timeout or continue polling indefinitely
-        // In real implementation, you'd have a max poll duration
-      }
+      // Poll until completion
+      const finalResult = await result.submitted.waitForCompletion(20); // 20ms poll interval
+      assert(pollCount > 3, `Should have polled multiple times, got ${pollCount}`);
+      assert.strictEqual(finalResult.success, true);
     });
 
     test('should mock webhook failure scenarios', async () => {

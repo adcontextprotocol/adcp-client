@@ -162,26 +162,26 @@ describe('TaskExecutor Error Scenarios', { skip: process.env.CI ? 'Slow tests - 
         return 'slow-response';
       });
 
-      ProtocolClient.callTool = mock.fn(async () => ({
-        status: ADCP_STATUS.INPUT_REQUIRED,
-        question: 'This handler will be slow',
-      }));
+      // First call returns input-required, second call (continue_task) returns completed
+      ProtocolClient.callTool = mock.fn(async (agent, taskName) => {
+        if (taskName === 'continue_task') {
+          return { status: ADCP_STATUS.COMPLETED, result: { message: 'task completed after slow handler' } };
+        }
+        return {
+          status: ADCP_STATUS.INPUT_REQUIRED,
+          question: 'This handler will be slow',
+        };
+      });
 
       const executor = new TaskExecutor({
         handlerTimeout: 100, // Very short handler timeout (if implemented)
+        strictSchemaValidation: false,
       });
 
-      // Note: This test depends on handler timeout being implemented
-      // If not implemented, the handler will complete normally
-      try {
-        const result = await executor.executeTask(mockAgent, 'slowHandlerTask', {}, slowHandler);
+      // Handler runs, provides input, and task completes
+      const result = await executor.executeTask(mockAgent, 'slowHandlerTask', {}, slowHandler);
 
-        // If no handler timeout is implemented, this will succeed
-        console.log('Handler timeout not implemented - test passed with slow handler');
-      } catch (error) {
-        // If handler timeout is implemented, should throw timeout error
-        assert(error.message.includes('timeout') || error.message.includes('slow'));
-      }
+      assert.strictEqual(slowHandler.mock.callCount(), 1, 'Handler should have been called once');
     });
   });
 
