@@ -26,6 +26,8 @@ import type {
   SyncEventSourcesResponse,
   LogEventRequest,
   LogEventResponse,
+  SyncAudiencesRequest,
+  SyncAudiencesResponse,
   BuildCreativeRequest,
   BuildCreativeResponse,
   PreviewCreativeRequest,
@@ -183,6 +185,13 @@ export class Agent {
    */
   async logEvent(params: LogEventRequest): Promise<LogEventResponse> {
     return this.callTool<LogEventResponse>('log_event', params);
+  }
+
+  /**
+   * Official AdCP sync_audiences tool schema
+   */
+  async syncAudiences(params: SyncAudiencesRequest): Promise<SyncAudiencesResponse> {
+    return this.callTool<SyncAudiencesResponse>('sync_audiences', params);
   }
 
   /**
@@ -424,6 +433,13 @@ export class AgentCollection {
    */
   async logEvent(params: LogEventRequest): Promise<LogEventResponse[]> {
     return this.callToolOnAll<LogEventResponse>('log_event', params);
+  }
+
+  /**
+   * Official AdCP sync_audiences tool schema (across multiple agents)
+   */
+  async syncAudiences(params: SyncAudiencesRequest): Promise<SyncAudiencesResponse[]> {
+    return this.callToolOnAll<SyncAudiencesResponse>('sync_audiences', params);
   }
 
   /**

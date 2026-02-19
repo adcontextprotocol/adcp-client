@@ -28,6 +28,8 @@ export interface MediaBuyFeatures {
   contentStandards?: boolean;
   /** Agent supports conversion event tracking (sync_event_sources, log_event) */
   conversionTracking?: boolean;
+  /** Agent supports first-party CRM audience management (sync_audiences) */
+  audienceManagement?: boolean;
 }
 
 /**
@@ -90,6 +92,7 @@ export const MEDIA_BUY_TOOLS = [
   'list_creatives',
   'get_media_buy_delivery',
   'provide_performance_feedback',
+  'sync_audiences',
 ] as const;
 
 export const SIGNALS_TOOLS = ['get_signals', 'activate_signal'] as const;
@@ -171,6 +174,8 @@ export function buildSyntheticCapabilities(tools: ToolInfo[]): AdcpCapabilities 
     contentStandards: false,
     // Conversion tracking if event tracking tools are available
     conversionTracking: EVENT_TRACKING_TOOLS.some(t => toolNames.has(t)),
+    // Audience management if sync_audiences is available
+    audienceManagement: toolNames.has('sync_audiences'),
   };
 
   return {
@@ -197,6 +202,7 @@ export function parseCapabilitiesResponse(response: any): AdcpCapabilities {
     propertyListFiltering: response.media_buy?.features?.property_list_filtering ?? false,
     contentStandards: response.media_buy?.features?.content_standards ?? false,
     conversionTracking: response.media_buy?.features?.conversion_tracking ?? false,
+    audienceManagement: response.media_buy?.features?.audience_management ?? false,
   };
 
   return {

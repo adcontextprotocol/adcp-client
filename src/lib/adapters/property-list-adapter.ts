@@ -145,7 +145,7 @@ export class PropertyListAdapter implements IPropertyListAdapter {
       description: request.description,
       base_properties: request.base_properties,
       filters: request.filters,
-      brand_manifest: request.brand_manifest,
+      brand: request.brand,
       created_at: now,
       updated_at: now,
       property_count: 0,
@@ -180,7 +180,7 @@ export class PropertyListAdapter implements IPropertyListAdapter {
       description: request.description ?? existing.description,
       base_properties: request.base_properties ?? existing.base_properties,
       filters: request.filters ?? existing.filters,
-      brand_manifest: request.brand_manifest ?? existing.brand_manifest,
+      brand: request.brand ?? existing.brand,
       updated_at: new Date().toISOString(),
     };
 

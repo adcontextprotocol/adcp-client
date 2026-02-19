@@ -16,6 +16,7 @@ export {
   testFullSalesFlow,
   testCreativeSync,
   testCreativeInline,
+  testSyncAudiences,
   selectProduct,
   selectPricingOption,
   buildCreateMediaBuyRequest,

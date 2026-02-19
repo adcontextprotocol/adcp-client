@@ -30,11 +30,15 @@ export type TestScenario =
   | 'si_session_lifecycle' // Full SI session: initiate -> messages -> terminate
   | 'si_availability' // Check SI offering availability
   // v3 Capability discovery
-  | 'capability_discovery'; // Verify get_adcp_capabilities response
+  | 'capability_discovery' // Verify get_adcp_capabilities response
+  // Audience management
+  | 'sync_audiences'; // Test CRM audience sync flow
 
 export interface TestOptions {
   // Protocol to use for testing (default: 'mcp')
   protocol?: 'mcp' | 'a2a';
+  // Brand reference for product discovery (preferred over brand_manifest)
+  brand?: { domain: string; brand_id?: string };
   // Custom brief for product discovery
   brief?: string;
   // Budget for test media buy (default: 1000)
@@ -99,6 +103,8 @@ export interface TestOptions {
   si_offering_id?: string;
   // For SI testing: initial conversation context
   si_context?: string;
+  // For audience testing: account ID to use with sync_audiences
+  audience_account_id?: string;
 }
 
 export interface TestStepResult {

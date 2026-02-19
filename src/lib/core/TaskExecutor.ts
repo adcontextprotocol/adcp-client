@@ -1186,11 +1186,12 @@ export class TaskExecutor {
         timestamp: new Date().toISOString(),
       });
 
-      // If task is finished, remove from active tasks after a delay
+      // If task is finished, remove from active tasks after a delay.
+      // unref() ensures this timer doesn't prevent the process from exiting.
       if (['completed', 'failed', 'rejected', 'canceled'].includes(status)) {
         setTimeout(() => {
           this.activeTasks.delete(taskId);
-        }, 30000); // Keep for 30 seconds for final status checks
+        }, 30000).unref(); // Keep for 30 seconds for final status checks
       }
     }
   }

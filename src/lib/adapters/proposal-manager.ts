@@ -9,7 +9,13 @@
  * Publishers should extend or replace this with their recommendation logic.
  */
 
-import type { GetProductsRequest, Proposal, Product, ProductAllocation, BrandManifest } from '../types/tools.generated';
+import type {
+  GetProductsRequest,
+  Proposal,
+  Product,
+  ProductAllocation,
+  BrandReference,
+} from '../types/tools.generated';
 
 /**
  * Context for generating proposals
@@ -19,8 +25,8 @@ export interface ProposalContext {
   brief?: string;
   /** Available products to allocate */
   products: Product[];
-  /** Brand information if provided */
-  brandManifest?: BrandManifest;
+  /** Brand reference if provided */
+  brand?: BrandReference;
   /** Property list ID if filtering was applied */
   propertyListId?: string;
   /** Previous proposal being refined */

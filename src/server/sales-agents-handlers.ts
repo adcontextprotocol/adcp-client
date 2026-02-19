@@ -9,8 +9,8 @@ import {
   type GetProductsRequest,
   type ListCreativeFormatsRequest,
   type CreateMediaBuyRequest,
+  type BrandReference,
   type TaskResult,
-  type BrandManifest,
 } from '../lib';
 import { ADCP_VERSION } from '../lib/version';
 
@@ -154,27 +154,19 @@ export class SalesAgentsHandlers {
 
       if (toolName === 'get_products') {
         // Build GetProductsRequest with proper types
-        // brand_manifest must be either a valid URL or a BrandManifest object
-        let brandManifest: string | BrandManifest;
-
-        const manifestInput = brandStory || userProvidedOffering || 'Test brand';
-
-        // Check if it's a valid URL
-        try {
-          new URL(manifestInput);
-          brandManifest = manifestInput; // It's a valid URL
-        } catch {
-          // Not a URL, create a BrandManifest object
-          console.warn(
-            `[Sales Agents] Non-URL string provided for brand_manifest: "${manifestInput}". Coercing to {name: ...}`
-          );
-          brandManifest = {
-            name: manifestInput,
-          } as BrandManifest;
+        // Attempt to extract a domain from the input to build a BrandReference
+        const brandInput = brandStory || userProvidedOffering;
+        let brandForProducts: BrandReference | undefined;
+        if (brandInput) {
+          try {
+            brandForProducts = { domain: new URL(brandInput).hostname };
+          } catch {
+            // Not a URL — omit brand, rely on brief for context
+          }
         }
 
         const params: GetProductsRequest = {
-          brand_manifest: brandManifest,
+          ...(brandForProducts && { brand: brandForProducts }),
           ...(brandStory && { brief: brandStory }),
         };
 
@@ -237,29 +229,20 @@ export class SalesAgentsHandlers {
         actualParams = params;
         result = await agent.listCreativeFormats(params);
       } else if (toolName === 'create_media_buy') {
-        // brand_manifest must be either a valid URL or a BrandManifest object
-        let brandManifestForBuy: string | BrandManifest;
-
-        const manifestInputForBuy = brandStory || userProvidedOffering || 'Test brand';
-
-        // Check if it's a valid URL
+        // brand is required in CreateMediaBuyRequest. Attempt to extract domain from input;
+        // fall back to a placeholder when the input is not a valid URL.
+        const brandInputForBuy = brandStory || userProvidedOffering;
+        let brandForBuy: BrandReference;
         try {
-          new URL(manifestInputForBuy);
-          brandManifestForBuy = manifestInputForBuy; // It's a valid URL
+          brandForBuy = { domain: new URL(brandInputForBuy || '').hostname };
         } catch {
-          // Not a URL, create a BrandManifest object
-          console.warn(
-            `[Sales Agents] Non-URL string provided for brand_manifest: "${manifestInputForBuy}". Coercing to {name: ...}`
-          );
-          brandManifestForBuy = {
-            name: manifestInputForBuy,
-          } as BrandManifest;
+          brandForBuy = { domain: 'test.example.com' };
         }
 
         const params: CreateMediaBuyRequest = {
           buyer_ref: additionalParams.buyer_ref || `test-${Date.now()}`,
           account_id: additionalParams.account_id || `test-account-${Date.now()}`,
-          brand_manifest: brandManifestForBuy,
+          brand: brandForBuy,
           packages: additionalParams.packages || [],
           start_time: additionalParams.start_time || 'asap',
           end_time: additionalParams.end_time || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
