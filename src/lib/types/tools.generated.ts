@@ -418,6 +418,10 @@ export interface MediaBuyFeatures {
    * Supports sync_audiences task and audience_include/audience_exclude in targeting overlays for first-party CRM audience management
    */
   audience_targeting?: boolean;
+  /**
+   * Supports sandbox mode for operations without real platform calls or spend
+   */
+  sandbox?: boolean;
   [k: string]: boolean | undefined;
 }
 /**
@@ -717,6 +721,10 @@ export interface GetProductsResponse {
    */
   product_selectors_applied?: boolean;
   pagination?: PaginationResponse;
+  /**
+   * When true, this response contains simulated data from sandbox mode.
+   */
+  sandbox?: boolean;
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -1929,6 +1937,14 @@ export interface ListCreativeFormatsRequest {
    */
   name_search?: string;
   wcag_level?: WCAGLevel;
+  /**
+   * Filter to formats whose output_format_ids includes any of these format IDs. Returns formats that can produce these outputs — inspect each result's input_format_ids to see what inputs they accept.
+   */
+  output_format_ids?: FormatID[];
+  /**
+   * Filter to formats whose input_format_ids includes any of these format IDs. Returns formats that accept these creatives as input — inspect each result's output_format_ids to see what they can produce.
+   */
+  input_format_ids?: FormatID[];
   pagination?: PaginationRequest;
   context?: ContextObject;
   ext?: ExtensionObject;
@@ -2035,6 +2051,10 @@ export interface ListCreativeFormatsResponse {
    */
   errors?: Error[];
   pagination?: PaginationResponse;
+  /**
+   * When true, this response contains simulated data from sandbox mode.
+   */
+  sandbox?: boolean;
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -2130,7 +2150,11 @@ export interface Format {
    */
   supported_macros?: (UniversalMacro | string)[];
   /**
-   * For generative formats: array of format IDs that this format can generate. When a format accepts inputs like brand context and message, this specifies what concrete output formats can be produced (e.g., a generative banner format might output standard image banner formats).
+   * Array of format IDs this format accepts as input creative manifests. When present, indicates this format can take existing creatives in these formats as input. Omit for formats that work from raw assets (images, text, etc.) rather than existing creatives.
+   */
+  input_format_ids?: FormatID1[];
+  /**
+   * Array of format IDs that this format can produce as output. When present, indicates this format can build creatives in these output formats (e.g., a multi-publisher template format might produce standard display formats across many publishers). Omit for formats that produce a single fixed output (the format itself).
    */
   output_format_ids?: FormatID1[];
   /**
@@ -3441,6 +3465,10 @@ export interface CreateMediaBuySuccess {
    * Array of created packages with complete state information
    */
   packages: Package[];
+  /**
+   * When true, this response contains simulated data from sandbox mode.
+   */
+  sandbox?: boolean;
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -3499,6 +3527,10 @@ export interface Account {
     amount: number;
     currency: string;
   };
+  /**
+   * When true, this is a sandbox account. All requests using this account_id are treated as sandbox — no real platform calls, no real spend.
+   */
+  sandbox?: boolean;
   ext?: ExtensionObject;
   [k: string]: unknown | undefined;
 }
@@ -3719,6 +3751,10 @@ export interface SyncCreativesSuccess {
       [k: string]: string;
     };
   }[];
+  /**
+   * When true, this response contains simulated data from sandbox mode.
+   */
+  sandbox?: boolean;
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -4107,6 +4143,10 @@ export interface ListCreativesResponse {
      */
     archived?: number;
   };
+  /**
+   * When true, this response contains simulated data from sandbox mode.
+   */
+  sandbox?: boolean;
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -4223,6 +4263,10 @@ export interface UpdateMediaBuySuccess {
    * Array of packages that were modified with complete state information
    */
   affected_packages?: Package[];
+  /**
+   * When true, this response contains simulated data from sandbox mode.
+   */
+  sandbox?: boolean;
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -4499,6 +4543,10 @@ export interface GetMediaBuyDeliveryResponse {
    * Task-specific errors and warnings (e.g., missing delivery data, reporting platform issues)
    */
   errors?: Error[];
+  /**
+   * When true, this response contains simulated data from sandbox mode.
+   */
+  sandbox?: boolean;
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -4820,6 +4868,10 @@ export interface ProvidePerformanceFeedbackSuccess {
    * Whether the performance feedback was successfully received
    */
   success: true;
+  /**
+   * When true, this response contains simulated data from sandbox mode.
+   */
+  sandbox?: boolean;
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -4939,6 +4991,10 @@ export interface SyncEventSourcesSuccess {
      */
     errors?: string[];
   }[];
+  /**
+   * When true, this response contains simulated data from sandbox mode.
+   */
+  sandbox?: boolean;
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -5178,6 +5234,10 @@ export interface LogEventSuccess {
    * Overall match quality score for the batch (0.0 = no matches, 1.0 = all matched)
    */
   match_quality?: number;
+  /**
+   * When true, this response contains simulated data from sandbox mode.
+   */
+  sandbox?: boolean;
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -5340,6 +5400,10 @@ export interface SyncAudiencesSuccess {
      */
     errors?: Error[];
   }[];
+  /**
+   * When true, this response contains simulated data from sandbox mode.
+   */
+  sandbox?: boolean;
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -5531,6 +5595,10 @@ export type BuildCreativeResponse = BuildCreativeSuccess | BuildCreativeError;
  */
 export interface BuildCreativeSuccess {
   creative_manifest: CreativeManifest;
+  /**
+   * When true, this response contains simulated data from sandbox mode.
+   */
+  sandbox?: boolean;
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -6671,6 +6739,10 @@ export interface GetSignalsResponse {
    */
   errors?: Error[];
   pagination?: PaginationResponse;
+  /**
+   * When true, this response contains simulated data from sandbox mode.
+   */
+  sandbox?: boolean;
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -6711,6 +6783,10 @@ export interface ActivateSignalSuccess {
    * Array of deployment results for each deployment target
    */
   deployments: Deployment[];
+  /**
+   * When true, this response contains simulated data from sandbox mode.
+   */
+  sandbox?: boolean;
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -9426,6 +9502,10 @@ export interface ListAccountsRequest {
    */
   status?: 'active' | 'pending_approval' | 'payment_required' | 'suspended' | 'closed';
   pagination?: PaginationRequest;
+  /**
+   * Filter by sandbox status. true returns only sandbox accounts, false returns only production accounts. Omit to return all accounts.
+   */
+  sandbox?: boolean;
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -9481,6 +9561,10 @@ export interface SyncAccountsRequest {
      * Who should be invoiced. brand: seller invoices the brand directly. operator: seller invoices the operator (agency). agent: agent consolidates billing across brands. Omit to accept the seller's default.
      */
     billing?: 'brand' | 'operator' | 'agent';
+    /**
+     * When true, provision this as a sandbox account. No real platform calls or billing. Sandbox accounts are identified by account_id in subsequent requests.
+     */
+    sandbox?: boolean;
   }[];
   /**
    * When true, accounts previously synced by this agent but not included in this request will be deactivated. Scoped to the authenticated agent — does not affect accounts managed by other agents. Use with caution.
@@ -9589,6 +9673,10 @@ export interface SyncAccountsSuccess {
      * Non-fatal warnings about this account
      */
     warnings?: string[];
+    /**
+     * Whether this is a sandbox account, echoed from the request.
+     */
+    sandbox?: boolean;
   }[];
   context?: ContextObject;
   ext?: ExtensionObject;
