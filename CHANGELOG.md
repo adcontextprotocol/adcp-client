@@ -1,5 +1,15 @@
 # Changelog
 
+## 3.18.0
+
+### Minor Changes
+
+- c8eef79: Sync upstream AdCP schema: sandbox mode support and creative format filters
+  - Added `sandbox?: boolean` to `Account`, `MediaBuyFeatures`, and all task response types (`GetProductsResponse`, `CreateMediaBuySuccess`, `UpdateMediaBuySuccess`, `SyncCreativesSuccess`, `ListCreativesResponse`, `ListCreativeFormatsResponse`, `GetMediaBuyDeliveryResponse`, `ProvidePerformanceFeedbackSuccess`, `SyncEventSourcesSuccess`, `LogEventSuccess`, `SyncAudiencesSuccess`, `BuildCreativeSuccess`, `ActivateSignalSuccess`, `GetSignalsResponse`)
+  - Added `sandbox?: boolean` filter to `ListAccountsRequest` and `SyncAccountsRequest`
+  - Added `output_format_ids` and `input_format_ids` filter fields to `ListCreativeFormatsRequest`
+  - Added `input_format_ids` to `Format`
+
 ## 3.17.0
 
 ### Minor Changes
