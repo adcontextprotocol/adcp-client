@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas vlatest
-// Generated at: 2026-02-19T11:49:54.677Z
+// Generated at: 2026-02-19T18:57:51.207Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -196,6 +196,10 @@ export interface Account {
     amount: number;
     currency: string;
   };
+  /**
+   * When true, this is a sandbox account. All requests using this account_id are treated as sandbox — no real platform calls, no real spend.
+   */
+  sandbox?: boolean;
   ext?: ExtensionObject;
   [k: string]: unknown | undefined;
 }
@@ -2635,6 +2639,10 @@ export interface GetProductsResponse {
    */
   product_selectors_applied?: boolean;
   pagination?: PaginationResponse;
+  /**
+   * When true, this response contains simulated data from sandbox mode.
+   */
+  sandbox?: boolean;
   context?: ContextObject;
   ext?: ExtensionObject;
   [k: string]: unknown | undefined;
@@ -2931,6 +2939,10 @@ export interface CreateMediaBuySuccess {
    * Array of created packages with complete state information
    */
   packages: Package[];
+  /**
+   * When true, this response contains simulated data from sandbox mode.
+   */
+  sandbox?: boolean;
   context?: ContextObject;
   ext?: ExtensionObject;
   [k: string]: unknown | undefined;
@@ -3017,6 +3029,10 @@ export interface UpdateMediaBuySuccess {
    * Array of packages that were modified with complete state information
    */
   affected_packages?: Package[];
+  /**
+   * When true, this response contains simulated data from sandbox mode.
+   */
+  sandbox?: boolean;
   context?: ContextObject;
   ext?: ExtensionObject;
   [k: string]: unknown | undefined;
@@ -3133,6 +3149,10 @@ export interface SyncCreativesSuccess {
     };
     [k: string]: unknown | undefined;
   }[];
+  /**
+   * When true, this response contains simulated data from sandbox mode.
+   */
+  sandbox?: boolean;
   context?: ContextObject;
   ext?: ExtensionObject;
   [k: string]: unknown | undefined;
@@ -3192,6 +3212,10 @@ export interface Account1 {
     amount: number;
     currency: string;
   };
+  /**
+   * When true, this is a sandbox account. All requests using this account_id are treated as sandbox — no real platform calls, no real spend.
+   */
+  sandbox?: boolean;
   ext?: ExtensionObject;
   [k: string]: unknown | undefined;
 }

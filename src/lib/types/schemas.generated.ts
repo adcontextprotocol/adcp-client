@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-02-19T14:12:26.972Z
+// Generated at: 2026-02-19T18:57:52.307Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -48,6 +48,7 @@ export const AccountSchema = z.record(z.string(), z.union([z.unknown(), z.undefi
         amount: z.number(),
         currency: z.string()
     }).nullish(),
+    sandbox: z.boolean().nullish(),
     ext: ExtensionObjectSchema.nullish()
 }));
 
@@ -591,6 +592,7 @@ export const SyncCreativesSuccessSchema = z.object({
         assigned_to: z.array(z.string()).nullish(),
         assignment_errors: z.record(z.string(), z.string()).nullish()
     })),
+    sandbox: z.boolean().nullish(),
     context: ContextObjectSchema.nullish(),
     ext: ExtensionObjectSchema.nullish()
 });
@@ -611,6 +613,7 @@ export const Account1Schema = z.record(z.string(), z.union([z.unknown(), z.undef
         amount: z.number(),
         currency: z.string()
     }).nullish(),
+    sandbox: z.boolean().nullish(),
     ext: ExtensionObjectSchema.nullish()
 }));
 
@@ -686,7 +689,8 @@ export const MediaBuyFeaturesSchema = z.record(z.string(), z.union([z.boolean(),
     property_list_filtering: z.boolean().nullish(),
     content_standards: z.boolean().nullish(),
     conversion_tracking: z.boolean().nullish(),
-    audience_targeting: z.boolean().nullish()
+    audience_targeting: z.boolean().nullish(),
+    sandbox: z.boolean().nullish()
 }));
 
 export const SignalTargetingSchema = z.union([z.record(z.string(), z.union([z.unknown(), z.undefined()])).and(z.object({
@@ -851,6 +855,8 @@ export const ListCreativeFormatsRequestSchema = z.object({
     is_responsive: z.boolean().nullish(),
     name_search: z.string().nullish(),
     wcag_level: WCAGLevelSchema.nullish(),
+    output_format_ids: z.array(FormatIDSchema).nullish(),
+    input_format_ids: z.array(FormatIDSchema).nullish(),
     pagination: PaginationRequestSchema.nullish(),
     context: ContextObjectSchema.nullish(),
     ext: ExtensionObjectSchema.nullish()
@@ -1092,6 +1098,7 @@ export const ListCreativesResponseSchema = z.object({
         rejected: z.number().nullish(),
         archived: z.number().nullish()
     }).nullish(),
+    sandbox: z.boolean().nullish(),
     context: ContextObjectSchema.nullish(),
     ext: ExtensionObjectSchema.nullish()
 });
@@ -1116,6 +1123,7 @@ export const UpdateMediaBuySuccessSchema = z.object({
     buyer_ref: z.string(),
     implementation_date: z.string().nullish().nullable(),
     affected_packages: z.array(PackageSchema).nullish(),
+    sandbox: z.boolean().nullish(),
     context: ContextObjectSchema.nullish(),
     ext: ExtensionObjectSchema.nullish()
 });
@@ -1209,6 +1217,7 @@ export const FeedbackSourceSchema = z.union([z.literal("buyer_attribution"), z.l
 
 export const ProvidePerformanceFeedbackSuccessSchema = z.object({
     success: z.literal(true),
+    sandbox: z.boolean().nullish(),
     context: ContextObjectSchema.nullish(),
     ext: ExtensionObjectSchema.nullish()
 });
@@ -1248,6 +1257,7 @@ export const SyncEventSourcesSuccessSchema = z.object({
         action: z.union([z.literal("created"), z.literal("updated"), z.literal("unchanged"), z.literal("deleted"), z.literal("failed")]),
         errors: z.array(z.string()).nullish()
     })),
+    sandbox: z.boolean().nullish(),
     context: ContextObjectSchema.nullish(),
     ext: ExtensionObjectSchema.nullish()
 });
@@ -1306,6 +1316,7 @@ export const LogEventSuccessSchema = z.object({
     })).nullish(),
     warnings: z.array(z.string()).nullish(),
     match_quality: z.number().nullish(),
+    sandbox: z.boolean().nullish(),
     context: ContextObjectSchema.nullish(),
     ext: ExtensionObjectSchema.nullish()
 });
@@ -1357,6 +1368,7 @@ export const SyncAudiencesSuccessSchema = z.object({
         minimum_size: z.number().nullish(),
         errors: z.array(ErrorSchema).nullish()
     })),
+    sandbox: z.boolean().nullish(),
     context: ContextObjectSchema.nullish(),
     ext: ExtensionObjectSchema.nullish()
 });
@@ -1402,6 +1414,7 @@ export const ReferenceAssetSchema = z.record(z.string(), z.union([z.unknown(), z
 
 export const BuildCreativeSuccessSchema = z.object({
     creative_manifest: CreativeManifestSchema,
+    sandbox: z.boolean().nullish(),
     context: ContextObjectSchema.nullish(),
     ext: ExtensionObjectSchema.nullish()
 });
@@ -1674,6 +1687,7 @@ export const ActivateSignalRequestSchema = z.object({
 
 export const ActivateSignalSuccessSchema = z.object({
     deployments: z.array(DeploymentSchema),
+    sandbox: z.boolean().nullish(),
     context: ContextObjectSchema.nullish(),
     ext: ExtensionObjectSchema.nullish()
 });
@@ -2414,6 +2428,7 @@ export const GetAdCPCapabilitiesResponseSchema = z.object({
 export const ListAccountsRequestSchema = z.object({
     status: z.union([z.literal("active"), z.literal("pending_approval"), z.literal("payment_required"), z.literal("suspended"), z.literal("closed")]).nullish(),
     pagination: PaginationRequestSchema.nullish(),
+    sandbox: z.boolean().nullish(),
     context: ContextObjectSchema.nullish(),
     ext: ExtensionObjectSchema.nullish()
 });
@@ -2431,7 +2446,8 @@ export const SyncAccountsRequestSchema = z.object({
         house: z.string(),
         brand_id: z.string().nullish(),
         operator: z.string().nullish(),
-        billing: z.union([z.literal("brand"), z.literal("operator"), z.literal("agent")]).nullish()
+        billing: z.union([z.literal("brand"), z.literal("operator"), z.literal("agent")]).nullish(),
+        sandbox: z.boolean().nullish()
     })),
     delete_missing: z.boolean().nullish(),
     dry_run: z.boolean().nullish(),
@@ -2464,7 +2480,8 @@ export const SyncAccountsSuccessSchema = z.object({
             currency: z.string()
         }).nullish(),
         errors: z.array(ErrorSchema).nullish(),
-        warnings: z.array(z.string()).nullish()
+        warnings: z.array(z.string()).nullish(),
+        sandbox: z.boolean().nullish()
     })),
     context: ContextObjectSchema.nullish(),
     ext: ExtensionObjectSchema.nullish()
@@ -2551,6 +2568,7 @@ export const CreateMediaBuySuccessSchema = z.object({
     account: AccountSchema.nullish(),
     creative_deadline: z.string().nullish(),
     packages: z.array(PackageSchema),
+    sandbox: z.boolean().nullish(),
     context: ContextObjectSchema.nullish(),
     ext: ExtensionObjectSchema.nullish()
 });
@@ -2639,6 +2657,7 @@ export const FormatSchema = z.record(z.string(), z.union([z.unknown(), z.undefin
         })])).nullish(),
     delivery: z.record(z.string(), z.union([z.unknown(), z.undefined()])).nullish(),
     supported_macros: z.array(z.union([UniversalMacroSchema, z.string()])).nullish(),
+    input_format_ids: z.array(FormatID1Schema).nullish(),
     output_format_ids: z.array(FormatID1Schema).nullish(),
     format_card: z.record(z.string(), z.union([z.unknown(), z.undefined()])).and(z.object({
         format_id: FormatID2Schema,
@@ -2774,6 +2793,7 @@ export const GetMediaBuyDeliveryResponseSchema = z.object({
         })).nullish()
     })),
     errors: z.array(ErrorSchema).nullish(),
+    sandbox: z.boolean().nullish(),
     context: ContextObjectSchema.nullish(),
     ext: ExtensionObjectSchema.nullish()
 });
@@ -2939,6 +2959,7 @@ export const GetSignalsResponseSchema = z.object({
     })),
     errors: z.array(ErrorSchema).nullish(),
     pagination: PaginationResponseSchema.nullish(),
+    sandbox: z.boolean().nullish(),
     context: ContextObjectSchema.nullish(),
     ext: ExtensionObjectSchema.nullish()
 });
@@ -3038,6 +3059,7 @@ export const GetProductsResponseSchema = z.object({
     property_list_applied: z.boolean().nullish(),
     product_selectors_applied: z.boolean().nullish(),
     pagination: PaginationResponseSchema.nullish(),
+    sandbox: z.boolean().nullish(),
     context: ContextObjectSchema.nullish(),
     ext: ExtensionObjectSchema.nullish()
 });
@@ -3065,6 +3087,7 @@ export const ListCreativeFormatsResponseSchema = z.object({
     })).nullish(),
     errors: z.array(ErrorSchema).nullish(),
     pagination: PaginationResponseSchema.nullish(),
+    sandbox: z.boolean().nullish(),
     context: ContextObjectSchema.nullish(),
     ext: ExtensionObjectSchema.nullish()
 });
