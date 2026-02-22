@@ -23,7 +23,7 @@
  */
 
 // Re-export types
-export type { TestScenario, TestOptions, TestStepResult, AgentProfile, TestResult, TaskResult, Logger } from './types';
+export type { TestScenario, TestOptions, TestStepResult, AgentProfile, TestResult, SuiteResult, TaskResult, Logger } from './types';
 
 // Re-export client utilities
 export { setAgentTesterLogger, getLogger, createTestClient, runStep } from './client';
@@ -271,6 +271,17 @@ export async function testAgent(
 
   return testResult;
 }
+
+// Re-export orchestrator
+export {
+  testAllScenarios,
+  getApplicableScenarios,
+  SCENARIO_REQUIREMENTS,
+  DEFAULT_SCENARIOS,
+  formatSuiteResults,
+  formatSuiteResultsJSON,
+  type OrchestratorOptions,
+} from './orchestrator';
 
 // Re-export individual scenarios for direct use
 export {

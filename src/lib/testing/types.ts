@@ -163,6 +163,27 @@ export interface TestResult {
   dry_run: boolean;
 }
 
+export interface SuiteResult {
+  agent_url: string;
+  agent_profile: AgentProfile;
+  /** Scenarios that were run */
+  scenarios_run: TestScenario[];
+  /** Scenarios skipped because the agent does not advertise the required tools */
+  scenarios_skipped: TestScenario[];
+  results: TestResult[];
+  /**
+   * True only when at least one scenario ran and none failed.
+   * False for both "all failed" and "no applicable scenarios found".
+   */
+  overall_passed: boolean;
+  passed_count: number;
+  failed_count: number;
+  /** Wall-clock time including capability discovery and all scenario runs */
+  total_duration_ms: number;
+  tested_at: string;
+  dry_run: boolean;
+}
+
 // Generic task result from executeTask
 export interface TaskResult {
   success: boolean;
