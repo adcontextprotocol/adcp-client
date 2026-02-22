@@ -28,6 +28,8 @@ import type {
   LogEventResponse,
   SyncAudiencesRequest,
   SyncAudiencesResponse,
+  SyncCatalogsRequest,
+  SyncCatalogsResponse,
   BuildCreativeRequest,
   BuildCreativeResponse,
   PreviewCreativeRequest,
@@ -192,6 +194,13 @@ export class Agent {
    */
   async syncAudiences(params: SyncAudiencesRequest): Promise<SyncAudiencesResponse> {
     return this.callTool<SyncAudiencesResponse>('sync_audiences', params);
+  }
+
+  /**
+   * Official AdCP sync_catalogs tool schema
+   */
+  async syncCatalogs(params: SyncCatalogsRequest): Promise<SyncCatalogsResponse> {
+    return this.callTool<SyncCatalogsResponse>('sync_catalogs', params);
   }
 
   /**
@@ -440,6 +449,13 @@ export class AgentCollection {
    */
   async syncAudiences(params: SyncAudiencesRequest): Promise<SyncAudiencesResponse[]> {
     return this.callToolOnAll<SyncAudiencesResponse>('sync_audiences', params);
+  }
+
+  /**
+   * Official AdCP sync_catalogs tool schema (across multiple agents)
+   */
+  async syncCatalogs(params: SyncCatalogsRequest): Promise<SyncCatalogsResponse[]> {
+    return this.callToolOnAll<SyncCatalogsResponse>('sync_catalogs', params);
   }
 
   /**

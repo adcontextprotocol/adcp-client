@@ -1,14 +1,57 @@
 /**
- * Backwards compatibility types for the BrandManifest -> BrandReference migration.
- *
- * BrandManifest (inline brand data) was replaced by BrandReference (a domain pointer
- * to a hosted /.well-known/brand.json file). These deprecated types are kept so that
- * existing callers don't break on upgrade.
- *
- * @deprecated Use BrandReference from the main package instead.
+ * Backwards compatibility types kept so existing callers don't break on upgrade.
  */
 
-import type { BrandReference } from './tools.generated';
+import type { BrandReference, Catalog } from './tools.generated';
+
+// ===== PromotedOfferings / PromotedProducts migration =====
+// promoted_offerings was replaced by a top-level brand field + per-package catalog field.
+// PromotedProducts selection methods (manifest_gtins, manifest_skus, etc.) map to the new
+// Catalog type (gtins, ids, tags, category, query).
+
+/**
+ * @deprecated Use Catalog instead. Product selection is now expressed as a Catalog with
+ * a 'product' type. Map fields: manifest_gtins→gtins, manifest_skus→ids,
+ * manifest_tags→tags, manifest_category→category, manifest_query→query.
+ */
+export interface PromotedProducts {
+  manifest_gtins?: string[];
+  manifest_skus?: string[];
+  manifest_tags?: string[];
+  manifest_category?: string;
+  manifest_query?: string;
+}
+
+/**
+ * @deprecated Use a top-level brand field (BrandReference) and per-package catalog (Catalog)
+ * in create_media_buy instead.
+ */
+export interface PromotedOfferings {
+  brand?: BrandReference;
+  si_agent_url?: string;
+  product_selectors?: PromotedProducts;
+  offerings?: Array<{
+    offering_id?: string;
+    name?: string;
+    description?: string;
+    landing_url?: string;
+    [k: string]: unknown;
+  }>;
+}
+
+/**
+ * Convert deprecated PromotedProducts selectors to the new Catalog type.
+ */
+export function promotedProductsToCatalog(pp: PromotedProducts): Catalog {
+  return {
+    type: 'product',
+    ...(pp.manifest_gtins?.length && { gtins: pp.manifest_gtins as [string, ...string[]] }),
+    ...(pp.manifest_skus?.length && { ids: pp.manifest_skus as [string, ...string[]] }),
+    ...(pp.manifest_tags?.length && { tags: pp.manifest_tags as [string, ...string[]] }),
+    ...(pp.manifest_category && { category: pp.manifest_category }),
+    ...(pp.manifest_query && { query: pp.manifest_query }),
+  };
+}
 
 /**
  * @deprecated Use BrandReference instead. Inline brand data is no longer part of

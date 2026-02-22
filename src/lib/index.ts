@@ -228,10 +228,18 @@ export type {
   CreativePolicy,
   BrandReference,
   BrandID,
-  PromotedProducts,
   CPAPricingOption,
   EventType,
   ActionSource,
+  // Catalog Domain
+  Catalog,
+  CatalogType,
+  CatalogAction,
+  CatalogItemStatus,
+  SyncCatalogsRequest,
+  SyncCatalogsResponse,
+  SyncCatalogsSuccess,
+  SyncCatalogsError,
   // Creative Delivery Domain
   GetCreativeDeliveryRequest,
   GetCreativeDeliveryResponse,
@@ -247,9 +255,15 @@ export type {
 } from './types/tools.generated';
 
 // ====== BACKWARDS COMPATIBILITY ======
-// Deprecated types from the BrandManifest -> BrandReference migration
-export type { BrandManifest, BrandManifestReference, AssetContentType } from './types/compat';
-export { brandManifestToBrandReference } from './types/compat';
+// Deprecated types from past protocol migrations
+export type {
+  BrandManifest,
+  BrandManifestReference,
+  AssetContentType,
+  PromotedProducts,
+  PromotedOfferings,
+} from './types/compat';
+export { brandManifestToBrandReference, promotedProductsToCatalog } from './types/compat';
 
 // ====== ZOD SCHEMAS (for runtime validation) ======
 // Re-export all Zod schemas for user validation needs
