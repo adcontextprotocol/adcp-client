@@ -204,9 +204,18 @@ describe('getApplicableScenarios', () => {
   test('never returns creative_reference', () => {
     // Even with a full tool set
     const allTools = [
-      'get_products', 'create_media_buy', 'update_media_buy', 'sync_creatives',
-      'build_creative', 'preview_creative', 'get_signals', 'activate_signal',
-      'create_property_list', 'list_content_standards', 'si_get_offering', 'si_initiate_session',
+      'get_products',
+      'create_media_buy',
+      'update_media_buy',
+      'sync_creatives',
+      'build_creative',
+      'preview_creative',
+      'get_signals',
+      'activate_signal',
+      'create_property_list',
+      'list_content_standards',
+      'si_get_offering',
+      'si_initiate_session',
     ];
     const applicable = getApplicableScenarios(allTools);
     assert.ok(!applicable.includes('creative_reference'));
@@ -263,9 +272,7 @@ describe('formatSuiteResults', () => {
       agent_profile: { name: 'Test Agent', tools: [] },
       scenarios_run: ['health_check'],
       scenarios_skipped: [],
-      results: [
-        { scenario: 'health_check', overall_passed: false, summary: '1 failed', total_duration_ms: 50 },
-      ],
+      results: [{ scenario: 'health_check', overall_passed: false, summary: '1 failed', total_duration_ms: 50 }],
       overall_passed: false,
       passed_count: 0,
       failed_count: 1,

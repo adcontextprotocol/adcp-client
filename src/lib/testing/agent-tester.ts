@@ -23,7 +23,16 @@
  */
 
 // Re-export types
-export type { TestScenario, TestOptions, TestStepResult, AgentProfile, TestResult, SuiteResult, TaskResult, Logger } from './types';
+export type {
+  TestScenario,
+  TestOptions,
+  TestStepResult,
+  AgentProfile,
+  TestResult,
+  SuiteResult,
+  TaskResult,
+  Logger,
+} from './types';
 
 // Re-export client utilities
 export { setAgentTesterLogger, getLogger, createTestClient, runStep } from './client';
