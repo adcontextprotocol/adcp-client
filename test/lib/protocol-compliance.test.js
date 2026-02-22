@@ -182,14 +182,15 @@ describe('A2A Protocol Compliance', { skip: process.env.CI ? 'Slow tests - skipp
       const authToken = 'TEST_BEARER_TOKEN_PLACEHOLDER';
       let capturedFetchImpl;
 
-      // Mock A2AClient.fromCardUrl to capture the fetchImpl
+      // Set up shared mocks first so mockA2AClient is available
+      setupA2AMocks();
+
+      // Then re-override fromCardUrl to capture the fetchImpl option
       const originalA2AClient = require('@a2a-js/sdk/client').A2AClient;
       originalA2AClient.fromCardUrl = async (cardUrl, options) => {
         capturedFetchImpl = options?.fetchImpl;
         return mockA2AClient;
       };
-
-      setupA2AMocks();
 
       await callA2ATool('https://test.com', 'test_skill', {}, authToken);
 
