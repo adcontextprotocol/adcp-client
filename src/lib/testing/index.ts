@@ -50,6 +50,7 @@ export {
   testSISessionLifecycle,
   testSIAvailability,
   testCapabilityDiscovery,
+  testSyncAudiences,
   // v3 helpers
   hasGovernanceTools,
   hasSITools,

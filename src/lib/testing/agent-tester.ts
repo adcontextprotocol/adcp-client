@@ -62,6 +62,7 @@ import {
   testSISessionLifecycle,
   testSIAvailability,
   testCapabilityDiscovery,
+  testSyncAudiences,
 } from './scenarios';
 
 // Import types
@@ -229,6 +230,12 @@ export async function testAgent(
         profile = result.profile;
         break;
 
+      case 'sync_audiences':
+        result = await testSyncAudiences(agentUrl, effectiveOptions);
+        steps = result.steps;
+        profile = result.profile;
+        break;
+
       default:
         steps = [
           {
@@ -314,6 +321,7 @@ export {
   testSISessionLifecycle,
   testSIAvailability,
   testCapabilityDiscovery,
+  testSyncAudiences,
   // v3 helpers
   hasGovernanceTools,
   hasSITools,

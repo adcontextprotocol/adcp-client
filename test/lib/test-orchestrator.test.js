@@ -33,8 +33,8 @@ describe('SCENARIO_REQUIREMENTS', () => {
     assert.ok(!('creative_reference' in SCENARIO_REQUIREMENTS), 'creative_reference should be omitted');
   });
 
-  test('does not include sync_audiences (not wired into testAgent)', () => {
-    assert.ok(!('sync_audiences' in SCENARIO_REQUIREMENTS), 'sync_audiences should be omitted');
+  test('sync_audiences requires sync_audiences tool', () => {
+    assert.deepStrictEqual(SCENARIO_REQUIREMENTS['sync_audiences'], ['sync_audiences']);
   });
 
   test('health_check, discovery, capability_discovery require no tools', () => {
@@ -87,8 +87,8 @@ describe('DEFAULT_SCENARIOS', () => {
     assert.ok(!DEFAULT_SCENARIOS.includes('creative_reference'));
   });
 
-  test('does not include sync_audiences', () => {
-    assert.ok(!DEFAULT_SCENARIOS.includes('sync_audiences'));
+  test('includes sync_audiences', () => {
+    assert.ok(DEFAULT_SCENARIOS.includes('sync_audiences'));
   });
 
   test('pricing_models is in SCENARIO_REQUIREMENTS but excluded from DEFAULT_SCENARIOS (deduplication)', () => {
@@ -187,6 +187,11 @@ describe('getApplicableScenarios', () => {
   test('with get_signals enables signals_flow', () => {
     const applicable = getApplicableScenarios(['get_signals']);
     assert.ok(applicable.includes('signals_flow'));
+  });
+
+  test('with sync_audiences tool enables sync_audiences scenario', () => {
+    const applicable = getApplicableScenarios(['sync_audiences']);
+    assert.ok(applicable.includes('sync_audiences'));
   });
 
   test('scenario filter restricts which scenarios are considered', () => {

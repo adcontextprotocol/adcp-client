@@ -16,7 +16,6 @@ import type { TestScenario, TestOptions, TestResult, AgentProfile, SuiteResult }
  *
  * Scenarios omitted from this map are not orchestrated:
  * - creative_reference: not yet implemented
- * - sync_audiences: not yet wired into testAgent()
  */
 export const SCENARIO_REQUIREMENTS: Partial<Record<TestScenario, string[]>> = {
   // Always applicable
@@ -52,6 +51,9 @@ export const SCENARIO_REQUIREMENTS: Partial<Record<TestScenario, string[]>> = {
   // Requires SI tools
   si_session_lifecycle: ['si_initiate_session'],
   si_availability: ['si_get_offering'],
+
+  // Requires audience management tools
+  sync_audiences: ['sync_audiences'],
 };
 
 /**
@@ -79,6 +81,7 @@ export const DEFAULT_SCENARIOS: readonly TestScenario[] = [
   'governance_content_standards',
   'si_session_lifecycle',
   'si_availability',
+  'sync_audiences',
 ] as const;
 
 /**
