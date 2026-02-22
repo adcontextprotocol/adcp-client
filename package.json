@@ -1,6 +1,6 @@
 {
   "name": "@adcp/client",
-  "version": "3.18.0",
+  "version": "3.19.0",
   "description": "AdCP client library with protocol support for MCP and A2A, includes testing framework",
   "main": "dist/lib/index.js",
   "types": "dist/lib/index.d.ts",
@@ -41,7 +41,7 @@
   ],
   "scripts": {
     "prepare": "node scripts/install-hooks.js 2>/dev/null || true",
-    "prepublishOnly": "npm run build:lib",
+    "prepublishOnly": "npm run clean && (test -f src/lib/types/tools.generated.ts || npm run sync-schemas) && (test -f src/lib/types/tools.generated.ts || npm run generate-types) && npm run build:lib && node --test test/lib/adcp-client.test.js test/lib/validation.test.js test/lib/zod-schemas.test.js",
     "dev": "tsx src/server/server.ts",
     "build": "npm run build:lib && tsc && cp -r src/public dist/",
     "build:lib": "tsc --project tsconfig.lib.json",
@@ -70,7 +70,6 @@
     "lint": "echo 'Linting not yet configured'",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist/",
-    "prepublishOnly": "npm run clean && (test -f src/lib/types/tools.generated.ts || npm run sync-schemas) && (test -f src/lib/types/tools.generated.ts || npm run generate-types) && npm run build:lib && node --test test/lib/adcp-client.test.js test/lib/validation.test.js test/lib/zod-schemas.test.js",
     "docs": "typedoc",
     "docs:watch": "typedoc --watch",
     "docs:serve": "npx http-server docs -p 4000 -o",
