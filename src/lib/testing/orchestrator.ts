@@ -7,7 +7,7 @@
 
 import { testAgent } from './agent-tester';
 import { createTestClient, discoverAgentProfile } from './client';
-import type { TestScenario, TestOptions, TestResult, AgentProfile, SuiteResult } from './types';
+import type { TestScenario, TestOptions, TestResult, SuiteResult } from './types';
 
 /**
  * Minimum tools required for each scenario to be applicable.
