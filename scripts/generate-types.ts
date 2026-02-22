@@ -759,7 +759,9 @@ function removeNumberedTypeDuplicates(typeDefinitions: string): string {
 
   if (numberedTypes.length === 0) return typeDefinitions;
 
-  console.log(`🔢 Deduplicating ${numberedTypes.length} numbered type(s): ${numberedTypes.map(t => `${t.numbered}→${t.base}`).join(', ')}`);
+  console.log(
+    `🔢 Deduplicating ${numberedTypes.length} numbered type(s): ${numberedTypes.map(t => `${t.numbered}→${t.base}`).join(', ')}`
+  );
 
   let result = typeDefinitions;
   for (const { numbered, base } of numberedTypes) {

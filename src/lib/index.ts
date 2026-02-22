@@ -234,6 +234,9 @@ export type {
   // Catalog Domain
   Catalog,
   CatalogType,
+  FeedFormat,
+  UpdateFrequency,
+  ContentIDType,
   CatalogAction,
   CatalogItemStatus,
   SyncCatalogsRequest,

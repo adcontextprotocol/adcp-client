@@ -20,6 +20,7 @@ export interface PromotedProducts {
   manifest_tags?: string[];
   manifest_category?: string;
   manifest_query?: string;
+  [k: string]: unknown | undefined;
 }
 
 /**
@@ -37,6 +38,25 @@ export interface PromotedOfferings {
     landing_url?: string;
     [k: string]: unknown;
   }>;
+  asset_selectors?: {
+    tags?: string[];
+    asset_types?: (
+      | 'image'
+      | 'video'
+      | 'audio'
+      | 'vast'
+      | 'daast'
+      | 'text'
+      | 'url'
+      | 'html'
+      | 'css'
+      | 'javascript'
+      | 'webhook'
+    )[];
+    exclude_tags?: string[];
+    [k: string]: unknown | undefined;
+  };
+  [k: string]: unknown | undefined;
 }
 
 /**
