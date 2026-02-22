@@ -60,6 +60,17 @@ export interface PromotedOfferings {
 }
 
 /**
+ * Convert deprecated PromotedOfferings to the new Catalog type.
+ * Inline offerings map to a Catalog with type 'offering' and items populated from offerings[].
+ */
+export function promotedOfferingsToCatalog(po: PromotedOfferings): Catalog {
+  return {
+    type: 'offering',
+    ...(po.offerings?.length && { items: po.offerings as [{}, ...{}[]] }),
+  };
+}
+
+/**
  * Convert deprecated PromotedProducts selectors to the new Catalog type.
  */
 export function promotedProductsToCatalog(pp: PromotedProducts): Catalog {

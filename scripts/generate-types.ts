@@ -731,7 +731,13 @@ function removeNumberedTypeDuplicates(typeDefinitions: string): string {
   const typeBodyMap = new Map<string, string>(); // name -> body text
   const numberedTypes: Array<{ numbered: string; base: string }> = [];
 
-  // Match all export type/interface blocks
+  // Match all export type/interface blocks.
+  // Note: {[^}]*} stops at the first } so interfaces with nested objects (e.g. assets: {...})
+  // get a truncated body. This means those interfaces will never match as duplicates — they are
+  // silently skipped. In practice this is acceptable because the generated numbered duplicates
+  // (SignalID1, EventType1, etc.) are all union types that use the =[^;]+; branch, which works
+  // correctly. Interface duplicates with nested objects (e.g. CreativeManifest1) pre-exist in
+  // the upstream generator output and are not regressed by this function.
   const typePattern = /^(export (?:type|interface) (\w+)(?:[^{=]*?)(?:\{[^}]*\}|=[^;]+;))/gm;
   let match;
   while ((match = typePattern.exec(typeDefinitions)) !== null) {

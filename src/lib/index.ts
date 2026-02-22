@@ -266,7 +266,7 @@ export type {
   PromotedProducts,
   PromotedOfferings,
 } from './types/compat';
-export { brandManifestToBrandReference, promotedProductsToCatalog } from './types/compat';
+export { brandManifestToBrandReference, promotedProductsToCatalog, promotedOfferingsToCatalog } from './types/compat';
 
 // ====== ZOD SCHEMAS (for runtime validation) ======
 // Re-export all Zod schemas for user validation needs
