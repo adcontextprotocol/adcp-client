@@ -62,10 +62,14 @@ export interface PromotedOfferings {
 /**
  * Convert deprecated PromotedOfferings to the new Catalog type.
  * Inline offerings map to a Catalog with type 'offering' and items populated from offerings[].
+ *
+ * Note: si_agent_url, product_selectors, and asset_selectors are not preserved in the
+ * Catalog type — callers must migrate these fields separately.
  */
 export function promotedOfferingsToCatalog(po: PromotedOfferings): Catalog {
   return {
     type: 'offering',
+    // Catalog.items is typed as [{}, ...{}[]] (non-empty array of freeform objects) per the schema.
     ...(po.offerings?.length && { items: po.offerings as [{}, ...{}[]] }),
   };
 }

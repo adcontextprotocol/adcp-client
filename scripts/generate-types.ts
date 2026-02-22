@@ -758,6 +758,10 @@ function removeNumberedTypeDuplicates(typeDefinitions: string): string {
         const baseBody = typeBodyMap.get(base) ?? '';
         if (numberedBody === baseBody) {
           numberedTypes.push({ numbered: name, base });
+        } else {
+          // Body mismatch — likely a nested-object interface where {[^}]*} truncates the body.
+          // The duplicate will remain in the output. This is a known limitation.
+          console.warn(`⚠️  Skipping ${name}→${base}: body mismatch (may have nested object types)`);
         }
       }
     }
