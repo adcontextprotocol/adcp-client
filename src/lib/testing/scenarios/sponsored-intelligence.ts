@@ -177,6 +177,7 @@ export async function testSISessionLifecycle(
           }) as Promise<TaskResult>
       );
 
+      let sessionEnded = false;
       if (result?.success && result?.data) {
         const data = result.data as any;
         step.details = `Session status: ${data.session_status || 'active'}`;
@@ -190,17 +191,16 @@ export async function testSISessionLifecycle(
           null,
           2
         );
-
-        // If session is no longer active, stop sending messages
-        if (data.session_status === 'complete' || data.session_status === 'terminated') {
-          steps.push(step);
-          break;
-        }
+        sessionEnded = data.session_status === 'complete' || data.session_status === 'terminated';
       } else if (result && !result.success) {
         step.passed = false;
         step.error = result.error || 'si_send_message failed';
       }
       steps.push(step);
+      // If session is no longer active, stop sending messages
+      if (sessionEnded) {
+        break;
+      }
     }
   }
 

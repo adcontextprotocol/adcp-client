@@ -23,7 +23,16 @@
  */
 
 // Re-export types
-export type { TestScenario, TestOptions, TestStepResult, AgentProfile, TestResult, TaskResult, Logger } from './types';
+export type {
+  TestScenario,
+  TestOptions,
+  TestStepResult,
+  AgentProfile,
+  TestResult,
+  SuiteResult,
+  TaskResult,
+  Logger,
+} from './types';
 
 // Re-export client utilities
 export { setAgentTesterLogger, getLogger, createTestClient, runStep } from './client';
@@ -53,6 +62,7 @@ import {
   testSISessionLifecycle,
   testSIAvailability,
   testCapabilityDiscovery,
+  testSyncAudiences,
 } from './scenarios';
 
 // Import types
@@ -220,6 +230,12 @@ export async function testAgent(
         profile = result.profile;
         break;
 
+      case 'sync_audiences':
+        result = await testSyncAudiences(agentUrl, effectiveOptions);
+        steps = result.steps;
+        profile = result.profile;
+        break;
+
       default:
         steps = [
           {
@@ -272,6 +288,17 @@ export async function testAgent(
   return testResult;
 }
 
+// Re-export orchestrator
+export {
+  testAllScenarios,
+  getApplicableScenarios,
+  SCENARIO_REQUIREMENTS,
+  DEFAULT_SCENARIOS,
+  formatSuiteResults,
+  formatSuiteResultsJSON,
+  type OrchestratorOptions,
+} from './orchestrator';
+
 // Re-export individual scenarios for direct use
 export {
   testHealthCheck,
@@ -294,6 +321,7 @@ export {
   testSISessionLifecycle,
   testSIAvailability,
   testCapabilityDiscovery,
+  testSyncAudiences,
   // v3 helpers
   hasGovernanceTools,
   hasSITools,

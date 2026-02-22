@@ -586,11 +586,12 @@ export async function testSyncAudiences(
   let accountId = options.audience_account_id;
 
   if (!accountId && profile.tools.includes('list_accounts')) {
-    const { result: accountsResult } = await runStep<TaskResult>(
+    const { result: accountsResult, step: accountsStep } = await runStep<TaskResult>(
       'Discover accounts for audience sync',
       'list_accounts',
       async () => client.executeTask('list_accounts', {}) as Promise<TaskResult>
     );
+    steps.push(accountsStep);
 
     if (accountsResult?.success && accountsResult?.data) {
       const accounts = (accountsResult.data as any).accounts ?? [];
