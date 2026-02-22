@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas vlatest
-// Generated at: 2026-02-22T00:32:13.357Z
+// Generated at: 2026-02-22T03:25:27.420Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -608,7 +608,7 @@ export interface OptimizationGoal {
 
 // CREATIVE-ASSET SCHEMA
 /**
- * Catalog type. Structural types: 'offering' (AdCP Offering objects), 'product' (ecommerce entries), 'inventory' (stock per location), 'store' (physical locations), 'promotion' (deals and pricing). Vertical types: 'hotel', 'flight', 'job', 'vehicle', 'real_estate', 'education', 'destination' — each with an industry-specific item schema.
+ * Catalog type. Structural types: 'offering' (AdCP Offering objects), 'product' (ecommerce entries), 'inventory' (stock per location), 'store' (physical locations), 'promotion' (deals and pricing). Vertical types: 'hotel', 'flight', 'job', 'vehicle', 'real_estate', 'education', 'destination', 'app' — each with an industry-specific item schema.
  */
 export type CatalogType =
   | 'offering'
@@ -622,7 +622,8 @@ export type CatalogType =
   | 'vehicle'
   | 'real_estate'
   | 'education'
-  | 'destination';
+  | 'destination'
+  | 'app';
 /**
  * Format of the external feed at url. Required when url points to a non-AdCP feed (e.g., Google Merchant Center XML, Meta Product Catalog). Omit for offering-type catalogs where the feed is native AdCP JSON.
  */
@@ -645,7 +646,8 @@ export type ContentIDType =
   | 'listing_id'
   | 'store_id'
   | 'program_id'
-  | 'destination_id';
+  | 'destination_id'
+  | 'app_id';
 /**
  * JavaScript module type
  */
@@ -843,7 +845,10 @@ export interface CreativeAsset {
    */
   name: string;
   format_id: FormatID;
-  catalog?: Catalog;
+  /**
+   * Catalogs this creative renders. Each entry satisfies one of the format's catalog_requirements, matched by type. Each catalog can be inline (with items), a reference to a synced catalog (by catalog_id), or a URL to an external feed.
+   */
+  catalogs?: Catalog[];
   /**
    * Assets required by the format, keyed by asset_role
    */
@@ -917,7 +922,7 @@ export interface Catalog {
   feed_format?: FeedFormat;
   update_frequency?: UpdateFrequency;
   /**
-   * Inline catalog data. The item schema depends on the catalog type: Offering objects for 'offering', StoreItem for 'store', HotelItem for 'hotel', FlightItem for 'flight', JobItem for 'job', VehicleItem for 'vehicle', RealEstateItem for 'real_estate', EducationItem for 'education', DestinationItem for 'destination', or freeform objects for 'product', 'inventory', and 'promotion'. Mutually exclusive with url — provide one or the other, not both. Implementations should validate items against the type-specific schema.
+   * Inline catalog data. The item schema depends on the catalog type: Offering objects for 'offering', StoreItem for 'store', HotelItem for 'hotel', FlightItem for 'flight', JobItem for 'job', VehicleItem for 'vehicle', RealEstateItem for 'real_estate', EducationItem for 'education', DestinationItem for 'destination', AppItem for 'app', or freeform objects for 'product', 'inventory', and 'promotion'. Mutually exclusive with url — provide one or the other, not both. Implementations should validate items against the type-specific schema.
    *
    * @minItems 1
    */

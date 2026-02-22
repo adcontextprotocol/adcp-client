@@ -7,7 +7,7 @@
  */
 export type BrandID = string;
 /**
- * Catalog type. Structural types: 'offering' (AdCP Offering objects), 'product' (ecommerce entries), 'inventory' (stock per location), 'store' (physical locations), 'promotion' (deals and pricing). Vertical types: 'hotel', 'flight', 'job', 'vehicle', 'real_estate', 'education', 'destination' — each with an industry-specific item schema.
+ * Catalog type. Structural types: 'offering' (AdCP Offering objects), 'product' (ecommerce entries), 'inventory' (stock per location), 'store' (physical locations), 'promotion' (deals and pricing). Vertical types: 'hotel', 'flight', 'job', 'vehicle', 'real_estate', 'education', 'destination', 'app' — each with an industry-specific item schema.
  */
 export type CatalogType =
   | 'offering'
@@ -21,7 +21,8 @@ export type CatalogType =
   | 'vehicle'
   | 'real_estate'
   | 'education'
-  | 'destination';
+  | 'destination'
+  | 'app';
 /**
  * Format of the external feed at url. Required when url points to a non-AdCP feed (e.g., Google Merchant Center XML, Meta Product Catalog). Omit for offering-type catalogs where the feed is native AdCP JSON.
  */
@@ -76,7 +77,8 @@ export type ContentIDType =
   | 'listing_id'
   | 'store_id'
   | 'program_id'
-  | 'destination_id';
+  | 'destination_id'
+  | 'app_id';
 /**
  * Type of inventory delivery
  */
@@ -250,7 +252,7 @@ export interface Catalog {
   feed_format?: FeedFormat;
   update_frequency?: UpdateFrequency;
   /**
-   * Inline catalog data. The item schema depends on the catalog type: Offering objects for 'offering', StoreItem for 'store', HotelItem for 'hotel', FlightItem for 'flight', JobItem for 'job', VehicleItem for 'vehicle', RealEstateItem for 'real_estate', EducationItem for 'education', DestinationItem for 'destination', or freeform objects for 'product', 'inventory', and 'promotion'. Mutually exclusive with url — provide one or the other, not both. Implementations should validate items against the type-specific schema.
+   * Inline catalog data. The item schema depends on the catalog type: Offering objects for 'offering', StoreItem for 'store', HotelItem for 'hotel', FlightItem for 'flight', JobItem for 'job', VehicleItem for 'vehicle', RealEstateItem for 'real_estate', EducationItem for 'education', DestinationItem for 'destination', AppItem for 'app', or freeform objects for 'product', 'inventory', and 'promotion'. Mutually exclusive with url — provide one or the other, not both. Implementations should validate items against the type-specific schema.
    *
    * @minItems 1
    */
@@ -1760,7 +1762,21 @@ export type UniversalMacro =
   | 'SHOW_NAME'
   | 'EPISODE_ID'
   | 'AUDIO_DURATION'
-  | 'AXEM';
+  | 'AXEM'
+  | 'CATALOG_ID'
+  | 'SKU'
+  | 'GTIN'
+  | 'OFFERING_ID'
+  | 'JOB_ID'
+  | 'HOTEL_ID'
+  | 'FLIGHT_ID'
+  | 'VEHICLE_ID'
+  | 'LISTING_ID'
+  | 'STORE_ID'
+  | 'PROGRAM_ID'
+  | 'DESTINATION_ID'
+  | 'CREATIVE_VARIANT_ID'
+  | 'APP_ITEM_ID';
 /**
  * WCAG conformance level that this format achieves. For format-rendered creatives, the format guarantees this level. For opaque creatives, the format requires assets that self-certify to this level.
  */
@@ -2377,7 +2393,7 @@ export interface WebhookAssetRequirements {
  */
 export type Pacing = 'even' | 'asap' | 'front_loaded';
 /**
- * Catalog type. Structural types: 'offering' (AdCP Offering objects), 'product' (ecommerce entries), 'inventory' (stock per location), 'store' (physical locations), 'promotion' (deals and pricing). Vertical types: 'hotel', 'flight', 'job', 'vehicle', 'real_estate', 'education', 'destination' — each with an industry-specific item schema.
+ * Catalog type. Structural types: 'offering' (AdCP Offering objects), 'product' (ecommerce entries), 'inventory' (stock per location), 'store' (physical locations), 'promotion' (deals and pricing). Vertical types: 'hotel', 'flight', 'job', 'vehicle', 'real_estate', 'education', 'destination', 'app' — each with an industry-specific item schema.
  */
 export type PostalCodeSystem =
   | 'us_zip'
@@ -3059,7 +3075,12 @@ export interface CreativeAsset {
    */
   name: string;
   format_id: FormatID;
-  catalog?: Catalog;
+  /**
+   * Catalogs this creative renders. Each entry satisfies one of the format's catalog_requirements, matched by type. Each catalog can be inline (with items), a reference to a synced catalog (by catalog_id), or a URL to an external feed.
+   *
+   * @minItems 1
+   */
+  catalogs?: [Catalog, ...Catalog[]];
   /**
    * Assets required by the format, keyed by asset_role
    */
@@ -3623,7 +3644,7 @@ export interface CreateMediaBuyError {
 
 // sync_creatives parameters
 /**
- * Catalog type. Structural types: 'offering' (AdCP Offering objects), 'product' (ecommerce entries), 'inventory' (stock per location), 'store' (physical locations), 'promotion' (deals and pricing). Vertical types: 'hotel', 'flight', 'job', 'vehicle', 'real_estate', 'education', 'destination' — each with an industry-specific item schema.
+ * Catalog type. Structural types: 'offering' (AdCP Offering objects), 'product' (ecommerce entries), 'inventory' (stock per location), 'store' (physical locations), 'promotion' (deals and pricing). Vertical types: 'hotel', 'flight', 'job', 'vehicle', 'real_estate', 'education', 'destination', 'app' — each with an industry-specific item schema.
  */
 export type ValidationMode = 'strict' | 'lenient';
 /**
@@ -4043,7 +4064,10 @@ export interface ListCreativesResponse {
      * When the creative was last modified
      */
     updated_date: string;
-    catalog?: Catalog;
+    /**
+     * Catalogs this creative renders, if any
+     */
+    catalogs?: Catalog[];
     /**
      * Assets for this creative, keyed by asset_role
      */
@@ -5454,7 +5478,7 @@ export interface SyncAudiencesError {
 
 // sync_catalogs parameters
 /**
- * Catalog type. Structural types: 'offering' (AdCP Offering objects), 'product' (ecommerce entries), 'inventory' (stock per location), 'store' (physical locations), 'promotion' (deals and pricing). Vertical types: 'hotel', 'flight', 'job', 'vehicle', 'real_estate', 'education', 'destination' — each with an industry-specific item schema.
+ * Catalog type. Structural types: 'offering' (AdCP Offering objects), 'product' (ecommerce entries), 'inventory' (stock per location), 'store' (physical locations), 'promotion' (deals and pricing). Vertical types: 'hotel', 'flight', 'job', 'vehicle', 'real_estate', 'education', 'destination', 'app' — each with an industry-specific item schema.
  */
 export interface SyncCatalogsRequest {
   /**
@@ -5487,7 +5511,7 @@ export interface SyncCatalogsRequest {
   ext?: ExtensionObject;
 }
 /**
- * A typed data feed. Catalogs carry the items, locations, stock levels, or pricing that publishers use to render ads. They can be synced to a platform via sync_catalogs (managed lifecycle with approval), provided inline, or fetched from an external URL. The catalog type determines the item schema and can be structural (offering, product, inventory, store, promotion) or vertical-specific (hotel, flight, job, vehicle, real_estate, education, destination). Selectors (ids, tags, category, query) filter items regardless of sourcing method.
+ * A typed data feed. Catalogs carry the items, locations, stock levels, or pricing that publishers use to render ads. They can be synced to a platform via sync_catalogs (managed lifecycle with approval), provided inline, or fetched from an external URL. The catalog type determines the item schema and can be structural (offering, product, inventory, store, promotion) or vertical-specific (hotel, flight, job, vehicle, real_estate, education, destination, app). Selectors (ids, tags, category, query) filter items regardless of sourcing method.
  */
 
 // sync_catalogs response
@@ -5600,7 +5624,7 @@ export interface SyncCatalogsError {
 
 // build_creative parameters
 /**
- * Catalog type. Structural types: 'offering' (AdCP Offering objects), 'product' (ecommerce entries), 'inventory' (stock per location), 'store' (physical locations), 'promotion' (deals and pricing). Vertical types: 'hotel', 'flight', 'job', 'vehicle', 'real_estate', 'education', 'destination' — each with an industry-specific item schema.
+ * Catalog type. Structural types: 'offering' (AdCP Offering objects), 'product' (ecommerce entries), 'inventory' (stock per location), 'store' (physical locations), 'promotion' (deals and pricing). Vertical types: 'hotel', 'flight', 'job', 'vehicle', 'real_estate', 'education', 'destination', 'app' — each with an industry-specific item schema.
  */
 export type HTTPMethod = 'GET' | 'POST';
 /**
@@ -5636,7 +5660,12 @@ export interface BuildCreativeRequest {
  */
 export interface CreativeManifest {
   format_id: FormatID;
-  catalog?: Catalog;
+  /**
+   * Catalogs this creative renders. Each entry satisfies one of the format's catalog_requirements, matched by type. Tells the creative what data to display — product listings for a carousel, job vacancies for a recruitment ad, store locations for a locator. This is a data reference, not a campaign expansion directive; campaign structure and budget allocation are handled by create_media_buy packages. Each catalog can be inline (with items), a reference to a synced catalog (by catalog_id), or a URL to an external feed.
+   *
+   * @minItems 1
+   */
+  catalogs?: [Catalog, ...Catalog[]];
   /**
    * Map of asset IDs to actual asset content. Each key MUST match an asset_id from the format's assets array (e.g., 'banner_image', 'clickthrough_url', 'video_file', 'vast_tag'). The asset_id is the technical identifier used to match assets to format requirements.
    *
@@ -5766,7 +5795,7 @@ export interface ReferenceAsset {
  */
 export type BuildCreativeResponse = BuildCreativeSuccess | BuildCreativeError;
 /**
- * Catalog type. Structural types: 'offering' (AdCP Offering objects), 'product' (ecommerce entries), 'inventory' (stock per location), 'store' (physical locations), 'promotion' (deals and pricing). Vertical types: 'hotel', 'flight', 'job', 'vehicle', 'real_estate', 'education', 'destination' — each with an industry-specific item schema.
+ * Catalog type. Structural types: 'offering' (AdCP Offering objects), 'product' (ecommerce entries), 'inventory' (stock per location), 'store' (physical locations), 'promotion' (deals and pricing). Vertical types: 'hotel', 'flight', 'job', 'vehicle', 'real_estate', 'education', 'destination', 'app' — each with an industry-specific item schema.
  */
 export interface BuildCreativeSuccess {
   creative_manifest: CreativeManifest;
@@ -5891,7 +5920,7 @@ export type PreviewCreativeRequest =
       ext?: ExtensionObject;
     };
 /**
- * Catalog type. Structural types: 'offering' (AdCP Offering objects), 'product' (ecommerce entries), 'inventory' (stock per location), 'store' (physical locations), 'promotion' (deals and pricing). Vertical types: 'hotel', 'flight', 'job', 'vehicle', 'real_estate', 'education', 'destination' — each with an industry-specific item schema.
+ * Catalog type. Structural types: 'offering' (AdCP Offering objects), 'product' (ecommerce entries), 'inventory' (stock per location), 'store' (physical locations), 'promotion' (deals and pricing). Vertical types: 'hotel', 'flight', 'job', 'vehicle', 'real_estate', 'education', 'destination', 'app' — each with an industry-specific item schema.
  */
 export type PreviewOutputFormat = 'url' | 'html';
 /**
@@ -5899,7 +5928,12 @@ export type PreviewOutputFormat = 'url' | 'html';
  */
 export interface CreativeManifest1 {
   format_id: FormatID;
-  catalog?: Catalog;
+  /**
+   * Catalogs this creative renders. Each entry satisfies one of the format's catalog_requirements, matched by type. Tells the creative what data to display — product listings for a carousel, job vacancies for a recruitment ad, store locations for a locator. This is a data reference, not a campaign expansion directive; campaign structure and budget allocation are handled by create_media_buy packages. Each catalog can be inline (with items), a reference to a synced catalog (by catalog_id), or a URL to an external feed.
+   *
+   * @minItems 1
+   */
+  catalogs?: [Catalog, ...Catalog[]];
   /**
    * Map of asset IDs to actual asset content. Each key MUST match an asset_id from the format's assets array (e.g., 'banner_image', 'clickthrough_url', 'video_file', 'vast_tag'). The asset_id is the technical identifier used to match assets to format requirements.
    *
@@ -6071,7 +6105,7 @@ export type PreviewRender =
       [k: string]: unknown | undefined;
     };
 /**
- * Catalog type. Structural types: 'offering' (AdCP Offering objects), 'product' (ecommerce entries), 'inventory' (stock per location), 'store' (physical locations), 'promotion' (deals and pricing). Vertical types: 'hotel', 'flight', 'job', 'vehicle', 'real_estate', 'education', 'destination' — each with an industry-specific item schema.
+ * Catalog type. Structural types: 'offering' (AdCP Offering objects), 'product' (ecommerce entries), 'inventory' (stock per location), 'store' (physical locations), 'promotion' (deals and pricing). Vertical types: 'hotel', 'flight', 'job', 'vehicle', 'real_estate', 'education', 'destination', 'app' — each with an industry-specific item schema.
  */
 export interface PreviewCreativeSingleResponse {
   /**
@@ -6272,7 +6306,7 @@ export type CreativeVariant = DeliveryMetrics & {
   };
 };
 /**
- * Catalog type. Structural types: 'offering' (AdCP Offering objects), 'product' (ecommerce entries), 'inventory' (stock per location), 'store' (physical locations), 'promotion' (deals and pricing). Vertical types: 'hotel', 'flight', 'job', 'vehicle', 'real_estate', 'education', 'destination' — each with an industry-specific item schema.
+ * Catalog type. Structural types: 'offering' (AdCP Offering objects), 'product' (ecommerce entries), 'inventory' (stock per location), 'store' (physical locations), 'promotion' (deals and pricing). Vertical types: 'hotel', 'flight', 'job', 'vehicle', 'real_estate', 'education', 'destination', 'app' — each with an industry-specific item schema.
  */
 export type PropertyIdentifierTypes =
   | 'domain'

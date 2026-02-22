@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-02-22T00:28:48.529Z
+// Generated at: 2026-02-22T03:25:28.572Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -90,13 +90,13 @@ export const PropertyListReferenceSchema = z.object({
     auth_token: z.string().nullish()
 });
 
-export const CatalogTypeSchema = z.union([z.literal("offering"), z.literal("product"), z.literal("inventory"), z.literal("store"), z.literal("promotion"), z.literal("hotel"), z.literal("flight"), z.literal("job"), z.literal("vehicle"), z.literal("real_estate"), z.literal("education"), z.literal("destination")]);
+export const CatalogTypeSchema = z.union([z.literal("offering"), z.literal("product"), z.literal("inventory"), z.literal("store"), z.literal("promotion"), z.literal("hotel"), z.literal("flight"), z.literal("job"), z.literal("vehicle"), z.literal("real_estate"), z.literal("education"), z.literal("destination"), z.literal("app")]);
 
 export const FeedFormatSchema = z.union([z.literal("google_merchant_center"), z.literal("facebook_catalog"), z.literal("shopify"), z.literal("linkedin_jobs"), z.literal("custom")]);
 
 export const UpdateFrequencySchema = z.union([z.literal("realtime"), z.literal("hourly"), z.literal("daily"), z.literal("weekly")]);
 
-export const ContentIDTypeSchema = z.union([z.literal("sku"), z.literal("gtin"), z.literal("offering_id"), z.literal("job_id"), z.literal("hotel_id"), z.literal("flight_id"), z.literal("vehicle_id"), z.literal("listing_id"), z.literal("store_id"), z.literal("program_id"), z.literal("destination_id")]);
+export const ContentIDTypeSchema = z.union([z.literal("sku"), z.literal("gtin"), z.literal("offering_id"), z.literal("job_id"), z.literal("hotel_id"), z.literal("flight_id"), z.literal("vehicle_id"), z.literal("listing_id"), z.literal("store_id"), z.literal("program_id"), z.literal("destination_id"), z.literal("app_id")]);
 
 export const JavaScriptModuleTypeSchema = z.union([z.literal("esm"), z.literal("commonjs"), z.literal("script")]);
 
@@ -795,7 +795,7 @@ export const ListCreativeFormatsRequestSchema = z.object({
 
 export const FormatIDParameterSchema = z.union([z.literal("dimensions"), z.literal("duration")]);
 
-export const UniversalMacroSchema = z.union([z.literal("MEDIA_BUY_ID"), z.literal("PACKAGE_ID"), z.literal("CREATIVE_ID"), z.literal("CACHEBUSTER"), z.literal("TIMESTAMP"), z.literal("CLICK_URL"), z.literal("GDPR"), z.literal("GDPR_CONSENT"), z.literal("US_PRIVACY"), z.literal("GPP_STRING"), z.literal("GPP_SID"), z.literal("IP_ADDRESS"), z.literal("LIMIT_AD_TRACKING"), z.literal("DEVICE_TYPE"), z.literal("OS"), z.literal("OS_VERSION"), z.literal("DEVICE_MAKE"), z.literal("DEVICE_MODEL"), z.literal("USER_AGENT"), z.literal("APP_BUNDLE"), z.literal("APP_NAME"), z.literal("COUNTRY"), z.literal("REGION"), z.literal("CITY"), z.literal("ZIP"), z.literal("DMA"), z.literal("LAT"), z.literal("LONG"), z.literal("DEVICE_ID"), z.literal("DEVICE_ID_TYPE"), z.literal("DOMAIN"), z.literal("PAGE_URL"), z.literal("REFERRER"), z.literal("KEYWORDS"), z.literal("PLACEMENT_ID"), z.literal("FOLD_POSITION"), z.literal("AD_WIDTH"), z.literal("AD_HEIGHT"), z.literal("VIDEO_ID"), z.literal("VIDEO_TITLE"), z.literal("VIDEO_DURATION"), z.literal("VIDEO_CATEGORY"), z.literal("CONTENT_GENRE"), z.literal("CONTENT_RATING"), z.literal("PLAYER_WIDTH"), z.literal("PLAYER_HEIGHT"), z.literal("POD_POSITION"), z.literal("POD_SIZE"), z.literal("AD_BREAK_ID"), z.literal("STATION_ID"), z.literal("SHOW_NAME"), z.literal("EPISODE_ID"), z.literal("AUDIO_DURATION"), z.literal("AXEM")]);
+export const UniversalMacroSchema = z.union([z.literal("MEDIA_BUY_ID"), z.literal("PACKAGE_ID"), z.literal("CREATIVE_ID"), z.literal("CACHEBUSTER"), z.literal("TIMESTAMP"), z.literal("CLICK_URL"), z.literal("GDPR"), z.literal("GDPR_CONSENT"), z.literal("US_PRIVACY"), z.literal("GPP_STRING"), z.literal("GPP_SID"), z.literal("IP_ADDRESS"), z.literal("LIMIT_AD_TRACKING"), z.literal("DEVICE_TYPE"), z.literal("OS"), z.literal("OS_VERSION"), z.literal("DEVICE_MAKE"), z.literal("DEVICE_MODEL"), z.literal("USER_AGENT"), z.literal("APP_BUNDLE"), z.literal("APP_NAME"), z.literal("COUNTRY"), z.literal("REGION"), z.literal("CITY"), z.literal("ZIP"), z.literal("DMA"), z.literal("LAT"), z.literal("LONG"), z.literal("DEVICE_ID"), z.literal("DEVICE_ID_TYPE"), z.literal("DOMAIN"), z.literal("PAGE_URL"), z.literal("REFERRER"), z.literal("KEYWORDS"), z.literal("PLACEMENT_ID"), z.literal("FOLD_POSITION"), z.literal("AD_WIDTH"), z.literal("AD_HEIGHT"), z.literal("VIDEO_ID"), z.literal("VIDEO_TITLE"), z.literal("VIDEO_DURATION"), z.literal("VIDEO_CATEGORY"), z.literal("CONTENT_GENRE"), z.literal("CONTENT_RATING"), z.literal("PLAYER_WIDTH"), z.literal("PLAYER_HEIGHT"), z.literal("POD_POSITION"), z.literal("POD_SIZE"), z.literal("AD_BREAK_ID"), z.literal("STATION_ID"), z.literal("SHOW_NAME"), z.literal("EPISODE_ID"), z.literal("AUDIO_DURATION"), z.literal("AXEM"), z.literal("CATALOG_ID"), z.literal("SKU"), z.literal("GTIN"), z.literal("OFFERING_ID"), z.literal("JOB_ID"), z.literal("HOTEL_ID"), z.literal("FLIGHT_ID"), z.literal("VEHICLE_ID"), z.literal("LISTING_ID"), z.literal("STORE_ID"), z.literal("PROGRAM_ID"), z.literal("DESTINATION_ID"), z.literal("CREATIVE_VARIANT_ID"), z.literal("APP_ITEM_ID")]);
 
 export const ImageAssetRequirementsSchema = z.record(z.string(), z.union([z.unknown(), z.undefined()])).and(z.object({
     min_width: z.number().nullish(),
@@ -984,7 +984,7 @@ export const CreativeAssetSchema = z.record(z.string(), z.union([z.unknown(), z.
     creative_id: z.string(),
     name: z.string(),
     format_id: FormatIDSchema,
-    catalog: CatalogSchema.nullish(),
+    catalogs: z.array(CatalogSchema).nullish(),
     assets: z.record(z.string(), z.union([z.unknown(), z.undefined()])),
     inputs: z.array(z.record(z.string(), z.union([z.unknown(), z.undefined()])).and(z.object({
         name: z.string(),
@@ -1081,7 +1081,7 @@ export const ListCreativesResponseSchema = z.object({
         status: CreativeStatusSchema,
         created_date: z.string(),
         updated_date: z.string(),
-        catalog: CatalogSchema.nullish(),
+        catalogs: z.array(CatalogSchema).nullish(),
         assets: z.record(z.string(), z.union([ImageAssetSchema, VideoAssetSchema, AudioAssetSchema, TextAssetSchema, HTMLAssetSchema, CSSAssetSchema, JavaScriptAssetSchema, VASTAssetSchema, DAASTAssetSchema, URLAssetSchema])).nullish(),
         tags: z.array(z.string()).nullish(),
         assignments: z.object({
@@ -1412,7 +1412,7 @@ export const WebhookSecurityMethodSchema = z.union([z.literal("hmac_sha256"), z.
 
 export const CreativeManifestSchema = z.record(z.string(), z.union([z.unknown(), z.undefined()])).and(z.object({
     format_id: FormatIDSchema,
-    catalog: CatalogSchema.nullish(),
+    catalogs: z.array(CatalogSchema).nullish(),
     assets: z.record(z.string(), z.union([z.unknown(), z.undefined()])),
     ext: ExtensionObjectSchema.nullish()
 }));
@@ -1454,7 +1454,7 @@ export const PreviewOutputFormatSchema = z.union([z.literal("url"), z.literal("h
 
 export const CreativeManifest1Schema = z.record(z.string(), z.union([z.unknown(), z.undefined()])).and(z.object({
     format_id: FormatIDSchema,
-    catalog: CatalogSchema.nullish(),
+    catalogs: z.array(CatalogSchema).nullish(),
     assets: z.record(z.string(), z.union([z.unknown(), z.undefined()])),
     ext: ExtensionObjectSchema.nullish()
 }));
