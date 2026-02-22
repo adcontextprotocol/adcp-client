@@ -148,7 +148,7 @@ describe(
         assert.ok(result.data, 'Should have data');
         assert.ok(
           result.data.message === 'Task completed successfully' ||
-          (result.data.result && result.data.result.message === 'Task completed successfully'),
+            (result.data.result && result.data.result.message === 'Task completed successfully'),
           'Should contain the completion message'
         );
       });
@@ -485,7 +485,10 @@ describe(
         // FAILED status throws internally but executeTask catches it and returns an error result
         const result = await executor.executeTask(mockAgent, 'failTask', {});
         assert.strictEqual(result.success, false);
-        assert.ok(result.error.includes('Authentication failed'), `Expected error to include 'Authentication failed', got: ${result.error}`);
+        assert.ok(
+          result.error.includes('Authentication failed'),
+          `Expected error to include 'Authentication failed', got: ${result.error}`
+        );
       });
 
       test('should handle REJECTED status', async () => {
@@ -501,7 +504,10 @@ describe(
         // REJECTED status throws internally but executeTask catches it and returns an error result
         const result = await executor.executeTask(mockAgent, 'rejectTask', {});
         assert.strictEqual(result.success, false);
-        assert.ok(result.error.includes('Request rejected by policy'), `Expected error to include 'Request rejected by policy', got: ${result.error}`);
+        assert.ok(
+          result.error.includes('Request rejected by policy'),
+          `Expected error to include 'Request rejected by policy', got: ${result.error}`
+        );
       });
 
       test('should handle CANCELED status', async () => {
@@ -517,7 +523,10 @@ describe(
         // CANCELED status throws internally but executeTask catches it and returns an error result
         const result = await executor.executeTask(mockAgent, 'cancelTask', {});
         assert.strictEqual(result.success, false);
-        assert.ok(result.error.includes('Task was canceled'), `Expected error to include 'Task was canceled', got: ${result.error}`);
+        assert.ok(
+          result.error.includes('Task was canceled'),
+          `Expected error to include 'Task was canceled', got: ${result.error}`
+        );
       });
 
       test('should handle unknown status with data as completion', async () => {
@@ -541,7 +550,7 @@ describe(
         assert.ok(result.data, 'Should have data');
         assert.ok(
           result.data['data'] === 'valid result' ||
-          (result.data.result && result.data.result['data'] === 'valid result'),
+            (result.data.result && result.data.result['data'] === 'valid result'),
           'Should contain the valid result data'
         );
       });
@@ -559,7 +568,10 @@ describe(
         // and returns an error result rather than rejecting.
         const result = await executor.executeTask(mockAgent, 'unknownEmptyTask', {});
         assert.strictEqual(result.success, false);
-        assert.ok(result.error.includes('Unknown status') || result.error.includes('unknown'), `Expected unknown status error, got: ${result.error}`);
+        assert.ok(
+          result.error.includes('Unknown status') || result.error.includes('unknown'),
+          `Expected unknown status error, got: ${result.error}`
+        );
       });
     });
 

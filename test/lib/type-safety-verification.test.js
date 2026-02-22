@@ -229,7 +229,10 @@ describe(
         assert.strictEqual(nullResult.success, true);
         // null result is returned as undefined since null is treated as absent data,
         // or it may be wrapped in a data object depending on the unwrapper path
-        assert.ok(nullResult.data === null || nullResult.data === undefined || typeof nullResult.data === 'object', 'Null result should be null, undefined, or object wrapper');
+        assert.ok(
+          nullResult.data === null || nullResult.data === undefined || typeof nullResult.data === 'object',
+          'Null result should be null, undefined, or object wrapper'
+        );
       });
     });
 
@@ -685,9 +688,8 @@ describe(
           // Fields are accessible either directly or nested under data.data
           const originalType = result.data?.originalType ?? result.data?.data?.originalType;
           const receivedType = result.data?.receivedType ?? result.data?.data?.receivedType;
-          const receivedValue = result.data?.receivedValue !== undefined
-            ? result.data.receivedValue
-            : result.data?.data?.receivedValue;
+          const receivedValue =
+            result.data?.receivedValue !== undefined ? result.data.receivedValue : result.data?.data?.receivedValue;
           assert.strictEqual(originalType, variant.type);
 
           if (variant.type === 'array') {

@@ -336,9 +336,16 @@ describe('TaskExecutor Mocking Strategies', { skip: process.env.CI ? 'Slow tests
         if (taskName === 'tasks/get') {
           const state = pollStates[Math.min(pollCount++, pollStates.length - 1)];
           return {
-            task: state === 'completed'
-              ? { status: 'completed', result: { polls: pollCount }, taskType: 'pollingTask', createdAt: Date.now(), updatedAt: Date.now() }
-              : { status: 'working' },
+            task:
+              state === 'completed'
+                ? {
+                    status: 'completed',
+                    result: { polls: pollCount },
+                    taskType: 'pollingTask',
+                    createdAt: Date.now(),
+                    updatedAt: Date.now(),
+                  }
+                : { status: 'working' },
           };
         } else {
           return { status: 'submitted' }; // Initial call returns submitted
@@ -376,7 +383,13 @@ describe('TaskExecutor Mocking Strategies', { skip: process.env.CI ? 'Slow tests
           return {
             task:
               quickPollCount >= 5
-                ? { status: 'completed', result: { rapidPolls: quickPollCount }, taskType: 'rapidPollingTask', createdAt: Date.now(), updatedAt: Date.now() }
+                ? {
+                    status: 'completed',
+                    result: { rapidPolls: quickPollCount },
+                    taskType: 'rapidPollingTask',
+                    createdAt: Date.now(),
+                    updatedAt: Date.now(),
+                  }
                 : { status: 'working' },
           };
         } else {
@@ -413,7 +426,15 @@ describe('TaskExecutor Mocking Strategies', { skip: process.env.CI ? 'Slow tests
         }
 
         if (taskName === 'tasks/get') {
-          return { task: { status: 'completed', result: { recovered: true }, taskType: 'task', createdAt: Date.now(), updatedAt: Date.now() } };
+          return {
+            task: {
+              status: 'completed',
+              result: { recovered: true },
+              taskType: 'task',
+              createdAt: Date.now(),
+              updatedAt: Date.now(),
+            },
+          };
         } else {
           // Initial call succeeds but returns submitted
           return { status: 'submitted' };
@@ -518,7 +539,13 @@ describe('TaskExecutor Mocking Strategies', { skip: process.env.CI ? 'Slow tests
         { status: 'working', message: 'Initializing...' },
         { status: 'working', message: 'Processing data...' },
         { status: 'working', message: 'Generating results...' },
-        { status: 'completed', result: { processed: 1000, generated: 50 }, taskType: 'realWorldTask', createdAt: Date.now() - 230, updatedAt: Date.now() },
+        {
+          status: 'completed',
+          result: { processed: 1000, generated: 50 },
+          taskType: 'realWorldTask',
+          createdAt: Date.now() - 230,
+          updatedAt: Date.now(),
+        },
       ];
 
       let stepIndex = 0;
@@ -567,8 +594,14 @@ describe('TaskExecutor Mocking Strategies', { skip: process.env.CI ? 'Slow tests
 
       // Should take approximately the sum of step durations
       const expectedDuration = stepDurations.reduce((a, b) => a + b, 0);
-      assert(elapsed >= expectedDuration * 0.8, `Should take at least 80% of expected duration (${expectedDuration * 0.8}ms), elapsed: ${elapsed}ms`);
-      assert(elapsed <= expectedDuration * 5, `Should not take more than 5x expected duration (${expectedDuration * 5}ms), elapsed: ${elapsed}ms`);
+      assert(
+        elapsed >= expectedDuration * 0.8,
+        `Should take at least 80% of expected duration (${expectedDuration * 0.8}ms), elapsed: ${elapsed}ms`
+      );
+      assert(
+        elapsed <= expectedDuration * 5,
+        `Should not take more than 5x expected duration (${expectedDuration * 5}ms), elapsed: ${elapsed}ms`
+      );
     });
   });
 });

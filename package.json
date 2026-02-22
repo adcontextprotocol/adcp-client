@@ -41,6 +41,7 @@
   ],
   "scripts": {
     "prepare": "node scripts/install-hooks.js 2>/dev/null || true",
+    "prepublishOnly": "npm run build:lib",
     "dev": "tsx src/server/server.ts",
     "build": "npm run build:lib && tsc && cp -r src/public dist/",
     "build:lib": "tsc --project tsconfig.lib.json",
