@@ -258,4 +258,49 @@ describe('Zod Schema Validation', () => {
     const result = schemas.GetMediaBuysResponseSchema.safeParse(invalidResponse);
     assert.ok(!result.success, 'GetMediaBuysResponse with invalid approval_status should fail');
   });
+
+  test('GetMediaBuysResponseSchema rejects media buy missing required fields', async () => {
+    if (!schemas) {
+      schemas = await import('../../dist/lib/types/schemas.generated.js');
+    }
+
+    // Missing required: status, currency, total_budget, packages
+    const invalidResponse = {
+      media_buys: [
+        {
+          media_buy_id: 'mb_123',
+          // status, currency, total_budget, packages all missing
+        },
+      ],
+    };
+
+    const result = schemas.GetMediaBuysResponseSchema.safeParse(invalidResponse);
+    assert.ok(!result.success, 'GetMediaBuysResponse with missing required fields should fail');
+  });
+
+  test('GetCreativeFeaturesRequestSchema validates valid request', async () => {
+    if (!schemas) {
+      schemas = await import('../../dist/lib/types/schemas.generated.js');
+    }
+
+    assert.ok(schemas.GetCreativeFeaturesRequestSchema, 'GetCreativeFeaturesRequestSchema should exist');
+
+    const result = schemas.GetCreativeFeaturesRequestSchema.safeParse({
+      creative_manifest: {
+        format_id: { agent_url: 'https://creative.example.com', id: 'display_300x250' },
+        assets: { banner: { url: 'https://example.com/banner.jpg' } },
+      },
+      feature_ids: ['viewability', 'brand_safety'],
+    });
+    assert.ok(result.success, `GetCreativeFeaturesRequest validation should succeed: ${JSON.stringify(result.error?.issues)}`);
+  });
+
+  test('GetCreativeFeaturesResponseSchema is importable', async () => {
+    if (!schemas) {
+      schemas = await import('../../dist/lib/types/schemas.generated.js');
+    }
+
+    assert.ok(schemas.GetCreativeFeaturesResponseSchema, 'GetCreativeFeaturesResponseSchema should exist');
+    assert.ok(typeof schemas.GetCreativeFeaturesResponseSchema.safeParse === 'function');
+  });
 });
