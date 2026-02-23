@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-02-22T03:25:28.572Z
+// Generated at: 2026-02-23T01:19:24.912Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -366,6 +366,7 @@ export const VCPMPricingOptionSchema = z.record(z.string(), z.union([z.unknown()
     currency: z.string(),
     fixed_price: z.number().nullish(),
     floor_price: z.number().nullish(),
+    max_bid: z.boolean().nullish(),
     price_guidance: PriceGuidanceSchema.nullish(),
     min_spend_per_package: z.number().nullish()
 }));
@@ -376,6 +377,7 @@ export const CPCPricingOptionSchema = z.record(z.string(), z.union([z.unknown(),
     currency: z.string(),
     fixed_price: z.number().nullish(),
     floor_price: z.number().nullish(),
+    max_bid: z.boolean().nullish(),
     price_guidance: PriceGuidanceSchema.nullish(),
     min_spend_per_package: z.number().nullish()
 }));
@@ -386,6 +388,7 @@ export const CPCVPricingOptionSchema = z.record(z.string(), z.union([z.unknown()
     currency: z.string(),
     fixed_price: z.number().nullish(),
     floor_price: z.number().nullish(),
+    max_bid: z.boolean().nullish(),
     price_guidance: PriceGuidanceSchema.nullish(),
     min_spend_per_package: z.number().nullish()
 }));
@@ -396,6 +399,7 @@ export const CPVPricingOptionSchema = z.record(z.string(), z.union([z.unknown(),
     currency: z.string(),
     fixed_price: z.number().nullish(),
     floor_price: z.number().nullish(),
+    max_bid: z.boolean().nullish(),
     price_guidance: PriceGuidanceSchema.nullish(),
     parameters: z.record(z.string(), z.union([z.unknown(), z.undefined()])).and(z.object({
         view_threshold: z.union([z.number(), z.record(z.string(), z.union([z.unknown(), z.undefined()])).and(z.object({
@@ -735,6 +739,7 @@ export const CPMPricingOptionSchema = z.record(z.string(), z.union([z.unknown(),
     currency: z.string(),
     fixed_price: z.number().nullish(),
     floor_price: z.number().nullish(),
+    max_bid: z.boolean().nullish(),
     price_guidance: PriceGuidanceSchema.nullish(),
     min_spend_per_package: z.number().nullish()
 }));
@@ -1136,6 +1141,71 @@ export const UpdateMediaBuySuccessSchema = z.object({
     buyer_ref: z.string(),
     implementation_date: z.string().nullish().nullable(),
     affected_packages: z.array(PackageSchema).nullish(),
+    sandbox: z.boolean().nullish(),
+    context: ContextObjectSchema.nullish(),
+    ext: ExtensionObjectSchema.nullish()
+});
+
+export const GetMediaBuysRequestSchema = z.object({
+    account_id: z.string().nullish(),
+    media_buy_ids: z.array(z.string()).nullish(),
+    buyer_refs: z.array(z.string()).nullish(),
+    status_filter: z.union([MediaBuyStatusSchema, z.array(MediaBuyStatusSchema)]).nullish(),
+    include_snapshot: z.boolean().nullish(),
+    pagination: PaginationRequestSchema.nullish(),
+    context: ContextObjectSchema.nullish(),
+    ext: ExtensionObjectSchema.nullish()
+});
+
+export const CreativeApprovalStatusSchema = z.union([z.literal("pending_review"), z.literal("approved"), z.literal("rejected")]);
+
+export const GetMediaBuysResponseSchema = z.object({
+    media_buys: z.array(z.object({
+        media_buy_id: z.string(),
+        buyer_ref: z.string().nullish(),
+        buyer_campaign_ref: z.string().nullish(),
+        account: AccountSchema.nullish(),
+        status: MediaBuyStatusSchema,
+        currency: z.string(),
+        total_budget: z.number(),
+        creative_deadline: z.string().nullish(),
+        created_at: z.string().nullish(),
+        updated_at: z.string().nullish(),
+        packages: z.array(z.object({
+            package_id: z.string(),
+            buyer_ref: z.string().nullish(),
+            product_id: z.string().nullish(),
+            budget: z.number().nullish(),
+            currency: z.string().nullish(),
+            bid_price: z.number().nullish(),
+            impressions: z.number().nullish(),
+            start_time: z.string().nullish(),
+            end_time: z.string().nullish(),
+            paused: z.boolean().nullish(),
+            creative_approvals: z.array(z.object({
+                creative_id: z.string(),
+                approval_status: CreativeApprovalStatusSchema,
+                rejection_reason: z.string().nullish()
+            })).nullish(),
+            format_ids_pending: z.array(FormatIDSchema).nullish(),
+            snapshot_unavailable_reason: z.union([z.literal("SNAPSHOT_UNSUPPORTED"), z.literal("SNAPSHOT_TEMPORARILY_UNAVAILABLE"), z.literal("SNAPSHOT_PERMISSION_DENIED")]).nullish(),
+            snapshot: z.object({
+                as_of: z.string(),
+                staleness_seconds: z.number(),
+                impressions: z.number(),
+                spend: z.number(),
+                currency: z.string().nullish(),
+                clicks: z.number().nullish(),
+                pacing_index: z.number().nullish(),
+                delivery_status: z.union([z.literal("delivering"), z.literal("not_delivering"), z.literal("completed"), z.literal("budget_exhausted"), z.literal("flight_ended"), z.literal("goal_met")]).nullish(),
+                ext: ExtensionObjectSchema.nullish()
+            }).nullish(),
+            ext: ExtensionObjectSchema.nullish()
+        })),
+        ext: ExtensionObjectSchema.nullish()
+    })),
+    errors: z.array(ErrorSchema).nullish(),
+    pagination: PaginationResponseSchema.nullish(),
     sandbox: z.boolean().nullish(),
     context: ContextObjectSchema.nullish(),
     ext: ExtensionObjectSchema.nullish()
@@ -2041,6 +2111,25 @@ export const GetMediaBuyArtifactsResponseSchema = z.union([z.object({
         ext: ExtensionObjectSchema.nullish()
     })]);
 
+export const GetCreativeFeaturesRequestSchema = z.object({
+    creative_manifest: CreativeManifestSchema,
+    feature_ids: z.array(z.string()).nullish(),
+    context: ContextObjectSchema.nullish(),
+    ext: ExtensionObjectSchema.nullish()
+});
+
+export const CreativeFeatureResultSchema = z.object({
+    feature_id: z.string(),
+    value: z.union([z.boolean(), z.number(), z.string()]),
+    unit: z.string().nullish(),
+    confidence: z.number().nullish(),
+    measured_at: z.string().nullish(),
+    expires_at: z.string().nullish(),
+    methodology_version: z.string().nullish(),
+    details: z.record(z.string(), z.union([z.unknown(), z.undefined()])).nullish(),
+    ext: ExtensionObjectSchema.nullish()
+});
+
 export const SIGetOfferingRequestSchema = z.object({
     offering_id: z.string(),
     context: z.string().nullish(),
@@ -2299,6 +2388,17 @@ export const GetAdCPCapabilitiesResponseSchema = z.object({
             categories: z.array(z.string()).nullish(),
             description: z.string().nullish(),
             methodology_url: z.string().nullish()
+        })).nullish(),
+        creative_features: z.array(z.object({
+            feature_id: z.string(),
+            type: z.union([z.literal("binary"), z.literal("quantitative"), z.literal("categorical")]),
+            range: z.object({
+                min: z.number(),
+                max: z.number()
+            }).nullish(),
+            categories: z.array(z.string()).nullish(),
+            description: z.string().nullish(),
+            methodology_url: z.string().nullish()
         })).nullish()
     }).nullish(),
     sponsored_intelligence: z.object({
@@ -2393,7 +2493,7 @@ export const SyncAccountsErrorSchema = z.object({
 export const MediaBuySchema = z.object({
     media_buy_id: z.string(),
     buyer_ref: z.string().nullish(),
-    campaign_ref: z.string().nullish(),
+    buyer_campaign_ref: z.string().nullish(),
     account: AccountSchema.nullish(),
     status: MediaBuyStatusSchema,
     total_budget: z.number(),
@@ -2464,7 +2564,7 @@ export const UpdateMediaBuyResponseSchema = z.union([UpdateMediaBuySuccessSchema
 export const CreateMediaBuySuccessSchema = z.object({
     media_buy_id: z.string(),
     buyer_ref: z.string(),
-    campaign_ref: z.string().nullish(),
+    buyer_campaign_ref: z.string().nullish(),
     account: AccountSchema.nullish(),
     creative_deadline: z.string().nullish(),
     packages: z.array(PackageSchema),
@@ -2632,8 +2732,8 @@ export const GetMediaBuyDeliveryResponseSchema = z.object({
     media_buy_deliveries: z.array(z.object({
         media_buy_id: z.string(),
         buyer_ref: z.string().nullish(),
-        campaign_ref: z.string().nullish(),
-        status: z.union([z.literal("pending"), z.literal("active"), z.literal("paused"), z.literal("completed"), z.literal("failed"), z.literal("reporting_delayed")]),
+        buyer_campaign_ref: z.string().nullish(),
+        status: z.union([z.literal("pending_activation"), z.literal("pending"), z.literal("active"), z.literal("paused"), z.literal("completed"), z.literal("failed"), z.literal("reporting_delayed")]),
         expected_availability: z.string().nullish(),
         is_adjusted: z.boolean().nullish(),
         pricing_model: PricingModelSchema.nullish(),
@@ -2883,6 +2983,19 @@ export const GetContentStandardsResponseSchema = z.union([ContentStandardsSchema
         ext: ExtensionObjectSchema.nullish()
     })]);
 
+export const GetCreativeFeaturesResponseSchema = z.union([z.object({
+        results: z.array(CreativeFeatureResultSchema),
+        detail_url: z.string().nullish(),
+        errors: z.record(z.string(), z.union([z.unknown(), z.undefined()])).nullish(),
+        context: ContextObjectSchema.nullish(),
+        ext: ExtensionObjectSchema.nullish()
+    }), z.object({
+        errors: z.array(ErrorSchema),
+        results: z.record(z.string(), z.union([z.unknown(), z.undefined()])).nullish(),
+        context: ContextObjectSchema.nullish(),
+        ext: ExtensionObjectSchema.nullish()
+    })]);
+
 export const SIInitiateSessionRequestSchema = z.object({
     context: z.string(),
     identity: SIIdentitySchema,
@@ -2923,7 +3036,7 @@ export const GetProductsRequestSchema = z.object({
     brand: BrandReferenceSchema.nullish(),
     catalog: CatalogSchema.nullish(),
     account_id: z.string().nullish(),
-    campaign_ref: z.string().nullish(),
+    buyer_campaign_ref: z.string().nullish(),
     filters: ProductFiltersSchema.nullish(),
     property_list: PropertyListReferenceSchema.nullish(),
     pagination: PaginationRequestSchema.nullish(),
@@ -2942,7 +3055,7 @@ export const CatalogRequirementsSchema = z.record(z.string(), z.union([z.unknown
 
 export const CreateMediaBuyRequestSchema = z.object({
     buyer_ref: z.string(),
-    campaign_ref: z.string().nullish(),
+    buyer_campaign_ref: z.string().nullish(),
     account_id: z.string().nullish(),
     proposal_id: z.string().nullish(),
     total_budget: z.object({

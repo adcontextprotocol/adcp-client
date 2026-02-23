@@ -15,6 +15,8 @@ import type {
   SyncCreativesResponse,
   ListCreativesRequest,
   ListCreativesResponse,
+  GetMediaBuysRequest,
+  GetMediaBuysResponse,
   GetMediaBuyDeliveryRequest,
   GetMediaBuyDeliveryResponse,
   ProvidePerformanceFeedbackRequest,
@@ -1227,6 +1229,27 @@ export class SingleAgentClient {
   }
 
   /**
+   * Get media buy status, creative approvals, and optional delivery snapshots
+   *
+   * @param params - Request parameters
+   * @param inputHandler - Handler for clarification requests
+   * @param options - Task execution options
+   */
+  async getMediaBuys(
+    params: GetMediaBuysRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<GetMediaBuysResponse>> {
+    return this.executeAndHandle<GetMediaBuysResponse>(
+      'get_media_buys',
+      'onGetMediaBuysStatusChange',
+      params,
+      inputHandler,
+      options
+    );
+  }
+
+  /**
    * Get media buy delivery information
    *
    * @param params - Delivery information parameters
@@ -2027,6 +2050,8 @@ export class SingleAgentClient {
       // update_media_buy: excluded - complex discriminated unions (package operations)
       sync_creatives: schemas.SyncCreativesRequestSchema,
       list_creatives: schemas.ListCreativesRequestSchema,
+      get_media_buys: schemas.GetMediaBuysRequestSchema,
+      get_creative_features: schemas.GetCreativeFeaturesRequestSchema,
       get_media_buy_delivery: schemas.GetMediaBuyDeliveryRequestSchema,
       get_signals: schemas.GetSignalsRequestSchema,
       activate_signal: schemas.ActivateSignalRequestSchema,

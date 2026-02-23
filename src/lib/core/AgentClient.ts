@@ -17,6 +17,8 @@ import type {
   SyncCreativesResponse,
   ListCreativesRequest,
   ListCreativesResponse,
+  GetMediaBuysRequest,
+  GetMediaBuysResponse,
   GetMediaBuyDeliveryRequest,
   GetMediaBuyDeliveryResponse,
   ProvidePerformanceFeedbackRequest,
@@ -40,6 +42,7 @@ export type TaskResponseTypeMap = {
   update_media_buy: UpdateMediaBuyResponse;
   sync_creatives: SyncCreativesResponse;
   list_creatives: ListCreativesResponse;
+  get_media_buys: GetMediaBuysResponse;
   get_media_buy_delivery: GetMediaBuyDeliveryResponse;
   provide_performance_feedback: ProvidePerformanceFeedbackResponse;
   get_signals: GetSignalsResponse;
@@ -223,6 +226,26 @@ export class AgentClient {
     options?: TaskOptions
   ): Promise<TaskResult<ListCreativesResponse>> {
     const result = await this.client.listCreatives(params, inputHandler, {
+      ...options,
+      contextId: this.currentContextId,
+    });
+
+    if (result.success) {
+      this.currentContextId = result.metadata.taskId;
+    }
+
+    return result;
+  }
+
+  /**
+   * Get media buy status, creative approvals, and optional delivery snapshots
+   */
+  async getMediaBuys(
+    params: GetMediaBuysRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<GetMediaBuysResponse>> {
+    const result = await this.client.getMediaBuys(params, inputHandler, {
       ...options,
       contextId: this.currentContextId,
     });
