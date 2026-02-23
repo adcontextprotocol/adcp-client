@@ -284,7 +284,13 @@ export class RegistryClient {
    */
   async checkPropertyList(domains: string[]): Promise<{
     summary: { total: number; remove: number; modify: number; assess: number; ok: number };
-    remove: Array<{ input: string; canonical: string; reason: 'duplicate' | 'blocked'; domain_type?: string; blocked_reason?: string }>;
+    remove: Array<{
+      input: string;
+      canonical: string;
+      reason: 'duplicate' | 'blocked';
+      domain_type?: string;
+      blocked_reason?: string;
+    }>;
     modify: Array<{ input: string; canonical: string; reason: string }>;
     assess: Array<{ domain: string }>;
     ok: Array<{ domain: string; source: string }>;

@@ -64,7 +64,7 @@ function postProcessLazyTypeAnnotations(content: string): string {
   if (result.includes('from "undefined"') || result.includes(': z.ZodSchema<')) {
     throw new Error(
       'postProcessLazyTypeAnnotations: unresolved z.ZodSchema<> annotation or "undefined" import in output. ' +
-      'A recursive type may have a nested generic parameter — update the regex.'
+        'A recursive type may have a nested generic parameter — update the regex.'
     );
   }
   return result;
