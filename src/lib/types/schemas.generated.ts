@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-02-23T18:35:44.370Z
+// Generated at: 2026-02-23T18:46:32.796Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -3115,7 +3115,7 @@ export const GetProductsRequestSchema = z.object({
         buying_mode: z.literal("brief")
     }), z.object({
         buying_mode: z.literal("wholesale"),
-        brief: z.never().nullish()
+        brief: z.never().optional()
     })]));
 
 export const CatalogRequirementsSchema = z.record(z.string(), z.union([z.unknown(), z.undefined()])).and(z.object({

@@ -27,8 +27,10 @@ const OUTPUT_FILE = path.join(__dirname, '../src/lib/types/schemas.generated.ts'
  * so treating "optional" as "can be undefined OR null" is the pragmatic approach.
  */
 function postProcessForNullish(content: string): string {
-  // Replace all .optional() with .nullish() globally
-  return content.replace(/\.optional\(\)/g, '.nullish()');
+  // Replace .optional() with .nullish() globally, except when preceded by .never()
+  // z.never().optional() must stay as-is: it means "this field must not be provided",
+  // and converting to .nullish() would allow null values through, weakening that constraint.
+  return content.replace(/(?<!\.never\(\))\.optional\(\)/g, '.nullish()');
 }
 
 /**

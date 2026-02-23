@@ -298,7 +298,8 @@ async function syncRegistrySpec(): Promise<void> {
   if (!res.ok) throw new Error(`Failed to fetch registry spec: ${res.status} ${res.statusText}`);
   const yaml = await res.text();
   if (!yaml.trim()) throw new Error('Registry spec response was empty');
-  if (!yaml.includes('openapi:')) throw new Error('Registry spec response does not look like an OpenAPI spec');
+  if (!yaml.trimStart().startsWith('openapi:'))
+    throw new Error('Registry spec response does not look like an OpenAPI spec');
   mkdirSync(path.dirname(REGISTRY_SPEC_PATH), { recursive: true });
   writeFileSync(REGISTRY_SPEC_PATH, yaml);
   console.log(`✅ Registry spec cached at ${REGISTRY_SPEC_PATH} (${yaml.length} bytes)`);
