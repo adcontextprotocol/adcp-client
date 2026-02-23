@@ -62,6 +62,7 @@ export type {
 
 const DEFAULT_BASE_URL = 'https://adcontextprotocol.org';
 const MAX_BULK_DOMAINS = 100;
+const MAX_CHECK_DOMAINS = 10000; // per OpenAPI spec maxItems
 
 /**
  * Client for the AdCP Registry API.
@@ -265,6 +266,49 @@ export class RegistryClient {
       agent_url: agentUrl,
       publisher_properties: publisherProperties,
     });
+  }
+
+  // ====== Property List Checking ======
+
+  /**
+   * Check a list of publisher domains against the AAO registry.
+   *
+   * Normalizes domains (strips www/m prefixes), removes duplicates, flags known ad tech
+   * infrastructure, and identifies domains not yet in the registry. Returns four buckets:
+   * - `remove`: duplicates or known blocked domains (ad servers, CDNs, trackers)
+   * - `modify`: domains that were normalized (e.g. www.example.com → example.com)
+   * - `assess`: unknown domains not in registry, not blocked
+   * - `ok`: domains found in registry with no changes needed
+   *
+   * Results are stored for 7 days and retrievable via the `report_id`.
+   */
+  async checkPropertyList(domains: string[]): Promise<{
+    summary: { total: number; remove: number; modify: number; assess: number; ok: number };
+    remove: Array<{ input: string; canonical: string; reason: 'duplicate' | 'blocked'; domain_type?: string; blocked_reason?: string }>;
+    modify: Array<{ input: string; canonical: string; reason: string }>;
+    assess: Array<{ domain: string }>;
+    ok: Array<{ domain: string; source: string }>;
+    report_id: string;
+  }> {
+    if (!domains?.length) throw new Error('domains is required');
+    if (domains.length > MAX_CHECK_DOMAINS) {
+      throw new Error(`Cannot check more than ${MAX_CHECK_DOMAINS} domains at once (got ${domains.length})`);
+    }
+    return this.post(`${this.baseUrl}/api/properties/check`, { domains });
+  }
+
+  /**
+   * Retrieve a previously stored property check report by ID.
+   * Reports expire after 7 days.
+   *
+   * Note: the report endpoint only returns the summary counts, not the full per-domain
+   * buckets. Use checkPropertyList to get the full detail (stored for 7 days via report_id).
+   */
+  async getPropertyCheckReport(reportId: string): Promise<{
+    summary: { total: number; remove: number; modify: number; assess: number; ok: number };
+  }> {
+    if (!reportId?.trim()) throw new Error('reportId is required');
+    return this.get(`${this.baseUrl}/api/properties/check/${encodeURIComponent(reportId)}`);
   }
 
   // ====== Adagents Tooling ======

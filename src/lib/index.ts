@@ -239,10 +239,14 @@ export type {
   ContentIDType,
   CatalogAction,
   CatalogItemStatus,
+  CatalogFieldMapping,
+  CatalogFieldBinding,
   SyncCatalogsRequest,
   SyncCatalogsResponse,
   SyncCatalogsSuccess,
   SyncCatalogsError,
+  // Format Assets
+  Overlay,
   // Creative Delivery Domain
   GetCreativeDeliveryRequest,
   GetCreativeDeliveryResponse,

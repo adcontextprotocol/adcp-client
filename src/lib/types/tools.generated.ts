@@ -3,6 +3,42 @@
 
 // get_products parameters
 /**
+ * Request parameters for discovering available advertising products
+ */
+export type GetProductsRequest = {
+  /**
+   * Declares buyer intent for this request. 'brief': publisher curates product recommendations from the provided brief. 'wholesale': buyer requests raw inventory to apply their own audiences — brief must not be provided. When buying_mode is 'wholesale', publishers return only products that support buyer-directed targeting and omit proposals.
+   */
+  buying_mode: 'brief' | 'wholesale';
+  /**
+   * Natural language description of campaign requirements. Required when buying_mode is 'brief'. Must not be provided when buying_mode is 'wholesale'.
+   */
+  brief?: string;
+  brand?: BrandReference;
+  catalog?: Catalog;
+  /**
+   * Account ID for product lookup. Required when the seller declares account.required_for_products = true in capabilities. Returns products with pricing specific to this account's rate card.
+   */
+  account_id?: string;
+  /**
+   * Buyer's campaign reference label. Groups related discovery and buy operations under a single campaign for CRM and ad server correlation (e.g., 'NovaDrink_Meals_Q2').
+   */
+  buyer_campaign_ref?: string;
+  filters?: ProductFilters;
+  property_list?: PropertyListReference;
+  pagination?: PaginationRequest;
+  context?: ContextObject;
+  ext?: ExtensionObject;
+} & (
+  | {
+      buying_mode: 'brief';
+    }
+  | {
+      buying_mode: 'wholesale';
+      brief?: never;
+    }
+);
+/**
  * Brand identifier within the house portfolio. Optional for single-brand domains.
  */
 export type BrandID = string;
@@ -79,6 +115,108 @@ export type ContentIDType =
   | 'program_id'
   | 'destination_id'
   | 'app_id';
+/**
+ * Declares how a field in an external feed maps to the AdCP catalog item schema. Used in sync_catalogs feed_field_mappings to normalize non-AdCP feeds (Google Merchant Center, LinkedIn Jobs XML, hotel XML, etc.) to the standard catalog item schema without requiring the buyer to preprocess every feed. Multiple mappings can assemble a nested object via dot notation (e.g., separate mappings for price.amount and price.currency).
+ */
+export type CatalogFieldMapping = {
+  [k: string]: unknown | undefined;
+} & {
+  [k: string]: unknown | undefined;
+} & {
+  /**
+   * Field name in the external feed record. Omit when injecting a static literal value (use the value property instead).
+   */
+  feed_field?: string;
+  /**
+   * Target field on the catalog item schema, using dot notation for nested fields (e.g., 'name', 'price.amount', 'location.city'). Mutually exclusive with asset_group_id.
+   */
+  catalog_field?: string;
+  /**
+   * Places the feed field value (a URL) into a typed asset pool on the catalog item's assets array. The value is wrapped as an image or video asset in a group with this ID. Use standard group IDs: 'images_landscape', 'images_vertical', 'images_square', 'logo', 'video'. Mutually exclusive with catalog_field.
+   */
+  asset_group_id?: string;
+  /**
+   * Static literal value to inject into catalog_field for every item, regardless of what the feed contains. Mutually exclusive with feed_field. Useful for fields the feed omits (e.g., currency when price is always USD, or a constant category value).
+   */
+  value?: {
+    [k: string]: unknown | undefined;
+  };
+  /**
+   * Named transform to apply to the feed field value before writing to the catalog schema. See transform-specific parameters (format, timezone, by, separator).
+   */
+  transform?: 'date' | 'divide' | 'boolean' | 'split';
+  /**
+   * For transform 'date': the input date format string (e.g., 'YYYYMMDD', 'MM/DD/YYYY', 'DD-MM-YYYY'). Output is always ISO 8601 (e.g., '2025-03-01'). Uses Unicode date pattern tokens.
+   */
+  format?: string;
+  /**
+   * For transform 'date': the timezone of the input value. IANA timezone identifier (e.g., 'UTC', 'America/New_York', 'Europe/Amsterdam'). Defaults to UTC when omitted.
+   */
+  timezone?: string;
+  /**
+   * For transform 'divide': the divisor to apply (e.g., 100 to convert integer cents to decimal dollars).
+   */
+  by?: number;
+  /**
+   * For transform 'split': the separator character or string to split on. Defaults to ','.
+   */
+  separator?: string;
+  /**
+   * Fallback value to use when feed_field is absent, null, or empty. Applied after any transform would have been applied. Allows optional feed fields to have a guaranteed baseline value.
+   */
+  default?: {
+    [k: string]: unknown | undefined;
+  };
+  ext?: ExtensionObject;
+  [k: string]: unknown | undefined;
+} & {
+  /**
+   * Field name in the external feed record. Omit when injecting a static literal value (use the value property instead).
+   */
+  feed_field?: string;
+  /**
+   * Target field on the catalog item schema, using dot notation for nested fields (e.g., 'name', 'price.amount', 'location.city'). Mutually exclusive with asset_group_id.
+   */
+  catalog_field?: string;
+  /**
+   * Places the feed field value (a URL) into a typed asset pool on the catalog item's assets array. The value is wrapped as an image or video asset in a group with this ID. Use standard group IDs: 'images_landscape', 'images_vertical', 'images_square', 'logo', 'video'. Mutually exclusive with catalog_field.
+   */
+  asset_group_id?: string;
+  /**
+   * Static literal value to inject into catalog_field for every item, regardless of what the feed contains. Mutually exclusive with feed_field. Useful for fields the feed omits (e.g., currency when price is always USD, or a constant category value).
+   */
+  value?: {
+    [k: string]: unknown | undefined;
+  };
+  /**
+   * Named transform to apply to the feed field value before writing to the catalog schema. See transform-specific parameters (format, timezone, by, separator).
+   */
+  transform?: 'date' | 'divide' | 'boolean' | 'split';
+  /**
+   * For transform 'date': the input date format string (e.g., 'YYYYMMDD', 'MM/DD/YYYY', 'DD-MM-YYYY'). Output is always ISO 8601 (e.g., '2025-03-01'). Uses Unicode date pattern tokens.
+   */
+  format?: string;
+  /**
+   * For transform 'date': the timezone of the input value. IANA timezone identifier (e.g., 'UTC', 'America/New_York', 'Europe/Amsterdam'). Defaults to UTC when omitted.
+   */
+  timezone?: string;
+  /**
+   * For transform 'divide': the divisor to apply (e.g., 100 to convert integer cents to decimal dollars).
+   */
+  by?: number;
+  /**
+   * For transform 'split': the separator character or string to split on. Defaults to ','.
+   */
+  separator?: string;
+  /**
+   * Fallback value to use when feed_field is absent, null, or empty. Applied after any transform would have been applied. Allows optional feed fields to have a guaranteed baseline value.
+   */
+  default?: {
+    [k: string]: unknown | undefined;
+  };
+  ext?: ExtensionObject;
+  [k: string]: unknown | undefined;
+};
 /**
  * Type of inventory delivery
  */
@@ -201,30 +339,6 @@ export type SignalID =
 /**
  * The signal to target
  */
-export interface GetProductsRequest {
-  /**
-   * Natural language description of campaign requirements.
-   */
-  brief?: string;
-  brand?: BrandReference;
-  catalog?: Catalog;
-  /**
-   * Account ID for product lookup. Required when the seller declares account.required_for_products = true in capabilities. Returns products with pricing specific to this account's rate card.
-   */
-  account_id?: string;
-  /**
-   * Buyer's campaign reference label. Groups related discovery and buy operations under a single campaign for CRM and ad server correlation (e.g., 'NovaDrink_Meals_Q2').
-   */
-  buyer_campaign_ref?: string;
-  filters?: ProductFilters;
-  property_list?: PropertyListReference;
-  pagination?: PaginationRequest;
-  context?: ContextObject;
-  ext?: ExtensionObject;
-}
-/**
- * Brand reference for product discovery context. Resolved to full brand identity at execution time.
- */
 export interface BrandReference {
   /**
    * Domain where /.well-known/brand.json is hosted, or the brand's operating domain
@@ -290,6 +404,18 @@ export interface Catalog {
    */
   conversion_events?: [EventType, ...EventType[]];
   content_id_type?: ContentIDType;
+  /**
+   * Declarative normalization rules for external feeds. Maps non-standard feed field names, date formats, price encodings, and image URLs to the AdCP catalog item schema. Applied during sync_catalogs ingestion. Supports field renames, named transforms (date, divide, boolean, split), static literal injection, and assignment of image URLs to typed asset pools.
+   *
+   * @minItems 1
+   */
+  feed_field_mappings?: [CatalogFieldMapping, ...CatalogFieldMapping[]];
+  [k: string]: unknown | undefined;
+}
+/**
+ * Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.
+ */
+export interface ExtensionObject {
   [k: string]: unknown | undefined;
 }
 /**
@@ -504,12 +630,6 @@ export interface PaginationRequest {
  * Opaque correlation data that is echoed unchanged in responses. Used for internal tracking, UI session IDs, trace IDs, and other caller-specific identifiers that don't affect protocol behavior. Context data is never parsed by AdCP agents - it's simply preserved and returned.
  */
 export interface ContextObject {
-  [k: string]: unknown | undefined;
-}
-/**
- * Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.
- */
-export interface ExtensionObject {
   [k: string]: unknown | undefined;
 }
 
@@ -1814,6 +1934,148 @@ export type AssetRequirements =
   | URLAssetRequirements
   | WebhookAssetRequirements;
 /**
+ * Maps a format template slot to a catalog item field or typed asset pool. Allows formats to explicitly declare how their template slots map to catalog data, making the binding self-describing for creative agents rather than leaving it implicit. All bindings are optional — agents can still infer mappings without them.
+ */
+export type CatalogFieldBinding = {
+  /**
+   * The asset_id from the format's assets array. Identifies which individual template slot this binding applies to.
+   */
+  asset_id?: string;
+  /**
+   * The asset_group_id of a repeatable_group in the format's assets array. Used when the entire group iterates over catalog items (catalog_item: true).
+   */
+  format_group_id?: string;
+  /**
+   * Dot-notation path to the field on the catalog item (e.g., 'name', 'price.amount', 'location.city'). Used for scalar bindings.
+   */
+  catalog_field?: string;
+  /**
+   * The asset_group_id on the catalog item's assets array to pull from (e.g., 'images_landscape', 'images_vertical', 'logo'). Used for asset pool bindings — the format slot receives the first item in the pool.
+   */
+  asset_group_id?: string;
+  /**
+   * When true on a format_group_id binding, each repetition of the format's repeatable_group maps to one item from the catalog. The group iterates in catalog item order.
+   */
+  catalog_item?: true;
+  /**
+   * For catalog_item group bindings: the scalar and asset pool bindings that apply within each repetition of the group. Only scalar and asset pool variants are allowed here — nested catalog group bindings are not permitted.
+   *
+   * @minItems 1
+   */
+  per_item_bindings?: [
+    CatalogFieldBinding & {
+      [k: string]: unknown | undefined;
+    },
+    ...(CatalogFieldBinding & {
+      [k: string]: unknown | undefined;
+    })[]
+  ];
+  ext?: ExtensionObject;
+  [k: string]: unknown | undefined;
+} & (
+  | {
+      [k: string]: unknown | undefined;
+    }
+  | {
+      [k: string]: unknown | undefined;
+    }
+  | {
+      catalog_item: true;
+    }
+) & {
+    /**
+     * The asset_id from the format's assets array. Identifies which individual template slot this binding applies to.
+     */
+    asset_id?: string;
+    /**
+     * The asset_group_id of a repeatable_group in the format's assets array. Used when the entire group iterates over catalog items (catalog_item: true).
+     */
+    format_group_id?: string;
+    /**
+     * Dot-notation path to the field on the catalog item (e.g., 'name', 'price.amount', 'location.city'). Used for scalar bindings.
+     */
+    catalog_field?: string;
+    /**
+     * The asset_group_id on the catalog item's assets array to pull from (e.g., 'images_landscape', 'images_vertical', 'logo'). Used for asset pool bindings — the format slot receives the first item in the pool.
+     */
+    asset_group_id?: string;
+    /**
+     * When true on a format_group_id binding, each repetition of the format's repeatable_group maps to one item from the catalog. The group iterates in catalog item order.
+     */
+    catalog_item?: true;
+    /**
+     * For catalog_item group bindings: the scalar and asset pool bindings that apply within each repetition of the group. Only scalar and asset pool variants are allowed here — nested catalog group bindings are not permitted.
+     *
+     * @minItems 1
+     */
+    per_item_bindings?: [
+      CatalogFieldBinding & {
+        [k: string]: unknown | undefined;
+      },
+      ...(CatalogFieldBinding & {
+        [k: string]: unknown | undefined;
+      })[]
+    ];
+    ext?: ExtensionObject;
+    [k: string]: unknown | undefined;
+  } & (
+    | {
+        [k: string]: unknown | undefined;
+      }
+    | {
+        [k: string]: unknown | undefined;
+      }
+    | {
+        catalog_item: true;
+      }
+  ) & {
+    /**
+     * The asset_id from the format's assets array. Identifies which individual template slot this binding applies to.
+     */
+    asset_id?: string;
+    /**
+     * The asset_group_id of a repeatable_group in the format's assets array. Used when the entire group iterates over catalog items (catalog_item: true).
+     */
+    format_group_id?: string;
+    /**
+     * Dot-notation path to the field on the catalog item (e.g., 'name', 'price.amount', 'location.city'). Used for scalar bindings.
+     */
+    catalog_field?: string;
+    /**
+     * The asset_group_id on the catalog item's assets array to pull from (e.g., 'images_landscape', 'images_vertical', 'logo'). Used for asset pool bindings — the format slot receives the first item in the pool.
+     */
+    asset_group_id?: string;
+    /**
+     * When true on a format_group_id binding, each repetition of the format's repeatable_group maps to one item from the catalog. The group iterates in catalog item order.
+     */
+    catalog_item?: true;
+    /**
+     * For catalog_item group bindings: the scalar and asset pool bindings that apply within each repetition of the group. Only scalar and asset pool variants are allowed here — nested catalog group bindings are not permitted.
+     *
+     * @minItems 1
+     */
+    per_item_bindings?: [
+      CatalogFieldBinding & {
+        [k: string]: unknown | undefined;
+      },
+      ...(CatalogFieldBinding & {
+        [k: string]: unknown | undefined;
+      })[]
+    ];
+    ext?: ExtensionObject;
+    [k: string]: unknown | undefined;
+  } & (
+    | {
+        [k: string]: unknown | undefined;
+      }
+    | {
+        [k: string]: unknown | undefined;
+      }
+    | {
+        catalog_item: true;
+      }
+  );
+/**
  * Standard delivery and performance metrics available for reporting
  */
 export type CreativeAgentCapability = 'validation' | 'assembly' | 'generation' | 'preview' | 'delivery';
@@ -2024,6 +2286,65 @@ export interface BaseIndividualAsset {
    * Whether this asset is required (true) or optional (false). Required assets must be provided for a valid creative. Optional assets enhance the creative but are not mandatory.
    */
   required: boolean;
+  /**
+   * Publisher-controlled elements rendered on top of buyer content at this asset's position (e.g., video player controls, publisher logos). Creative agents should avoid placing critical content (CTAs, logos, key copy) within overlay bounds.
+   */
+  overlays?: Overlay[];
+}
+/**
+ * A publisher-controlled element that renders on top of buyer creative content within the ad placement. Creative agents should avoid placing critical content (CTAs, logos, key copy) within overlay bounds.
+ */
+export interface Overlay {
+  /**
+   * Identifier for this overlay (e.g., 'play_pause', 'volume', 'publisher_logo', 'carousel_prev', 'carousel_next')
+   */
+  id: string;
+  /**
+   * Human-readable explanation of what this overlay is and how buyers should account for it
+   */
+  description?: string;
+  /**
+   * Optional visual reference for this overlay element. Useful for creative agents compositing previews and for buyers understanding what will appear over their content. Must include at least one of: url, light, or dark.
+   */
+  visual?: {
+    /**
+     * URL to a theme-neutral overlay graphic (SVG or PNG). Use when a single file works for all backgrounds, e.g. an SVG using CSS custom properties or currentColor.
+     */
+    url?: string;
+    /**
+     * URL to the overlay graphic for use on light/bright backgrounds (SVG or PNG)
+     */
+    light?: string;
+    /**
+     * URL to the overlay graphic for use on dark backgrounds (SVG or PNG)
+     */
+    dark?: string;
+  };
+  /**
+   * Position and size of the overlay relative to the asset's own top-left corner. See 'unit' for coordinate interpretation.
+   */
+  bounds: {
+    /**
+     * Horizontal offset from the asset's left edge
+     */
+    x: number;
+    /**
+     * Vertical offset from the asset's top edge
+     */
+    y: number;
+    /**
+     * Width of the overlay
+     */
+    width: number;
+    /**
+     * Height of the overlay
+     */
+    height: number;
+    /**
+     * 'px' = absolute pixels from asset top-left. 'fraction' = proportional to asset dimensions (x/y: 0.0 = asset edge, 1.0 = opposite edge; width/height: 0.12 = 12% of asset dimension).
+     */
+    unit: 'px' | 'fraction';
+  };
 }
 export interface BaseGroupAsset {
   /**
@@ -2038,6 +2359,10 @@ export interface BaseGroupAsset {
    * Whether this asset is required within each repetition of the group
    */
   required: boolean;
+  /**
+   * Publisher-controlled elements rendered on top of buyer content at this asset's position (e.g., carousel navigation arrows, slide indicators). Creative agents should avoid placing critical content within overlay bounds.
+   */
+  overlays?: Overlay[];
 }
 /**
  * Structured format identifier with agent URL and format name. Can reference: (1) a concrete format with fixed dimensions (id only), (2) a template format without parameters (id only), or (3) a template format with parameters (id + dimensions/duration). Template formats accept parameters in format_id while concrete formats have fixed dimensions in their definition. Parameterized format IDs create unique, specific format variants.
@@ -2065,11 +2390,17 @@ export interface CatalogRequirements {
    */
   feed_formats?: [FeedFormat, ...FeedFormat[]];
   /**
-   * Per-offering creative requirements. Only applicable when catalog_type is 'offering'. Declares what asset groups (headlines, images, videos) each offering must provide, along with count bounds and per-asset technical constraints.
+   * Per-item creative asset requirements. Declares what asset groups (headlines, images, videos) each catalog item must provide in its assets array, along with count bounds and per-asset technical constraints. Applicable to 'offering' and all vertical catalog types (hotel, flight, job, etc.) whose items carry typed assets.
    *
    * @minItems 1
    */
   offering_asset_constraints?: [OfferingAssetConstraint, ...OfferingAssetConstraint[]];
+  /**
+   * Explicit mappings from format template slots to catalog item fields or typed asset pools. Optional — creative agents can infer mappings without them, but bindings make the relationship self-describing and enable validation. Covers scalar fields (asset_id → catalog_field), asset pools (asset_id → asset_group_id on the catalog item), and repeatable groups that iterate over catalog items.
+   *
+   * @minItems 1
+   */
+  field_bindings?: [CatalogFieldBinding, ...CatalogFieldBinding[]];
   [k: string]: unknown | undefined;
 }
 /**
@@ -3457,7 +3788,7 @@ export interface URLAsset {
   [k: string]: unknown | undefined;
 }
 /**
- * Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.
+ * Brand reference for this media buy. Resolved to full brand identity at execution time from brand.json or the registry.
  */
 export interface ReportingWebhook {
   /**

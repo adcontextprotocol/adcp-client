@@ -72,7 +72,12 @@ test('generated types maintain strict schema enforcement', () => {
   // - Enhanced video/audio asset schemas with detailed technical specs
   // - Added property_list targeting on products
   //
-  const MAX_ALLOWED = 205;
+  // Updated from 205 to 210 for AdCP schema changes adding catalog field types:
+  // - CatalogFieldMapping: declarative feed normalization rules (allOf with extensible record type)
+  // - CatalogFieldBinding: format template slot to catalog item field mapping (recursive, allOf)
+  // - Both types use [k: string]: unknown for forward compatibility per AdCP extensibility pattern
+  //
+  const MAX_ALLOWED = 210;
 
   console.log(`📊 Type strictness metrics:`);
   console.log(`   Index signatures found: ${count}`);
