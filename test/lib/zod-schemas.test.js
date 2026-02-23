@@ -134,7 +134,10 @@ describe('Zod Schema Validation', () => {
     }
 
     const result = schemas.GetMediaBuysRequestSchema.safeParse({});
-    assert.ok(result.success, `GetMediaBuysRequest with no fields should succeed: ${JSON.stringify(result.error?.issues)}`);
+    assert.ok(
+      result.success,
+      `GetMediaBuysRequest with no fields should succeed: ${JSON.stringify(result.error?.issues)}`
+    );
   });
 
   test('GetMediaBuysRequestSchema validates status_filter as single value', async () => {
@@ -145,7 +148,10 @@ describe('Zod Schema Validation', () => {
     const result = schemas.GetMediaBuysRequestSchema.safeParse({
       status_filter: 'active',
     });
-    assert.ok(result.success, `GetMediaBuysRequest with single status_filter should succeed: ${JSON.stringify(result.error?.issues)}`);
+    assert.ok(
+      result.success,
+      `GetMediaBuysRequest with single status_filter should succeed: ${JSON.stringify(result.error?.issues)}`
+    );
   });
 
   test('GetMediaBuysRequestSchema validates status_filter as array', async () => {
@@ -156,7 +162,10 @@ describe('Zod Schema Validation', () => {
     const result = schemas.GetMediaBuysRequestSchema.safeParse({
       status_filter: ['active', 'paused'],
     });
-    assert.ok(result.success, `GetMediaBuysRequest with array status_filter should succeed: ${JSON.stringify(result.error?.issues)}`);
+    assert.ok(
+      result.success,
+      `GetMediaBuysRequest with array status_filter should succeed: ${JSON.stringify(result.error?.issues)}`
+    );
   });
 
   test('GetMediaBuysResponseSchema validates valid response', async () => {
@@ -192,7 +201,10 @@ describe('Zod Schema Validation', () => {
     };
 
     const result = schemas.GetMediaBuysResponseSchema.safeParse(validResponse);
-    assert.ok(result.success, `GetMediaBuysResponse validation should succeed: ${JSON.stringify(result.error?.issues)}`);
+    assert.ok(
+      result.success,
+      `GetMediaBuysResponse validation should succeed: ${JSON.stringify(result.error?.issues)}`
+    );
   });
 
   test('GetMediaBuysResponseSchema validates response with snapshot', async () => {
@@ -214,7 +226,7 @@ describe('Zod Schema Validation', () => {
                 as_of: '2026-02-22T12:00:00Z',
                 staleness_seconds: 900,
                 impressions: 12500,
-                spend: 1250.50,
+                spend: 1250.5,
                 delivery_status: 'delivering',
                 pacing_index: 1.05,
               },
@@ -225,7 +237,10 @@ describe('Zod Schema Validation', () => {
     };
 
     const result = schemas.GetMediaBuysResponseSchema.safeParse(validResponse);
-    assert.ok(result.success, `GetMediaBuysResponse with snapshot should succeed: ${JSON.stringify(result.error?.issues)}`);
+    assert.ok(
+      result.success,
+      `GetMediaBuysResponse with snapshot should succeed: ${JSON.stringify(result.error?.issues)}`
+    );
   });
 
   test('GetMediaBuysResponseSchema rejects invalid creative approval status', async () => {
@@ -292,7 +307,10 @@ describe('Zod Schema Validation', () => {
       },
       feature_ids: ['viewability', 'brand_safety'],
     });
-    assert.ok(result.success, `GetCreativeFeaturesRequest validation should succeed: ${JSON.stringify(result.error?.issues)}`);
+    assert.ok(
+      result.success,
+      `GetCreativeFeaturesRequest validation should succeed: ${JSON.stringify(result.error?.issues)}`
+    );
   });
 
   test('GetCreativeFeaturesResponseSchema is importable', async () => {
