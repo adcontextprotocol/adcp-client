@@ -90,7 +90,7 @@ interface StoredEvent {
 }
 
 const eventStore: StoredEvent[] = [];
-const MAX_EVENTS = 10000; // Keep last 10k events across all sessions
+const MAX_EVENTS = 500; // Keep last 500 events - 10k was causing OOM on 256MB machine
 
 // Completed task history (keeps last 1000 completed tasks for viewing)
 interface CompletedTask {
@@ -106,7 +106,7 @@ interface CompletedTask {
 }
 
 const completedTasks: CompletedTask[] = [];
-const MAX_COMPLETED_TASKS = 1000;
+const MAX_COMPLETED_TASKS = 100;
 
 function archiveCompletedTask(task: any, finalStatus: 'completed' | 'failed' | 'rejected' | 'canceled') {
   const completedTask: CompletedTask = {
@@ -1704,6 +1704,12 @@ app.post<{
       });
 
       app.log.info(`Task ${task.taskId} updated via webhook: ${task.status}`);
+
+      // Clean up terminal tasks so they don't accumulate in memory
+      if (['completed', 'failed', 'rejected', 'canceled'].includes(task.status)) {
+        archiveCompletedTask(task, task.status as 'completed' | 'failed' | 'rejected' | 'canceled');
+        activeTasks.delete(task.taskId);
+      }
     }
 
     return reply.send({
