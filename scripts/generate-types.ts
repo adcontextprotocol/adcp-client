@@ -159,7 +159,19 @@ function enforceStrictSchema(schema: any): any {
   }
 
   if (strictSchema.allOf) {
-    strictSchema.allOf = strictSchema.allOf.map(enforceStrictSchema);
+    // Strip allOf members that contain only `not` constraints. These are mutual-exclusivity
+    // validators (e.g. "not both feed_field and value") that TypeScript cannot represent.
+    // Keeping them causes json-schema-to-typescript to emit the full property set once per
+    // member, producing duplicate intersection arms in the output type.
+    strictSchema.allOf = strictSchema.allOf
+      .filter((member: any) => {
+        const keys = Object.keys(member);
+        return !(keys.length === 1 && keys[0] === 'not');
+      })
+      .map(enforceStrictSchema);
+    if (strictSchema.allOf.length === 0) {
+      delete strictSchema.allOf;
+    }
   }
 
   if (strictSchema.anyOf) {
@@ -580,7 +592,7 @@ async function generateToolTypes(tools: ToolDefinition[]) {
       if (url.startsWith('/schemas/')) {
         const schema = loadCachedSchema(url);
         if (schema) {
-          return Promise.resolve(schema);
+          return Promise.resolve(enforceStrictSchema(removeMinItemsConstraints(schema)));
         }
       }
       return Promise.reject(new Error(`Cannot resolve $ref: ${url}`));
@@ -1021,7 +1033,7 @@ async function generateTypes() {
       if (url.startsWith('/schemas/')) {
         const schema = loadCachedSchema(url);
         if (schema) {
-          return Promise.resolve(schema);
+          return Promise.resolve(enforceStrictSchema(removeMinItemsConstraints(schema)));
         }
       }
       return Promise.reject(new Error(`Cannot resolve $ref: ${url}`));

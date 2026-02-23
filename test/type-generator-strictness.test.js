@@ -72,12 +72,13 @@ test('generated types maintain strict schema enforcement', () => {
   // - Enhanced video/audio asset schemas with detailed technical specs
   // - Added property_list targeting on products
   //
-  // Updated from 205 to 210 for AdCP schema changes adding catalog field types:
-  // - CatalogFieldMapping: declarative feed normalization rules (allOf with extensible record type)
-  // - CatalogFieldBinding: format template slot to catalog item field mapping (recursive, allOf)
-  // - Both types use [k: string]: unknown for forward compatibility per AdCP extensibility pattern
+  // Updated from 210 to 50 after fixing $ref schema preprocessing:
+  // - enforceStrictSchema now applied to all $ref-resolved schemas (not just root schemas)
+  // - This removes additionalProperties: true from referenced schemas throughout the graph
+  // - CatalogFieldMapping and CatalogFieldBinding are now clean interfaces/unions, not intersections
+  // - Remaining ~42 signatures are protocol-mandated context fields + asset metadata
   //
-  const MAX_ALLOWED = 210;
+  const MAX_ALLOWED = 50;
 
   console.log(`📊 Type strictness metrics:`);
   console.log(`   Index signatures found: ${count}`);
