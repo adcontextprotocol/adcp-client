@@ -367,4 +367,56 @@ describe('SingleAgentClient Request Validation', () => {
       });
     });
   });
+
+  describe('get_media_buys validation', () => {
+    test('should accept valid get_media_buys request with media_buy_ids', async () => {
+      const client = new AdCPClient([mockAgent]);
+      const agent = client.agent(mockAgent.id);
+
+      await assert.doesNotReject(async () => {
+        try {
+          await agent.getMediaBuys({
+            media_buy_ids: ['mb_123', 'mb_456'],
+          });
+        } catch (err) {
+          if (err.message.includes('Request validation failed')) {
+            throw err;
+          }
+        }
+      });
+    });
+
+    test('should accept get_media_buys request with status_filter array', async () => {
+      const client = new AdCPClient([mockAgent]);
+      const agent = client.agent(mockAgent.id);
+
+      await assert.doesNotReject(async () => {
+        try {
+          await agent.getMediaBuys({
+            status_filter: ['active', 'paused'],
+            include_snapshot: true,
+          });
+        } catch (err) {
+          if (err.message.includes('Request validation failed')) {
+            throw err;
+          }
+        }
+      });
+    });
+
+    test('should accept empty get_media_buys request', async () => {
+      const client = new AdCPClient([mockAgent]);
+      const agent = client.agent(mockAgent.id);
+
+      await assert.doesNotReject(async () => {
+        try {
+          await agent.getMediaBuys({});
+        } catch (err) {
+          if (err.message.includes('Request validation failed')) {
+            throw err;
+          }
+        }
+      });
+    });
+  });
 });

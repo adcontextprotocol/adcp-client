@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas vlatest
-// Generated at: 2026-02-22T03:25:27.420Z
+// Generated at: 2026-02-23T01:19:23.831Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -99,7 +99,7 @@ export interface MediaBuy {
   /**
    * Buyer's campaign reference label. Groups related operations under a single campaign for CRM and ad server correlation.
    */
-  campaign_ref?: string;
+  buyer_campaign_ref?: string;
   account?: Account;
   status: MediaBuyStatus;
   /**
@@ -218,7 +218,7 @@ export interface Package {
    */
   pricing_option_id?: string;
   /**
-   * Bid price for auction-based CPM pricing (present if using cpm-auction-option)
+   * Bid price for auction-based pricing. This is the exact bid/price to honor unless the selected pricing option has max_bid=true, in which case bid_price is the buyer's maximum willingness to pay (ceiling).
    */
   bid_price?: number;
   /**
@@ -1361,7 +1361,7 @@ export type MediaChannel =
  */
 export type DeliveryType = 'guaranteed' | 'non_guaranteed';
 /**
- * A pricing model option offered by a publisher for a product. Discriminated by pricing_model field. If fixed_price is present, it's fixed pricing. If absent, it's auction-based (floor_price and price_guidance optional).
+ * A pricing model option offered by a publisher for a product. Discriminated by pricing_model field. If fixed_price is present, it's fixed pricing. If absent, it's auction-based (floor_price and price_guidance optional). Bid-based auction models may also include max_bid as a boolean signal to interpret bid_price as a buyer ceiling instead of an exact honored price.
  */
 export type PricingOption =
   | CPMPricingOption
@@ -1680,6 +1680,10 @@ export interface CPMPricingOption {
    * Minimum acceptable bid for auction pricing (mutually exclusive with fixed_price). Bids below this value will be rejected.
    */
   floor_price?: number;
+  /**
+   * When true, bid_price is interpreted as the buyer's maximum willingness to pay (ceiling) rather than an exact price. Sellers may optimize actual clearing prices between floor_price and bid_price based on delivery pacing. When false or absent, bid_price (if provided) is the exact bid/price to honor.
+   */
+  max_bid?: boolean;
   price_guidance?: PriceGuidance;
   /**
    * Minimum spend requirement per package using this pricing option, in the specified currency
@@ -1733,6 +1737,10 @@ export interface VCPMPricingOption {
    * Minimum acceptable bid for auction pricing (mutually exclusive with fixed_price). Bids below this value will be rejected.
    */
   floor_price?: number;
+  /**
+   * When true, bid_price is interpreted as the buyer's maximum willingness to pay (ceiling) rather than an exact price. Sellers may optimize actual clearing prices between floor_price and bid_price based on delivery pacing. When false or absent, bid_price (if provided) is the exact bid/price to honor.
+   */
+  max_bid?: boolean;
   price_guidance?: PriceGuidance;
   /**
    * Minimum spend requirement per package using this pricing option, in the specified currency
@@ -1764,6 +1772,10 @@ export interface CPCPricingOption {
    * Minimum acceptable bid for auction pricing (mutually exclusive with fixed_price). Bids below this value will be rejected.
    */
   floor_price?: number;
+  /**
+   * When true, bid_price is interpreted as the buyer's maximum willingness to pay (ceiling) rather than an exact price. Sellers may optimize actual clearing prices between floor_price and bid_price based on delivery pacing. When false or absent, bid_price (if provided) is the exact bid/price to honor.
+   */
+  max_bid?: boolean;
   price_guidance?: PriceGuidance;
   /**
    * Minimum spend requirement per package using this pricing option, in the specified currency
@@ -1795,6 +1807,10 @@ export interface CPCVPricingOption {
    * Minimum acceptable bid for auction pricing (mutually exclusive with fixed_price). Bids below this value will be rejected.
    */
   floor_price?: number;
+  /**
+   * When true, bid_price is interpreted as the buyer's maximum willingness to pay (ceiling) rather than an exact price. Sellers may optimize actual clearing prices between floor_price and bid_price based on delivery pacing. When false or absent, bid_price (if provided) is the exact bid/price to honor.
+   */
+  max_bid?: boolean;
   price_guidance?: PriceGuidance;
   /**
    * Minimum spend requirement per package using this pricing option, in the specified currency
@@ -1826,6 +1842,10 @@ export interface CPVPricingOption {
    * Minimum acceptable bid for auction pricing (mutually exclusive with fixed_price). Bids below this value will be rejected.
    */
   floor_price?: number;
+  /**
+   * When true, bid_price is interpreted as the buyer's maximum willingness to pay (ceiling) rather than an exact price. Sellers may optimize actual clearing prices between floor_price and bid_price based on delivery pacing. When false or absent, bid_price (if provided) is the exact bid/price to honor.
+   */
+  max_bid?: boolean;
   price_guidance?: PriceGuidance;
   /**
    * CPV-specific parameters defining the view threshold
@@ -2625,7 +2645,7 @@ export interface CreateMediaBuySuccess {
   /**
    * Buyer's campaign reference label, echoed from the request
    */
-  campaign_ref?: string;
+  buyer_campaign_ref?: string;
   account?: Account;
   /**
    * ISO 8601 timestamp for creative upload deadline

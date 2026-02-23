@@ -111,4 +111,214 @@ describe('Zod Schema Validation', () => {
       'CreativeAssetSchema should have safeParse method'
     );
   });
+
+  test('GetMediaBuysRequestSchema validates valid request', async () => {
+    if (!schemas) {
+      schemas = await import('../../dist/lib/types/schemas.generated.js');
+    }
+
+    assert.ok(schemas.GetMediaBuysRequestSchema, 'GetMediaBuysRequestSchema should exist');
+
+    const validRequest = {
+      media_buy_ids: ['mb_123', 'mb_456'],
+      include_snapshot: true,
+    };
+
+    const result = schemas.GetMediaBuysRequestSchema.safeParse(validRequest);
+    assert.ok(result.success, `GetMediaBuysRequest validation should succeed: ${JSON.stringify(result.error?.issues)}`);
+  });
+
+  test('GetMediaBuysRequestSchema validates empty request (all fields optional)', async () => {
+    if (!schemas) {
+      schemas = await import('../../dist/lib/types/schemas.generated.js');
+    }
+
+    const result = schemas.GetMediaBuysRequestSchema.safeParse({});
+    assert.ok(
+      result.success,
+      `GetMediaBuysRequest with no fields should succeed: ${JSON.stringify(result.error?.issues)}`
+    );
+  });
+
+  test('GetMediaBuysRequestSchema validates status_filter as single value', async () => {
+    if (!schemas) {
+      schemas = await import('../../dist/lib/types/schemas.generated.js');
+    }
+
+    const result = schemas.GetMediaBuysRequestSchema.safeParse({
+      status_filter: 'active',
+    });
+    assert.ok(
+      result.success,
+      `GetMediaBuysRequest with single status_filter should succeed: ${JSON.stringify(result.error?.issues)}`
+    );
+  });
+
+  test('GetMediaBuysRequestSchema validates status_filter as array', async () => {
+    if (!schemas) {
+      schemas = await import('../../dist/lib/types/schemas.generated.js');
+    }
+
+    const result = schemas.GetMediaBuysRequestSchema.safeParse({
+      status_filter: ['active', 'paused'],
+    });
+    assert.ok(
+      result.success,
+      `GetMediaBuysRequest with array status_filter should succeed: ${JSON.stringify(result.error?.issues)}`
+    );
+  });
+
+  test('GetMediaBuysResponseSchema validates valid response', async () => {
+    if (!schemas) {
+      schemas = await import('../../dist/lib/types/schemas.generated.js');
+    }
+
+    assert.ok(schemas.GetMediaBuysResponseSchema, 'GetMediaBuysResponseSchema should exist');
+
+    const validResponse = {
+      media_buys: [
+        {
+          media_buy_id: 'mb_123',
+          buyer_ref: 'buyer-ref-1',
+          buyer_campaign_ref: 'Q4_Campaign',
+          status: 'active',
+          currency: 'USD',
+          total_budget: 50000,
+          packages: [
+            {
+              package_id: 'pkg_1',
+              budget: 25000,
+              creative_approvals: [
+                {
+                  creative_id: 'cr_1',
+                  approval_status: 'approved',
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+
+    const result = schemas.GetMediaBuysResponseSchema.safeParse(validResponse);
+    assert.ok(
+      result.success,
+      `GetMediaBuysResponse validation should succeed: ${JSON.stringify(result.error?.issues)}`
+    );
+  });
+
+  test('GetMediaBuysResponseSchema validates response with snapshot', async () => {
+    if (!schemas) {
+      schemas = await import('../../dist/lib/types/schemas.generated.js');
+    }
+
+    const validResponse = {
+      media_buys: [
+        {
+          media_buy_id: 'mb_123',
+          status: 'active',
+          currency: 'USD',
+          total_budget: 50000,
+          packages: [
+            {
+              package_id: 'pkg_1',
+              snapshot: {
+                as_of: '2026-02-22T12:00:00Z',
+                staleness_seconds: 900,
+                impressions: 12500,
+                spend: 1250.5,
+                delivery_status: 'delivering',
+                pacing_index: 1.05,
+              },
+            },
+          ],
+        },
+      ],
+    };
+
+    const result = schemas.GetMediaBuysResponseSchema.safeParse(validResponse);
+    assert.ok(
+      result.success,
+      `GetMediaBuysResponse with snapshot should succeed: ${JSON.stringify(result.error?.issues)}`
+    );
+  });
+
+  test('GetMediaBuysResponseSchema rejects invalid creative approval status', async () => {
+    if (!schemas) {
+      schemas = await import('../../dist/lib/types/schemas.generated.js');
+    }
+
+    const invalidResponse = {
+      media_buys: [
+        {
+          media_buy_id: 'mb_123',
+          status: 'active',
+          currency: 'USD',
+          total_budget: 50000,
+          packages: [
+            {
+              package_id: 'pkg_1',
+              creative_approvals: [
+                {
+                  creative_id: 'cr_1',
+                  approval_status: 'invalid_status',
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+
+    const result = schemas.GetMediaBuysResponseSchema.safeParse(invalidResponse);
+    assert.ok(!result.success, 'GetMediaBuysResponse with invalid approval_status should fail');
+  });
+
+  test('GetMediaBuysResponseSchema rejects media buy missing required fields', async () => {
+    if (!schemas) {
+      schemas = await import('../../dist/lib/types/schemas.generated.js');
+    }
+
+    // Missing required: status, currency, total_budget, packages
+    const invalidResponse = {
+      media_buys: [
+        {
+          media_buy_id: 'mb_123',
+          // status, currency, total_budget, packages all missing
+        },
+      ],
+    };
+
+    const result = schemas.GetMediaBuysResponseSchema.safeParse(invalidResponse);
+    assert.ok(!result.success, 'GetMediaBuysResponse with missing required fields should fail');
+  });
+
+  test('GetCreativeFeaturesRequestSchema validates valid request', async () => {
+    if (!schemas) {
+      schemas = await import('../../dist/lib/types/schemas.generated.js');
+    }
+
+    assert.ok(schemas.GetCreativeFeaturesRequestSchema, 'GetCreativeFeaturesRequestSchema should exist');
+
+    const result = schemas.GetCreativeFeaturesRequestSchema.safeParse({
+      creative_manifest: {
+        format_id: { agent_url: 'https://creative.example.com', id: 'display_300x250' },
+        assets: { banner: { url: 'https://example.com/banner.jpg' } },
+      },
+      feature_ids: ['viewability', 'brand_safety'],
+    });
+    assert.ok(
+      result.success,
+      `GetCreativeFeaturesRequest validation should succeed: ${JSON.stringify(result.error?.issues)}`
+    );
+  });
+
+  test('GetCreativeFeaturesResponseSchema is importable', async () => {
+    if (!schemas) {
+      schemas = await import('../../dist/lib/types/schemas.generated.js');
+    }
+
+    assert.ok(schemas.GetCreativeFeaturesResponseSchema, 'GetCreativeFeaturesResponseSchema should exist');
+    assert.ok(typeof schemas.GetCreativeFeaturesResponseSchema.safeParse === 'function');
+  });
 });

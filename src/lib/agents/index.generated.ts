@@ -18,6 +18,8 @@ import type {
   ListCreativesResponse,
   UpdateMediaBuyRequest,
   UpdateMediaBuyResponse,
+  GetMediaBuysRequest,
+  GetMediaBuysResponse,
   GetMediaBuyDeliveryRequest,
   GetMediaBuyDeliveryResponse,
   ProvidePerformanceFeedbackRequest,
@@ -64,6 +66,8 @@ import type {
   ValidateContentDeliveryResponse,
   GetMediaBuyArtifactsRequest,
   GetMediaBuyArtifactsResponse,
+  GetCreativeFeaturesRequest,
+  GetCreativeFeaturesResponse,
   SIGetOfferingRequest,
   SIGetOfferingResponse,
   SIInitiateSessionRequest,
@@ -159,6 +163,13 @@ export class Agent {
    */
   async updateMediaBuy(params: UpdateMediaBuyRequest): Promise<UpdateMediaBuyResponse> {
     return this.callTool<UpdateMediaBuyResponse>('update_media_buy', params);
+  }
+
+  /**
+   * Official AdCP get_media_buys tool schema
+   */
+  async getMediaBuys(params: GetMediaBuysRequest): Promise<GetMediaBuysResponse> {
+    return this.callTool<GetMediaBuysResponse>('get_media_buys', params);
   }
 
   /**
@@ -323,6 +334,13 @@ export class Agent {
   }
 
   /**
+   * Official AdCP get_creative_features tool schema
+   */
+  async getCreativeFeatures(params: GetCreativeFeaturesRequest): Promise<GetCreativeFeaturesResponse> {
+    return this.callTool<GetCreativeFeaturesResponse>('get_creative_features', params);
+  }
+
+  /**
    * Official AdCP si_get_offering tool schema
    */
   async siGetOffering(params: SIGetOfferingRequest): Promise<SIGetOfferingResponse> {
@@ -414,6 +432,13 @@ export class AgentCollection {
    */
   async listCreatives(params: ListCreativesRequest): Promise<ListCreativesResponse[]> {
     return this.callToolOnAll<ListCreativesResponse>('list_creatives', params);
+  }
+
+  /**
+   * Official AdCP get_media_buys tool schema (across multiple agents)
+   */
+  async getMediaBuys(params: GetMediaBuysRequest): Promise<GetMediaBuysResponse[]> {
+    return this.callToolOnAll<GetMediaBuysResponse>('get_media_buys', params);
   }
 
   /**
@@ -540,6 +565,13 @@ export class AgentCollection {
    */
   async getMediaBuyArtifacts(params: GetMediaBuyArtifactsRequest): Promise<GetMediaBuyArtifactsResponse[]> {
     return this.callToolOnAll<GetMediaBuyArtifactsResponse>('get_media_buy_artifacts', params);
+  }
+
+  /**
+   * Official AdCP get_creative_features tool schema (across multiple agents)
+   */
+  async getCreativeFeatures(params: GetCreativeFeaturesRequest): Promise<GetCreativeFeaturesResponse[]> {
+    return this.callToolOnAll<GetCreativeFeaturesResponse>('get_creative_features', params);
   }
 
   /**

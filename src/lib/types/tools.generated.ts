@@ -215,7 +215,7 @@ export interface GetProductsRequest {
   /**
    * Buyer's campaign reference label. Groups related discovery and buy operations under a single campaign for CRM and ad server correlation (e.g., 'NovaDrink_Meals_Q2').
    */
-  campaign_ref?: string;
+  buyer_campaign_ref?: string;
   filters?: ProductFilters;
   property_list?: PropertyListReference;
   pagination?: PaginationRequest;
@@ -951,6 +951,10 @@ export interface CPMPricingOption {
    * Minimum acceptable bid for auction pricing (mutually exclusive with fixed_price). Bids below this value will be rejected.
    */
   floor_price?: number;
+  /**
+   * When true, bid_price is interpreted as the buyer's maximum willingness to pay (ceiling) rather than an exact price. Sellers may optimize actual clearing prices between floor_price and bid_price based on delivery pacing. When false or absent, bid_price (if provided) is the exact bid/price to honor.
+   */
+  max_bid?: boolean;
   price_guidance?: PriceGuidance;
   /**
    * Minimum spend requirement per package using this pricing option, in the specified currency
@@ -1004,6 +1008,10 @@ export interface VCPMPricingOption {
    * Minimum acceptable bid for auction pricing (mutually exclusive with fixed_price). Bids below this value will be rejected.
    */
   floor_price?: number;
+  /**
+   * When true, bid_price is interpreted as the buyer's maximum willingness to pay (ceiling) rather than an exact price. Sellers may optimize actual clearing prices between floor_price and bid_price based on delivery pacing. When false or absent, bid_price (if provided) is the exact bid/price to honor.
+   */
+  max_bid?: boolean;
   price_guidance?: PriceGuidance;
   /**
    * Minimum spend requirement per package using this pricing option, in the specified currency
@@ -1035,6 +1043,10 @@ export interface CPCPricingOption {
    * Minimum acceptable bid for auction pricing (mutually exclusive with fixed_price). Bids below this value will be rejected.
    */
   floor_price?: number;
+  /**
+   * When true, bid_price is interpreted as the buyer's maximum willingness to pay (ceiling) rather than an exact price. Sellers may optimize actual clearing prices between floor_price and bid_price based on delivery pacing. When false or absent, bid_price (if provided) is the exact bid/price to honor.
+   */
+  max_bid?: boolean;
   price_guidance?: PriceGuidance;
   /**
    * Minimum spend requirement per package using this pricing option, in the specified currency
@@ -1066,6 +1078,10 @@ export interface CPCVPricingOption {
    * Minimum acceptable bid for auction pricing (mutually exclusive with fixed_price). Bids below this value will be rejected.
    */
   floor_price?: number;
+  /**
+   * When true, bid_price is interpreted as the buyer's maximum willingness to pay (ceiling) rather than an exact price. Sellers may optimize actual clearing prices between floor_price and bid_price based on delivery pacing. When false or absent, bid_price (if provided) is the exact bid/price to honor.
+   */
+  max_bid?: boolean;
   price_guidance?: PriceGuidance;
   /**
    * Minimum spend requirement per package using this pricing option, in the specified currency
@@ -1097,6 +1113,10 @@ export interface CPVPricingOption {
    * Minimum acceptable bid for auction pricing (mutually exclusive with fixed_price). Bids below this value will be rejected.
    */
   floor_price?: number;
+  /**
+   * When true, bid_price is interpreted as the buyer's maximum willingness to pay (ceiling) rather than an exact price. Sellers may optimize actual clearing prices between floor_price and bid_price based on delivery pacing. When false or absent, bid_price (if provided) is the exact bid/price to honor.
+   */
+  max_bid?: boolean;
   price_guidance?: PriceGuidance;
   /**
    * CPV-specific parameters defining the view threshold
@@ -2627,7 +2647,7 @@ export interface CreateMediaBuyRequest {
   /**
    * Buyer's campaign reference label. Groups related discovery and buy operations under a single campaign for CRM and ad server correlation (e.g., 'NovaDrink_Meals_Q2').
    */
-  campaign_ref?: string;
+  buyer_campaign_ref?: string;
   /**
    * Account to bill for this media buy. Required when the agent has access to multiple accounts; when omitted, the seller uses the agent's sole account. The seller maps the agent's brand + operator to an account during sync_accounts; the agent passes that account_id here.
    */
@@ -2735,7 +2755,7 @@ export interface PackageRequest {
    */
   pricing_option_id: string;
   /**
-   * Bid price for auction-based CPM pricing (required if using cpm-auction-option)
+   * Bid price for auction-based pricing options. This is the exact bid/price to honor unless selected pricing_option has max_bid=true, in which case bid_price is the buyer's maximum willingness to pay (ceiling).
    */
   bid_price?: number;
   /**
@@ -3498,7 +3518,7 @@ export interface CreateMediaBuySuccess {
   /**
    * Buyer's campaign reference label, echoed from the request
    */
-  campaign_ref?: string;
+  buyer_campaign_ref?: string;
   account?: Account;
   /**
    * ISO 8601 timestamp for creative upload deadline
@@ -3603,7 +3623,7 @@ export interface Package {
    */
   pricing_option_id?: string;
   /**
-   * Bid price for auction-based CPM pricing (present if using cpm-auction-option)
+   * Bid price for auction-based pricing. This is the exact bid/price to honor unless the selected pricing option has max_bid=true, in which case bid_price is the buyer's maximum willingness to pay (ceiling).
    */
   bid_price?: number;
   /**
@@ -4251,7 +4271,7 @@ export type PackageUpdate = {
   budget?: number;
   pacing?: Pacing;
   /**
-   * Updated bid price for auction-based pricing options (only applies when pricing_option is auction-based)
+   * Updated bid price for auction-based pricing options. This is the exact bid/price to honor unless selected pricing_option has max_bid=true, in which case bid_price is the buyer's maximum willingness to pay (ceiling).
    */
   bid_price?: number;
   /**
@@ -4332,14 +4352,223 @@ export interface UpdateMediaBuyError {
  * Standard error structure for task-specific errors and warnings
  */
 
-// get_media_buy_delivery parameters
+// get_media_buys parameters
 /**
  * Status of a media buy
  */
 export type MediaBuyStatus = 'pending_activation' | 'active' | 'paused' | 'completed';
 
 /**
- * Request parameters for retrieving comprehensive delivery metrics
+ * Request parameters for retrieving media buy status, creative approval state, and optional delivery snapshots
+ */
+export interface GetMediaBuysRequest {
+  /**
+   * Filter to a specific account. When omitted, returns media buys across all accessible accounts. Optional if the agent has a single account.
+   */
+  account_id?: string;
+  /**
+   * Array of publisher media buy IDs to retrieve. When omitted along with buyer_refs, returns a paginated set of accessible media buys matching status_filter.
+   */
+  media_buy_ids?: string[];
+  /**
+   * Array of buyer reference IDs to retrieve
+   */
+  buyer_refs?: string[];
+  /**
+   * Filter by status. Can be a single status or array of statuses. Defaults to ["active"] only when media_buy_ids and buyer_refs are both omitted. When media_buy_ids or buyer_refs are provided, no implicit status filter is applied.
+   */
+  status_filter?: MediaBuyStatus | MediaBuyStatus[];
+  /**
+   * When true, include a near-real-time delivery snapshot for each package. Snapshots reflect the latest available entity-level stats from the platform (e.g., updated every ~15 minutes on GAM, ~1 hour on batch-only platforms). The staleness_seconds field on each snapshot indicates data freshness. If a snapshot cannot be returned, package.snapshot_unavailable_reason explains why. Defaults to false.
+   */
+  include_snapshot?: boolean;
+  pagination?: PaginationRequest;
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Cursor-based pagination controls. Strongly recommended when querying broad scopes (for example, all active media buys in an account).
+ */
+
+// get_media_buys response
+/**
+ * Status of a media buy
+ */
+export type CreativeApprovalStatus = 'pending_review' | 'approved' | 'rejected';
+
+/**
+ * Response payload for get_media_buys task. Returns media buy configuration, creative approval state, and optional delivery snapshots.
+ */
+export interface GetMediaBuysResponse {
+  /**
+   * Array of media buys with status, creative approval state, and optional delivery snapshots
+   */
+  media_buys: {
+    /**
+     * Publisher's unique identifier for the media buy
+     */
+    media_buy_id: string;
+    /**
+     * Buyer's reference identifier for this media buy
+     */
+    buyer_ref?: string;
+    /**
+     * Buyer campaign reference label sourced from create_media_buy.buyer_campaign_ref. Groups related operations under a single campaign; may be absent when not provided at creation time.
+     */
+    buyer_campaign_ref?: string;
+    account?: Account;
+    status: MediaBuyStatus;
+    /**
+     * ISO 4217 currency code (e.g., USD, EUR, GBP) for monetary values at this media buy level. total_budget is always denominated in this currency. Package-level fields may override with package.currency.
+     */
+    currency: string;
+    /**
+     * Total budget amount across all packages, denominated in media_buy.currency
+     */
+    total_budget: number;
+    /**
+     * ISO 8601 timestamp for creative upload deadline
+     */
+    creative_deadline?: string;
+    /**
+     * Creation timestamp
+     */
+    created_at?: string;
+    /**
+     * Last update timestamp
+     */
+    updated_at?: string;
+    /**
+     * Packages within this media buy, augmented with creative approval status and optional delivery snapshots
+     */
+    packages: {
+      /**
+       * Publisher's package identifier
+       */
+      package_id: string;
+      /**
+       * Buyer's reference identifier for this package
+       */
+      buyer_ref?: string;
+      /**
+       * Product identifier this package is purchased from
+       */
+      product_id?: string;
+      /**
+       * Package budget amount, denominated in package.currency when present, otherwise media_buy.currency
+       */
+      budget?: number;
+      /**
+       * ISO 4217 currency code for monetary values at this package level (budget, bid_price, snapshot.spend). When absent, inherit media_buy.currency.
+       */
+      currency?: string;
+      /**
+       * Current bid price for auction-based packages. Denominated in package.currency when present, otherwise media_buy.currency. Relevant for automated price optimization loops.
+       */
+      bid_price?: number;
+      /**
+       * Goal impression count for impression-based packages
+       */
+      impressions?: number;
+      /**
+       * ISO 8601 flight start time for this package. Use to determine whether the package is within its scheduled flight before interpreting delivery status.
+       */
+      start_time?: string;
+      /**
+       * ISO 8601 flight end time for this package
+       */
+      end_time?: string;
+      /**
+       * Whether this package is currently paused by the buyer
+       */
+      paused?: boolean;
+      /**
+       * Approval status for each creative assigned to this package. Absent when no creatives have been assigned.
+       */
+      creative_approvals?: {
+        /**
+         * Creative identifier
+         */
+        creative_id: string;
+        approval_status: CreativeApprovalStatus;
+        /**
+         * Human-readable explanation of why the creative was rejected. Present only when approval_status is 'rejected'.
+         */
+        rejection_reason?: string;
+      }[];
+      /**
+       * Format IDs from the original create_media_buy format_ids_to_provide that have not yet been uploaded via sync_creatives. When empty or absent, all required formats have been provided.
+       */
+      format_ids_pending?: FormatID[];
+      /**
+       * Machine-readable reason the snapshot is omitted. Present only when include_snapshot was true and snapshot is unavailable for this package.
+       */
+      snapshot_unavailable_reason?:
+        | 'SNAPSHOT_UNSUPPORTED'
+        | 'SNAPSHOT_TEMPORARILY_UNAVAILABLE'
+        | 'SNAPSHOT_PERMISSION_DENIED';
+      /**
+       * Near-real-time delivery snapshot for this package. Only present when include_snapshot was true in the request. Represents the latest available entity-level stats from the platform — not billing-grade data.
+       */
+      snapshot?: {
+        /**
+         * ISO 8601 timestamp when this snapshot was captured by the platform
+         */
+        as_of: string;
+        /**
+         * Maximum age of this data in seconds. For example, 900 means the data may be up to 15 minutes old. Use this to interpret zero delivery: a value of 900 means zero impressions is likely real; a value of 14400 means reporting may still be catching up.
+         */
+        staleness_seconds: number;
+        /**
+         * Total impressions delivered since package start
+         */
+        impressions: number;
+        /**
+         * Total spend since package start, denominated in snapshot.currency when present, otherwise package.currency or media_buy.currency
+         */
+        spend: number;
+        /**
+         * ISO 4217 currency code for spend in this snapshot. Optional when unchanged from package.currency or media_buy.currency.
+         */
+        currency?: string;
+        /**
+         * Total clicks since package start (when available)
+         */
+        clicks?: number;
+        /**
+         * Current delivery pace relative to expected (1.0 = on track, <1.0 = behind, >1.0 = ahead). Absent when pacing cannot be determined.
+         */
+        pacing_index?: number;
+        /**
+         * Operational delivery state of this package. 'not_delivering' means the package is within its scheduled flight but has delivered zero impressions for at least one full staleness cycle — the signal for automated price adjustments or buyer alerts. Implementers must not return 'not_delivering' until at least staleness_seconds have elapsed since package activation.
+         */
+        delivery_status?:
+          | 'delivering'
+          | 'not_delivering'
+          | 'completed'
+          | 'budget_exhausted'
+          | 'flight_ended'
+          | 'goal_met';
+        ext?: ExtensionObject;
+      };
+      ext?: ExtensionObject;
+    }[];
+    ext?: ExtensionObject;
+  }[];
+  /**
+   * Task-specific errors (e.g., media buy not found)
+   */
+  errors?: Error[];
+  pagination?: PaginationResponse;
+  /**
+   * When true, this response contains simulated data from sandbox mode.
+   */
+  sandbox?: boolean;
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Account billed for this media buy
  */
 export interface GetMediaBuyDeliveryRequest {
   /**
@@ -4482,13 +4711,13 @@ export interface GetMediaBuyDeliveryResponse {
      */
     buyer_ref?: string;
     /**
-     * Buyer's campaign reference label. Groups related operations under a single campaign for CRM and ad server correlation.
+     * Buyer's campaign reference label from create_media_buy.buyer_campaign_ref. Groups related operations under a single campaign for CRM and ad server correlation; may be absent when not provided at creation time.
      */
-    campaign_ref?: string;
+    buyer_campaign_ref?: string;
     /**
-     * Current media buy status. In webhook context, reporting_delayed indicates data temporarily unavailable.
+     * Current media buy status. Lifecycle states use the same taxonomy as media-buy-status (`pending_activation`, `active`, `paused`, `completed`). In webhook context, reporting_delayed indicates data temporarily unavailable. `pending` is accepted as a legacy alias for pending_activation.
      */
-    status: 'pending' | 'active' | 'paused' | 'completed' | 'failed' | 'reporting_delayed';
+    status: 'pending_activation' | 'pending' | 'active' | 'paused' | 'completed' | 'failed' | 'reporting_delayed';
     /**
      * When delayed data is expected to be available (only present when status is reporting_delayed)
      */
@@ -8096,6 +8325,102 @@ export type GetMediaBuyArtifactsResponse =
  * Type of identifier
  */
 
+// get_creative_features parameters
+/**
+ * Catalog type. Structural types: 'offering' (AdCP Offering objects), 'product' (ecommerce entries), 'inventory' (stock per location), 'store' (physical locations), 'promotion' (deals and pricing). Vertical types: 'hotel', 'flight', 'job', 'vehicle', 'real_estate', 'education', 'destination', 'app' — each with an industry-specific item schema.
+ */
+export interface GetCreativeFeaturesRequest {
+  creative_manifest: CreativeManifest;
+  /**
+   * Optional filter to specific features. If omitted, returns all available features.
+   */
+  feature_ids?: string[];
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * The creative manifest to evaluate. Contains format_id and assets.
+ */
+
+// get_creative_features response
+/**
+ * Response payload for get_creative_features task. Returns feature values for the evaluated creative.
+ */
+export type GetCreativeFeaturesResponse =
+  | {
+      /**
+       * Feature values for the evaluated creative
+       */
+      results: CreativeFeatureResult[];
+      /**
+       * URL to the vendor's full assessment report. The vendor controls what information is disclosed and access control.
+       */
+      detail_url?: string;
+      /**
+       * Field must not be present in success response
+       */
+      errors?: {
+        [k: string]: unknown | undefined;
+      };
+      context?: ContextObject;
+      ext?: ExtensionObject;
+    }
+  | {
+      errors: Error[];
+      /**
+       * Field must not be present in error response
+       */
+      results?: {
+        [k: string]: unknown | undefined;
+      };
+      context?: ContextObject;
+      ext?: ExtensionObject;
+    };
+
+/**
+ * A single feature evaluation result for a creative. Uses the same value structure as property-feature-value (value, confidence, expires_at, etc.).
+ */
+export interface CreativeFeatureResult {
+  /**
+   * The feature that was evaluated (e.g., 'auto_redirect', 'brand_consistency', 'iab_casinos_gambling')
+   */
+  feature_id: string;
+  /**
+   * The feature value. Type depends on feature definition: boolean for binary, number for quantitative, string for categorical.
+   */
+  value: boolean | number | string;
+  /**
+   * Unit of measurement for quantitative values (e.g., 'percentage', 'score')
+   */
+  unit?: string;
+  /**
+   * Confidence score for this value (0-1)
+   */
+  confidence?: number;
+  /**
+   * When this feature was evaluated
+   */
+  measured_at?: string;
+  /**
+   * When this evaluation expires and should be refreshed
+   */
+  expires_at?: string;
+  /**
+   * Version of the methodology used to evaluate this feature
+   */
+  methodology_version?: string;
+  /**
+   * Additional vendor-specific details about this evaluation
+   */
+  details?: {
+    [k: string]: unknown | undefined;
+  };
+  ext?: ExtensionObject;
+}
+/**
+ * Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.
+ */
+
 // si_get_offering parameters
 /**
  * Get offering details and availability before session handoff. Returns offering information, availability status, and optionally matching products based on context.
@@ -9065,7 +9390,7 @@ export interface GetAdCPCapabilitiesResponse {
     };
   };
   /**
-   * Governance protocol capabilities. Only present if governance is in supported_protocols. Governance agents provide property data like compliance scores, brand safety ratings, and sustainability metrics.
+   * Governance protocol capabilities. Only present if governance is in supported_protocols. Governance agents provide property and creative data like compliance scores, brand safety ratings, sustainability metrics, and creative quality assessments.
    */
   governance?: {
     /**
@@ -9103,6 +9428,44 @@ export interface GetAdCPCapabilitiesResponse {
       description?: string;
       /**
        * URL to documentation explaining how this feature is calculated or measured. Helps buyers understand and compare methodologies across vendors.
+       */
+      methodology_url?: string;
+    }[];
+    /**
+     * Creative features this governance agent can evaluate. Each feature describes a score, rating, or assessment the agent can provide for creatives (e.g., security scanning, creative quality, content categorization).
+     */
+    creative_features?: {
+      /**
+       * Unique identifier for this feature (e.g., 'auto_redirect', 'brand_consistency', 'iab_casinos_gambling')
+       */
+      feature_id: string;
+      /**
+       * Data type: 'binary' for yes/no, 'quantitative' for numeric scores, 'categorical' for enum values
+       */
+      type: 'binary' | 'quantitative' | 'categorical';
+      /**
+       * For quantitative features, the valid range
+       */
+      range?: {
+        /**
+         * Minimum value
+         */
+        min: number;
+        /**
+         * Maximum value
+         */
+        max: number;
+      };
+      /**
+       * For categorical features, the valid values
+       */
+      categories?: string[];
+      /**
+       * Human-readable description of what this feature measures
+       */
+      description?: string;
+      /**
+       * URL to documentation explaining how this feature is calculated or measured.
        */
       methodology_url?: string;
     }[];
