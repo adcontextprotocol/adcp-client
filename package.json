@@ -76,7 +76,7 @@
     "docs:open": "open docs/api/index.html || xdg-open docs/api/index.html || start docs/api/index.html",
     "ci:validate": "node scripts/ci-validate.js",
     "ci:quick": "npm run format:check && npm run typecheck && npm run build:lib && npm test",
-    "ci:schema-check": "npm run sync-schemas && npm run generate-types && git diff --exit-code src/lib/types/ src/lib/agents/ || (echo '⚠️  Generated files are out of sync. Run: npm run sync-schemas && npm run generate-types' && exit 1)",
+    "ci:schema-check": "npm run sync-schemas && npm run generate-types && npm run generate-registry-types && git diff --exit-code src/lib/types/ src/lib/agents/ src/lib/registry/types.generated.ts schemas/registry/registry.yaml || (echo '⚠️  Generated files are out of sync. Run: npm run sync-schemas && npm run generate-types && npm run generate-registry-types' && exit 1)",
     "ci:pre-push": "npm run ci:schema-check && npm run ci:quick",
     "hooks:install": "node scripts/install-hooks.js",
     "hooks:uninstall": "rm -f .git/hooks/pre-push",

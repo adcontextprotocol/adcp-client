@@ -1383,4 +1383,117 @@ describe('RegistryClient', () => {
       );
     });
   });
+
+  // ============ checkPropertyList ============
+
+  describe('checkPropertyList', () => {
+    test('posts domains and returns buckets with report_id', async () => {
+      const response = {
+        summary: { total: 3, remove: 1, modify: 1, assess: 0, ok: 1 },
+        remove: [
+          { input: 'doubleclick.net', canonical: 'doubleclick.net', reason: 'blocked', domain_type: 'ad_server' },
+        ],
+        modify: [{ input: 'www.nytimes.com', canonical: 'nytimes.com', reason: 'www stripped' }],
+        assess: [],
+        ok: [{ domain: 'nytimes.com', source: 'adagents_json' }],
+        report_id: 'rpt_abc123',
+      };
+      let capturedUrl, capturedBody;
+      restore = mockFetch(async (url, opts) => {
+        capturedUrl = url;
+        capturedBody = JSON.parse(opts.body);
+        return new Response(JSON.stringify(response), { status: 200 });
+      });
+
+      const client = new RegistryClient();
+      const result = await client.checkPropertyList(['doubleclick.net', 'www.nytimes.com', 'nytimes.com']);
+
+      assert.ok(capturedUrl.includes('/api/properties/check'));
+      assert.deepStrictEqual(capturedBody.domains, ['doubleclick.net', 'www.nytimes.com', 'nytimes.com']);
+      assert.strictEqual(result.report_id, 'rpt_abc123');
+      assert.strictEqual(result.summary.total, 3);
+      assert.strictEqual(result.remove[0].reason, 'blocked');
+      assert.strictEqual(result.modify[0].canonical, 'nytimes.com');
+    });
+
+    test('throws on empty domains array', async () => {
+      const client = new RegistryClient();
+      await assert.rejects(
+        () => client.checkPropertyList([]),
+        err => {
+          assert.ok(err.message.includes('domains is required'));
+          return true;
+        }
+      );
+    });
+
+    test('throws when domains exceeds 10000 limit', async () => {
+      const client = new RegistryClient();
+      const tooMany = Array.from({ length: 10001 }, (_, i) => `domain${i}.com`);
+      await assert.rejects(
+        () => client.checkPropertyList(tooMany),
+        err => {
+          assert.ok(err.message.includes('Cannot check more than 10000'));
+          return true;
+        }
+      );
+    });
+  });
+
+  // ============ getPropertyCheckReport ============
+
+  describe('getPropertyCheckReport', () => {
+    test('fetches stored report by id', async () => {
+      const response = { summary: { total: 50, remove: 5, modify: 10, assess: 20, ok: 15 } };
+      let capturedUrl;
+      restore = mockFetch(async url => {
+        capturedUrl = url;
+        return new Response(JSON.stringify(response), { status: 200 });
+      });
+
+      const client = new RegistryClient();
+      const result = await client.getPropertyCheckReport('rpt_abc123');
+
+      assert.ok(capturedUrl.includes('/api/properties/check/rpt_abc123'));
+      assert.strictEqual(result.summary.total, 50);
+      assert.strictEqual(result.summary.ok, 15);
+    });
+
+    test('url-encodes the report id', async () => {
+      let capturedUrl;
+      restore = mockFetch(async url => {
+        capturedUrl = url;
+        return new Response(JSON.stringify({ summary: { total: 0, remove: 0, modify: 0, assess: 0, ok: 0 } }), {
+          status: 200,
+        });
+      });
+
+      const client = new RegistryClient();
+      await client.getPropertyCheckReport('rpt/with spaces');
+
+      assert.ok(capturedUrl.includes('rpt%2Fwith%20spaces'));
+    });
+
+    test('throws on empty reportId', async () => {
+      const client = new RegistryClient();
+      await assert.rejects(
+        () => client.getPropertyCheckReport(''),
+        err => {
+          assert.ok(err.message.includes('reportId is required'));
+          return true;
+        }
+      );
+    });
+
+    test('throws on whitespace-only reportId', async () => {
+      const client = new RegistryClient();
+      await assert.rejects(
+        () => client.getPropertyCheckReport('   '),
+        err => {
+          assert.ok(err.message.includes('reportId is required'));
+          return true;
+        }
+      );
+    });
+  });
 });

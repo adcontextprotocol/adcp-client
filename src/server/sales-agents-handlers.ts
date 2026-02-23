@@ -165,10 +165,18 @@ export class SalesAgentsHandlers {
           }
         }
 
-        const params: GetProductsRequest = {
-          ...(brandForProducts && { brand: brandForProducts }),
-          ...(brandStory && { brief: brandStory }),
-        };
+        // 'brief' = publisher curates recommendations from the provided brief
+        // 'wholesale' = buyer requests raw inventory to apply their own targeting
+        const params: GetProductsRequest = brandStory
+          ? {
+              buying_mode: 'brief',
+              brief: brandStory,
+              ...(brandForProducts && { brand: brandForProducts }),
+            }
+          : {
+              buying_mode: 'wholesale',
+              ...(brandForProducts && { brand: brandForProducts }),
+            };
 
         // Add filters if provided
         if (

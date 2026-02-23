@@ -27,8 +27,49 @@ const OUTPUT_FILE = path.join(__dirname, '../src/lib/types/schemas.generated.ts'
  * so treating "optional" as "can be undefined OR null" is the pragmatic approach.
  */
 function postProcessForNullish(content: string): string {
-  // Replace all .optional() with .nullish() globally
-  return content.replace(/\.optional\(\)/g, '.nullish()');
+  // Replace .optional() with .nullish() globally, except when preceded by .never()
+  // z.never().optional() must stay as-is: it means "this field must not be provided",
+  // and converting to .nullish() would allow null values through, weakening that constraint.
+  return content.replace(/(?<!\.never\(\))\.optional\(\)/g, '.nullish()');
+}
+
+/**
+ * Post-process generated Zod schemas to fix imports from "undefined".
+ *
+ * ts-to-zod generates `import { type X } from "undefined"` for recursive types
+ * when passed combined source text instead of real file paths. The TypeScript type
+ * is needed for the z.ZodSchema<X> annotation on z.lazy() schemas. Since all tool
+ * types live in tools.generated.ts (same directory as the output), replace the
+ * broken import with the correct relative path.
+ */
+function postProcessUndefinedImports(content: string): string {
+  return content.replace(/from "undefined"/g, 'from "./tools.generated"');
+}
+
+/**
+ * Post-process generated Zod schemas to loosen explicit type annotations on lazy schemas.
+ *
+ * ts-to-zod generates `export const XSchema: z.ZodSchema<X> = z.lazy(() => ...)` for
+ * recursive types. After our .nullish() post-processing the inferred type no longer
+ * matches the strict TypeScript type X (optional fields become `T | null | undefined`
+ * instead of `T | undefined`). Replace the annotation with `z.ZodTypeAny` to avoid
+ * the incompatibility while still breaking the circular reference TypeScript needs.
+ *
+ * Note: `[^>]+` assumes the type parameter is a simple identifier with no nested generics
+ * (e.g., `z.ZodSchema<Foo>` not `z.ZodSchema<Map<string, Foo>>`). ts-to-zod only ever
+ * generates simple identifiers here in practice.
+ */
+function postProcessLazyTypeAnnotations(content: string): string {
+  const result = content.replace(/: z\.ZodSchema<[^>]+>/g, ': z.ZodTypeAny');
+  // Guard: if any broken annotation remains, fail fast rather than silently produce
+  // a TypeScript error that's hard to trace back to this post-processing step.
+  if (result.includes('from "undefined"') || result.includes(': z.ZodSchema<')) {
+    throw new Error(
+      'postProcessLazyTypeAnnotations: unresolved z.ZodSchema<> annotation or "undefined" import in output. ' +
+        'A recursive type may have a nested generic parameter — update the regex.'
+    );
+  }
+  return result;
 }
 
 /**
@@ -135,6 +176,14 @@ async function generateZodSchemas() {
     // null values for optional fields, but ts-to-zod generates .optional() which only
     // accepts undefined, not null. Using .nullish() accepts both undefined and null.
     zodSchemas = postProcessForNullish(zodSchemas);
+
+    // Post-process: Fix broken imports from "undefined" (recursive types with z.lazy())
+    zodSchemas = postProcessUndefinedImports(zodSchemas);
+
+    // Post-process: Loosen z.ZodSchema<X> annotations on lazy schemas to z.ZodTypeAny
+    // Our .nullish() post-processing makes the inferred type incompatible with the strict
+    // TypeScript type annotation. ZodTypeAny avoids this while still breaking circular refs.
+    zodSchemas = postProcessLazyTypeAnnotations(zodSchemas);
 
     // Post-process: Convert tuple patterns to arrays to allow empty arrays
     // ts-to-zod converts @minItems 1 to z.tuple([]).rest() which requires at least one element,

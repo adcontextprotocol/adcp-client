@@ -50,11 +50,8 @@ describe('Zod Schema Validation', () => {
     }
 
     const validRequest = {
+      buying_mode: 'brief',
       brief: 'Looking for premium display inventory in US',
-      brand_manifest: {
-        name: 'Nike',
-        url: 'https://nike.com',
-      },
     };
 
     const result = schemas.GetProductsRequestSchema.safeParse(validRequest);

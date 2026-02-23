@@ -72,7 +72,13 @@ test('generated types maintain strict schema enforcement', () => {
   // - Enhanced video/audio asset schemas with detailed technical specs
   // - Added property_list targeting on products
   //
-  const MAX_ALLOWED = 205;
+  // Updated from 210 to 50 after fixing $ref schema preprocessing:
+  // - enforceStrictSchema now applied to all $ref-resolved schemas (not just root schemas)
+  // - This removes additionalProperties: true from referenced schemas throughout the graph
+  // - CatalogFieldMapping and CatalogFieldBinding are now clean interfaces/unions, not intersections
+  // - Remaining ~42 signatures are protocol-mandated context fields + asset metadata
+  //
+  const MAX_ALLOWED = 50;
 
   console.log(`📊 Type strictness metrics:`);
   console.log(`   Index signatures found: ${count}`);

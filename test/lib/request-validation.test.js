@@ -265,6 +265,8 @@ describe('SingleAgentClient Request Validation', () => {
       await assert.doesNotReject(async () => {
         try {
           await agent.getProducts({
+            buying_mode: 'brief',
+            brief: 'Test brief',
             context: {
               trace_id: '123',
               request_id: 'abc',

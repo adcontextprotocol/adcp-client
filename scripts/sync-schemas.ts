@@ -288,14 +288,34 @@ async function syncSchemas(version?: string): Promise<void> {
   console.log(`📁 Schemas cached in: ${versionCacheDir}`);
 }
 
+const REGISTRY_SPEC_URL = `${ADCP_BASE_URL}/openapi/registry.yaml`;
+const REGISTRY_SPEC_PATH = path.join(__dirname, '../schemas/registry/registry.yaml');
+
+/** Download the registry OpenAPI spec to schemas/registry/registry.yaml. */
+async function syncRegistrySpec(): Promise<void> {
+  console.log(`\n📥 Downloading registry spec from ${REGISTRY_SPEC_URL}...`);
+  const res = await fetch(REGISTRY_SPEC_URL);
+  if (!res.ok) throw new Error(`Failed to fetch registry spec: ${res.status} ${res.statusText}`);
+  const yaml = await res.text();
+  if (!yaml.trim()) throw new Error('Registry spec response was empty');
+  if (!yaml.trimStart().startsWith('openapi:'))
+    throw new Error('Registry spec response does not look like an OpenAPI spec');
+  mkdirSync(path.dirname(REGISTRY_SPEC_PATH), { recursive: true });
+  writeFileSync(REGISTRY_SPEC_PATH, yaml);
+  console.log(`✅ Registry spec cached at ${REGISTRY_SPEC_PATH} (${yaml.length} bytes)`);
+}
+
 // CLI execution
 if (require.main === module) {
   const version = process.argv[2]; // Optional version argument
 
-  syncSchemas(version).catch(error => {
+  (async () => {
+    await syncSchemas(version);
+    await syncRegistrySpec();
+  })().catch(error => {
     console.error('❌ Schema sync failed:', error);
     process.exit(1);
   });
 }
 
-export { syncSchemas };
+export { syncSchemas, syncRegistrySpec };

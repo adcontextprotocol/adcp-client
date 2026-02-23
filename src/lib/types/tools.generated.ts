@@ -3,6 +3,42 @@
 
 // get_products parameters
 /**
+ * Request parameters for discovering available advertising products
+ */
+export type GetProductsRequest = {
+  /**
+   * Declares buyer intent for this request. 'brief': publisher curates product recommendations from the provided brief. 'wholesale': buyer requests raw inventory to apply their own audiences — brief must not be provided. When buying_mode is 'wholesale', publishers return only products that support buyer-directed targeting and omit proposals.
+   */
+  buying_mode: 'brief' | 'wholesale';
+  /**
+   * Natural language description of campaign requirements. Required when buying_mode is 'brief'. Must not be provided when buying_mode is 'wholesale'.
+   */
+  brief?: string;
+  brand?: BrandReference;
+  catalog?: Catalog;
+  /**
+   * Account ID for product lookup. Required when the seller declares account.required_for_products = true in capabilities. Returns products with pricing specific to this account's rate card.
+   */
+  account_id?: string;
+  /**
+   * Buyer's campaign reference label. Groups related discovery and buy operations under a single campaign for CRM and ad server correlation (e.g., 'NovaDrink_Meals_Q2').
+   */
+  buyer_campaign_ref?: string;
+  filters?: ProductFilters;
+  property_list?: PropertyListReference;
+  pagination?: PaginationRequest;
+  context?: ContextObject;
+  ext?: ExtensionObject;
+} & (
+  | {
+      buying_mode: 'brief';
+    }
+  | {
+      buying_mode: 'wholesale';
+      brief?: never;
+    }
+);
+/**
  * Brand identifier within the house portfolio. Optional for single-brand domains.
  */
 export type BrandID = string;
@@ -132,7 +168,6 @@ export type SignalTargeting =
        * Whether to include (true) or exclude (false) users matching this signal
        */
       value: boolean;
-      [k: string]: unknown | undefined;
     }
   | {
       signal_id: SignalID;
@@ -142,11 +177,8 @@ export type SignalTargeting =
       value_type: 'categorical';
       /**
        * Values to target. Users with any of these values will be included.
-       *
-       * @minItems 1
        */
-      values: [string, ...string[]];
-      [k: string]: unknown | undefined;
+      values: string[];
     }
   | {
       signal_id: SignalID;
@@ -162,7 +194,6 @@ export type SignalTargeting =
        * Maximum value (inclusive). Omit for no maximum. Must be >= min_value when both are provided. Should be <= signal's range.max if defined.
        */
       max_value?: number;
-      [k: string]: unknown | undefined;
     };
 /**
  * The signal to target
@@ -181,7 +212,6 @@ export type SignalID =
        * Signal identifier within the data provider's catalog (e.g., 'likely_tesla_buyers', 'income_100k_plus')
        */
       id: string;
-      [k: string]: unknown | undefined;
     }
   | {
       /**
@@ -196,34 +226,9 @@ export type SignalID =
        * Signal identifier within the agent's signal set (e.g., 'custom_auto_intenders')
        */
       id: string;
-      [k: string]: unknown | undefined;
     };
 /**
  * The signal to target
- */
-export interface GetProductsRequest {
-  /**
-   * Natural language description of campaign requirements.
-   */
-  brief?: string;
-  brand?: BrandReference;
-  catalog?: Catalog;
-  /**
-   * Account ID for product lookup. Required when the seller declares account.required_for_products = true in capabilities. Returns products with pricing specific to this account's rate card.
-   */
-  account_id?: string;
-  /**
-   * Buyer's campaign reference label. Groups related discovery and buy operations under a single campaign for CRM and ad server correlation (e.g., 'NovaDrink_Meals_Q2').
-   */
-  buyer_campaign_ref?: string;
-  filters?: ProductFilters;
-  property_list?: PropertyListReference;
-  pagination?: PaginationRequest;
-  context?: ContextObject;
-  ext?: ExtensionObject;
-}
-/**
- * Brand reference for product discovery context. Resolved to full brand identity at execution time.
  */
 export interface BrandReference {
   /**
@@ -253,28 +258,20 @@ export interface Catalog {
   update_frequency?: UpdateFrequency;
   /**
    * Inline catalog data. The item schema depends on the catalog type: Offering objects for 'offering', StoreItem for 'store', HotelItem for 'hotel', FlightItem for 'flight', JobItem for 'job', VehicleItem for 'vehicle', RealEstateItem for 'real_estate', EducationItem for 'education', DestinationItem for 'destination', AppItem for 'app', or freeform objects for 'product', 'inventory', and 'promotion'. Mutually exclusive with url — provide one or the other, not both. Implementations should validate items against the type-specific schema.
-   *
-   * @minItems 1
    */
-  items?: [{}, ...{}[]];
+  items?: {}[];
   /**
    * Filter catalog to specific item IDs. For offering-type catalogs, these are offering_id values. For product-type catalogs, these are SKU identifiers.
-   *
-   * @minItems 1
    */
-  ids?: [string, ...string[]];
+  ids?: string[];
   /**
    * Filter product-type catalogs by GTIN identifiers for cross-retailer catalog matching. Accepts standard GTIN formats (GTIN-8, UPC-A/GTIN-12, EAN-13/GTIN-13, GTIN-14). Only applicable when type is 'product'.
-   *
-   * @minItems 1
    */
-  gtins?: [string, ...string[]];
+  gtins?: string[];
   /**
    * Filter catalog to items with these tags. Tags are matched using OR logic — items matching any tag are included.
-   *
-   * @minItems 1
    */
-  tags?: [string, ...string[]];
+  tags?: string[];
   /**
    * Filter catalog to items in this category (e.g., 'beverages/soft-drinks', 'chef-positions').
    */
@@ -285,13 +282,68 @@ export interface Catalog {
   query?: string;
   /**
    * Event types that represent conversions for items in this catalog. Declares what events the platform should attribute to catalog items — e.g., a job catalog converts via submit_application, a product catalog via purchase. The event's content_ids field carries the item IDs that connect back to catalog items. Use content_id_type to declare what identifier type content_ids values represent.
-   *
-   * @minItems 1
    */
-  conversion_events?: [EventType, ...EventType[]];
+  conversion_events?: EventType[];
   content_id_type?: ContentIDType;
-  [k: string]: unknown | undefined;
+  /**
+   * Declarative normalization rules for external feeds. Maps non-standard feed field names, date formats, price encodings, and image URLs to the AdCP catalog item schema. Applied during sync_catalogs ingestion. Supports field renames, named transforms (date, divide, boolean, split), static literal injection, and assignment of image URLs to typed asset pools.
+   */
+  feed_field_mappings?: CatalogFieldMapping[];
 }
+/**
+ * Declares how a field in an external feed maps to the AdCP catalog item schema. Used in sync_catalogs feed_field_mappings to normalize non-AdCP feeds (Google Merchant Center, LinkedIn Jobs XML, hotel XML, etc.) to the standard catalog item schema without requiring the buyer to preprocess every feed. Multiple mappings can assemble a nested object via dot notation (e.g., separate mappings for price.amount and price.currency).
+ */
+export interface CatalogFieldMapping {
+  /**
+   * Field name in the external feed record. Omit when injecting a static literal value (use the value property instead).
+   */
+  feed_field?: string;
+  /**
+   * Target field on the catalog item schema, using dot notation for nested fields (e.g., 'name', 'price.amount', 'location.city'). Mutually exclusive with asset_group_id.
+   */
+  catalog_field?: string;
+  /**
+   * Places the feed field value (a URL) into a typed asset pool on the catalog item's assets array. The value is wrapped as an image or video asset in a group with this ID. Use standard group IDs: 'images_landscape', 'images_vertical', 'images_square', 'logo', 'video'. Mutually exclusive with catalog_field.
+   */
+  asset_group_id?: string;
+  /**
+   * Static literal value to inject into catalog_field for every item, regardless of what the feed contains. Mutually exclusive with feed_field. Useful for fields the feed omits (e.g., currency when price is always USD, or a constant category value).
+   */
+  value?: {
+    [k: string]: unknown | undefined;
+  };
+  /**
+   * Named transform to apply to the feed field value before writing to the catalog schema. See transform-specific parameters (format, timezone, by, separator).
+   */
+  transform?: 'date' | 'divide' | 'boolean' | 'split';
+  /**
+   * For transform 'date': the input date format string (e.g., 'YYYYMMDD', 'MM/DD/YYYY', 'DD-MM-YYYY'). Output is always ISO 8601 (e.g., '2025-03-01'). Uses Unicode date pattern tokens.
+   */
+  format?: string;
+  /**
+   * For transform 'date': the timezone of the input value. IANA timezone identifier (e.g., 'UTC', 'America/New_York', 'Europe/Amsterdam'). Defaults to UTC when omitted.
+   */
+  timezone?: string;
+  /**
+   * For transform 'divide': the divisor to apply (e.g., 100 to convert integer cents to decimal dollars).
+   */
+  by?: number;
+  /**
+   * For transform 'split': the separator character or string to split on. Defaults to ','.
+   */
+  separator?: string;
+  /**
+   * Fallback value to use when feed_field is absent, null, or empty. Applied after any transform would have been applied. Allows optional feed fields to have a guaranteed baseline value.
+   */
+  default?: {
+    [k: string]: unknown | undefined;
+  };
+  ext?: ExtensionObject;
+}
+/**
+ * Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.
+ */
+export interface ExtensionObject {}
 /**
  * Structured filters for product discovery
  */
@@ -303,16 +355,12 @@ export interface ProductFilters {
   is_fixed_price?: boolean;
   /**
    * Filter by format types
-   *
-   * @minItems 1
    */
-  format_types?: [FormatCategory, ...FormatCategory[]];
+  format_types?: FormatCategory[];
   /**
    * Filter by specific format IDs
-   *
-   * @minItems 1
    */
-  format_ids?: [FormatID, ...FormatID[]];
+  format_ids?: FormatID[];
   /**
    * Only return products accepting IAB standard formats
    */
@@ -337,78 +385,45 @@ export interface ProductFilters {
   };
   /**
    * Filter by country coverage using ISO 3166-1 alpha-2 codes (e.g., ['US', 'CA', 'GB']). Works for all inventory types.
-   *
-   * @minItems 1
    */
-  countries?: [string, ...string[]];
+  countries?: string[];
   /**
    * Filter by region coverage using ISO 3166-2 codes (e.g., ['US-NY', 'US-CA', 'GB-SCT']). Use for locally-bound inventory (regional OOH, local TV) where products have region-specific coverage.
-   *
-   * @minItems 1
    */
-  regions?: [string, ...string[]];
+  regions?: string[];
   /**
    * Filter by metro coverage for locally-bound inventory (radio, DOOH, local TV). Use when products have DMA/metro-specific coverage. For digital inventory where products have broad coverage, use required_geo_targeting instead to filter by seller capability.
-   *
-   * @minItems 1
    */
-  metros?: [
-    {
-      system: MetroAreaSystem;
-      /**
-       * Metro code within the system (e.g., '501' for NYC DMA)
-       */
-      code: string;
-    },
-    ...{
-      system: MetroAreaSystem;
-      /**
-       * Metro code within the system (e.g., '501' for NYC DMA)
-       */
-      code: string;
-    }[]
-  ];
+  metros?: {
+    system: MetroAreaSystem;
+    /**
+     * Metro code within the system (e.g., '501' for NYC DMA)
+     */
+    code: string;
+  }[];
   /**
    * Filter by advertising channels (e.g., ['display', 'ctv', 'dooh'])
-   *
-   * @minItems 1
    */
-  channels?: [MediaChannel, ...MediaChannel[]];
+  channels?: MediaChannel[];
   /**
    * Filter to products executable through specific agentic ad exchanges. URLs are canonical identifiers.
-   *
-   * @minItems 1
    */
-  required_axe_integrations?: [string, ...string[]];
+  required_axe_integrations?: string[];
   required_features?: MediaBuyFeatures;
   /**
    * Filter to products from sellers supporting specific geo targeting capabilities. Each entry specifies a targeting level (country, region, metro, postal_area) and optionally a system for levels that have multiple classification systems.
-   *
-   * @minItems 1
    */
-  required_geo_targeting?: [
-    {
-      level: GeographicTargetingLevel;
-      /**
-       * Classification system within the level. Required for metro (e.g., 'nielsen_dma') and postal_area (e.g., 'us_zip'). Not applicable for country/region which use ISO standards.
-       */
-      system?: string;
-    },
-    ...{
-      level: GeographicTargetingLevel;
-      /**
-       * Classification system within the level. Required for metro (e.g., 'nielsen_dma') and postal_area (e.g., 'us_zip'). Not applicable for country/region which use ISO standards.
-       */
-      system?: string;
-    }[]
-  ];
+  required_geo_targeting?: {
+    level: GeographicTargetingLevel;
+    /**
+     * Classification system within the level. Required for metro (e.g., 'nielsen_dma') and postal_area (e.g., 'us_zip'). Not applicable for country/region which use ISO standards.
+     */
+    system?: string;
+  }[];
   /**
    * Filter to products supporting specific signals from data provider catalogs. Products must have the requested signals in their data_provider_signals and signal_targeting_allowed must be true (or all signals requested).
-   *
-   * @minItems 1
    */
-  signal_targeting?: [SignalTargeting, ...SignalTargeting[]];
-  [k: string]: unknown | undefined;
+  signal_targeting?: SignalTargeting[];
 }
 /**
  * Structured format identifier with agent URL and format name. Can reference: (1) a concrete format with fixed dimensions (id only), (2) a template format without parameters (id only), or (3) a template format with parameters (id + dimensions/duration). Template formats accept parameters in format_id while concrete formats have fixed dimensions in their definition. Parameterized format IDs create unique, specific format variants.
@@ -434,7 +449,6 @@ export interface FormatID {
    * Duration in milliseconds for time-based formats (video, audio). When specified, creates a parameterized format ID. Omit to reference a template format without parameters.
    */
   duration_ms?: number;
-  [k: string]: unknown | undefined;
 }
 /**
  * Filter to products from sellers supporting specific protocol features. Only features set to true are used for filtering.
@@ -503,15 +517,7 @@ export interface PaginationRequest {
 /**
  * Opaque correlation data that is echoed unchanged in responses. Used for internal tracking, UI session IDs, trace IDs, and other caller-specific identifiers that don't affect protocol behavior. Context data is never parsed by AdCP agents - it's simply preserved and returned.
  */
-export interface ContextObject {
-  [k: string]: unknown | undefined;
-}
-/**
- * Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.
- */
-export interface ExtensionObject {
-  [k: string]: unknown | undefined;
-}
+export interface ContextObject {}
 
 
 // get_products response
@@ -528,7 +534,6 @@ export type PublisherPropertySelector =
        * Discriminator indicating all properties from this publisher are included
        */
       selection_type: 'all';
-      [k: string]: unknown | undefined;
     }
   | {
       /**
@@ -541,11 +546,8 @@ export type PublisherPropertySelector =
       selection_type: 'by_id';
       /**
        * Specific property IDs from the publisher's adagents.json
-       *
-       * @minItems 1
        */
-      property_ids: [PropertyID, ...PropertyID[]];
-      [k: string]: unknown | undefined;
+      property_ids: PropertyID[];
     }
   | {
       /**
@@ -558,11 +560,8 @@ export type PublisherPropertySelector =
       selection_type: 'by_tag';
       /**
        * Property tags from the publisher's adagents.json. Selector covers all properties with these tags
-       *
-       * @minItems 1
        */
-      property_tags: [PropertyTag, ...PropertyTag[]];
-      [k: string]: unknown | undefined;
+      property_tags: PropertyTag[];
     };
 /**
  * Identifier for a publisher property. Must be lowercase alphanumeric with underscores only.
@@ -652,7 +651,6 @@ export type DataProviderSignalSelector =
        * Discriminator indicating all signals from this data provider are included
        */
       selection_type: 'all';
-      [k: string]: unknown | undefined;
     }
   | {
       /**
@@ -665,11 +663,8 @@ export type DataProviderSignalSelector =
       selection_type: 'by_id';
       /**
        * Specific signal IDs from the data provider's catalog
-       *
-       * @minItems 1
        */
-      signal_ids: [string, ...string[]];
-      [k: string]: unknown | undefined;
+      signal_ids: string[];
     }
   | {
       /**
@@ -682,11 +677,8 @@ export type DataProviderSignalSelector =
       selection_type: 'by_tag';
       /**
        * Signal tags from the data provider's catalog. Selector covers all signals with these tags
-       *
-       * @minItems 1
        */
-      signal_tags: [string, ...string[]];
-      [k: string]: unknown | undefined;
+      signal_tags: string[];
     };
 /**
  * The type of catalog feed. Determines the item schema and how the platform resolves catalog items. Multiple catalog types can be synced to the same account and referenced together in creatives.
@@ -756,10 +748,8 @@ export interface Product {
   description: string;
   /**
    * Publisher properties covered by this product. Buyers fetch actual property definitions from each publisher's adagents.json and validate agent authorization. Selection patterns mirror the authorization patterns in adagents.json for consistency.
-   *
-   * @minItems 1
    */
-  publisher_properties: [PublisherPropertySelector, ...PublisherPropertySelector[]];
+  publisher_properties: PublisherPropertySelector[];
   /**
    * Advertising channels this product is sold as. Products inherit from their properties' supported_channels but may narrow the scope. For example, a product covering YouTube properties might be sold as ['ctv'] even though those properties support ['olv', 'social', 'ctv'].
    */
@@ -770,17 +760,13 @@ export interface Product {
   format_ids: FormatID[];
   /**
    * Optional array of specific placements within this product. When provided, buyers can target specific placements when assigning creatives.
-   *
-   * @minItems 1
    */
-  placements?: [Placement, ...Placement[]];
+  placements?: Placement[];
   delivery_type: DeliveryType;
   /**
    * Available pricing models for this product
-   *
-   * @minItems 1
    */
-  pricing_options: [PricingOption, ...PricingOption[]];
+  pricing_options: PricingOption[];
   forecast?: DeliveryForecast;
   measurement?: Measurement;
   /**
@@ -816,34 +802,24 @@ export interface Product {
   signal_targeting_allowed?: boolean;
   /**
    * Catalog types this product supports for catalog-driven campaigns. A sponsored product listing declares ["product"], a job board declares ["job", "offering"]. Buyers match synced catalogs to products via this field.
-   *
-   * @minItems 1
    */
-  catalog_types?: [CatalogType, ...CatalogType[]];
+  catalog_types?: CatalogType[];
   /**
    * Conversion tracking for this product. Presence indicates the product supports conversion-optimized delivery. Seller-level capabilities (supported event types, UID types, attribution windows) are declared in get_adcp_capabilities.
    */
   conversion_tracking?: {
     /**
      * Action sources relevant to this product (e.g. a retail media product might have 'in_store' and 'website', while a display product might only have 'website')
-     *
-     * @minItems 1
      */
-    action_sources?: [ActionSource, ...ActionSource[]];
+    action_sources?: ActionSource[];
     /**
      * Optimization strategies this product supports when an optimization_goal is set on a package
-     *
-     * @minItems 1
      */
-    supported_optimization_strategies?: [
-      'maximize_conversions' | 'target_cpa' | 'target_roas',
-      ...('maximize_conversions' | 'target_cpa' | 'target_roas')[]
-    ];
+    supported_optimization_strategies?: ('maximize_conversions' | 'target_cpa' | 'target_roas')[];
     /**
      * Whether the seller provides its own always-on measurement (e.g. Amazon sales attribution for Amazon advertisers). When true, sync_event_sources response will include seller-managed event sources with managed_by='seller'.
      */
     platform_managed?: boolean;
-    [k: string]: unknown | undefined;
   };
   /**
    * When the buyer provides a catalog on get_products, indicates which catalog items are eligible for this product. Only present for products where catalog matching is relevant (e.g., sponsored product listings, job boards, hotel ads).
@@ -882,10 +858,7 @@ export interface Product {
     /**
      * Asset manifest for rendering the card, structure defined by the format
      */
-    manifest: {
-      [k: string]: unknown | undefined;
-    };
-    [k: string]: unknown | undefined;
+    manifest: {};
   };
   /**
    * Optional detailed card with carousel and full specifications. Provides rich product presentation similar to media kit pages.
@@ -895,13 +868,9 @@ export interface Product {
     /**
      * Asset manifest for rendering the detailed card, structure defined by the format
      */
-    manifest: {
-      [k: string]: unknown | undefined;
-    };
-    [k: string]: unknown | undefined;
+    manifest: {};
   };
   ext?: ExtensionObject;
-  [k: string]: unknown | undefined;
 }
 /**
  * Structured format identifier with agent URL and format name. Can reference: (1) a concrete format with fixed dimensions (id only), (2) a template format without parameters (id only), or (3) a template format with parameters (id + dimensions/duration). Template formats accept parameters in format_id while concrete formats have fixed dimensions in their definition. Parameterized format IDs create unique, specific format variants.
@@ -921,11 +890,8 @@ export interface Placement {
   description?: string;
   /**
    * Format IDs supported by this specific placement. Can include: (1) concrete format_ids (fixed dimensions), (2) template format_ids without parameters (accepts any dimensions/duration), or (3) parameterized format_ids (specific dimension/duration constraints).
-   *
-   * @minItems 1
    */
-  format_ids?: [FormatID, ...FormatID[]];
-  [k: string]: unknown | undefined;
+  format_ids?: FormatID[];
 }
 /**
  * Cost Per Mille (cost per 1,000 impressions) pricing. If fixed_price is present, it's fixed pricing. If absent, it's auction-based.
@@ -960,7 +926,6 @@ export interface CPMPricingOption {
    * Minimum spend requirement per package using this pricing option, in the specified currency
    */
   min_spend_per_package?: number;
-  [k: string]: unknown | undefined;
 }
 /**
  * Optional pricing guidance for auction-based bidding
@@ -982,7 +947,6 @@ export interface PriceGuidance {
    * 90th percentile of recent winning bids
    */
   p90?: number;
-  [k: string]: unknown | undefined;
 }
 /**
  * Viewable Cost Per Mille (cost per 1,000 viewable impressions) pricing - MRC viewability standard. If fixed_price is present, it's fixed pricing. If absent, it's auction-based.
@@ -1017,7 +981,6 @@ export interface VCPMPricingOption {
    * Minimum spend requirement per package using this pricing option, in the specified currency
    */
   min_spend_per_package?: number;
-  [k: string]: unknown | undefined;
 }
 /**
  * Optional pricing guidance for auction-based bidding
@@ -1052,7 +1015,6 @@ export interface CPCPricingOption {
    * Minimum spend requirement per package using this pricing option, in the specified currency
    */
   min_spend_per_package?: number;
-  [k: string]: unknown | undefined;
 }
 /**
  * Optional pricing guidance for auction-based bidding
@@ -1087,7 +1049,6 @@ export interface CPCVPricingOption {
    * Minimum spend requirement per package using this pricing option, in the specified currency
    */
   min_spend_per_package?: number;
-  [k: string]: unknown | undefined;
 }
 /**
  * Optional pricing guidance for auction-based bidding
@@ -1129,15 +1090,12 @@ export interface CPVPricingOption {
            * Seconds of viewing required
            */
           duration_seconds: number;
-          [k: string]: unknown | undefined;
         };
-    [k: string]: unknown | undefined;
   };
   /**
    * Minimum spend requirement per package using this pricing option, in the specified currency
    */
   min_spend_per_package?: number;
-  [k: string]: unknown | undefined;
 }
 /**
  * Optional pricing guidance for auction-based bidding
@@ -1177,13 +1135,11 @@ export interface CPPPricingOption {
      * Minimum GRPs/TRPs required
      */
     min_points?: number;
-    [k: string]: unknown | undefined;
   };
   /**
    * Minimum spend requirement per package using this pricing option, in the specified currency
    */
   min_spend_per_package?: number;
-  [k: string]: unknown | undefined;
 }
 /**
  * Optional pricing guidance for auction-based bidding
@@ -1221,7 +1177,6 @@ export interface CPAPricingOption {
    * Minimum spend requirement per package using this pricing option, in the specified currency
    */
   min_spend_per_package?: number;
-  [k: string]: unknown | undefined;
 }
 /**
  * Flat rate pricing for DOOH, sponsorships, and time-based campaigns. If fixed_price is present, it's fixed pricing. If absent, it's auction-based.
@@ -1280,13 +1235,11 @@ export interface FlatRatePricingOption {
      * Specific daypart for time-based pricing
      */
     daypart?: string;
-    [k: string]: unknown | undefined;
   };
   /**
    * Minimum spend requirement per package using this pricing option, in the specified currency
    */
   min_spend_per_package?: number;
-  [k: string]: unknown | undefined;
 }
 /**
  * Optional pricing guidance for auction-based bidding
@@ -1329,13 +1282,11 @@ export interface TimeBasedPricingOption {
      * Maximum booking duration in time_units. Must be >= min_duration when both are present.
      */
     max_duration?: number;
-    [k: string]: unknown | undefined;
   };
   /**
    * Minimum spend requirement per package using this pricing option, in the specified currency
    */
   min_spend_per_package?: number;
-  [k: string]: unknown | undefined;
 }
 /**
  * Optional pricing guidance for auction-based bidding
@@ -1343,10 +1294,8 @@ export interface TimeBasedPricingOption {
 export interface DeliveryForecast {
   /**
    * Forecasted delivery at one or more budget levels. A single point is a standard forecast; multiple points ordered by ascending budget form a curve showing how metrics scale with spend. Each point pairs a budget with metric ranges.
-   *
-   * @minItems 1
    */
-  points: [ForecastPoint, ...ForecastPoint[]];
+  points: ForecastPoint[];
   forecast_range_unit?: ForecastRangeUnit;
   method: ForecastMethod;
   /**
@@ -1368,7 +1317,6 @@ export interface DeliveryForecast {
    */
   valid_until?: string;
   ext?: ExtensionObject;
-  [k: string]: unknown | undefined;
 }
 /**
  * A forecast at a specific budget level. A single point represents a standard forecast; multiple points ordered by ascending budget form a curve showing how delivery metrics scale with spend.
@@ -1384,7 +1332,6 @@ export interface ForecastPoint {
   metrics: {
     [k: string]: ForecastRange | undefined;
   };
-  [k: string]: unknown | undefined;
 }
 /**
  * A forecast value with optional low/high bounds. The mid value represents the most likely outcome. When low and high are provided, they represent conservative and optimistic estimates respectively.
@@ -1402,7 +1349,6 @@ export interface ForecastRange {
    * Optimistic (high-end) forecast value
    */
   high?: number;
-  [k: string]: unknown | undefined;
 }
 /**
  * Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.
@@ -1424,7 +1370,6 @@ export interface Measurement {
    * Reporting frequency and format
    */
   reporting: string;
-  [k: string]: unknown | undefined;
 }
 /**
  * Reporting capabilities available for a product
@@ -1432,10 +1377,8 @@ export interface Measurement {
 export interface ReportingCapabilities {
   /**
    * Supported reporting frequency options
-   *
-   * @minItems 1
    */
-  available_reporting_frequencies: [ReportingFrequency, ...ReportingFrequency[]];
+  available_reporting_frequencies: ReportingFrequency[];
   /**
    * Expected delay in minutes before reporting data becomes available (e.g., 240 for 4-hour delay)
    */
@@ -1460,7 +1403,6 @@ export interface ReportingCapabilities {
    * Whether delivery data can be filtered to arbitrary date ranges. 'date_range' means the platform supports start_date/end_date parameters. 'lifetime_only' means the platform returns campaign lifetime totals and date range parameters are not accepted.
    */
   date_range_support: 'date_range' | 'lifetime_only';
-  [k: string]: unknown | undefined;
 }
 /**
  * Creative requirements and restrictions for a product
@@ -1472,7 +1414,6 @@ export interface CreativePolicy {
    * Whether creative templates are provided
    */
   templates_available: boolean;
-  [k: string]: unknown | undefined;
 }
 /**
  * Structured format identifier with agent URL and format name. Can reference: (1) a concrete format with fixed dimensions (id only), (2) a template format without parameters (id only), or (3) a template format with parameters (id + dimensions/duration). Template formats accept parameters in format_id while concrete formats have fixed dimensions in their definition. Parameterized format IDs create unique, specific format variants.
@@ -1492,10 +1433,8 @@ export interface Proposal {
   description?: string;
   /**
    * Budget allocations across products. Allocation percentages MUST sum to 100. Publishers are responsible for ensuring the sum equals 100; buyers SHOULD validate this before execution.
-   *
-   * @minItems 1
    */
-  allocations: [ProductAllocation, ...ProductAllocation[]];
+  allocations: ProductAllocation[];
   /**
    * When this proposal expires and can no longer be executed. After expiration, referenced products or pricing may no longer be available.
    */
@@ -1520,7 +1459,6 @@ export interface Proposal {
      * ISO 4217 currency code
      */
     currency?: string;
-    [k: string]: unknown | undefined;
   };
   /**
    * Explanation of how this proposal aligns with the campaign brief
@@ -1528,7 +1466,6 @@ export interface Proposal {
   brief_alignment?: string;
   forecast?: DeliveryForecast;
   ext?: ExtensionObject;
-  [k: string]: unknown | undefined;
 }
 /**
  * A budget allocation for a specific product within a proposal. Percentages across all allocations in a proposal should sum to 100.
@@ -1560,13 +1497,10 @@ export interface ProductAllocation {
   tags?: string[];
   /**
    * Recommended time windows for this allocation in spot-plan proposals.
-   *
-   * @minItems 1
    */
-  daypart_targets?: [DaypartTarget, ...DaypartTarget[]];
+  daypart_targets?: DaypartTarget[];
   forecast?: DeliveryForecast;
   ext?: ExtensionObject;
-  [k: string]: unknown | undefined;
 }
 /**
  * A time window for daypart targeting. Specifies days of week and an hour range. start_hour is inclusive, end_hour is exclusive (e.g., 6-10 = 6:00am to 10:00am). Follows the Google Ads AdScheduleInfo / DV360 DayPartTargeting pattern.
@@ -1574,10 +1508,8 @@ export interface ProductAllocation {
 export interface DaypartTarget {
   /**
    * Days of week this window applies to. Use multiple days for compact targeting (e.g., monday-friday in one object).
-   *
-   * @minItems 1
    */
-  days: [DayOfWeek, ...DayOfWeek[]];
+  days: DayOfWeek[];
   /**
    * Start hour (inclusive), 0-23 in 24-hour format. 0 = midnight, 6 = 6:00am, 18 = 6:00pm.
    */
@@ -1618,10 +1550,7 @@ export interface Error {
   /**
    * Additional task-specific error details
    */
-  details?: {
-    [k: string]: unknown | undefined;
-  };
-  [k: string]: unknown | undefined;
+  details?: {};
 }
 /**
  * Standard cursor-based pagination metadata for list responses
@@ -1814,6 +1743,28 @@ export type AssetRequirements =
   | URLAssetRequirements
   | WebhookAssetRequirements;
 /**
+ * Maps a format template slot to a catalog item field or typed asset pool. The 'kind' field identifies the binding variant. All bindings are optional — agents can still infer mappings without them.
+ */
+export type CatalogFieldBinding =
+  | ScalarBinding
+  | AssetPoolBinding
+  | {
+      kind: 'catalog_group';
+      /**
+       * The asset_group_id of a repeatable_group in the format's assets array.
+       */
+      format_group_id: string;
+      /**
+       * Each repetition of the format's repeatable_group maps to one item from the catalog.
+       */
+      catalog_item: true;
+      /**
+       * Scalar and asset pool bindings that apply within each repetition of the group. Nested catalog_group bindings are not permitted.
+       */
+      per_item_bindings?: (ScalarBinding | AssetPoolBinding)[];
+      ext?: ExtensionObject;
+    };
+/**
  * Standard delivery and performance metrics available for reporting
  */
 export type CreativeAgentCapability = 'validation' | 'assembly' | 'generation' | 'preview' | 'delivery';
@@ -1879,27 +1830,15 @@ export interface Format {
   accepts_parameters?: FormatIDParameter[];
   /**
    * Specification of rendered pieces for this format. Most formats produce a single render. Companion ad formats (video + banner), adaptive formats, and multi-placement formats produce multiple renders. Each render specifies its role and dimensions.
-   *
-   * @minItems 1
    */
-  renders?: [
-    (
-      | {
-          [k: string]: unknown | undefined;
-        }
-      | {
-          parameters_from_format_id: true;
-        }
-    ),
-    ...(
-      | {
-          [k: string]: unknown | undefined;
-        }
-      | {
-          parameters_from_format_id: true;
-        }
-    )[]
-  ];
+  renders?: (
+    | {
+        [k: string]: unknown | undefined;
+      }
+    | {
+        parameters_from_format_id: true;
+      }
+  )[];
   /**
    * Array of all assets supported for this format. Each asset is identified by its asset_id, which must be used as the key in creative manifests. Use the 'required' boolean on each asset to indicate whether it's mandatory.
    */
@@ -1939,9 +1878,7 @@ export interface Format {
   /**
    * Delivery method specifications (e.g., hosted, VAST, third-party tags)
    */
-  delivery?: {
-    [k: string]: unknown | undefined;
-  };
+  delivery?: {};
   /**
    * List of universal macros supported by this format (e.g., MEDIA_BUY_ID, CACHEBUSTER, DEVICE_ID). Used for validation and developer tooling. See docs/creative/universal-macros.mdx for full documentation.
    */
@@ -1962,10 +1899,7 @@ export interface Format {
     /**
      * Asset manifest for rendering the card, structure defined by the format
      */
-    manifest: {
-      [k: string]: unknown | undefined;
-    };
-    [k: string]: unknown | undefined;
+    manifest: {};
   };
   /**
    * Accessibility posture of this format. Declares the WCAG conformance level that creatives produced by this format will meet.
@@ -1985,24 +1919,16 @@ export interface Format {
     /**
      * Asset manifest for rendering the detailed card, structure defined by the format
      */
-    manifest: {
-      [k: string]: unknown | undefined;
-    };
-    [k: string]: unknown | undefined;
+    manifest: {};
   };
   /**
    * Catalog feeds this format requires for rendering. Formats that display product listings, store locators, inventory availability, or promotional pricing declare what catalog types must be synced to the account. Buyers ensure the required catalogs are synced via sync_catalogs before submitting creatives in this format.
-   *
-   * @minItems 1
    */
-  catalog_requirements?: [CatalogRequirements, ...CatalogRequirements[]];
+  catalog_requirements?: CatalogRequirements[];
   /**
    * Metrics this format can produce in delivery reporting. Buyers receive the intersection of format reported_metrics and product available_metrics. If omitted, the format defers entirely to product-level metric declarations.
-   *
-   * @minItems 1
    */
-  reported_metrics?: [AvailableMetric, ...AvailableMetric[]];
-  [k: string]: unknown | undefined;
+  reported_metrics?: AvailableMetric[];
 }
 /**
  * Structured format identifier with agent URL and format name
@@ -2024,6 +1950,65 @@ export interface BaseIndividualAsset {
    * Whether this asset is required (true) or optional (false). Required assets must be provided for a valid creative. Optional assets enhance the creative but are not mandatory.
    */
   required: boolean;
+  /**
+   * Publisher-controlled elements rendered on top of buyer content at this asset's position (e.g., video player controls, publisher logos). Creative agents should avoid placing critical content (CTAs, logos, key copy) within overlay bounds.
+   */
+  overlays?: Overlay[];
+}
+/**
+ * A publisher-controlled element that renders on top of buyer creative content within the ad placement. Creative agents should avoid placing critical content (CTAs, logos, key copy) within overlay bounds.
+ */
+export interface Overlay {
+  /**
+   * Identifier for this overlay (e.g., 'play_pause', 'volume', 'publisher_logo', 'carousel_prev', 'carousel_next')
+   */
+  id: string;
+  /**
+   * Human-readable explanation of what this overlay is and how buyers should account for it
+   */
+  description?: string;
+  /**
+   * Optional visual reference for this overlay element. Useful for creative agents compositing previews and for buyers understanding what will appear over their content. Must include at least one of: url, light, or dark.
+   */
+  visual?: {
+    /**
+     * URL to a theme-neutral overlay graphic (SVG or PNG). Use when a single file works for all backgrounds, e.g. an SVG using CSS custom properties or currentColor.
+     */
+    url?: string;
+    /**
+     * URL to the overlay graphic for use on light/bright backgrounds (SVG or PNG)
+     */
+    light?: string;
+    /**
+     * URL to the overlay graphic for use on dark backgrounds (SVG or PNG)
+     */
+    dark?: string;
+  };
+  /**
+   * Position and size of the overlay relative to the asset's own top-left corner. See 'unit' for coordinate interpretation.
+   */
+  bounds: {
+    /**
+     * Horizontal offset from the asset's left edge
+     */
+    x: number;
+    /**
+     * Vertical offset from the asset's top edge
+     */
+    y: number;
+    /**
+     * Width of the overlay
+     */
+    width: number;
+    /**
+     * Height of the overlay
+     */
+    height: number;
+    /**
+     * 'px' = absolute pixels from asset top-left. 'fraction' = proportional to asset dimensions (x/y: 0.0 = asset edge, 1.0 = opposite edge; width/height: 0.12 = 12% of asset dimension).
+     */
+    unit: 'px' | 'fraction';
+  };
 }
 export interface BaseGroupAsset {
   /**
@@ -2038,6 +2023,10 @@ export interface BaseGroupAsset {
    * Whether this asset is required within each repetition of the group
    */
   required: boolean;
+  /**
+   * Publisher-controlled elements rendered on top of buyer content at this asset's position (e.g., carousel navigation arrows, slide indicators). Creative agents should avoid placing critical content within overlay bounds.
+   */
+  overlays?: Overlay[];
 }
 /**
  * Structured format identifier with agent URL and format name. Can reference: (1) a concrete format with fixed dimensions (id only), (2) a template format without parameters (id only), or (3) a template format with parameters (id + dimensions/duration). Template formats accept parameters in format_id while concrete formats have fixed dimensions in their definition. Parameterized format IDs create unique, specific format variants.
@@ -2054,23 +2043,20 @@ export interface CatalogRequirements {
   min_items?: number;
   /**
    * Fields that must be present and non-empty on every item in the catalog. Field names are catalog-type-specific (e.g., 'title', 'price', 'image_url' for product catalogs; 'store_id', 'quantity' for inventory feeds).
-   *
-   * @minItems 1
    */
-  required_fields?: [string, ...string[]];
+  required_fields?: string[];
   /**
    * Accepted feed formats for this catalog type. When specified, the synced catalog must use one of these formats. When omitted, any format is accepted.
-   *
-   * @minItems 1
    */
-  feed_formats?: [FeedFormat, ...FeedFormat[]];
+  feed_formats?: FeedFormat[];
   /**
-   * Per-offering creative requirements. Only applicable when catalog_type is 'offering'. Declares what asset groups (headlines, images, videos) each offering must provide, along with count bounds and per-asset technical constraints.
-   *
-   * @minItems 1
+   * Per-item creative asset requirements. Declares what asset groups (headlines, images, videos) each catalog item must provide in its assets array, along with count bounds and per-asset technical constraints. Applicable to 'offering' and all vertical catalog types (hotel, flight, job, etc.) whose items carry typed assets.
    */
-  offering_asset_constraints?: [OfferingAssetConstraint, ...OfferingAssetConstraint[]];
-  [k: string]: unknown | undefined;
+  offering_asset_constraints?: OfferingAssetConstraint[];
+  /**
+   * Explicit mappings from format template slots to catalog item fields or typed asset pools. Optional — creative agents can infer mappings without them, but bindings make the relationship self-describing and enable validation. Covers scalar fields (asset_id → catalog_field), asset pools (asset_id → asset_group_id on the catalog item), and repeatable groups that iterate over catalog items.
+   */
+  field_bindings?: CatalogFieldBinding[];
 }
 /**
  * Declares per-group creative requirements that each offering must satisfy. Allows formats to specify what asset groups (headlines, images, videos) offerings must provide, along with count and per-asset technical constraints.
@@ -2095,7 +2081,6 @@ export interface OfferingAssetConstraint {
   max_count?: number;
   asset_requirements?: AssetRequirements;
   ext?: ExtensionObject;
-  [k: string]: unknown | undefined;
 }
 /**
  * Requirements for image creative assets. These define the technical constraints for image files.
@@ -2141,7 +2126,6 @@ export interface ImageAssetRequirements {
    * Maximum animation duration in milliseconds (if animation_allowed is true)
    */
   max_animation_duration_ms?: number;
-  [k: string]: unknown | undefined;
 }
 /**
  * Requirements for video creative assets. These define the technical constraints for video files.
@@ -2203,7 +2187,6 @@ export interface VideoAssetRequirements {
    * Whether the video must include an audio track
    */
   audio_required?: boolean;
-  [k: string]: unknown | undefined;
 }
 /**
  * Requirements for audio creative assets.
@@ -2241,7 +2224,6 @@ export interface AudioAssetRequirements {
    * Maximum audio bitrate in kilobits per second
    */
   max_bitrate_kbps?: number;
-  [k: string]: unknown | undefined;
 }
 /**
  * Requirements for text creative assets such as headlines, body copy, and CTAs.
@@ -2271,7 +2253,6 @@ export interface TextAssetRequirements {
    * List of prohibited words or phrases
    */
   prohibited_terms?: string[];
-  [k: string]: unknown | undefined;
 }
 /**
  * Requirements for markdown creative assets.
@@ -2281,7 +2262,6 @@ export interface MarkdownAssetRequirements {
    * Maximum character length
    */
   max_length?: number;
-  [k: string]: unknown | undefined;
 }
 /**
  * Requirements for HTML creative assets. These define the execution environment constraints that the HTML must be compatible with.
@@ -2303,7 +2283,6 @@ export interface HTMLAssetRequirements {
    * List of domains the HTML creative may reference for external resources. Only applicable when external_resources_allowed is true.
    */
   allowed_external_domains?: string[];
-  [k: string]: unknown | undefined;
 }
 /**
  * Requirements for CSS creative assets.
@@ -2313,7 +2292,6 @@ export interface CSSAssetRequirements {
    * Maximum file size in kilobytes
    */
   max_file_size_kb?: number;
-  [k: string]: unknown | undefined;
 }
 /**
  * Requirements for JavaScript creative assets. These define the execution environment constraints that the JavaScript must be compatible with.
@@ -2339,7 +2317,6 @@ export interface JavaScriptAssetRequirements {
    * List of domains the JavaScript may reference for external resources. Only applicable when external_resources_allowed is true.
    */
   allowed_external_domains?: string[];
-  [k: string]: unknown | undefined;
 }
 /**
  * Requirements for VAST (Video Ad Serving Template) creative assets.
@@ -2349,7 +2326,6 @@ export interface VASTAssetRequirements {
    * Required VAST version
    */
   vast_version?: '2.0' | '3.0' | '4.0' | '4.1' | '4.2';
-  [k: string]: unknown | undefined;
 }
 /**
  * Requirements for DAAST (Digital Audio Ad Serving Template) creative assets.
@@ -2359,7 +2335,6 @@ export interface DAASTAssetRequirements {
    * Required DAAST version. DAAST 1.0 is the current IAB standard.
    */
   daast_version?: '1.0';
-  [k: string]: unknown | undefined;
 }
 /**
  * Requirements for URL assets such as click-through URLs, tracking pixels, and landing pages.
@@ -2391,7 +2366,6 @@ export interface URLAssetRequirements {
    * Whether the URL supports macro substitution (e.g., ${CACHEBUSTER})
    */
   macro_support?: boolean;
-  [k: string]: unknown | undefined;
 }
 /**
  * Requirements for webhook creative assets.
@@ -2401,10 +2375,39 @@ export interface WebhookAssetRequirements {
    * Allowed HTTP methods
    */
   methods?: ('GET' | 'POST')[];
-  [k: string]: unknown | undefined;
 }
 /**
  * Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.
+ */
+export interface ScalarBinding {
+  kind: 'scalar';
+  /**
+   * The asset_id from the format's assets array. Identifies which individual template slot this binding applies to.
+   */
+  asset_id: string;
+  /**
+   * Dot-notation path to the field on the catalog item (e.g., 'name', 'price.amount', 'location.city').
+   */
+  catalog_field: string;
+  ext?: ExtensionObject;
+}
+/**
+ * Maps an individual format asset to a typed asset pool on the catalog item (e.g., images_landscape, images_vertical, logo). The format slot receives the first item in the pool.
+ */
+export interface AssetPoolBinding {
+  kind: 'asset_pool';
+  /**
+   * The asset_id from the format's assets array. Identifies which individual template slot this binding applies to.
+   */
+  asset_id: string;
+  /**
+   * The asset_group_id on the catalog item's assets array to pull from (e.g., 'images_landscape', 'images_vertical', 'logo').
+   */
+  asset_group_id: string;
+  ext?: ExtensionObject;
+}
+/**
+ * Standard error structure for task-specific errors and warnings
  */
 
 // create_media_buy parameters
@@ -2483,7 +2486,6 @@ export type VASTAsset =
        * URL to audio description track for visually impaired users
        */
       audio_description_url?: string;
-      [k: string]: unknown | undefined;
     }
   | {
       /**
@@ -2515,7 +2517,6 @@ export type VASTAsset =
        * URL to audio description track for visually impaired users
        */
       audio_description_url?: string;
-      [k: string]: unknown | undefined;
     };
 /**
  * VAST specification version
@@ -2571,7 +2572,6 @@ export type DAASTAsset =
        * URL to text transcript of the audio content
        */
       transcript_url?: string;
-      [k: string]: unknown | undefined;
     }
   | {
       /**
@@ -2599,7 +2599,6 @@ export type DAASTAsset =
        * URL to text transcript of the audio content
        */
       transcript_url?: string;
-      [k: string]: unknown | undefined;
     };
 /**
  * DAAST specification version
@@ -2741,10 +2740,8 @@ export interface PackageRequest {
   product_id: string;
   /**
    * Array of format IDs that will be used for this package - must be supported by the product. If omitted, defaults to all formats supported by the product.
-   *
-   * @minItems 1
    */
-  format_ids?: [FormatID, ...FormatID[]];
+  format_ids?: FormatID[];
   /**
    * Budget allocation for this package in the media buy's currency
    */
@@ -2771,19 +2768,15 @@ export interface PackageRequest {
   targeting_overlay?: TargetingOverlay;
   /**
    * Assign existing library creatives to this package with optional weights and placement targeting
-   *
-   * @minItems 1
    */
-  creative_assignments?: [CreativeAssignment, ...CreativeAssignment[]];
+  creative_assignments?: CreativeAssignment[];
   /**
    * Upload new creative assets and assign to this package (creatives will be added to library). Use creative_assignments instead for existing library creatives.
    *
-   * @minItems 1
    * @maxItems 100
    */
-  creatives?: [CreativeAsset, ...CreativeAsset[]];
+  creatives?: CreativeAsset[];
   ext?: ExtensionObject;
-  [k: string]: unknown | undefined;
 }
 /**
  * Structured format identifier with agent URL and format name. Can reference: (1) a concrete format with fixed dimensions (id only), (2) a template format without parameters (id only), or (3) a template format with parameters (id + dimensions/duration). Template formats accept parameters in format_id while concrete formats have fixed dimensions in their definition. Parameterized format IDs create unique, specific format variants.
@@ -2814,9 +2807,7 @@ export interface OptimizationGoal {
      * View-through attribution window (e.g. '1d', '7d')
      */
     view_through?: string;
-    [k: string]: unknown | undefined;
   };
-  [k: string]: unknown | undefined;
 }
 /**
  * Optional restriction overlays for media buys. Most targeting should be expressed in the brief and handled by the publisher. These fields are for functional restrictions: geographic (RCT testing, regulatory compliance), age verification (alcohol, gambling), device platform (app compatibility), and language (localization).
@@ -2824,134 +2815,64 @@ export interface OptimizationGoal {
 export interface TargetingOverlay {
   /**
    * Restrict delivery to specific countries. ISO 3166-1 alpha-2 codes (e.g., 'US', 'GB', 'DE').
-   *
-   * @minItems 1
    */
-  geo_countries?: [string, ...string[]];
+  geo_countries?: string[];
   /**
    * Exclude specific countries from delivery. ISO 3166-1 alpha-2 codes (e.g., 'US', 'GB', 'DE').
-   *
-   * @minItems 1
    */
-  geo_countries_exclude?: [string, ...string[]];
+  geo_countries_exclude?: string[];
   /**
    * Restrict delivery to specific regions/states. ISO 3166-2 subdivision codes (e.g., 'US-CA', 'GB-SCT').
-   *
-   * @minItems 1
    */
-  geo_regions?: [string, ...string[]];
+  geo_regions?: string[];
   /**
    * Exclude specific regions/states from delivery. ISO 3166-2 subdivision codes (e.g., 'US-CA', 'GB-SCT').
-   *
-   * @minItems 1
    */
-  geo_regions_exclude?: [string, ...string[]];
+  geo_regions_exclude?: string[];
   /**
    * Restrict delivery to specific metro areas. Each entry specifies the classification system and target values. Seller must declare supported systems in get_adcp_capabilities.
-   *
-   * @minItems 1
    */
-  geo_metros?: [
-    {
-      system: MetroAreaSystem;
-      /**
-       * Metro codes within the system (e.g., ['501', '602'] for Nielsen DMAs)
-       *
-       * @minItems 1
-       */
-      values: [string, ...string[]];
-    },
-    ...{
-      system: MetroAreaSystem;
-      /**
-       * Metro codes within the system (e.g., ['501', '602'] for Nielsen DMAs)
-       *
-       * @minItems 1
-       */
-      values: [string, ...string[]];
-    }[]
-  ];
+  geo_metros?: {
+    system: MetroAreaSystem;
+    /**
+     * Metro codes within the system (e.g., ['501', '602'] for Nielsen DMAs)
+     */
+    values: string[];
+  }[];
   /**
    * Exclude specific metro areas from delivery. Each entry specifies the classification system and excluded values. Seller must declare supported systems in get_adcp_capabilities.
-   *
-   * @minItems 1
    */
-  geo_metros_exclude?: [
-    {
-      system: MetroAreaSystem;
-      /**
-       * Metro codes to exclude within the system (e.g., ['501', '602'] for Nielsen DMAs)
-       *
-       * @minItems 1
-       */
-      values: [string, ...string[]];
-    },
-    ...{
-      system: MetroAreaSystem;
-      /**
-       * Metro codes to exclude within the system (e.g., ['501', '602'] for Nielsen DMAs)
-       *
-       * @minItems 1
-       */
-      values: [string, ...string[]];
-    }[]
-  ];
+  geo_metros_exclude?: {
+    system: MetroAreaSystem;
+    /**
+     * Metro codes to exclude within the system (e.g., ['501', '602'] for Nielsen DMAs)
+     */
+    values: string[];
+  }[];
   /**
    * Restrict delivery to specific postal areas. Each entry specifies the postal system and target values. Seller must declare supported systems in get_adcp_capabilities.
-   *
-   * @minItems 1
    */
-  geo_postal_areas?: [
-    {
-      system: PostalCodeSystem;
-      /**
-       * Postal codes within the system (e.g., ['10001', '10002'] for us_zip)
-       *
-       * @minItems 1
-       */
-      values: [string, ...string[]];
-    },
-    ...{
-      system: PostalCodeSystem;
-      /**
-       * Postal codes within the system (e.g., ['10001', '10002'] for us_zip)
-       *
-       * @minItems 1
-       */
-      values: [string, ...string[]];
-    }[]
-  ];
+  geo_postal_areas?: {
+    system: PostalCodeSystem;
+    /**
+     * Postal codes within the system (e.g., ['10001', '10002'] for us_zip)
+     */
+    values: string[];
+  }[];
   /**
    * Exclude specific postal areas from delivery. Each entry specifies the postal system and excluded values. Seller must declare supported systems in get_adcp_capabilities.
-   *
-   * @minItems 1
    */
-  geo_postal_areas_exclude?: [
-    {
-      system: PostalCodeSystem;
-      /**
-       * Postal codes to exclude within the system (e.g., ['10001', '10002'] for us_zip)
-       *
-       * @minItems 1
-       */
-      values: [string, ...string[]];
-    },
-    ...{
-      system: PostalCodeSystem;
-      /**
-       * Postal codes to exclude within the system (e.g., ['10001', '10002'] for us_zip)
-       *
-       * @minItems 1
-       */
-      values: [string, ...string[]];
-    }[]
-  ];
+  geo_postal_areas_exclude?: {
+    system: PostalCodeSystem;
+    /**
+     * Postal codes to exclude within the system (e.g., ['10001', '10002'] for us_zip)
+     */
+    values: string[];
+  }[];
   /**
    * Restrict delivery to specific time windows. Each entry specifies days of week and an hour range.
-   *
-   * @minItems 1
    */
-  daypart_targets?: [DaypartTarget, ...DaypartTarget[]];
+  daypart_targets?: DaypartTarget[];
   /**
    * AXE segment ID to include for targeting
    */
@@ -2962,16 +2883,12 @@ export interface TargetingOverlay {
   axe_exclude_segment?: string;
   /**
    * Restrict delivery to members of these first-party CRM audiences. Only users present in the uploaded lists are eligible. References audience_id values from sync_audiences on the same seller account — audience IDs are not portable across sellers. Not for lookalike expansion — express that intent in the campaign brief. Seller must declare support in get_adcp_capabilities.
-   *
-   * @minItems 1
    */
-  audience_include?: [string, ...string[]];
+  audience_include?: string[];
   /**
    * Suppress delivery to members of these first-party CRM audiences. Matched users are excluded regardless of other targeting. References audience_id values from sync_audiences on the same seller account — audience IDs are not portable across sellers. Seller must declare support in get_adcp_capabilities.
-   *
-   * @minItems 1
    */
-  audience_exclude?: [string, ...string[]];
+  audience_exclude?: string[];
   frequency_cap?: FrequencyCap;
   property_list?: PropertyListReference;
   /**
@@ -2988,69 +2905,34 @@ export interface TargetingOverlay {
     verification_required?: boolean;
     /**
      * Accepted verification methods. If omitted, any method the platform supports is acceptable.
-     *
-     * @minItems 1
      */
-    accepted_methods?: [AgeVerificationMethod, ...AgeVerificationMethod[]];
+    accepted_methods?: AgeVerificationMethod[];
   };
   /**
    * Restrict to specific platforms. Use for technical compatibility (app only works on iOS). Values from Sec-CH-UA-Platform standard, extended for CTV.
-   *
-   * @minItems 1
    */
-  device_platform?: [DevicePlatform, ...DevicePlatform[]];
+  device_platform?: DevicePlatform[];
   /**
    * Target users within store catchment areas from a synced store catalog. Each entry references a store-type catalog and optionally narrows to specific stores or catchment zones.
-   *
-   * @minItems 1
    */
-  store_catchments?: [
-    {
-      /**
-       * Synced store-type catalog ID from sync_catalogs.
-       */
-      catalog_id: string;
-      /**
-       * Filter to specific stores within the catalog. Omit to target all stores.
-       *
-       * @minItems 1
-       */
-      store_ids?: [string, ...string[]];
-      /**
-       * Catchment zone IDs to target (e.g., 'walk', 'drive'). Omit to target all catchment zones.
-       *
-       * @minItems 1
-       */
-      catchment_ids?: [string, ...string[]];
-      [k: string]: unknown | undefined;
-    },
-    ...{
-      /**
-       * Synced store-type catalog ID from sync_catalogs.
-       */
-      catalog_id: string;
-      /**
-       * Filter to specific stores within the catalog. Omit to target all stores.
-       *
-       * @minItems 1
-       */
-      store_ids?: [string, ...string[]];
-      /**
-       * Catchment zone IDs to target (e.g., 'walk', 'drive'). Omit to target all catchment zones.
-       *
-       * @minItems 1
-       */
-      catchment_ids?: [string, ...string[]];
-      [k: string]: unknown | undefined;
-    }[]
-  ];
+  store_catchments?: {
+    /**
+     * Synced store-type catalog ID from sync_catalogs.
+     */
+    catalog_id: string;
+    /**
+     * Filter to specific stores within the catalog. Omit to target all stores.
+     */
+    store_ids?: string[];
+    /**
+     * Catchment zone IDs to target (e.g., 'walk', 'drive'). Omit to target all catchment zones.
+     */
+    catchment_ids?: string[];
+  }[];
   /**
    * Restrict to users with specific language preferences. ISO 639-1 codes (e.g., 'en', 'es', 'fr').
-   *
-   * @minItems 1
    */
-  language?: [string, ...string[]];
-  [k: string]: unknown | undefined;
+  language?: string[];
 }
 /**
  * A time window for daypart targeting. Specifies days of week and an hour range. start_hour is inclusive, end_hour is exclusive (e.g., 6-10 = 6:00am to 10:00am). Follows the Google Ads AdScheduleInfo / DV360 DayPartTargeting pattern.
@@ -3060,7 +2942,6 @@ export interface FrequencyCap {
    * Minutes to suppress after impression
    */
   suppress_minutes: number;
-  [k: string]: unknown | undefined;
 }
 /**
  * Reference to a property list for targeting specific properties within this product. The package runs on the intersection of the product's publisher_properties and this list. Sellers SHOULD return a validation error if the product has property_targeting_allowed: false.
@@ -3076,11 +2957,8 @@ export interface CreativeAssignment {
   weight?: number;
   /**
    * Optional array of placement IDs where this creative should run. When omitted, the creative runs on all placements in the package. References placement_id values from the product's placements array.
-   *
-   * @minItems 1
    */
-  placement_ids?: [string, ...string[]];
-  [k: string]: unknown | undefined;
+  placement_ids?: string[];
 }
 /**
  * Creative asset for upload to library - supports static assets, generative formats, and third-party snippets
@@ -3097,15 +2975,27 @@ export interface CreativeAsset {
   format_id: FormatID;
   /**
    * Catalogs this creative renders. Each entry satisfies one of the format's catalog_requirements, matched by type. Each catalog can be inline (with items), a reference to a synced catalog (by catalog_id), or a URL to an external feed.
-   *
-   * @minItems 1
    */
-  catalogs?: [Catalog, ...Catalog[]];
+  catalogs?: Catalog[];
   /**
    * Assets required by the format, keyed by asset_role
    */
   assets: {
-    [k: string]: unknown | undefined;
+    /**
+     * This interface was referenced by `undefined`'s JSON-Schema definition
+     * via the `patternProperty` "^[a-zA-Z0-9_-]+$".
+     */
+    [k: string]:
+      | ImageAsset
+      | VideoAsset
+      | AudioAsset
+      | TextAsset
+      | HTMLAsset
+      | CSSAsset
+      | JavaScriptAsset
+      | VASTAsset
+      | DAASTAsset
+      | URLAsset;
   };
   /**
    * Preview contexts for generative formats - defines what scenarios to generate previews for
@@ -3125,7 +3015,6 @@ export interface CreativeAsset {
      * Natural language description of the context for AI-generated content
      */
     context_description?: string;
-    [k: string]: unknown | undefined;
   }[];
   /**
    * User-defined tags for organization and searchability
@@ -3138,11 +3027,8 @@ export interface CreativeAsset {
   weight?: number;
   /**
    * Optional array of placement IDs where this creative should run when uploading via create_media_buy or update_media_buy. References placement_id values from the product's placements array. If omitted, creative runs on all placements. Only used during upload to media buy - not stored in creative library.
-   *
-   * @minItems 1
    */
-  placement_ids?: [string, ...string[]];
-  [k: string]: unknown | undefined;
+  placement_ids?: string[];
 }
 /**
  * Structured format identifier with agent URL and format name. Can reference: (1) a concrete format with fixed dimensions (id only), (2) a template format without parameters (id only), or (3) a template format with parameters (id + dimensions/duration). Template formats accept parameters in format_id while concrete formats have fixed dimensions in their definition. Parameterized format IDs create unique, specific format variants.
@@ -3168,7 +3054,6 @@ export interface ImageAsset {
    * Alternative text for accessibility
    */
   alt_text?: string;
-  [k: string]: unknown | undefined;
 }
 /**
  * Video asset with URL and technical specifications including audio track properties
@@ -3290,7 +3175,6 @@ export interface VideoAsset {
    * URL to audio description track for visually impaired users
    */
   audio_description_url?: string;
-  [k: string]: unknown | undefined;
 }
 /**
  * Audio asset with URL and technical specifications
@@ -3344,7 +3228,6 @@ export interface AudioAsset {
    * URL to text transcript of the audio content
    */
   transcript_url?: string;
-  [k: string]: unknown | undefined;
 }
 /**
  * Text content asset
@@ -3358,7 +3241,6 @@ export interface TextAsset {
    * Language code (e.g., 'en', 'es', 'fr')
    */
   language?: string;
-  [k: string]: unknown | undefined;
 }
 /**
  * HTML content asset
@@ -3393,7 +3275,6 @@ export interface HTMLAsset {
      */
     screen_reader_tested?: boolean;
   };
-  [k: string]: unknown | undefined;
 }
 /**
  * CSS stylesheet asset
@@ -3407,7 +3288,6 @@ export interface CSSAsset {
    * CSS media query context (e.g., 'screen', 'print')
    */
   media?: string;
-  [k: string]: unknown | undefined;
 }
 /**
  * JavaScript code asset
@@ -3439,7 +3319,6 @@ export interface JavaScriptAsset {
      */
     screen_reader_tested?: boolean;
   };
-  [k: string]: unknown | undefined;
 }
 /**
  * URL reference asset
@@ -3454,10 +3333,9 @@ export interface URLAsset {
    * Description of what this URL points to
    */
   description?: string;
-  [k: string]: unknown | undefined;
 }
 /**
- * Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.
+ * Brand reference for this media buy. Resolved to full brand identity at execution time from brand.json or the registry.
  */
 export interface ReportingWebhook {
   /**
@@ -3475,10 +3353,9 @@ export interface ReportingWebhook {
     /**
      * Array of authentication schemes. Supported: ['Bearer'] for simple token auth, ['HMAC-SHA256'] for signature verification (recommended for production)
      *
-     * @minItems 1
      * @maxItems 1
      */
-    schemes: [AuthenticationScheme];
+    schemes: [] | [AuthenticationScheme];
     /**
      * Credentials for authentication. For Bearer: token sent in Authorization header. For HMAC-SHA256: shared secret used to generate signature. Minimum 32 characters. Exchanged out-of-band during onboarding.
      */
@@ -3492,7 +3369,6 @@ export interface ReportingWebhook {
    * Optional list of metrics to include in webhook notifications. If omitted, all available metrics are included. Must be subset of product's available_metrics.
    */
   requested_metrics?: AvailableMetric[];
-  [k: string]: unknown | undefined;
 }
 /**
  * Opaque correlation data that is echoed unchanged in responses. Used for internal tracking, UI session IDs, trace IDs, and other caller-specific identifiers that don't affect protocol behavior. Context data is never parsed by AdCP agents - it's simply preserved and returned.
@@ -3595,7 +3471,6 @@ export interface Account {
    */
   sandbox?: boolean;
   ext?: ExtensionObject;
-  [k: string]: unknown | undefined;
 }
 /**
  * Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.
@@ -3645,7 +3520,6 @@ export interface Package {
    */
   paused?: boolean;
   ext?: ExtensionObject;
-  [k: string]: unknown | undefined;
 }
 /**
  * Optional restriction overlays for media buys. Most targeting should be expressed in the brief and handled by the publisher. These fields are for functional restrictions: geographic (RCT testing, regulatory compliance), age verification (alcohol, gambling), device platform (app compatibility), and language (localization).
@@ -3731,10 +3605,9 @@ export interface PushNotificationConfig {
     /**
      * Array of authentication schemes. Supported: ['Bearer'] for simple token auth, ['HMAC-SHA256'] for signature verification (recommended for production)
      *
-     * @minItems 1
      * @maxItems 1
      */
-    schemes: [AuthenticationScheme];
+    schemes: [] | [AuthenticationScheme];
     /**
      * Credentials for authentication. For Bearer: token sent in Authorization header. For HMAC-SHA256: shared secret used to generate signature. Minimum 32 characters. Exchanged out-of-band during onboarding.
      */
@@ -3901,34 +3774,24 @@ export interface ListCreativesRequest {
 export interface CreativeFilters {
   /**
    * Filter creatives by owning accounts. Useful for agencies managing multiple client accounts.
-   *
-   * @minItems 1
    */
-  account_ids?: [string, ...string[]];
+  account_ids?: string[];
   /**
    * Filter by creative format types (e.g., video, audio, display)
-   *
-   * @minItems 1
    */
-  formats?: [string, ...string[]];
+  formats?: string[];
   /**
    * Filter by creative approval statuses
-   *
-   * @minItems 1
    */
-  statuses?: [CreativeStatus, ...CreativeStatus[]];
+  statuses?: CreativeStatus[];
   /**
    * Filter by creative tags (all tags must match)
-   *
-   * @minItems 1
    */
-  tags?: [string, ...string[]];
+  tags?: string[];
   /**
    * Filter by creative tags (any tag must match)
-   *
-   * @minItems 1
    */
-  tags_any?: [string, ...string[]];
+  tags_any?: string[];
   /**
    * Filter by creative names containing this text (case-insensitive)
    */
@@ -3936,10 +3799,9 @@ export interface CreativeFilters {
   /**
    * Filter by specific creative IDs
    *
-   * @minItems 1
    * @maxItems 100
    */
-  creative_ids?: [string, ...string[]];
+  creative_ids?: string[];
   /**
    * Filter creatives created after this date (ISO 8601)
    */
@@ -3958,22 +3820,16 @@ export interface CreativeFilters {
   updated_before?: string;
   /**
    * Filter creatives assigned to any of these packages
-   *
-   * @minItems 1
    */
-  assigned_to_packages?: [string, ...string[]];
+  assigned_to_packages?: string[];
   /**
    * Filter creatives assigned to any of these media buys
-   *
-   * @minItems 1
    */
-  media_buy_ids?: [string, ...string[]];
+  media_buy_ids?: string[];
   /**
    * Filter creatives assigned to media buys with any of these buyer references
-   *
-   * @minItems 1
    */
-  buyer_refs?: [string, ...string[]];
+  buyer_refs?: string[];
   /**
    * Filter for unassigned creatives when true, assigned creatives when false
    */
@@ -3982,7 +3838,6 @@ export interface CreativeFilters {
    * Filter creatives that have performance data when true
    */
   has_performance_data?: boolean;
-  [k: string]: unknown | undefined;
 }
 /**
  * Standard cursor-based pagination parameters for list operations
@@ -4010,7 +3865,6 @@ export type SubAsset =
        * URL for media assets (images, videos, etc.)
        */
       content_uri: string;
-      [k: string]: unknown | undefined;
     }
   | {
       /**
@@ -4029,7 +3883,6 @@ export type SubAsset =
        * Text content for text-based assets like headlines, body text, CTA text, etc.
        */
       content: string | string[];
-      [k: string]: unknown | undefined;
     };
 
 /**
@@ -4292,12 +4145,10 @@ export type PackageUpdate = {
   /**
    * Upload new creative assets and assign to this package (creatives will be added to library). Use creative_assignments instead for existing library creatives.
    *
-   * @minItems 1
    * @maxItems 100
    */
-  creatives?: [CreativeAsset, ...CreativeAsset[]];
+  creatives?: CreativeAsset[];
   ext?: ExtensionObject;
-  [k: string]: unknown | undefined;
 } & {
   [k: string]: unknown | undefined;
 };
@@ -4848,7 +4699,6 @@ export interface AttributionWindow {
    */
   view_window_days?: number;
   model: AttributionModel;
-  [k: string]: unknown | undefined;
 }
 /**
  * Standard delivery metrics that can be reported at media buy, package, or creative level
@@ -4923,7 +4773,6 @@ export interface DeliveryMetrics {
      * Total monetary value of events of this type
      */
     value?: number;
-    [k: string]: unknown | undefined;
   }[];
   /**
    * Gross Rating Points delivered (for CPP)
@@ -5010,9 +4859,7 @@ export interface DeliveryMetrics {
        * Number of screens used at this venue
        */
       screens_used?: number;
-      [k: string]: unknown | undefined;
     }[];
-    [k: string]: unknown | undefined;
   };
   /**
    * Viewability metrics. Viewable rate should be calculated as viewable_impressions / measurable_impressions (not total impressions), since some environments cannot measure viewability.
@@ -5034,7 +4881,6 @@ export interface DeliveryMetrics {
      * Viewability measurement standard. 'mrc': 50% of pixels in view for 1 second (display) or 2 seconds (video), per MRC/IAB guidelines. 'groupm': 100% of pixels in view for the same durations. These are materially different thresholds and should not be compared across standards.
      */
     standard?: 'mrc' | 'groupm';
-    [k: string]: unknown | undefined;
   };
   /**
    * Platform-specific engagement rate (0.0 to 1.0). Definition varies by platform (e.g., likes+comments+shares/impressions on social, interactions/impressions on rich media).
@@ -5061,9 +4907,7 @@ export interface DeliveryMetrics {
      * Total monetary value of conversions from this action source
      */
     value?: number;
-    [k: string]: unknown | undefined;
   }[];
-  [k: string]: unknown | undefined;
 }
 /**
  * Standard error structure for task-specific errors and warnings
@@ -5307,27 +5151,14 @@ export type UserMatch = {
 } & {
   /**
    * Universal ID values for user matching
-   *
-   * @minItems 1
    */
-  uids?: [
-    {
-      type: UIDType;
-      /**
-       * Universal ID value
-       */
-      value: string;
-      [k: string]: unknown | undefined;
-    },
-    ...{
-      type: UIDType;
-      /**
-       * Universal ID value
-       */
-      value: string;
-      [k: string]: unknown | undefined;
-    }[]
-  ];
+  uids?: {
+    type: UIDType;
+    /**
+     * Universal ID value
+     */
+    value: string;
+  }[];
   /**
    * SHA-256 hash of lowercase, trimmed email address. Buyer must normalize before hashing: lowercase, trim whitespace.
    */
@@ -5353,7 +5184,6 @@ export type UserMatch = {
    */
   client_user_agent?: string;
   ext?: ExtensionObject;
-  [k: string]: unknown | undefined;
 };
 /**
  * Universal ID type
@@ -5405,7 +5235,6 @@ export interface Event {
    */
   custom_event_name?: string;
   ext?: ExtensionObject;
-  [k: string]: unknown | undefined;
 }
 /**
  * Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.
@@ -5467,10 +5296,8 @@ export interface EventCustomData {
      * Brand name of this item
      */
     brand?: string;
-    [k: string]: unknown | undefined;
   }[];
   ext?: ExtensionObject;
-  [k: string]: unknown | undefined;
 }
 /**
  * Opaque correlation data that is echoed unchanged in responses. Used for internal tracking, UI session IDs, trace IDs, and other caller-specific identifiers that don't affect protocol behavior. Context data is never parsed by AdCP agents - it's simply preserved and returned.
@@ -5558,29 +5385,15 @@ export type AudienceMember = {
   hashed_phone?: string;
   /**
    * Universal ID values (MAIDs, RampID, UID2, etc.) for user matching.
-   *
-   * @minItems 1
    */
-  uids?: [
-    {
-      type: UIDType;
-      /**
-       * Universal ID value
-       */
-      value: string;
-      [k: string]: unknown | undefined;
-    },
-    ...{
-      type: UIDType;
-      /**
-       * Universal ID value
-       */
-      value: string;
-      [k: string]: unknown | undefined;
-    }[]
-  ];
+  uids?: {
+    type: UIDType;
+    /**
+     * Universal ID value
+     */
+    value: string;
+  }[];
   ext?: ExtensionObject;
-  [k: string]: unknown | undefined;
 };
 /**
  * Universal ID type
@@ -5891,20 +5704,32 @@ export interface CreativeManifest {
   format_id: FormatID;
   /**
    * Catalogs this creative renders. Each entry satisfies one of the format's catalog_requirements, matched by type. Tells the creative what data to display — product listings for a carousel, job vacancies for a recruitment ad, store locations for a locator. This is a data reference, not a campaign expansion directive; campaign structure and budget allocation are handled by create_media_buy packages. Each catalog can be inline (with items), a reference to a synced catalog (by catalog_id), or a URL to an external feed.
-   *
-   * @minItems 1
    */
-  catalogs?: [Catalog, ...Catalog[]];
+  catalogs?: Catalog[];
   /**
    * Map of asset IDs to actual asset content. Each key MUST match an asset_id from the format's assets array (e.g., 'banner_image', 'clickthrough_url', 'video_file', 'vast_tag'). The asset_id is the technical identifier used to match assets to format requirements.
    *
    * IMPORTANT: Full validation requires format context. The format defines what type each asset_id should be. Standalone schema validation only checks structural conformance — each asset must match at least one valid asset type schema.
    */
   assets: {
-    [k: string]: unknown | undefined;
+    /**
+     * This interface was referenced by `undefined`'s JSON-Schema definition
+     * via the `patternProperty` "^[a-z0-9_]+$".
+     */
+    [k: string]:
+      | ImageAsset
+      | VideoAsset
+      | AudioAsset
+      | VASTAsset
+      | TextAsset
+      | URLAsset
+      | HTMLAsset
+      | JavaScriptAsset
+      | WebhookAsset
+      | CSSAsset
+      | DAASTAsset;
   };
   ext?: ExtensionObject;
-  [k: string]: unknown | undefined;
 }
 /**
  * Format identifier this manifest is for. Can be a template format (id only) or a deterministic format (id + dimensions/duration). For dimension-specific creatives, include width/height/unit in the format_id to create a unique identifier (e.g., {id: 'display_static', width: 300, height: 250, unit: 'px'}).
@@ -5942,7 +5767,6 @@ export interface WebhookAsset {
      */
     api_key_header?: string;
   };
-  [k: string]: unknown | undefined;
 }
 /**
  * CSS stylesheet asset
@@ -5988,13 +5812,11 @@ export interface CreativeBrief {
      * Key messages to communicate in priority order
      */
     key_messages?: string[];
-    [k: string]: unknown | undefined;
   };
   /**
    * Visual and strategic reference materials such as mood boards, product shots, example creatives, and strategy documents
    */
   reference_assets?: ReferenceAsset[];
-  [k: string]: unknown | undefined;
 }
 /**
  * A reference asset that provides creative context. Carries visual materials (mood boards, product shots, example creatives) with semantic roles that tell creative agents how to use them.
@@ -6012,7 +5834,6 @@ export interface ReferenceAsset {
    * Human-readable description of the asset and how it should inform creative generation
    */
   description?: string;
-  [k: string]: unknown | undefined;
 }
 /**
  * Opaque correlation data that is echoed unchanged in responses. Used for internal tracking, UI session IDs, trace IDs, and other caller-specific identifiers that don't affect protocol behavior. Context data is never parsed by AdCP agents - it's simply preserved and returned.
@@ -6159,20 +5980,32 @@ export interface CreativeManifest1 {
   format_id: FormatID;
   /**
    * Catalogs this creative renders. Each entry satisfies one of the format's catalog_requirements, matched by type. Tells the creative what data to display — product listings for a carousel, job vacancies for a recruitment ad, store locations for a locator. This is a data reference, not a campaign expansion directive; campaign structure and budget allocation are handled by create_media_buy packages. Each catalog can be inline (with items), a reference to a synced catalog (by catalog_id), or a URL to an external feed.
-   *
-   * @minItems 1
    */
-  catalogs?: [Catalog, ...Catalog[]];
+  catalogs?: Catalog[];
   /**
    * Map of asset IDs to actual asset content. Each key MUST match an asset_id from the format's assets array (e.g., 'banner_image', 'clickthrough_url', 'video_file', 'vast_tag'). The asset_id is the technical identifier used to match assets to format requirements.
    *
    * IMPORTANT: Full validation requires format context. The format defines what type each asset_id should be. Standalone schema validation only checks structural conformance — each asset must match at least one valid asset type schema.
    */
   assets: {
-    [k: string]: unknown | undefined;
+    /**
+     * This interface was referenced by `undefined`'s JSON-Schema definition
+     * via the `patternProperty` "^[a-z0-9_]+$".
+     */
+    [k: string]:
+      | ImageAsset
+      | VideoAsset
+      | AudioAsset
+      | VASTAsset
+      | TextAsset
+      | URLAsset
+      | HTMLAsset
+      | JavaScriptAsset
+      | WebhookAsset
+      | CSSAsset
+      | DAASTAsset;
   };
   ext?: ExtensionObject;
-  [k: string]: unknown | undefined;
 }
 
 
@@ -6233,7 +6066,6 @@ export type PreviewRender =
          */
         csp_policy?: string;
       };
-      [k: string]: unknown | undefined;
     }
   | {
       /**
@@ -6280,7 +6112,6 @@ export type PreviewRender =
          */
         csp_policy?: string;
       };
-      [k: string]: unknown | undefined;
     }
   | {
       /**
@@ -6331,7 +6162,6 @@ export type PreviewRender =
          */
         csp_policy?: string;
       };
-      [k: string]: unknown | undefined;
     };
 /**
  * Catalog type. Structural types: 'offering' (AdCP Offering objects), 'product' (ecommerce entries), 'inventory' (stock per location), 'store' (physical locations), 'promotion' (deals and pricing). Vertical types: 'hotel', 'flight', 'job', 'vehicle', 'real_estate', 'education', 'destination', 'app' — each with an industry-specific item schema.
@@ -6531,7 +6361,6 @@ export type CreativeVariant = DeliveryMetrics & {
       artifact_id: string;
     };
     ext?: ExtensionObject;
-    [k: string]: unknown | undefined;
   };
 };
 /**
@@ -6714,7 +6543,6 @@ export type Destination =
        * Optional account identifier on the platform
        */
       account?: string;
-      [k: string]: unknown | undefined;
     }
   | {
       /**
@@ -6729,7 +6557,6 @@ export type Destination =
        * Optional account identifier on the agent
        */
       account?: string;
-      [k: string]: unknown | undefined;
     };
 /**
  * Types of signal catalogs available for audience targeting
@@ -6742,16 +6569,12 @@ export type SignalCatalogType = 'marketplace' | 'custom' | 'owned';
 export interface SignalFilters {
   /**
    * Filter by catalog type
-   *
-   * @minItems 1
    */
-  catalog_types?: [SignalCatalogType, ...SignalCatalogType[]];
+  catalog_types?: SignalCatalogType[];
   /**
    * Filter by specific data providers
-   *
-   * @minItems 1
    */
-  data_providers?: [string, ...string[]];
+  data_providers?: string[];
   /**
    * Maximum CPM price filter
    */
@@ -6760,7 +6583,6 @@ export interface SignalFilters {
    * Minimum coverage requirement
    */
   min_coverage_percentage?: number;
-  [k: string]: unknown | undefined;
 }
 /**
  * Standard cursor-based pagination parameters for list operations
@@ -6801,7 +6623,6 @@ export type Deployment =
        * Timestamp when activation completed (if is_live=true)
        */
       deployed_at?: string;
-      [k: string]: unknown | undefined;
     }
   | {
       /**
@@ -6829,7 +6650,6 @@ export type Deployment =
        * Timestamp when activation completed (if is_live=true)
        */
       deployed_at?: string;
-      [k: string]: unknown | undefined;
     };
 /**
  * The key to use for targeting. Only present if is_live=true AND requester has access to this deployment.
@@ -6844,7 +6664,6 @@ export type ActivationKey =
        * The platform-specific segment identifier to use in campaign targeting
        */
       segment_id: string;
-      [k: string]: unknown | undefined;
     }
   | {
       /**
@@ -6859,7 +6678,6 @@ export type ActivationKey =
        * The targeting parameter value
        */
       value: string;
-      [k: string]: unknown | undefined;
     };
 /**
  * The key to use for targeting. Only present if is_live=true AND requester has access to this deployment.
@@ -7033,10 +6851,8 @@ export interface PublisherTagsSource {
   publisher_domain: string;
   /**
    * Property tags from the publisher's adagents.json. Selects all properties with these tags.
-   *
-   * @minItems 1
    */
-  tags: [PropertyTag, ...PropertyTag[]];
+  tags: PropertyTag[];
 }
 /**
  * Select specific properties from a publisher by ID
@@ -7052,10 +6868,8 @@ export interface PublisherPropertyIDsSource {
   publisher_domain: string;
   /**
    * Specific property IDs from the publisher's adagents.json
-   *
-   * @minItems 1
    */
-  property_ids: [PropertyID, ...PropertyID[]];
+  property_ids: PropertyID[];
 }
 /**
  * Select properties by direct identifiers (domains, app IDs, etc.) without publisher context
@@ -7067,10 +6881,8 @@ export interface DirectIdentifiersSource {
   selection_type: 'identifiers';
   /**
    * Direct property identifiers (domains, app IDs, etc.)
-   *
-   * @minItems 1
    */
-  identifiers: [Identifier, ...Identifier[]];
+  identifiers: Identifier[];
 }
 /**
  * A property identifier with type and value. Used to identify properties across platforms (domains, app store IDs, etc.).
@@ -7078,34 +6890,24 @@ export interface DirectIdentifiersSource {
 export interface PropertyListFilters {
   /**
    * Property must have feature data for ALL listed countries (ISO codes). Required.
-   *
-   * @minItems 1
    */
-  countries_all: [string, ...string[]];
+  countries_all: string[];
   /**
    * Property must support ANY of the listed channels. Required.
-   *
-   * @minItems 1
    */
-  channels_any: [MediaChannel, ...MediaChannel[]];
+  channels_any: MediaChannel[];
   /**
    * Filter to these property types
-   *
-   * @minItems 1
    */
-  property_types?: [PropertyType, ...PropertyType[]];
+  property_types?: PropertyType[];
   /**
    * Feature-based requirements. Property must pass ALL requirements (AND logic).
-   *
-   * @minItems 1
    */
-  feature_requirements?: [FeatureRequirement, ...FeatureRequirement[]];
+  feature_requirements?: FeatureRequirement[];
   /**
    * Identifiers to always exclude from results
-   *
-   * @minItems 1
    */
-  exclude_identifiers?: [Identifier, ...Identifier[]];
+  exclude_identifiers?: Identifier[];
 }
 /**
  * A feature-based requirement for property filtering. Use min_value/max_value for quantitative features, allowed_values for binary/categorical features.
@@ -7125,10 +6927,8 @@ export interface FeatureRequirement {
   max_value?: number;
   /**
    * Values that pass the requirement (for binary/categorical features)
-   *
-   * @minItems 1
    */
-  allowed_values?: [unknown, ...unknown[]];
+  allowed_values?: unknown[];
   /**
    * How to handle properties where this feature is not covered. 'exclude' (default): property is removed from the list. 'include': property passes this requirement (fail-open).
    */
@@ -7459,9 +7259,7 @@ export type AssetAccess =
       /**
        * Service account credentials
        */
-      credentials?: {
-        [k: string]: unknown | undefined;
-      };
+      credentials?: {};
     }
   | {
       method: 'signed_url';
@@ -7480,22 +7278,16 @@ export interface ContentStandards {
   name?: string;
   /**
    * ISO 3166-1 alpha-2 country codes. Standards apply in ALL listed countries (AND logic).
-   *
-   * @minItems 1
    */
-  countries_all?: [string, ...string[]];
+  countries_all?: string[];
   /**
    * Advertising channels. Standards apply to ANY of the listed channels (OR logic).
-   *
-   * @minItems 1
    */
-  channels_any?: [MediaChannel, ...MediaChannel[]];
+  channels_any?: MediaChannel[];
   /**
    * BCP 47 language tags (e.g., 'en', 'de', 'fr'). Standards apply to content in ANY of these languages (OR logic). Content in unlisted languages is not covered by these standards.
-   *
-   * @minItems 1
    */
-  languages_any?: [string, ...string[]];
+  languages_any?: string[];
   /**
    * Natural language policy describing acceptable and unacceptable content contexts. Used by LLMs and human reviewers to make judgments.
    */
@@ -7652,20 +7444,15 @@ export interface Artifact {
     /**
      * Open Graph protocol metadata
      */
-    open_graph?: {
-      [k: string]: unknown | undefined;
-    };
+    open_graph?: {};
     /**
      * Twitter Card metadata
      */
-    twitter_card?: {
-      [k: string]: unknown | undefined;
-    };
+    twitter_card?: {};
     /**
      * JSON-LD structured data (schema.org)
      */
     json_ld?: {}[];
-    [k: string]: unknown | undefined;
   };
   /**
    * Platform-specific identifiers for this artifact
@@ -7691,9 +7478,7 @@ export interface Artifact {
      * RSS feed URL
      */
     rss_url?: string;
-    [k: string]: unknown | undefined;
   };
-  [k: string]: unknown | undefined;
 }
 /**
  * Identifier for the property where this artifact appears
@@ -8412,9 +8197,7 @@ export interface CreativeFeatureResult {
   /**
    * Additional vendor-specific details about this evaluation
    */
-  details?: {
-    [k: string]: unknown | undefined;
-  };
+  details?: {};
   ext?: ExtensionObject;
 }
 /**
@@ -8618,7 +8401,6 @@ export interface SIIdentity {
      * Version of policy acknowledged
      */
     brand_policy_version?: string;
-    [k: string]: unknown | undefined;
   };
   /**
    * User data (only present if consent_granted is true)
@@ -8649,15 +8431,12 @@ export interface SIIdentity {
       state?: string;
       postal_code?: string;
       country?: string;
-      [k: string]: unknown | undefined;
     };
-    [k: string]: unknown | undefined;
   };
   /**
    * Session ID for anonymous users (when consent_granted is false)
    */
   anonymous_session_id?: string;
-  [k: string]: unknown | undefined;
 }
 /**
  * What capabilities the host supports
@@ -8685,7 +8464,6 @@ export interface SICapabilities {
            * Brand voice identifier
            */
           voice_id?: string;
-          [k: string]: unknown | undefined;
         };
     /**
      * Brand video content playback
@@ -8701,7 +8479,6 @@ export interface SICapabilities {
            * Maximum video duration
            */
           max_duration_seconds?: number;
-          [k: string]: unknown | undefined;
         };
     /**
      * Animated video presence with brand avatar
@@ -8717,9 +8494,7 @@ export interface SICapabilities {
            * Brand avatar identifier
            */
           avatar_id?: string;
-          [k: string]: unknown | undefined;
         };
-    [k: string]: unknown | undefined;
   };
   /**
    * Visual components supported
@@ -8732,10 +8507,7 @@ export interface SICapabilities {
     /**
      * Platform-specific extensions (chatgpt_apps_sdk, maps, forms, etc.)
      */
-    extensions?: {
-      [k: string]: unknown | undefined;
-    };
-    [k: string]: unknown | undefined;
+    extensions?: {};
   };
   /**
    * Commerce capabilities
@@ -8745,7 +8517,6 @@ export interface SICapabilities {
      * Supports ACP (Agentic Commerce Protocol) checkout handoff
      */
     acp_checkout?: boolean;
-    [k: string]: unknown | undefined;
   };
   /**
    * A2UI (Agent-to-UI) capabilities
@@ -8759,13 +8530,11 @@ export interface SICapabilities {
      * Supported A2UI component catalogs (e.g., 'si-standard', 'standard')
      */
     catalogs?: string[];
-    [k: string]: unknown | undefined;
   };
   /**
    * Supports MCP Apps for rendering A2UI surfaces in iframes
    */
   mcp_apps?: boolean;
-  [k: string]: unknown | undefined;
 }
 /**
  * Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.
@@ -8793,10 +8562,7 @@ export type SIUIElement = {
   /**
    * Component-specific data
    */
-  data?: {
-    [k: string]: unknown | undefined;
-  };
-  [k: string]: unknown | undefined;
+  data?: {};
 };
 
 /**
@@ -8966,10 +8732,7 @@ export interface A2UISurface {
   /**
    * Application data that components can bind to
    */
-  dataModel?: {
-    [k: string]: unknown | undefined;
-  };
-  [k: string]: unknown | undefined;
+  dataModel?: {};
 }
 /**
  * A component in an A2UI surface
@@ -8992,7 +8755,6 @@ export interface A2UIComponent {
      */
     [k: string]: {} | undefined;
   };
-  [k: string]: unknown | undefined;
 }
 /**
  * Standard error structure for task-specific errors and warnings
