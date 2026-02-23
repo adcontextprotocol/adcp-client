@@ -241,6 +241,8 @@ export type {
   CatalogItemStatus,
   CatalogFieldMapping,
   CatalogFieldBinding,
+  ScalarBinding,
+  AssetPoolBinding,
   SyncCatalogsRequest,
   SyncCatalogsResponse,
   SyncCatalogsSuccess,

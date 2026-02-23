@@ -1934,147 +1934,30 @@ export type AssetRequirements =
   | URLAssetRequirements
   | WebhookAssetRequirements;
 /**
- * Maps a format template slot to a catalog item field or typed asset pool. Allows formats to explicitly declare how their template slots map to catalog data, making the binding self-describing for creative agents rather than leaving it implicit. All bindings are optional — agents can still infer mappings without them.
+ * Maps a format template slot to a catalog item field or typed asset pool. The 'kind' field identifies the binding variant. All bindings are optional — agents can still infer mappings without them.
  */
-export type CatalogFieldBinding = {
-  /**
-   * The asset_id from the format's assets array. Identifies which individual template slot this binding applies to.
-   */
-  asset_id?: string;
-  /**
-   * The asset_group_id of a repeatable_group in the format's assets array. Used when the entire group iterates over catalog items (catalog_item: true).
-   */
-  format_group_id?: string;
-  /**
-   * Dot-notation path to the field on the catalog item (e.g., 'name', 'price.amount', 'location.city'). Used for scalar bindings.
-   */
-  catalog_field?: string;
-  /**
-   * The asset_group_id on the catalog item's assets array to pull from (e.g., 'images_landscape', 'images_vertical', 'logo'). Used for asset pool bindings — the format slot receives the first item in the pool.
-   */
-  asset_group_id?: string;
-  /**
-   * When true on a format_group_id binding, each repetition of the format's repeatable_group maps to one item from the catalog. The group iterates in catalog item order.
-   */
-  catalog_item?: true;
-  /**
-   * For catalog_item group bindings: the scalar and asset pool bindings that apply within each repetition of the group. Only scalar and asset pool variants are allowed here — nested catalog group bindings are not permitted.
-   *
-   * @minItems 1
-   */
-  per_item_bindings?: [
-    CatalogFieldBinding & {
-      [k: string]: unknown | undefined;
-    },
-    ...(CatalogFieldBinding & {
-      [k: string]: unknown | undefined;
-    })[]
-  ];
-  ext?: ExtensionObject;
-  [k: string]: unknown | undefined;
-} & (
+export type CatalogFieldBinding =
+  | ScalarBinding
+  | AssetPoolBinding
   | {
-      [k: string]: unknown | undefined;
-    }
-  | {
-      [k: string]: unknown | undefined;
-    }
-  | {
+      kind: 'catalog_group';
+      /**
+       * The asset_group_id of a repeatable_group in the format's assets array.
+       */
+      format_group_id: string;
+      /**
+       * Each repetition of the format's repeatable_group maps to one item from the catalog.
+       */
       catalog_item: true;
-    }
-) & {
-    /**
-     * The asset_id from the format's assets array. Identifies which individual template slot this binding applies to.
-     */
-    asset_id?: string;
-    /**
-     * The asset_group_id of a repeatable_group in the format's assets array. Used when the entire group iterates over catalog items (catalog_item: true).
-     */
-    format_group_id?: string;
-    /**
-     * Dot-notation path to the field on the catalog item (e.g., 'name', 'price.amount', 'location.city'). Used for scalar bindings.
-     */
-    catalog_field?: string;
-    /**
-     * The asset_group_id on the catalog item's assets array to pull from (e.g., 'images_landscape', 'images_vertical', 'logo'). Used for asset pool bindings — the format slot receives the first item in the pool.
-     */
-    asset_group_id?: string;
-    /**
-     * When true on a format_group_id binding, each repetition of the format's repeatable_group maps to one item from the catalog. The group iterates in catalog item order.
-     */
-    catalog_item?: true;
-    /**
-     * For catalog_item group bindings: the scalar and asset pool bindings that apply within each repetition of the group. Only scalar and asset pool variants are allowed here — nested catalog group bindings are not permitted.
-     *
-     * @minItems 1
-     */
-    per_item_bindings?: [
-      CatalogFieldBinding & {
-        [k: string]: unknown | undefined;
-      },
-      ...(CatalogFieldBinding & {
-        [k: string]: unknown | undefined;
-      })[]
-    ];
-    ext?: ExtensionObject;
-    [k: string]: unknown | undefined;
-  } & (
-    | {
-        [k: string]: unknown | undefined;
-      }
-    | {
-        [k: string]: unknown | undefined;
-      }
-    | {
-        catalog_item: true;
-      }
-  ) & {
-    /**
-     * The asset_id from the format's assets array. Identifies which individual template slot this binding applies to.
-     */
-    asset_id?: string;
-    /**
-     * The asset_group_id of a repeatable_group in the format's assets array. Used when the entire group iterates over catalog items (catalog_item: true).
-     */
-    format_group_id?: string;
-    /**
-     * Dot-notation path to the field on the catalog item (e.g., 'name', 'price.amount', 'location.city'). Used for scalar bindings.
-     */
-    catalog_field?: string;
-    /**
-     * The asset_group_id on the catalog item's assets array to pull from (e.g., 'images_landscape', 'images_vertical', 'logo'). Used for asset pool bindings — the format slot receives the first item in the pool.
-     */
-    asset_group_id?: string;
-    /**
-     * When true on a format_group_id binding, each repetition of the format's repeatable_group maps to one item from the catalog. The group iterates in catalog item order.
-     */
-    catalog_item?: true;
-    /**
-     * For catalog_item group bindings: the scalar and asset pool bindings that apply within each repetition of the group. Only scalar and asset pool variants are allowed here — nested catalog group bindings are not permitted.
-     *
-     * @minItems 1
-     */
-    per_item_bindings?: [
-      CatalogFieldBinding & {
-        [k: string]: unknown | undefined;
-      },
-      ...(CatalogFieldBinding & {
-        [k: string]: unknown | undefined;
-      })[]
-    ];
-    ext?: ExtensionObject;
-    [k: string]: unknown | undefined;
-  } & (
-    | {
-        [k: string]: unknown | undefined;
-      }
-    | {
-        [k: string]: unknown | undefined;
-      }
-    | {
-        catalog_item: true;
-      }
-  );
+      /**
+       * Scalar and asset pool bindings that apply within each repetition of the group. Nested catalog_group bindings are not permitted.
+       *
+       * @minItems 1
+       */
+      per_item_bindings?: [ScalarBinding | AssetPoolBinding, ...(ScalarBinding | AssetPoolBinding)[]];
+      ext?: ExtensionObject;
+      [k: string]: unknown | undefined;
+    };
 /**
  * Standard delivery and performance metrics available for reporting
  */
@@ -2736,6 +2619,38 @@ export interface WebhookAssetRequirements {
 }
 /**
  * Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.
+ */
+export interface ScalarBinding {
+  kind: 'scalar';
+  /**
+   * The asset_id from the format's assets array. Identifies which individual template slot this binding applies to.
+   */
+  asset_id: string;
+  /**
+   * Dot-notation path to the field on the catalog item (e.g., 'name', 'price.amount', 'location.city').
+   */
+  catalog_field: string;
+  ext?: ExtensionObject;
+  [k: string]: unknown | undefined;
+}
+/**
+ * Maps an individual format asset to a typed asset pool on the catalog item (e.g., images_landscape, images_vertical, logo). The format slot receives the first item in the pool.
+ */
+export interface AssetPoolBinding {
+  kind: 'asset_pool';
+  /**
+   * The asset_id from the format's assets array. Identifies which individual template slot this binding applies to.
+   */
+  asset_id: string;
+  /**
+   * The asset_group_id on the catalog item's assets array to pull from (e.g., 'images_landscape', 'images_vertical', 'logo').
+   */
+  asset_group_id: string;
+  ext?: ExtensionObject;
+  [k: string]: unknown | undefined;
+}
+/**
+ * Standard error structure for task-specific errors and warnings
  */
 
 // create_media_buy parameters
