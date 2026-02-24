@@ -60,7 +60,7 @@ export class ProtocolClient {
       const argsWithWebhook = pushNotificationConfig
         ? { ...args, push_notification_config: pushNotificationConfig }
         : args;
-      return callMCPTool(agent.agent_uri, toolName, argsWithWebhook, authToken, debugLogs);
+      return callMCPTool(agent.agent_uri, toolName, argsWithWebhook, authToken, debugLogs, agent.headers);
     } else if (agent.protocol === 'a2a') {
       // For A2A, pass pushNotificationConfig separately (not in skill parameters)
       return callA2ATool(
@@ -69,7 +69,8 @@ export class ProtocolClient {
         args, // This maps to 'parameters' in callA2ATool
         authToken,
         debugLogs,
-        pushNotificationConfig
+        pushNotificationConfig,
+        agent.headers
       );
     } else {
       throw new Error(`Unsupported protocol: ${agent.protocol}`);
@@ -80,12 +81,12 @@ export class ProtocolClient {
 /**
  * Simple factory functions for protocol-specific clients
  */
-export const createMCPClient = (agentUrl: string, authToken?: string) => ({
+export const createMCPClient = (agentUrl: string, authToken?: string, headers?: Record<string, string>) => ({
   callTool: (toolName: string, args: Record<string, any>, debugLogs?: any[]) =>
-    callMCPTool(agentUrl, toolName, args, authToken, debugLogs),
+    callMCPTool(agentUrl, toolName, args, authToken, debugLogs, headers),
 });
 
-export const createA2AClient = (agentUrl: string, authToken?: string) => ({
+export const createA2AClient = (agentUrl: string, authToken?: string, headers?: Record<string, string>) => ({
   callTool: (toolName: string, parameters: Record<string, any>, debugLogs?: any[]) =>
-    callA2ATool(agentUrl, toolName, parameters, authToken, debugLogs),
+    callA2ATool(agentUrl, toolName, parameters, authToken, debugLogs, undefined, headers),
 });

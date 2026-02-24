@@ -2682,6 +2682,7 @@ export interface CreateMediaBuyRequest {
    * Campaign end date/time in ISO 8601 format
    */
   end_time: string;
+  push_notification_config?: PushNotificationConfig;
   reporting_webhook?: ReportingWebhook;
   /**
    * Optional webhook configuration for content artifact delivery. Used by governance agents to validate content adjacency. Seller pushes artifacts to this endpoint; orchestrator forwards to governance agent for validation.
@@ -3337,6 +3338,34 @@ export interface URLAsset {
 /**
  * Brand reference for this media buy. Resolved to full brand identity at execution time from brand.json or the registry.
  */
+export interface PushNotificationConfig {
+  /**
+   * Webhook endpoint URL for task status notifications
+   */
+  url: string;
+  /**
+   * Optional client-provided token for webhook validation. Echoed back in webhook payload to validate request authenticity.
+   */
+  token?: string;
+  /**
+   * Authentication configuration for webhook delivery (A2A-compatible)
+   */
+  authentication: {
+    /**
+     * Array of authentication schemes. Supported: ['Bearer'] for simple token auth, ['HMAC-SHA256'] for signature verification (recommended for production)
+     *
+     * @maxItems 1
+     */
+    schemes: [] | [AuthenticationScheme];
+    /**
+     * Credentials for authentication. For Bearer: token sent in Authorization header. For HMAC-SHA256: shared secret used to generate signature. Minimum 32 characters. Exchanged out-of-band during onboarding.
+     */
+    credentials: string;
+  };
+}
+/**
+ * Optional webhook configuration for automated reporting delivery
+ */
 export interface ReportingWebhook {
   /**
    * Webhook endpoint URL for reporting notifications
@@ -3467,6 +3496,23 @@ export interface Account {
     currency: string;
   };
   /**
+   * Present when status is 'pending_approval'. Contains next steps for completing account activation.
+   */
+  setup?: {
+    /**
+     * URL where the human can complete the required action (credit application, legal agreement, add funds).
+     */
+    url?: string;
+    /**
+     * Human-readable description of what's needed.
+     */
+    message: string;
+    /**
+     * When this setup link expires.
+     */
+    expires_at?: string;
+  };
+  /**
    * When true, this is a sandbox account. All requests using this account_id are treated as sandbox — no real platform calls, no real spend.
    */
   sandbox?: boolean;
@@ -3588,34 +3634,6 @@ export interface SyncCreativesRequest {
 }
 /**
  * Creative asset for upload to library - supports static assets, generative formats, and third-party snippets
- */
-export interface PushNotificationConfig {
-  /**
-   * Webhook endpoint URL for task status notifications
-   */
-  url: string;
-  /**
-   * Optional client-provided token for webhook validation. Echoed back in webhook payload to validate request authenticity.
-   */
-  token?: string;
-  /**
-   * Authentication configuration for webhook delivery (A2A-compatible)
-   */
-  authentication: {
-    /**
-     * Array of authentication schemes. Supported: ['Bearer'] for simple token auth, ['HMAC-SHA256'] for signature verification (recommended for production)
-     *
-     * @maxItems 1
-     */
-    schemes: [] | [AuthenticationScheme];
-    /**
-     * Credentials for authentication. For Bearer: token sent in Authorization header. For HMAC-SHA256: shared secret used to generate signature. Minimum 32 characters. Exchanged out-of-band during onboarding.
-     */
-    credentials: string;
-  };
-}
-/**
- * Opaque correlation data that is echoed unchanged in responses. Used for internal tracking, UI session IDs, trace IDs, and other caller-specific identifiers that don't affect protocol behavior. Context data is never parsed by AdCP agents - it's simply preserved and returned.
  */
 
 // sync_creatives response
@@ -9493,3 +9511,101 @@ export interface SyncAccountsError {
   ext?: ExtensionObject;
 }
 
+
+// report_usage parameters
+/**
+ * Reports how a vendor's service was consumed after campaign delivery. Used by orchestrators (DSPs, storefronts) to inform vendor agents (signals, governance, creative) what was used so the vendor can track earned revenue and verify billing. Records can span multiple accounts, operators, and campaigns in a single request.
+ */
+export interface ReportUsageRequest {
+  /**
+   * The time range covered by this usage report. Applies to all records in the request.
+   */
+  reporting_period: {
+    /**
+     * Start of the reporting period (inclusive), in UTC.
+     */
+    start: string;
+    /**
+     * End of the reporting period (inclusive), in UTC.
+     */
+    end: string;
+  };
+  /**
+   * One or more usage records. Each record is self-contained: it carries its own account_id, operator_id, and buyer_campaign_ref, allowing a single request to span multiple accounts, operators, and campaigns.
+   */
+  usage: {
+    /**
+     * The account with this vendor agent for this record, obtained from sync_accounts.
+     */
+    account_id: string;
+    /**
+     * The operator on whose behalf this usage is reported. Identifies the billing party — the entity that owes the vendor for this consumption.
+     */
+    operator_id: string;
+    /**
+     * The buyer's campaign reference (e.g., a media_buy_id). Used to group records by campaign.
+     */
+    buyer_campaign_ref?: string;
+    /**
+     * The type of vendor service consumed.
+     */
+    kind: 'signal' | 'content_standards' | 'creative';
+    /**
+     * Amount owed to the vendor for this record, denominated in currency.
+     */
+    vendor_cost: number;
+    /**
+     * ISO 4217 currency code.
+     */
+    currency: string;
+    /**
+     * Impressions delivered using this vendor service. Required when kind is 'signal'.
+     */
+    impressions?: number;
+    /**
+     * Media spend in currency for the period. Required when a percent_of_media pricing model was used, so the vendor can verify the applied rate.
+     */
+    media_spend?: number;
+    /**
+     * Signal identifier from get_signals. Required when kind is 'signal'.
+     */
+    signal_agent_segment_id?: string;
+    /**
+     * Pricing option identifier from the original get_signals response. The vendor uses this to verify the correct rate was applied. Required when kind is 'signal'.
+     */
+    pricing_option_id?: string;
+    /**
+     * Content standards configuration identifier. Required when kind is 'content_standards'.
+     */
+    standards_id?: string;
+  }[];
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Opaque correlation data that is echoed unchanged in responses. Used for internal tracking, UI session IDs, trace IDs, and other caller-specific identifiers that don't affect protocol behavior. Context data is never parsed by AdCP agents - it's simply preserved and returned.
+ */
+
+// report_usage response
+/**
+ * Response from report_usage. Partial acceptance is valid — records that pass validation are stored even when others fail.
+ */
+export interface ReportUsageResponse {
+  /**
+   * Number of usage records successfully stored.
+   */
+  accepted: number;
+  /**
+   * Validation errors for individual records. The field property identifies which record failed (e.g., 'usage[1].pricing_option_id').
+   */
+  errors?: Error[];
+  /**
+   * When true, the account is a sandbox account and no billing occurred.
+   */
+  sandbox?: boolean;
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Standard error structure for task-specific errors and warnings
+ */

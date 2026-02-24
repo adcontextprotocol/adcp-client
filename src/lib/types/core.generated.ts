@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas vlatest
-// Generated at: 2026-02-23T19:01:52.257Z
+// Generated at: 2026-02-24T15:27:12.848Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -178,6 +178,23 @@ export interface Account {
   credit_limit?: {
     amount: number;
     currency: string;
+  };
+  /**
+   * Present when status is 'pending_approval'. Contains next steps for completing account activation.
+   */
+  setup?: {
+    /**
+     * URL where the human can complete the required action (credit application, legal agreement, add funds).
+     */
+    url?: string;
+    /**
+     * Human-readable description of what's needed.
+     */
+    message: string;
+    /**
+     * When this setup link expires.
+     */
+    expires_at?: string;
   };
   /**
    * When true, this is a sandbox account. All requests using this account_id are treated as sandbox — no real platform calls, no real spend.
@@ -2235,7 +2252,7 @@ export type CatalogItemStatus = 'approved' | 'pending' | 'rejected' | 'warning';
  */
 export interface MCPWebhookPayload {
   /**
-   * Publisher-defined operation identifier correlating a sequence of task updates across webhooks.
+   * Client-generated identifier that was embedded in the webhook URL by the buyer. Publishers echo this back in webhook payloads so clients can correlate notifications without parsing URL paths. Typically generated as a unique ID per task invocation.
    */
   operation_id?: string;
   /**

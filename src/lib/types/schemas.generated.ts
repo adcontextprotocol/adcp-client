@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-02-23T19:01:53.501Z
+// Generated at: 2026-02-24T15:27:13.918Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -43,6 +43,11 @@ export const AccountSchema = z.object({
     credit_limit: z.object({
         amount: z.number(),
         currency: z.string()
+    }).nullish(),
+    setup: z.object({
+        url: z.string().nullish(),
+        message: z.string(),
+        expires_at: z.string().nullish()
     }).nullish(),
     sandbox: z.boolean().nullish(),
     ext: ExtensionObjectSchema.nullish()
@@ -964,6 +969,15 @@ export const StartTimingSchema = z.union([z.literal("asap"), z.string()]);
 
 export const AuthenticationSchemeSchema = z.union([z.literal("Bearer"), z.literal("HMAC-SHA256")]);
 
+export const PushNotificationConfigSchema = z.object({
+    url: z.string(),
+    token: z.string().nullish(),
+    authentication: z.object({
+        schemes: z.union([z.tuple([]), z.tuple([AuthenticationSchemeSchema])]),
+        credentials: z.string()
+    })
+});
+
 export const ReportingWebhookSchema = z.object({
     url: z.string(),
     token: z.string().nullish(),
@@ -1053,13 +1067,17 @@ export const PackageSchema = z.object({
 
 export const ValidationModeSchema = z.union([z.literal("strict"), z.literal("lenient")]);
 
-export const PushNotificationConfigSchema = z.object({
-    url: z.string(),
-    token: z.string().nullish(),
-    authentication: z.object({
-        schemes: z.union([z.tuple([]), z.tuple([AuthenticationSchemeSchema])]),
-        credentials: z.string()
-    })
+export const SyncCreativesRequestSchema = z.object({
+    account_id: z.string().nullish(),
+    creatives: z.array(CreativeAssetSchema),
+    creative_ids: z.array(z.string()).nullish(),
+    assignments: z.record(z.string(), z.array(z.string())).nullish(),
+    delete_missing: z.boolean().nullish(),
+    dry_run: z.boolean().nullish(),
+    validation_mode: ValidationModeSchema.nullish(),
+    push_notification_config: PushNotificationConfigSchema.nullish(),
+    context: ContextObjectSchema.nullish(),
+    ext: ExtensionObjectSchema.nullish()
 });
 
 export const SyncCreativesResponseSchema = z.union([SyncCreativesSuccessSchema, SyncCreativesErrorSchema]);
@@ -2509,6 +2527,36 @@ export const SyncAccountsErrorSchema = z.object({
     ext: ExtensionObjectSchema.nullish()
 });
 
+export const ReportUsageRequestSchema = z.object({
+    reporting_period: z.object({
+        start: z.string(),
+        end: z.string()
+    }),
+    usage: z.array(z.object({
+        account_id: z.string(),
+        operator_id: z.string(),
+        buyer_campaign_ref: z.string().nullish(),
+        kind: z.union([z.literal("signal"), z.literal("content_standards"), z.literal("creative")]),
+        vendor_cost: z.number(),
+        currency: z.string(),
+        impressions: z.number().nullish(),
+        media_spend: z.number().nullish(),
+        signal_agent_segment_id: z.string().nullish(),
+        pricing_option_id: z.string().nullish(),
+        standards_id: z.string().nullish()
+    })),
+    context: ContextObjectSchema.nullish(),
+    ext: ExtensionObjectSchema.nullish()
+});
+
+export const ReportUsageResponseSchema = z.object({
+    accepted: z.number(),
+    errors: z.array(ErrorSchema).nullish(),
+    sandbox: z.boolean().nullish(),
+    context: ContextObjectSchema.nullish(),
+    ext: ExtensionObjectSchema.nullish()
+});
+
 export const MediaBuySchema = z.object({
     media_buy_id: z.string(),
     buyer_ref: z.string().nullish(),
@@ -2684,19 +2732,6 @@ export const PackageRequestSchema = z.object({
 });
 
 export const CreateMediaBuyResponseSchema = z.union([CreateMediaBuySuccessSchema, CreateMediaBuyErrorSchema]);
-
-export const SyncCreativesRequestSchema = z.object({
-    account_id: z.string().nullish(),
-    creatives: z.array(CreativeAssetSchema),
-    creative_ids: z.array(z.string()).nullish(),
-    assignments: z.record(z.string(), z.array(z.string())).nullish(),
-    delete_missing: z.boolean().nullish(),
-    dry_run: z.boolean().nullish(),
-    validation_mode: ValidationModeSchema.nullish(),
-    push_notification_config: PushNotificationConfigSchema.nullish(),
-    context: ContextObjectSchema.nullish(),
-    ext: ExtensionObjectSchema.nullish()
-});
 
 export const ListCreativesRequestSchema = z.object({
     filters: CreativeFiltersSchema.nullish(),
@@ -3100,6 +3135,7 @@ export const CreateMediaBuyRequestSchema = z.object({
     po_number: z.string().nullish(),
     start_time: StartTimingSchema,
     end_time: z.string(),
+    push_notification_config: PushNotificationConfigSchema.nullish(),
     reporting_webhook: ReportingWebhookSchema.nullish(),
     artifact_webhook: z.object({
         url: z.string(),

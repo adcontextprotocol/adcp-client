@@ -29,6 +29,8 @@ export interface MCPCallOptions {
   authProvider?: OAuthClientProvider;
   /** Debug logs array */
   debugLogs?: any[];
+  /** Additional headers to send with every request (auth headers take precedence) */
+  customHeaders?: Record<string, string>;
 }
 
 /**
@@ -44,38 +46,26 @@ export async function callMCPTool(
   toolName: string,
   args: any,
   authToken?: string,
-  debugLogs: any[] = []
+  debugLogs: any[] = [],
+  customHeaders?: Record<string, string>
 ): Promise<any> {
   let mcpClient: MCPClient | undefined = undefined;
   const baseUrl = new URL(agentUrl);
 
-  // Create a custom fetch function that adds auth headers to every request
-  // Always provide a custom fetch to ensure consistent header handling across all MCP requests
-  const authHeaders = authToken ? createMCPAuthHeaders(authToken) : {};
+  // Merge: custom < auth (auth always wins)
+  const authHeaders = {
+    ...customHeaders,
+    ...(authToken ? createMCPAuthHeaders(authToken) : {}),
+  };
 
-  if (authToken) {
-    // Add to debug logs only when auth is configured
-    debugLogs.push({
-      type: 'info',
-      message: `MCP: Auth token provided (${authToken.substring(0, 10)}...) for tool ${toolName}`,
-      timestamp: new Date().toISOString(),
-      headers: authHeaders,
-    });
-
-    debugLogs.push({
-      type: 'info',
-      message: `MCP: Setting auth headers: ${JSON.stringify(authHeaders)}`,
-      timestamp: new Date().toISOString(),
-    });
-  }
-
-  // Log auth configuration
+  // Log auth configuration (token values redacted)
   debugLogs.push({
     type: 'info',
     message: `MCP: Auth configuration`,
     timestamp: new Date().toISOString(),
     hasAuth: !!authToken,
     headers: authToken ? { 'x-adcp-auth': '***' } : {},
+    customHeaderKeys: customHeaders ? Object.keys(customHeaders) : [],
   });
 
   try {
@@ -159,9 +149,18 @@ export async function callMCPTool(
         version: '1.0.0',
       });
 
-      // For SSE fallback, add auth to URL (if SSE transport supports it)
+      // For SSE fallback, add auth to URL (SSEClientTransport does not support
+      // custom request headers — EventSource API limitation)
       if (authToken) {
         baseUrl.searchParams.set('auth', authToken);
+      }
+      if (customHeaders && Object.keys(customHeaders).length > 0) {
+        debugLogs.push({
+          type: 'warning',
+          message: `MCP: Custom headers not sent on SSE fallback connection (EventSource limitation)`,
+          timestamp: new Date().toISOString(),
+          customHeaderKeys: Object.keys(customHeaders),
+        });
       }
 
       const sseTransport = new SSEClientTransport(baseUrl);
@@ -296,8 +295,9 @@ export async function connectMCP(options: {
   authToken?: string;
   authProvider?: OAuthClientProvider;
   debugLogs?: any[];
+  customHeaders?: Record<string, string>;
 }): Promise<MCPConnectionResult> {
-  const { agentUrl, authToken, authProvider, debugLogs = [] } = options;
+  const { agentUrl, authToken, authProvider, debugLogs = [], customHeaders } = options;
   const baseUrl = new URL(agentUrl);
 
   debugLogs.push({
@@ -324,8 +324,8 @@ export async function connectMCP(options: {
       timestamp: new Date().toISOString(),
     });
   } else if (authToken) {
-    // Use static token
-    const authHeaders = createMCPAuthHeaders(authToken);
+    // Use static token, merged with any custom headers (auth takes precedence)
+    const authHeaders = { ...customHeaders, ...createMCPAuthHeaders(authToken) };
     transportOptions.requestInit = { headers: authHeaders };
     debugLogs.push({
       type: 'info',
@@ -371,11 +371,11 @@ export async function connectMCP(options: {
  * @throws UnauthorizedError if OAuth is required (with transport attached)
  */
 export async function callMCPToolWithOAuth(options: MCPCallOptions): Promise<any> {
-  const { agentUrl, toolName, args, authToken, authProvider, debugLogs = [] } = options;
+  const { agentUrl, toolName, args, authToken, authProvider, debugLogs = [], customHeaders } = options;
 
   // If no OAuth provider, use the legacy function
   if (!authProvider) {
-    return callMCPTool(agentUrl, toolName, args, authToken, debugLogs);
+    return callMCPTool(agentUrl, toolName, args, authToken, debugLogs, customHeaders);
   }
 
   let client: MCPClient | undefined;
@@ -386,6 +386,7 @@ export async function callMCPToolWithOAuth(options: MCPCallOptions): Promise<any
       agentUrl,
       authProvider,
       debugLogs,
+      customHeaders,
     });
     client = result.client;
     transport = result.transport;
