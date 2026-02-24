@@ -81,12 +81,12 @@ export class ProtocolClient {
 /**
  * Simple factory functions for protocol-specific clients
  */
-export const createMCPClient = (agentUrl: string, authToken?: string) => ({
+export const createMCPClient = (agentUrl: string, authToken?: string, headers?: Record<string, string>) => ({
   callTool: (toolName: string, args: Record<string, any>, debugLogs?: any[]) =>
-    callMCPTool(agentUrl, toolName, args, authToken, debugLogs),
+    callMCPTool(agentUrl, toolName, args, authToken, debugLogs, headers),
 });
 
-export const createA2AClient = (agentUrl: string, authToken?: string) => ({
+export const createA2AClient = (agentUrl: string, authToken?: string, headers?: Record<string, string>) => ({
   callTool: (toolName: string, parameters: Record<string, any>, debugLogs?: any[]) =>
-    callA2ATool(agentUrl, toolName, parameters, authToken, debugLogs),
+    callA2ATool(agentUrl, toolName, parameters, authToken, debugLogs, undefined, headers),
 });
