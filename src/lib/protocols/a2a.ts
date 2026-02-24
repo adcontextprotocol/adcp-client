@@ -16,7 +16,8 @@ export async function callA2ATool(
   parameters: Record<string, any>,
   authToken?: string,
   debugLogs: any[] = [],
-  pushNotificationConfig?: PushNotificationConfig
+  pushNotificationConfig?: PushNotificationConfig,
+  customHeaders?: Record<string, string>
 ): Promise<any> {
   // Track 401 errors for better error messaging
   let got401 = false;
@@ -40,9 +41,10 @@ export async function callA2ATool(
       }
     }
 
-    // Add auth headers if token is provided - these override any existing auth headers
+    // Merge: existing < custom < auth (auth always wins)
     const headers: Record<string, string> = {
       ...existingHeaders,
+      ...customHeaders,
       ...(authToken && {
         Authorization: `Bearer ${authToken}`,
         'x-adcp-auth': authToken,

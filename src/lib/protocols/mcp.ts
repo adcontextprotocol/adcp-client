@@ -29,6 +29,8 @@ export interface MCPCallOptions {
   authProvider?: OAuthClientProvider;
   /** Debug logs array */
   debugLogs?: any[];
+  /** Additional headers to send with every request (auth headers take precedence) */
+  customHeaders?: Record<string, string>;
 }
 
 /**
@@ -44,38 +46,26 @@ export async function callMCPTool(
   toolName: string,
   args: any,
   authToken?: string,
-  debugLogs: any[] = []
+  debugLogs: any[] = [],
+  customHeaders?: Record<string, string>
 ): Promise<any> {
   let mcpClient: MCPClient | undefined = undefined;
   const baseUrl = new URL(agentUrl);
 
-  // Create a custom fetch function that adds auth headers to every request
-  // Always provide a custom fetch to ensure consistent header handling across all MCP requests
-  const authHeaders = authToken ? createMCPAuthHeaders(authToken) : {};
+  // Merge: custom < auth (auth always wins)
+  const authHeaders = {
+    ...customHeaders,
+    ...(authToken ? createMCPAuthHeaders(authToken) : {}),
+  };
 
-  if (authToken) {
-    // Add to debug logs only when auth is configured
-    debugLogs.push({
-      type: 'info',
-      message: `MCP: Auth token provided (${authToken.substring(0, 10)}...) for tool ${toolName}`,
-      timestamp: new Date().toISOString(),
-      headers: authHeaders,
-    });
-
-    debugLogs.push({
-      type: 'info',
-      message: `MCP: Setting auth headers: ${JSON.stringify(authHeaders)}`,
-      timestamp: new Date().toISOString(),
-    });
-  }
-
-  // Log auth configuration
+  // Log auth configuration (token values redacted)
   debugLogs.push({
     type: 'info',
     message: `MCP: Auth configuration`,
     timestamp: new Date().toISOString(),
     hasAuth: !!authToken,
     headers: authToken ? { 'x-adcp-auth': '***' } : {},
+    customHeaderKeys: customHeaders ? Object.keys(customHeaders) : [],
   });
 
   try {

@@ -237,6 +237,21 @@ export interface AgentConfig {
    * @internal
    */
   oauth_code_verifier?: string;
+
+  /**
+   * Additional HTTP headers to include in every request to this agent.
+   * Useful for sending API keys, org IDs, or other vendor-specific headers
+   * alongside the standard authorization token.
+   *
+   * Example:
+   * ```typescript
+   * headers: {
+   *   'x-api-key': 'quota-key',
+   *   'x-org-id': 'org-123'
+   * }
+   * ```
+   */
+  headers?: Record<string, string>;
 }
 
 // Testing Types
