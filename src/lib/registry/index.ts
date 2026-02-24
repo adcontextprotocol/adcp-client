@@ -20,6 +20,8 @@ import type {
   ValidateProductAuthorizationRequest,
   ExpandProductIdentifiersRequest,
   PublisherPropertySelector,
+  CompanySearchResult,
+  FindCompanyResult,
 } from './types';
 
 export type {
@@ -44,6 +46,8 @@ export type {
   ValidateProductAuthorizationRequest,
   ExpandProductIdentifiersRequest,
   PublisherPropertySelector,
+  CompanySearchResult,
+  FindCompanyResult,
 } from './types';
 
 // Re-export all generated types for advanced usage
@@ -94,6 +98,14 @@ export class RegistryClient {
     if (!domain?.trim()) throw new Error('domain is required');
     const url = `${this.baseUrl}/api/brands/resolve?domain=${encodeURIComponent(domain)}`;
     return this.get(url, { nullOn404: true });
+  }
+
+  /** Search for companies by name or keyword, resolving colloquial names to canonical brand forms. */
+  async findCompany(query: string, options?: { limit?: number }): Promise<FindCompanyResult> {
+    if (!query?.trim()) throw new Error('query is required');
+    let url = `${this.baseUrl}/api/brands/find?q=${encodeURIComponent(query)}`;
+    if (options?.limit != null) url += `&limit=${options.limit}`;
+    return this.get(url);
   }
 
   /** Bulk resolve domains to their canonical brand identities (max 100). */
