@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.23.0
+
+### Minor Changes
+
+- 7143b35: Add `headers` field to `AgentConfig` for per-agent custom HTTP headers
+
+  Enables sending additional HTTP headers (API keys, org IDs, etc.) alongside the standard bearer token on every request to a specific agent. Auth headers always take precedence over custom headers.
+
 ## 3.22.0
 
 ### Minor Changes
