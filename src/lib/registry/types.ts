@@ -72,6 +72,23 @@ export type PropertyInfo = import('./types.generated').ResolvedProperty;
 
 // ====== Client-specific types (not in the API schema) ======
 
+/** A single company match from a brand search query. */
+export interface CompanySearchResult {
+  domain: string;
+  canonical_domain: string;
+  brand_name: string;
+  house_domain?: string;
+  parent_brand?: string;
+  keller_type: 'master' | 'sub_brand' | 'endorsed' | 'independent';
+  brand_agent_url?: string;
+  source: string;
+}
+
+/** Result from findCompany() brand search. */
+export interface FindCompanyResult {
+  results: CompanySearchResult[];
+}
+
 /** Configuration for the registry client. */
 export interface RegistryClientConfig {
   /** Base URL of the AdCP registry. Defaults to https://adcontextprotocol.org */

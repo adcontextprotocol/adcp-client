@@ -21,6 +21,8 @@ export type {
   ListOptions,
   ListAgentsOptions,
   PublisherPropertySelector,
+  CompanySearchResult,
+  FindCompanyResult,
 } from './registry';
 
 // ====== PROPERTY DISCOVERY (AdCP v2.2.0) ======

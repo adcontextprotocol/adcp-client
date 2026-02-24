@@ -182,6 +182,149 @@ describe('RegistryClient', () => {
     });
   });
 
+  // ============ findCompany ============
+
+  describe('findCompany', () => {
+    const COMPANY_RESULTS = [
+      {
+        domain: 'coca-cola.com',
+        canonical_domain: 'coca-cola.com',
+        brand_name: 'Coca-Cola',
+        house_domain: 'coca-cola.com',
+        keller_type: 'master',
+        source: 'brand_json',
+      },
+      {
+        domain: 'coke.com',
+        canonical_domain: 'coke.com',
+        brand_name: 'Coke',
+        parent_brand: 'Coca-Cola',
+        keller_type: 'sub_brand',
+        brand_agent_url: 'https://agent.coca-cola.com',
+        source: 'brand_json',
+      },
+    ];
+
+    test('searches companies by query', async () => {
+      let capturedUrl;
+      restore = mockFetch(async url => {
+        capturedUrl = url;
+        return new Response(JSON.stringify({ results: COMPANY_RESULTS }), { status: 200 });
+      });
+
+      const client = new RegistryClient();
+      const result = await client.findCompany('Coke');
+
+      assert.ok(capturedUrl.includes('/api/brands/find?'));
+      assert.ok(capturedUrl.includes('q=Coke'));
+      assert.strictEqual(result.results.length, 2);
+      assert.strictEqual(result.results[0].brand_name, 'Coca-Cola');
+      assert.strictEqual(result.results[1].keller_type, 'sub_brand');
+    });
+
+    test('encodes special characters in query', async () => {
+      let capturedUrl;
+      restore = mockFetch(async url => {
+        capturedUrl = url;
+        return new Response(JSON.stringify({ results: [] }), { status: 200 });
+      });
+
+      const client = new RegistryClient();
+      await client.findCompany('Procter & Gamble');
+
+      assert.ok(capturedUrl.includes('q=Procter%20%26%20Gamble'));
+    });
+
+    test('passes limit option', async () => {
+      let capturedUrl;
+      restore = mockFetch(async url => {
+        capturedUrl = url;
+        return new Response(JSON.stringify({ results: [] }), { status: 200 });
+      });
+
+      const client = new RegistryClient();
+      await client.findCompany('nike', { limit: 5 });
+
+      assert.ok(capturedUrl.includes('limit=5'));
+    });
+
+    test('omits limit when not provided', async () => {
+      let capturedUrl;
+      restore = mockFetch(async url => {
+        capturedUrl = url;
+        return new Response(JSON.stringify({ results: [] }), { status: 200 });
+      });
+
+      const client = new RegistryClient();
+      await client.findCompany('nike');
+
+      assert.ok(!capturedUrl.includes('limit='));
+    });
+
+    test('throws on empty query', async () => {
+      const client = new RegistryClient();
+      await assert.rejects(
+        () => client.findCompany(''),
+        err => {
+          assert.ok(err.message.includes('query is required'));
+          return true;
+        }
+      );
+    });
+
+    test('throws on whitespace-only query', async () => {
+      const client = new RegistryClient();
+      await assert.rejects(
+        () => client.findCompany('   '),
+        err => {
+          assert.ok(err.message.includes('query is required'));
+          return true;
+        }
+      );
+    });
+
+    test('throws on server error', async () => {
+      restore = mockFetch(async () => {
+        return new Response('Internal Server Error', { status: 500 });
+      });
+
+      const client = new RegistryClient();
+      await assert.rejects(
+        () => client.findCompany('nike'),
+        err => {
+          assert.ok(err.message.includes('500'));
+          return true;
+        }
+      );
+    });
+
+    test('sends limit=0 when explicitly passed', async () => {
+      let capturedUrl;
+      restore = mockFetch(async url => {
+        capturedUrl = url;
+        return new Response(JSON.stringify({ results: [] }), { status: 200 });
+      });
+
+      const client = new RegistryClient();
+      await client.findCompany('nike', { limit: 0 });
+
+      assert.ok(capturedUrl.includes('limit=0'));
+    });
+
+    test('uses custom base URL', async () => {
+      let capturedUrl;
+      restore = mockFetch(async url => {
+        capturedUrl = url;
+        return new Response(JSON.stringify({ results: [] }), { status: 200 });
+      });
+
+      const client = new RegistryClient({ baseUrl: 'https://custom.registry.example.com' });
+      await client.findCompany('nike');
+
+      assert.ok(capturedUrl.startsWith('https://custom.registry.example.com/api/brands/find'));
+    });
+  });
+
   // ============ lookupProperty ============
 
   describe('lookupProperty', () => {
