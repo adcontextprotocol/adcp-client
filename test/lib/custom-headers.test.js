@@ -122,14 +122,7 @@ test('AgentConfig.headers: debug logs include custom header names but not token 
   const customHeaders = { 'x-api-key': 'secret-key', 'x-org-id': 'org-123' };
 
   try {
-    await callMCPTool(
-      'https://invalid.test.local/mcp',
-      'get_products',
-      {},
-      'auth-token',
-      debugLogs,
-      customHeaders
-    );
+    await callMCPTool('https://invalid.test.local/mcp', 'get_products', {}, 'auth-token', debugLogs, customHeaders);
   } catch (_err) {
     // Expected: network failure
   }

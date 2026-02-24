@@ -81,7 +81,9 @@ import type {
   ListAccountsRequest,
   ListAccountsResponse,
   SyncAccountsRequest,
-  SyncAccountsResponse
+  SyncAccountsResponse,
+  ReportUsageRequest,
+  ReportUsageResponse
 } from '../types/tools.generated';
 
 /**
@@ -389,6 +391,13 @@ export class Agent {
     return this.callTool<SyncAccountsResponse>('sync_accounts', params);
   }
 
+  /**
+   * Official AdCP report_usage tool schema
+   */
+  async reportUsage(params: ReportUsageRequest): Promise<ReportUsageResponse> {
+    return this.callTool<ReportUsageResponse>('report_usage', params);
+  }
+
 }
 
 /**
@@ -607,6 +616,13 @@ export class AgentCollection {
    */
   async syncAccounts(params: SyncAccountsRequest): Promise<SyncAccountsResponse[]> {
     return this.callToolOnAll<SyncAccountsResponse>('sync_accounts', params);
+  }
+
+  /**
+   * Official AdCP report_usage tool schema (across multiple agents)
+   */
+  async reportUsage(params: ReportUsageRequest): Promise<ReportUsageResponse[]> {
+    return this.callToolOnAll<ReportUsageResponse>('report_usage', params);
   }
 
 }
