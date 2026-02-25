@@ -14,7 +14,7 @@
  */
 
 import type { TestOptions, TestStepResult, AgentProfile, TaskResult } from '../types';
-import { createTestClient, runStep, discoverAgentProfile, discoverAgentCapabilities } from '../client';
+import { createTestClient, runStep, resolveBrand, discoverAgentProfile, discoverAgentCapabilities } from '../client';
 import { testDiscovery } from './discovery';
 
 /**
@@ -87,7 +87,7 @@ export async function testErrorHandling(
       step.details = 'Agent accepts empty get_products request (permissive)';
     } else if (result && !result.success && result.error) {
       step.passed = true;
-      step.details = 'Agent requires brief/brand_manifest (stricter validation)';
+      step.details = 'Agent requires brief or brand (stricter validation)';
       step.response_preview = JSON.stringify({ error: result.error }, null, 2);
     } else {
       step.passed = false;
@@ -355,11 +355,9 @@ export async function testPricingEdgeCases(
     'get_products',
     async () =>
       client.executeTask('get_products', {
+        buying_mode: 'brief',
         brief: 'Show all products with pricing details',
-        brand_manifest: options.brand_manifest || {
-          name: 'Pricing Test',
-          url: 'https://test.example.com',
-        },
+        brand: resolveBrand(options),
       }) as Promise<TaskResult>
   );
 
@@ -585,21 +583,22 @@ export async function testBehaviorAnalysis(
     return { steps, profile };
   }
 
-  // Test 1: Does get_products require brand_manifest?
+  // Test 1: Does get_products require brand?
   if (profile.tools.includes('get_products')) {
-    const { result: withoutManifest, step: step1 } = await runStep<TaskResult>(
-      'get_products without brand_manifest',
+    const { result: withoutBrand, step: step1 } = await runStep<TaskResult>(
+      'get_products without brand',
       'get_products',
       async () =>
         client.executeTask('get_products', {
+          buying_mode: 'brief',
           brief: 'Show me all available products',
         }) as Promise<TaskResult>
     );
 
-    if (withoutManifest?.success && withoutManifest?.data?.products?.length) {
-      step1.details = `Returns ${withoutManifest.data.products.length} products without brand_manifest`;
-    } else if (withoutManifest && !withoutManifest.success) {
-      step1.details = 'Requires brand_manifest for product discovery';
+    if (withoutBrand?.success && withoutBrand?.data?.products?.length) {
+      step1.details = `Returns ${withoutBrand.data.products.length} products without brand`;
+    } else if (withoutBrand && !withoutBrand.success) {
+      step1.details = 'Requires brand for product discovery';
     }
     steps.push(step1);
 
@@ -609,11 +608,9 @@ export async function testBehaviorAnalysis(
       'get_products',
       async () =>
         client.executeTask('get_products', {
+          buying_mode: 'brief',
           brief: 'Looking specifically for podcast audio advertising only',
-          brand_manifest: options.brand_manifest || {
-            name: 'Brief Filter Test',
-            url: 'https://test.example.com',
-          },
+          brand: resolveBrand(options),
         }) as Promise<TaskResult>
     );
 
@@ -622,11 +619,9 @@ export async function testBehaviorAnalysis(
       'get_products',
       async () =>
         client.executeTask('get_products', {
+          buying_mode: 'brief',
           brief: 'Show all products across all channels and formats',
-          brand_manifest: options.brand_manifest || {
-            name: 'Brief Filter Test',
-            url: 'https://test.example.com',
-          },
+          brand: resolveBrand(options),
         }) as Promise<TaskResult>
     );
 

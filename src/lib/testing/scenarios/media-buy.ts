@@ -131,6 +131,7 @@ export async function testCreateMediaBuy(
     'get_products',
     async () =>
       client.executeTask('get_products', {
+        buying_mode: 'brief',
         brief: options.brief || 'Looking for display advertising products',
         brand: resolveBrand(options),
       }) as Promise<TaskResult>
@@ -458,6 +459,7 @@ export async function testCreativeInline(
     'get_products',
     async () =>
       client.executeTask('get_products', {
+        buying_mode: 'brief',
         brief: options.brief || 'Looking for display advertising products',
         brand: resolveBrand(options),
       }) as Promise<TaskResult>
