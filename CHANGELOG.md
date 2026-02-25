@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.25.1
+
+### Patch Changes
+
+- fca1a4b: Fix v2 brand_manifest URL: use base domain instead of /.well-known/brand.json path, which may not exist on advertiser domains and caused "brand_manifest must provide brand information" errors from v2 servers like Magnite.
+
 ## 3.25.0
 
 ### Minor Changes
