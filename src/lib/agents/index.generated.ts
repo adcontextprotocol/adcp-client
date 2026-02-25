@@ -83,7 +83,9 @@ import type {
   SyncAccountsRequest,
   SyncAccountsResponse,
   ReportUsageRequest,
-  ReportUsageResponse
+  ReportUsageResponse,
+  GetAccountFinancialsRequest,
+  GetAccountFinancialsResponse
 } from '../types/tools.generated';
 
 /**
@@ -398,6 +400,13 @@ export class Agent {
     return this.callTool<ReportUsageResponse>('report_usage', params);
   }
 
+  /**
+   * Official AdCP get_account_financials tool schema
+   */
+  async getAccountFinancials(params: GetAccountFinancialsRequest): Promise<GetAccountFinancialsResponse> {
+    return this.callTool<GetAccountFinancialsResponse>('get_account_financials', params);
+  }
+
 }
 
 /**
@@ -623,6 +632,13 @@ export class AgentCollection {
    */
   async reportUsage(params: ReportUsageRequest): Promise<ReportUsageResponse[]> {
     return this.callToolOnAll<ReportUsageResponse>('report_usage', params);
+  }
+
+  /**
+   * Official AdCP get_account_financials tool schema (across multiple agents)
+   */
+  async getAccountFinancials(params: GetAccountFinancialsRequest): Promise<GetAccountFinancialsResponse[]> {
+    return this.callToolOnAll<GetAccountFinancialsResponse>('get_account_financials', params);
   }
 
 }

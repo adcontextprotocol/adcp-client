@@ -16,10 +16,7 @@ export type GetProductsRequest = {
   brief?: string;
   brand?: BrandReference;
   catalog?: Catalog;
-  /**
-   * Account ID for product lookup. Required when the seller declares account.required_for_products = true in capabilities. Returns products with pricing specific to this account's rate card.
-   */
-  account_id?: string;
+  account?: AccountReference;
   /**
    * Buyer's campaign reference label. Groups related discovery and buy operations under a single campaign for CRM and ad server correlation (e.g., 'NovaDrink_Meals_Q2').
    */
@@ -115,6 +112,23 @@ export type ContentIDType =
   | 'program_id'
   | 'destination_id'
   | 'app_id';
+/**
+ * Account for product lookup. Returns products with pricing specific to this account's rate card.
+ */
+export type AccountReference =
+  | {
+      /**
+       * Seller-assigned account identifier (from sync_accounts or list_accounts)
+       */
+      account_id: string;
+    }
+  | {
+      brand: BrandReference;
+      /**
+       * Domain of the entity operating on the brand's behalf. When the brand operates directly, this is the brand's domain.
+       */
+      operator: string;
+    };
 /**
  * Type of inventory delivery
  */
@@ -345,7 +359,7 @@ export interface CatalogFieldMapping {
  */
 export interface ExtensionObject {}
 /**
- * Structured filters for product discovery
+ * Brand reference identifying the advertiser
  */
 export interface ProductFilters {
   delivery_type?: DeliveryType;
@@ -813,9 +827,9 @@ export interface Product {
      */
     action_sources?: ActionSource[];
     /**
-     * Optimization strategies this product supports when an optimization_goal is set on a package
+     * Optimization strategies this product supports when optimization_goals are set on a package. Target kinds: cost_per (cost per metric unit or conversion event), threshold_rate (minimum per-impression metric rate), per_ad_spend (return on ad spend — requires value_field on event sources). A goal without a target implicitly maximizes that metric or event within budget — no separate strategy declaration needed. When this field is omitted but conversion_tracking is present, buyers can still set target-less optimization goals (maximize within budget); they just cannot set specific cost_per, threshold_rate, or per_ad_spend targets.
      */
-    supported_optimization_strategies?: ('maximize_conversions' | 'target_cpa' | 'target_roas')[];
+    supported_optimization_strategies?: ('target_cost_per' | 'target_threshold_rate' | 'target_per_ad_spend')[];
     /**
      * Whether the seller provides its own always-on measurement (e.g. Amazon sales attribution for Amazon advertisers). When true, sync_event_sources response will include seller-managed event sources with managed_by='seller'.
      */
@@ -2412,11 +2426,104 @@ export interface AssetPoolBinding {
 
 // create_media_buy parameters
 /**
- * Budget pacing strategy
+ * Account to bill for this media buy. Pass an account_id from list_accounts (explicit model), or use a natural key (brand, operator) if the seller supports implicit_from_sync resolution.
  */
 export type Pacing = 'even' | 'asap' | 'front_loaded';
 /**
  * Catalog type. Structural types: 'offering' (AdCP Offering objects), 'product' (ecommerce entries), 'inventory' (stock per location), 'store' (physical locations), 'promotion' (deals and pricing). Vertical types: 'hotel', 'flight', 'job', 'vehicle', 'real_estate', 'education', 'destination', 'app' — each with an industry-specific item schema.
+ */
+export type OptimizationGoal =
+  | {
+      kind: 'metric';
+      /**
+       * Seller-native metric to optimize for. Count metrics: clicks, views (viewable impressions), completed_views (video or audio completions). Duration/score metrics: viewed_seconds (time in view per impression), attention_seconds (attention time per impression), attention_score (vendor-specific attention score per impression).
+       */
+      metric: 'clicks' | 'views' | 'completed_views' | 'viewed_seconds' | 'attention_seconds' | 'attention_score';
+      /**
+       * Target for this metric. When omitted, the seller optimizes for maximum metric volume within budget.
+       */
+      target?:
+        | {
+            kind: 'cost_per';
+            /**
+             * Target cost per metric unit in the buy currency
+             */
+            value: number;
+          }
+        | {
+            kind: 'threshold_rate';
+            /**
+             * Minimum per-impression value. Units depend on the metric: proportion (clicks, views, completed_views), seconds (viewed_seconds, attention_seconds), or score (attention_score).
+             */
+            value: number;
+          };
+      /**
+       * Relative priority among all optimization goals on this package. 1 = highest priority (primary goal); higher numbers are lower priority (secondary signals). When omitted, sellers may use array position as priority.
+       */
+      priority?: number;
+    }
+  | {
+      kind: 'event';
+      /**
+       * Event source and type pairs that feed this goal. Each entry identifies a source and event type to include. The seller deduplicates by event_id across all entries — the same business event reported by multiple sources (e.g., web analytics and an MMP) counts once. When a deduplicated event_id appears from multiple sources with different value_fields, the seller uses the value_field and value_factor from the first matching entry in the event_sources array. All event sources must be configured via sync_event_sources.
+       */
+      event_sources: {
+        /**
+         * Event source to include (must be configured on this account via sync_event_sources)
+         */
+        event_source_id: string;
+        event_type: EventType;
+        /**
+         * Required when event_type is 'custom'. Platform-specific name for the custom event.
+         */
+        custom_event_name?: string;
+        /**
+         * Field on the event's custom_data that carries the monetary value. Required on at least one entry when target.kind is 'per_ad_spend'. The field must contain a numeric value in the buy currency. Common values: 'value', 'order_total', 'profit_margin'.
+         */
+        value_field?: string;
+        /**
+         * Multiplier applied to the value_field before aggregation. Use -1 for refund events (negate the value), 0.01 for values in cents, -0.01 for refunds in cents. A value of 0 zeroes out this source's value contribution (the source still counts for event dedup). Defaults to 1.
+         */
+        value_factor?: number;
+      }[];
+      /**
+       * Target cost or return for this event goal. When omitted, the seller optimizes for maximum conversions within budget.
+       */
+      target?:
+        | {
+            kind: 'cost_per';
+            /**
+             * Target cost per event in the buy currency
+             */
+            value: number;
+          }
+        | {
+            kind: 'per_ad_spend';
+            /**
+             * Target return ratio (e.g., 4.0 means $4 of value per $1 spent)
+             */
+            value: number;
+          };
+      /**
+       * Attribution window for this optimization goal. Values must match an option declared in the seller's conversion_tracking.attribution_windows capability. Sellers must reject windows not in their declared capabilities. When omitted, the seller uses their default window.
+       */
+      attribution_window?: {
+        /**
+         * Click-through attribution window (e.g. '7d', '28d', '30d')
+         */
+        click_through: string;
+        /**
+         * View-through attribution window (e.g. '1d', '7d')
+         */
+        view_through?: string;
+      };
+      /**
+       * Relative priority among all optimization goals on this package. 1 = highest priority (primary goal); higher numbers are lower priority (secondary signals). When omitted, sellers may use array position as priority.
+       */
+      priority?: number;
+    };
+/**
+ * Standard marketing event types for event logging, aligned with IAB ECAPI
  */
 export type PostalCodeSystem =
   | 'us_zip'
@@ -2628,7 +2735,7 @@ export type URLAssetType = 'clickthrough' | 'tracker_pixel' | 'tracker_script';
  */
 export type CreativeStatus = 'processing' | 'approved' | 'rejected' | 'pending_review' | 'archived';
 /**
- * Brand identifier within the house portfolio. Optional for single-brand domains.
+ * Campaign start timing: 'asap' or ISO 8601 date-time
  */
 export type StartTiming = 'asap' | string;
 /**
@@ -2647,10 +2754,7 @@ export interface CreateMediaBuyRequest {
    * Buyer's campaign reference label. Groups related discovery and buy operations under a single campaign for CRM and ad server correlation (e.g., 'NovaDrink_Meals_Q2').
    */
   buyer_campaign_ref?: string;
-  /**
-   * Account to bill for this media buy. Required when the agent has access to multiple accounts; when omitted, the seller uses the agent's sole account. The seller maps the agent's brand + operator to an account during sync_accounts; the agent passes that account_id here.
-   */
-  account_id?: string;
+  account: AccountReference;
   /**
    * ID of a proposal from get_products to execute. When provided with total_budget, the publisher converts the proposal's allocation percentages into packages automatically. Alternative to providing packages array.
    */
@@ -2728,7 +2832,7 @@ export interface CreateMediaBuyRequest {
   ext?: ExtensionObject;
 }
 /**
- * Package configuration for media buy creation
+ * Brand reference identifying the advertiser
  */
 export interface PackageRequest {
   /**
@@ -2765,7 +2869,10 @@ export interface PackageRequest {
    */
   paused?: boolean;
   catalog?: Catalog;
-  optimization_goal?: OptimizationGoal;
+  /**
+   * Optimization targets for this package. The seller optimizes delivery toward these goals in priority order. Common pattern: event goals (purchase, install) as primary targets at priority 1; metric goals (clicks, views) as secondary proxy signals at priority 2+.
+   */
+  optimization_goals?: OptimizationGoal[];
   targeting_overlay?: TargetingOverlay;
   /**
    * Assign existing library creatives to this package with optional weights and placement targeting
@@ -2781,37 +2888,6 @@ export interface PackageRequest {
 }
 /**
  * Structured format identifier with agent URL and format name. Can reference: (1) a concrete format with fixed dimensions (id only), (2) a template format without parameters (id only), or (3) a template format with parameters (id + dimensions/duration). Template formats accept parameters in format_id while concrete formats have fixed dimensions in their definition. Parameterized format IDs create unique, specific format variants.
- */
-export interface OptimizationGoal {
-  /**
-   * Event source to optimize against (must be configured on this account via sync_event_sources)
-   */
-  event_source_id: string;
-  event_type: EventType;
-  /**
-   * Target return on ad spend (e.g. 4.0 = $4 conversion value per $1 spent). Mutually exclusive with target_cpa.
-   */
-  target_roas?: number;
-  /**
-   * Target cost per acquisition in the buy currency. Mutually exclusive with target_roas.
-   */
-  target_cpa?: number;
-  /**
-   * Attribution window for this optimization goal. Values must match an option declared in the seller's conversion_tracking.attribution_windows capability. When omitted, the seller uses their default window.
-   */
-  attribution_window?: {
-    /**
-     * Click-through attribution window (e.g. '7d', '28d', '30d')
-     */
-    click_through: string;
-    /**
-     * View-through attribution window (e.g. '1d', '7d')
-     */
-    view_through?: string;
-  };
-}
-/**
- * Optional restriction overlays for media buys. Most targeting should be expressed in the brief and handled by the publisher. These fields are for functional restrictions: geographic (RCT testing, regulatory compliance), age verification (alcohol, gambling), device platform (app compatibility), and language (localization).
  */
 export interface TargetingOverlay {
   /**
@@ -3409,7 +3485,7 @@ export interface ReportingWebhook {
  */
 export type CreateMediaBuyResponse = CreateMediaBuySuccess | CreateMediaBuyError;
 /**
- * Budget pacing strategy
+ * Brand identifier within the house portfolio. Optional for single-brand domains.
  */
 export interface CreateMediaBuySuccess {
   /**
@@ -3461,25 +3537,18 @@ export interface Account {
    */
   billing_proxy?: string;
   /**
-   * Account status. pending_approval: seller reviewing (credit, contracts). payment_required: credit limit reached or funds depleted. suspended: was active, now paused. closed: terminated.
+   * Account status. pending_approval: seller reviewing (credit, contracts). rejected: seller declined the account request. payment_required: credit limit reached or funds depleted. suspended: was active, now paused. closed: was active, now terminated.
    */
-  status: 'active' | 'pending_approval' | 'payment_required' | 'suspended' | 'closed';
+  status: 'active' | 'pending_approval' | 'rejected' | 'payment_required' | 'suspended' | 'closed';
+  brand?: BrandReference;
   /**
-   * House domain where brand.json is hosted. Canonical identity anchor for the brand.
-   */
-  house?: string;
-  /**
-   * Brand ID within the house portfolio (from brand.json)
-   */
-  brand_id?: string;
-  /**
-   * Domain of the entity operating this account
+   * Domain of the entity operating this account. When the brand operates directly, this is the brand's domain.
    */
   operator?: string;
   /**
-   * Who is invoiced on this account. brand: seller invoices the brand directly. operator: seller invoices the operator (agency). agent: agent consolidates billing.
+   * Who is invoiced on this account. operator: seller invoices the operator (agency or brand buying direct). agent: agent consolidates billing.
    */
-  billing?: 'brand' | 'operator' | 'agent';
+  billing?: 'operator' | 'agent';
   /**
    * Identifier for the rate card applied to this account
    */
@@ -3513,13 +3582,17 @@ export interface Account {
     expires_at?: string;
   };
   /**
+   * How the seller scoped this account. operator: shared across all brands for this operator. brand: shared across all operators for this brand. operator_brand: dedicated to a specific operator+brand combination. agent: the agent's default account with no brand or operator association.
+   */
+  account_scope?: 'operator' | 'brand' | 'operator_brand' | 'agent';
+  /**
    * When true, this is a sandbox account. All requests using this account_id are treated as sandbox — no real platform calls, no real spend.
    */
   sandbox?: boolean;
   ext?: ExtensionObject;
 }
 /**
- * Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.
+ * Brand reference identifying the advertiser
  */
 export interface Package {
   /**
@@ -3560,7 +3633,10 @@ export interface Package {
    * Format IDs that creative assets will be provided for this package
    */
   format_ids_to_provide?: FormatID[];
-  optimization_goal?: OptimizationGoal;
+  /**
+   * Optimization targets for this package. The seller optimizes delivery toward these goals in priority order. Common pattern: event goals (purchase, install) as primary targets at priority 1; metric goals (clicks, views) as secondary proxy signals at priority 2+.
+   */
+  optimization_goals?: OptimizationGoal[];
   /**
    * Whether this package is paused by the buyer. Paused packages do not deliver impressions. Defaults to false.
    */
@@ -3584,17 +3660,14 @@ export interface CreateMediaBuyError {
 
 // sync_creatives parameters
 /**
- * Catalog type. Structural types: 'offering' (AdCP Offering objects), 'product' (ecommerce entries), 'inventory' (stock per location), 'store' (physical locations), 'promotion' (deals and pricing). Vertical types: 'hotel', 'flight', 'job', 'vehicle', 'real_estate', 'education', 'destination', 'app' — each with an industry-specific item schema.
+ * Account that owns these creatives.
  */
 export type ValidationMode = 'strict' | 'lenient';
 /**
  * Authentication schemes for push notification endpoints
  */
 export interface SyncCreativesRequest {
-  /**
-   * Account that owns these creatives. Optional if the agent has a single account or the seller can determine the account from context. Required if the agent has multiple accounts and the seller cannot route automatically.
-   */
-  account_id?: string;
+  account: AccountReference;
   /**
    * Array of creative assets to sync (create or update)
    *
@@ -3633,7 +3706,7 @@ export interface SyncCreativesRequest {
   ext?: ExtensionObject;
 }
 /**
- * Creative asset for upload to library - supports static assets, generative formats, and third-party snippets
+ * Brand reference identifying the advertiser
  */
 
 // sync_creatives response
@@ -3642,7 +3715,7 @@ export interface SyncCreativesRequest {
  */
 export type SyncCreativesResponse = SyncCreativesSuccess | SyncCreativesError;
 /**
- * Action taken for this creative
+ * Brand identifier within the house portfolio. Optional for single-brand domains.
  */
 export type CreativeAction = 'created' | 'updated' | 'unchanged' | 'failed' | 'deleted';
 
@@ -3729,7 +3802,7 @@ export interface SyncCreativesError {
 
 // list_creatives parameters
 /**
- * Status of a creative asset
+ * Reference to an account by seller-assigned ID or natural key. Use account_id when the buyer manages accounts (e.g., picked from list_accounts). Use the natural key (brand + operator) when the seller resolves accounts internally.
  */
 export type CreativeSortField =
   | 'created_date'
@@ -3793,7 +3866,7 @@ export interface CreativeFilters {
   /**
    * Filter creatives by owning accounts. Useful for agencies managing multiple client accounts.
    */
-  account_ids?: string[];
+  accounts?: AccountReference[];
   /**
    * Filter by creative format types (e.g., video, audio, display)
    */
@@ -3858,7 +3931,7 @@ export interface CreativeFilters {
   has_performance_data?: boolean;
 }
 /**
- * Standard cursor-based pagination parameters for list operations
+ * Brand reference identifying the advertiser
  */
 
 // list_creatives response
@@ -4154,7 +4227,10 @@ export type PackageUpdate = {
    */
   paused?: boolean;
   catalog?: Catalog;
-  optimization_goal?: OptimizationGoal;
+  /**
+   * Replace all optimization goals for this package. Uses replacement semantics — omit to leave goals unchanged.
+   */
+  optimization_goals?: OptimizationGoal[];
   targeting_overlay?: TargetingOverlay;
   /**
    * Replace creative assignments for this package with optional weights and placement targeting. Uses replacement semantics - omit to leave assignments unchanged.
@@ -4223,7 +4299,7 @@ export interface UpdateMediaBuyError {
 
 // get_media_buys parameters
 /**
- * Status of a media buy
+ * Account to retrieve media buys for.
  */
 export type MediaBuyStatus = 'pending_activation' | 'active' | 'paused' | 'completed';
 
@@ -4231,10 +4307,7 @@ export type MediaBuyStatus = 'pending_activation' | 'active' | 'paused' | 'compl
  * Request parameters for retrieving media buy status, creative approval state, and optional delivery snapshots
  */
 export interface GetMediaBuysRequest {
-  /**
-   * Filter to a specific account. When omitted, returns media buys across all accessible accounts. Optional if the agent has a single account.
-   */
-  account_id?: string;
+  account: AccountReference;
   /**
    * Array of publisher media buy IDs to retrieve. When omitted along with buyer_refs, returns a paginated set of accessible media buys matching status_filter.
    */
@@ -4256,12 +4329,12 @@ export interface GetMediaBuysRequest {
   ext?: ExtensionObject;
 }
 /**
- * Cursor-based pagination controls. Strongly recommended when querying broad scopes (for example, all active media buys in an account).
+ * Brand reference identifying the advertiser
  */
 
 // get_media_buys response
 /**
- * Status of a media buy
+ * Brand identifier within the house portfolio. Optional for single-brand domains.
  */
 export type CreativeApprovalStatus = 'pending_review' | 'approved' | 'rejected';
 
@@ -4440,10 +4513,7 @@ export interface GetMediaBuysResponse {
  * Account billed for this media buy
  */
 export interface GetMediaBuyDeliveryRequest {
-  /**
-   * Filter delivery data to a specific account. When provided, only returns media buys belonging to this account. When omitted, returns data across all accessible accounts. Optional if the agent has a single account.
-   */
-  account_id?: string;
+  account?: AccountReference;
   /**
    * Array of publisher media buy IDs to get delivery data for
    */
@@ -4468,7 +4538,7 @@ export interface GetMediaBuyDeliveryRequest {
   ext?: ExtensionObject;
 }
 /**
- * Opaque correlation data that is echoed unchanged in responses. Used for internal tracking, UI session IDs, trace IDs, and other caller-specific identifiers that don't affect protocol behavior. Context data is never parsed by AdCP agents - it's simply preserved and returned.
+ * Brand reference identifying the advertiser
  */
 
 // get_media_buy_delivery response
@@ -5039,13 +5109,10 @@ export interface ProvidePerformanceFeedbackError {
 
 // sync_event_sources parameters
 /**
- * Standard marketing event types for event logging, aligned with IAB ECAPI
+ * Account to configure event sources for.
  */
 export interface SyncEventSourcesRequest {
-  /**
-   * Account to configure event sources for
-   */
-  account_id: string;
+  account: AccountReference;
   /**
    * Event sources to sync (create or update). When omitted, the call is discovery-only and returns all existing event sources on the account without modification.
    */
@@ -5075,7 +5142,7 @@ export interface SyncEventSourcesRequest {
   ext?: ExtensionObject;
 }
 /**
- * Opaque correlation data that is echoed unchanged in responses. Used for internal tracking, UI session IDs, trace IDs, and other caller-specific identifiers that don't affect protocol behavior. Context data is never parsed by AdCP agents - it's simply preserved and returned.
+ * Brand reference identifying the advertiser
  */
 
 // sync_event_sources response
@@ -5388,7 +5455,7 @@ export interface LogEventError {
 
 // sync_audiences parameters
 /**
- * Hashed identifiers for a CRM audience member. All identifiers must be normalized before hashing: emails to lowercase+trim, phone numbers to E.164 format (e.g. +12065551234). At least one identifier is required. Providing multiple identifiers for the same person improves match rates. Composite identifiers (e.g. hashed first name + last name + zip for Google Customer Match) are not yet standardized — use the ext field for platform-specific extensions.
+ * Account to manage audiences for.
  */
 export type AudienceMember = {
   [k: string]: unknown | undefined;
@@ -5417,10 +5484,7 @@ export type AudienceMember = {
  * Universal ID type
  */
 export interface SyncAudiencesRequest {
-  /**
-   * Account to manage audiences for
-   */
-  account_id: string;
+  account: AccountReference;
   /**
    * Audiences to sync (create or update). When omitted, the call is discovery-only and returns all existing audiences on the account without modification.
    */
@@ -5458,7 +5522,7 @@ export interface SyncAudiencesRequest {
   ext?: ExtensionObject;
 }
 /**
- * Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.
+ * Brand reference identifying the advertiser
  */
 
 // sync_audiences response
@@ -5538,13 +5602,10 @@ export interface SyncAudiencesError {
 
 // sync_catalogs parameters
 /**
- * Catalog type. Structural types: 'offering' (AdCP Offering objects), 'product' (ecommerce entries), 'inventory' (stock per location), 'store' (physical locations), 'promotion' (deals and pricing). Vertical types: 'hotel', 'flight', 'job', 'vehicle', 'real_estate', 'education', 'destination', 'app' — each with an industry-specific item schema.
+ * Account that owns these catalogs.
  */
 export interface SyncCatalogsRequest {
-  /**
-   * Account that owns these catalogs. Required if the agent has multiple accounts and the seller cannot route automatically.
-   */
-  account_id?: string;
+  account: AccountReference;
   /**
    * Array of catalog feeds to sync (create or update). When omitted, the call is discovery-only and returns all existing catalogs on the account without modification.
    *
@@ -5571,7 +5632,7 @@ export interface SyncCatalogsRequest {
   ext?: ExtensionObject;
 }
 /**
- * A typed data feed. Catalogs carry the items, locations, stock levels, or pricing that publishers use to render ads. They can be synced to a platform via sync_catalogs (managed lifecycle with approval), provided inline, or fetched from an external URL. The catalog type determines the item schema and can be structural (offering, product, inventory, store, promotion) or vertical-specific (hotel, flight, job, vehicle, real_estate, education, destination, app). Selectors (ids, tags, category, query) filter items regardless of sourcing method.
+ * Brand reference identifying the advertiser
  */
 
 // sync_catalogs response
@@ -6301,10 +6362,7 @@ export interface PreviewCreativeVariantResponse {
 export type GetCreativeDeliveryRequest = {
   [k: string]: unknown | undefined;
 } & {
-  /**
-   * Account context for routing and scoping. Limits results to creatives within this account. Optional if the agent has a single account or can determine routing from the media buy identifiers.
-   */
-  account_id?: string;
+  account?: AccountReference;
   /**
    * Filter to specific media buys by publisher ID. If omitted, returns creative delivery across all matching media buys.
    */
@@ -6345,9 +6403,8 @@ export type GetCreativeDeliveryRequest = {
   context?: ContextObject;
   ext?: ExtensionObject;
 };
-
 /**
- * Opaque correlation data that is echoed unchanged in responses. Used for internal tracking, UI session IDs, trace IDs, and other caller-specific identifiers that don't affect protocol behavior. Context data is never parsed by AdCP agents - it's simply preserved and returned.
+ * Account for routing and scoping. Limits results to creatives within this account.
  */
 
 // get_creative_delivery response
@@ -7968,13 +8025,10 @@ export type ValidateContentDeliveryResponse =
 
 // get_media_buy_artifacts parameters
 /**
- * Request parameters for retrieving content artifacts from a media buy for validation
+ * Filter artifacts to a specific account. When omitted, returns artifacts across all accessible accounts.
  */
 export interface GetMediaBuyArtifactsRequest {
-  /**
-   * Filter artifacts to a specific account. When provided, only returns artifacts for media buys belonging to this account. When omitted, returns artifacts across all accessible accounts. Optional if the agent has a single account.
-   */
-  account_id?: string;
+  account?: AccountReference;
   /**
    * Media buy to get artifacts from
    */
@@ -8026,7 +8080,7 @@ export interface GetMediaBuyArtifactsRequest {
   ext?: ExtensionObject;
 }
 /**
- * Opaque correlation data that is echoed unchanged in responses. Used for internal tracking, UI session IDs, trace IDs, and other caller-specific identifiers that don't affect protocol behavior. Context data is never parsed by AdCP agents - it's simply preserved and returned.
+ * Brand reference identifying the advertiser
  */
 
 // get_media_buy_artifacts response
@@ -8906,6 +8960,10 @@ export interface GetAdCPCapabilitiesResponse {
    */
   account?: {
     /**
+     * How the seller resolves account references. explicit_account_id: accounts are managed out-of-band (advertiser portal, sales rep) and discovered via list_accounts. implicit_from_sync: buyer declares intent via sync_accounts and the seller provisions accounts.
+     */
+    account_resolution?: 'explicit_account_id' | 'implicit_from_sync';
+    /**
      * Whether the seller requires operator-level credentials. When false (default), the seller trusts the agent's identity claims — the agent authenticates once and declares brands/operators via sync_accounts. When true, each operator must authenticate independently with the seller, and the agent opens a per-operator session using the operator's credential.
      */
     require_operator_auth?: boolean;
@@ -8914,17 +8972,17 @@ export interface GetAdCPCapabilitiesResponse {
      */
     authorization_endpoint?: string;
     /**
-     * Billing models this seller supports. brand: seller invoices the brand directly. operator: seller invoices the operator (agency). agent: agent consolidates billing.
+     * Billing models this seller supports. operator: seller invoices the operator (agency or brand buying direct). agent: agent consolidates billing. The buyer must pass one of these values in sync_accounts.
      */
-    supported_billing: ('brand' | 'operator' | 'agent')[];
+    supported_billing: ('operator' | 'agent')[];
     /**
-     * The billing model applied when the agent omits billing from a sync_accounts request. Must be one of the values in supported_billing.
-     */
-    default_billing?: 'brand' | 'operator' | 'agent';
-    /**
-     * Whether an active account is required to call get_products. When true, the agent must establish an account via sync_accounts before browsing products. When false, get_products works without an account (account_id is optional for rate-card-specific pricing).
+     * Whether an account reference is required for get_products. When true, the buyer must establish an account before browsing products. When false (default), the buyer can browse products without an account — useful for price comparison and discovery before committing to a seller.
      */
     required_for_products?: boolean;
+    /**
+     * Whether this seller supports the get_account_financials task for querying account-level financial status (spend, credit, invoices). Only applicable to operator-billed accounts.
+     */
+    account_financials?: boolean;
   };
   /**
    * Media-buy protocol capabilities. Only present if media_buy is in supported_protocols.
@@ -9110,7 +9168,7 @@ export interface GetAdCPCapabilitiesResponse {
        */
       supported_action_sources?: ActionSource[];
       /**
-       * Attribution windows available from this seller. Single-element arrays indicate fixed windows; multi-element arrays indicate configurable options the buyer can choose from via optimization_goal.attribution_window on packages.
+       * Attribution windows available from this seller. Single-element arrays indicate fixed windows; multi-element arrays indicate configurable options the buyer can choose from via attribution_window on optimization goals.
        */
       attribution_windows?: {
         event_type?: EventType;
@@ -9318,7 +9376,7 @@ export interface ListAccountsRequest {
   /**
    * Filter accounts by status. Omit to return accounts in all statuses.
    */
-  status?: 'active' | 'pending_approval' | 'payment_required' | 'suspended' | 'closed';
+  status?: 'active' | 'pending_approval' | 'rejected' | 'payment_required' | 'suspended' | 'closed';
   pagination?: PaginationRequest;
   /**
    * Filter by sandbox status. true returns only sandbox accounts, false returns only production accounts. Omit to return all accounts.
@@ -9333,7 +9391,7 @@ export interface ListAccountsRequest {
 
 // list_accounts response
 /**
- * Response payload for list_accounts task
+ * Brand identifier within the house portfolio. Optional for single-brand domains.
  */
 export interface ListAccountsResponse {
   /**
@@ -9354,7 +9412,7 @@ export interface ListAccountsResponse {
 
 // sync_accounts parameters
 /**
- * Authentication schemes for push notification endpoints
+ * Brand identifier within the house portfolio. Optional for single-brand domains.
  */
 export interface SyncAccountsRequest {
   /**
@@ -9363,22 +9421,15 @@ export interface SyncAccountsRequest {
    * @maxItems 1000
    */
   accounts: {
+    brand: BrandReference;
     /**
-     * House domain where brand.json is hosted (e.g., 'unilever.com', 'acme-corp.com'). This is the canonical identity anchor for the brand, resolved via /.well-known/brand.json. For single-brand houses, this alone identifies the brand.
+     * Domain of the entity operating on the brand's behalf (e.g., 'pinnacle-media.com'). When the brand operates directly, this is the brand's domain. Verified against the brand's authorized_operators in brand.json.
      */
-    house: string;
+    operator: string;
     /**
-     * Brand ID within the house portfolio (from brand.json). Required when the house has multiple brands (e.g., 'dove' under unilever.com, 'tide' under pg.com). Omit for single-brand houses.
+     * Who should be invoiced. operator: seller invoices the operator (agency or brand buying direct). agent: agent consolidates billing across brands. The seller must either accept this billing model or reject the request.
      */
-    brand_id?: string;
-    /**
-     * Domain of the entity operating the seat (e.g., 'groupm.com', 'mindshare.com'). Verified against the brand's authorized_operators in brand.json. Omit if the brand operates its own seat.
-     */
-    operator?: string;
-    /**
-     * Who should be invoiced. brand: seller invoices the brand directly. operator: seller invoices the operator (agency). agent: agent consolidates billing across brands. Omit to accept the seller's default.
-     */
-    billing?: 'brand' | 'operator' | 'agent';
+    billing: 'operator' | 'agent';
     /**
      * When true, provision this as a sandbox account. No real platform calls or billing. Sandbox accounts are identified by account_id in subsequent requests.
      */
@@ -9397,7 +9448,7 @@ export interface SyncAccountsRequest {
   ext?: ExtensionObject;
 }
 /**
- * Optional webhook for async notifications when account status changes (e.g., pending_approval transitions to active).
+ * Brand reference identifying the advertiser. Uses the brand's house domain and optional brand_id from brand.json.
  */
 
 // sync_accounts response
@@ -9405,9 +9456,8 @@ export interface SyncAccountsRequest {
  * Response from account sync operation. Returns per-account results with status and billing, or operation-level errors on complete failure.
  */
 export type SyncAccountsResponse = SyncAccountsSuccess | SyncAccountsError;
-
 /**
- * Sync operation processed accounts (individual accounts may be pending or have action=failed)
+ * Brand identifier within the house portfolio. Optional for single-brand domains.
  */
 export interface SyncAccountsSuccess {
   /**
@@ -9418,22 +9468,11 @@ export interface SyncAccountsSuccess {
    * Results for each account processed
    */
   accounts: {
-    /**
-     * Seller-assigned account identifier. When billing is 'agent', multiple brands may share the same account_id.
-     */
-    account_id?: string;
-    /**
-     * House domain, echoed from the request
-     */
-    house: string;
-    /**
-     * Brand ID within the house portfolio, echoed from request
-     */
-    brand_id?: string;
+    brand: BrandReference;
     /**
      * Operator domain, echoed from request
      */
-    operator?: string;
+    operator: string;
     /**
      * Human-readable account name assigned by the seller
      */
@@ -9443,17 +9482,17 @@ export interface SyncAccountsSuccess {
      */
     action: 'created' | 'updated' | 'unchanged' | 'failed';
     /**
-     * Account status. active: ready for use. pending_approval: seller reviewing (credit, legal). payment_required: credit limit reached or funds depleted. suspended: was active, now paused. closed: terminated.
+     * Account status. active: ready for use. pending_approval: seller reviewing (credit, legal). rejected: seller declined the account request. payment_required: credit limit reached or funds depleted. suspended: was active, now paused. closed: was active, now terminated.
      */
-    status: 'active' | 'pending_approval' | 'payment_required' | 'suspended' | 'closed';
+    status: 'active' | 'pending_approval' | 'rejected' | 'payment_required' | 'suspended' | 'closed';
     /**
-     * Who is invoiced on this account. May differ from the requested billing if the seller doesn't support it.
+     * Who is invoiced on this account. Matches the requested billing model.
      */
-    billing?: 'brand' | 'operator' | 'agent';
+    billing?: 'operator' | 'agent';
     /**
-     * Parent account ID when this account is a sub-account under a shared billing account
+     * How the seller scoped this account. operator: shared across all brands for this operator. brand: shared across all operators for this brand. operator_brand: dedicated to this operator+brand pair. agent: the agent's default account.
      */
-    parent_account_id?: string;
+    account_scope?: 'operator' | 'brand' | 'operator_brand' | 'agent';
     /**
      * Setup information for pending accounts. Provides the agent (or human) with next steps to complete account activation.
      */
@@ -9500,7 +9539,7 @@ export interface SyncAccountsSuccess {
   ext?: ExtensionObject;
 }
 /**
- * Standard error structure for task-specific errors and warnings
+ * Brand reference, echoed from the request
  */
 export interface SyncAccountsError {
   /**
@@ -9514,7 +9553,7 @@ export interface SyncAccountsError {
 
 // report_usage parameters
 /**
- * Reports how a vendor's service was consumed after campaign delivery. Used by orchestrators (DSPs, storefronts) to inform vendor agents (signals, governance, creative) what was used so the vendor can track earned revenue and verify billing. Records can span multiple accounts, operators, and campaigns in a single request.
+ * Account for this usage record.
  */
 export interface ReportUsageRequest {
   /**
@@ -9531,13 +9570,10 @@ export interface ReportUsageRequest {
     end: string;
   };
   /**
-   * One or more usage records. Each record is self-contained: it carries its own account_id, operator_id, and buyer_campaign_ref, allowing a single request to span multiple accounts, operators, and campaigns.
+   * One or more usage records. Each record is self-contained: it carries its own account, operator_id, and buyer_campaign_ref, allowing a single request to span multiple accounts, operators, and campaigns.
    */
   usage: {
-    /**
-     * The account with this vendor agent for this record, obtained from sync_accounts.
-     */
-    account_id: string;
+    account: AccountReference;
     /**
      * The operator on whose behalf this usage is reported. Identifies the billing party — the entity that owes the vendor for this consumption.
      */
@@ -9583,7 +9619,7 @@ export interface ReportUsageRequest {
   ext?: ExtensionObject;
 }
 /**
- * Opaque correlation data that is echoed unchanged in responses. Used for internal tracking, UI session IDs, trace IDs, and other caller-specific identifiers that don't affect protocol behavior. Context data is never parsed by AdCP agents - it's simply preserved and returned.
+ * Brand reference identifying the advertiser
  */
 
 // report_usage response
@@ -9603,6 +9639,169 @@ export interface ReportUsageResponse {
    * When true, the account is a sandbox account and no billing occurred.
    */
   sandbox?: boolean;
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Standard error structure for task-specific errors and warnings
+ */
+
+// get_account_financials parameters
+/**
+ * Account to query financials for. Must be an operator-billed account.
+ */
+export interface GetAccountFinancialsRequest {
+  account: AccountReference;
+  /**
+   * Date range for the spend summary. Defaults to the current billing cycle if omitted.
+   */
+  period?: {
+    /**
+     * Period start (ISO 8601 date)
+     */
+    start: string;
+    /**
+     * Period end (ISO 8601 date)
+     */
+    end: string;
+  };
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Brand reference identifying the advertiser
+ */
+
+// get_account_financials response
+/**
+ * Financial status for an operator-billed account. Returns spend summary, credit/balance status, payment status, and invoice history. The level of detail varies by seller — only account, currency, and period are guaranteed on success.
+ */
+export type GetAccountFinancialsResponse = GetAccountFinancialsSuccess | GetAccountFinancialsError;
+/**
+ * Account reference, echoed from the request
+ */
+export interface GetAccountFinancialsSuccess {
+  account: AccountReference;
+  /**
+   * ISO 4217 currency code for all monetary amounts in this response
+   */
+  currency: string;
+  /**
+   * The actual period covered by spend data. May differ from the requested period if the seller adjusts to billing cycle boundaries.
+   */
+  period: {
+    /**
+     * Period start (ISO 8601 date)
+     */
+    start: string;
+    /**
+     * Period end (ISO 8601 date)
+     */
+    end: string;
+  };
+  /**
+   * Spend summary for the period
+   */
+  spend?: {
+    /**
+     * Total spend in the period, in currency
+     */
+    total_spend: number;
+    /**
+     * Number of active media buys in the period
+     */
+    media_buy_count?: number;
+  };
+  /**
+   * Credit status. Present for credit-based accounts (payment_terms like net_30).
+   */
+  credit?: {
+    /**
+     * Maximum outstanding balance allowed
+     */
+    credit_limit: number;
+    /**
+     * Remaining credit available (credit_limit minus outstanding balance)
+     */
+    available_credit: number;
+    /**
+     * Credit utilization as a percentage (0-100)
+     */
+    utilization_percent?: number;
+  };
+  /**
+   * Prepay balance. Present for prepay accounts.
+   */
+  balance?: {
+    /**
+     * Remaining prepaid balance
+     */
+    available: number;
+    /**
+     * Most recent balance top-up
+     */
+    last_top_up?: {
+      /**
+       * Top-up amount
+       */
+      amount: number;
+      /**
+       * Date of top-up
+       */
+      date: string;
+    };
+  };
+  /**
+   * Overall payment status. current: all obligations met. past_due: one or more invoices overdue. suspended: account suspended due to payment issues.
+   */
+  payment_status?: 'current' | 'past_due' | 'suspended';
+  /**
+   * Payment terms in effect (e.g., 'net_30', 'prepay')
+   */
+  payment_terms?: string;
+  /**
+   * Recent invoices. Sellers may limit the number returned.
+   */
+  invoices?: {
+    /**
+     * Seller-assigned invoice identifier
+     */
+    invoice_id: string;
+    /**
+     * Billing period covered by this invoice
+     */
+    period?: {
+      start: string;
+      end: string;
+    };
+    /**
+     * Invoice total in currency
+     */
+    amount: number;
+    /**
+     * Invoice status
+     */
+    status: 'draft' | 'issued' | 'paid' | 'past_due' | 'void';
+    /**
+     * Payment due date
+     */
+    due_date?: string;
+    /**
+     * Date payment was received. Present when status is 'paid'.
+     */
+    paid_date?: string;
+  }[];
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Brand reference identifying the advertiser
+ */
+export interface GetAccountFinancialsError {
+  /**
+   * Operation-level errors
+   */
+  errors: Error[];
   context?: ContextObject;
   ext?: ExtensionObject;
 }
