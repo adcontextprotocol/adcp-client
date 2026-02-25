@@ -238,6 +238,109 @@ export function normalizeProductPricing(product: any): any {
 }
 
 /**
+ * Adapt a get_products request for a v2 server.
+ *
+ * Converts v3 fields to their v2 equivalents:
+ * - brand (BrandReference) → brand_manifest (string URL)
+ * - catalog → promoted_offerings (type='offering') or promoted_offerings.product_selectors (type='product')
+ * - channels in filters → v2 channel names
+ *
+ * Strips v3-only fields v2 agents don't understand:
+ * - buying_mode, buyer_campaign_ref, property_list, account_id, pagination (top-level)
+ * - filters: required_features, required_axe_integrations, required_geo_targeting,
+ *            signal_targeting, regions, metros
+ */
+export function adaptGetProductsRequestForV2(request: any): any {
+  const adapted: any = { ...request };
+
+  // Convert v3 brand (BrandReference) → v2 brand_manifest (string URL)
+  if (adapted.brand?.domain) {
+    adapted.brand_manifest = `https://${adapted.brand.domain}/.well-known/brand.json`;
+    delete adapted.brand;
+  }
+
+  // Convert v3 catalog → v2 promoted_offerings
+  if (adapted.catalog) {
+    const catalog = adapted.catalog;
+    if (catalog.type === 'product') {
+      adapted.promoted_offerings = {
+        product_selectors: {
+          ...(catalog.gtins?.length && { manifest_gtins: catalog.gtins }),
+          ...(catalog.ids?.length && { manifest_skus: catalog.ids }),
+          ...(catalog.tags?.length && { manifest_tags: catalog.tags }),
+          ...(catalog.category && { manifest_category: catalog.category }),
+          ...(catalog.query && { manifest_query: catalog.query }),
+        },
+      };
+    } else if (catalog.type === 'offering') {
+      adapted.promoted_offerings = {
+        ...(catalog.items?.length && { offerings: catalog.items }),
+      };
+    }
+    delete adapted.catalog;
+  }
+
+  // Map v3 channel names to v2 equivalents
+  if (adapted.filters?.channels) {
+    const v2ChannelMap: Record<string, string> = {
+      olv: 'video',
+      ctv: 'video',
+      streaming_audio: 'audio',
+      retail_media: 'retail',
+    };
+    // Deduplicate after mapping (e.g. olv+ctv both become 'video')
+    const mapped = adapted.filters.channels.map((ch: string) => v2ChannelMap[ch] ?? ch);
+    adapted.filters = {
+      ...adapted.filters,
+      channels: [...new Set(mapped)],
+    };
+  }
+
+  // Strip v3-only filter fields (format_ids exists in both v2 and v3, keep it)
+  if (adapted.filters) {
+    const {
+      required_features,
+      required_axe_integrations,
+      required_geo_targeting,
+      signal_targeting,
+      regions,
+      metros,
+      ...v2Filters
+    } = adapted.filters;
+    adapted.filters = v2Filters;
+  }
+
+  // Strip v3-only top-level fields
+  delete adapted.buying_mode;
+  delete adapted.buyer_campaign_ref;
+  delete adapted.property_list;
+  delete adapted.account_id;
+  delete adapted.pagination;
+
+  return adapted;
+}
+
+/**
+ * Normalize v2 channel names on a product to v3.
+ * v2 used coarser buckets; some map one-to-many (e.g. 'video' → ['olv', 'ctv']).
+ */
+export function normalizeProductChannels(product: any): any {
+  if (!product?.channels || !Array.isArray(product.channels)) {
+    return product;
+  }
+
+  const v3ChannelMap: Record<string, string[]> = {
+    video: ['olv', 'ctv'],
+    audio: ['streaming_audio'],
+    native: ['display'],
+    retail: ['retail_media'],
+  };
+
+  const normalized = product.channels.flatMap((ch: string) => v3ChannelMap[ch] ?? [ch]);
+  return { ...product, channels: [...new Set(normalized)] };
+}
+
+/**
  * Normalize all products in a get_products response to v3
  */
 export function normalizeGetProductsResponse(response: any): any {
@@ -247,7 +350,7 @@ export function normalizeGetProductsResponse(response: any): any {
 
   return {
     ...response,
-    products: response.products.map(normalizeProductPricing),
+    products: response.products.map((p: any) => normalizeProductChannels(normalizeProductPricing(p))),
   };
 }
 
