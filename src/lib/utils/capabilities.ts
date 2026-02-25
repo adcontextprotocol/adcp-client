@@ -248,7 +248,7 @@ export function parseCapabilitiesResponse(response: any): AdcpCapabilities {
     account = {
       requireOperatorAuth: response.account.require_operator_auth ?? false,
       authorizationEndpoint: response.account.authorization_endpoint,
-      supportedBilling: response.account.supported_billing,
+      supportedBilling: response.account.supported_billing ?? [],
       defaultBilling: response.account.default_billing,
       requiredForProducts: response.account.required_for_products ?? false,
     };

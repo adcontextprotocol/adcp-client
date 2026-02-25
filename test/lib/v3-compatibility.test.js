@@ -216,6 +216,20 @@ describe('parseCapabilitiesResponse', () => {
     assert.strictEqual(capabilities.account.defaultBilling, undefined);
     assert.strictEqual(capabilities.account.requiredForProducts, false);
   });
+
+  test('should default supported_billing to empty array when absent', () => {
+    const response = {
+      adcp: { major_versions: [3] },
+      supported_protocols: ['media_buy'],
+      account: {},
+      extensions_supported: [],
+    };
+
+    const capabilities = parseCapabilitiesResponse(response);
+
+    assert.ok(capabilities.account);
+    assert.deepStrictEqual(capabilities.account.supportedBilling, []);
+  });
 });
 
 describe('Capability Checks', () => {
