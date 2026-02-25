@@ -169,6 +169,50 @@ describe('parseCapabilitiesResponse', () => {
     assert.strictEqual(capabilities.features.contentStandards, true);
     assert.deepStrictEqual(capabilities.extensions, ['scope3']);
     assert.strictEqual(capabilities._synthetic, false);
+    assert.strictEqual(capabilities.account, undefined);
+  });
+
+  test('should parse account capabilities when present', () => {
+    const response = {
+      adcp: { major_versions: [3] },
+      supported_protocols: ['media_buy'],
+      account: {
+        require_operator_auth: true,
+        authorization_endpoint: 'https://seller.example.com/oauth/authorize',
+        supported_billing: ['operator', 'agent'],
+        default_billing: 'operator',
+        required_for_products: true,
+      },
+      extensions_supported: [],
+    };
+
+    const capabilities = parseCapabilitiesResponse(response);
+
+    assert.ok(capabilities.account, 'account capabilities should be present');
+    assert.strictEqual(capabilities.account.requireOperatorAuth, true);
+    assert.strictEqual(capabilities.account.authorizationEndpoint, 'https://seller.example.com/oauth/authorize');
+    assert.deepStrictEqual(capabilities.account.supportedBilling, ['operator', 'agent']);
+    assert.strictEqual(capabilities.account.defaultBilling, 'operator');
+    assert.strictEqual(capabilities.account.requiredForProducts, true);
+  });
+
+  test('should apply account capability defaults when fields are absent', () => {
+    const response = {
+      adcp: { major_versions: [3] },
+      supported_protocols: ['media_buy'],
+      account: {
+        supported_billing: ['brand'],
+      },
+      extensions_supported: [],
+    };
+
+    const capabilities = parseCapabilitiesResponse(response);
+
+    assert.ok(capabilities.account);
+    assert.strictEqual(capabilities.account.requireOperatorAuth, false);
+    assert.strictEqual(capabilities.account.authorizationEndpoint, undefined);
+    assert.strictEqual(capabilities.account.defaultBilling, undefined);
+    assert.strictEqual(capabilities.account.requiredForProducts, false);
   });
 });
 

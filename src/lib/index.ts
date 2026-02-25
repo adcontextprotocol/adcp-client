@@ -340,6 +340,7 @@ export type {
   AdcpCapabilities,
   AdcpMajorVersion,
   AdcpProtocol,
+  AccountCapabilities,
   MediaBuyFeatures,
   ToolInfo,
 } from './utils/capabilities';
