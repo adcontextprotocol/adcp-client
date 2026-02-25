@@ -250,7 +250,9 @@ describe('Capability Checks', () => {
   });
 
   test('requiresOperatorAuth should return true when set', () => {
-    const capabilities = { account: { requireOperatorAuth: true, supportedBilling: ['operator'], requiredForProducts: false } };
+    const capabilities = {
+      account: { requireOperatorAuth: true, supportedBilling: ['operator'], requiredForProducts: false },
+    };
     assert.strictEqual(requiresOperatorAuth(capabilities), true);
   });
 
@@ -260,7 +262,9 @@ describe('Capability Checks', () => {
   });
 
   test('requiresAccountForProducts should return true when set', () => {
-    const capabilities = { account: { requireOperatorAuth: false, supportedBilling: ['brand'], requiredForProducts: true } };
+    const capabilities = {
+      account: { requireOperatorAuth: false, supportedBilling: ['brand'], requiredForProducts: true },
+    };
     assert.strictEqual(requiresAccountForProducts(capabilities), true);
   });
 
