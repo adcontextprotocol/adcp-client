@@ -241,7 +241,7 @@ export function normalizeProductPricing(product: any): any {
  * Adapt a get_products request for a v2 server.
  *
  * Converts v3 fields to their v2 equivalents:
- * - brand (BrandReference) → brand_manifest (object with domain + URL)
+ * - brand (BrandReference) → brand_manifest (base domain URL string)
  * - catalog → promoted_offerings (type='offering') or promoted_offerings.product_selectors (type='product')
  * - channels in filters → v2 channel names
  *
@@ -253,13 +253,12 @@ export function normalizeProductPricing(product: any): any {
 export function adaptGetProductsRequestForV2(request: any): any {
   const adapted: any = { ...request };
 
-  // Convert v3 brand (BrandReference) → v2 brand_manifest (inline object).
-  // V2 servers expect brand information as an object, not a bare URL string.
+  // Convert v3 brand (BrandReference) → v2 brand_manifest (string URL).
+  // Use the base domain URL — v2 servers resolve brand info from there.
+  // Do not append /.well-known/brand.json; that path may not exist and
+  // would cause servers to return "brand_manifest must provide brand information".
   if (adapted.brand?.domain) {
-    adapted.brand_manifest = {
-      name: adapted.brand.domain,
-      url: `https://${adapted.brand.domain}`,
-    };
+    adapted.brand_manifest = `https://${adapted.brand.domain}`;
     delete adapted.brand;
   }
 
