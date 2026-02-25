@@ -45,7 +45,9 @@ export interface AccountCapabilities {
 
   /**
    * OAuth authorization endpoint for obtaining operator-level credentials.
-   * Present when require_operator_auth is true and the seller supports OAuth.
+   * Present when the seller supports OAuth for operator authentication.
+   * May be absent even when requireOperatorAuth is true — in that case,
+   * operators obtain credentials out-of-band (e.g., seller portal, API key).
    */
   authorizationEndpoint?: string;
 
@@ -246,7 +248,7 @@ export function parseCapabilitiesResponse(response: any): AdcpCapabilities {
     account = {
       requireOperatorAuth: response.account.require_operator_auth ?? false,
       authorizationEndpoint: response.account.authorization_endpoint,
-      supportedBilling: response.account.supported_billing ?? [],
+      supportedBilling: response.account.supported_billing,
       defaultBilling: response.account.default_billing,
       requiredForProducts: response.account.required_for_products ?? false,
     };
@@ -293,4 +295,18 @@ export function supportsPropertyListFiltering(capabilities: AdcpCapabilities): b
  */
 export function supportsContentStandards(capabilities: AdcpCapabilities): boolean {
   return capabilities.features.contentStandards ?? false;
+}
+
+/**
+ * Check if the seller requires per-operator authentication
+ */
+export function requiresOperatorAuth(capabilities: AdcpCapabilities): boolean {
+  return capabilities.account?.requireOperatorAuth ?? false;
+}
+
+/**
+ * Check if an active account is required before calling get_products
+ */
+export function requiresAccountForProducts(capabilities: AdcpCapabilities): boolean {
+  return capabilities.account?.requiredForProducts ?? false;
 }

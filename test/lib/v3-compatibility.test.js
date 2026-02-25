@@ -15,6 +15,8 @@ const {
   supportsProtocol,
   supportsPropertyListFiltering,
   supportsContentStandards,
+  requiresOperatorAuth,
+  requiresAccountForProducts,
   MEDIA_BUY_TOOLS,
   SIGNALS_TOOLS,
   CREATIVE_TOOLS,
@@ -231,6 +233,26 @@ describe('Capability Checks', () => {
     const capabilities = { protocols: ['media_buy', 'creative'] };
     assert.strictEqual(supportsProtocol(capabilities, 'media_buy'), true);
     assert.strictEqual(supportsProtocol(capabilities, 'signals'), false);
+  });
+
+  test('requiresOperatorAuth should return true when set', () => {
+    const capabilities = { account: { requireOperatorAuth: true, supportedBilling: ['operator'], requiredForProducts: false } };
+    assert.strictEqual(requiresOperatorAuth(capabilities), true);
+  });
+
+  test('requiresOperatorAuth should return false when account is absent', () => {
+    const capabilities = { account: undefined };
+    assert.strictEqual(requiresOperatorAuth(capabilities), false);
+  });
+
+  test('requiresAccountForProducts should return true when set', () => {
+    const capabilities = { account: { requireOperatorAuth: false, supportedBilling: ['brand'], requiredForProducts: true } };
+    assert.strictEqual(requiresAccountForProducts(capabilities), true);
+  });
+
+  test('requiresAccountForProducts should return false when account is absent', () => {
+    const capabilities = { account: undefined };
+    assert.strictEqual(requiresAccountForProducts(capabilities), false);
   });
 });
 

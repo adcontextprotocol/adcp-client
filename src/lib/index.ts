@@ -328,6 +328,8 @@ export {
   supportsProtocol,
   supportsPropertyListFiltering,
   supportsContentStandards,
+  requiresOperatorAuth,
+  requiresAccountForProducts,
   MEDIA_BUY_TOOLS,
   SIGNALS_TOOLS,
   GOVERNANCE_TOOLS,
