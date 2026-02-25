@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.24.0
+
+### Minor Changes
+
+- 081dc21: Add `findCompany()` to RegistryClient for resolving colloquial brand names to canonical forms via `GET /api/brands/find`
+- b3a03f8: Infer buying_mode from brief presence on get_products for backwards compatibility
+
 ## 3.23.0
 
 ### Minor Changes
