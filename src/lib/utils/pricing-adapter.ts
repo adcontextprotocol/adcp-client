@@ -298,7 +298,15 @@ export function adaptGetProductsRequestForV2(request: any): any {
 
   // Strip v3-only filter fields (format_ids exists in both v2 and v3, keep it)
   if (adapted.filters) {
-    const { required_features, required_axe_integrations, required_geo_targeting, signal_targeting, regions, metros, ...v2Filters } = adapted.filters;
+    const {
+      required_features,
+      required_axe_integrations,
+      required_geo_targeting,
+      signal_targeting,
+      regions,
+      metros,
+      ...v2Filters
+    } = adapted.filters;
     adapted.filters = v2Filters;
   }
 
