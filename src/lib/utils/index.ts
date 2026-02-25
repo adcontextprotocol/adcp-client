@@ -155,6 +155,8 @@ export {
 
 // Re-export pricing adapter utilities (v3 pricing field compatibility)
 export {
+  adaptGetProductsRequestForV2,
+  normalizeProductChannels,
   adaptPricingOptionForV2,
   normalizePricingOption,
   normalizeProductPricing,

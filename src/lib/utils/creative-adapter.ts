@@ -55,45 +55,46 @@ export interface PackageResponseV2 {
 /**
  * Adapt a v3-style package request for a v2 server.
  * Converts creative_assignments to creative_ids (dropping weight and placement_ids).
+ * Strips v3-only package fields (optimization_goal).
  */
 export function adaptPackageRequestForV2(pkg: PackageRequestV3): PackageRequestV2 {
-  if (!pkg.creative_assignments) {
-    return pkg as PackageRequestV2;
+  const { optimization_goal, ...rest } = pkg as any;
+
+  if (!rest.creative_assignments) {
+    return rest as PackageRequestV2;
   }
 
-  const { creative_assignments, ...rest } = pkg;
+  const { creative_assignments, ...withoutAssignments } = rest;
 
   return {
-    ...rest,
-    creative_ids: creative_assignments.map(a => a.creative_id),
+    ...withoutAssignments,
+    creative_ids: creative_assignments.map((a: CreativeAssignment) => a.creative_id),
   };
 }
 
 /**
  * Adapt a create_media_buy request for a v2 server.
+ * Strips v3-only top-level fields and adapts packages.
  */
 export function adaptCreateMediaBuyRequestForV2(request: any): any {
-  if (!request.packages) {
-    return request;
-  }
+  const { account_id, proposal_id, total_budget, artifact_webhook, ...rest } = request;
 
   return {
-    ...request,
-    packages: request.packages.map(adaptPackageRequestForV2),
+    ...rest,
+    ...(rest.packages && { packages: rest.packages.map(adaptPackageRequestForV2) }),
   };
 }
 
 /**
  * Adapt an update_media_buy request for a v2 server.
+ * Strips v3-only top-level fields and adapts packages.
  */
 export function adaptUpdateMediaBuyRequestForV2(request: any): any {
-  if (!request.packages) {
-    return request;
-  }
+  const { reporting_webhook, ...rest } = request;
 
   return {
-    ...request,
-    packages: request.packages.map(adaptPackageRequestForV2),
+    ...rest,
+    ...(rest.packages && { packages: rest.packages.map(adaptPackageRequestForV2) }),
   };
 }
 

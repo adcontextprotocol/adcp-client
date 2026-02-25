@@ -58,7 +58,8 @@ import {
 } from '../utils/creative-adapter';
 import { normalizeFormatsResponse } from '../utils/format-renders';
 import { normalizePreviewCreativeResponse } from '../utils/preview-normalizer';
-import { normalizeGetProductsResponse } from '../utils/pricing-adapter';
+import { normalizeGetProductsResponse, adaptGetProductsRequestForV2 } from '../utils/pricing-adapter';
+import { brandManifestToBrandReference, promotedProductsToCatalog } from '../types/compat';
 
 /**
  * Error class for v3 feature compatibility issues
@@ -930,6 +931,9 @@ export class SingleAgentClient {
 
     // Adapt v3 requests for v2 servers
     switch (taskType) {
+      case 'get_products':
+        return adaptGetProductsRequestForV2(params);
+
       case 'create_media_buy':
         return adaptCreateMediaBuyRequestForV2(params);
 
@@ -2010,13 +2014,38 @@ export class SingleAgentClient {
    * written against older schema versions keep working.
    */
   private normalizeRequestParams(taskType: string, params: any): any {
-    if (taskType === 'get_products' && params && !params.buying_mode) {
-      return {
-        buying_mode: params.brief ? 'brief' : 'wholesale',
-        ...params,
+    if (taskType !== 'get_products' || !params) {
+      return params;
+    }
+
+    let normalized = { ...params };
+
+    // Infer buying_mode from brief presence if not supplied
+    if (!normalized.buying_mode) {
+      normalized = {
+        buying_mode: normalized.brief ? 'brief' : 'wholesale',
+        ...normalized,
       };
     }
-    return params;
+
+    // Convert legacy brand_manifest → brand (BrandReference) so strict validation passes.
+    // brand takes precedence if both are supplied.
+    if (normalized.brand_manifest && !normalized.brand) {
+      const brand = brandManifestToBrandReference(normalized.brand_manifest);
+      if (brand) {
+        normalized.brand = brand;
+      }
+    }
+    delete normalized.brand_manifest;
+
+    // Convert legacy product_selectors (v3 beta / v2 era) → catalog so strict validation passes.
+    // catalog takes precedence if both are supplied.
+    if (normalized.product_selectors && !normalized.catalog) {
+      normalized.catalog = promotedProductsToCatalog(normalized.product_selectors);
+    }
+    delete normalized.product_selectors;
+
+    return normalized;
   }
 
   /**
