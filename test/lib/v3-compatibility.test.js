@@ -15,6 +15,8 @@ const {
   supportsProtocol,
   supportsPropertyListFiltering,
   supportsContentStandards,
+  requiresOperatorAuth,
+  requiresAccountForProducts,
   MEDIA_BUY_TOOLS,
   SIGNALS_TOOLS,
   CREATIVE_TOOLS,
@@ -169,6 +171,64 @@ describe('parseCapabilitiesResponse', () => {
     assert.strictEqual(capabilities.features.contentStandards, true);
     assert.deepStrictEqual(capabilities.extensions, ['scope3']);
     assert.strictEqual(capabilities._synthetic, false);
+    assert.strictEqual(capabilities.account, undefined);
+  });
+
+  test('should parse account capabilities when present', () => {
+    const response = {
+      adcp: { major_versions: [3] },
+      supported_protocols: ['media_buy'],
+      account: {
+        require_operator_auth: true,
+        authorization_endpoint: 'https://seller.example.com/oauth/authorize',
+        supported_billing: ['operator', 'agent'],
+        default_billing: 'operator',
+        required_for_products: true,
+      },
+      extensions_supported: [],
+    };
+
+    const capabilities = parseCapabilitiesResponse(response);
+
+    assert.ok(capabilities.account, 'account capabilities should be present');
+    assert.strictEqual(capabilities.account.requireOperatorAuth, true);
+    assert.strictEqual(capabilities.account.authorizationEndpoint, 'https://seller.example.com/oauth/authorize');
+    assert.deepStrictEqual(capabilities.account.supportedBilling, ['operator', 'agent']);
+    assert.strictEqual(capabilities.account.defaultBilling, 'operator');
+    assert.strictEqual(capabilities.account.requiredForProducts, true);
+  });
+
+  test('should apply account capability defaults when fields are absent', () => {
+    const response = {
+      adcp: { major_versions: [3] },
+      supported_protocols: ['media_buy'],
+      account: {
+        supported_billing: ['brand'],
+      },
+      extensions_supported: [],
+    };
+
+    const capabilities = parseCapabilitiesResponse(response);
+
+    assert.ok(capabilities.account);
+    assert.strictEqual(capabilities.account.requireOperatorAuth, false);
+    assert.strictEqual(capabilities.account.authorizationEndpoint, undefined);
+    assert.strictEqual(capabilities.account.defaultBilling, undefined);
+    assert.strictEqual(capabilities.account.requiredForProducts, false);
+  });
+
+  test('should default supported_billing to empty array when absent', () => {
+    const response = {
+      adcp: { major_versions: [3] },
+      supported_protocols: ['media_buy'],
+      account: {},
+      extensions_supported: [],
+    };
+
+    const capabilities = parseCapabilitiesResponse(response);
+
+    assert.ok(capabilities.account);
+    assert.deepStrictEqual(capabilities.account.supportedBilling, []);
   });
 });
 
@@ -187,6 +247,30 @@ describe('Capability Checks', () => {
     const capabilities = { protocols: ['media_buy', 'creative'] };
     assert.strictEqual(supportsProtocol(capabilities, 'media_buy'), true);
     assert.strictEqual(supportsProtocol(capabilities, 'signals'), false);
+  });
+
+  test('requiresOperatorAuth should return true when set', () => {
+    const capabilities = {
+      account: { requireOperatorAuth: true, supportedBilling: ['operator'], requiredForProducts: false },
+    };
+    assert.strictEqual(requiresOperatorAuth(capabilities), true);
+  });
+
+  test('requiresOperatorAuth should return false when account is absent', () => {
+    const capabilities = { account: undefined };
+    assert.strictEqual(requiresOperatorAuth(capabilities), false);
+  });
+
+  test('requiresAccountForProducts should return true when set', () => {
+    const capabilities = {
+      account: { requireOperatorAuth: false, supportedBilling: ['brand'], requiredForProducts: true },
+    };
+    assert.strictEqual(requiresAccountForProducts(capabilities), true);
+  });
+
+  test('requiresAccountForProducts should return false when account is absent', () => {
+    const capabilities = { account: undefined };
+    assert.strictEqual(requiresAccountForProducts(capabilities), false);
   });
 });
 

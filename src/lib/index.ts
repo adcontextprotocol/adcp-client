@@ -328,6 +328,8 @@ export {
   supportsProtocol,
   supportsPropertyListFiltering,
   supportsContentStandards,
+  requiresOperatorAuth,
+  requiresAccountForProducts,
   MEDIA_BUY_TOOLS,
   SIGNALS_TOOLS,
   GOVERNANCE_TOOLS,
@@ -340,6 +342,7 @@ export type {
   AdcpCapabilities,
   AdcpMajorVersion,
   AdcpProtocol,
+  AccountCapabilities,
   MediaBuyFeatures,
   ToolInfo,
 } from './utils/capabilities';

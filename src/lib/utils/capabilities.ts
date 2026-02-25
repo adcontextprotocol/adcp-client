@@ -33,6 +33,41 @@ export interface MediaBuyFeatures {
 }
 
 /**
+ * Account management capabilities declared by the seller
+ */
+export interface AccountCapabilities {
+  /**
+   * Whether the seller requires operator-level credentials.
+   * When false (default), the agent authenticates once and declares brands/operators via sync_accounts.
+   * When true, each operator must authenticate independently.
+   */
+  requireOperatorAuth: boolean;
+
+  /**
+   * OAuth authorization endpoint for obtaining operator-level credentials.
+   * Present when the seller supports OAuth for operator authentication.
+   * May be absent even when requireOperatorAuth is true — in that case,
+   * operators obtain credentials out-of-band (e.g., seller portal, API key).
+   */
+  authorizationEndpoint?: string;
+
+  /**
+   * Billing models this seller supports (e.g., 'operator', 'agent').
+   */
+  supportedBilling: ('brand' | 'operator' | 'agent')[];
+
+  /**
+   * Default billing model applied when omitted from sync_accounts.
+   */
+  defaultBilling?: 'brand' | 'operator' | 'agent';
+
+  /**
+   * Whether an active account is required before calling get_products.
+   */
+  requiredForProducts: boolean;
+}
+
+/**
  * Normalized capabilities response that works for both v2 and v3 servers
  */
 export interface AdcpCapabilities {
@@ -47,6 +82,9 @@ export interface AdcpCapabilities {
 
   /** Media buy specific features */
   features: MediaBuyFeatures;
+
+  /** Account management capabilities */
+  account?: AccountCapabilities;
 
   /** Supported extension namespaces (e.g., 'scope3', 'garm') */
   extensions: string[];
@@ -205,11 +243,23 @@ export function parseCapabilitiesResponse(response: any): AdcpCapabilities {
     audienceManagement: response.media_buy?.features?.audience_management ?? false,
   };
 
+  let account: AccountCapabilities | undefined;
+  if (response.account) {
+    account = {
+      requireOperatorAuth: response.account.require_operator_auth ?? false,
+      authorizationEndpoint: response.account.authorization_endpoint,
+      supportedBilling: response.account.supported_billing ?? [],
+      defaultBilling: response.account.default_billing,
+      requiredForProducts: response.account.required_for_products ?? false,
+    };
+  }
+
   return {
     version: highestVersion >= 3 ? 'v3' : 'v2',
     majorVersions,
     protocols,
     features,
+    account,
     extensions: response.extensions_supported ?? [],
     publisherDomains: response.media_buy?.portfolio?.publisher_domains,
     channels: response.media_buy?.portfolio?.channels,
@@ -245,4 +295,18 @@ export function supportsPropertyListFiltering(capabilities: AdcpCapabilities): b
  */
 export function supportsContentStandards(capabilities: AdcpCapabilities): boolean {
   return capabilities.features.contentStandards ?? false;
+}
+
+/**
+ * Check if the seller requires per-operator authentication
+ */
+export function requiresOperatorAuth(capabilities: AdcpCapabilities): boolean {
+  return capabilities.account?.requireOperatorAuth ?? false;
+}
+
+/**
+ * Check if an active account is required before calling get_products
+ */
+export function requiresAccountForProducts(capabilities: AdcpCapabilities): boolean {
+  return capabilities.account?.requiredForProducts ?? false;
 }
