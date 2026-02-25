@@ -235,6 +235,24 @@ npm run test:all          # Full test suite
 - `test/e2e/` - Integration tests
 - `examples/` - Usage examples and demos
 
+## Backwards Compatibility
+
+**This is a published npm library. Callers on older versions must not break when we add new required fields.**
+
+When adding a new required field to a request schema:
+1. **Infer it from existing fields** in `SingleAgentClient.normalizeRequestParams()` so callers that don't send it still work
+2. **Update all internal callers** (testing scenarios, server handlers) to send the field explicitly
+3. **Add tests** verifying the inference works and that explicit values are preserved
+
+Example: `buying_mode` was added as required on `get_products`. The client infers it from `brief` presence — callers that only sent `{ brief: '...' }` keep working.
+
+The pattern:
+- `normalizeRequestParams()` runs before validation, filling in derivable fields
+- `validateRequest()` runs Zod schemas after normalization
+- `adaptRequestForServerVersion()` handles v3→v2 downgrades for older servers
+
+**Never add a required field without a backwards-compatible default or inference path.**
+
 ## Common Gotchas
 
 1. **Protocol clients**: Always use official `@a2a-js/sdk` and `@modelcontextprotocol/sdk`
@@ -242,6 +260,7 @@ npm run test:all          # Full test suite
 3. **Mock data**: Never inject fallback data when agents return empty responses
 4. **Version management**: Let changesets handle package.json, edit ADCP_VERSION separately
 5. **Debug logs**: UI expects specific format with separate request/response entries
+6. **Backwards compatibility**: New required schema fields need inference in `normalizeRequestParams()`
 
 ## Debug Log Format (DO NOT CHANGE)
 

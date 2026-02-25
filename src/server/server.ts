@@ -365,6 +365,11 @@ function buildToolArgs(toolName: string, brief?: string, promotedOffering?: stri
   const brandAcceptingTools = ['get_products', 'create_media_buy'];
 
   // Only add parameters that the tool accepts
+  // Note: SingleAgentClient.normalizeRequestParams() also infers buying_mode,
+  // but the server uses executeTaskOnAgent() which may bypass that path.
+  if (toolName === 'get_products') {
+    args.buying_mode = brief ? 'brief' : 'wholesale';
+  }
   if (briefAcceptingTools.includes(toolName) && brief) {
     args.brief = brief;
   }

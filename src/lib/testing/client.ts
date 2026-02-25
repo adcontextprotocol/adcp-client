@@ -174,6 +174,7 @@ export async function discoverAgentCapabilities(
 
   const brief = options.brief || 'Show me all available advertising products across all channels';
   const getProductsParams: Record<string, unknown> = {
+    buying_mode: 'brief',
     brief,
     brand: resolveBrand(options),
   };

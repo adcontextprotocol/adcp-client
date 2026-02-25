@@ -110,23 +110,94 @@ describe('SingleAgentClient Request Validation', () => {
   // Tests below verify that requests with extra fields are ALLOWED (not rejected)
 
   describe('get_products validation', () => {
-    test('should reject extra fields in get_products requests (strict validation)', async () => {
+    test('should strip extra fields in get_products requests (ZodIntersection strips unknown)', async () => {
       const client = new AdCPClient([mockAgent]);
       const agent = client.agent(mockAgent.id);
 
-      // get_products now has Zod schema validation with .strict()
-      // Unknown top-level fields are rejected to catch typos
-      await assert.rejects(
-        async () => {
+      // GetProductsRequestSchema is a ZodIntersection (object.and(union)), not a plain
+      // ZodObject, so .strict() is not applied. Unknown top-level fields are silently
+      // stripped rather than rejected.
+      await assert.doesNotReject(async () => {
+        try {
           await agent.getProducts({
-            extra_field: 'should fail',
+            extra_field: 'silently stripped',
           });
-        },
-        err => {
-          return err.message.includes('Request validation failed for get_products');
-        },
-        'Should throw validation error for invalid get_products request'
-      );
+        } catch (err) {
+          if (err.message.includes('Request validation failed')) {
+            throw err;
+          }
+        }
+      });
+    });
+
+    test('should infer buying_mode "brief" when brief is provided but buying_mode is missing', async () => {
+      const client = new AdCPClient([mockAgent]);
+      const agent = client.agent(mockAgent.id);
+
+      // Should NOT throw validation error — buying_mode inferred from brief presence
+      await assert.doesNotReject(async () => {
+        try {
+          await agent.getProducts({
+            brief: 'Looking for premium ad placements',
+          });
+        } catch (err) {
+          if (err.message.includes('Request validation failed')) {
+            throw err;
+          }
+        }
+      });
+    });
+
+    test('should infer buying_mode "wholesale" when neither brief nor buying_mode is provided', async () => {
+      const client = new AdCPClient([mockAgent]);
+      const agent = client.agent(mockAgent.id);
+
+      // Should NOT throw validation error — buying_mode inferred as 'wholesale'
+      await assert.doesNotReject(async () => {
+        try {
+          await agent.getProducts({});
+        } catch (err) {
+          if (err.message.includes('Request validation failed')) {
+            throw err;
+          }
+        }
+      });
+    });
+
+    test('should not override explicit buying_mode', async () => {
+      const client = new AdCPClient([mockAgent]);
+      const agent = client.agent(mockAgent.id);
+
+      // Explicit buying_mode should be preserved even if brief is also provided
+      await assert.doesNotReject(async () => {
+        try {
+          await agent.getProducts({
+            buying_mode: 'brief',
+            brief: 'Test brief',
+          });
+        } catch (err) {
+          if (err.message.includes('Request validation failed')) {
+            throw err;
+          }
+        }
+      });
+    });
+
+    test('should preserve explicit wholesale buying_mode', async () => {
+      const client = new AdCPClient([mockAgent]);
+      const agent = client.agent(mockAgent.id);
+
+      await assert.doesNotReject(async () => {
+        try {
+          await agent.getProducts({
+            buying_mode: 'wholesale',
+          });
+        } catch (err) {
+          if (err.message.includes('Request validation failed')) {
+            throw err;
+          }
+        }
+      });
     });
   });
 

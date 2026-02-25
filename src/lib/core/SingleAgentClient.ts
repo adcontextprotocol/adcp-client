@@ -871,11 +871,14 @@ export class SingleAgentClient {
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<T>> {
+    // Normalize params for backwards compatibility before validation
+    const normalizedParams = this.normalizeRequestParams(taskType, params);
+
     // Validate request params against schema
-    this.validateRequest(taskType, params);
+    this.validateRequest(taskType, normalizedParams);
 
     // Check for v3 features used against v2 servers - return empty result if unsupported
-    const earlyResult = await this.getEarlyResultForUnsupportedFeatures<T>(taskType, params);
+    const earlyResult = await this.getEarlyResultForUnsupportedFeatures<T>(taskType, normalizedParams);
     if (earlyResult) {
       return earlyResult;
     }
@@ -883,7 +886,7 @@ export class SingleAgentClient {
     const agent = await this.ensureEndpointDiscovered();
 
     // Adapt request for v2 servers if needed
-    const adaptedParams = await this.adaptRequestForServerVersion(taskType, params);
+    const adaptedParams = await this.adaptRequestForServerVersion(taskType, normalizedParams);
 
     const result = await this.executor.executeTask<T>(agent, taskType, adaptedParams, inputHandler, options);
 
@@ -1384,8 +1387,9 @@ export class SingleAgentClient {
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<T>> {
+    const normalizedParams = this.normalizeRequestParams(taskName, params);
     const agent = await this.ensureEndpointDiscovered();
-    return this.executor.executeTask<T>(agent, taskName, params, inputHandler, options);
+    return this.executor.executeTask<T>(agent, taskName, normalizedParams, inputHandler, options);
   }
 
   // ====== DEFERRED TASK MANAGEMENT ======
@@ -1997,6 +2001,22 @@ export class SingleAgentClient {
     }
 
     return result.data.formats || [];
+  }
+
+  /**
+   * Normalize request params for backwards compatibility.
+   *
+   * Infers missing fields that can be derived from other params so callers
+   * written against older schema versions keep working.
+   */
+  private normalizeRequestParams(taskType: string, params: any): any {
+    if (taskType === 'get_products' && params && !params.buying_mode) {
+      return {
+        buying_mode: params.brief ? 'brief' : 'wholesale',
+        ...params,
+      };
+    }
+    return params;
   }
 
   /**
