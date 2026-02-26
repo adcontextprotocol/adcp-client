@@ -230,6 +230,7 @@ export type {
   CreativePolicy,
   BrandReference,
   BrandID,
+  AccountReference,
   CPAPricingOption,
   EventType,
   ActionSource,

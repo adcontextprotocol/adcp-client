@@ -2300,7 +2300,7 @@ export type AdCPAsyncResponseData =
  */
 export type CreateMediaBuyResponse = CreateMediaBuySuccess | CreateMediaBuyError;
 /**
- * Brand identifier within the house portfolio. Optional for single-brand domains.
+ * Response for a completed or failed update_media_buy
  */
 export type UpdateMediaBuyResponse = UpdateMediaBuySuccess | UpdateMediaBuyError;
 /**

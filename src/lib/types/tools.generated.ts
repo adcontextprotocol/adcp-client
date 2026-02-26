@@ -359,7 +359,7 @@ export interface CatalogFieldMapping {
  */
 export interface ExtensionObject {}
 /**
- * Brand reference identifying the advertiser
+ * Optional filters to narrow product discovery results
  */
 export interface ProductFilters {
   delivery_type?: DeliveryType;
