@@ -357,20 +357,39 @@ describe('Creative Assignment Adapter', () => {
       assert.strictEqual(result.brand_manifest, 'https://example.com');
     });
 
-    test('should throw when proposal_id is present (v3-only feature)', () => {
+    test('should throw when proposal_id is present and no packages (v3-only feature, no fallback)', () => {
       const v3Request = {
         buyer_ref: 'buyer-1',
         account: { account_id: 'acc-1' },
         proposal_id: 'prop-1',
         total_budget: { amount: 10000, currency: 'USD' },
         brand: { domain: 'example.com' },
+        // no packages — nothing for a v2 server to execute
       };
 
       assert.throws(
         () => adaptCreateMediaBuyRequestForV2(v3Request),
         err => err.message.includes('Proposal mode') && err.message.includes('v3 server'),
-        'Should throw when proposal_id is sent to a v2 server'
+        'Should throw when proposal_id is present with no packages'
       );
+    });
+
+    test('should strip proposal_id and proceed when packages are also present', () => {
+      const v3Request = {
+        buyer_ref: 'buyer-1',
+        proposal_id: 'prop-1',
+        total_budget: { amount: 10000, currency: 'USD' },
+        brand: { domain: 'example.com' },
+        packages: [{ buyer_ref: 'pkg-1', product_id: 'prod-1', budget: 1000 }],
+      };
+
+      // Should NOT throw — packages provide a valid v2 fallback
+      const result = adaptCreateMediaBuyRequestForV2(v3Request);
+
+      assert.strictEqual(result.proposal_id, undefined);
+      assert.strictEqual(result.total_budget, undefined);
+      assert.strictEqual(result.buyer_ref, 'buyer-1');
+      assert.ok(result.packages?.length === 1);
     });
 
     test('should produce a valid v2 brand_manifest URL from brand with brand_id', () => {

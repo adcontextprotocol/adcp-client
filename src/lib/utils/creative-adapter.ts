@@ -79,8 +79,10 @@ export function adaptPackageRequestForV2(pkg: PackageRequestV3): PackageRequestV
 export function adaptCreateMediaBuyRequestForV2(request: any): any {
   const { account, proposal_id, total_budget, artifact_webhook, brand, ...rest } = request;
 
-  // Proposal mode is v3-only — v2 servers require an explicit packages array.
-  if (proposal_id) {
+  // Proposal mode is v3-only. If packages are also present we can still satisfy the request
+  // by dropping proposal_id/total_budget and using the explicit packages.
+  // Only throw when there are no packages — then there's nothing to send a v2 server.
+  if (proposal_id && !rest.packages?.length) {
     throw new Error(
       'Proposal mode (proposal_id + total_budget) requires a v3 server. ' +
         'The connected server only supports AdCP v2. Provide an explicit packages array instead.'
