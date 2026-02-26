@@ -305,6 +305,57 @@ describe('Creative Assignment Adapter', () => {
 
       assert.deepStrictEqual(result.creative_ids, ['creative-1']);
     });
+
+    test('should strip optimization_goals from package', () => {
+      const v3Package = {
+        product_id: 'prod-1',
+        optimization_goals: [{ kind: 'metric', metric: 'clicks' }],
+        creative_ids: ['creative-1'],
+      };
+
+      const result = adaptPackageRequestForV2(v3Package);
+
+      assert.strictEqual(result.optimization_goals, undefined);
+      assert.deepStrictEqual(result.creative_ids, ['creative-1']);
+    });
+  });
+
+  describe('adaptCreateMediaBuyRequestForV2', () => {
+    test('should strip v3-only top-level fields', () => {
+      const v3Request = {
+        buyer_ref: 'buyer-1',
+        account: { account_id: 'acc-1' },
+        proposal_id: 'prop-1',
+        total_budget: { amount: 10000, currency: 'USD' },
+        artifact_webhook: 'https://example.com/webhook',
+        brand: { domain: 'example.com' },
+        packages: [],
+      };
+
+      const result = adaptCreateMediaBuyRequestForV2(v3Request);
+
+      assert.strictEqual(result.account, undefined);
+      assert.strictEqual(result.proposal_id, undefined);
+      assert.strictEqual(result.total_budget, undefined);
+      assert.strictEqual(result.artifact_webhook, undefined);
+      assert.strictEqual(result.buyer_ref, 'buyer-1');
+      assert.deepStrictEqual(result.brand, { domain: 'example.com' });
+    });
+  });
+
+  describe('adaptUpdateMediaBuyRequestForV2', () => {
+    test('should strip reporting_webhook', () => {
+      const v3Request = {
+        media_buy_id: 'mb-1',
+        reporting_webhook: 'https://example.com/report',
+        packages: [],
+      };
+
+      const result = adaptUpdateMediaBuyRequestForV2(v3Request);
+
+      assert.strictEqual(result.reporting_webhook, undefined);
+      assert.strictEqual(result.media_buy_id, 'mb-1');
+    });
   });
 
   describe('normalizePackageResponse', () => {
