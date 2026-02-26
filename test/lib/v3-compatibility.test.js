@@ -403,6 +403,21 @@ describe('Creative Assignment Adapter', () => {
       assert.strictEqual(result.brand_manifest, 'https://acme.com');
       assert.strictEqual(result.brand, undefined);
     });
+
+    test('should preserve brand when it has no domain (consistent with adaptGetProductsRequestForV2)', () => {
+      // If brand is present but has no domain we cannot produce a brand_manifest URL.
+      // Preserve brand in the output rather than silently dropping it, matching the
+      // behaviour of adaptGetProductsRequestForV2 which also leaves brand untouched
+      // when it cannot be converted.
+      const result = adaptCreateMediaBuyRequestForV2({
+        buyer_ref: 'buyer-1',
+        brand: { brand_id: 'br_999' }, // no domain
+        packages: [],
+      });
+
+      assert.deepStrictEqual(result.brand, { brand_id: 'br_999' });
+      assert.strictEqual(result.brand_manifest, undefined);
+    });
   });
 
   describe('adaptUpdateMediaBuyRequestForV2', () => {
@@ -417,6 +432,18 @@ describe('Creative Assignment Adapter', () => {
 
       assert.strictEqual(result.reporting_webhook, undefined);
       assert.strictEqual(result.media_buy_id, 'mb-1');
+    });
+
+    test('should not modify brand-related fields (neither v2 nor v3 update_media_buy schema has a brand field)', () => {
+      // The update_media_buy schema has no brand field in v2 or v3, so the adapter
+      // must not convert or strip any brand-related data — pass through unchanged.
+      const result = adaptUpdateMediaBuyRequestForV2({
+        media_buy_id: 'mb-1',
+        brand: { domain: 'example.com' },
+      });
+
+      assert.deepStrictEqual(result.brand, { domain: 'example.com' });
+      assert.strictEqual(result.brand_manifest, undefined);
     });
   });
 

@@ -92,10 +92,13 @@ export function adaptCreateMediaBuyRequestForV2(request: any): any {
   // Convert v3 BrandReference → v2 brand_manifest URL (bare domain, consistent with get_products).
   // normalizeRequestParams has already stripped any incoming brand_manifest and
   // promoted it to brand, so brand is the canonical source here.
-  const brand_manifest = brand ? `https://${brand.domain}` : undefined;
+  const brand_manifest = brand?.domain ? `https://${brand.domain}` : undefined;
 
   return {
     ...rest,
+    // If brand is present but has no domain, preserve it — consistent with adaptGetProductsRequestForV2
+    // which also leaves brand on the object when it cannot convert it.
+    ...(brand && !brand_manifest && { brand }),
     ...(brand_manifest !== undefined && { brand_manifest }),
     ...(rest.packages && { packages: rest.packages.map(adaptPackageRequestForV2) }),
   };

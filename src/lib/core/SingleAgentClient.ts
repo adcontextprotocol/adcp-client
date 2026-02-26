@@ -2020,9 +2020,10 @@ export class SingleAgentClient {
 
     let normalized = { ...params };
 
-    // Strip brand_manifest → brand for any task that uses strict validation with a brand field.
+    // Strip brand_manifest → brand for tasks whose schema has a brand field (get_products, create_media_buy).
+    // update_media_buy has no brand field in either v2 or v3 — excluded deliberately.
     // brand takes precedence if both are supplied.
-    if (taskType === 'get_products' || taskType === 'create_media_buy' || taskType === 'update_media_buy') {
+    if (taskType === 'get_products' || taskType === 'create_media_buy') {
       if (normalized.brand_manifest && !normalized.brand) {
         const brand = brandManifestToBrandReference(normalized.brand_manifest);
         if (brand) {
