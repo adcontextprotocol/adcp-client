@@ -103,6 +103,52 @@ describe('SingleAgentClient Request Validation', () => {
         'Should throw validation error for invalid create_media_buy request'
       );
     });
+
+    test('should strip brand_manifest and convert to brand before strict validation', async () => {
+      const client = new AdCPClient([mockAgent]);
+      const agent = client.agent(mockAgent.id);
+
+      // brand_manifest is a legacy v2.5 field — should be stripped before strict validation
+      await assert.doesNotReject(async () => {
+        try {
+          await agent.createMediaBuy({
+            buyer_ref: 'buyer123',
+            account: { account_id: 'test-account' },
+            packages: [],
+            brand_manifest: { name: 'Acme', url: 'https://acme.com/brand.json' },
+            start_time: 'immediate',
+            end_time: '2025-12-31T23:59:59Z',
+          });
+        } catch (err) {
+          if (err.message.includes('Request validation failed')) {
+            throw err;
+          }
+        }
+      }, 'brand_manifest should be stripped before strict validation, not cause a validation error');
+    });
+
+    test('should prefer explicit brand over brand_manifest when both are supplied', async () => {
+      const client = new AdCPClient([mockAgent]);
+      const agent = client.agent(mockAgent.id);
+
+      await assert.doesNotReject(async () => {
+        try {
+          await agent.createMediaBuy({
+            buyer_ref: 'buyer123',
+            account: { account_id: 'test-account' },
+            packages: [],
+            brand: { domain: 'example.com' },
+            brand_manifest: { name: 'Acme', url: 'https://acme.com/brand.json' },
+            start_time: 'immediate',
+            end_time: '2025-12-31T23:59:59Z',
+          });
+        } catch (err) {
+          if (err.message.includes('Request validation failed')) {
+            throw err;
+          }
+        }
+      }, 'brand takes precedence; brand_manifest stripped without causing a validation error');
+    });
   });
 
   // Note: AdCP v3 schemas have additionalProperties: true for extensibility
