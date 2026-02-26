@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-02-25T20:59:38.317Z
+// Generated at: 2026-02-26T11:38:58.696Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -51,7 +51,8 @@ export const FormatIDSchema = z.object({
 
 export const OptimizationGoalSchema = z.union([z.object({
         kind: z.literal("metric"),
-        metric: z.union([z.literal("clicks"), z.literal("views"), z.literal("completed_views"), z.literal("viewed_seconds"), z.literal("attention_seconds"), z.literal("attention_score")]),
+        metric: z.union([z.literal("clicks"), z.literal("views"), z.literal("completed_views"), z.literal("viewed_seconds"), z.literal("attention_seconds"), z.literal("attention_score"), z.literal("engagements"), z.literal("follows"), z.literal("saves"), z.literal("profile_visits")]),
+        view_duration_seconds: z.number().nullish(),
         target: z.union([z.object({
                 kind: z.literal("cost_per"),
                 value: z.number()
@@ -75,6 +76,8 @@ export const OptimizationGoalSchema = z.union([z.object({
             }), z.object({
                 kind: z.literal("per_ad_spend"),
                 value: z.number()
+            }), z.object({
+                kind: z.literal("maximize_value")
             })]).nullish(),
         attribution_window: z.object({
             click_through: z.string(),
@@ -1362,6 +1365,10 @@ export const DeliveryMetricsSchema = z.object({
         viewable_rate: z.number().nullish(),
         standard: z.union([z.literal("mrc"), z.literal("groupm")]).nullish()
     }).nullish(),
+    engagements: z.number().nullish(),
+    follows: z.number().nullish(),
+    saves: z.number().nullish(),
+    profile_visits: z.number().nullish(),
     engagement_rate: z.number().nullish(),
     cost_per_click: z.number().nullish(),
     by_action_source: z.array(z.object({
@@ -2421,6 +2428,7 @@ export const GetAdCPCapabilitiesResponseSchema = z.object({
             }).nullish()
         }).nullish(),
         conversion_tracking: z.object({
+            multi_source_event_dedup: z.boolean().nullish(),
             supported_event_types: z.array(EventTypeSchema).nullish(),
             supported_uid_types: z.array(UIDTypeSchema).nullish(),
             supported_hashed_identifiers: z.array(z.union([z.literal("hashed_email"), z.literal("hashed_phone")])).nullish(),
@@ -2678,9 +2686,15 @@ export const ProductSchema = z.object({
     data_provider_signals: z.array(DataProviderSignalSelectorSchema).nullish(),
     signal_targeting_allowed: z.boolean().nullish(),
     catalog_types: z.array(CatalogTypeSchema).nullish(),
+    metric_optimization: z.object({
+        supported_metrics: z.array(z.union([z.literal("clicks"), z.literal("views"), z.literal("completed_views"), z.literal("viewed_seconds"), z.literal("attention_seconds"), z.literal("attention_score"), z.literal("engagements"), z.literal("follows"), z.literal("saves"), z.literal("profile_visits")])),
+        supported_view_durations: z.array(z.number()).nullish(),
+        supported_targets: z.array(z.union([z.literal("cost_per"), z.literal("threshold_rate")])).nullish()
+    }).nullish(),
+    max_optimization_goals: z.number().nullish(),
     conversion_tracking: z.object({
         action_sources: z.array(ActionSourceSchema).nullish(),
-        supported_optimization_strategies: z.array(z.union([z.literal("target_cost_per"), z.literal("target_threshold_rate"), z.literal("target_per_ad_spend")])).nullish(),
+        supported_targets: z.array(z.union([z.literal("cost_per"), z.literal("per_ad_spend"), z.literal("maximize_value")])).nullish(),
         platform_managed: z.boolean().nullish()
     }).nullish(),
     catalog_match: z.object({

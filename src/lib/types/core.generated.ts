@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas vlatest
-// Generated at: 2026-02-26T00:44:21.637Z
+// Generated at: 2026-02-26T11:38:57.291Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -62,9 +62,23 @@ export type OptimizationGoal =
   | {
       kind: 'metric';
       /**
-       * Seller-native metric to optimize for. Count metrics: clicks, views (viewable impressions), completed_views (video or audio completions). Duration/score metrics: viewed_seconds (time in view per impression), attention_seconds (attention time per impression), attention_score (vendor-specific attention score per impression).
+       * Seller-native metric to optimize for. Delivery metrics: clicks (link clicks, swipe-throughs, CTA taps that navigate away), views (viewable impressions), completed_views (video/audio completions — see view_duration_seconds). Duration/score metrics: viewed_seconds (time in view per impression), attention_seconds (attention time per impression), attention_score (vendor-specific attention score). Audience action metrics: engagements (any direct interaction with the ad unit beyond viewing — social reactions/comments/shares, story/unit opens, interactive overlay taps, companion banner interactions on audio and CTV), follows (new followers, page likes, artist/podcast/channel subscribes), saves (saves, bookmarks, playlist adds, pins — signals of intent to return), profile_visits (visits to the brand's in-platform page — profile, artist page, channel, or storefront. Does not include external website clicks, which are covered by 'clicks').
        */
-      metric: 'clicks' | 'views' | 'completed_views' | 'viewed_seconds' | 'attention_seconds' | 'attention_score';
+      metric:
+        | 'clicks'
+        | 'views'
+        | 'completed_views'
+        | 'viewed_seconds'
+        | 'attention_seconds'
+        | 'attention_score'
+        | 'engagements'
+        | 'follows'
+        | 'saves'
+        | 'profile_visits';
+      /**
+       * Minimum video view duration in seconds that qualifies as a completed_view for this goal. Only applicable when metric is 'completed_views'. When omitted, the seller uses their platform default (typically 2–15 seconds). Common values: 2 (Snap/LinkedIn default), 6 (TikTok), 15 (Snap 15-second views, Meta ThruPlay). Sellers declare which durations they support in metric_optimization.supported_view_durations. Sellers must reject goals with unsupported values — silent rounding would create measurement discrepancies.
+       */
+      view_duration_seconds?: number;
       /**
        * Target for this metric. When omitted, the seller optimizes for maximum metric volume within budget.
        */
@@ -91,7 +105,7 @@ export type OptimizationGoal =
   | {
       kind: 'event';
       /**
-       * Event source and type pairs that feed this goal. Each entry identifies a source and event type to include. The seller deduplicates by event_id across all entries — the same business event reported by multiple sources (e.g., web analytics and an MMP) counts once. When a deduplicated event_id appears from multiple sources with different value_fields, the seller uses the value_field and value_factor from the first matching entry in the event_sources array. All event sources must be configured via sync_event_sources.
+       * Event source and type pairs that feed this goal. Each entry identifies a source and event type to include. When the seller supports multi_source_event_dedup (declared in get_adcp_capabilities), they deduplicate by event_id across all entries — the same business event from multiple sources counts once, using value_field and value_factor from the first matching entry. When multi_source_event_dedup is false or absent, buyers should use a single entry per goal; the seller will use only the first entry. All event sources must be configured via sync_event_sources.
        */
       event_sources: {
         /**
@@ -104,11 +118,11 @@ export type OptimizationGoal =
          */
         custom_event_name?: string;
         /**
-         * Field on the event's custom_data that carries the monetary value. Required on at least one entry when target.kind is 'per_ad_spend'. The field must contain a numeric value in the buy currency. Common values: 'value', 'order_total', 'profit_margin'.
+         * Which field in the event's custom_data carries the monetary value. The seller must use this field for value extraction and aggregation when computing ROAS and conversion value metrics. Required on at least one entry when target.kind is 'per_ad_spend' or 'maximize_value'. Common values: 'value', 'order_total', 'profit_margin'. This is not passed as a parameter to underlying platform APIs — the seller maps it to their platform's value ingestion mechanism.
          */
         value_field?: string;
         /**
-         * Multiplier applied to the value_field before aggregation. Use -1 for refund events (negate the value), 0.01 for values in cents, -0.01 for refunds in cents. A value of 0 zeroes out this source's value contribution (the source still counts for event dedup). Defaults to 1.
+         * Multiplier the seller must apply to value_field before aggregation. Use -1 for refund events (negate the value), 0.01 for values in cents, -0.01 for refunds in cents. A value of 0 zeroes out this source's value contribution (the source still counts for event dedup). Defaults to 1. This is not passed as a parameter to underlying platform APIs — the seller applies it when computing aggregated value metrics.
          */
         value_factor?: number;
       }[];
@@ -129,6 +143,9 @@ export type OptimizationGoal =
              * Target return ratio (e.g., 4.0 means $4 of value per $1 spent)
              */
             value: number;
+          }
+        | {
+            kind: 'maximize_value';
           };
       /**
        * Attribution window for this optimization goal. Values must match an option declared in the seller's conversion_tracking.attribution_windows capability. Sellers must reject windows not in their declared capabilities. When omitted, the seller uses their default window.
@@ -1553,7 +1570,39 @@ export interface Product {
    */
   catalog_types?: CatalogType[];
   /**
-   * Conversion tracking for this product. Presence indicates the product supports conversion-optimized delivery. Seller-level capabilities (supported event types, UID types, attribution windows) are declared in get_adcp_capabilities.
+   * Metric optimization capabilities for this product. Presence indicates the product supports optimization_goals with kind: 'metric'. No event source or conversion tracking setup required — the seller tracks these metrics natively.
+   */
+  metric_optimization?: {
+    /**
+     * Metric kinds this product can optimize for. Buyers should only request metric goals for kinds listed here.
+     */
+    supported_metrics: (
+      | 'clicks'
+      | 'views'
+      | 'completed_views'
+      | 'viewed_seconds'
+      | 'attention_seconds'
+      | 'attention_score'
+      | 'engagements'
+      | 'follows'
+      | 'saves'
+      | 'profile_visits'
+    )[];
+    /**
+     * Video view duration thresholds (in seconds) this product supports for completed_views goals. Only relevant when supported_metrics includes 'completed_views'. When absent, the seller uses their platform default. Buyers must set view_duration_seconds to a value in this list — sellers reject unsupported values.
+     */
+    supported_view_durations?: number[];
+    /**
+     * Target kinds available for metric goals on this product. Values match target.kind on the optimization goal. Only these target kinds are accepted — goals with unlisted target kinds will be rejected. When omitted, buyers can set target-less metric goals (maximize volume within budget) but cannot set specific targets.
+     */
+    supported_targets?: ('cost_per' | 'threshold_rate')[];
+  };
+  /**
+   * Maximum number of optimization_goals this product accepts on a package. When absent, no limit is declared. Most social platforms accept only 1 goal — buyers sending arrays longer than this value should expect the seller to use only the highest-priority (lowest priority number) goal.
+   */
+  max_optimization_goals?: number;
+  /**
+   * Conversion event tracking for this product. Presence indicates the product supports optimization_goals with kind: 'event'. Seller-level capabilities (supported event types, UID types, attribution windows) are declared in get_adcp_capabilities.
    */
   conversion_tracking?: {
     /**
@@ -1561,9 +1610,9 @@ export interface Product {
      */
     action_sources?: ActionSource[];
     /**
-     * Optimization strategies this product supports when optimization_goals are set on a package. Target kinds: cost_per (cost per metric unit or conversion event), threshold_rate (minimum per-impression metric rate), per_ad_spend (return on ad spend — requires value_field on event sources). A goal without a target implicitly maximizes that metric or event within budget — no separate strategy declaration needed. When this field is omitted but conversion_tracking is present, buyers can still set target-less optimization goals (maximize within budget); they just cannot set specific cost_per, threshold_rate, or per_ad_spend targets.
+     * Target kinds available for event goals on this product. Values match target.kind on the optimization goal. cost_per: target cost per conversion event. per_ad_spend: target return on ad spend (requires value_field on event sources). maximize_value: maximize total conversion value without a specific ratio target (requires value_field). Only these target kinds are accepted — goals with unlisted target kinds will be rejected. A goal without a target implicitly maximizes conversion count within budget — no declaration needed for that mode. When omitted, buyers can still set target-less event goals.
      */
-    supported_optimization_strategies?: ('target_cost_per' | 'target_threshold_rate' | 'target_per_ad_spend')[];
+    supported_targets?: ('cost_per' | 'per_ad_spend' | 'maximize_value')[];
     /**
      * Whether the seller provides its own always-on measurement (e.g. Amazon sales attribution for Amazon advertisers). When true, sync_event_sources response will include seller-managed event sources with managed_by='seller'.
      */
