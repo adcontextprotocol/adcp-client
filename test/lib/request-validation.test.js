@@ -252,7 +252,7 @@ describe('SingleAgentClient Request Validation', () => {
         try {
           await agent.createMediaBuy({
             buyer_ref: 'buyer123',
-            account_id: 'test-account',
+            account: { account_id: 'test-account' },
             packages: [
               {
                 buyer_ref: 'pkg123',
@@ -295,7 +295,7 @@ describe('SingleAgentClient Request Validation', () => {
         try {
           await agent.createMediaBuy({
             buyer_ref: 'buyer123',
-            account_id: 'test-account',
+            account: { account_id: 'test-account' },
             packages: [
               {
                 buyer_ref: 'pkg123',
@@ -362,6 +362,7 @@ describe('SingleAgentClient Request Validation', () => {
       await assert.doesNotReject(async () => {
         try {
           await agent.syncCreatives({
+            account: { account_id: 'test-account' },
             creatives: [
               {
                 creative_id: 'test',
@@ -399,7 +400,7 @@ describe('SingleAgentClient Request Validation', () => {
         try {
           await agent.createMediaBuy({
             buyer_ref: 'buyer123',
-            account_id: 'test-account',
+            account: { account_id: 'test-account' },
             packages: [],
             brand: { domain: 'example.com' },
             start_time: 'immediate',
@@ -449,6 +450,7 @@ describe('SingleAgentClient Request Validation', () => {
       await assert.doesNotReject(async () => {
         try {
           await agent.getMediaBuys({
+            account: { account_id: 'test-account' },
             media_buy_ids: ['mb_123', 'mb_456'],
           });
         } catch (err) {
@@ -466,6 +468,7 @@ describe('SingleAgentClient Request Validation', () => {
       await assert.doesNotReject(async () => {
         try {
           await agent.getMediaBuys({
+            account: { account_id: 'test-account' },
             status_filter: ['active', 'paused'],
             include_snapshot: true,
           });
@@ -483,7 +486,7 @@ describe('SingleAgentClient Request Validation', () => {
 
       await assert.doesNotReject(async () => {
         try {
-          await agent.getMediaBuys({});
+          await agent.getMediaBuys({ account: { account_id: 'test-account' } });
         } catch (err) {
           if (err.message.includes('Request validation failed')) {
             throw err;
