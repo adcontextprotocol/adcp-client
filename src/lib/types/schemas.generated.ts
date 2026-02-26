@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-02-26T11:38:58.696Z
+// Generated at: 2026-02-26T12:30:40.657Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -18,7 +18,7 @@ export const PacingSchema = z.union([z.literal("even"), z.literal("asap"), z.lit
 
 export const MetroAreaSystemSchema = z.union([z.literal("nielsen_dma"), z.literal("uk_itl1"), z.literal("uk_itl2"), z.literal("eurostat_nuts2"), z.literal("custom")]);
 
-export const PostalCodeSystemSchema = z.union([z.literal("us_zip"), z.literal("us_zip_plus_four"), z.literal("gb_outward"), z.literal("gb_full"), z.literal("ca_fsa"), z.literal("ca_full"), z.literal("de_plz"), z.literal("fr_code_postal"), z.literal("au_postcode")]);
+export const PostalCodeSystemSchema = z.union([z.literal("us_zip"), z.literal("us_zip_plus_four"), z.literal("gb_outward"), z.literal("gb_full"), z.literal("ca_fsa"), z.literal("ca_full"), z.literal("de_plz"), z.literal("fr_code_postal"), z.literal("au_postcode"), z.literal("ch_plz"), z.literal("at_plz")]);
 
 export const DayOfWeekSchema = z.union([z.literal("monday"), z.literal("tuesday"), z.literal("wednesday"), z.literal("thursday"), z.literal("friday"), z.literal("saturday"), z.literal("sunday")]);
 
@@ -1775,6 +1775,7 @@ export const DeploymentSchema = z.union([z.object({
 export const ActivateSignalRequestSchema = z.object({
     signal_agent_segment_id: z.string(),
     deployments: z.array(DestinationSchema),
+    pricing_option_id: z.string().nullish(),
     context: ContextObjectSchema.nullish(),
     ext: ExtensionObjectSchema.nullish()
 });
@@ -1993,6 +1994,7 @@ export const ContentStandardsSchema = z.object({
         pass: z.array(ArtifactSchema).nullish(),
         fail: z.array(ArtifactSchema).nullish()
     }).nullish(),
+    pricing_options: z.array(PricingOptionSchema).nullish(),
     ext: ExtensionObjectSchema.nullish()
 });
 
@@ -2406,7 +2408,9 @@ export const GetAdCPCapabilitiesResponseSchema = z.object({
                     ca_full: z.boolean().nullish(),
                     de_plz: z.boolean().nullish(),
                     fr_code_postal: z.boolean().nullish(),
-                    au_postcode: z.boolean().nullish()
+                    au_postcode: z.boolean().nullish(),
+                    ch_plz: z.boolean().nullish(),
+                    at_plz: z.boolean().nullish()
                 }).nullish(),
                 age_restriction: z.object({
                     supported: z.boolean().nullish(),
@@ -2564,21 +2568,20 @@ export const SyncAccountsErrorSchema = z.object({
 });
 
 export const ReportUsageRequestSchema = z.object({
+    idempotency_key: z.string().nullish(),
     reporting_period: z.object({
         start: z.string(),
         end: z.string()
     }),
     usage: z.array(z.object({
         account: AccountReferenceSchema,
-        operator_id: z.string(),
         buyer_campaign_ref: z.string().nullish(),
-        kind: z.union([z.literal("signal"), z.literal("content_standards"), z.literal("creative")]),
         vendor_cost: z.number(),
         currency: z.string(),
+        pricing_option_id: z.string().nullish(),
         impressions: z.number().nullish(),
         media_spend: z.number().nullish(),
         signal_agent_segment_id: z.string().nullish(),
-        pricing_option_id: z.string().nullish(),
         standards_id: z.string().nullish()
     })),
     context: ContextObjectSchema.nullish(),
@@ -3087,10 +3090,7 @@ export const GetSignalsResponseSchema = z.object({
         data_provider: z.string(),
         coverage_percentage: z.number(),
         deployments: z.array(DeploymentSchema),
-        pricing: z.object({
-            cpm: z.number(),
-            currency: z.string()
-        })
+        pricing_options: z.array(PricingOptionSchema)
     })),
     errors: z.array(ErrorSchema).nullish(),
     pagination: PaginationResponseSchema.nullish(),

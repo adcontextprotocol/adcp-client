@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas vlatest
-// Generated at: 2026-02-26T11:38:57.291Z
+// Generated at: 2026-02-26T12:30:39.470Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -30,7 +30,9 @@ export type PostalCodeSystem =
   | 'ca_full'
   | 'de_plz'
   | 'fr_code_postal'
-  | 'au_postcode';
+  | 'au_postcode'
+  | 'ch_plz'
+  | 'at_plz';
 /**
  * Postal code system (e.g., 'us_zip', 'gb_outward'). System name encodes country and precision.
  */

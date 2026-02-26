@@ -2574,7 +2574,9 @@ export type PostalCodeSystem =
   | 'ca_full'
   | 'de_plz'
   | 'fr_code_postal'
-  | 'au_postcode';
+  | 'au_postcode'
+  | 'ch_plz'
+  | 'at_plz';
 /**
  * Postal code system (e.g., 'us_zip', 'gb_outward'). System name encodes country and precision.
  */
@@ -6810,18 +6812,9 @@ export interface GetSignalsResponse {
      */
     deployments: Deployment[];
     /**
-     * Pricing information
+     * Pricing options available for this signal. The buyer selects one and passes its pricing_option_id in report_usage for billing verification.
      */
-    pricing: {
-      /**
-       * Cost per thousand impressions
-       */
-      cpm: number;
-      /**
-       * Currency code
-       */
-      currency: string;
-    };
+    pricing_options: PricingOption[];
   }[];
   /**
    * Task-specific errors and warnings (e.g., signal discovery or pricing issues)
@@ -6836,7 +6829,7 @@ export interface GetSignalsResponse {
   ext?: ExtensionObject;
 }
 /**
- * Standard error structure for task-specific errors and warnings
+ * Cost Per Mille (cost per 1,000 impressions) pricing. If fixed_price is present, it's fixed pricing. If absent, it's auction-based.
  */
 
 // activate_signal parameters
@@ -6849,6 +6842,10 @@ export interface ActivateSignalRequest {
    * Target deployment(s) for activation. If the authenticated caller matches one of these deployment targets, activation keys will be included in the response.
    */
   deployments: Destination[];
+  /**
+   * The pricing option selected from the signal's pricing_options in the get_signals response. Required when the signal has pricing options. Records the buyer's pricing commitment at activation time and is referenced in subsequent report_usage calls.
+   */
+  pricing_option_id?: string;
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -7379,6 +7376,10 @@ export interface ContentStandards {
      */
     fail?: Artifact[];
   };
+  /**
+   * Pricing options for this content standards service. The buyer passes the selected pricing_option_id in report_usage for billing verification.
+   */
+  pricing_options?: PricingOption[];
   ext?: ExtensionObject;
 }
 /**
@@ -9066,6 +9067,14 @@ export interface GetAdCPCapabilitiesResponse {
            * Australian postcode, 4 digits (e.g., '2000')
            */
           au_postcode?: boolean;
+          /**
+           * Swiss Postleitzahl, 4 digits (e.g., '8000')
+           */
+          ch_plz?: boolean;
+          /**
+           * Austrian Postleitzahl, 4 digits (e.g., '1010')
+           */
+          at_plz?: boolean;
         };
         /**
          * Age restriction capabilities for compliance (alcohol, gambling)
@@ -9527,6 +9536,10 @@ export interface SyncAccountsError {
 // report_usage parameters
 export interface ReportUsageRequest {
   /**
+   * Client-generated unique key for this request. If a request with the same key has already been accepted, the server returns the original response without re-processing. Use a UUID or other unique identifier. Prevents duplicate billing on retries.
+   */
+  idempotency_key?: string;
+  /**
    * The time range covered by this usage report. Applies to all records in the request.
    */
   reporting_period: {
@@ -9540,22 +9553,14 @@ export interface ReportUsageRequest {
     end: string;
   };
   /**
-   * One or more usage records. Each record is self-contained: it carries its own account, operator_id, and buyer_campaign_ref, allowing a single request to span multiple accounts, operators, and campaigns.
+   * One or more usage records. Each record is self-contained: it carries its own account and buyer_campaign_ref, allowing a single request to span multiple accounts and campaigns.
    */
   usage: {
     account: AccountReference;
     /**
-     * The operator on whose behalf this usage is reported. Identifies the billing party — the entity that owes the vendor for this consumption.
-     */
-    operator_id: string;
-    /**
      * The buyer's campaign reference (e.g., a media_buy_id). Used to group records by campaign.
      */
     buyer_campaign_ref?: string;
-    /**
-     * The type of vendor service consumed.
-     */
-    kind: 'signal' | 'content_standards' | 'creative';
     /**
      * Amount owed to the vendor for this record, denominated in currency.
      */
@@ -9565,7 +9570,11 @@ export interface ReportUsageRequest {
      */
     currency: string;
     /**
-     * Impressions delivered using this vendor service. Required when kind is 'signal'.
+     * Pricing option identifier from the vendor's discovery response (e.g., get_signals, list_content_standards). The vendor uses this to verify the correct rate was applied.
+     */
+    pricing_option_id?: string;
+    /**
+     * Impressions delivered using this vendor service.
      */
     impressions?: number;
     /**
@@ -9573,15 +9582,11 @@ export interface ReportUsageRequest {
      */
     media_spend?: number;
     /**
-     * Signal identifier from get_signals. Required when kind is 'signal'.
+     * Signal identifier from get_signals. Required for signals agents.
      */
     signal_agent_segment_id?: string;
     /**
-     * Pricing option identifier from the original get_signals response. The vendor uses this to verify the correct rate was applied. Required when kind is 'signal'.
-     */
-    pricing_option_id?: string;
-    /**
-     * Content standards configuration identifier. Required when kind is 'content_standards'.
+     * Content standards configuration identifier. Required for governance agents.
      */
     standards_id?: string;
   }[];
