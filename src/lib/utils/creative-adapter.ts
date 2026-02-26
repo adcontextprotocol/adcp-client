@@ -55,10 +55,10 @@ export interface PackageResponseV2 {
 /**
  * Adapt a v3-style package request for a v2 server.
  * Converts creative_assignments to creative_ids (dropping weight and placement_ids).
- * Strips v3-only package fields (optimization_goal).
+ * Strips v3-only package fields (optimization_goals).
  */
 export function adaptPackageRequestForV2(pkg: PackageRequestV3): PackageRequestV2 {
-  const { optimization_goal, ...rest } = pkg as any;
+  const { optimization_goals, ...rest } = pkg as any;
 
   if (!rest.creative_assignments) {
     return rest as PackageRequestV2;
@@ -77,7 +77,7 @@ export function adaptPackageRequestForV2(pkg: PackageRequestV3): PackageRequestV
  * Strips v3-only top-level fields and adapts packages.
  */
 export function adaptCreateMediaBuyRequestForV2(request: any): any {
-  const { account_id, proposal_id, total_budget, artifact_webhook, ...rest } = request;
+  const { account, proposal_id, total_budget, artifact_webhook, ...rest } = request;
 
   return {
     ...rest,
