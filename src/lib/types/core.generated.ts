@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas vlatest
-// Generated at: 2026-02-25T20:59:37.193Z
+// Generated at: 2026-02-26T00:44:21.637Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -2300,7 +2300,7 @@ export type AdCPAsyncResponseData =
  */
 export type CreateMediaBuyResponse = CreateMediaBuySuccess | CreateMediaBuyError;
 /**
- * Response for a completed or failed update_media_buy
+ * Brand identifier within the house portfolio. Optional for single-brand domains.
  */
 export type UpdateMediaBuyResponse = UpdateMediaBuySuccess | UpdateMediaBuyError;
 /**

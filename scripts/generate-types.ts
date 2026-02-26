@@ -802,6 +802,10 @@ function filterDuplicateTypeDefinitions(typeDefinitions: string, generatedTypes:
   let currentTypeDefinition: string[] = [];
   let currentTypeName: string | null = null;
   let insideTypeDefinition = false;
+  // Buffer JSDoc comment lines that precede a type definition so they can be
+  // dropped together if the type turns out to be a duplicate.
+  let pendingJsdoc: string[] = [];
+  let insideJsdoc = false;
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
@@ -819,10 +823,12 @@ function filterDuplicateTypeDefinitions(typeDefinitions: string, generatedTypes:
         currentTypeDefinition = [];
       }
 
-      // Start tracking this new type
+      // Start tracking this new type, prepending any buffered JSDoc
       currentTypeName = typeMatch[1];
       insideTypeDefinition = true;
-      currentTypeDefinition = [line];
+      insideJsdoc = false;
+      currentTypeDefinition = [...pendingJsdoc, line];
+      pendingJsdoc = [];
     } else if (insideTypeDefinition) {
       currentTypeDefinition.push(line);
 
@@ -840,8 +846,25 @@ function filterDuplicateTypeDefinitions(typeDefinitions: string, generatedTypes:
         insideTypeDefinition = false;
       }
     } else {
-      // Regular line outside of type definitions
-      outputLines.push(line);
+      // Outside a type definition — buffer JSDoc comment blocks so they travel
+      // with the type that follows them rather than being emitted immediately.
+      if (line.trimStart().startsWith('/**')) {
+        // Start of a new JSDoc block; discard any previous orphaned pending block
+        pendingJsdoc = [line];
+        insideJsdoc = true;
+      } else if (insideJsdoc) {
+        pendingJsdoc.push(line);
+        if (line.trimStart().startsWith('*/') || line.trimStart() === '*/') {
+          insideJsdoc = false;
+        }
+      } else {
+        // Flush any accumulated JSDoc that wasn't immediately followed by a type
+        if (pendingJsdoc.length > 0) {
+          outputLines.push(...pendingJsdoc);
+          pendingJsdoc = [];
+        }
+        outputLines.push(line);
+      }
     }
   }
 
@@ -851,6 +874,11 @@ function filterDuplicateTypeDefinitions(typeDefinitions: string, generatedTypes:
       generatedTypes.add(currentTypeName);
       outputLines.push(...currentTypeDefinition);
     }
+  }
+
+  // Flush any trailing pending JSDoc
+  if (pendingJsdoc.length > 0) {
+    outputLines.push(...pendingJsdoc);
   }
 
   return outputLines.join('\n');

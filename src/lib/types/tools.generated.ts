@@ -359,7 +359,7 @@ export interface CatalogFieldMapping {
  */
 export interface ExtensionObject {}
 /**
- * Optional filters to narrow product discovery results
+ * Brand reference identifying the advertiser
  */
 export interface ProductFilters {
   delivery_type?: DeliveryType;
@@ -1588,9 +1588,6 @@ export interface PaginationResponse {
  */
 
 // list_creative_formats parameters
-/**
- * Filter by format type (technical categories with distinct requirements)
- */
 export type AssetContentType =
   | 'image'
   | 'video'
@@ -1664,9 +1661,6 @@ export interface ListCreativeFormatsRequest {
  */
 
 // list_creative_formats response
-/**
- * DEPRECATED: High-level category for this format. Use the assets array to understand creative requirements instead - it provides precise information about what asset types are needed.
- */
 export type FormatIDParameter = 'dimensions' | 'duration';
 /**
  * Standardized macro placeholders for dynamic value substitution in creative tracking URLs. Macros are replaced with actual values at impression time. See docs/creative/universal-macros.mdx for detailed documentation.
@@ -2425,9 +2419,6 @@ export interface AssetPoolBinding {
  */
 
 // create_media_buy parameters
-/**
- * Account to bill for this media buy. Pass an account_id from list_accounts (explicit model), or use a natural key (brand, operator) if the seller supports implicit_from_sync resolution.
- */
 export type Pacing = 'even' | 'asap' | 'front_loaded';
 /**
  * Catalog type. Structural types: 'offering' (AdCP Offering objects), 'product' (ecommerce entries), 'inventory' (stock per location), 'store' (physical locations), 'promotion' (deals and pricing). Vertical types: 'hotel', 'flight', 'job', 'vehicle', 'real_estate', 'education', 'destination', 'app' — each with an industry-specific item schema.
@@ -3659,9 +3650,6 @@ export interface CreateMediaBuyError {
  */
 
 // sync_creatives parameters
-/**
- * Account that owns these creatives.
- */
 export type ValidationMode = 'strict' | 'lenient';
 /**
  * Authentication schemes for push notification endpoints
@@ -3801,9 +3789,6 @@ export interface SyncCreativesError {
  */
 
 // list_creatives parameters
-/**
- * Reference to an account by seller-assigned ID or natural key. Use account_id when the buyer manages accounts (e.g., picked from list_accounts). Use the natural key (brand + operator) when the seller resolves accounts internally.
- */
 export type CreativeSortField =
   | 'created_date'
   | 'updated_date'
@@ -3935,9 +3920,6 @@ export interface CreativeFilters {
  */
 
 // list_creatives response
-/**
- * Sort direction for list queries
- */
 export type SubAsset =
   | {
       /**
@@ -4298,9 +4280,6 @@ export interface UpdateMediaBuyError {
  */
 
 // get_media_buys parameters
-/**
- * Account to retrieve media buys for.
- */
 export type MediaBuyStatus = 'pending_activation' | 'active' | 'paused' | 'completed';
 
 /**
@@ -4333,9 +4312,6 @@ export interface GetMediaBuysRequest {
  */
 
 // get_media_buys response
-/**
- * Brand identifier within the house portfolio. Optional for single-brand domains.
- */
 export type CreativeApprovalStatus = 'pending_review' | 'approved' | 'rejected';
 
 /**
@@ -5108,9 +5084,6 @@ export interface ProvidePerformanceFeedbackError {
  */
 
 // sync_event_sources parameters
-/**
- * Account to configure event sources for.
- */
 export interface SyncEventSourcesRequest {
   account: AccountReference;
   /**
@@ -5228,9 +5201,6 @@ export interface SyncEventSourcesError {
  */
 
 // log_event parameters
-/**
- * Standard event type
- */
 export type UserMatch = {
   [k: string]: unknown | undefined;
 } & {
@@ -5454,9 +5424,6 @@ export interface LogEventError {
  */
 
 // sync_audiences parameters
-/**
- * Account to manage audiences for.
- */
 export type AudienceMember = {
   [k: string]: unknown | undefined;
 } & {
@@ -5601,9 +5568,6 @@ export interface SyncAudiencesError {
 
 
 // sync_catalogs parameters
-/**
- * Account that owns these catalogs.
- */
 export interface SyncCatalogsRequest {
   account: AccountReference;
   /**
@@ -5744,9 +5708,6 @@ export interface SyncCatalogsError {
  */
 
 // build_creative parameters
-/**
- * Catalog type. Structural types: 'offering' (AdCP Offering objects), 'product' (ecommerce entries), 'inventory' (stock per location), 'store' (physical locations), 'promotion' (deals and pricing). Vertical types: 'hotel', 'flight', 'job', 'vehicle', 'real_estate', 'education', 'destination', 'app' — each with an industry-specific item schema.
- */
 export type HTTPMethod = 'GET' | 'POST';
 /**
  * Standardized macro placeholders for dynamic value substitution in creative tracking URLs. Macros are replaced with actual values at impression time. See docs/creative/universal-macros.mdx for detailed documentation.
@@ -6408,9 +6369,6 @@ export type GetCreativeDeliveryRequest = {
  */
 
 // get_creative_delivery response
-/**
- * The event type
- */
 export type CreativeVariant = DeliveryMetrics & {
   /**
    * Platform-assigned identifier for this variant
@@ -6664,9 +6622,6 @@ export interface SignalFilters {
  */
 
 // get_signals response
-/**
- * Universal signal identifier referencing the data provider's catalog. Use this to verify authorization and look up signal definitions.
- */
 export type SignalValueType = 'binary' | 'categorical' | 'numeric';
 /**
  * Catalog type of signal (marketplace, custom, owned)
@@ -6820,9 +6775,6 @@ export interface GetSignalsResponse {
  */
 
 // activate_signal parameters
-/**
- * A deployment target where signals can be activated (DSP, sales agent, etc.)
- */
 export interface ActivateSignalRequest {
   /**
    * The universal identifier for the signal to activate
@@ -7014,9 +6966,6 @@ export interface FeatureRequirement {
  */
 
 // create_property_list response
-/**
- * A source of properties for a property list. Supports three selection patterns: publisher with tags, publisher with property IDs, or direct identifiers.
- */
 export interface CreatePropertyListResponse {
   list: PropertyList;
   /**
@@ -7077,9 +7026,6 @@ export interface PropertyList {
  */
 
 // update_property_list parameters
-/**
- * A source of properties for a property list. Supports three selection patterns: publisher with tags, publisher with property IDs, or direct identifiers.
- */
 export interface UpdatePropertyListRequest {
   /**
    * ID of the property list to update
@@ -7111,9 +7057,6 @@ export interface UpdatePropertyListRequest {
  */
 
 // update_property_list response
-/**
- * A source of properties for a property list. Supports three selection patterns: publisher with tags, publisher with property IDs, or direct identifiers.
- */
 export interface UpdatePropertyListResponse {
   list: PropertyList;
   ext?: ExtensionObject;
@@ -7156,9 +7099,6 @@ export interface GetPropertyListRequest {
  */
 
 // get_property_list response
-/**
- * A source of properties for a property list. Supports three selection patterns: publisher with tags, publisher with property IDs, or direct identifiers.
- */
 export interface GetPropertyListResponse {
   list: PropertyList;
   /**
@@ -7208,9 +7148,6 @@ export interface ListPropertyListsRequest {
  */
 
 // list_property_lists response
-/**
- * A source of properties for a property list. Supports three selection patterns: publisher with tags, publisher with property IDs, or direct identifiers.
- */
 export interface ListPropertyListsResponse {
   /**
    * Array of property lists (metadata only, not resolved properties)
@@ -7259,9 +7196,6 @@ export interface DeletePropertyListResponse {
  */
 
 // list_content_standards parameters
-/**
- * Standardized advertising media channels describing how buyers allocate budget. Channels are planning abstractions, not technical substrates. See the Media Channel Taxonomy specification for detailed definitions.
- */
 export interface ListContentStandardsRequest {
   /**
    * Filter by channel
@@ -7597,9 +7531,6 @@ export type GetContentStandardsResponse =
  */
 
 // create_content_standards parameters
-/**
- * Standardized advertising media channels describing how buyers allocate budget. Channels are planning abstractions, not technical substrates. See the Media Channel Taxonomy specification for detailed definitions.
- */
 export interface CreateContentStandardsRequest {
   /**
    * Where this standards configuration applies
@@ -7713,9 +7644,6 @@ export type CreateContentStandardsResponse =
  */
 
 // update_content_standards parameters
-/**
- * Standardized advertising media channels describing how buyers allocate budget. Channels are planning abstractions, not technical substrates. See the Media Channel Taxonomy specification for detailed definitions.
- */
 export interface UpdateContentStandardsRequest {
   /**
    * ID of the standards configuration to update
@@ -7823,9 +7751,6 @@ export interface UpdateContentStandardsResponse {
  */
 
 // calibrate_content parameters
-/**
- * Type of identifier
- */
 export interface CalibrateContentRequest {
   /**
    * Standards configuration to calibrate against
@@ -7894,9 +7819,6 @@ export type CalibrateContentResponse =
  */
 
 // validate_content_delivery parameters
-/**
- * Type of identifier
- */
 export interface ValidateContentDeliveryRequest {
   /**
    * Standards configuration to validate against
@@ -8024,9 +7946,6 @@ export type ValidateContentDeliveryResponse =
  */
 
 // get_media_buy_artifacts parameters
-/**
- * Filter artifacts to a specific account. When omitted, returns artifacts across all accessible accounts.
- */
 export interface GetMediaBuyArtifactsRequest {
   account?: AccountReference;
   /**
@@ -8183,9 +8102,6 @@ export type GetMediaBuyArtifactsResponse =
  */
 
 // get_creative_features parameters
-/**
- * Catalog type. Structural types: 'offering' (AdCP Offering objects), 'product' (ecommerce entries), 'inventory' (stock per location), 'store' (physical locations), 'promotion' (deals and pricing). Vertical types: 'hotel', 'flight', 'job', 'vehicle', 'real_estate', 'education', 'destination', 'app' — each with an industry-specific item schema.
- */
 export interface GetCreativeFeaturesRequest {
   creative_manifest: CreativeManifest;
   /**
@@ -8705,9 +8621,6 @@ export type SISendMessageRequest = {
  */
 
 // si_send_message response
-/**
- * Standard visual component that brand returns and host renders
- */
 export interface SISendMessageResponse {
   /**
    * Session identifier
@@ -8938,9 +8851,6 @@ export interface GetAdCPCapabilitiesRequest {
  */
 
 // get_adcp_capabilities response
-/**
- * Methods for verifying user age for compliance. Does not include 'inferred' as it is not accepted for regulatory compliance.
- */
 export interface GetAdCPCapabilitiesResponse {
   /**
    * Core AdCP protocol information
@@ -9390,9 +9300,6 @@ export interface ListAccountsRequest {
  */
 
 // list_accounts response
-/**
- * Brand identifier within the house portfolio. Optional for single-brand domains.
- */
 export interface ListAccountsResponse {
   /**
    * Array of accounts accessible to the authenticated agent
@@ -9411,9 +9318,6 @@ export interface ListAccountsResponse {
  */
 
 // sync_accounts parameters
-/**
- * Brand identifier within the house portfolio. Optional for single-brand domains.
- */
 export interface SyncAccountsRequest {
   /**
    * Advertiser accounts to sync
@@ -9552,9 +9456,6 @@ export interface SyncAccountsError {
 
 
 // report_usage parameters
-/**
- * Account for this usage record.
- */
 export interface ReportUsageRequest {
   /**
    * The time range covered by this usage report. Applies to all records in the request.
@@ -9647,9 +9548,6 @@ export interface ReportUsageResponse {
  */
 
 // get_account_financials parameters
-/**
- * Account to query financials for. Must be an operator-billed account.
- */
 export interface GetAccountFinancialsRequest {
   account: AccountReference;
   /**
