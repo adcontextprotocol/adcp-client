@@ -179,6 +179,7 @@ export class SingleAgentClient {
   private discoveredEndpoint?: string; // Cache discovered MCP endpoint
   private canonicalBaseUrl?: string; // Cache canonical base URL (from agent card or stripped /mcp)
   private cachedCapabilities?: AdcpCapabilities; // Cache detected server capabilities
+  private cachedToolSchemas?: Map<string, Record<string, unknown>>; // inputSchema.properties per tool name
 
   constructor(
     private agent: AgentConfig,
@@ -924,8 +925,23 @@ export class SingleAgentClient {
     // Get server version (cached after first call)
     const version = await this.detectServerVersion();
 
-    // If server is v3, no adaptation needed
     if (version === 'v3') {
+      // Most v3 requests pass through unchanged. Exception: agents with partial v3
+      // implementations declare get_adcp_capabilities (detected as v3) but their
+      // get_products tool schema doesn't include all v3 fields (e.g. buying_mode).
+      // Use the cached inputSchema (populated by getCapabilities via getAgentInfo)
+      // to strip client-inferred fields the agent hasn't declared. MCP-only in
+      // practice — A2A agents use a different skill schema structure and may not
+      // populate cachedToolSchemas, in which case toolDeclaresField fails open.
+      if (taskType === 'get_products' && params.buying_mode !== undefined) {
+        if (!this.toolDeclaresField('get_products', 'buying_mode')) {
+          console.warn(
+            `[AdCP] Stripping inferred "buying_mode" from get_products request to agent "${this.agent.id}" — field not declared in agent's tool schema.`
+          );
+          const { buying_mode: _dropped, ...rest } = params;
+          return rest;
+        }
+      }
       return params;
     }
 
@@ -943,6 +959,19 @@ export class SingleAgentClient {
       default:
         return params;
     }
+  }
+
+  /**
+   * Check whether a tool's cached inputSchema declares a specific field.
+   * Fails open (returns true) when no schema is cached — better to send the
+   * field and let the agent reject it with a clear error than to silently drop
+   * something that might be required.
+   */
+  private toolDeclaresField(toolName: string, field: string): boolean {
+    if (!this.cachedToolSchemas) return true;
+    const properties = this.cachedToolSchemas.get(toolName);
+    if (!properties) return true;
+    return field in properties;
   }
 
   /**
@@ -1911,6 +1940,15 @@ export class SingleAgentClient {
       name: t.name,
       description: t.description,
     }));
+
+    // Cache raw tool schemas for field-level compatibility checks (e.g. buying_mode on get_products).
+    // INVARIANT: must be assigned before cachedCapabilities below so that any code path
+    // reaching adaptRequestForServerVersion always finds the schemas populated.
+    this.cachedToolSchemas = new Map(
+      agentInfo.tools
+        .filter(t => t.inputSchema?.properties)
+        .map(t => [t.name, t.inputSchema.properties as Record<string, unknown>])
+    );
 
     // Check if agent supports get_adcp_capabilities (v3)
     const hasCapabilitiesTool = tools.some(t => t.name === 'get_adcp_capabilities');
