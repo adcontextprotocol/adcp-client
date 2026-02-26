@@ -103,6 +103,107 @@ describe('SingleAgentClient Request Validation', () => {
         'Should throw validation error for invalid create_media_buy request'
       );
     });
+
+    test('should strip brand_manifest and convert to brand before strict validation', async () => {
+      const client = new AdCPClient([mockAgent]);
+      const agent = client.agent(mockAgent.id);
+
+      // brand_manifest is a legacy v2.5 field — should be stripped before strict validation
+      await assert.doesNotReject(async () => {
+        try {
+          await agent.createMediaBuy({
+            buyer_ref: 'buyer123',
+            account: { account_id: 'test-account' },
+            packages: [],
+            brand_manifest: { name: 'Acme', url: 'https://acme.com/brand.json' },
+            start_time: 'immediate',
+            end_time: '2025-12-31T23:59:59Z',
+          });
+        } catch (err) {
+          if (err.message.includes('Request validation failed')) {
+            throw err;
+          }
+        }
+      }, 'brand_manifest should be stripped before strict validation, not cause a validation error');
+    });
+
+    test('should verify brand_manifest is not forwarded as an object to the server', async () => {
+      // Mock A2AClient to capture the parameters actually sent to the server so we can
+      // verify normalization happened — not just that Zod didn't reject the request.
+      const capturedCalls = [];
+      const A2AClient = require('@a2a-js/sdk/client').A2AClient;
+      const originalFromCardUrl = A2AClient.fromCardUrl;
+
+      A2AClient.fromCardUrl = async () => ({
+        sendMessage: async payload => {
+          capturedCalls.push(payload.message.parts[0].data);
+          return {
+            jsonrpc: '2.0',
+            id: 'test-id',
+            result: {
+              kind: 'task',
+              id: 'task-123',
+              contextId: 'ctx-123',
+              status: { state: 'completed', timestamp: new Date().toISOString() },
+            },
+          };
+        },
+      });
+
+      try {
+        const client = new AdCPClient([mockAgent]);
+        const agent = client.agent(mockAgent.id);
+
+        await agent.createMediaBuy({
+          buyer_ref: 'buyer123',
+          account: { account_id: 'test-account' },
+          packages: [],
+          brand_manifest: { name: 'Acme', url: 'https://acme.com/brand.json' },
+          start_time: 'immediate',
+          end_time: '2025-12-31T23:59:59Z',
+        });
+      } catch (err) {
+        assert.ok(
+          !err.message.includes('Request validation failed'),
+          `Validation should not reject brand_manifest: ${err.message}`
+        );
+      } finally {
+        A2AClient.fromCardUrl = originalFromCardUrl;
+      }
+
+      // If the request reached the server, verify brand_manifest was NOT forwarded as an object.
+      // (It should have been converted to either brand:{domain} for v3 or brand_manifest URL for v2.)
+      const mediaBuyCall = capturedCalls.find(d => d.skill === 'create_media_buy');
+      if (mediaBuyCall) {
+        assert.ok(
+          typeof mediaBuyCall.parameters.brand_manifest !== 'object',
+          'brand_manifest must not be forwarded as an object — it should be converted before sending'
+        );
+      }
+    });
+
+    test('should prefer explicit brand over brand_manifest when both are supplied', async () => {
+      const client = new AdCPClient([mockAgent]);
+      const agent = client.agent(mockAgent.id);
+
+      await assert.doesNotReject(async () => {
+        try {
+          await agent.createMediaBuy({
+            buyer_ref: 'buyer123',
+            account: { account_id: 'test-account' },
+            packages: [],
+            brand: { domain: 'example.com' },
+            brand_manifest: { name: 'Acme', url: 'https://acme.com/brand.json' },
+            start_time: 'immediate',
+            end_time: '2025-12-31T23:59:59Z',
+          });
+        } catch (err) {
+          if (err.message.includes('Request validation failed')) {
+            throw err;
+          }
+        }
+      }, 'brand takes precedence; brand_manifest stripped without causing a validation error');
+    });
   });
 
   // Note: AdCP v3 schemas have additionalProperties: true for extensibility

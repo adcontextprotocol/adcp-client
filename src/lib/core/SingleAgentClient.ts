@@ -2014,11 +2014,30 @@ export class SingleAgentClient {
    * written against older schema versions keep working.
    */
   private normalizeRequestParams(taskType: string, params: any): any {
-    if (taskType !== 'get_products' || !params) {
+    if (!params) {
       return params;
     }
 
     let normalized = { ...params };
+
+    // Strip brand_manifest → brand for tasks whose schema has a brand field (get_products, create_media_buy).
+    // update_media_buy has no brand field in either v2 or v3 — excluded deliberately.
+    // brand takes precedence if both are supplied.
+    if (taskType === 'get_products' || taskType === 'create_media_buy') {
+      if (normalized.brand_manifest && !normalized.brand) {
+        const brand = brandManifestToBrandReference(normalized.brand_manifest);
+        if (brand) {
+          normalized.brand = brand;
+        }
+      }
+      delete normalized.brand_manifest;
+    }
+
+    if (taskType !== 'get_products') {
+      return normalized;
+    }
+
+    // get_products-specific normalization below
 
     // Infer buying_mode from brief presence if not supplied
     if (!normalized.buying_mode) {
@@ -2027,16 +2046,6 @@ export class SingleAgentClient {
         ...normalized,
       };
     }
-
-    // Convert legacy brand_manifest → brand (BrandReference) so strict validation passes.
-    // brand takes precedence if both are supplied.
-    if (normalized.brand_manifest && !normalized.brand) {
-      const brand = brandManifestToBrandReference(normalized.brand_manifest);
-      if (brand) {
-        normalized.brand = brand;
-      }
-    }
-    delete normalized.brand_manifest;
 
     // Convert legacy product_selectors (v3 beta / v2 era) → catalog so strict validation passes.
     // catalog takes precedence if both are supplied.

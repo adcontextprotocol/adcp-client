@@ -318,14 +318,28 @@ describe('Creative Assignment Adapter', () => {
       assert.strictEqual(result.optimization_goals, undefined);
       assert.deepStrictEqual(result.creative_ids, ['creative-1']);
     });
+
+    test('should strip catalog from package (v3-only field)', () => {
+      const v3Package = {
+        package_id: 'pkg-1',
+        budget: 5000,
+        catalog: { type: 'product', gtins: ['gtin-1', 'gtin-2'] },
+        creative_assignments: [{ creative_id: 'creative-1' }],
+      };
+
+      const result = adaptPackageRequestForV2(v3Package);
+
+      assert.strictEqual(result.catalog, undefined);
+      assert.strictEqual(result.budget, 5000);
+      assert.deepStrictEqual(result.creative_ids, ['creative-1']);
+    });
   });
 
   describe('adaptCreateMediaBuyRequestForV2', () => {
-    test('should strip v3-only top-level fields', () => {
+    test('should strip v3-only top-level fields and convert brand to brand_manifest', () => {
       const v3Request = {
         buyer_ref: 'buyer-1',
         account: { account_id: 'acc-1' },
-        proposal_id: 'prop-1',
         total_budget: { amount: 10000, currency: 'USD' },
         artifact_webhook: 'https://example.com/webhook',
         brand: { domain: 'example.com' },
@@ -335,11 +349,74 @@ describe('Creative Assignment Adapter', () => {
       const result = adaptCreateMediaBuyRequestForV2(v3Request);
 
       assert.strictEqual(result.account, undefined);
-      assert.strictEqual(result.proposal_id, undefined);
       assert.strictEqual(result.total_budget, undefined);
       assert.strictEqual(result.artifact_webhook, undefined);
+      assert.strictEqual(result.brand, undefined);
       assert.strictEqual(result.buyer_ref, 'buyer-1');
-      assert.deepStrictEqual(result.brand, { domain: 'example.com' });
+      // brand converted to v2 brand_manifest URL (bare domain)
+      assert.strictEqual(result.brand_manifest, 'https://example.com');
+    });
+
+    test('should throw when proposal_id is present and no packages (v3-only feature, no fallback)', () => {
+      const v3Request = {
+        buyer_ref: 'buyer-1',
+        account: { account_id: 'acc-1' },
+        proposal_id: 'prop-1',
+        total_budget: { amount: 10000, currency: 'USD' },
+        brand: { domain: 'example.com' },
+        // no packages — nothing for a v2 server to execute
+      };
+
+      assert.throws(
+        () => adaptCreateMediaBuyRequestForV2(v3Request),
+        err => err.message.includes('Proposal mode') && err.message.includes('v3 server'),
+        'Should throw when proposal_id is present with no packages'
+      );
+    });
+
+    test('should strip proposal_id and proceed when packages are also present', () => {
+      const v3Request = {
+        buyer_ref: 'buyer-1',
+        proposal_id: 'prop-1',
+        total_budget: { amount: 10000, currency: 'USD' },
+        brand: { domain: 'example.com' },
+        packages: [{ buyer_ref: 'pkg-1', product_id: 'prod-1', budget: 1000 }],
+      };
+
+      // Should NOT throw — packages provide a valid v2 fallback
+      const result = adaptCreateMediaBuyRequestForV2(v3Request);
+
+      assert.strictEqual(result.proposal_id, undefined);
+      assert.strictEqual(result.total_budget, undefined);
+      assert.strictEqual(result.buyer_ref, 'buyer-1');
+      assert.ok(result.packages?.length === 1);
+    });
+
+    test('should produce a valid v2 brand_manifest URL from brand with brand_id', () => {
+      const result = adaptCreateMediaBuyRequestForV2({
+        buyer_ref: 'buyer-1',
+        brand: { domain: 'acme.com', brand_id: 'br_123' },
+        packages: [],
+      });
+
+      // brand_id is v3-only metadata; v2 brand_manifest URL uses just the domain
+      assert.strictEqual(result.brand_manifest, 'https://acme.com');
+      assert.strictEqual(result.brand, undefined);
+    });
+
+    test('should preserve brand when it has no domain (consistent with adaptGetProductsRequestForV2)', () => {
+      // If brand is present but has no domain we cannot produce a brand_manifest URL.
+      // Preserve brand in the output rather than silently dropping it, matching the
+      // behaviour of adaptGetProductsRequestForV2 which also leaves brand untouched
+      // when it cannot be converted.
+      const result = adaptCreateMediaBuyRequestForV2({
+        buyer_ref: 'buyer-1',
+        brand: { brand_id: 'br_999' }, // no domain
+        packages: [],
+      });
+
+      assert.deepStrictEqual(result.brand, { brand_id: 'br_999' });
+      assert.strictEqual(result.brand_manifest, undefined);
     });
   });
 
@@ -355,6 +432,18 @@ describe('Creative Assignment Adapter', () => {
 
       assert.strictEqual(result.reporting_webhook, undefined);
       assert.strictEqual(result.media_buy_id, 'mb-1');
+    });
+
+    test('should not modify brand-related fields (neither v2 nor v3 update_media_buy schema has a brand field)', () => {
+      // The update_media_buy schema has no brand field in v2 or v3, so the adapter
+      // must not convert or strip any brand-related data — pass through unchanged.
+      const result = adaptUpdateMediaBuyRequestForV2({
+        media_buy_id: 'mb-1',
+        brand: { domain: 'example.com' },
+      });
+
+      assert.deepStrictEqual(result.brand, { domain: 'example.com' });
+      assert.strictEqual(result.brand_manifest, undefined);
     });
   });
 

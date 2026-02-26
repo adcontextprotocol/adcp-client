@@ -55,10 +55,10 @@ export interface PackageResponseV2 {
 /**
  * Adapt a v3-style package request for a v2 server.
  * Converts creative_assignments to creative_ids (dropping weight and placement_ids).
- * Strips v3-only package fields (optimization_goals).
+ * Strips v3-only package fields (optimization_goals, catalog).
  */
 export function adaptPackageRequestForV2(pkg: PackageRequestV3): PackageRequestV2 {
-  const { optimization_goals, ...rest } = pkg as any;
+  const { optimization_goals, catalog, ...rest } = pkg as any;
 
   if (!rest.creative_assignments) {
     return rest as PackageRequestV2;
@@ -74,13 +74,32 @@ export function adaptPackageRequestForV2(pkg: PackageRequestV3): PackageRequestV
 
 /**
  * Adapt a create_media_buy request for a v2 server.
- * Strips v3-only top-level fields and adapts packages.
+ * Strips v3-only top-level fields, converts brand → brand_manifest, and adapts packages.
  */
 export function adaptCreateMediaBuyRequestForV2(request: any): any {
-  const { account, proposal_id, total_budget, artifact_webhook, ...rest } = request;
+  const { account, proposal_id, total_budget, artifact_webhook, brand, ...rest } = request;
+
+  // Proposal mode is v3-only. If packages are also present we can still satisfy the request
+  // by dropping proposal_id/total_budget and using the explicit packages.
+  // Only throw when there are no packages — then there's nothing to send a v2 server.
+  if (proposal_id && !rest.packages?.length) {
+    throw new Error(
+      'Proposal mode (proposal_id + total_budget) requires a v3 server. ' +
+        'The connected server only supports AdCP v2. Provide an explicit packages array instead.'
+    );
+  }
+
+  // Convert v3 BrandReference → v2 brand_manifest URL (bare domain, consistent with get_products).
+  // normalizeRequestParams has already stripped any incoming brand_manifest and
+  // promoted it to brand, so brand is the canonical source here.
+  const brand_manifest = brand?.domain ? `https://${brand.domain}` : undefined;
 
   return {
     ...rest,
+    // If brand is present but has no domain, preserve it — consistent with adaptGetProductsRequestForV2
+    // which also leaves brand on the object when it cannot convert it.
+    ...(brand && !brand_manifest && { brand }),
+    ...(brand_manifest !== undefined && { brand_manifest }),
     ...(rest.packages && { packages: rest.packages.map(adaptPackageRequestForV2) }),
   };
 }
