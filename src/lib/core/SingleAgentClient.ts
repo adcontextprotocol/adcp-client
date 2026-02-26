@@ -2022,11 +2022,7 @@ export class SingleAgentClient {
 
     // Strip brand_manifest → brand for any task that uses strict validation with a brand field.
     // brand takes precedence if both are supplied.
-    if (
-      taskType === 'get_products' ||
-      taskType === 'create_media_buy' ||
-      taskType === 'update_media_buy'
-    ) {
+    if (taskType === 'get_products' || taskType === 'create_media_buy' || taskType === 'update_media_buy') {
       if (normalized.brand_manifest && !normalized.brand) {
         const brand = brandManifestToBrandReference(normalized.brand_manifest);
         if (brand) {
