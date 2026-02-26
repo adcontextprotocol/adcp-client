@@ -41,6 +41,39 @@ export interface MCPConnectionResult {
   transport: StreamableHTTPClientTransport;
 }
 
+/**
+ * Filter tool call args to only include fields present in the tool's input schema.
+ * Silently drops unknown fields to handle agents on older protocol versions that
+ * don't accept fields the client infers (e.g. buying_mode on get_products).
+ */
+async function filterArgsByToolSchema(
+  client: MCPClient,
+  toolName: string,
+  args: any,
+  debugLogs: any[]
+): Promise<any> {
+  try {
+    const toolsResult = await client.listTools();
+    const tool = toolsResult.tools?.find((t: any) => t.name === toolName);
+    if (tool?.inputSchema?.properties) {
+      const acceptedKeys = new Set(Object.keys(tool.inputSchema.properties as object));
+      const droppedKeys = Object.keys(args).filter(k => !acceptedKeys.has(k));
+      if (droppedKeys.length > 0) {
+        debugLogs.push({
+          type: 'info',
+          message: `MCP: Dropping args not in ${toolName} schema: ${droppedKeys.join(', ')}`,
+          timestamp: new Date().toISOString(),
+          droppedKeys,
+        });
+        return Object.fromEntries(Object.entries(args).filter(([k]) => acceptedKeys.has(k)));
+      }
+    }
+  } catch {
+    // listTools failed — proceed with original args unchanged
+  }
+  return args;
+}
+
 export async function callMCPTool(
   agentUrl: string,
   toolName: string,
@@ -175,10 +208,15 @@ export async function callMCPTool(
   }
 
   try {
+    // Filter args to only include fields the tool's schema accepts.
+    // Prevents "Unexpected keyword argument" errors when the client has inferred
+    // fields (e.g. buying_mode) that older agent implementations don't support.
+    const filteredArgs = await filterArgsByToolSchema(mcpClient, toolName, args, debugLogs);
+
     // Call the tool using official MCP client
     debugLogs.push({
       type: 'info',
-      message: `MCP: Calling tool ${toolName} with args: ${JSON.stringify(args)}`,
+      message: `MCP: Calling tool ${toolName} with args: ${JSON.stringify(filteredArgs)}`,
       timestamp: new Date().toISOString(),
     });
 
@@ -193,7 +231,7 @@ export async function callMCPTool(
 
     const response = await mcpClient.callTool({
       name: toolName,
-      arguments: args,
+      arguments: filteredArgs,
     });
 
     debugLogs.push({
@@ -397,9 +435,11 @@ export async function callMCPToolWithOAuth(options: MCPCallOptions): Promise<any
       timestamp: new Date().toISOString(),
     });
 
+    const filteredArgs = await filterArgsByToolSchema(client, toolName, args, debugLogs);
+
     const response = await client.callTool({
       name: toolName,
-      arguments: args,
+      arguments: filteredArgs,
     });
 
     debugLogs.push({

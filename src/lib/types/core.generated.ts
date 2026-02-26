@@ -1,7 +1,11 @@
 // Generated AdCP core types from official schemas vlatest
-// Generated at: 2026-02-24T15:27:12.848Z
+// Generated at: 2026-02-26T15:20:57.391Z
 
 // MEDIA-BUY SCHEMA
+/**
+ * Brand identifier within the house portfolio. Optional for single-brand domains.
+ */
+export type BrandID = string;
 /**
  * Status of a media buy
  */
@@ -26,7 +30,9 @@ export type PostalCodeSystem =
   | 'ca_full'
   | 'de_plz'
   | 'fr_code_postal'
-  | 'au_postcode';
+  | 'au_postcode'
+  | 'ch_plz'
+  | 'at_plz';
 /**
  * Postal code system (e.g., 'us_zip', 'gb_outward'). System name encodes country and precision.
  */
@@ -52,7 +58,117 @@ export type DevicePlatform =
   | 'roku_os'
   | 'unknown';
 /**
- * Event type to optimize for (e.g. purchase, lead)
+ * A single optimization target for a package. Packages accept an array of optimization_goals. When multiple goals are present, priority determines which the seller focuses on — 1 is highest priority (primary goal); higher numbers are secondary. Duplicate priority values result in undefined seller behavior.
+ */
+export type OptimizationGoal =
+  | {
+      kind: 'metric';
+      /**
+       * Seller-native metric to optimize for. Delivery metrics: clicks (link clicks, swipe-throughs, CTA taps that navigate away), views (viewable impressions), completed_views (video/audio completions — see view_duration_seconds). Duration/score metrics: viewed_seconds (time in view per impression), attention_seconds (attention time per impression), attention_score (vendor-specific attention score). Audience action metrics: engagements (any direct interaction with the ad unit beyond viewing — social reactions/comments/shares, story/unit opens, interactive overlay taps, companion banner interactions on audio and CTV), follows (new followers, page likes, artist/podcast/channel subscribes), saves (saves, bookmarks, playlist adds, pins — signals of intent to return), profile_visits (visits to the brand's in-platform page — profile, artist page, channel, or storefront. Does not include external website clicks, which are covered by 'clicks').
+       */
+      metric:
+        | 'clicks'
+        | 'views'
+        | 'completed_views'
+        | 'viewed_seconds'
+        | 'attention_seconds'
+        | 'attention_score'
+        | 'engagements'
+        | 'follows'
+        | 'saves'
+        | 'profile_visits';
+      /**
+       * Minimum video view duration in seconds that qualifies as a completed_view for this goal. Only applicable when metric is 'completed_views'. When omitted, the seller uses their platform default (typically 2–15 seconds). Common values: 2 (Snap/LinkedIn default), 6 (TikTok), 15 (Snap 15-second views, Meta ThruPlay). Sellers declare which durations they support in metric_optimization.supported_view_durations. Sellers must reject goals with unsupported values — silent rounding would create measurement discrepancies.
+       */
+      view_duration_seconds?: number;
+      /**
+       * Target for this metric. When omitted, the seller optimizes for maximum metric volume within budget.
+       */
+      target?:
+        | {
+            kind: 'cost_per';
+            /**
+             * Target cost per metric unit in the buy currency
+             */
+            value: number;
+          }
+        | {
+            kind: 'threshold_rate';
+            /**
+             * Minimum per-impression value. Units depend on the metric: proportion (clicks, views, completed_views), seconds (viewed_seconds, attention_seconds), or score (attention_score).
+             */
+            value: number;
+          };
+      /**
+       * Relative priority among all optimization goals on this package. 1 = highest priority (primary goal); higher numbers are lower priority (secondary signals). When omitted, sellers may use array position as priority.
+       */
+      priority?: number;
+    }
+  | {
+      kind: 'event';
+      /**
+       * Event source and type pairs that feed this goal. Each entry identifies a source and event type to include. When the seller supports multi_source_event_dedup (declared in get_adcp_capabilities), they deduplicate by event_id across all entries — the same business event from multiple sources counts once, using value_field and value_factor from the first matching entry. When multi_source_event_dedup is false or absent, buyers should use a single entry per goal; the seller will use only the first entry. All event sources must be configured via sync_event_sources.
+       */
+      event_sources: {
+        /**
+         * Event source to include (must be configured on this account via sync_event_sources)
+         */
+        event_source_id: string;
+        event_type: EventType;
+        /**
+         * Required when event_type is 'custom'. Platform-specific name for the custom event.
+         */
+        custom_event_name?: string;
+        /**
+         * Which field in the event's custom_data carries the monetary value. The seller must use this field for value extraction and aggregation when computing ROAS and conversion value metrics. Required on at least one entry when target.kind is 'per_ad_spend' or 'maximize_value'. Common values: 'value', 'order_total', 'profit_margin'. This is not passed as a parameter to underlying platform APIs — the seller maps it to their platform's value ingestion mechanism.
+         */
+        value_field?: string;
+        /**
+         * Multiplier the seller must apply to value_field before aggregation. Use -1 for refund events (negate the value), 0.01 for values in cents, -0.01 for refunds in cents. A value of 0 zeroes out this source's value contribution (the source still counts for event dedup). Defaults to 1. This is not passed as a parameter to underlying platform APIs — the seller applies it when computing aggregated value metrics.
+         */
+        value_factor?: number;
+      }[];
+      /**
+       * Target cost or return for this event goal. When omitted, the seller optimizes for maximum conversions within budget.
+       */
+      target?:
+        | {
+            kind: 'cost_per';
+            /**
+             * Target cost per event in the buy currency
+             */
+            value: number;
+          }
+        | {
+            kind: 'per_ad_spend';
+            /**
+             * Target return ratio (e.g., 4.0 means $4 of value per $1 spent)
+             */
+            value: number;
+          }
+        | {
+            kind: 'maximize_value';
+          };
+      /**
+       * Attribution window for this optimization goal. Values must match an option declared in the seller's conversion_tracking.attribution_windows capability. Sellers must reject windows not in their declared capabilities. When omitted, the seller uses their default window.
+       */
+      attribution_window?: {
+        /**
+         * Click-through attribution window (e.g. '7d', '28d', '30d')
+         */
+        click_through: string;
+        /**
+         * View-through attribution window (e.g. '1d', '7d')
+         */
+        view_through?: string;
+      };
+      /**
+       * Relative priority among all optimization goals on this package. 1 = highest priority (primary goal); higher numbers are lower priority (secondary signals). When omitted, sellers may use array position as priority.
+       */
+      priority?: number;
+    };
+/**
+ * Event type to include from this source (e.g., purchase, lead, app_install, refund)
  */
 export type EventType =
   | 'page_view'
@@ -145,25 +261,18 @@ export interface Account {
    */
   billing_proxy?: string;
   /**
-   * Account status. pending_approval: seller reviewing (credit, contracts). payment_required: credit limit reached or funds depleted. suspended: was active, now paused. closed: terminated.
+   * Account status. pending_approval: seller reviewing (credit, contracts). rejected: seller declined the account request. payment_required: credit limit reached or funds depleted. suspended: was active, now paused. closed: was active, now terminated.
    */
-  status: 'active' | 'pending_approval' | 'payment_required' | 'suspended' | 'closed';
+  status: 'active' | 'pending_approval' | 'rejected' | 'payment_required' | 'suspended' | 'closed';
+  brand?: BrandReference;
   /**
-   * House domain where brand.json is hosted. Canonical identity anchor for the brand.
-   */
-  house?: string;
-  /**
-   * Brand ID within the house portfolio (from brand.json)
-   */
-  brand_id?: string;
-  /**
-   * Domain of the entity operating this account
+   * Domain of the entity operating this account. When the brand operates directly, this is the brand's domain.
    */
   operator?: string;
   /**
-   * Who is invoiced on this account. brand: seller invoices the brand directly. operator: seller invoices the operator (agency). agent: agent consolidates billing.
+   * Who is invoiced on this account. operator: seller invoices the operator (agency or brand buying direct). agent: agent consolidates billing.
    */
-  billing?: 'brand' | 'operator' | 'agent';
+  billing?: 'operator' | 'agent';
   /**
    * Identifier for the rate card applied to this account
    */
@@ -197,10 +306,24 @@ export interface Account {
     expires_at?: string;
   };
   /**
+   * How the seller scoped this account. operator: shared across all brands for this operator. brand: shared across all operators for this brand. operator_brand: dedicated to a specific operator+brand combination. agent: the agent's default account with no brand or operator association.
+   */
+  account_scope?: 'operator' | 'brand' | 'operator_brand' | 'agent';
+  /**
    * When true, this is a sandbox account. All requests using this account_id are treated as sandbox — no real platform calls, no real spend.
    */
   sandbox?: boolean;
   ext?: ExtensionObject;
+}
+/**
+ * Brand reference identifying the advertiser
+ */
+export interface BrandReference {
+  /**
+   * Domain where /.well-known/brand.json is hosted, or the brand's operating domain
+   */
+  domain: string;
+  brand_id?: BrandID;
 }
 /**
  * Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.
@@ -248,7 +371,10 @@ export interface Package {
    * Format IDs that creative assets will be provided for this package
    */
   format_ids_to_provide?: FormatID[];
-  optimization_goal?: OptimizationGoal;
+  /**
+   * Optimization targets for this package. The seller optimizes delivery toward these goals in priority order. Common pattern: event goals (purchase, install) as primary targets at priority 1; metric goals (clicks, views) as secondary proxy signals at priority 2+.
+   */
+  optimization_goals?: OptimizationGoal[];
   /**
    * Whether this package is paused by the buyer. Paused packages do not deliver impressions. Defaults to false.
    */
@@ -468,37 +594,6 @@ export interface FormatID {
    * Duration in milliseconds for time-based formats (video, audio). When specified, creates a parameterized format ID. Omit to reference a template format without parameters.
    */
   duration_ms?: number;
-}
-/**
- * Conversion optimization goal for a package. Tells the seller which event source and event type to optimize delivery against. Provide at most one of target_roas or target_cpa. If neither is provided, the seller optimizes for maximum conversions within budget.
- */
-export interface OptimizationGoal {
-  /**
-   * Event source to optimize against (must be configured on this account via sync_event_sources)
-   */
-  event_source_id: string;
-  event_type: EventType;
-  /**
-   * Target return on ad spend (e.g. 4.0 = $4 conversion value per $1 spent). Mutually exclusive with target_cpa.
-   */
-  target_roas?: number;
-  /**
-   * Target cost per acquisition in the buy currency. Mutually exclusive with target_roas.
-   */
-  target_cpa?: number;
-  /**
-   * Attribution window for this optimization goal. Values must match an option declared in the seller's conversion_tracking.attribution_windows capability. When omitted, the seller uses their default window.
-   */
-  attribution_window?: {
-    /**
-     * Click-through attribution window (e.g. '7d', '28d', '30d')
-     */
-    click_through: string;
-    /**
-     * View-through attribution window (e.g. '1d', '7d')
-     */
-    view_through?: string;
-  };
 }
 
 // CREATIVE-ASSET SCHEMA
@@ -1477,7 +1572,39 @@ export interface Product {
    */
   catalog_types?: CatalogType[];
   /**
-   * Conversion tracking for this product. Presence indicates the product supports conversion-optimized delivery. Seller-level capabilities (supported event types, UID types, attribution windows) are declared in get_adcp_capabilities.
+   * Metric optimization capabilities for this product. Presence indicates the product supports optimization_goals with kind: 'metric'. No event source or conversion tracking setup required — the seller tracks these metrics natively.
+   */
+  metric_optimization?: {
+    /**
+     * Metric kinds this product can optimize for. Buyers should only request metric goals for kinds listed here.
+     */
+    supported_metrics: (
+      | 'clicks'
+      | 'views'
+      | 'completed_views'
+      | 'viewed_seconds'
+      | 'attention_seconds'
+      | 'attention_score'
+      | 'engagements'
+      | 'follows'
+      | 'saves'
+      | 'profile_visits'
+    )[];
+    /**
+     * Video view duration thresholds (in seconds) this product supports for completed_views goals. Only relevant when supported_metrics includes 'completed_views'. When absent, the seller uses their platform default. Buyers must set view_duration_seconds to a value in this list — sellers reject unsupported values.
+     */
+    supported_view_durations?: number[];
+    /**
+     * Target kinds available for metric goals on this product. Values match target.kind on the optimization goal. Only these target kinds are accepted — goals with unlisted target kinds will be rejected. When omitted, buyers can set target-less metric goals (maximize volume within budget) but cannot set specific targets.
+     */
+    supported_targets?: ('cost_per' | 'threshold_rate')[];
+  };
+  /**
+   * Maximum number of optimization_goals this product accepts on a package. When absent, no limit is declared. Most social platforms accept only 1 goal — buyers sending arrays longer than this value should expect the seller to use only the highest-priority (lowest priority number) goal.
+   */
+  max_optimization_goals?: number;
+  /**
+   * Conversion event tracking for this product. Presence indicates the product supports optimization_goals with kind: 'event'. Seller-level capabilities (supported event types, UID types, attribution windows) are declared in get_adcp_capabilities.
    */
   conversion_tracking?: {
     /**
@@ -1485,9 +1612,9 @@ export interface Product {
      */
     action_sources?: ActionSource[];
     /**
-     * Optimization strategies this product supports when an optimization_goal is set on a package
+     * Target kinds available for event goals on this product. Values match target.kind on the optimization goal. cost_per: target cost per conversion event. per_ad_spend: target return on ad spend (requires value_field on event sources). maximize_value: maximize total conversion value without a specific ratio target (requires value_field). Only these target kinds are accepted — goals with unlisted target kinds will be rejected. A goal without a target implicitly maximizes conversion count within budget — no declaration needed for that mode. When omitted, buyers can still set target-less event goals.
      */
-    supported_optimization_strategies?: ('maximize_conversions' | 'target_cpa' | 'target_roas')[];
+    supported_targets?: ('cost_per' | 'per_ad_spend' | 'maximize_value')[];
     /**
      * Whether the seller provides its own always-on measurement (e.g. Amazon sales attribution for Amazon advertisers). When true, sync_event_sources response will include seller-managed event sources with managed_by='seller'.
      */
@@ -2172,6 +2299,7 @@ export type TaskType =
   | 'list_property_lists'
   | 'delete_property_list'
   | 'sync_accounts'
+  | 'get_account_financials'
   | 'get_creative_delivery'
   | 'sync_event_sources'
   | 'sync_audiences'
@@ -2223,7 +2351,7 @@ export type AdCPAsyncResponseData =
  */
 export type CreateMediaBuyResponse = CreateMediaBuySuccess | CreateMediaBuyError;
 /**
- * Budget pacing strategy
+ * Brand identifier within the house portfolio. Optional for single-brand domains.
  */
 export type UpdateMediaBuyResponse = UpdateMediaBuySuccess | UpdateMediaBuyError;
 /**
