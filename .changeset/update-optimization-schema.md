@@ -11,6 +11,9 @@ Sync upstream schema changes (breaking):
 - `Account.house` and `Account.brand_id` removed; replaced by `Account.brand?: BrandReference`
 - `billing` enum: `'brand'` value removed
 - `MediaBuy.campaign_ref` renamed to `buyer_campaign_ref`
+- `Signal.pricing` replaced by `Signal.pricing_options: PricingOption[]`
+- `LogEventRequest` usage records: `operator_id` field removed; `pricing_option_id` field added for billing verification; `kind` field removed
+- `PostalCodeSystem`: added `ch_plz` (Swiss) and `at_plz` (Austrian) postal code systems
 
 New additions:
 

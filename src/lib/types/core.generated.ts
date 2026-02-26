@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas vlatest
-// Generated at: 2026-02-26T12:30:39.470Z
+// Generated at: 2026-02-26T12:42:50.240Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -19,7 +19,7 @@ export type Pacing = 'even' | 'asap' | 'front_loaded';
  */
 export type MetroAreaSystem = 'nielsen_dma' | 'uk_itl1' | 'uk_itl2' | 'eurostat_nuts2' | 'custom';
 /**
- * Metro area classification system (e.g., 'nielsen_dma', 'uk_itl2')
+ * Postal code system (e.g., 'us_zip', 'gb_outward'). System name encodes country and precision.
  */
 export type PostalCodeSystem =
   | 'us_zip'
@@ -34,7 +34,7 @@ export type PostalCodeSystem =
   | 'ch_plz'
   | 'at_plz';
 /**
- * Postal code system (e.g., 'us_zip', 'gb_outward'). System name encodes country and precision.
+ * Days of the week for daypart targeting
  */
 export type DayOfWeek = 'monday' | 'tuesday' | 'wednesday' | 'thursday' | 'friday' | 'saturday' | 'sunday';
 /**
@@ -623,7 +623,7 @@ export type FeedFormat = 'google_merchant_center' | 'facebook_catalog' | 'shopif
  */
 export type UpdateFrequency = 'realtime' | 'hourly' | 'daily' | 'weekly';
 /**
- * Standard marketing event types for event logging, aligned with IAB ECAPI
+ * Identifier type that the event's content_ids field should be matched against for items in this catalog. For example, 'gtin' means content_ids values are Global Trade Item Numbers, 'sku' means retailer SKUs. Omit when using a custom identifier scheme not listed in the enum.
  */
 export type ContentIDType =
   | 'sku'
@@ -733,7 +733,7 @@ export type VASTTrackingEvent =
   | 'playerExpand'
   | 'playerCollapse';
 /**
- * VAST specification version
+ * DAAST (Digital Audio Ad Serving Template) tag for third-party audio ad serving
  */
 export type DAASTAsset =
   | {
@@ -810,7 +810,7 @@ export type DAASTTrackingEvent =
   | 'mute'
   | 'unmute';
 /**
- * DAAST specification version
+ * Type of URL asset: 'clickthrough' for user click destination (landing page), 'tracker_pixel' for impression/event tracking via HTTP request (fires GET, expects pixel/204 response), 'tracker_script' for measurement SDKs that must load as <script> tag (OMID verification, native event trackers using method:2)
  */
 export type URLAssetType = 'clickthrough' | 'tracker_pixel' | 'tracker_script';
 /**
@@ -889,7 +889,7 @@ export interface CreativeAsset {
   placement_ids?: string[];
 }
 /**
- * Format identifier specifying which format this creative conforms to. Can be: (1) concrete format_id referencing a format with fixed dimensions, (2) template format_id referencing a template format, or (3) parameterized format_id with dimensions/duration parameters for template formats.
+ * A typed data feed. Catalogs carry the items, locations, stock levels, or pricing that publishers use to render ads. They can be synced to a platform via sync_catalogs (managed lifecycle with approval), provided inline, or fetched from an external URL. The catalog type determines the item schema and can be structural (offering, product, inventory, store, promotion) or vertical-specific (hotel, flight, job, vehicle, real_estate, education, destination, app). Selectors (ids, tags, category, query) filter items regardless of sourcing method.
  */
 export interface Catalog {
   /**
@@ -992,7 +992,7 @@ export interface CatalogFieldMapping {
   ext?: ExtensionObject;
 }
 /**
- * Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.
+ * Image asset with URL and dimensions
  */
 export interface ImageAsset {
   /**
@@ -1392,7 +1392,7 @@ export type PricingOption =
  */
 export type DemographicSystem = 'nielsen' | 'barb' | 'agf' | 'oztam' | 'mediametrie' | 'custom';
 /**
- * Standard marketing event types for event logging, aligned with IAB ECAPI
+ * How to interpret the points array. 'spend' (default when omitted): points at ascending budget levels. 'reach_freq': points at ascending reach/frequency targets. 'weekly'/'daily': metrics are per-period values. 'clicks'/'conversions': points at ascending outcome targets.
  */
 export type ForecastRangeUnit = 'spend' | 'reach_freq' | 'weekly' | 'daily' | 'clicks' | 'conversions';
 /**
@@ -1400,7 +1400,7 @@ export type ForecastRangeUnit = 'spend' | 'reach_freq' | 'weekly' | 'daily' | 'c
  */
 export type ForecastMethod = 'estimate' | 'modeled' | 'guaranteed';
 /**
- * Measurement system for the demographic field. Ensures buyer and seller agree on demographic notation.
+ * Unit of measurement for reach and audience_size metrics in this forecast. Required for cross-channel forecast comparison.
  */
 export type ReachUnit = 'individuals' | 'households' | 'devices' | 'accounts' | 'cookies' | 'custom';
 /**
@@ -1484,7 +1484,7 @@ export type DataProviderSignalSelector =
       signal_tags: string[];
     };
 /**
- * The type of catalog feed. Determines the item schema and how the platform resolves catalog items. Multiple catalog types can be synced to the same account and referenced together in creatives.
+ * Where the conversion event originated
  */
 export type ActionSource =
   | 'website'
@@ -1672,7 +1672,7 @@ export interface Product {
   ext?: ExtensionObject;
 }
 /**
- * Structured format identifier with agent URL and format name. Can reference: (1) a concrete format with fixed dimensions (id only), (2) a template format without parameters (id only), or (3) a template format with parameters (id + dimensions/duration). Template formats accept parameters in format_id while concrete formats have fixed dimensions in their definition. Parameterized format IDs create unique, specific format variants.
+ * Represents a specific ad placement within a product's inventory
  */
 export interface Placement {
   /**
@@ -1782,7 +1782,7 @@ export interface VCPMPricingOption {
   min_spend_per_package?: number;
 }
 /**
- * Optional pricing guidance for auction-based bidding
+ * Cost Per Click pricing. If fixed_price is present, it's fixed pricing. If absent, it's auction-based.
  */
 export interface CPCPricingOption {
   /**
@@ -1816,7 +1816,7 @@ export interface CPCPricingOption {
   min_spend_per_package?: number;
 }
 /**
- * Optional pricing guidance for auction-based bidding
+ * Cost Per Completed View (100% video/audio completion) pricing. If fixed_price is present, it's fixed pricing. If absent, it's auction-based.
  */
 export interface CPCVPricingOption {
   /**
@@ -1850,7 +1850,7 @@ export interface CPCVPricingOption {
   min_spend_per_package?: number;
 }
 /**
- * Optional pricing guidance for auction-based bidding
+ * Cost Per View (at publisher-defined threshold) pricing for video/audio. If fixed_price is present, it's fixed pricing. If absent, it's auction-based.
  */
 export interface CPVPricingOption {
   /**
@@ -1897,7 +1897,7 @@ export interface CPVPricingOption {
   min_spend_per_package?: number;
 }
 /**
- * Optional pricing guidance for auction-based bidding
+ * Cost Per Point (Gross Rating Point) pricing for TV and audio campaigns. If fixed_price is present, it's fixed pricing. If absent, it's auction-based.
  */
 export interface CPPPricingOption {
   /**
@@ -1941,7 +1941,7 @@ export interface CPPPricingOption {
   min_spend_per_package?: number;
 }
 /**
- * Optional pricing guidance for auction-based bidding
+ * Cost Per Acquisition pricing. Advertiser pays a fixed price when a specified conversion event occurs. The event_type field declares which event triggers billing (e.g., purchase, lead, app_install).
  */
 export interface CPAPricingOption {
   /**
@@ -2041,7 +2041,7 @@ export interface FlatRatePricingOption {
   min_spend_per_package?: number;
 }
 /**
- * Optional pricing guidance for auction-based bidding
+ * Cost per time unit (hour, day, week, or month) - rate scales with campaign duration. If fixed_price is present, it's fixed pricing. If absent, it's auction-based.
  */
 export interface TimeBasedPricingOption {
   /**
@@ -2088,7 +2088,7 @@ export interface TimeBasedPricingOption {
   min_spend_per_package?: number;
 }
 /**
- * Optional pricing guidance for auction-based bidding
+ * Forecasted delivery metrics for this product. Gives buyers an estimate of expected performance before requesting a proposal.
  */
 export interface DeliveryForecast {
   /**
@@ -2150,7 +2150,7 @@ export interface ForecastRange {
   high?: number;
 }
 /**
- * Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.
+ * Measurement capabilities included with a product
  */
 export interface Measurement {
   /**
@@ -2215,7 +2215,7 @@ export interface CreativePolicy {
   templates_available: boolean;
 }
 /**
- * Structured format identifier with agent URL and format name. Can reference: (1) a concrete format with fixed dimensions (id only), (2) a template format without parameters (id only), or (3) a template format with parameters (id + dimensions/duration). Template formats accept parameters in format_id while concrete formats have fixed dimensions in their definition. Parameterized format IDs create unique, specific format variants.
+ * Type of advertising property
  */
 export type PropertyType =
   | 'website'
@@ -2250,7 +2250,7 @@ export type PropertyIdentifierTypes =
   | 'spotify_show_id'
   | 'podcast_guid';
 /**
- * Tag for categorizing publisher properties. Must be lowercase alphanumeric with underscores only.
+ * An advertising property that can be validated via adagents.json
  */
 export interface Property {
   property_id?: PropertyID;
@@ -2347,11 +2347,11 @@ export type AdCPAsyncResponseData =
   | SyncCatalogsAsyncInputRequired
   | SyncCatalogsAsyncSubmitted;
 /**
- * Selects properties from a publisher's adagents.json. Used for both product definitions and agent authorization. Supports three selection patterns: all properties, specific IDs, or by tags.
+ * Response for completed or failed create_media_buy
  */
 export type CreateMediaBuyResponse = CreateMediaBuySuccess | CreateMediaBuyError;
 /**
- * Brand identifier within the house portfolio. Optional for single-brand domains.
+ * Response for completed or failed update_media_buy
  */
 export type UpdateMediaBuyResponse = UpdateMediaBuySuccess | UpdateMediaBuyError;
 /**
@@ -2437,7 +2437,7 @@ export interface GetProductsResponse {
   ext?: ExtensionObject;
 }
 /**
- * Represents available advertising inventory
+ * A proposed media plan with budget allocations across products. Represents the publisher's strategic recommendation for how to structure a campaign based on the brief. Proposals are actionable - buyers can execute them directly via create_media_buy by providing the proposal_id.
  */
 export interface Proposal {
   /**
@@ -2524,7 +2524,7 @@ export interface ProductAllocation {
   ext?: ExtensionObject;
 }
 /**
- * A time window for daypart targeting. Specifies days of week and an hour range. start_hour is inclusive, end_hour is exclusive (e.g., 6-10 = 6:00am to 10:00am). Follows the Google Ads AdScheduleInfo / DV360 DayPartTargeting pattern.
+ * Standard error structure for task-specific errors and warnings
  */
 export interface Error {
   /**
@@ -2659,7 +2659,7 @@ export interface CreateMediaBuySuccess {
   ext?: ExtensionObject;
 }
 /**
- * Account billed for this media buy. Includes advertiser, billing proxy (if any), and rate card applied.
+ * Error response - operation failed, no media buy created
  */
 export interface CreateMediaBuyError {
   /**
@@ -2860,7 +2860,7 @@ export interface SyncCreativesSuccess {
   ext?: ExtensionObject;
 }
 /**
- * Account that owns this creative
+ * Error response - operation failed completely, no creatives were processed
  */
 export interface SyncCreativesError {
   /**

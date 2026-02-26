@@ -242,7 +242,7 @@ export type SignalID =
       id: string;
     };
 /**
- * The signal to target
+ * Brand reference for product discovery context. Resolved to full brand identity at execution time.
  */
 export interface BrandReference {
   /**
@@ -359,7 +359,7 @@ export interface CatalogFieldMapping {
  */
 export interface ExtensionObject {}
 /**
- * Brand reference identifying the advertiser
+ * Structured filters for product discovery
  */
 export interface ProductFilters {
   delivery_type?: DeliveryType;
@@ -586,7 +586,7 @@ export type PropertyID = string;
  */
 export type PropertyTag = string;
 /**
- * Standardized advertising media channels describing how buyers allocate budget. Channels are planning abstractions, not technical substrates. See the Media Channel Taxonomy specification for detailed definitions.
+ * A pricing model option offered by a publisher for a product. Discriminated by pricing_model field. If fixed_price is present, it's fixed pricing. If absent, it's auction-based (floor_price and price_guidance optional). Bid-based auction models may also include max_bid as a boolean signal to interpret bid_price as a buyer ceiling instead of an exact honored price.
  */
 export type PricingOption =
   | CPMPricingOption
@@ -603,7 +603,7 @@ export type PricingOption =
  */
 export type DemographicSystem = 'nielsen' | 'barb' | 'agf' | 'oztam' | 'mediametrie' | 'custom';
 /**
- * Standard marketing event types for event logging, aligned with IAB ECAPI
+ * How to interpret the points array. 'spend' (default when omitted): points at ascending budget levels. 'reach_freq': points at ascending reach/frequency targets. 'weekly'/'daily': metrics are per-period values. 'clicks'/'conversions': points at ascending outcome targets.
  */
 export type ForecastRangeUnit = 'spend' | 'reach_freq' | 'weekly' | 'daily' | 'clicks' | 'conversions';
 /**
@@ -611,7 +611,7 @@ export type ForecastRangeUnit = 'spend' | 'reach_freq' | 'weekly' | 'daily' | 'c
  */
 export type ForecastMethod = 'estimate' | 'modeled' | 'guaranteed';
 /**
- * Measurement system for the demographic field. Ensures buyer and seller agree on demographic notation.
+ * Unit of measurement for reach and audience_size metrics in this forecast. Required for cross-channel forecast comparison.
  */
 export type ReachUnit = 'individuals' | 'households' | 'devices' | 'accounts' | 'cookies' | 'custom';
 /**
@@ -695,7 +695,7 @@ export type DataProviderSignalSelector =
       signal_tags: string[];
     };
 /**
- * The type of catalog feed. Determines the item schema and how the platform resolves catalog items. Multiple catalog types can be synced to the same account and referenced together in creatives.
+ * Where the conversion event originated
  */
 export type ActionSource =
   | 'website'
@@ -919,7 +919,7 @@ export interface Product {
   ext?: ExtensionObject;
 }
 /**
- * Structured format identifier with agent URL and format name. Can reference: (1) a concrete format with fixed dimensions (id only), (2) a template format without parameters (id only), or (3) a template format with parameters (id + dimensions/duration). Template formats accept parameters in format_id while concrete formats have fixed dimensions in their definition. Parameterized format IDs create unique, specific format variants.
+ * Represents a specific ad placement within a product's inventory
  */
 export interface Placement {
   /**
@@ -1029,7 +1029,7 @@ export interface VCPMPricingOption {
   min_spend_per_package?: number;
 }
 /**
- * Optional pricing guidance for auction-based bidding
+ * Cost Per Click pricing. If fixed_price is present, it's fixed pricing. If absent, it's auction-based.
  */
 export interface CPCPricingOption {
   /**
@@ -1063,7 +1063,7 @@ export interface CPCPricingOption {
   min_spend_per_package?: number;
 }
 /**
- * Optional pricing guidance for auction-based bidding
+ * Cost Per Completed View (100% video/audio completion) pricing. If fixed_price is present, it's fixed pricing. If absent, it's auction-based.
  */
 export interface CPCVPricingOption {
   /**
@@ -1097,7 +1097,7 @@ export interface CPCVPricingOption {
   min_spend_per_package?: number;
 }
 /**
- * Optional pricing guidance for auction-based bidding
+ * Cost Per View (at publisher-defined threshold) pricing for video/audio. If fixed_price is present, it's fixed pricing. If absent, it's auction-based.
  */
 export interface CPVPricingOption {
   /**
@@ -1144,7 +1144,7 @@ export interface CPVPricingOption {
   min_spend_per_package?: number;
 }
 /**
- * Optional pricing guidance for auction-based bidding
+ * Cost Per Point (Gross Rating Point) pricing for TV and audio campaigns. If fixed_price is present, it's fixed pricing. If absent, it's auction-based.
  */
 export interface CPPPricingOption {
   /**
@@ -1188,7 +1188,7 @@ export interface CPPPricingOption {
   min_spend_per_package?: number;
 }
 /**
- * Optional pricing guidance for auction-based bidding
+ * Cost Per Acquisition pricing. Advertiser pays a fixed price when a specified conversion event occurs. The event_type field declares which event triggers billing (e.g., purchase, lead, app_install).
  */
 export interface CPAPricingOption {
   /**
@@ -1288,7 +1288,7 @@ export interface FlatRatePricingOption {
   min_spend_per_package?: number;
 }
 /**
- * Optional pricing guidance for auction-based bidding
+ * Cost per time unit (hour, day, week, or month) - rate scales with campaign duration. If fixed_price is present, it's fixed pricing. If absent, it's auction-based.
  */
 export interface TimeBasedPricingOption {
   /**
@@ -1335,7 +1335,7 @@ export interface TimeBasedPricingOption {
   min_spend_per_package?: number;
 }
 /**
- * Optional pricing guidance for auction-based bidding
+ * Forecasted delivery metrics for this product. Gives buyers an estimate of expected performance before requesting a proposal.
  */
 export interface DeliveryForecast {
   /**
@@ -1397,7 +1397,7 @@ export interface ForecastRange {
   high?: number;
 }
 /**
- * Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.
+ * Measurement capabilities included with a product
  */
 export interface Measurement {
   /**
@@ -1462,7 +1462,7 @@ export interface CreativePolicy {
   templates_available: boolean;
 }
 /**
- * Structured format identifier with agent URL and format name. Can reference: (1) a concrete format with fixed dimensions (id only), (2) a template format without parameters (id only), or (3) a template format with parameters (id + dimensions/duration). Template formats accept parameters in format_id while concrete formats have fixed dimensions in their definition. Parameterized format IDs create unique, specific format variants.
+ * A proposed media plan with budget allocations across products. Represents the publisher's strategic recommendation for how to structure a campaign based on the brief. Proposals are actionable - buyers can execute them directly via create_media_buy by providing the proposal_id.
  */
 export interface Proposal {
   /**
@@ -1570,7 +1570,7 @@ export interface DaypartTarget {
   label?: string;
 }
 /**
- * Forecasted delivery metrics for this allocation
+ * Standard error structure for task-specific errors and warnings
  */
 export interface Error {
   /**
@@ -1615,11 +1615,11 @@ export interface PaginationResponse {
    */
   total_count?: number;
 }
-/**
- * Opaque correlation data that is echoed unchanged in responses. Used for internal tracking, UI session IDs, trace IDs, and other caller-specific identifiers that don't affect protocol behavior. Context data is never parsed by AdCP agents - it's simply preserved and returned.
- */
 
 // list_creative_formats parameters
+/**
+ * Types of content that can be used as creative assets. Describes what KIND of content an asset contains (image, video, code, etc.), not where it displays.
+ */
 export type AssetContentType =
   | 'image'
   | 'video'
@@ -1688,11 +1688,11 @@ export interface ListCreativeFormatsRequest {
   context?: ContextObject;
   ext?: ExtensionObject;
 }
-/**
- * Structured format identifier with agent URL and format name. Can reference: (1) a concrete format with fixed dimensions (id only), (2) a template format without parameters (id only), or (3) a template format with parameters (id + dimensions/duration). Template formats accept parameters in format_id while concrete formats have fixed dimensions in their definition. Parameterized format IDs create unique, specific format variants.
- */
 
 // list_creative_formats response
+/**
+ * Types of parameters that template formats accept in format_id objects to create parameterized format identifiers
+ */
 export type FormatIDParameter = 'dimensions' | 'duration';
 /**
  * Standardized macro placeholders for dynamic value substitution in creative tracking URLs. Macros are replaced with actual values at impression time. See docs/creative/universal-macros.mdx for detailed documentation.
@@ -1767,7 +1767,7 @@ export type UniversalMacro =
   | 'CREATIVE_VARIANT_ID'
   | 'APP_ITEM_ID';
 /**
- * WCAG conformance level that this format achieves. For format-rendered creatives, the format guarantees this level. For opaque creatives, the format requires assets that self-certify to this level.
+ * Technical requirements for each item in this group (e.g., max_length for text, min_width/aspect_ratio for images). Applies uniformly to all items in the group.
  */
 export type AssetRequirements =
   | ImageAssetRequirements
@@ -1805,7 +1805,7 @@ export type CatalogFieldBinding =
       ext?: ExtensionObject;
     };
 /**
- * Standard delivery and performance metrics available for reporting
+ * Capabilities supported by creative agents for format handling
  */
 export type CreativeAgentCapability = 'validation' | 'assembly' | 'generation' | 'preview' | 'delivery';
 
@@ -1970,9 +1970,6 @@ export interface Format {
    */
   reported_metrics?: AvailableMetric[];
 }
-/**
- * Structured format identifier with agent URL and format name
- */
 export interface BaseIndividualAsset {
   /**
    * Discriminator indicating this is an individual asset
@@ -2069,7 +2066,7 @@ export interface BaseGroupAsset {
   overlays?: Overlay[];
 }
 /**
- * Structured format identifier with agent URL and format name. Can reference: (1) a concrete format with fixed dimensions (id only), (2) a template format without parameters (id only), or (3) a template format with parameters (id + dimensions/duration). Template formats accept parameters in format_id while concrete formats have fixed dimensions in their definition. Parameterized format IDs create unique, specific format variants.
+ * Format-level declaration of what catalog feeds a creative needs. Formats that render product listings, store locators, or promotional content declare which catalog types must be synced and what fields each catalog must provide. Buyers use this to ensure the right catalogs are synced before submitting creatives.
  */
 export interface CatalogRequirements {
   catalog_type: CatalogType;
@@ -2417,7 +2414,7 @@ export interface WebhookAssetRequirements {
   methods?: ('GET' | 'POST')[];
 }
 /**
- * Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.
+ * Maps an individual format asset to a catalog item field via dot-notation path.
  */
 export interface ScalarBinding {
   kind: 'scalar';
@@ -2446,14 +2443,14 @@ export interface AssetPoolBinding {
   asset_group_id: string;
   ext?: ExtensionObject;
 }
-/**
- * Standard error structure for task-specific errors and warnings
- */
 
 // create_media_buy parameters
+/**
+ * Budget pacing strategy
+ */
 export type Pacing = 'even' | 'asap' | 'front_loaded';
 /**
- * Catalog type. Structural types: 'offering' (AdCP Offering objects), 'product' (ecommerce entries), 'inventory' (stock per location), 'store' (physical locations), 'promotion' (deals and pricing). Vertical types: 'hotel', 'flight', 'job', 'vehicle', 'real_estate', 'education', 'destination', 'app' — each with an industry-specific item schema.
+ * A single optimization target for a package. Packages accept an array of optimization_goals. When multiple goals are present, priority determines which the seller focuses on — 1 is highest priority (primary goal); higher numbers are secondary. Duplicate priority values result in undefined seller behavior.
  */
 export type OptimizationGoal =
   | {
@@ -2563,7 +2560,7 @@ export type OptimizationGoal =
       priority?: number;
     };
 /**
- * Standard marketing event types for event logging, aligned with IAB ECAPI
+ * Postal code system (e.g., 'us_zip', 'gb_outward'). System name encodes country and precision.
  */
 export type PostalCodeSystem =
   | 'us_zip'
@@ -2578,7 +2575,7 @@ export type PostalCodeSystem =
   | 'ch_plz'
   | 'at_plz';
 /**
- * Postal code system (e.g., 'us_zip', 'gb_outward'). System name encodes country and precision.
+ * Methods for verifying user age for compliance. Does not include 'inferred' as it is not accepted for regulatory compliance.
  */
 export type AgeVerificationMethod = 'facial_age_estimation' | 'id_document' | 'digital_id' | 'credit_card' | 'world_id';
 /**
@@ -2692,7 +2689,7 @@ export type VASTTrackingEvent =
   | 'playerExpand'
   | 'playerCollapse';
 /**
- * VAST specification version
+ * DAAST (Digital Audio Ad Serving Template) tag for third-party audio ad serving
  */
 export type DAASTAsset =
   | {
@@ -2769,7 +2766,7 @@ export type DAASTTrackingEvent =
   | 'mute'
   | 'unmute';
 /**
- * DAAST specification version
+ * Type of URL asset: 'clickthrough' for user click destination (landing page), 'tracker_pixel' for impression/event tracking via HTTP request (fires GET, expects pixel/204 response), 'tracker_script' for measurement SDKs that must load as <script> tag (OMID verification, native event trackers using method:2)
  */
 export type URLAssetType = 'clickthrough' | 'tracker_pixel' | 'tracker_script';
 /**
@@ -2785,7 +2782,7 @@ export type StartTiming = 'asap' | string;
  */
 export type AuthenticationScheme = 'Bearer' | 'HMAC-SHA256';
 /**
- * Standard delivery and performance metrics available for reporting
+ * Request parameters for creating a media buy. Supports two modes: (1) Manual mode - provide packages array with explicit line item configurations, or (2) Proposal mode - provide proposal_id and total_budget to execute a proposal from get_products. One of packages or proposal_id must be provided.
  */
 export interface CreateMediaBuyRequest {
   /**
@@ -2874,7 +2871,7 @@ export interface CreateMediaBuyRequest {
   ext?: ExtensionObject;
 }
 /**
- * Brand reference identifying the advertiser
+ * Package configuration for media buy creation
  */
 export interface PackageRequest {
   /**
@@ -2929,7 +2926,7 @@ export interface PackageRequest {
   ext?: ExtensionObject;
 }
 /**
- * Structured format identifier with agent URL and format name. Can reference: (1) a concrete format with fixed dimensions (id only), (2) a template format without parameters (id only), or (3) a template format with parameters (id + dimensions/duration). Template formats accept parameters in format_id while concrete formats have fixed dimensions in their definition. Parameterized format IDs create unique, specific format variants.
+ * Optional restriction overlays for media buys. Most targeting should be expressed in the brief and handled by the publisher. These fields are for functional restrictions: geographic (RCT testing, regulatory compliance), age verification (alcohol, gambling), device platform (app compatibility), and language (localization).
  */
 export interface TargetingOverlay {
   /**
@@ -3054,7 +3051,7 @@ export interface TargetingOverlay {
   language?: string[];
 }
 /**
- * A time window for daypart targeting. Specifies days of week and an hour range. start_hour is inclusive, end_hour is exclusive (e.g., 6-10 = 6:00am to 10:00am). Follows the Google Ads AdScheduleInfo / DV360 DayPartTargeting pattern.
+ * Frequency capping settings for package-level application
  */
 export interface FrequencyCap {
   /**
@@ -3063,7 +3060,7 @@ export interface FrequencyCap {
   suppress_minutes: number;
 }
 /**
- * Reference to a property list for targeting specific properties within this product. The package runs on the intersection of the product's publisher_properties and this list. Sellers SHOULD return a validation error if the product has property_targeting_allowed: false.
+ * Assignment of a creative asset to a package with optional placement targeting. Used in create_media_buy and update_media_buy requests. Note: sync_creatives does not support placement_ids - use create/update_media_buy for placement-level targeting.
  */
 export interface CreativeAssignment {
   /**
@@ -3150,7 +3147,7 @@ export interface CreativeAsset {
   placement_ids?: string[];
 }
 /**
- * Structured format identifier with agent URL and format name. Can reference: (1) a concrete format with fixed dimensions (id only), (2) a template format without parameters (id only), or (3) a template format with parameters (id + dimensions/duration). Template formats accept parameters in format_id while concrete formats have fixed dimensions in their definition. Parameterized format IDs create unique, specific format variants.
+ * Image asset with URL and dimensions
  */
 export interface ImageAsset {
   /**
@@ -3454,7 +3451,7 @@ export interface URLAsset {
   description?: string;
 }
 /**
- * Brand reference for this media buy. Resolved to full brand identity at execution time from brand.json or the registry.
+ * Optional webhook configuration for async task status notifications. Publisher will send webhooks when status changes (working, input-required, completed, failed). The client generates an operation_id and embeds it in the URL before sending — the publisher echoes it back in webhook payloads for correlation.
  */
 export interface PushNotificationConfig {
   /**
@@ -3517,9 +3514,6 @@ export interface ReportingWebhook {
    */
   requested_metrics?: AvailableMetric[];
 }
-/**
- * Opaque correlation data that is echoed unchanged in responses. Used for internal tracking, UI session IDs, trace IDs, and other caller-specific identifiers that don't affect protocol behavior. Context data is never parsed by AdCP agents - it's simply preserved and returned.
- */
 
 // create_media_buy response
 /**
@@ -3527,7 +3521,7 @@ export interface ReportingWebhook {
  */
 export type CreateMediaBuyResponse = CreateMediaBuySuccess | CreateMediaBuyError;
 /**
- * Brand identifier within the house portfolio. Optional for single-brand domains.
+ * Success response - media buy created successfully
  */
 export interface CreateMediaBuySuccess {
   /**
@@ -3634,7 +3628,7 @@ export interface Account {
   ext?: ExtensionObject;
 }
 /**
- * Brand reference identifying the advertiser
+ * A specific product within a media buy (line item)
  */
 export interface Package {
   /**
@@ -3686,7 +3680,7 @@ export interface Package {
   ext?: ExtensionObject;
 }
 /**
- * Optional restriction overlays for media buys. Most targeting should be expressed in the brief and handled by the publisher. These fields are for functional restrictions: geographic (RCT testing, regulatory compliance), age verification (alcohol, gambling), device platform (app compatibility), and language (localization).
+ * Error response - operation failed, no media buy created
  */
 export interface CreateMediaBuyError {
   /**
@@ -3696,14 +3690,14 @@ export interface CreateMediaBuyError {
   context?: ContextObject;
   ext?: ExtensionObject;
 }
-/**
- * Standard error structure for task-specific errors and warnings
- */
 
 // sync_creatives parameters
+/**
+ * Validation strictness. 'strict' fails entire sync on any validation error. 'lenient' processes valid creatives and reports errors.
+ */
 export type ValidationMode = 'strict' | 'lenient';
 /**
- * Authentication schemes for push notification endpoints
+ * Request parameters for syncing creative assets with upsert semantics - supports bulk operations, scoped updates, and assignment management
  */
 export interface SyncCreativesRequest {
   account: AccountReference;
@@ -3744,9 +3738,6 @@ export interface SyncCreativesRequest {
   context?: ContextObject;
   ext?: ExtensionObject;
 }
-/**
- * Brand reference identifying the advertiser
- */
 
 // sync_creatives response
 /**
@@ -3754,7 +3745,7 @@ export interface SyncCreativesRequest {
  */
 export type SyncCreativesResponse = SyncCreativesSuccess | SyncCreativesError;
 /**
- * Brand identifier within the house portfolio. Optional for single-brand domains.
+ * Action taken for this creative
  */
 export type CreativeAction = 'created' | 'updated' | 'unchanged' | 'failed' | 'deleted';
 
@@ -3825,7 +3816,7 @@ export interface SyncCreativesSuccess {
   ext?: ExtensionObject;
 }
 /**
- * Account that owns this creative
+ * Error response - operation failed completely, no creatives were processed
  */
 export interface SyncCreativesError {
   /**
@@ -3835,11 +3826,11 @@ export interface SyncCreativesError {
   context?: ContextObject;
   ext?: ExtensionObject;
 }
-/**
- * Standard error structure for task-specific errors and warnings
- */
 
 // list_creatives parameters
+/**
+ * Field to sort by
+ */
 export type CreativeSortField =
   | 'created_date'
   | 'updated_date'
@@ -3966,11 +3957,11 @@ export interface CreativeFilters {
    */
   has_performance_data?: boolean;
 }
-/**
- * Brand reference identifying the advertiser
- */
 
 // list_creatives response
+/**
+ * Sub-asset for multi-asset creative formats, including carousel images and native ad template variables
+ */
 export type SubAsset =
   | {
       /**
@@ -4193,9 +4184,6 @@ export interface ListCreativesResponse {
   context?: ContextObject;
   ext?: ExtensionObject;
 }
-/**
- * Standard cursor-based pagination metadata for list responses
- */
 
 // update_media_buy parameters
 /**
@@ -4231,7 +4219,7 @@ export type UpdateMediaBuyRequest = {
   [k: string]: unknown | undefined;
 };
 /**
- * Campaign start timing: 'asap' or ISO 8601 date-time
+ * Package update configuration for update_media_buy. Identifies package by package_id or buyer_ref and specifies fields to modify. Fields not present are left unchanged. Note: product_id, format_ids, and pricing_option_id cannot be changed after creation.
  */
 export type PackageUpdate = {
   /**
@@ -4279,9 +4267,6 @@ export type PackageUpdate = {
 } & {
   [k: string]: unknown | undefined;
 };
-/**
- * Budget pacing strategy
- */
 
 // update_media_buy response
 /**
@@ -4289,7 +4274,7 @@ export type PackageUpdate = {
  */
 export type UpdateMediaBuyResponse = UpdateMediaBuySuccess | UpdateMediaBuyError;
 /**
- * Budget pacing strategy
+ * Success response - media buy updated successfully
  */
 export interface UpdateMediaBuySuccess {
   /**
@@ -4316,7 +4301,7 @@ export interface UpdateMediaBuySuccess {
   ext?: ExtensionObject;
 }
 /**
- * A specific product within a media buy (line item)
+ * Error response - operation failed, no changes applied
  */
 export interface UpdateMediaBuyError {
   /**
@@ -4326,11 +4311,11 @@ export interface UpdateMediaBuyError {
   context?: ContextObject;
   ext?: ExtensionObject;
 }
-/**
- * Standard error structure for task-specific errors and warnings
- */
 
 // get_media_buys parameters
+/**
+ * Status of a media buy
+ */
 export type MediaBuyStatus = 'pending_activation' | 'active' | 'paused' | 'completed';
 
 /**
@@ -4358,11 +4343,11 @@ export interface GetMediaBuysRequest {
   context?: ContextObject;
   ext?: ExtensionObject;
 }
-/**
- * Brand reference identifying the advertiser
- */
 
 // get_media_buys response
+/**
+ * Approval state of a creative on a specific package
+ */
 export type CreativeApprovalStatus = 'pending_review' | 'approved' | 'rejected';
 
 /**
@@ -4537,7 +4522,7 @@ export interface GetMediaBuysResponse {
   ext?: ExtensionObject;
 }
 /**
- * Account billed for this media buy
+ * Request parameters for retrieving comprehensive delivery metrics
  */
 export interface GetMediaBuyDeliveryRequest {
   account?: AccountReference;
@@ -4564,9 +4549,6 @@ export interface GetMediaBuyDeliveryRequest {
   context?: ContextObject;
   ext?: ExtensionObject;
 }
-/**
- * Brand reference identifying the advertiser
- */
 
 // get_media_buy_delivery response
 /**
@@ -4578,7 +4560,7 @@ export type AttributionModel = 'last_touch' | 'first_touch' | 'linear' | 'time_d
  */
 export type PricingModel = 'cpm' | 'vcpm' | 'cpc' | 'cpcv' | 'cpv' | 'cpp' | 'cpa' | 'flat_rate' | 'time';
 /**
- * The event type
+ * Response payload for get_media_buy_delivery task
  */
 export interface GetMediaBuyDeliveryResponse {
   /**
@@ -5040,9 +5022,6 @@ export interface DeliveryMetrics {
     value?: number;
   }[];
 }
-/**
- * Standard error structure for task-specific errors and warnings
- */
 
 // provide_performance_feedback parameters
 /**
@@ -5110,9 +5089,6 @@ export type FeedbackSource =
   | 'platform_analytics'
   | 'verification_partner';
 
-/**
- * Opaque correlation data that is echoed unchanged in responses. Used for internal tracking, UI session IDs, trace IDs, and other caller-specific identifiers that don't affect protocol behavior. Context data is never parsed by AdCP agents - it's simply preserved and returned.
- */
 
 // provide_performance_feedback response
 /**
@@ -5136,7 +5112,7 @@ export interface ProvidePerformanceFeedbackSuccess {
   ext?: ExtensionObject;
 }
 /**
- * Opaque correlation data that is echoed unchanged in responses. Used for internal tracking, UI session IDs, trace IDs, and other caller-specific identifiers that don't affect protocol behavior. Context data is never parsed by AdCP agents - it's simply preserved and returned.
+ * Error response - feedback rejected or could not be processed
  */
 export interface ProvidePerformanceFeedbackError {
   /**
@@ -5146,11 +5122,11 @@ export interface ProvidePerformanceFeedbackError {
   context?: ContextObject;
   ext?: ExtensionObject;
 }
-/**
- * Standard error structure for task-specific errors and warnings
- */
 
 // sync_event_sources parameters
+/**
+ * Request parameters for configuring event sources on an account with upsert semantics. Existing event sources matched by event_source_id are updated, new ones are created. When delete_missing is true, buyer-managed event sources on the account not in this request are removed. When event_sources is omitted, the call is discovery-only: it returns all event sources on the account without modification. The response always includes both synced and seller-managed event sources for full visibility.
+ */
 export interface SyncEventSourcesRequest {
   account: AccountReference;
   /**
@@ -5181,9 +5157,6 @@ export interface SyncEventSourcesRequest {
   context?: ContextObject;
   ext?: ExtensionObject;
 }
-/**
- * Brand reference identifying the advertiser
- */
 
 // sync_event_sources response
 /**
@@ -5191,7 +5164,7 @@ export interface SyncEventSourcesRequest {
  */
 export type SyncEventSourcesResponse = SyncEventSourcesSuccess | SyncEventSourcesError;
 /**
- * Standard marketing event types for event logging, aligned with IAB ECAPI
+ * Success response - sync operation processed event sources
  */
 export interface SyncEventSourcesSuccess {
   /**
@@ -5253,7 +5226,7 @@ export interface SyncEventSourcesSuccess {
   ext?: ExtensionObject;
 }
 /**
- * Opaque correlation data that is echoed unchanged in responses. Used for internal tracking, UI session IDs, trace IDs, and other caller-specific identifiers that don't affect protocol behavior. Context data is never parsed by AdCP agents - it's simply preserved and returned.
+ * Error response - operation failed completely
  */
 export interface SyncEventSourcesError {
   /**
@@ -5263,11 +5236,11 @@ export interface SyncEventSourcesError {
   context?: ContextObject;
   ext?: ExtensionObject;
 }
-/**
- * Standard error structure for task-specific errors and warnings
- */
 
 // log_event parameters
+/**
+ * User identifiers for attribution matching
+ */
 export type UserMatch = {
   [k: string]: unknown | undefined;
 } & {
@@ -5312,7 +5285,7 @@ export type UserMatch = {
  */
 export type UIDType = 'rampid' | 'id5' | 'uid2' | 'euid' | 'pairid' | 'external_id' | 'maid' | 'other';
 /**
- * Where the event originated
+ * Request parameters for logging marketing events
  */
 export interface LogEventRequest {
   /**
@@ -5359,7 +5332,7 @@ export interface Event {
   ext?: ExtensionObject;
 }
 /**
- * Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.
+ * Event-specific data (value, currency, items, etc.)
  */
 export interface EventCustomData {
   /**
@@ -5421,9 +5394,6 @@ export interface EventCustomData {
   }[];
   ext?: ExtensionObject;
 }
-/**
- * Opaque correlation data that is echoed unchanged in responses. Used for internal tracking, UI session IDs, trace IDs, and other caller-specific identifiers that don't affect protocol behavior. Context data is never parsed by AdCP agents - it's simply preserved and returned.
- */
 
 // log_event response
 /**
@@ -5476,7 +5446,7 @@ export interface LogEventSuccess {
   ext?: ExtensionObject;
 }
 /**
- * Opaque correlation data that is echoed unchanged in responses. Used for internal tracking, UI session IDs, trace IDs, and other caller-specific identifiers that don't affect protocol behavior. Context data is never parsed by AdCP agents - it's simply preserved and returned.
+ * Error response - request failed entirely
  */
 export interface LogEventError {
   /**
@@ -5486,11 +5456,11 @@ export interface LogEventError {
   context?: ContextObject;
   ext?: ExtensionObject;
 }
-/**
- * Standard error structure for task-specific errors and warnings
- */
 
 // sync_audiences parameters
+/**
+ * Hashed identifiers for a CRM audience member. All identifiers must be normalized before hashing: emails to lowercase+trim, phone numbers to E.164 format (e.g. +12065551234). At least one identifier is required. Providing multiple identifiers for the same person improves match rates. Composite identifiers (e.g. hashed first name + last name + zip for Google Customer Match) are not yet standardized — use the ext field for platform-specific extensions.
+ */
 export type AudienceMember = {
   [k: string]: unknown | undefined;
 } & {
@@ -5515,7 +5485,7 @@ export type AudienceMember = {
   ext?: ExtensionObject;
 };
 /**
- * Universal ID type
+ * Request parameters for managing CRM-based audiences on an account with upsert semantics. Existing audiences matched by audience_id are updated, new ones are created. Members are specified as delta operations: add appends new members, remove drops existing ones. Recommend no more than 100,000 members per call; for larger lists, chunk and call incrementally using add/remove deltas. When delete_missing is true, buyer-managed audiences on the account not in this request are removed — do not combine with omitted audiences or all buyer-managed audiences will be deleted. When audiences is omitted, the call is discovery-only: it returns all audiences on the account without modification.
  */
 export interface SyncAudiencesRequest {
   account: AccountReference;
@@ -5555,9 +5525,6 @@ export interface SyncAudiencesRequest {
   context?: ContextObject;
   ext?: ExtensionObject;
 }
-/**
- * Brand reference identifying the advertiser
- */
 
 // sync_audiences response
 /**
@@ -5622,7 +5589,7 @@ export interface SyncAudiencesSuccess {
   ext?: ExtensionObject;
 }
 /**
- * Standard error structure for task-specific errors and warnings
+ * Error response - operation failed completely
  */
 export interface SyncAudiencesError {
   /**
@@ -5635,6 +5602,9 @@ export interface SyncAudiencesError {
 
 
 // sync_catalogs parameters
+/**
+ * Request parameters for syncing catalog feeds with upsert semantics. Supports bulk operations across multiple catalog types (products, inventory, stores, promotions, offerings). Existing catalogs matched by catalog_id are updated, new ones are created. When catalogs is omitted, the call is discovery-only: returns all catalogs on the account without modification.
+ */
 export interface SyncCatalogsRequest {
   account: AccountReference;
   /**
@@ -5662,9 +5632,6 @@ export interface SyncCatalogsRequest {
   context?: ContextObject;
   ext?: ExtensionObject;
 }
-/**
- * Brand reference identifying the advertiser
- */
 
 // sync_catalogs response
 /**
@@ -5760,7 +5727,7 @@ export interface SyncCatalogsSuccess {
   ext?: ExtensionObject;
 }
 /**
- * Opaque correlation data that is echoed unchanged in responses. Used for internal tracking, UI session IDs, trace IDs, and other caller-specific identifiers that don't affect protocol behavior. Context data is never parsed by AdCP agents - it's simply preserved and returned.
+ * Error response - operation failed completely, no catalogs were processed
  */
 export interface SyncCatalogsError {
   /**
@@ -5770,14 +5737,14 @@ export interface SyncCatalogsError {
   context?: ContextObject;
   ext?: ExtensionObject;
 }
-/**
- * Standard error structure for task-specific errors and warnings
- */
 
 // build_creative parameters
+/**
+ * HTTP method
+ */
 export type HTTPMethod = 'GET' | 'POST';
 /**
- * Standardized macro placeholders for dynamic value substitution in creative tracking URLs. Macros are replaced with actual values at impression time. See docs/creative/universal-macros.mdx for detailed documentation.
+ * Expected content type of webhook response
  */
 export type WebhookResponseType = 'html' | 'json' | 'xml' | 'javascript';
 /**
@@ -5785,7 +5752,7 @@ export type WebhookResponseType = 'html' | 'json' | 'xml' | 'javascript';
  */
 export type WebhookSecurityMethod = 'hmac_sha256' | 'api_key' | 'none';
 /**
- * DAAST (Digital Audio Ad Serving Template) tag for third-party audio ad serving
+ * Campaign-level creative brief with objective, audience, messaging, and reference assets. Can be an inline brief object or a URL to a hosted brief. Supplements the natural language message with structured creative direction.
  */
 export type CreativeBriefReference = CreativeBrief | string;
 
@@ -5839,7 +5806,7 @@ export interface CreativeManifest {
   ext?: ExtensionObject;
 }
 /**
- * Format identifier this manifest is for. Can be a template format (id only) or a deterministic format (id + dimensions/duration). For dimension-specific creatives, include width/height/unit in the format_id to create a unique identifier (e.g., {id: 'display_static', width: 300, height: 250, unit: 'px'}).
+ * Webhook for server-side dynamic content rendering (DCO)
  */
 export interface WebhookAsset {
   /**
@@ -5876,7 +5843,7 @@ export interface WebhookAsset {
   };
 }
 /**
- * CSS stylesheet asset
+ * Inline creative brief object
  */
 export interface CreativeBrief {
   /**
@@ -5942,9 +5909,6 @@ export interface ReferenceAsset {
    */
   description?: string;
 }
-/**
- * Opaque correlation data that is echoed unchanged in responses. Used for internal tracking, UI session IDs, trace IDs, and other caller-specific identifiers that don't affect protocol behavior. Context data is never parsed by AdCP agents - it's simply preserved and returned.
- */
 
 // build_creative response
 /**
@@ -5952,7 +5916,7 @@ export interface ReferenceAsset {
  */
 export type BuildCreativeResponse = BuildCreativeSuccess | BuildCreativeError;
 /**
- * Catalog type. Structural types: 'offering' (AdCP Offering objects), 'product' (ecommerce entries), 'inventory' (stock per location), 'store' (physical locations), 'promotion' (deals and pricing). Vertical types: 'hotel', 'flight', 'job', 'vehicle', 'real_estate', 'education', 'destination', 'app' — each with an industry-specific item schema.
+ * Success response - creative manifest generated successfully
  */
 export interface BuildCreativeSuccess {
   creative_manifest: CreativeManifest;
@@ -5964,7 +5928,7 @@ export interface BuildCreativeSuccess {
   ext?: ExtensionObject;
 }
 /**
- * The generated or transformed creative manifest
+ * Error response - creative generation failed
  */
 export interface BuildCreativeError {
   /**
@@ -5974,9 +5938,6 @@ export interface BuildCreativeError {
   context?: ContextObject;
   ext?: ExtensionObject;
 }
-/**
- * Standard error structure for task-specific errors and warnings
- */
 
 // preview_creative parameters
 /**
@@ -6077,11 +6038,11 @@ export type PreviewCreativeRequest =
       ext?: ExtensionObject;
     };
 /**
- * Catalog type. Structural types: 'offering' (AdCP Offering objects), 'product' (ecommerce entries), 'inventory' (stock per location), 'store' (physical locations), 'promotion' (deals and pricing). Vertical types: 'hotel', 'flight', 'job', 'vehicle', 'real_estate', 'education', 'destination', 'app' — each with an industry-specific item schema.
+ * Output format for previews. 'url' returns preview_url (iframe-embeddable URL), 'html' returns preview_html (raw HTML for direct embedding). Default: 'url' for backward compatibility.
  */
 export type PreviewOutputFormat = 'url' | 'html';
 /**
- * Output format for this preview. 'url' returns preview_url, 'html' returns preview_html.
+ * Complete creative manifest with all required assets
  */
 export interface CreativeManifest1 {
   format_id: FormatID;
@@ -6271,7 +6232,7 @@ export type PreviewRender =
       };
     };
 /**
- * Catalog type. Structural types: 'offering' (AdCP Offering objects), 'product' (ecommerce entries), 'inventory' (stock per location), 'store' (physical locations), 'promotion' (deals and pricing). Vertical types: 'hotel', 'flight', 'job', 'vehicle', 'real_estate', 'education', 'destination', 'app' — each with an industry-specific item schema.
+ * Single preview response - each preview URL returns an HTML page that can be embedded in an iframe
  */
 export interface PreviewCreativeSingleResponse {
   /**
@@ -6322,7 +6283,7 @@ export interface PreviewCreativeSingleResponse {
   ext?: ExtensionObject;
 }
 /**
- * Opaque correlation data that is echoed unchanged in responses. Used for internal tracking, UI session IDs, trace IDs, and other caller-specific identifiers that don't affect protocol behavior. Context data is never parsed by AdCP agents - it's simply preserved and returned.
+ * Batch preview response - contains results for multiple creative requests
  */
 export interface PreviewCreativeBatchResponse {
   /**
@@ -6379,9 +6340,6 @@ export interface PreviewCreativeVariantResponse {
   context?: ContextObject;
   ext?: ExtensionObject;
 }
-/**
- * The rendered creative manifest for this variant — the actual output that was served, not the input assets
- */
 
 // get_creative_delivery parameters
 /**
@@ -6431,11 +6389,11 @@ export type GetCreativeDeliveryRequest = {
   context?: ContextObject;
   ext?: ExtensionObject;
 };
-/**
- * Account for routing and scoping. Limits results to creatives within this account.
- */
 
 // get_creative_delivery response
+/**
+ * A specific execution variant of a creative with delivery metrics. For catalog-driven packages, each catalog item rendered as a distinct ad execution is a variant — the variant's manifest includes the catalog reference with the specific item rendered. For asset group optimization, represents one combination of assets the platform selected. For generative creative, represents a platform-generated variant. For standard creatives, maps 1:1 with the creative itself.
+ */
 export type CreativeVariant = DeliveryMetrics & {
   /**
    * Platform-assigned identifier for this variant
@@ -6464,7 +6422,7 @@ export type CreativeVariant = DeliveryMetrics & {
   };
 };
 /**
- * Catalog type. Structural types: 'offering' (AdCP Offering objects), 'product' (ecommerce entries), 'inventory' (stock per location), 'store' (physical locations), 'promotion' (deals and pricing). Vertical types: 'hotel', 'flight', 'job', 'vehicle', 'real_estate', 'education', 'destination', 'app' — each with an industry-specific item schema.
+ * Type of identifier
  */
 export type PropertyIdentifierTypes =
   | 'domain'
@@ -6576,7 +6534,7 @@ export interface GetCreativeDeliveryResponse {
   ext?: ExtensionObject;
 }
 /**
- * Format of this creative
+ * Property where the artifact appears
  */
 export interface Identifier {
   type: PropertyIdentifierTypes;
@@ -6585,9 +6543,6 @@ export interface Identifier {
    */
   value: string;
 }
-/**
- * Standard error structure for task-specific errors and warnings
- */
 
 // get_signals parameters
 /**
@@ -6627,7 +6582,7 @@ export type GetSignalsRequest = {
   ext?: ExtensionObject;
 };
 /**
- * Universal signal identifier. Uses 'source' as discriminator: 'catalog' for signals from a data provider's published catalog (verifiable), 'agent' for agent-native signals (not externally verifiable).
+ * A deployment target where signals can be activated (DSP, sales agent, etc.)
  */
 export type Destination =
   | {
@@ -6684,14 +6639,14 @@ export interface SignalFilters {
    */
   min_coverage_percentage?: number;
 }
-/**
- * Standard cursor-based pagination parameters for list operations
- */
 
 // get_signals response
+/**
+ * The data type of this signal's values (binary, categorical, numeric)
+ */
 export type SignalValueType = 'binary' | 'categorical' | 'numeric';
 /**
- * Catalog type of signal (marketplace, custom, owned)
+ * A signal deployment to a specific deployment target with activation status and key
  */
 export type Deployment =
   | {
@@ -6777,7 +6732,7 @@ export type ActivationKey =
       value: string;
     };
 /**
- * The key to use for targeting. Only present if is_live=true AND requester has access to this deployment.
+ * Response payload for get_signals task
  */
 export interface GetSignalsResponse {
   /**
@@ -6828,11 +6783,11 @@ export interface GetSignalsResponse {
   context?: ContextObject;
   ext?: ExtensionObject;
 }
-/**
- * Cost Per Mille (cost per 1,000 impressions) pricing. If fixed_price is present, it's fixed pricing. If absent, it's auction-based.
- */
 
 // activate_signal parameters
+/**
+ * Request parameters for activating a signal on a specific deployment target
+ */
 export interface ActivateSignalRequest {
   /**
    * The universal identifier for the signal to activate
@@ -6849,9 +6804,6 @@ export interface ActivateSignalRequest {
   context?: ContextObject;
   ext?: ExtensionObject;
 }
-/**
- * Opaque correlation data that is echoed unchanged in responses. Used for internal tracking, UI session IDs, trace IDs, and other caller-specific identifiers that don't affect protocol behavior. Context data is never parsed by AdCP agents - it's simply preserved and returned.
- */
 
 // activate_signal response
 /**
@@ -6859,7 +6811,7 @@ export interface ActivateSignalRequest {
  */
 export type ActivateSignalResponse = ActivateSignalSuccess | ActivateSignalError;
 /**
- * A signal deployment to a specific deployment target with activation status and key
+ * Success response - signal activated successfully to one or more deployment targets
  */
 export interface ActivateSignalSuccess {
   /**
@@ -6874,7 +6826,7 @@ export interface ActivateSignalSuccess {
   ext?: ExtensionObject;
 }
 /**
- * Opaque correlation data that is echoed unchanged in responses. Used for internal tracking, UI session IDs, trace IDs, and other caller-specific identifiers that don't affect protocol behavior. Context data is never parsed by AdCP agents - it's simply preserved and returned.
+ * Error response - operation failed, signal not activated
  */
 export interface ActivateSignalError {
   /**
@@ -6884,9 +6836,6 @@ export interface ActivateSignalError {
   context?: ContextObject;
   ext?: ExtensionObject;
 }
-/**
- * Standard error structure for task-specific errors and warnings
- */
 
 // create_property_list parameters
 /**
@@ -6894,7 +6843,7 @@ export interface ActivateSignalError {
  */
 export type BasePropertySource = PublisherTagsSource | PublisherPropertyIDsSource | DirectIdentifiersSource;
 /**
- * Tag for categorizing publisher properties. Must be lowercase alphanumeric with underscores only.
+ * Types of addressable advertising properties with verifiable ownership. Property types are a subset of media channels - they represent inventory surfaces that can be validated via adagents.json.
  */
 export type PropertyType =
   | 'website'
@@ -6906,7 +6855,7 @@ export type PropertyType =
   | 'radio'
   | 'streaming_audio';
 /**
- * Brand identifier within the house portfolio. Optional for single-brand domains.
+ * Request parameters for creating a new property list
  */
 export interface CreatePropertyListRequest {
   /**
@@ -6974,7 +6923,7 @@ export interface DirectIdentifiersSource {
   identifiers: Identifier[];
 }
 /**
- * A property identifier with type and value. Used to identify properties across platforms (domains, app store IDs, etc.).
+ * Dynamic filters to apply when resolving the list
  */
 export interface PropertyListFilters {
   /**
@@ -7023,11 +6972,11 @@ export interface FeatureRequirement {
    */
   if_not_covered?: 'exclude' | 'include';
 }
-/**
- * Brand reference. When provided, the agent automatically applies appropriate rules based on brand characteristics (industry, target_audience, etc.). Resolved at execution time.
- */
 
 // create_property_list response
+/**
+ * Response payload for create_property_list task
+ */
 export interface CreatePropertyListResponse {
   list: PropertyList;
   /**
@@ -7083,11 +7032,11 @@ export interface PropertyList {
    */
   property_count?: number;
 }
-/**
- * Select properties from a publisher by tag membership
- */
 
 // update_property_list parameters
+/**
+ * Request parameters for updating an existing property list
+ */
 export interface UpdatePropertyListRequest {
   /**
    * ID of the property list to update
@@ -7114,18 +7063,15 @@ export interface UpdatePropertyListRequest {
   context?: ContextObject;
   ext?: ExtensionObject;
 }
-/**
- * Select properties from a publisher by tag membership
- */
 
 // update_property_list response
+/**
+ * Response payload for update_property_list task
+ */
 export interface UpdatePropertyListResponse {
   list: PropertyList;
   ext?: ExtensionObject;
 }
-/**
- * The updated property list
- */
 
 // get_property_list parameters
 /**
@@ -7156,11 +7102,11 @@ export interface GetPropertyListRequest {
   context?: ContextObject;
   ext?: ExtensionObject;
 }
-/**
- * Opaque correlation data that is echoed unchanged in responses. Used for internal tracking, UI session IDs, trace IDs, and other caller-specific identifiers that don't affect protocol behavior. Context data is never parsed by AdCP agents - it's simply preserved and returned.
- */
 
 // get_property_list response
+/**
+ * Response payload for get_property_list task. Returns identifiers only (not full property objects or scores). Consumers should cache the resolved identifiers and refresh based on cache_valid_until.
+ */
 export interface GetPropertyListResponse {
   list: PropertyList;
   /**
@@ -7184,9 +7130,6 @@ export interface GetPropertyListResponse {
   };
   ext?: ExtensionObject;
 }
-/**
- * The property list metadata (always returned)
- */
 
 // list_property_lists parameters
 /**
@@ -7205,11 +7148,11 @@ export interface ListPropertyListsRequest {
   context?: ContextObject;
   ext?: ExtensionObject;
 }
-/**
- * Standard cursor-based pagination parameters for list operations
- */
 
 // list_property_lists response
+/**
+ * Response payload for list_property_lists task
+ */
 export interface ListPropertyListsResponse {
   /**
    * Array of property lists (metadata only, not resolved properties)
@@ -7218,9 +7161,6 @@ export interface ListPropertyListsResponse {
   pagination?: PaginationResponse;
   ext?: ExtensionObject;
 }
-/**
- * A managed property list with optional filters for dynamic evaluation. Lists are resolved at setup time and cached by orchestrators/sellers for real-time use.
- */
 
 // delete_property_list parameters
 /**
@@ -7234,9 +7174,6 @@ export interface DeletePropertyListRequest {
   context?: ContextObject;
   ext?: ExtensionObject;
 }
-/**
- * Opaque correlation data that is echoed unchanged in responses. Used for internal tracking, UI session IDs, trace IDs, and other caller-specific identifiers that don't affect protocol behavior. Context data is never parsed by AdCP agents - it's simply preserved and returned.
- */
 
 // delete_property_list response
 /**
@@ -7253,11 +7190,11 @@ export interface DeletePropertyListResponse {
   list_id: string;
   ext?: ExtensionObject;
 }
-/**
- * Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.
- */
 
 // list_content_standards parameters
+/**
+ * Request parameters for listing content standards configurations
+ */
 export interface ListContentStandardsRequest {
   /**
    * Filter by channel
@@ -7275,9 +7212,6 @@ export interface ListContentStandardsRequest {
   context?: ContextObject;
   ext?: ExtensionObject;
 }
-/**
- * Standard cursor-based pagination parameters for list operations
- */
 
 // list_content_standards response
 /**
@@ -7311,7 +7245,7 @@ export type ListContentStandardsResponse =
       ext?: ExtensionObject;
     };
 /**
- * Standardized advertising media channels describing how buyers allocate budget. Channels are planning abstractions, not technical substrates. See the Media Channel Taxonomy specification for detailed definitions.
+ * Authentication for secured URLs
  */
 export type AssetAccess =
   | {
@@ -7336,7 +7270,7 @@ export type AssetAccess =
       method: 'signed_url';
     };
 /**
- * Authentication for secured URLs
+ * A content standards configuration defining brand safety and suitability policies. Standards are scoped by brand, geography, and channel. Multiple standards can be active simultaneously for different scopes.
  */
 export interface ContentStandards {
   /**
@@ -7555,9 +7489,6 @@ export interface Artifact {
     rss_url?: string;
   };
 }
-/**
- * Identifier for the property where this artifact appears
- */
 
 // get_content_standards parameters
 /**
@@ -7571,9 +7502,6 @@ export interface GetContentStandardsRequest {
   context?: ContextObject;
   ext?: ExtensionObject;
 }
-/**
- * Opaque correlation data that is echoed unchanged in responses. Used for internal tracking, UI session IDs, trace IDs, and other caller-specific identifiers that don't affect protocol behavior. Context data is never parsed by AdCP agents - it's simply preserved and returned.
- */
 
 // get_content_standards response
 /**
@@ -7592,11 +7520,11 @@ export type GetContentStandardsResponse =
       context?: ContextObject;
       ext?: ExtensionObject;
     };
-/**
- * Standardized advertising media channels describing how buyers allocate budget. Channels are planning abstractions, not technical substrates. See the Media Channel Taxonomy specification for detailed definitions.
- */
 
 // create_content_standards parameters
+/**
+ * Request parameters for creating a new content standards configuration
+ */
 export interface CreateContentStandardsRequest {
   /**
    * Where this standards configuration applies
@@ -7672,7 +7600,7 @@ export interface CreateContentStandardsRequest {
   ext?: ExtensionObject;
 }
 /**
- * Full artifact with pre-extracted content (text, images, video, audio)
+ * Response payload for creating a content standards configuration
  */
 export type CreateContentStandardsResponse =
   | {
@@ -7705,11 +7633,11 @@ export type CreateContentStandardsResponse =
       ext?: ExtensionObject;
     };
 
-/**
- * Opaque correlation data that is echoed unchanged in responses. Used for internal tracking, UI session IDs, trace IDs, and other caller-specific identifiers that don't affect protocol behavior. Context data is never parsed by AdCP agents - it's simply preserved and returned.
- */
 
 // update_content_standards parameters
+/**
+ * Request parameters for updating an existing content standards configuration. Creates a new version.
+ */
 export interface UpdateContentStandardsRequest {
   /**
    * ID of the standards configuration to update
@@ -7788,9 +7716,6 @@ export interface UpdateContentStandardsRequest {
   context?: ContextObject;
   ext?: ExtensionObject;
 }
-/**
- * Full artifact with pre-extracted content (text, images, video, audio)
- */
 
 // update_content_standards response
 /**
@@ -7812,11 +7737,11 @@ export interface UpdateContentStandardsResponse {
   context?: ContextObject;
   ext?: ExtensionObject;
 }
-/**
- * Standard error structure for task-specific errors and warnings
- */
 
 // calibrate_content parameters
+/**
+ * Request parameters for evaluating content during calibration. Multi-turn dialogue is handled at the protocol layer via contextId.
+ */
 export interface CalibrateContentRequest {
   /**
    * Standards configuration to calibrate against
@@ -7824,9 +7749,6 @@ export interface CalibrateContentRequest {
   standards_id: string;
   artifact: Artifact;
 }
-/**
- * Artifact to evaluate
- */
 
 // calibrate_content response
 /**
@@ -7880,11 +7802,11 @@ export type CalibrateContentResponse =
       };
     };
 
-/**
- * Standard error structure for task-specific errors and warnings
- */
 
 // validate_content_delivery parameters
+/**
+ * Request parameters for batch validating delivery records against content safety policies
+ */
 export interface ValidateContentDeliveryRequest {
   /**
    * Standards configuration to validate against
@@ -7942,9 +7864,6 @@ export interface ValidateContentDeliveryRequest {
   context?: ContextObject;
   ext?: ExtensionObject;
 }
-/**
- * Artifact where ad was delivered
- */
 
 // validate_content_delivery response
 /**
@@ -8007,11 +7926,11 @@ export type ValidateContentDeliveryResponse =
       ext?: ExtensionObject;
     };
 
-/**
- * Opaque correlation data that is echoed unchanged in responses. Used for internal tracking, UI session IDs, trace IDs, and other caller-specific identifiers that don't affect protocol behavior. Context data is never parsed by AdCP agents - it's simply preserved and returned.
- */
 
 // get_media_buy_artifacts parameters
+/**
+ * Request parameters for retrieving content artifacts from a media buy for validation
+ */
 export interface GetMediaBuyArtifactsRequest {
   account?: AccountReference;
   /**
@@ -8064,9 +7983,6 @@ export interface GetMediaBuyArtifactsRequest {
   context?: ContextObject;
   ext?: ExtensionObject;
 }
-/**
- * Brand reference identifying the advertiser
- */
 
 // get_media_buy_artifacts response
 /**
@@ -8163,11 +8079,11 @@ export type GetMediaBuyArtifactsResponse =
       context?: ContextObject;
       ext?: ExtensionObject;
     };
-/**
- * Type of identifier
- */
 
 // get_creative_features parameters
+/**
+ * Request payload for get_creative_features task. Evaluates a creative manifest and returns feature values from a creative governance agent.
+ */
 export interface GetCreativeFeaturesRequest {
   creative_manifest: CreativeManifest;
   /**
@@ -8177,9 +8093,6 @@ export interface GetCreativeFeaturesRequest {
   context?: ContextObject;
   ext?: ExtensionObject;
 }
-/**
- * The creative manifest to evaluate. Contains format_id and assets.
- */
 
 // get_creative_features response
 /**
@@ -8254,9 +8167,6 @@ export interface CreativeFeatureResult {
   details?: {};
   ext?: ExtensionObject;
 }
-/**
- * Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.
- */
 
 // si_get_offering parameters
 /**
@@ -8281,9 +8191,6 @@ export interface SIGetOfferingRequest {
   product_limit?: number;
   ext?: ExtensionObject;
 }
-/**
- * Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.
- */
 
 // si_get_offering response
 /**
@@ -8394,9 +8301,6 @@ export interface SIGetOfferingResponse {
   errors?: Error[];
   ext?: ExtensionObject;
 }
-/**
- * Standard error structure for task-specific errors and warnings
- */
 
 // si_initiate_session parameters
 /**
@@ -8590,9 +8494,6 @@ export interface SICapabilities {
    */
   mcp_apps?: boolean;
 }
-/**
- * Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.
- */
 
 // si_initiate_session response
 /**
@@ -8647,9 +8548,6 @@ export interface SIInitiateSessionResponse {
   errors?: Error[];
   ext?: ExtensionObject;
 }
-/**
- * Intersection of brand and host capabilities for this session
- */
 
 // si_send_message parameters
 /**
@@ -8682,11 +8580,11 @@ export type SISendMessageRequest = {
   ext?: ExtensionObject;
 };
 
-/**
- * Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.
- */
 
 // si_send_message response
+/**
+ * Brand agent's response to a user message
+ */
 export interface SISendMessageResponse {
   /**
    * Session identifier
@@ -8807,9 +8705,6 @@ export interface A2UIComponent {
     [k: string]: {} | undefined;
   };
 }
-/**
- * Standard error structure for task-specific errors and warnings
- */
 
 // si_terminate_session parameters
 /**
@@ -8849,9 +8744,6 @@ export interface SITerminateSessionRequest {
   };
   ext?: ExtensionObject;
 }
-/**
- * Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.
- */
 
 // si_terminate_session response
 /**
@@ -8896,9 +8788,6 @@ export interface SITerminateSessionResponse {
   errors?: Error[];
   ext?: ExtensionObject;
 }
-/**
- * Standard error structure for task-specific errors and warnings
- */
 
 // get_adcp_capabilities parameters
 /**
@@ -8912,11 +8801,11 @@ export interface GetAdCPCapabilitiesRequest {
   context?: ContextObject;
   ext?: ExtensionObject;
 }
-/**
- * Opaque correlation data that is echoed unchanged in responses. Used for internal tracking, UI session IDs, trace IDs, and other caller-specific identifiers that don't affect protocol behavior. Context data is never parsed by AdCP agents - it's simply preserved and returned.
- */
 
 // get_adcp_capabilities response
+/**
+ * Response payload for get_adcp_capabilities task. Protocol-level capability discovery across all AdCP protocols. Each domain protocol has its own capability section.
+ */
 export interface GetAdCPCapabilitiesResponse {
   /**
    * Core AdCP protocol information
@@ -9352,9 +9241,6 @@ export interface GetAdCPCapabilitiesResponse {
   context?: ContextObject;
   ext?: ExtensionObject;
 }
-/**
- * Optional media-buy protocol features. Used in capability declarations (seller declares support) and product filters (buyer requires support). If a seller declares a feature as true, they MUST honor requests using that feature.
- */
 
 // list_accounts parameters
 /**
@@ -9373,11 +9259,11 @@ export interface ListAccountsRequest {
   context?: ContextObject;
   ext?: ExtensionObject;
 }
-/**
- * Standard cursor-based pagination parameters for list operations
- */
 
 // list_accounts response
+/**
+ * Response payload for list_accounts task
+ */
 export interface ListAccountsResponse {
   /**
    * Array of accounts accessible to the authenticated agent
@@ -9391,11 +9277,11 @@ export interface ListAccountsResponse {
   context?: ContextObject;
   ext?: ExtensionObject;
 }
-/**
- * A billing account representing the relationship between a buyer and seller. The account determines rate cards, payment terms, and billing entity.
- */
 
 // sync_accounts parameters
+/**
+ * Sync advertiser accounts with a seller using upsert semantics. The agent declares which brands it represents, who operates on each brand's behalf, and the billing model. The seller provisions or links accounts accordingly, returning per-account status.
+ */
 export interface SyncAccountsRequest {
   /**
    * Advertiser accounts to sync
@@ -9429,9 +9315,6 @@ export interface SyncAccountsRequest {
   context?: ContextObject;
   ext?: ExtensionObject;
 }
-/**
- * Brand reference identifying the advertiser. Uses the brand's house domain and optional brand_id from brand.json.
- */
 
 // sync_accounts response
 /**
@@ -9439,7 +9322,7 @@ export interface SyncAccountsRequest {
  */
 export type SyncAccountsResponse = SyncAccountsSuccess | SyncAccountsError;
 /**
- * Brand identifier within the house portfolio. Optional for single-brand domains.
+ * Sync operation processed accounts (individual accounts may be pending or have action=failed)
  */
 export interface SyncAccountsSuccess {
   /**
@@ -9521,7 +9404,7 @@ export interface SyncAccountsSuccess {
   ext?: ExtensionObject;
 }
 /**
- * Brand reference, echoed from the request
+ * Operation failed completely, no accounts were processed
  */
 export interface SyncAccountsError {
   /**
@@ -9534,6 +9417,9 @@ export interface SyncAccountsError {
 
 
 // report_usage parameters
+/**
+ * Reports how a vendor's service was consumed after campaign delivery. Used by orchestrators (DSPs, storefronts) to inform vendor agents (signals, governance, creative) what was used so the vendor can track earned revenue and verify billing. Records can span multiple accounts and campaigns in a single request.
+ */
 export interface ReportUsageRequest {
   /**
    * Client-generated unique key for this request. If a request with the same key has already been accepted, the server returns the original response without re-processing. Use a UUID or other unique identifier. Prevents duplicate billing on retries.
@@ -9593,9 +9479,6 @@ export interface ReportUsageRequest {
   context?: ContextObject;
   ext?: ExtensionObject;
 }
-/**
- * Brand reference identifying the advertiser
- */
 
 // report_usage response
 /**
@@ -9617,11 +9500,11 @@ export interface ReportUsageResponse {
   context?: ContextObject;
   ext?: ExtensionObject;
 }
-/**
- * Standard error structure for task-specific errors and warnings
- */
 
 // get_account_financials parameters
+/**
+ * Request financial status for an operator-billed account. Returns spend summary, credit/balance status, and invoice history. Only applicable when the seller declares account_financials capability.
+ */
 export interface GetAccountFinancialsRequest {
   account: AccountReference;
   /**
@@ -9640,9 +9523,6 @@ export interface GetAccountFinancialsRequest {
   context?: ContextObject;
   ext?: ExtensionObject;
 }
-/**
- * Brand reference identifying the advertiser
- */
 
 // get_account_financials response
 /**
@@ -9650,7 +9530,7 @@ export interface GetAccountFinancialsRequest {
  */
 export type GetAccountFinancialsResponse = GetAccountFinancialsSuccess | GetAccountFinancialsError;
 /**
- * Account reference, echoed from the request
+ * Financial data retrieved successfully
  */
 export interface GetAccountFinancialsSuccess {
   account: AccountReference;
@@ -9767,7 +9647,7 @@ export interface GetAccountFinancialsSuccess {
   ext?: ExtensionObject;
 }
 /**
- * Brand reference identifying the advertiser
+ * Operation failed — financials not available
  */
 export interface GetAccountFinancialsError {
   /**
@@ -9777,6 +9657,3 @@ export interface GetAccountFinancialsError {
   context?: ContextObject;
   ext?: ExtensionObject;
 }
-/**
- * Standard error structure for task-specific errors and warnings
- */
