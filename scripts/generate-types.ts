@@ -802,6 +802,24 @@ function filterDuplicateTypeDefinitions(typeDefinitions: string, generatedTypes:
   let currentTypeDefinition: string[] = [];
   let currentTypeName: string | null = null;
   let insideTypeDefinition = false;
+  // Track brace depth so we can detect when a non-indented `/**` is the start
+  // of the next type's JSDoc rather than a comment inside the current type body.
+  let braceDepth = 0;
+  // Buffer JSDoc comment lines that precede a type definition so they can be
+  // dropped together if the type turns out to be a duplicate.
+  let pendingJsdoc: string[] = [];
+  let insideJsdoc = false;
+
+  function endCurrentType(): void {
+    if (currentTypeName && !generatedTypes.has(currentTypeName)) {
+      generatedTypes.add(currentTypeName);
+      outputLines.push(...currentTypeDefinition);
+    }
+    currentTypeDefinition = [];
+    currentTypeName = null;
+    insideTypeDefinition = false;
+    braceDepth = 0;
+  }
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
@@ -812,36 +830,65 @@ function filterDuplicateTypeDefinitions(typeDefinitions: string, generatedTypes:
     if (typeMatch) {
       // If we were tracking a previous type, process it first
       if (currentTypeName && currentTypeDefinition.length > 0) {
-        if (!generatedTypes.has(currentTypeName)) {
-          generatedTypes.add(currentTypeName);
-          outputLines.push(...currentTypeDefinition);
-        }
-        currentTypeDefinition = [];
+        endCurrentType();
       }
 
-      // Start tracking this new type
+      // Start tracking this new type, prepending any buffered JSDoc
       currentTypeName = typeMatch[1];
       insideTypeDefinition = true;
-      currentTypeDefinition = [line];
-    } else if (insideTypeDefinition) {
-      currentTypeDefinition.push(line);
+      insideJsdoc = false;
+      braceDepth = 0;
+      currentTypeDefinition = [...pendingJsdoc, line];
+      pendingJsdoc = [];
 
-      // Check if we've reached the end of the type definition
-      // Type definitions end when we hit a line that starts a new export or is completely empty
-      const nextLine = i + 1 < lines.length ? lines[i + 1] : '';
-      if (nextLine.match(/^export /) || (line.trim() === '' && nextLine.trim() === '')) {
-        // End of current type definition
-        if (currentTypeName && !generatedTypes.has(currentTypeName)) {
-          generatedTypes.add(currentTypeName);
-          outputLines.push(...currentTypeDefinition);
+      // Count braces on the opening line (e.g. `export interface Foo {`)
+      for (const ch of line) {
+        if (ch === '{') braceDepth++;
+        else if (ch === '}') braceDepth--;
+      }
+    } else if (insideTypeDefinition) {
+      // Count brace depth so we know when we've left the type body
+      for (const ch of line) {
+        if (ch === '{') braceDepth++;
+        else if (ch === '}') braceDepth--;
+      }
+
+      // A non-indented `/**` at brace depth 0 unambiguously starts the next
+      // type's JSDoc — end the current type here rather than swallowing it.
+      if (braceDepth === 0 && line === line.trimStart() && line.startsWith('/**')) {
+        endCurrentType();
+        // Begin buffering this JSDoc for the upcoming type
+        pendingJsdoc = [line];
+        insideJsdoc = true;
+      } else {
+        currentTypeDefinition.push(line);
+
+        // Also end when the next line starts a new export or we hit a double blank
+        const nextLine = i + 1 < lines.length ? lines[i + 1] : '';
+        if (nextLine.match(/^export /) || (line.trim() === '' && nextLine.trim() === '')) {
+          endCurrentType();
         }
-        currentTypeDefinition = [];
-        currentTypeName = null;
-        insideTypeDefinition = false;
       }
     } else {
-      // Regular line outside of type definitions
-      outputLines.push(line);
+      // Outside a type definition — buffer JSDoc comment blocks so they travel
+      // with the type that follows them rather than being emitted immediately.
+      if (line.trimStart().startsWith('/**')) {
+        // Start of a new JSDoc block; discard any previous orphaned pending block
+        pendingJsdoc = [line];
+        insideJsdoc = true;
+      } else if (insideJsdoc) {
+        pendingJsdoc.push(line);
+        if (line.trimStart().startsWith('*/')) {
+          insideJsdoc = false;
+        }
+      } else {
+        // Flush any accumulated JSDoc that wasn't immediately followed by a type
+        if (pendingJsdoc.length > 0) {
+          outputLines.push(...pendingJsdoc);
+          pendingJsdoc = [];
+        }
+        outputLines.push(line);
+      }
     }
   }
 
@@ -851,6 +898,11 @@ function filterDuplicateTypeDefinitions(typeDefinitions: string, generatedTypes:
       generatedTypes.add(currentTypeName);
       outputLines.push(...currentTypeDefinition);
     }
+  }
+
+  // Flush any trailing pending JSDoc
+  if (pendingJsdoc.length > 0) {
+    outputLines.push(...pendingJsdoc);
   }
 
   return outputLines.join('\n');

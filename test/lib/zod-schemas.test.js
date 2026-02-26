@@ -117,6 +117,7 @@ describe('Zod Schema Validation', () => {
     assert.ok(schemas.GetMediaBuysRequestSchema, 'GetMediaBuysRequestSchema should exist');
 
     const validRequest = {
+      account: { account_id: 'acc_123' },
       media_buy_ids: ['mb_123', 'mb_456'],
       include_snapshot: true,
     };
@@ -125,15 +126,15 @@ describe('Zod Schema Validation', () => {
     assert.ok(result.success, `GetMediaBuysRequest validation should succeed: ${JSON.stringify(result.error?.issues)}`);
   });
 
-  test('GetMediaBuysRequestSchema validates empty request (all fields optional)', async () => {
+  test('GetMediaBuysRequestSchema validates request with only required account field', async () => {
     if (!schemas) {
       schemas = await import('../../dist/lib/types/schemas.generated.js');
     }
 
-    const result = schemas.GetMediaBuysRequestSchema.safeParse({});
+    const result = schemas.GetMediaBuysRequestSchema.safeParse({ account: { account_id: 'acc_123' } });
     assert.ok(
       result.success,
-      `GetMediaBuysRequest with no fields should succeed: ${JSON.stringify(result.error?.issues)}`
+      `GetMediaBuysRequest with only account should succeed: ${JSON.stringify(result.error?.issues)}`
     );
   });
 
@@ -143,6 +144,7 @@ describe('Zod Schema Validation', () => {
     }
 
     const result = schemas.GetMediaBuysRequestSchema.safeParse({
+      account: { account_id: 'acc_123' },
       status_filter: 'active',
     });
     assert.ok(
@@ -157,6 +159,7 @@ describe('Zod Schema Validation', () => {
     }
 
     const result = schemas.GetMediaBuysRequestSchema.safeParse({
+      account: { account_id: 'acc_123' },
       status_filter: ['active', 'paused'],
     });
     assert.ok(

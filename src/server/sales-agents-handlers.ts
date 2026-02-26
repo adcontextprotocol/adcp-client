@@ -9,6 +9,7 @@ import {
   type GetProductsRequest,
   type ListCreativeFormatsRequest,
   type CreateMediaBuyRequest,
+  type AccountReference,
   type BrandReference,
   type TaskResult,
 } from '../lib';
@@ -247,9 +248,15 @@ export class SalesAgentsHandlers {
           brandForBuy = { domain: 'test.example.com' };
         }
 
+        const accountRef: AccountReference = additionalParams.account
+          ? additionalParams.account
+          : additionalParams.account_id
+            ? { account_id: additionalParams.account_id }
+            : { brand: brandForBuy, operator: brandForBuy.domain };
+
         const params: CreateMediaBuyRequest = {
           buyer_ref: additionalParams.buyer_ref || `test-${Date.now()}`,
-          account_id: additionalParams.account_id || `test-account-${Date.now()}`,
+          account: accountRef,
           brand: brandForBuy,
           packages: additionalParams.packages || [],
           start_time: additionalParams.start_time || 'asap',

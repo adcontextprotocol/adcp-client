@@ -230,6 +230,7 @@ export type {
   CreativePolicy,
   BrandReference,
   BrandID,
+  AccountReference,
   CPAPricingOption,
   EventType,
   ActionSource,
@@ -260,6 +261,10 @@ export type {
   ListAccountsResponse,
   SyncAccountsRequest,
   SyncAccountsResponse,
+  GetAccountFinancialsRequest,
+  GetAccountFinancialsResponse,
+  GetAccountFinancialsSuccess,
+  GetAccountFinancialsError,
   // Pagination
   PaginationRequest,
   PaginationResponse,
