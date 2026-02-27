@@ -659,7 +659,11 @@ describe('v3 partial-schema field stripping', () => {
 
     const getProductsCall = capturedCalls.find(c => c.toolName === 'get_products');
     assert.ok(getProductsCall, 'get_products should have been called');
-    assert.strictEqual(getProductsCall.args.brand, undefined, 'brand should be stripped when not declared in agent schema');
+    assert.strictEqual(
+      getProductsCall.args.brand,
+      undefined,
+      'brand should be stripped when not declared in agent schema'
+    );
     assert.ok(getProductsCall.args.brief, 'brief should be preserved');
   });
 
@@ -717,6 +721,10 @@ describe('v3 partial-schema field stripping', () => {
 
     const getProductsCall = capturedCalls.find(c => c.toolName === 'get_products');
     assert.ok(getProductsCall, 'get_products should have been called');
-    assert.deepStrictEqual(getProductsCall.args.brand, { domain: 'example.com' }, 'brand should be passed through when declared in agent schema');
+    assert.deepStrictEqual(
+      getProductsCall.args.brand,
+      { domain: 'example.com' },
+      'brand should be passed through when declared in agent schema'
+    );
   });
 });
