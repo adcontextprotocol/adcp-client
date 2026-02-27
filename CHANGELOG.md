@@ -1,5 +1,19 @@
 # Changelog
 
+## 4.0.2
+
+### Patch Changes
+
+- 2867b24: fix: strip undeclared fields from get_products for partial v3 agents
+
+  Agents that declare `get_adcp_capabilities` (detected as v3) but whose `get_products` inputSchema omits some v3 fields (e.g. `brand`, `buying_mode`) would receive those fields and reject them with a Pydantic `unexpected_keyword_argument` error.
+
+  The client now filters request params to only the fields declared in the agent's cached inputSchema for any v3 tool call. This replaces the previous per-field approach (`toolDeclaresField`) with a general schema-based filter that handles all undeclared fields automatically.
+
+- be452e6: Add v2/v3 adapter for sync_creatives requests
+
+  Introduces `adaptSyncCreativesRequestForV2` which strips the v3-only `account` field and `catalogs` array from each creative, and converts the v3 `status` enum (`'approved'` / `'rejected'`) to the v2 `approved` boolean before sending to v2 servers.
+
 ## 4.0.1
 
 ### Patch Changes
