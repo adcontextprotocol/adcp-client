@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas vlatest
-// Generated at: 2026-02-27T02:51:07.879Z
+// Generated at: 2026-02-27T03:29:29.443Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -84,6 +84,10 @@ export type DevicePlatform =
   | 'fire_os'
   | 'roku_os'
   | 'unknown';
+/**
+ * Device form factor categories for targeting and reporting. Complements device-platform (operating system) with hardware classification. OpenRTB mapping: 1 (Mobile/Tablet General) → mobile, 2 (PC) → desktop, 4 (Phone) → mobile, 5 (Tablet) → tablet, 6 (Connected Device) → ctv, 7 (Set Top Box) → ctv. DOOH inventory uses dooh.
+ */
+export type DeviceType = 'desktop' | 'mobile' | 'tablet' | 'ctv' | 'dooh' | 'unknown';
 /**
  * A single optimization target for a package. Packages accept an array of optimization_goals. When multiple goals are present, priority determines which the seller focuses on — 1 is highest priority (primary goal); higher numbers are secondary. Duplicate priority values result in undefined seller behavior.
  */
@@ -420,7 +424,7 @@ export interface Package {
   ext?: ExtensionObject;
 }
 /**
- * Optional restriction overlays for media buys. Most targeting should be expressed in the brief and handled by the publisher. These fields are for functional restrictions: geographic (RCT testing, regulatory compliance), age verification (alcohol, gambling), device platform (app compatibility), language (localization), and keyword targeting (search/retail media).
+ * Optional restriction overlays for media buys. Most targeting should be expressed in the brief and handled by the publisher. These fields are for functional restrictions: geographic (RCT testing, regulatory compliance, proximity targeting), age verification (alcohol, gambling), device platform (app compatibility), language (localization), and keyword targeting (search/retail media).
  */
 export interface TargetingOverlay {
   /**
@@ -523,6 +527,14 @@ export interface TargetingOverlay {
    */
   device_platform?: DevicePlatform[];
   /**
+   * Restrict to specific device form factors. Use for campaigns targeting hardware categories rather than operating systems (e.g., mobile-only promotions, CTV campaigns).
+   */
+  device_type?: DeviceType[];
+  /**
+   * Exclude specific device form factors from delivery (e.g., exclude CTV for app-install campaigns).
+   */
+  device_type_exclude?: DeviceType[];
+  /**
    * Target users within store catchment areas from a synced store catalog. Each entry references a store-type catalog and optionally narrows to specific stores or catchment zones.
    */
   store_catchments?: {
@@ -538,6 +550,12 @@ export interface TargetingOverlay {
      * Catchment zone IDs to target (e.g., 'walk', 'drive'). Omit to target all catchment zones.
      */
     catchment_ids?: string[];
+  }[];
+  /**
+   * Target users within travel time, distance, or a custom boundary around arbitrary geographic points. Multiple entries use OR semantics — a user within range of any listed point is eligible. For campaigns targeting 10+ locations, consider using store_catchments with a location catalog instead. Seller must declare support in get_adcp_capabilities.
+   */
+  geo_proximity?: {
+    [k: string]: unknown | undefined;
   }[];
   /**
    * Restrict to users with specific language preferences. ISO 639-1 codes (e.g., 'en', 'es', 'fr').
@@ -2262,10 +2280,52 @@ export interface ReportingCapabilities {
    * Whether this product supports keyword-level metric breakdowns in delivery reporting (by_keyword within by_package)
    */
   supports_keyword_breakdown?: boolean;
+  supports_geo_breakdown?: GeographicBreakdownSupport;
+  /**
+   * Whether this product supports device type breakdowns in delivery reporting (by_device_type within by_package)
+   */
+  supports_device_type_breakdown?: boolean;
+  /**
+   * Whether this product supports device platform breakdowns in delivery reporting (by_device_platform within by_package)
+   */
+  supports_device_platform_breakdown?: boolean;
+  /**
+   * Whether this product supports audience segment breakdowns in delivery reporting (by_audience within by_package)
+   */
+  supports_audience_breakdown?: boolean;
+  /**
+   * Whether this product supports placement breakdowns in delivery reporting (by_placement within by_package)
+   */
+  supports_placement_breakdown?: boolean;
   /**
    * Whether delivery data can be filtered to arbitrary date ranges. 'date_range' means the platform supports start_date/end_date parameters. 'lifetime_only' means the platform returns campaign lifetime totals and date range parameters are not accepted.
    */
   date_range_support: 'date_range' | 'lifetime_only';
+}
+/**
+ * Geographic breakdown support for this product. Declares which geo levels and systems are available for by_geo reporting within by_package.
+ */
+export interface GeographicBreakdownSupport {
+  /**
+   * Supports country-level geo breakdown (ISO 3166-1 alpha-2)
+   */
+  country?: boolean;
+  /**
+   * Supports region/state-level geo breakdown (ISO 3166-2)
+   */
+  region?: boolean;
+  /**
+   * Metro area breakdown support. Keys are metro-system enum values; true means supported.
+   */
+  metro?: {
+    [k: string]: boolean | undefined;
+  };
+  /**
+   * Postal area breakdown support. Keys are postal-system enum values; true means supported.
+   */
+  postal_area?: {
+    [k: string]: boolean | undefined;
+  };
 }
 /**
  * Creative requirements and restrictions for a product
