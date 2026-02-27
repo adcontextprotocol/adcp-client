@@ -56,6 +56,7 @@ import {
   adaptUpdateMediaBuyRequestForV2,
   normalizeMediaBuyResponse,
 } from '../utils/creative-adapter';
+import { adaptSyncCreativesRequestForV2 } from '../utils/sync-creatives-adapter';
 import { normalizeFormatsResponse } from '../utils/format-renders';
 import { normalizePreviewCreativeResponse } from '../utils/preview-normalizer';
 import { normalizeGetProductsResponse, adaptGetProductsRequestForV2 } from '../utils/pricing-adapter';
@@ -955,6 +956,9 @@ export class SingleAgentClient {
 
       case 'update_media_buy':
         return adaptUpdateMediaBuyRequestForV2(params);
+
+      case 'sync_creatives':
+        return adaptSyncCreativesRequestForV2(params);
 
       default:
         return params;
