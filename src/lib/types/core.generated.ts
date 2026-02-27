@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas vlatest
-// Generated at: 2026-02-26T12:42:50.240Z
+// Generated at: 2026-02-27T03:05:16.207Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -38,6 +38,33 @@ export type PostalCodeSystem =
  */
 export type DayOfWeek = 'monday' | 'tuesday' | 'wednesday' | 'thursday' | 'friday' | 'saturday' | 'sunday';
 /**
+ * Frequency capping settings for package-level application. Two types of frequency control can be used independently or together: suppress_minutes enforces a cooldown between consecutive exposures; max_impressions + per + window caps total exposures per entity in a time window. At least one of suppress_minutes or max_impressions must be set.
+ */
+export type FrequencyCap = {
+  [k: string]: unknown | undefined;
+} & {
+  /**
+   * Cooldown period in minutes between consecutive exposures to the same entity. Prevents back-to-back ad delivery (e.g., 60 = at least 1 hour between impressions).
+   */
+  suppress_minutes?: number;
+  /**
+   * Maximum number of impressions per entity per window. For duration windows (e.g., '1d', '7d'), implementations typically use a rolling window; 'campaign' applies a fixed cap across the full flight.
+   */
+  max_impressions?: number;
+  /**
+   * Entity granularity for impression counting. Required when max_impressions is set.
+   */
+  per?: ReachUnit;
+  /**
+   * Time window for the max_impressions cap. Duration string (e.g., '1h', '6h', '1d', '7d', '30d', 'campaign'). 'campaign' applies the cap across the full campaign flight. Required when max_impressions is set.
+   */
+  window?: string;
+};
+/**
+ * Unit of measurement for reach and audience size metrics. Different channels and measurement providers count reach in fundamentally different units, making cross-channel comparison impossible without declaring the unit.
+ */
+export type ReachUnit = 'individuals' | 'households' | 'devices' | 'accounts' | 'cookies' | 'custom';
+/**
  * Methods for verifying user age for compliance. Does not include 'inferred' as it is not accepted for regulatory compliance.
  */
 export type AgeVerificationMethod = 'facial_age_estimation' | 'id_document' | 'digital_id' | 'credit_card' | 'world_id';
@@ -58,13 +85,17 @@ export type DevicePlatform =
   | 'roku_os'
   | 'unknown';
 /**
+ * Device form factor categories for targeting and reporting. Complements device-platform (operating system) with hardware classification. OpenRTB mapping: 1 (Mobile/Tablet General) → mobile, 2 (PC) → desktop, 4 (Phone) → mobile, 5 (Tablet) → tablet, 6 (Connected Device) → ctv, 7 (Set Top Box) → ctv. DOOH inventory uses dooh.
+ */
+export type DeviceType = 'desktop' | 'mobile' | 'tablet' | 'ctv' | 'dooh' | 'unknown';
+/**
  * A single optimization target for a package. Packages accept an array of optimization_goals. When multiple goals are present, priority determines which the seller focuses on — 1 is highest priority (primary goal); higher numbers are secondary. Duplicate priority values result in undefined seller behavior.
  */
 export type OptimizationGoal =
   | {
       kind: 'metric';
       /**
-       * Seller-native metric to optimize for. Delivery metrics: clicks (link clicks, swipe-throughs, CTA taps that navigate away), views (viewable impressions), completed_views (video/audio completions — see view_duration_seconds). Duration/score metrics: viewed_seconds (time in view per impression), attention_seconds (attention time per impression), attention_score (vendor-specific attention score). Audience action metrics: engagements (any direct interaction with the ad unit beyond viewing — social reactions/comments/shares, story/unit opens, interactive overlay taps, companion banner interactions on audio and CTV), follows (new followers, page likes, artist/podcast/channel subscribes), saves (saves, bookmarks, playlist adds, pins — signals of intent to return), profile_visits (visits to the brand's in-platform page — profile, artist page, channel, or storefront. Does not include external website clicks, which are covered by 'clicks').
+       * Seller-native metric to optimize for. Delivery metrics: clicks (link clicks, swipe-throughs, CTA taps that navigate away), views (viewable impressions), completed_views (video/audio completions — see view_duration_seconds), reach (unique audience reach — see reach_unit and target_frequency). Duration/score metrics: viewed_seconds (time in view per impression), attention_seconds (attention time per impression), attention_score (vendor-specific attention score). Audience action metrics: engagements (any direct interaction with the ad unit beyond viewing — social reactions/comments/shares, story/unit opens, interactive overlay taps, companion banner interactions on audio and CTV), follows (new followers, page likes, artist/podcast/channel subscribes), saves (saves, bookmarks, playlist adds, pins — signals of intent to return), profile_visits (visits to the brand's in-platform page — profile, artist page, channel, or storefront. Does not include external website clicks, which are covered by 'clicks').
        */
       metric:
         | 'clicks'
@@ -76,7 +107,18 @@ export type OptimizationGoal =
         | 'engagements'
         | 'follows'
         | 'saves'
-        | 'profile_visits';
+        | 'profile_visits'
+        | 'reach';
+      /**
+       * Unit for reach measurement. Required when metric is 'reach'. Must be a value declared in the product's metric_optimization.supported_reach_units.
+       */
+      reach_unit?: ReachUnit;
+      /**
+       * Target frequency band for reach optimization. Only applicable when metric is 'reach'. Frames frequency as an optimization signal: the seller should treat impressions toward entities already within the [min, max] band as lower-value, and impressions toward unreached entities as higher-value. This shifts budget toward fresh reach rather than re-reaching known users. When omitted, the seller maximizes unique reach without a frequency constraint. A hard cap can still be layered via targeting_overlay.frequency_cap if a ceiling is needed.
+       */
+      target_frequency?: {
+        [k: string]: unknown | undefined;
+      };
       /**
        * Minimum video view duration in seconds that qualifies as a completed_view for this goal. Only applicable when metric is 'completed_views'. When omitted, the seller uses their platform default (typically 2–15 seconds). Common values: 2 (Snap/LinkedIn default), 6 (TikTok), 15 (Snap 15-second views, Meta ThruPlay). Sellers declare which durations they support in metric_optimization.supported_view_durations. Sellers must reject goals with unsupported values — silent rounding would create measurement discrepancies.
        */
@@ -382,7 +424,7 @@ export interface Package {
   ext?: ExtensionObject;
 }
 /**
- * Optional restriction overlays for media buys. Most targeting should be expressed in the brief and handled by the publisher. These fields are for functional restrictions: geographic (RCT testing, regulatory compliance), age verification (alcohol, gambling), device platform (app compatibility), and language (localization).
+ * Optional restriction overlays for media buys. Most targeting should be expressed in the brief and handled by the publisher. These fields are for functional restrictions: geographic (RCT testing, regulatory compliance, proximity targeting), age verification (alcohol, gambling), device platform (app compatibility), language (localization), and keyword targeting (search/retail media).
  */
 export interface TargetingOverlay {
   /**
@@ -485,6 +527,14 @@ export interface TargetingOverlay {
    */
   device_platform?: DevicePlatform[];
   /**
+   * Restrict to specific device form factors. Use for campaigns targeting hardware categories rather than operating systems (e.g., mobile-only promotions, CTV campaigns).
+   */
+  device_type?: DeviceType[];
+  /**
+   * Exclude specific device form factors from delivery (e.g., exclude CTV for app-install campaigns).
+   */
+  device_type_exclude?: DeviceType[];
+  /**
    * Target users within store catchment areas from a synced store catalog. Each entry references a store-type catalog and optionally narrows to specific stores or catchment zones.
    */
   store_catchments?: {
@@ -502,9 +552,45 @@ export interface TargetingOverlay {
     catchment_ids?: string[];
   }[];
   /**
+   * Target users within travel time, distance, or a custom boundary around arbitrary geographic points. Multiple entries use OR semantics — a user within range of any listed point is eligible. For campaigns targeting 10+ locations, consider using store_catchments with a location catalog instead. Seller must declare support in get_adcp_capabilities.
+   */
+  geo_proximity?: {
+    [k: string]: unknown | undefined;
+  }[];
+  /**
    * Restrict to users with specific language preferences. ISO 639-1 codes (e.g., 'en', 'es', 'fr').
    */
   language?: string[];
+  /**
+   * Keyword targeting for search and retail media platforms. Restricts delivery to queries matching the specified keywords. Each keyword is identified by the tuple (keyword, match_type) — the same keyword string with different match types are distinct targets. Sellers SHOULD reject duplicate (keyword, match_type) pairs within a single request. Seller must declare support in get_adcp_capabilities.
+   */
+  keyword_targets?: {
+    /**
+     * The keyword to target
+     */
+    keyword: string;
+    /**
+     * Match type: broad matches related queries, phrase matches queries containing the keyword phrase, exact matches the query exactly
+     */
+    match_type: 'broad' | 'phrase' | 'exact';
+    /**
+     * Per-keyword bid price, denominated in the same currency as the package's pricing option. Overrides the package-level bid_price for this keyword. Inherits the max_bid interpretation from the pricing option: when max_bid is true, this is the keyword's bid ceiling; when false, this is the exact bid. If omitted, the package bid_price applies.
+     */
+    bid_price?: number;
+  }[];
+  /**
+   * Keywords to exclude from delivery. Queries matching these keywords will not trigger the ad. Each negative keyword is identified by the tuple (keyword, match_type). Seller must declare support in get_adcp_capabilities.
+   */
+  negative_keywords?: {
+    /**
+     * The keyword to exclude
+     */
+    keyword: string;
+    /**
+     * Match type for exclusion
+     */
+    match_type: 'broad' | 'phrase' | 'exact';
+  }[];
 }
 /**
  * A time window for daypart targeting. Specifies days of week and an hour range. start_hour is inclusive, end_hour is exclusive (e.g., 6-10 = 6:00am to 10:00am). Follows the Google Ads AdScheduleInfo / DV360 DayPartTargeting pattern.
@@ -526,15 +612,6 @@ export interface DaypartTarget {
    * Optional human-readable name for this time window (e.g., 'Morning Drive', 'Prime Time')
    */
   label?: string;
-}
-/**
- * Frequency capping settings for package-level application
- */
-export interface FrequencyCap {
-  /**
-   * Minutes to suppress after impression
-   */
-  suppress_minutes: number;
 }
 /**
  * Reference to a property list for targeting specific properties within this product. The package runs on the intersection of the product's publisher_properties and this list. Sellers SHOULD return a validation error if the product has property_targeting_allowed: false.
@@ -1400,10 +1477,6 @@ export type ForecastRangeUnit = 'spend' | 'reach_freq' | 'weekly' | 'daily' | 'c
  */
 export type ForecastMethod = 'estimate' | 'modeled' | 'guaranteed';
 /**
- * Unit of measurement for reach and audience_size metrics in this forecast. Required for cross-channel forecast comparison.
- */
-export type ReachUnit = 'individuals' | 'households' | 'devices' | 'accounts' | 'cookies' | 'custom';
-/**
  * Available frequencies for delivery reports and metrics updates
  */
 export type ReportingFrequency = 'hourly' | 'daily' | 'monthly';
@@ -1589,7 +1662,12 @@ export interface Product {
       | 'follows'
       | 'saves'
       | 'profile_visits'
+      | 'reach'
     )[];
+    /**
+     * Reach units this product can optimize for. Required when supported_metrics includes 'reach'. Buyers must set reach_unit to a value in this list on reach optimization goals — sellers reject unsupported values.
+     */
+    supported_reach_units?: ReachUnit[];
     /**
      * Video view duration thresholds (in seconds) this product supports for completed_views goals. Only relevant when supported_metrics includes 'completed_views'. When absent, the seller uses their platform default. Buyers must set view_duration_seconds to a value in this list — sellers reject unsupported values.
      */
@@ -2199,9 +2277,55 @@ export interface ReportingCapabilities {
    */
   supports_creative_breakdown?: boolean;
   /**
+   * Whether this product supports keyword-level metric breakdowns in delivery reporting (by_keyword within by_package)
+   */
+  supports_keyword_breakdown?: boolean;
+  supports_geo_breakdown?: GeographicBreakdownSupport;
+  /**
+   * Whether this product supports device type breakdowns in delivery reporting (by_device_type within by_package)
+   */
+  supports_device_type_breakdown?: boolean;
+  /**
+   * Whether this product supports device platform breakdowns in delivery reporting (by_device_platform within by_package)
+   */
+  supports_device_platform_breakdown?: boolean;
+  /**
+   * Whether this product supports audience segment breakdowns in delivery reporting (by_audience within by_package)
+   */
+  supports_audience_breakdown?: boolean;
+  /**
+   * Whether this product supports placement breakdowns in delivery reporting (by_placement within by_package)
+   */
+  supports_placement_breakdown?: boolean;
+  /**
    * Whether delivery data can be filtered to arbitrary date ranges. 'date_range' means the platform supports start_date/end_date parameters. 'lifetime_only' means the platform returns campaign lifetime totals and date range parameters are not accepted.
    */
   date_range_support: 'date_range' | 'lifetime_only';
+}
+/**
+ * Geographic breakdown support for this product. Declares which geo levels and systems are available for by_geo reporting within by_package.
+ */
+export interface GeographicBreakdownSupport {
+  /**
+   * Supports country-level geo breakdown (ISO 3166-1 alpha-2)
+   */
+  country?: boolean;
+  /**
+   * Supports region/state-level geo breakdown (ISO 3166-2)
+   */
+  region?: boolean;
+  /**
+   * Metro area breakdown support. Keys are metro-system enum values; true means supported.
+   */
+  metro?: {
+    [k: string]: boolean | undefined;
+  };
+  /**
+   * Postal area breakdown support. Keys are postal-system enum values; true means supported.
+   */
+  postal_area?: {
+    [k: string]: boolean | undefined;
+  };
 }
 /**
  * Creative requirements and restrictions for a product

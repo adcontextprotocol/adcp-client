@@ -836,7 +836,12 @@ export interface Product {
       | 'follows'
       | 'saves'
       | 'profile_visits'
+      | 'reach'
     )[];
+    /**
+     * Reach units this product can optimize for. Required when supported_metrics includes 'reach'. Buyers must set reach_unit to a value in this list on reach optimization goals — sellers reject unsupported values.
+     */
+    supported_reach_units?: ReachUnit[];
     /**
      * Video view duration thresholds (in seconds) this product supports for completed_views goals. Only relevant when supported_metrics includes 'completed_views'. When absent, the seller uses their platform default. Buyers must set view_duration_seconds to a value in this list — sellers reject unsupported values.
      */
@@ -1446,9 +1451,55 @@ export interface ReportingCapabilities {
    */
   supports_creative_breakdown?: boolean;
   /**
+   * Whether this product supports keyword-level metric breakdowns in delivery reporting (by_keyword within by_package)
+   */
+  supports_keyword_breakdown?: boolean;
+  supports_geo_breakdown?: GeographicBreakdownSupport;
+  /**
+   * Whether this product supports device type breakdowns in delivery reporting (by_device_type within by_package)
+   */
+  supports_device_type_breakdown?: boolean;
+  /**
+   * Whether this product supports device platform breakdowns in delivery reporting (by_device_platform within by_package)
+   */
+  supports_device_platform_breakdown?: boolean;
+  /**
+   * Whether this product supports audience segment breakdowns in delivery reporting (by_audience within by_package)
+   */
+  supports_audience_breakdown?: boolean;
+  /**
+   * Whether this product supports placement breakdowns in delivery reporting (by_placement within by_package)
+   */
+  supports_placement_breakdown?: boolean;
+  /**
    * Whether delivery data can be filtered to arbitrary date ranges. 'date_range' means the platform supports start_date/end_date parameters. 'lifetime_only' means the platform returns campaign lifetime totals and date range parameters are not accepted.
    */
   date_range_support: 'date_range' | 'lifetime_only';
+}
+/**
+ * Geographic breakdown support for this product. Declares which geo levels and systems are available for by_geo reporting within by_package.
+ */
+export interface GeographicBreakdownSupport {
+  /**
+   * Supports country-level geo breakdown (ISO 3166-1 alpha-2)
+   */
+  country?: boolean;
+  /**
+   * Supports region/state-level geo breakdown (ISO 3166-2)
+   */
+  region?: boolean;
+  /**
+   * Metro area breakdown support. Keys are metro-system enum values; true means supported.
+   */
+  metro?: {
+    [k: string]: boolean | undefined;
+  };
+  /**
+   * Postal area breakdown support. Keys are postal-system enum values; true means supported.
+   */
+  postal_area?: {
+    [k: string]: boolean | undefined;
+  };
 }
 /**
  * Creative requirements and restrictions for a product
@@ -2456,7 +2507,7 @@ export type OptimizationGoal =
   | {
       kind: 'metric';
       /**
-       * Seller-native metric to optimize for. Delivery metrics: clicks (link clicks, swipe-throughs, CTA taps that navigate away), views (viewable impressions), completed_views (video/audio completions — see view_duration_seconds). Duration/score metrics: viewed_seconds (time in view per impression), attention_seconds (attention time per impression), attention_score (vendor-specific attention score). Audience action metrics: engagements (any direct interaction with the ad unit beyond viewing — social reactions/comments/shares, story/unit opens, interactive overlay taps, companion banner interactions on audio and CTV), follows (new followers, page likes, artist/podcast/channel subscribes), saves (saves, bookmarks, playlist adds, pins — signals of intent to return), profile_visits (visits to the brand's in-platform page — profile, artist page, channel, or storefront. Does not include external website clicks, which are covered by 'clicks').
+       * Seller-native metric to optimize for. Delivery metrics: clicks (link clicks, swipe-throughs, CTA taps that navigate away), views (viewable impressions), completed_views (video/audio completions — see view_duration_seconds), reach (unique audience reach — see reach_unit and target_frequency). Duration/score metrics: viewed_seconds (time in view per impression), attention_seconds (attention time per impression), attention_score (vendor-specific attention score). Audience action metrics: engagements (any direct interaction with the ad unit beyond viewing — social reactions/comments/shares, story/unit opens, interactive overlay taps, companion banner interactions on audio and CTV), follows (new followers, page likes, artist/podcast/channel subscribes), saves (saves, bookmarks, playlist adds, pins — signals of intent to return), profile_visits (visits to the brand's in-platform page — profile, artist page, channel, or storefront. Does not include external website clicks, which are covered by 'clicks').
        */
       metric:
         | 'clicks'
@@ -2468,7 +2519,18 @@ export type OptimizationGoal =
         | 'engagements'
         | 'follows'
         | 'saves'
-        | 'profile_visits';
+        | 'profile_visits'
+        | 'reach';
+      /**
+       * Unit for reach measurement. Required when metric is 'reach'. Must be a value declared in the product's metric_optimization.supported_reach_units.
+       */
+      reach_unit?: ReachUnit;
+      /**
+       * Target frequency band for reach optimization. Only applicable when metric is 'reach'. Frames frequency as an optimization signal: the seller should treat impressions toward entities already within the [min, max] band as lower-value, and impressions toward unreached entities as higher-value. This shifts budget toward fresh reach rather than re-reaching known users. When omitted, the seller maximizes unique reach without a frequency constraint. A hard cap can still be layered via targeting_overlay.frequency_cap if a ceiling is needed.
+       */
+      target_frequency?: {
+        [k: string]: unknown | undefined;
+      };
       /**
        * Minimum video view duration in seconds that qualifies as a completed_view for this goal. Only applicable when metric is 'completed_views'. When omitted, the seller uses their platform default (typically 2–15 seconds). Common values: 2 (Snap/LinkedIn default), 6 (TikTok), 15 (Snap 15-second views, Meta ThruPlay). Sellers declare which durations they support in metric_optimization.supported_view_durations. Sellers must reject goals with unsupported values — silent rounding would create measurement discrepancies.
        */
@@ -2575,6 +2637,29 @@ export type PostalCodeSystem =
   | 'ch_plz'
   | 'at_plz';
 /**
+ * Frequency capping settings for package-level application. Two types of frequency control can be used independently or together: suppress_minutes enforces a cooldown between consecutive exposures; max_impressions + per + window caps total exposures per entity in a time window. At least one of suppress_minutes or max_impressions must be set.
+ */
+export type FrequencyCap = {
+  [k: string]: unknown | undefined;
+} & {
+  /**
+   * Cooldown period in minutes between consecutive exposures to the same entity. Prevents back-to-back ad delivery (e.g., 60 = at least 1 hour between impressions).
+   */
+  suppress_minutes?: number;
+  /**
+   * Maximum number of impressions per entity per window. For duration windows (e.g., '1d', '7d'), implementations typically use a rolling window; 'campaign' applies a fixed cap across the full flight.
+   */
+  max_impressions?: number;
+  /**
+   * Entity granularity for impression counting. Required when max_impressions is set.
+   */
+  per?: ReachUnit;
+  /**
+   * Time window for the max_impressions cap. Duration string (e.g., '1h', '6h', '1d', '7d', '30d', 'campaign'). 'campaign' applies the cap across the full campaign flight. Required when max_impressions is set.
+   */
+  window?: string;
+};
+/**
  * Methods for verifying user age for compliance. Does not include 'inferred' as it is not accepted for regulatory compliance.
  */
 export type AgeVerificationMethod = 'facial_age_estimation' | 'id_document' | 'digital_id' | 'credit_card' | 'world_id';
@@ -2594,6 +2679,10 @@ export type DevicePlatform =
   | 'fire_os'
   | 'roku_os'
   | 'unknown';
+/**
+ * Device form factor categories for targeting and reporting. Complements device-platform (operating system) with hardware classification. OpenRTB mapping: 1 (Mobile/Tablet General) → mobile, 2 (PC) → desktop, 4 (Phone) → mobile, 5 (Tablet) → tablet, 6 (Connected Device) → ctv, 7 (Set Top Box) → ctv. DOOH inventory uses dooh.
+ */
+export type DeviceType = 'desktop' | 'mobile' | 'tablet' | 'ctv' | 'dooh' | 'unknown';
 /**
  * JavaScript module type
  */
@@ -2926,7 +3015,7 @@ export interface PackageRequest {
   ext?: ExtensionObject;
 }
 /**
- * Optional restriction overlays for media buys. Most targeting should be expressed in the brief and handled by the publisher. These fields are for functional restrictions: geographic (RCT testing, regulatory compliance), age verification (alcohol, gambling), device platform (app compatibility), and language (localization).
+ * Optional restriction overlays for media buys. Most targeting should be expressed in the brief and handled by the publisher. These fields are for functional restrictions: geographic (RCT testing, regulatory compliance, proximity targeting), age verification (alcohol, gambling), device platform (app compatibility), language (localization), and keyword targeting (search/retail media).
  */
 export interface TargetingOverlay {
   /**
@@ -3029,6 +3118,14 @@ export interface TargetingOverlay {
    */
   device_platform?: DevicePlatform[];
   /**
+   * Restrict to specific device form factors. Use for campaigns targeting hardware categories rather than operating systems (e.g., mobile-only promotions, CTV campaigns).
+   */
+  device_type?: DeviceType[];
+  /**
+   * Exclude specific device form factors from delivery (e.g., exclude CTV for app-install campaigns).
+   */
+  device_type_exclude?: DeviceType[];
+  /**
    * Target users within store catchment areas from a synced store catalog. Each entry references a store-type catalog and optionally narrows to specific stores or catchment zones.
    */
   store_catchments?: {
@@ -3046,18 +3143,45 @@ export interface TargetingOverlay {
     catchment_ids?: string[];
   }[];
   /**
+   * Target users within travel time, distance, or a custom boundary around arbitrary geographic points. Multiple entries use OR semantics — a user within range of any listed point is eligible. For campaigns targeting 10+ locations, consider using store_catchments with a location catalog instead. Seller must declare support in get_adcp_capabilities.
+   */
+  geo_proximity?: {
+    [k: string]: unknown | undefined;
+  }[];
+  /**
    * Restrict to users with specific language preferences. ISO 639-1 codes (e.g., 'en', 'es', 'fr').
    */
   language?: string[];
-}
-/**
- * Frequency capping settings for package-level application
- */
-export interface FrequencyCap {
   /**
-   * Minutes to suppress after impression
+   * Keyword targeting for search and retail media platforms. Restricts delivery to queries matching the specified keywords. Each keyword is identified by the tuple (keyword, match_type) — the same keyword string with different match types are distinct targets. Sellers SHOULD reject duplicate (keyword, match_type) pairs within a single request. Seller must declare support in get_adcp_capabilities.
    */
-  suppress_minutes: number;
+  keyword_targets?: {
+    /**
+     * The keyword to target
+     */
+    keyword: string;
+    /**
+     * Match type: broad matches related queries, phrase matches queries containing the keyword phrase, exact matches the query exactly
+     */
+    match_type: 'broad' | 'phrase' | 'exact';
+    /**
+     * Per-keyword bid price, denominated in the same currency as the package's pricing option. Overrides the package-level bid_price for this keyword. Inherits the max_bid interpretation from the pricing option: when max_bid is true, this is the keyword's bid ceiling; when false, this is the exact bid. If omitted, the package bid_price applies.
+     */
+    bid_price?: number;
+  }[];
+  /**
+   * Keywords to exclude from delivery. Queries matching these keywords will not trigger the ad. Each negative keyword is identified by the tuple (keyword, match_type). Seller must declare support in get_adcp_capabilities.
+   */
+  negative_keywords?: {
+    /**
+     * The keyword to exclude
+     */
+    keyword: string;
+    /**
+     * Match type for exclusion
+     */
+    match_type: 'broad' | 'phrase' | 'exact';
+  }[];
 }
 /**
  * Assignment of a creative asset to a package with optional placement targeting. Used in create_media_buy and update_media_buy requests. Note: sync_creatives does not support placement_ids - use create/update_media_buy for placement-level targeting.
@@ -4254,6 +4378,62 @@ export type PackageUpdate = {
   optimization_goals?: OptimizationGoal[];
   targeting_overlay?: TargetingOverlay;
   /**
+   * Keyword targets to add or update on this package. Upserts by (keyword, match_type) identity: if the pair already exists, its bid_price is updated; if not, a new keyword target is added. Use targeting_overlay.keyword_targets in create_media_buy to set the initial list.
+   */
+  keyword_targets_add?: {
+    /**
+     * The keyword to target
+     */
+    keyword: string;
+    /**
+     * Match type for this keyword
+     */
+    match_type: 'broad' | 'phrase' | 'exact';
+    /**
+     * Per-keyword bid price. Inherits currency and max_bid interpretation from the package's pricing option.
+     */
+    bid_price?: number;
+  }[];
+  /**
+   * Keyword targets to remove from this package. Removes matching (keyword, match_type) pairs. If a specified pair is not present, sellers SHOULD treat it as a no-op for that entry.
+   */
+  keyword_targets_remove?: {
+    /**
+     * The keyword to stop targeting
+     */
+    keyword: string;
+    /**
+     * Match type to remove
+     */
+    match_type: 'broad' | 'phrase' | 'exact';
+  }[];
+  /**
+   * Negative keywords to add to this package. Appends to the existing negative keyword list — does not replace it. If a keyword+match_type pair already exists, sellers SHOULD treat it as a no-op for that entry. Use targeting_overlay.negative_keywords in create_media_buy to set the initial list.
+   */
+  negative_keywords_add?: {
+    /**
+     * The keyword to exclude
+     */
+    keyword: string;
+    /**
+     * Match type for exclusion
+     */
+    match_type: 'broad' | 'phrase' | 'exact';
+  }[];
+  /**
+   * Negative keywords to remove from this package. Removes matching keyword+match_type pairs from the existing list. If a specified pair is not present, sellers SHOULD treat it as a no-op for that entry.
+   */
+  negative_keywords_remove?: {
+    /**
+     * The keyword to stop excluding
+     */
+    keyword: string;
+    /**
+     * Match type to remove
+     */
+    match_type: 'broad' | 'phrase' | 'exact';
+  }[];
+  /**
    * Replace creative assignments for this package with optional weights and placement targeting. Uses replacement semantics - omit to leave assignments unchanged.
    */
   creative_assignments?: CreativeAssignment[];
@@ -4522,6 +4702,32 @@ export interface GetMediaBuysResponse {
   ext?: ExtensionObject;
 }
 /**
+ * Metric to sort breakdown rows by (descending). Falls back to 'spend' if the seller does not report the requested metric.
+ */
+export type SortMetric =
+  | 'impressions'
+  | 'spend'
+  | 'clicks'
+  | 'ctr'
+  | 'views'
+  | 'completed_views'
+  | 'completion_rate'
+  | 'conversions'
+  | 'conversion_value'
+  | 'roas'
+  | 'cost_per_acquisition'
+  | 'new_to_brand_rate'
+  | 'leads'
+  | 'grps'
+  | 'reach'
+  | 'frequency'
+  | 'engagements'
+  | 'follows'
+  | 'saves'
+  | 'profile_visits'
+  | 'engagement_rate'
+  | 'cost_per_click';
+/**
  * Request parameters for retrieving comprehensive delivery metrics
  */
 export interface GetMediaBuyDeliveryRequest {
@@ -4546,6 +4752,66 @@ export interface GetMediaBuyDeliveryRequest {
    * End date for reporting period (YYYY-MM-DD). When omitted along with start_date, returns campaign lifetime data. Only accepted when the product's reporting_capabilities.date_range_support is 'date_range'.
    */
   end_date?: string;
+  /**
+   * Request dimensional breakdowns in delivery reporting. Each key enables a specific breakdown dimension within by_package — include as an empty object (e.g., "device_type": {}) to activate with defaults. Omit entirely for no breakdowns (backward compatible). Unsupported dimensions are silently omitted from the response.
+   */
+  reporting_dimensions?: {
+    /**
+     * Request geographic breakdown. Check reporting_capabilities.supports_geo_breakdown for available levels and systems.
+     */
+    geo?: {
+      geo_level: GeographicTargetingLevel;
+      /**
+       * Classification system for metro or postal_area levels (e.g., 'nielsen_dma', 'us_zip'). Required when geo_level is 'metro' or 'postal_area'.
+       */
+      system?: MetroAreaSystem | PostalCodeSystem;
+      /**
+       * Maximum number of geo entries to return. Defaults to 25. When truncated, by_geo_truncated is true in the response.
+       */
+      limit?: number;
+      sort_by?: SortMetric;
+    };
+    /**
+     * Request device type breakdown.
+     */
+    device_type?: {
+      /**
+       * Maximum number of entries to return. When omitted, all entries are returned (the enum is small and bounded).
+       */
+      limit?: number;
+      sort_by?: SortMetric;
+    };
+    /**
+     * Request device platform breakdown.
+     */
+    device_platform?: {
+      /**
+       * Maximum number of entries to return. When omitted, all entries are returned (the enum is small and bounded).
+       */
+      limit?: number;
+      sort_by?: SortMetric;
+    };
+    /**
+     * Request audience segment breakdown.
+     */
+    audience?: {
+      /**
+       * Maximum number of entries to return. Defaults to 25.
+       */
+      limit?: number;
+      sort_by?: SortMetric;
+    };
+    /**
+     * Request placement breakdown.
+     */
+    placement?: {
+      /**
+       * Maximum number of entries to return. Defaults to 25.
+       */
+      limit?: number;
+      sort_by?: SortMetric;
+    };
+  };
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -4559,6 +4825,11 @@ export type AttributionModel = 'last_touch' | 'first_touch' | 'linear' | 'time_d
  * Pricing model used for this media buy
  */
 export type PricingModel = 'cpm' | 'vcpm' | 'cpc' | 'cpcv' | 'cpv' | 'cpp' | 'cpa' | 'flat_rate' | 'time';
+/**
+ * Origin of the audience segment (synced, platform, third_party, lookalike, retargeting, unknown)
+ */
+export type AudienceSource = 'synced' | 'platform' | 'third_party' | 'lookalike' | 'retargeting' | 'unknown';
+
 /**
  * Response payload for get_media_buy_delivery task
  */
@@ -4737,6 +5008,96 @@ export interface GetMediaBuyDeliveryResponse {
          */
         weight?: number;
       })[];
+      /**
+       * Metrics broken down by keyword within this package. One row per (keyword, match_type) pair — the same keyword with different match types appears as separate rows. Keyword-grain only: rows reflect aggregate performance of each targeted keyword, not individual search queries. Rows may not sum to package totals when a single impression is attributed to the triggering keyword only. Available for search and retail media packages when the seller supports keyword-level reporting.
+       */
+      by_keyword?: (DeliveryMetrics & {
+        /**
+         * The targeted keyword
+         */
+        keyword: string;
+        /**
+         * Match type for this keyword
+         */
+        match_type: 'broad' | 'phrase' | 'exact';
+      })[];
+      /**
+       * Delivery by geographic area within this package. Available when the buyer requests geo breakdown via reporting_dimensions and the seller supports it. Each dimension's rows are independent slices that should sum to the package total.
+       */
+      by_geo?: (DeliveryMetrics & {
+        geo_level: GeographicTargetingLevel;
+        /**
+         * Classification system for metro or postal_area levels (e.g., 'nielsen_dma', 'us_zip'). Present when geo_level is 'metro' or 'postal_area'.
+         */
+        system?: string;
+        /**
+         * Geographic code within the level and system. Country: ISO 3166-1 alpha-2 ('US'). Region: ISO 3166-2 with country prefix ('US-CA'). Metro/postal: system-specific code ('501', '10001').
+         */
+        geo_code: string;
+        /**
+         * Human-readable geographic name (e.g., 'United States', 'California', 'New York DMA')
+         */
+        geo_name?: string;
+      })[];
+      /**
+       * Whether by_geo was truncated due to the requested limit or a seller-imposed maximum. Sellers MUST return this flag whenever by_geo is present (false means the list is complete).
+       */
+      by_geo_truncated?: boolean;
+      /**
+       * Delivery by device form factor within this package. Available when the buyer requests device_type breakdown via reporting_dimensions and the seller supports it.
+       */
+      by_device_type?: (DeliveryMetrics & {
+        device_type: DeviceType;
+      })[];
+      /**
+       * Whether by_device_type was truncated. Sellers MUST return this flag whenever by_device_type is present (false means the list is complete).
+       */
+      by_device_type_truncated?: boolean;
+      /**
+       * Delivery by operating system within this package. Available when the buyer requests device_platform breakdown via reporting_dimensions and the seller supports it. Useful for CTV campaigns where tvOS vs Roku OS vs Fire OS matters.
+       */
+      by_device_platform?: (DeliveryMetrics & {
+        device_platform: DevicePlatform;
+      })[];
+      /**
+       * Whether by_device_platform was truncated. Sellers MUST return this flag whenever by_device_platform is present (false means the list is complete).
+       */
+      by_device_platform_truncated?: boolean;
+      /**
+       * Delivery by audience segment within this package. Available when the buyer requests audience breakdown via reporting_dimensions and the seller supports it. Only 'synced' audiences are directly targetable via the targeting overlay; other sources are informational.
+       */
+      by_audience?: (DeliveryMetrics & {
+        /**
+         * Audience segment identifier. For 'synced' source, matches audience_id from sync_audiences. For other sources, seller-defined.
+         */
+        audience_id: string;
+        audience_source: AudienceSource;
+        /**
+         * Human-readable audience segment name
+         */
+        audience_name?: string;
+      })[];
+      /**
+       * Whether by_audience was truncated. Sellers MUST return this flag whenever by_audience is present (false means the list is complete).
+       */
+      by_audience_truncated?: boolean;
+      /**
+       * Delivery by placement within this package. Available when the buyer requests placement breakdown via reporting_dimensions and the seller supports it. Placement IDs reference the product's placements array.
+       */
+      by_placement?: (DeliveryMetrics & {
+        /**
+         * Placement identifier from the product's placements array
+         */
+        placement_id: string;
+        /**
+         * Human-readable placement name
+         */
+        placement_name?: string;
+      })[];
+      /**
+       * Whether by_placement was truncated. Sellers MUST return this flag whenever by_placement is present (false means the list is complete).
+       */
+      by_placement_truncated?: boolean;
     })[];
     /**
      * Day-by-day delivery
@@ -5283,7 +5644,7 @@ export type UserMatch = {
 /**
  * Universal ID type
  */
-export type UIDType = 'rampid' | 'id5' | 'uid2' | 'euid' | 'pairid' | 'external_id' | 'maid' | 'other';
+export type UIDType = 'rampid' | 'id5' | 'uid2' | 'euid' | 'pairid' | 'maid' | 'other';
 /**
  * Request parameters for logging marketing events
  */
@@ -5459,11 +5820,15 @@ export interface LogEventError {
 
 // sync_audiences parameters
 /**
- * Hashed identifiers for a CRM audience member. All identifiers must be normalized before hashing: emails to lowercase+trim, phone numbers to E.164 format (e.g. +12065551234). At least one identifier is required. Providing multiple identifiers for the same person improves match rates. Composite identifiers (e.g. hashed first name + last name + zip for Google Customer Match) are not yet standardized — use the ext field for platform-specific extensions.
+ * A CRM audience member identified by a buyer-assigned external_id and at least one matchable identifier. All identifiers must be normalized before hashing: emails to lowercase+trim, phone numbers to E.164 format (e.g. +12065551234). Providing multiple identifiers for the same person improves match rates. Composite identifiers (e.g. hashed first name + last name + zip for Google Customer Match) are not yet standardized — use the ext field for platform-specific extensions.
  */
 export type AudienceMember = {
   [k: string]: unknown | undefined;
 } & {
+  /**
+   * Buyer-assigned stable identifier for this audience member (e.g. CRM record ID, loyalty ID). Used for deduplication, removal, and cross-referencing with buyer systems. Adapters for CDPs that don't natively assign IDs can derive one (e.g. hash of the member's identifiers).
+   */
+  external_id: string;
   /**
    * SHA-256 hash of lowercase, trimmed email address.
    */
@@ -6552,6 +6917,14 @@ export type GetSignalsRequest = {
   [k: string]: unknown | undefined;
 } & {
   /**
+   * The caller's account with this signals agent. When provided, the signals agent returns per-account pricing options if configured.
+   */
+  account_id?: string;
+  /**
+   * The buyer's campaign reference. Used to correlate signal discovery with subsequent report_usage calls.
+   */
+  buyer_campaign_ref?: string;
+  /**
    * Natural language description of the desired signals. When used alone, enables semantic discovery. When combined with signal_ids, provides context for the agent but signal_ids matches are returned first.
    */
   signal_spec?: string;
@@ -6560,18 +6933,13 @@ export type GetSignalsRequest = {
    */
   signal_ids?: SignalID[];
   /**
-   * Deployment targets where signals need to be activated
+   * Filter signals to those activatable on specific agents/platforms. When omitted, returns all signals available on the current agent. If the authenticated caller matches one of these destinations, activation keys will be included in the response.
    */
-  deliver_to: {
-    /**
-     * List of deployment targets (DSPs, sales agents, etc.). If the authenticated caller matches one of these deployment targets, activation keys will be included in the response.
-     */
-    deployments: Destination[];
-    /**
-     * Countries where signals will be used (ISO codes)
-     */
-    countries: string[];
-  };
+  destinations?: Destination[];
+  /**
+   * Countries where signals will be used (ISO 3166-1 alpha-2 codes). When omitted, no geographic filter is applied.
+   */
+  countries?: string[];
   filters?: SignalFilters;
   /**
    * Maximum number of results to return
@@ -6631,9 +6999,13 @@ export interface SignalFilters {
    */
   data_providers?: string[];
   /**
-   * Maximum CPM price filter
+   * Maximum CPM filter. Applies only to signals with model='cpm'.
    */
   max_cpm?: number;
+  /**
+   * Maximum percent-of-media rate filter. Signals where all percent_of_media pricing options exceed this value are excluded. Does not account for max_cpm caps.
+   */
+  max_percent?: number;
   /**
    * Minimum coverage requirement
    */
@@ -6732,6 +7104,20 @@ export type ActivationKey =
       value: string;
     };
 /**
+ * A pricing option offered by a signals agent. Combines pricing_option_id with the signal pricing model fields at the same level — pass pricing_option_id in report_usage for billing verification.
+ */
+export type SignalPricingOption = {
+  /**
+   * Opaque identifier for this pricing option, unique within the signals agent. Pass this in report_usage to identify which pricing option was applied.
+   */
+  pricing_option_id: string;
+} & SignalPricing;
+/**
+ * Pricing model for a signal. Discriminated by model: 'cpm' (fixed CPM), 'percent_of_media' (percentage of spend with optional CPM cap), or 'flat_fee' (fixed charge per reporting period, e.g. monthly licensed segments).
+ */
+export type SignalPricing = CpmPricing | PercentOfMediaPricing | FlatFeePricing;
+
+/**
  * Response payload for get_signals task
  */
 export interface GetSignalsResponse {
@@ -6769,7 +7155,7 @@ export interface GetSignalsResponse {
     /**
      * Pricing options available for this signal. The buyer selects one and passes its pricing_option_id in report_usage for billing verification.
      */
-    pricing_options: PricingOption[];
+    pricing_options: SignalPricingOption[];
   }[];
   /**
    * Task-specific errors and warnings (e.g., signal discovery or pricing issues)
@@ -6781,6 +7167,55 @@ export interface GetSignalsResponse {
    */
   sandbox?: boolean;
   context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Fixed cost per thousand impressions
+ */
+export interface CpmPricing {
+  model: 'cpm';
+  /**
+   * Cost per thousand impressions
+   */
+  cpm: number;
+  /**
+   * ISO 4217 currency code
+   */
+  currency: string;
+  ext?: ExtensionObject;
+}
+/**
+ * Percentage of media spend charged for this signal. When max_cpm is set, the effective rate is capped at that CPM — useful for platforms like The Trade Desk that use percent-of-media pricing with a CPM ceiling.
+ */
+export interface PercentOfMediaPricing {
+  model: 'percent_of_media';
+  /**
+   * Percentage of media spend, e.g. 15 = 15%
+   */
+  percent: number;
+  /**
+   * Optional CPM cap. When set, the effective charge is min(percent × media_spend_per_mille, max_cpm).
+   */
+  max_cpm?: number;
+  /**
+   * ISO 4217 currency code for the resulting charge
+   */
+  currency: string;
+  ext?: ExtensionObject;
+}
+/**
+ * Fixed charge per reporting period, regardless of impressions or spend. Used for licensed data bundles and monthly audience subscriptions.
+ */
+export interface FlatFeePricing {
+  model: 'flat_fee';
+  /**
+   * Fixed charge for the reporting period
+   */
+  amount: number;
+  /**
+   * ISO 4217 currency code
+   */
+  currency: string;
   ext?: ExtensionObject;
 }
 
@@ -6798,9 +7233,17 @@ export interface ActivateSignalRequest {
    */
   deployments: Destination[];
   /**
-   * The pricing option selected from the signal's pricing_options in the get_signals response. Required when the signal has pricing options. Records the buyer's pricing commitment at activation time and is referenced in subsequent report_usage calls.
+   * The pricing option selected from the signal's pricing_options in the get_signals response. Required when the signal has pricing options. Records the buyer's pricing commitment at activation time; pass this same value in report_usage for billing verification.
    */
   pricing_option_id?: string;
+  /**
+   * The caller's account with the signals agent. Associates this activation with a commercial relationship established via sync_accounts.
+   */
+  account_id?: string;
+  /**
+   * The buyer's campaign reference for this activation. Enables the signals agent to correlate activations with subsequent report_usage calls.
+   */
+  buyer_campaign_ref?: string;
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -8804,6 +9247,10 @@ export interface GetAdCPCapabilitiesRequest {
 
 // get_adcp_capabilities response
 /**
+ * Transportation modes for isochrone-based catchment area calculations. Determines how travel time translates to geographic reach.
+ */
+export type TransportMode = 'walking' | 'cycling' | 'driving' | 'public_transport';
+/**
  * Response payload for get_adcp_capabilities task. Protocol-level capability discovery across all AdCP protocols. Each domain protocol has its own capability section.
  */
 export interface GetAdCPCapabilitiesResponse {
@@ -8983,6 +9430,10 @@ export interface GetAdCPCapabilitiesResponse {
          */
         device_platform?: boolean;
         /**
+         * Whether seller supports device type targeting (form factor: desktop, mobile, tablet, ctv, dooh, unknown). When true, seller supports both device_type (include) and device_type_exclude (exclude) in targeting overlays.
+         */
+        device_type?: boolean;
+        /**
          * Whether seller supports language targeting (ISO 639-1 codes)
          */
         language?: boolean;
@@ -8994,6 +9445,35 @@ export interface GetAdCPCapabilitiesResponse {
          * Whether seller supports audience_exclude in targeting overlays (requires features.audience_targeting)
          */
         audience_exclude?: boolean;
+        /**
+         * Whether seller supports keyword targeting via targeting_overlay.keyword_targets and keyword_targets_add/remove in update_media_buy
+         */
+        keyword_targets?: boolean;
+        /**
+         * Whether seller supports negative keyword targeting via targeting_overlay.negative_keywords and negative_keywords_add/remove in update_media_buy
+         */
+        negative_keywords?: boolean;
+        /**
+         * Proximity targeting capabilities from arbitrary coordinates via targeting_overlay.geo_proximity.
+         */
+        geo_proximity?: {
+          /**
+           * Whether seller supports simple radius targeting (distance circle from a point)
+           */
+          radius?: boolean;
+          /**
+           * Whether seller supports travel time isochrone targeting (requires a routing engine)
+           */
+          travel_time?: boolean;
+          /**
+           * Whether seller supports pre-computed GeoJSON geometry (buyer provides the polygon)
+           */
+          geometry?: boolean;
+          /**
+           * Transport modes supported for travel_time isochrones. Only relevant when travel_time is true.
+           */
+          transport_modes?: TransportMode[];
+        };
       };
     };
     /**
@@ -9001,9 +9481,9 @@ export interface GetAdCPCapabilitiesResponse {
      */
     audience_targeting?: {
       /**
-       * Hashed PII types accepted for audience matching. Buyers should only send identifiers the seller supports.
+       * Identifier types accepted for audience matching. Buyers should only send identifiers the seller supports.
        */
-      supported_identifier_types: ('hashed_email' | 'hashed_phone')[];
+      supported_identifier_types: ('hashed_email' | 'hashed_phone' | 'external_id')[];
       /**
        * Universal ID types accepted for audience matching (MAIDs, RampID, UID2, etc.). MAID support varies significantly by platform — check this field before sending uids with type: maid.
        */
