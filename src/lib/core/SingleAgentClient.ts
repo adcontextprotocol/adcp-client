@@ -927,23 +927,35 @@ export class SingleAgentClient {
     const version = await this.detectServerVersion();
 
     if (version === 'v3') {
-      // Most v3 requests pass through unchanged. Exception: agents with partial v3
-      // implementations declare get_adcp_capabilities (detected as v3) but their
-      // get_products tool schema doesn't include all v3 fields (e.g. buying_mode).
-      // Use the cached inputSchema (populated by getCapabilities via getAgentInfo)
-      // to strip client-inferred fields the agent hasn't declared. MCP-only in
-      // practice — A2A agents use a different skill schema structure and may not
-      // populate cachedToolSchemas, in which case toolDeclaresField fails open.
-      if (taskType === 'get_products' && params.buying_mode !== undefined) {
-        if (!this.toolDeclaresField('get_products', 'buying_mode')) {
-          console.warn(
-            `[AdCP] Stripping inferred "buying_mode" from get_products request to agent "${this.agent.id}" — field not declared in agent's tool schema.`
-          );
-          const { buying_mode: _dropped, ...rest } = params;
-          return rest;
+      // For v3 agents that have a cached inputSchema, strip any top-level fields
+      // not declared in the schema's properties. This handles partial v3
+      // implementations (agents that declare get_adcp_capabilities but omit some
+      // v3 fields like brand or buying_mode from their tool schema).
+      // Fails open when no schema is cached — better to send unknown fields and
+      // let the agent respond than to silently drop data that might be required.
+      // MCP-only in practice: A2A agents don't populate cachedToolSchemas.
+      const toolSchema = this.cachedToolSchemas?.get(taskType);
+      if (!toolSchema) return params;
+
+      const declaredFields = new Set(Object.keys(toolSchema));
+      const filtered: Record<string, unknown> = {};
+      const stripped: string[] = [];
+
+      for (const [key, value] of Object.entries(params)) {
+        if (declaredFields.has(key)) {
+          filtered[key] = value;
+        } else {
+          stripped.push(key);
         }
       }
-      return params;
+
+      if (stripped.length > 0) {
+        console.warn(
+          `[AdCP] Stripping fields not declared in agent "${this.agent.id}" schema for ${taskType}: ${stripped.join(', ')}`
+        );
+      }
+
+      return filtered;
     }
 
     // Adapt v3 requests for v2 servers
@@ -963,19 +975,6 @@ export class SingleAgentClient {
       default:
         return params;
     }
-  }
-
-  /**
-   * Check whether a tool's cached inputSchema declares a specific field.
-   * Fails open (returns true) when no schema is cached — better to send the
-   * field and let the agent reject it with a clear error than to silently drop
-   * something that might be required.
-   */
-  private toolDeclaresField(toolName: string, field: string): boolean {
-    if (!this.cachedToolSchemas) return true;
-    const properties = this.cachedToolSchemas.get(toolName);
-    if (!properties) return true;
-    return field in properties;
   }
 
   /**
