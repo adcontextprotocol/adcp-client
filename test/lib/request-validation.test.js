@@ -5,7 +5,7 @@ const { test, describe } = require('node:test');
 const assert = require('node:assert');
 
 // Import from built dist
-const { AdCPClient } = require('../../dist/lib/index.js');
+const { AdCPClient, ProtocolClient } = require('../../dist/lib/index.js');
 
 describe('SingleAgentClient Request Validation', () => {
   const mockAgent = {
@@ -595,5 +595,136 @@ describe('SingleAgentClient Request Validation', () => {
         }
       });
     });
+  });
+});
+
+describe('v3 partial-schema field stripping', () => {
+  // For v3 agents with a cached inputSchema, the client filters request params to
+  // only the fields declared in the schema. This handles partial v3 implementations
+  // that declare get_adcp_capabilities but omit some v3 fields (brand, buying_mode,
+  // etc.) from their tool schema, causing Pydantic unexpected_keyword_argument errors.
+  test('should strip undeclared fields from get_products for a partial v3 agent', async () => {
+    const mockMCPAgent = {
+      id: 'partial-v3-agent',
+      name: 'Partial V3 Agent',
+      agent_uri: 'https://agents.example.com/mcp',
+      protocol: 'mcp',
+    };
+
+    const client = new AdCPClient([mockMCPAgent]);
+    const agent = client.agent(mockMCPAgent.id);
+    // AgentClient wraps SingleAgentClient in .client; set state there to bypass network calls
+    const inner = agent.client;
+
+    // Simulate: agent is detected as v3 but get_products schema has no 'brand' field
+    inner.discoveredEndpoint = mockMCPAgent.agent_uri;
+    inner.cachedCapabilities = {
+      version: 'v3',
+      majorVersions: [3],
+      protocols: ['media_buy'],
+      features: {
+        inlineCreativeManagement: false,
+        conversionTracking: false,
+        audienceManagement: false,
+        propertyListFiltering: false,
+        contentStandards: false,
+      },
+      extensions: [],
+      _synthetic: false,
+    };
+    inner.cachedToolSchemas = new Map([
+      ['get_products', { brief: {}, filters: {}, buying_mode: {} }], // no 'brand'
+    ]);
+
+    const capturedCalls = [];
+    const originalCallTool = ProtocolClient.callTool;
+    ProtocolClient.callTool = async (_agentConfig, toolName, args) => {
+      capturedCalls.push({ toolName, args });
+      return { products: [], formats: [] };
+    };
+
+    try {
+      await agent.getProducts({
+        brand: { domain: 'fanta.com' },
+        brief: 'love chocolate and have 20k to spend',
+      });
+    } catch (err) {
+      if (err.message?.includes('Request validation failed')) {
+        throw err;
+      }
+      // Network/protocol errors are expected since there's no real server
+    } finally {
+      ProtocolClient.callTool = originalCallTool;
+    }
+
+    const getProductsCall = capturedCalls.find(c => c.toolName === 'get_products');
+    assert.ok(getProductsCall, 'get_products should have been called');
+    assert.strictEqual(
+      getProductsCall.args.brand,
+      undefined,
+      'brand should be stripped when not declared in agent schema'
+    );
+    assert.ok(getProductsCall.args.brief, 'brief should be preserved');
+  });
+
+  test('should pass through all fields when v3 agent schema declares them', async () => {
+    const mockMCPAgent = {
+      id: 'full-v3-agent',
+      name: 'Full V3 Agent',
+      agent_uri: 'https://agents.example.com/mcp',
+      protocol: 'mcp',
+    };
+
+    const client = new AdCPClient([mockMCPAgent]);
+    const agent = client.agent(mockMCPAgent.id);
+    const inner = agent.client;
+
+    // Simulate: agent is detected as v3 and does declare 'brand' in its schema
+    inner.discoveredEndpoint = mockMCPAgent.agent_uri;
+    inner.cachedCapabilities = {
+      version: 'v3',
+      majorVersions: [3],
+      protocols: ['media_buy'],
+      features: {
+        inlineCreativeManagement: false,
+        conversionTracking: false,
+        audienceManagement: false,
+        propertyListFiltering: false,
+        contentStandards: false,
+      },
+      extensions: [],
+      _synthetic: false,
+    };
+    inner.cachedToolSchemas = new Map([
+      ['get_products', { brief: {}, filters: {}, buying_mode: {}, brand: {} }], // has 'brand'
+    ]);
+
+    const capturedCalls = [];
+    const originalCallTool = ProtocolClient.callTool;
+    ProtocolClient.callTool = async (_agentConfig, toolName, args) => {
+      capturedCalls.push({ toolName, args });
+      return { products: [], formats: [] };
+    };
+
+    try {
+      await agent.getProducts({
+        brand: { domain: 'example.com' },
+        brief: 'test campaign',
+      });
+    } catch (err) {
+      if (err.message?.includes('Request validation failed')) {
+        throw err;
+      }
+    } finally {
+      ProtocolClient.callTool = originalCallTool;
+    }
+
+    const getProductsCall = capturedCalls.find(c => c.toolName === 'get_products');
+    assert.ok(getProductsCall, 'get_products should have been called');
+    assert.deepStrictEqual(
+      getProductsCall.args.brand,
+      { domain: 'example.com' },
+      'brand should be passed through when declared in agent schema'
+    );
   });
 });
