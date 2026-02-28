@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-02-27T03:29:31.015Z
+// Generated at: 2026-02-28T22:29:57.155Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -12,15 +12,30 @@ import { z } from "zod";
 
 export const BrandIDSchema = z.string();
 
-export const MediaBuyStatusSchema = z.union([z.literal("pending_activation"), z.literal("active"), z.literal("paused"), z.literal("completed")]);
+export const MediaBuyStatusSchema = z.union([z.literal("pending_activation"), z.literal("active"), z.literal("paused"), z.literal("completed"), z.literal("rejected"), z.literal("canceled")]);
 
 export const PacingSchema = z.union([z.literal("even"), z.literal("asap"), z.literal("front_loaded")]);
+
+export const CatalogTypeSchema = z.union([z.literal("offering"), z.literal("product"), z.literal("inventory"), z.literal("store"), z.literal("promotion"), z.literal("hotel"), z.literal("flight"), z.literal("job"), z.literal("vehicle"), z.literal("real_estate"), z.literal("education"), z.literal("destination"), z.literal("app")]);
+
+export const FeedFormatSchema = z.union([z.literal("google_merchant_center"), z.literal("facebook_catalog"), z.literal("shopify"), z.literal("linkedin_jobs"), z.literal("custom")]);
+
+export const UpdateFrequencySchema = z.union([z.literal("realtime"), z.literal("hourly"), z.literal("daily"), z.literal("weekly")]);
+
+export const EventTypeSchema = z.union([z.literal("page_view"), z.literal("view_content"), z.literal("select_content"), z.literal("select_item"), z.literal("search"), z.literal("share"), z.literal("add_to_cart"), z.literal("remove_from_cart"), z.literal("viewed_cart"), z.literal("add_to_wishlist"), z.literal("initiate_checkout"), z.literal("add_payment_info"), z.literal("purchase"), z.literal("refund"), z.literal("lead"), z.literal("qualify_lead"), z.literal("close_convert_lead"), z.literal("disqualify_lead"), z.literal("complete_registration"), z.literal("subscribe"), z.literal("start_trial"), z.literal("app_install"), z.literal("app_launch"), z.literal("contact"), z.literal("schedule"), z.literal("donate"), z.literal("submit_application"), z.literal("custom")]);
+
+export const ContentIDTypeSchema = z.union([z.literal("sku"), z.literal("gtin"), z.literal("offering_id"), z.literal("job_id"), z.literal("hotel_id"), z.literal("flight_id"), z.literal("vehicle_id"), z.literal("listing_id"), z.literal("store_id"), z.literal("program_id"), z.literal("destination_id"), z.literal("app_id")]);
 
 export const MetroAreaSystemSchema = z.union([z.literal("nielsen_dma"), z.literal("uk_itl1"), z.literal("uk_itl2"), z.literal("eurostat_nuts2"), z.literal("custom")]);
 
 export const PostalCodeSystemSchema = z.union([z.literal("us_zip"), z.literal("us_zip_plus_four"), z.literal("gb_outward"), z.literal("gb_full"), z.literal("ca_fsa"), z.literal("ca_full"), z.literal("de_plz"), z.literal("fr_code_postal"), z.literal("au_postcode"), z.literal("ch_plz"), z.literal("at_plz")]);
 
 export const DayOfWeekSchema = z.union([z.literal("monday"), z.literal("tuesday"), z.literal("wednesday"), z.literal("thursday"), z.literal("friday"), z.literal("saturday"), z.literal("sunday")]);
+
+export const DurationSchema = z.object({
+    interval: z.number(),
+    unit: z.union([z.literal("minutes"), z.literal("hours"), z.literal("days"), z.literal("campaign")])
+});
 
 export const ReachUnitSchema = z.union([z.literal("individuals"), z.literal("households"), z.literal("devices"), z.literal("accounts"), z.literal("cookies"), z.literal("custom")]);
 
@@ -29,29 +44,6 @@ export const AgeVerificationMethodSchema = z.union([z.literal("facial_age_estima
 export const DevicePlatformSchema = z.union([z.literal("ios"), z.literal("android"), z.literal("windows"), z.literal("macos"), z.literal("linux"), z.literal("chromeos"), z.literal("tvos"), z.literal("tizen"), z.literal("webos"), z.literal("fire_os"), z.literal("roku_os"), z.literal("unknown")]);
 
 export const DeviceTypeSchema = z.union([z.literal("desktop"), z.literal("mobile"), z.literal("tablet"), z.literal("ctv"), z.literal("dooh"), z.literal("unknown")]);
-
-export const EventTypeSchema = z.union([z.literal("page_view"), z.literal("view_content"), z.literal("select_content"), z.literal("select_item"), z.literal("search"), z.literal("share"), z.literal("add_to_cart"), z.literal("remove_from_cart"), z.literal("viewed_cart"), z.literal("add_to_wishlist"), z.literal("initiate_checkout"), z.literal("add_payment_info"), z.literal("purchase"), z.literal("refund"), z.literal("lead"), z.literal("qualify_lead"), z.literal("close_convert_lead"), z.literal("disqualify_lead"), z.literal("complete_registration"), z.literal("subscribe"), z.literal("start_trial"), z.literal("app_install"), z.literal("app_launch"), z.literal("contact"), z.literal("schedule"), z.literal("donate"), z.literal("submit_application"), z.literal("custom")]);
-
-export const ExtensionObjectSchema = z.object({});
-
-export const BrandReferenceSchema = z.object({
-    domain: z.string(),
-    brand_id: BrandIDSchema.nullish()
-});
-
-export const CreativeAssignmentSchema = z.object({
-    creative_id: z.string(),
-    weight: z.number().nullish(),
-    placement_ids: z.array(z.string()).nullish()
-});
-
-export const FormatIDSchema = z.object({
-    agent_url: z.string(),
-    id: z.string(),
-    width: z.number().nullish(),
-    height: z.number().nullish(),
-    duration_ms: z.number().nullish()
-});
 
 export const OptimizationGoalSchema = z.union([z.object({
         kind: z.literal("metric"),
@@ -86,11 +78,46 @@ export const OptimizationGoalSchema = z.union([z.object({
                 kind: z.literal("maximize_value")
             })]).nullish(),
         attribution_window: z.object({
-            click_through: z.string(),
-            view_through: z.string().nullish()
+            post_click: DurationSchema,
+            post_view: DurationSchema.nullish()
         }).nullish(),
         priority: z.number().nullish()
     })]);
+
+export const ExtensionObjectSchema = z.object({});
+
+export const BrandReferenceSchema = z.object({
+    domain: z.string(),
+    brand_id: BrandIDSchema.nullish()
+});
+
+export const FormatIDSchema = z.object({
+    agent_url: z.string(),
+    id: z.string(),
+    width: z.number().nullish(),
+    height: z.number().nullish(),
+    duration_ms: z.number().nullish()
+});
+
+export const CreativeAssignmentSchema = z.object({
+    creative_id: z.string(),
+    weight: z.number().nullish(),
+    placement_ids: z.array(z.string()).nullish()
+});
+
+export const CatalogFieldMappingSchema = z.object({
+    feed_field: z.string().nullish(),
+    catalog_field: z.string().nullish(),
+    asset_group_id: z.string().nullish(),
+    value: z.record(z.string(), z.union([z.unknown(), z.undefined()])).nullish(),
+    transform: z.union([z.literal("date"), z.literal("divide"), z.literal("boolean"), z.literal("split")]).nullish(),
+    format: z.string().nullish(),
+    timezone: z.string().nullish(),
+    by: z.number().nullish(),
+    separator: z.string().nullish(),
+    default: z.record(z.string(), z.union([z.unknown(), z.undefined()])).nullish(),
+    ext: ExtensionObjectSchema.nullish()
+});
 
 export const DaypartTargetSchema = z.object({
     days: z.array(DayOfWeekSchema),
@@ -100,10 +127,11 @@ export const DaypartTargetSchema = z.object({
 });
 
 export const FrequencyCapSchema = z.record(z.string(), z.union([z.unknown(), z.undefined()])).and(z.object({
+    suppress: DurationSchema.nullish(),
     suppress_minutes: z.number().nullish(),
     max_impressions: z.number().nullish(),
     per: ReachUnitSchema.nullish(),
-    window: z.string().nullish()
+    window: DurationSchema.nullish()
 }));
 
 export const PropertyListReferenceSchema = z.object({
@@ -112,25 +140,84 @@ export const PropertyListReferenceSchema = z.object({
     auth_token: z.string().nullish()
 });
 
-export const CatalogTypeSchema = z.union([z.literal("offering"), z.literal("product"), z.literal("inventory"), z.literal("store"), z.literal("promotion"), z.literal("hotel"), z.literal("flight"), z.literal("job"), z.literal("vehicle"), z.literal("real_estate"), z.literal("education"), z.literal("destination"), z.literal("app")]);
-
-export const FeedFormatSchema = z.union([z.literal("google_merchant_center"), z.literal("facebook_catalog"), z.literal("shopify"), z.literal("linkedin_jobs"), z.literal("custom")]);
-
-export const UpdateFrequencySchema = z.union([z.literal("realtime"), z.literal("hourly"), z.literal("daily"), z.literal("weekly")]);
-
-export const ContentIDTypeSchema = z.union([z.literal("sku"), z.literal("gtin"), z.literal("offering_id"), z.literal("job_id"), z.literal("hotel_id"), z.literal("flight_id"), z.literal("vehicle_id"), z.literal("listing_id"), z.literal("store_id"), z.literal("program_id"), z.literal("destination_id"), z.literal("app_id")]);
-
-export const JavaScriptModuleTypeSchema = z.union([z.literal("esm"), z.literal("commonjs"), z.literal("script")]);
+export const DigitalSourceTypeSchema = z.union([z.literal("digital_capture"), z.literal("digital_creation"), z.literal("trained_algorithmic_media"), z.literal("composite_with_trained_algorithmic_media"), z.literal("algorithmic_media"), z.literal("composite_capture"), z.literal("composite_synthetic"), z.literal("human_edits"), z.literal("data_driven_media")]);
 
 export const VASTVersionSchema = z.union([z.literal("2.0"), z.literal("3.0"), z.literal("4.0"), z.literal("4.1"), z.literal("4.2")]);
 
 export const VASTTrackingEventSchema = z.union([z.literal("start"), z.literal("firstQuartile"), z.literal("midpoint"), z.literal("thirdQuartile"), z.literal("complete"), z.literal("impression"), z.literal("click"), z.literal("pause"), z.literal("resume"), z.literal("skip"), z.literal("mute"), z.literal("unmute"), z.literal("fullscreen"), z.literal("exitFullscreen"), z.literal("playerExpand"), z.literal("playerCollapse")]);
 
+export const ProvenanceSchema = z.object({
+    digital_source_type: DigitalSourceTypeSchema.nullish(),
+    ai_tool: z.object({
+        name: z.string(),
+        version: z.string().nullish(),
+        provider: z.string().nullish()
+    }).nullish(),
+    human_oversight: z.union([z.literal("none"), z.literal("prompt_only"), z.literal("selected"), z.literal("edited"), z.literal("directed")]).nullish(),
+    declared_by: z.object({
+        agent_url: z.string().nullish(),
+        role: z.union([z.literal("creator"), z.literal("advertiser"), z.literal("agency"), z.literal("platform"), z.literal("tool")])
+    }).nullish(),
+    created_time: z.string().nullish(),
+    c2pa: z.object({
+        manifest_url: z.string()
+    }).nullish(),
+    disclosure: z.object({
+        required: z.boolean(),
+        jurisdictions: z.array(z.object({
+            country: z.string(),
+            region: z.string().nullish(),
+            regulation: z.string(),
+            label_text: z.string().nullish()
+        })).nullish()
+    }).nullish(),
+    verification: z.array(z.object({
+        verified_by: z.string(),
+        verified_time: z.string().nullish(),
+        result: z.union([z.literal("authentic"), z.literal("ai_generated"), z.literal("ai_modified"), z.literal("inconclusive")]),
+        confidence: z.number().nullish(),
+        details_url: z.string().nullish()
+    })).nullish(),
+    ext: ExtensionObjectSchema.nullish()
+});
+
+export const URLAssetTypeSchema = z.union([z.literal("clickthrough"), z.literal("tracker_pixel"), z.literal("tracker_script")]);
+
+export const JavaScriptModuleTypeSchema = z.union([z.literal("esm"), z.literal("commonjs"), z.literal("script")]);
+
+export const HTTPMethodSchema = z.union([z.literal("GET"), z.literal("POST")]);
+
+export const UniversalMacroSchema = z.union([z.literal("MEDIA_BUY_ID"), z.literal("PACKAGE_ID"), z.literal("CREATIVE_ID"), z.literal("CACHEBUSTER"), z.literal("TIMESTAMP"), z.literal("CLICK_URL"), z.literal("GDPR"), z.literal("GDPR_CONSENT"), z.literal("US_PRIVACY"), z.literal("GPP_STRING"), z.literal("GPP_SID"), z.literal("IP_ADDRESS"), z.literal("LIMIT_AD_TRACKING"), z.literal("DEVICE_TYPE"), z.literal("OS"), z.literal("OS_VERSION"), z.literal("DEVICE_MAKE"), z.literal("DEVICE_MODEL"), z.literal("USER_AGENT"), z.literal("APP_BUNDLE"), z.literal("APP_NAME"), z.literal("COUNTRY"), z.literal("REGION"), z.literal("CITY"), z.literal("ZIP"), z.literal("DMA"), z.literal("LAT"), z.literal("LONG"), z.literal("DEVICE_ID"), z.literal("DEVICE_ID_TYPE"), z.literal("DOMAIN"), z.literal("PAGE_URL"), z.literal("REFERRER"), z.literal("KEYWORDS"), z.literal("PLACEMENT_ID"), z.literal("FOLD_POSITION"), z.literal("AD_WIDTH"), z.literal("AD_HEIGHT"), z.literal("VIDEO_ID"), z.literal("VIDEO_TITLE"), z.literal("VIDEO_DURATION"), z.literal("VIDEO_CATEGORY"), z.literal("CONTENT_GENRE"), z.literal("CONTENT_RATING"), z.literal("PLAYER_WIDTH"), z.literal("PLAYER_HEIGHT"), z.literal("POD_POSITION"), z.literal("POD_SIZE"), z.literal("AD_BREAK_ID"), z.literal("STATION_ID"), z.literal("SHOW_NAME"), z.literal("EPISODE_ID"), z.literal("AUDIO_DURATION"), z.literal("AXEM"), z.literal("CATALOG_ID"), z.literal("SKU"), z.literal("GTIN"), z.literal("OFFERING_ID"), z.literal("JOB_ID"), z.literal("HOTEL_ID"), z.literal("FLIGHT_ID"), z.literal("VEHICLE_ID"), z.literal("LISTING_ID"), z.literal("STORE_ID"), z.literal("PROGRAM_ID"), z.literal("DESTINATION_ID"), z.literal("CREATIVE_VARIANT_ID"), z.literal("APP_ITEM_ID")]);
+
+export const WebhookResponseTypeSchema = z.union([z.literal("html"), z.literal("json"), z.literal("xml"), z.literal("javascript")]);
+
+export const WebhookSecurityMethodSchema = z.union([z.literal("hmac_sha256"), z.literal("api_key"), z.literal("none")]);
+
 export const DAASTVersionSchema = z.union([z.literal("1.0"), z.literal("1.1")]);
 
 export const DAASTTrackingEventSchema = z.union([z.literal("start"), z.literal("firstQuartile"), z.literal("midpoint"), z.literal("thirdQuartile"), z.literal("complete"), z.literal("impression"), z.literal("pause"), z.literal("resume"), z.literal("skip"), z.literal("mute"), z.literal("unmute")]);
 
-export const URLAssetTypeSchema = z.union([z.literal("clickthrough"), z.literal("tracker_pixel"), z.literal("tracker_script")]);
+export const MarkdownFlavorSchema = z.union([z.literal("commonmark"), z.literal("gfm")]);
+
+export const DisclosurePositionSchema = z.union([z.literal("prominent"), z.literal("footer"), z.literal("audio"), z.literal("subtitle"), z.literal("overlay"), z.literal("end_card"), z.literal("pre_roll"), z.literal("companion")]);
+
+export const CatalogSchema = z.object({
+    catalog_id: z.string().nullish(),
+    name: z.string().nullish(),
+    type: CatalogTypeSchema,
+    url: z.string().nullish(),
+    feed_format: FeedFormatSchema.nullish(),
+    update_frequency: UpdateFrequencySchema.nullish(),
+    items: z.array(z.object({})).nullish(),
+    ids: z.array(z.string()).nullish(),
+    gtins: z.array(z.string()).nullish(),
+    tags: z.array(z.string()).nullish(),
+    category: z.string().nullish(),
+    query: z.string().nullish(),
+    conversion_events: z.array(EventTypeSchema).nullish(),
+    content_id_type: ContentIDTypeSchema.nullish(),
+    feed_field_mappings: z.array(CatalogFieldMappingSchema).nullish()
+});
 
 export const CreativeStatusSchema = z.union([z.literal("processing"), z.literal("approved"), z.literal("rejected"), z.literal("pending_review"), z.literal("archived")]);
 
@@ -139,7 +226,8 @@ export const ImageAssetSchema = z.object({
     width: z.number(),
     height: z.number(),
     format: z.string().nullish(),
-    alt_text: z.string().nullish()
+    alt_text: z.string().nullish(),
+    provenance: ProvenanceSchema.nullish()
 });
 
 export const VideoAssetSchema = z.object({
@@ -171,7 +259,8 @@ export const VideoAssetSchema = z.object({
     audio_true_peak_dbfs: z.number().nullish(),
     captions_url: z.string().nullish(),
     transcript_url: z.string().nullish(),
-    audio_description_url: z.string().nullish()
+    audio_description_url: z.string().nullish(),
+    provenance: ProvenanceSchema.nullish()
 });
 
 export const AudioAssetSchema = z.object({
@@ -186,39 +275,8 @@ export const AudioAssetSchema = z.object({
     bitrate_kbps: z.number().nullish(),
     loudness_lufs: z.number().nullish(),
     true_peak_dbfs: z.number().nullish(),
-    transcript_url: z.string().nullish()
-});
-
-export const TextAssetSchema = z.object({
-    content: z.string(),
-    language: z.string().nullish()
-});
-
-export const HTMLAssetSchema = z.object({
-    content: z.string(),
-    version: z.string().nullish(),
-    accessibility: z.object({
-        alt_text: z.string().nullish(),
-        keyboard_navigable: z.boolean().nullish(),
-        motion_control: z.boolean().nullish(),
-        screen_reader_tested: z.boolean().nullish()
-    }).nullish()
-});
-
-export const CSSAssetSchema = z.object({
-    content: z.string(),
-    media: z.string().nullish()
-});
-
-export const JavaScriptAssetSchema = z.object({
-    content: z.string(),
-    module_type: JavaScriptModuleTypeSchema.nullish(),
-    accessibility: z.object({
-        alt_text: z.string().nullish(),
-        keyboard_navigable: z.boolean().nullish(),
-        motion_control: z.boolean().nullish(),
-        screen_reader_tested: z.boolean().nullish()
-    }).nullish()
+    transcript_url: z.string().nullish(),
+    provenance: ProvenanceSchema.nullish()
 });
 
 export const VASTAssetSchema = z.union([z.object({
@@ -229,7 +287,8 @@ export const VASTAssetSchema = z.union([z.object({
         duration_ms: z.number().nullish(),
         tracking_events: z.array(VASTTrackingEventSchema).nullish(),
         captions_url: z.string().nullish(),
-        audio_description_url: z.string().nullish()
+        audio_description_url: z.string().nullish(),
+        provenance: ProvenanceSchema.nullish()
     }), z.object({
         delivery_type: z.literal("inline"),
         content: z.string(),
@@ -238,8 +297,67 @@ export const VASTAssetSchema = z.union([z.object({
         duration_ms: z.number().nullish(),
         tracking_events: z.array(VASTTrackingEventSchema).nullish(),
         captions_url: z.string().nullish(),
-        audio_description_url: z.string().nullish()
+        audio_description_url: z.string().nullish(),
+        provenance: ProvenanceSchema.nullish()
     })]);
+
+export const TextAssetSchema = z.object({
+    content: z.string(),
+    language: z.string().nullish(),
+    provenance: ProvenanceSchema.nullish()
+});
+
+export const URLAssetSchema = z.object({
+    url: z.string(),
+    url_type: URLAssetTypeSchema.nullish(),
+    description: z.string().nullish(),
+    provenance: ProvenanceSchema.nullish()
+});
+
+export const HTMLAssetSchema = z.object({
+    content: z.string(),
+    version: z.string().nullish(),
+    accessibility: z.object({
+        alt_text: z.string().nullish(),
+        keyboard_navigable: z.boolean().nullish(),
+        motion_control: z.boolean().nullish(),
+        screen_reader_tested: z.boolean().nullish()
+    }).nullish(),
+    provenance: ProvenanceSchema.nullish()
+});
+
+export const JavaScriptAssetSchema = z.object({
+    content: z.string(),
+    module_type: JavaScriptModuleTypeSchema.nullish(),
+    accessibility: z.object({
+        alt_text: z.string().nullish(),
+        keyboard_navigable: z.boolean().nullish(),
+        motion_control: z.boolean().nullish(),
+        screen_reader_tested: z.boolean().nullish()
+    }).nullish(),
+    provenance: ProvenanceSchema.nullish()
+});
+
+export const WebhookAssetSchema = z.object({
+    url: z.string(),
+    method: HTTPMethodSchema.nullish(),
+    timeout_ms: z.number().nullish(),
+    supported_macros: z.array(z.union([UniversalMacroSchema, z.string()])).nullish(),
+    required_macros: z.array(z.union([UniversalMacroSchema, z.string()])).nullish(),
+    response_type: WebhookResponseTypeSchema,
+    security: z.object({
+        method: WebhookSecurityMethodSchema,
+        hmac_header: z.string().nullish(),
+        api_key_header: z.string().nullish()
+    }),
+    provenance: ProvenanceSchema.nullish()
+});
+
+export const CSSAssetSchema = z.object({
+    content: z.string(),
+    media: z.string().nullish(),
+    provenance: ProvenanceSchema.nullish()
+});
 
 export const DAASTAssetSchema = z.union([z.object({
         delivery_type: z.literal("url"),
@@ -248,7 +366,8 @@ export const DAASTAssetSchema = z.union([z.object({
         duration_ms: z.number().nullish(),
         tracking_events: z.array(DAASTTrackingEventSchema).nullish(),
         companion_ads: z.boolean().nullish(),
-        transcript_url: z.string().nullish()
+        transcript_url: z.string().nullish(),
+        provenance: ProvenanceSchema.nullish()
     }), z.object({
         delivery_type: z.literal("inline"),
         content: z.string(),
@@ -256,27 +375,23 @@ export const DAASTAssetSchema = z.union([z.object({
         duration_ms: z.number().nullish(),
         tracking_events: z.array(DAASTTrackingEventSchema).nullish(),
         companion_ads: z.boolean().nullish(),
-        transcript_url: z.string().nullish()
+        transcript_url: z.string().nullish(),
+        provenance: ProvenanceSchema.nullish()
     })]);
 
-export const URLAssetSchema = z.object({
-    url: z.string(),
-    url_type: URLAssetTypeSchema.nullish(),
-    description: z.string().nullish()
+export const MarkdownAssetSchema = z.object({
+    content: z.string(),
+    language: z.string().nullish(),
+    markdown_flavor: MarkdownFlavorSchema.nullish(),
+    allow_raw_html: z.boolean().nullish()
 });
 
-export const CatalogFieldMappingSchema = z.object({
-    feed_field: z.string().nullish(),
-    catalog_field: z.string().nullish(),
-    asset_group_id: z.string().nullish(),
-    value: z.record(z.string(), z.union([z.unknown(), z.undefined()])).nullish(),
-    transform: z.union([z.literal("date"), z.literal("divide"), z.literal("boolean"), z.literal("split")]).nullish(),
-    format: z.string().nullish(),
-    timezone: z.string().nullish(),
-    by: z.number().nullish(),
-    separator: z.string().nullish(),
-    default: z.record(z.string(), z.union([z.unknown(), z.undefined()])).nullish(),
-    ext: ExtensionObjectSchema.nullish()
+export const CatalogAssetSchema = CatalogSchema;
+
+export const ReferenceAssetSchema = z.object({
+    url: z.string(),
+    role: z.union([z.literal("style_reference"), z.literal("product_shot"), z.literal("mood_board"), z.literal("example_creative"), z.literal("logo"), z.literal("strategy_doc")]),
+    description: z.string().nullish()
 });
 
 export const PropertyIDSchema = z.string();
@@ -347,17 +462,18 @@ export const PlacementSchema = z.object({
     format_ids: z.array(FormatIDSchema).nullish()
 });
 
-export const MeasurementSchema = z.object({
+export const OutcomeMeasurementSchema = z.object({
     type: z.string(),
     attribution: z.string(),
-    window: z.string().nullish(),
+    window: DurationSchema.nullish(),
     reporting: z.string()
 });
 
 export const CreativePolicySchema = z.object({
     co_branding: CoBrandingRequirementSchema,
     landing_page: LandingPageRequirementSchema,
-    templates_available: z.boolean()
+    templates_available: z.boolean(),
+    provenance_required: z.boolean().nullish()
 });
 
 export const PriceGuidanceSchema = z.object({
@@ -513,7 +629,8 @@ export const ErrorSchema = z.object({
     field: z.string().nullish(),
     suggestion: z.string().nullish(),
     retry_after: z.number().nullish(),
-    details: z.object({}).nullish()
+    details: z.object({}).nullish(),
+    recovery: z.union([z.literal("transient"), z.literal("correctable"), z.literal("terminal")]).nullish()
 });
 
 export const PaginationResponseSchema = z.object({
@@ -630,7 +747,7 @@ export const SyncCreativesSuccessSchema = z.object({
         preview_url: z.string().nullish(),
         expires_at: z.string().nullish(),
         assigned_to: z.array(z.string()).nullish(),
-        assignment_errors: z.record(z.string(), z.string()).nullish()
+        assignment_errors: z.record(z.string(), z.union([z.string(), z.undefined()])).nullish()
     })),
     sandbox: z.boolean().nullish(),
     context: ContextObjectSchema.nullish(),
@@ -721,24 +838,6 @@ export const SyncCatalogsAsyncSubmittedSchema = z.object({
     ext: ExtensionObjectSchema.nullish()
 });
 
-export const CatalogSchema = z.object({
-    catalog_id: z.string().nullish(),
-    name: z.string().nullish(),
-    type: CatalogTypeSchema,
-    url: z.string().nullish(),
-    feed_format: FeedFormatSchema.nullish(),
-    update_frequency: UpdateFrequencySchema.nullish(),
-    items: z.array(z.object({})).nullish(),
-    ids: z.array(z.string()).nullish(),
-    gtins: z.array(z.string()).nullish(),
-    tags: z.array(z.string()).nullish(),
-    category: z.string().nullish(),
-    query: z.string().nullish(),
-    conversion_events: z.array(EventTypeSchema).nullish(),
-    content_id_type: ContentIDTypeSchema.nullish(),
-    feed_field_mappings: z.array(CatalogFieldMappingSchema).nullish()
-});
-
 export const AccountReferenceSchema = z.union([z.object({
         account_id: z.string()
     }), z.object({
@@ -821,7 +920,21 @@ export const ReportingCapabilitiesSchema = z.object({
 
 export const ForecastPointSchema = z.object({
     budget: z.number(),
-    metrics: z.record(z.string(), z.union([ForecastRangeSchema, z.undefined()]))
+    metrics: z.record(z.string(), z.union([ForecastRangeSchema, z.undefined()])).and(z.object({
+        audience_size: ForecastRangeSchema.nullish(),
+        reach: ForecastRangeSchema.nullish(),
+        frequency: ForecastRangeSchema.nullish(),
+        impressions: ForecastRangeSchema.nullish(),
+        clicks: ForecastRangeSchema.nullish(),
+        spend: ForecastRangeSchema.nullish(),
+        views: ForecastRangeSchema.nullish(),
+        completed_views: ForecastRangeSchema.nullish(),
+        grps: ForecastRangeSchema.nullish(),
+        engagements: ForecastRangeSchema.nullish(),
+        follows: ForecastRangeSchema.nullish(),
+        saves: ForecastRangeSchema.nullish(),
+        profile_visits: ForecastRangeSchema.nullish()
+    }))
 });
 
 export const DeliveryForecastSchema = z.object({
@@ -849,7 +962,7 @@ export const ProductAllocationSchema = z.object({
     ext: ExtensionObjectSchema.nullish()
 });
 
-export const AssetContentTypeSchema = z.union([z.literal("image"), z.literal("video"), z.literal("audio"), z.literal("text"), z.literal("markdown"), z.literal("html"), z.literal("css"), z.literal("javascript"), z.literal("vast"), z.literal("daast"), z.literal("url"), z.literal("webhook")]);
+export const AssetContentTypeSchema = z.union([z.literal("image"), z.literal("video"), z.literal("audio"), z.literal("text"), z.literal("markdown"), z.literal("html"), z.literal("css"), z.literal("javascript"), z.literal("vast"), z.literal("daast"), z.literal("url"), z.literal("webhook"), z.literal("brief"), z.literal("catalog")]);
 
 export const WCAGLevelSchema = z.union([z.literal("A"), z.literal("AA"), z.literal("AAA")]);
 
@@ -864,6 +977,7 @@ export const ListCreativeFormatsRequestSchema = z.object({
     is_responsive: z.boolean().nullish(),
     name_search: z.string().nullish(),
     wcag_level: WCAGLevelSchema.nullish(),
+    disclosure_positions: z.array(DisclosurePositionSchema).nullish(),
     output_format_ids: z.array(FormatIDSchema).nullish(),
     input_format_ids: z.array(FormatIDSchema).nullish(),
     pagination: PaginationRequestSchema.nullish(),
@@ -872,115 +986,6 @@ export const ListCreativeFormatsRequestSchema = z.object({
 });
 
 export const FormatIDParameterSchema = z.union([z.literal("dimensions"), z.literal("duration")]);
-
-export const UniversalMacroSchema = z.union([z.literal("MEDIA_BUY_ID"), z.literal("PACKAGE_ID"), z.literal("CREATIVE_ID"), z.literal("CACHEBUSTER"), z.literal("TIMESTAMP"), z.literal("CLICK_URL"), z.literal("GDPR"), z.literal("GDPR_CONSENT"), z.literal("US_PRIVACY"), z.literal("GPP_STRING"), z.literal("GPP_SID"), z.literal("IP_ADDRESS"), z.literal("LIMIT_AD_TRACKING"), z.literal("DEVICE_TYPE"), z.literal("OS"), z.literal("OS_VERSION"), z.literal("DEVICE_MAKE"), z.literal("DEVICE_MODEL"), z.literal("USER_AGENT"), z.literal("APP_BUNDLE"), z.literal("APP_NAME"), z.literal("COUNTRY"), z.literal("REGION"), z.literal("CITY"), z.literal("ZIP"), z.literal("DMA"), z.literal("LAT"), z.literal("LONG"), z.literal("DEVICE_ID"), z.literal("DEVICE_ID_TYPE"), z.literal("DOMAIN"), z.literal("PAGE_URL"), z.literal("REFERRER"), z.literal("KEYWORDS"), z.literal("PLACEMENT_ID"), z.literal("FOLD_POSITION"), z.literal("AD_WIDTH"), z.literal("AD_HEIGHT"), z.literal("VIDEO_ID"), z.literal("VIDEO_TITLE"), z.literal("VIDEO_DURATION"), z.literal("VIDEO_CATEGORY"), z.literal("CONTENT_GENRE"), z.literal("CONTENT_RATING"), z.literal("PLAYER_WIDTH"), z.literal("PLAYER_HEIGHT"), z.literal("POD_POSITION"), z.literal("POD_SIZE"), z.literal("AD_BREAK_ID"), z.literal("STATION_ID"), z.literal("SHOW_NAME"), z.literal("EPISODE_ID"), z.literal("AUDIO_DURATION"), z.literal("AXEM"), z.literal("CATALOG_ID"), z.literal("SKU"), z.literal("GTIN"), z.literal("OFFERING_ID"), z.literal("JOB_ID"), z.literal("HOTEL_ID"), z.literal("FLIGHT_ID"), z.literal("VEHICLE_ID"), z.literal("LISTING_ID"), z.literal("STORE_ID"), z.literal("PROGRAM_ID"), z.literal("DESTINATION_ID"), z.literal("CREATIVE_VARIANT_ID"), z.literal("APP_ITEM_ID")]);
-
-export const ImageAssetRequirementsSchema = z.object({
-    min_width: z.number().nullish(),
-    max_width: z.number().nullish(),
-    min_height: z.number().nullish(),
-    max_height: z.number().nullish(),
-    aspect_ratio: z.string().nullish(),
-    formats: z.array(z.union([z.literal("jpg"), z.literal("jpeg"), z.literal("png"), z.literal("gif"), z.literal("webp"), z.literal("svg"), z.literal("avif")])).nullish(),
-    max_file_size_kb: z.number().nullish(),
-    transparency_required: z.boolean().nullish(),
-    animation_allowed: z.boolean().nullish(),
-    max_animation_duration_ms: z.number().nullish()
-});
-
-export const VideoAssetRequirementsSchema = z.object({
-    min_width: z.number().nullish(),
-    max_width: z.number().nullish(),
-    min_height: z.number().nullish(),
-    max_height: z.number().nullish(),
-    aspect_ratio: z.string().nullish(),
-    min_duration_ms: z.number().nullish(),
-    max_duration_ms: z.number().nullish(),
-    containers: z.array(z.union([z.literal("mp4"), z.literal("webm"), z.literal("mov"), z.literal("avi"), z.literal("mkv")])).nullish(),
-    codecs: z.array(z.union([z.literal("h264"), z.literal("h265"), z.literal("vp8"), z.literal("vp9"), z.literal("av1")])).nullish(),
-    max_file_size_kb: z.number().nullish(),
-    min_bitrate_kbps: z.number().nullish(),
-    max_bitrate_kbps: z.number().nullish(),
-    frame_rates: z.array(z.number()).nullish(),
-    audio_required: z.boolean().nullish()
-});
-
-export const AudioAssetRequirementsSchema = z.object({
-    min_duration_ms: z.number().nullish(),
-    max_duration_ms: z.number().nullish(),
-    formats: z.array(z.union([z.literal("mp3"), z.literal("aac"), z.literal("wav"), z.literal("ogg"), z.literal("flac")])).nullish(),
-    max_file_size_kb: z.number().nullish(),
-    sample_rates: z.array(z.number()).nullish(),
-    channels: z.array(z.union([z.literal("mono"), z.literal("stereo")])).nullish(),
-    min_bitrate_kbps: z.number().nullish(),
-    max_bitrate_kbps: z.number().nullish()
-});
-
-export const TextAssetRequirementsSchema = z.object({
-    min_length: z.number().nullish(),
-    max_length: z.number().nullish(),
-    min_lines: z.number().nullish(),
-    max_lines: z.number().nullish(),
-    character_pattern: z.string().nullish(),
-    prohibited_terms: z.array(z.string()).nullish()
-});
-
-export const MarkdownAssetRequirementsSchema = z.object({
-    max_length: z.number().nullish()
-});
-
-export const HTMLAssetRequirementsSchema = z.object({
-    max_file_size_kb: z.number().nullish(),
-    sandbox: z.union([z.literal("none"), z.literal("iframe"), z.literal("safeframe"), z.literal("fencedframe")]).nullish(),
-    external_resources_allowed: z.boolean().nullish(),
-    allowed_external_domains: z.array(z.string()).nullish()
-});
-
-export const CSSAssetRequirementsSchema = z.object({
-    max_file_size_kb: z.number().nullish()
-});
-
-export const JavaScriptAssetRequirementsSchema = z.object({
-    max_file_size_kb: z.number().nullish(),
-    module_type: z.union([z.literal("script"), z.literal("module"), z.literal("iife")]).nullish(),
-    strict_mode_required: z.boolean().nullish(),
-    external_resources_allowed: z.boolean().nullish(),
-    allowed_external_domains: z.array(z.string()).nullish()
-});
-
-export const VASTAssetRequirementsSchema = z.object({
-    vast_version: z.union([z.literal("2.0"), z.literal("3.0"), z.literal("4.0"), z.literal("4.1"), z.literal("4.2")]).nullish()
-});
-
-export const DAASTAssetRequirementsSchema = z.object({
-    daast_version: z.literal("1.0").nullish()
-});
-
-export const URLAssetRequirementsSchema = z.object({
-    role: z.union([z.literal("clickthrough"), z.literal("landing_page"), z.literal("impression_tracker"), z.literal("click_tracker"), z.literal("viewability_tracker"), z.literal("third_party_tracker")]).nullish(),
-    protocols: z.array(z.union([z.literal("https"), z.literal("http")])).nullish(),
-    allowed_domains: z.array(z.string()).nullish(),
-    max_length: z.number().nullish(),
-    macro_support: z.boolean().nullish()
-});
-
-export const WebhookAssetRequirementsSchema = z.object({
-    methods: z.array(z.union([z.literal("GET"), z.literal("POST")])).nullish()
-});
-
-export const ScalarBindingSchema = z.object({
-    kind: z.literal("scalar"),
-    asset_id: z.string(),
-    catalog_field: z.string(),
-    ext: ExtensionObjectSchema.nullish()
-});
-
-export const AssetPoolBindingSchema = z.object({
-    kind: z.literal("asset_pool"),
-    asset_id: z.string(),
-    asset_group_id: z.string(),
-    ext: ExtensionObjectSchema.nullish()
-});
 
 export const CreativeAgentCapabilitySchema = z.union([z.literal("validation"), z.literal("assembly"), z.literal("generation"), z.literal("preview"), z.literal("delivery")]);
 
@@ -1008,15 +1013,31 @@ export const BaseGroupAssetSchema = z.object({
     overlays: z.array(OverlaySchema).nullish()
 });
 
-export const CatalogFieldBindingSchema = z.union([ScalarBindingSchema, AssetPoolBindingSchema, z.object({
-        kind: z.literal("catalog_group"),
-        format_group_id: z.string(),
-        catalog_item: z.literal(true),
-        per_item_bindings: z.array(z.union([ScalarBindingSchema, AssetPoolBindingSchema])).nullish(),
-        ext: ExtensionObjectSchema.nullish()
-    })]);
-
-export const AssetRequirementsSchema = z.union([ImageAssetRequirementsSchema, VideoAssetRequirementsSchema, AudioAssetRequirementsSchema, TextAssetRequirementsSchema, MarkdownAssetRequirementsSchema, HTMLAssetRequirementsSchema, CSSAssetRequirementsSchema, JavaScriptAssetRequirementsSchema, VASTAssetRequirementsSchema, DAASTAssetRequirementsSchema, URLAssetRequirementsSchema, WebhookAssetRequirementsSchema]);
+export const CreativeBriefSchema = z.object({
+    name: z.string(),
+    objective: z.union([z.literal("awareness"), z.literal("consideration"), z.literal("conversion"), z.literal("retention"), z.literal("engagement")]).nullish(),
+    tone: z.string().nullish(),
+    audience: z.string().nullish(),
+    territory: z.string().nullish(),
+    messaging: z.object({
+        headline: z.string().nullish(),
+        tagline: z.string().nullish(),
+        cta: z.string().nullish(),
+        key_messages: z.array(z.string()).nullish()
+    }).nullish(),
+    reference_assets: z.array(ReferenceAssetSchema).nullish(),
+    compliance: z.object({
+        required_disclosures: z.array(z.object({
+            text: z.string(),
+            position: DisclosurePositionSchema.nullish(),
+            jurisdictions: z.array(z.string()).nullish(),
+            regulation: z.string().nullish(),
+            min_duration_ms: z.number().nullish(),
+            language: z.string().nullish()
+        })).nullish(),
+        prohibited_claims: z.array(z.string()).nullish()
+    }).nullish()
+});
 
 export const StartTimingSchema = z.union([z.literal("asap"), z.string()]);
 
@@ -1096,22 +1117,7 @@ export const TargetingOverlaySchema = z.object({
     })).nullish()
 });
 
-export const CreativeAssetSchema = z.object({
-    creative_id: z.string(),
-    name: z.string(),
-    format_id: FormatIDSchema,
-    catalogs: z.array(CatalogSchema).nullish(),
-    assets: z.record(z.string(), z.union([ImageAssetSchema, VideoAssetSchema, AudioAssetSchema, TextAssetSchema, HTMLAssetSchema, CSSAssetSchema, JavaScriptAssetSchema, VASTAssetSchema, DAASTAssetSchema, URLAssetSchema])),
-    inputs: z.array(z.object({
-        name: z.string(),
-        macros: z.record(z.string(), z.union([z.string(), z.undefined()])).nullish(),
-        context_description: z.string().nullish()
-    })).nullish(),
-    tags: z.array(z.string()).nullish(),
-    status: CreativeStatusSchema.nullish(),
-    weight: z.number().nullish(),
-    placement_ids: z.array(z.string()).nullish()
-});
+export const BriefAssetSchema = CreativeBriefSchema;
 
 export const PackageSchema = z.object({
     package_id: z.string(),
@@ -1122,6 +1128,8 @@ export const PackageSchema = z.object({
     pricing_option_id: z.string().nullish(),
     bid_price: z.number().nullish(),
     impressions: z.number().nullish(),
+    catalogs: z.array(CatalogSchema).nullish(),
+    format_ids: z.array(FormatIDSchema).nullish(),
     targeting_overlay: TargetingOverlaySchema.nullish(),
     creative_assignments: z.array(CreativeAssignmentSchema).nullish(),
     format_ids_to_provide: z.array(FormatIDSchema).nullish(),
@@ -1132,17 +1140,21 @@ export const PackageSchema = z.object({
 
 export const ValidationModeSchema = z.union([z.literal("strict"), z.literal("lenient")]);
 
-export const SyncCreativesRequestSchema = z.object({
-    account: AccountReferenceSchema,
-    creatives: z.array(CreativeAssetSchema),
-    creative_ids: z.array(z.string()).nullish(),
-    assignments: z.record(z.string(), z.array(z.string())).nullish(),
-    delete_missing: z.boolean().nullish(),
-    dry_run: z.boolean().nullish(),
-    validation_mode: ValidationModeSchema.nullish(),
-    push_notification_config: PushNotificationConfigSchema.nullish(),
-    context: ContextObjectSchema.nullish(),
-    ext: ExtensionObjectSchema.nullish()
+export const CreativeAssetSchema = z.object({
+    creative_id: z.string(),
+    name: z.string(),
+    format_id: FormatIDSchema,
+    assets: z.record(z.string(), z.union([ImageAssetSchema, VideoAssetSchema, AudioAssetSchema, VASTAssetSchema, TextAssetSchema, URLAssetSchema, HTMLAssetSchema, JavaScriptAssetSchema, WebhookAssetSchema, CSSAssetSchema, DAASTAssetSchema, MarkdownAssetSchema, BriefAssetSchema, CatalogAssetSchema])),
+    inputs: z.array(z.object({
+        name: z.string(),
+        macros: z.record(z.string(), z.union([z.string(), z.undefined()])).nullish(),
+        context_description: z.string().nullish()
+    })).nullish(),
+    tags: z.array(z.string()).nullish(),
+    status: CreativeStatusSchema.nullish(),
+    weight: z.number().nullish(),
+    placement_ids: z.array(z.string()).nullish(),
+    provenance: ProvenanceSchema.nullish()
 });
 
 export const SyncCreativesResponseSchema = z.union([SyncCreativesSuccessSchema, SyncCreativesErrorSchema]);
@@ -1201,8 +1213,7 @@ export const ListCreativesResponseSchema = z.object({
         status: CreativeStatusSchema,
         created_date: z.string(),
         updated_date: z.string(),
-        catalogs: z.array(CatalogSchema).nullish(),
-        assets: z.record(z.string(), z.union([ImageAssetSchema, VideoAssetSchema, AudioAssetSchema, TextAssetSchema, HTMLAssetSchema, CSSAssetSchema, JavaScriptAssetSchema, VASTAssetSchema, DAASTAssetSchema, URLAssetSchema])).nullish(),
+        assets: z.record(z.string(), z.union([ImageAssetSchema, VideoAssetSchema, AudioAssetSchema, VASTAssetSchema, TextAssetSchema, URLAssetSchema, HTMLAssetSchema, JavaScriptAssetSchema, WebhookAssetSchema, CSSAssetSchema, DAASTAssetSchema, MarkdownAssetSchema, BriefAssetSchema, CatalogAssetSchema])).nullish(),
         tags: z.array(z.string()).nullish(),
         assignments: z.object({
             assignment_count: z.number(),
@@ -1222,7 +1233,7 @@ export const ListCreativesResponseSchema = z.object({
         }).nullish(),
         sub_assets: z.array(SubAssetSchema).nullish()
     })),
-    format_summary: z.record(z.string(), z.number()).nullish(),
+    format_summary: z.record(z.string(), z.union([z.number(), z.undefined()])).nullish(),
     status_summary: z.object({
         processing: z.number().nullish(),
         approved: z.number().nullish(),
@@ -1243,7 +1254,7 @@ export const PackageUpdateSchema = z.object({
     bid_price: z.number().nullish(),
     impressions: z.number().nullish(),
     paused: z.boolean().nullish(),
-    catalog: CatalogSchema.nullish(),
+    catalogs: z.array(CatalogSchema).nullish(),
     optimization_goals: z.array(OptimizationGoalSchema).nullish(),
     targeting_overlay: TargetingOverlaySchema.nullish(),
     keyword_targets_add: z.array(z.object({
@@ -1300,6 +1311,8 @@ export const GetMediaBuysResponseSchema = z.object({
         status: MediaBuyStatusSchema,
         currency: z.string(),
         total_budget: z.number(),
+        start_time: z.string().nullish(),
+        end_time: z.string().nullish(),
         creative_deadline: z.string().nullish(),
         created_at: z.string().nullish(),
         updated_at: z.string().nullish(),
@@ -1343,6 +1356,8 @@ export const GetMediaBuysResponseSchema = z.object({
     ext: ExtensionObjectSchema.nullish()
 });
 
+export const AttributionModelSchema = z.union([z.literal("last_touch"), z.literal("first_touch"), z.literal("linear"), z.literal("time_decay"), z.literal("data_driven")]);
+
 export const SortMetricSchema = z.union([z.literal("impressions"), z.literal("spend"), z.literal("clicks"), z.literal("ctr"), z.literal("views"), z.literal("completed_views"), z.literal("completion_rate"), z.literal("conversions"), z.literal("conversion_value"), z.literal("roas"), z.literal("cost_per_acquisition"), z.literal("new_to_brand_rate"), z.literal("leads"), z.literal("grps"), z.literal("reach"), z.literal("frequency"), z.literal("engagements"), z.literal("follows"), z.literal("saves"), z.literal("profile_visits"), z.literal("engagement_rate"), z.literal("cost_per_click")]);
 
 export const GetMediaBuyDeliveryRequestSchema = z.object({
@@ -1352,6 +1367,12 @@ export const GetMediaBuyDeliveryRequestSchema = z.object({
     status_filter: z.union([MediaBuyStatusSchema, z.array(MediaBuyStatusSchema)]).nullish(),
     start_date: z.string().nullish(),
     end_date: z.string().nullish(),
+    include_package_daily_breakdown: z.boolean().nullish(),
+    attribution_window: z.object({
+        post_click: DurationSchema.nullish(),
+        post_view: DurationSchema.nullish(),
+        model: AttributionModelSchema.nullish()
+    }).nullish(),
     reporting_dimensions: z.object({
         geo: z.object({
             geo_level: GeographicTargetingLevelSchema,
@@ -1380,15 +1401,13 @@ export const GetMediaBuyDeliveryRequestSchema = z.object({
     ext: ExtensionObjectSchema.nullish()
 });
 
-export const AttributionModelSchema = z.union([z.literal("last_touch"), z.literal("first_touch"), z.literal("linear"), z.literal("time_decay"), z.literal("data_driven")]);
-
 export const PricingModelSchema = z.union([z.literal("cpm"), z.literal("vcpm"), z.literal("cpc"), z.literal("cpcv"), z.literal("cpv"), z.literal("cpp"), z.literal("cpa"), z.literal("flat_rate"), z.literal("time")]);
 
 export const AudienceSourceSchema = z.union([z.literal("synced"), z.literal("platform"), z.literal("third_party"), z.literal("lookalike"), z.literal("retargeting"), z.literal("unknown")]);
 
 export const AttributionWindowSchema = z.object({
-    click_window_days: z.number().nullish(),
-    view_window_days: z.number().nullish(),
+    post_click: DurationSchema.nullish(),
+    post_view: DurationSchema.nullish(),
     model: AttributionModelSchema
 });
 
@@ -1454,6 +1473,11 @@ export const DeliveryMetricsSchema = z.object({
         count: z.number(),
         value: z.number().nullish()
     })).nullish()
+});
+
+export const DatetimeRangeSchema = z.object({
+    start: z.string(),
+    end: z.string()
 });
 
 export const MetricTypeSchema = z.union([z.literal("overall_performance"), z.literal("conversion_rate"), z.literal("brand_lift"), z.literal("click_through_rate"), z.literal("completion_rate"), z.literal("viewability"), z.literal("brand_safety"), z.literal("cost_efficiency")]);
@@ -1580,15 +1604,20 @@ export const AudienceMemberSchema = z.record(z.string(), z.union([z.unknown(), z
     ext: ExtensionObjectSchema.nullish()
 }));
 
+export const ConsentBasisSchema = z.union([z.literal("consent"), z.literal("legitimate_interest"), z.literal("contract"), z.literal("legal_obligation")]);
+
 export const SyncAudiencesRequestSchema = z.object({
     account: AccountReferenceSchema,
     audiences: z.array(z.object({
         audience_id: z.string(),
         name: z.string().nullish(),
+        description: z.string().nullish(),
+        audience_type: z.union([z.literal("crm"), z.literal("suppression"), z.literal("lookalike_seed")]).nullish(),
+        tags: z.array(z.string()).nullish(),
         add: z.array(AudienceMemberSchema).nullish(),
         remove: z.array(AudienceMemberSchema).nullish(),
         delete: z.boolean().nullish(),
-        consent_basis: z.union([z.literal("consent"), z.literal("legitimate_interest"), z.literal("contract"), z.literal("legal_obligation")]).nullish()
+        consent_basis: ConsentBasisSchema.nullish()
     })).nullish(),
     delete_missing: z.boolean().nullish(),
     context: ContextObjectSchema.nullish(),
@@ -1603,6 +1632,7 @@ export const SyncAudiencesSuccessSchema = z.object({
         action: z.union([z.literal("created"), z.literal("updated"), z.literal("unchanged"), z.literal("deleted"), z.literal("failed")]),
         status: z.union([z.literal("processing"), z.literal("ready"), z.literal("too_small")]).nullish(),
         uploaded_count: z.number().nullish(),
+        total_uploaded_count: z.number().nullish(),
         matched_count: z.number().nullish(),
         last_synced_at: z.string().nullish(),
         minimum_size: z.number().nullish(),
@@ -1633,30 +1663,18 @@ export const SyncCatalogsRequestSchema = z.object({
 
 export const SyncCatalogsResponseSchema = z.union([SyncCatalogsSuccessSchema, SyncCatalogsErrorSchema]);
 
-export const HTTPMethodSchema = z.union([z.literal("GET"), z.literal("POST")]);
-
-export const WebhookResponseTypeSchema = z.union([z.literal("html"), z.literal("json"), z.literal("xml"), z.literal("javascript")]);
-
-export const WebhookSecurityMethodSchema = z.union([z.literal("hmac_sha256"), z.literal("api_key"), z.literal("none")]);
-
-export const WebhookAssetSchema = z.object({
-    url: z.string(),
-    method: HTTPMethodSchema.nullish(),
-    timeout_ms: z.number().nullish(),
-    supported_macros: z.array(z.union([UniversalMacroSchema, z.string()])).nullish(),
-    required_macros: z.array(z.union([UniversalMacroSchema, z.string()])).nullish(),
-    response_type: WebhookResponseTypeSchema,
-    security: z.object({
-        method: WebhookSecurityMethodSchema,
-        hmac_header: z.string().nullish(),
-        api_key_header: z.string().nullish()
-    })
+export const CreativeManifestSchema = z.object({
+    format_id: FormatIDSchema,
+    assets: z.record(z.string(), z.union([ImageAssetSchema, VideoAssetSchema, AudioAssetSchema, VASTAssetSchema, TextAssetSchema, URLAssetSchema, HTMLAssetSchema, JavaScriptAssetSchema, WebhookAssetSchema, CSSAssetSchema, DAASTAssetSchema, MarkdownAssetSchema, BriefAssetSchema, CatalogAssetSchema])),
+    provenance: ProvenanceSchema.nullish(),
+    ext: ExtensionObjectSchema.nullish()
 });
 
-export const ReferenceAssetSchema = z.object({
-    url: z.string(),
-    role: z.union([z.literal("style_reference"), z.literal("product_shot"), z.literal("mood_board"), z.literal("example_creative"), z.literal("logo"), z.literal("strategy_doc")]),
-    description: z.string().nullish()
+export const BuildCreativeSuccessSchema = z.object({
+    creative_manifest: CreativeManifestSchema,
+    sandbox: z.boolean().nullish(),
+    context: ContextObjectSchema.nullish(),
+    ext: ExtensionObjectSchema.nullish()
 });
 
 export const BuildCreativeErrorSchema = z.object({
@@ -1665,19 +1683,12 @@ export const BuildCreativeErrorSchema = z.object({
     ext: ExtensionObjectSchema.nullish()
 });
 
-export const CreativeManifestSchema = z.object({
-    format_id: FormatIDSchema,
-    catalogs: z.array(CatalogSchema).nullish(),
-    assets: z.record(z.string(), z.union([ImageAssetSchema, VideoAssetSchema, AudioAssetSchema, VASTAssetSchema, TextAssetSchema, URLAssetSchema, HTMLAssetSchema, JavaScriptAssetSchema, WebhookAssetSchema, CSSAssetSchema, DAASTAssetSchema])),
-    ext: ExtensionObjectSchema.nullish()
-});
-
 export const PreviewOutputFormatSchema = z.union([z.literal("url"), z.literal("html")]);
 
 export const CreativeManifest1Schema = z.object({
     format_id: FormatIDSchema,
-    catalogs: z.array(CatalogSchema).nullish(),
-    assets: z.record(z.string(), z.union([ImageAssetSchema, VideoAssetSchema, AudioAssetSchema, VASTAssetSchema, TextAssetSchema, URLAssetSchema, HTMLAssetSchema, JavaScriptAssetSchema, WebhookAssetSchema, CSSAssetSchema, DAASTAssetSchema])),
+    assets: z.record(z.string(), z.union([ImageAssetSchema, VideoAssetSchema, AudioAssetSchema, VASTAssetSchema, TextAssetSchema, URLAssetSchema, HTMLAssetSchema, JavaScriptAssetSchema, WebhookAssetSchema, CSSAssetSchema, DAASTAssetSchema, MarkdownAssetSchema, BriefAssetSchema, CatalogAssetSchema])),
+    provenance: ProvenanceSchema.nullish(),
     ext: ExtensionObjectSchema.nullish()
 });
 
@@ -1776,10 +1787,7 @@ export const GetCreativeDeliveryRequestSchema = z.record(z.string(), z.union([z.
     start_date: z.string().nullish(),
     end_date: z.string().nullish(),
     max_variants: z.number().nullish(),
-    pagination: z.object({
-        limit: z.number().nullish(),
-        offset: z.number().nullish()
-    }).nullish(),
+    pagination: PaginationRequestSchema.nullish(),
     context: ContextObjectSchema.nullish(),
     ext: ExtensionObjectSchema.nullish()
 }));
@@ -1851,6 +1859,7 @@ export const PercentOfMediaPricingSchema = z.object({
 export const FlatFeePricingSchema = z.object({
     model: z.literal("flat_fee"),
     amount: z.number(),
+    period: z.union([z.literal("monthly"), z.literal("quarterly"), z.literal("annual"), z.literal("campaign")]),
     currency: z.string(),
     ext: ExtensionObjectSchema.nullish()
 });
@@ -1874,10 +1883,11 @@ export const DeploymentSchema = z.union([z.object({
     })]);
 
 export const ActivateSignalRequestSchema = z.object({
+    action: z.union([z.literal("activate"), z.literal("deactivate")]).nullish(),
     signal_agent_segment_id: z.string(),
-    deployments: z.array(DestinationSchema),
+    destinations: z.array(DestinationSchema),
     pricing_option_id: z.string().nullish(),
-    account_id: z.string().nullish(),
+    account: AccountReferenceSchema.nullish(),
     buyer_campaign_ref: z.string().nullish(),
     context: ContextObjectSchema.nullish(),
     ext: ExtensionObjectSchema.nullish()
@@ -1924,8 +1934,8 @@ export const FeatureRequirementSchema = z.object({
 });
 
 export const PropertyListFiltersSchema = z.object({
-    countries_all: z.array(z.string()),
-    channels_any: z.array(MediaChannelSchema),
+    countries_all: z.array(z.string()).nullish(),
+    channels_any: z.array(MediaChannelSchema).nullish(),
     property_types: z.array(PropertyTypeSchema).nullish(),
     feature_requirements: z.array(FeatureRequirementSchema).nullish(),
     exclude_identifiers: z.array(IdentifierSchema).nullish()
@@ -2038,7 +2048,8 @@ export const ArtifactSchema = z.object({
             role: z.union([z.literal("title"), z.literal("paragraph"), z.literal("heading"), z.literal("caption"), z.literal("quote"), z.literal("list_item"), z.literal("description")]).nullish(),
             content: z.string(),
             language: z.string().nullish(),
-            heading_level: z.number().nullish()
+            heading_level: z.number().nullish(),
+            provenance: ProvenanceSchema.nullish()
         }), z.object({
             type: z.literal("image"),
             url: z.string(),
@@ -2046,7 +2057,8 @@ export const ArtifactSchema = z.object({
             alt_text: z.string().nullish(),
             caption: z.string().nullish(),
             width: z.number().nullish(),
-            height: z.number().nullish()
+            height: z.number().nullish(),
+            provenance: ProvenanceSchema.nullish()
         }), z.object({
             type: z.literal("video"),
             url: z.string(),
@@ -2054,14 +2066,16 @@ export const ArtifactSchema = z.object({
             duration_ms: z.number().nullish(),
             transcript: z.string().nullish(),
             transcript_source: z.union([z.literal("original_script"), z.literal("subtitles"), z.literal("closed_captions"), z.literal("dub"), z.literal("generated")]).nullish(),
-            thumbnail_url: z.string().nullish()
+            thumbnail_url: z.string().nullish(),
+            provenance: ProvenanceSchema.nullish()
         }), z.object({
             type: z.literal("audio"),
             url: z.string(),
             access: AssetAccessSchema.nullish(),
             duration_ms: z.number().nullish(),
             transcript: z.string().nullish(),
-            transcript_source: z.union([z.literal("original_script"), z.literal("closed_captions"), z.literal("generated")]).nullish()
+            transcript_source: z.union([z.literal("original_script"), z.literal("closed_captions"), z.literal("generated")]).nullish(),
+            provenance: ProvenanceSchema.nullish()
         })])),
     metadata: z.object({
         canonical: z.string().nullish(),
@@ -2071,6 +2085,7 @@ export const ArtifactSchema = z.object({
         twitter_card: z.object({}).nullish(),
         json_ld: z.array(z.object({})).nullish()
     }).nullish(),
+    provenance: ProvenanceSchema.nullish(),
     identifiers: z.object({
         apple_podcast_id: z.string().nullish(),
         spotify_show_id: z.string().nullish(),
@@ -2127,13 +2142,11 @@ export const CreateContentStandardsRequestSchema = z.object({
 
 export const CreateContentStandardsResponseSchema = z.union([z.object({
         standards_id: z.string(),
-        errors: z.record(z.string(), z.union([z.unknown(), z.undefined()])).nullish(),
         context: ContextObjectSchema.nullish(),
         ext: ExtensionObjectSchema.nullish()
     }), z.object({
         errors: z.array(ErrorSchema),
         conflicting_standards_id: z.string().nullish(),
-        standards_id: z.record(z.string(), z.union([z.unknown(), z.undefined()])).nullish(),
         context: ContextObjectSchema.nullish(),
         ext: ExtensionObjectSchema.nullish()
     })]);
@@ -2163,9 +2176,16 @@ export const UpdateContentStandardsRequestSchema = z.object({
     ext: ExtensionObjectSchema.nullish()
 });
 
-export const UpdateContentStandardsResponseSchema = z.object({
-    standards_id: z.string().nullish(),
-    errors: z.array(ErrorSchema).nullish(),
+export const UpdateContentStandardsSuccessSchema = z.object({
+    success: z.literal(true),
+    standards_id: z.string(),
+    context: ContextObjectSchema.nullish(),
+    ext: ExtensionObjectSchema.nullish()
+});
+
+export const UpdateContentStandardsErrorSchema = z.object({
+    success: z.literal(false),
+    errors: z.array(ErrorSchema),
     conflicting_standards_id: z.string().nullish(),
     context: ContextObjectSchema.nullish(),
     ext: ExtensionObjectSchema.nullish()
@@ -2185,10 +2205,12 @@ export const CalibrateContentResponseSchema = z.union([z.object({
             status: z.union([z.literal("passed"), z.literal("failed"), z.literal("warning"), z.literal("unevaluated")]),
             explanation: z.string().nullish()
         })).nullish(),
-        errors: z.record(z.string(), z.union([z.unknown(), z.undefined()])).nullish()
+        context: ContextObjectSchema.nullish(),
+        ext: ExtensionObjectSchema.nullish()
     }), z.object({
         errors: z.array(ErrorSchema),
-        verdict: z.record(z.string(), z.union([z.unknown(), z.undefined()])).nullish()
+        context: ContextObjectSchema.nullish(),
+        ext: ExtensionObjectSchema.nullish()
     })]);
 
 export const ValidateContentDeliveryRequestSchema = z.object({
@@ -2228,12 +2250,10 @@ export const ValidateContentDeliveryResponseSchema = z.union([z.object({
                 rule_id: z.string().nullish()
             })).nullish()
         })),
-        errors: z.record(z.string(), z.union([z.unknown(), z.undefined()])).nullish(),
         context: ContextObjectSchema.nullish(),
         ext: ExtensionObjectSchema.nullish()
     }), z.object({
         errors: z.array(ErrorSchema),
-        summary: z.record(z.string(), z.union([z.unknown(), z.undefined()])).nullish(),
         context: ContextObjectSchema.nullish(),
         ext: ExtensionObjectSchema.nullish()
     })]);
@@ -2280,12 +2300,10 @@ export const GetMediaBuyArtifactsResponseSchema = z.union([z.object({
             method: z.union([z.literal("random"), z.literal("stratified"), z.literal("recent"), z.literal("failures_only")]).nullish()
         }).nullish(),
         pagination: PaginationResponseSchema.nullish(),
-        errors: z.record(z.string(), z.union([z.unknown(), z.undefined()])).nullish(),
         context: ContextObjectSchema.nullish(),
         ext: ExtensionObjectSchema.nullish()
     }), z.object({
         errors: z.array(ErrorSchema),
-        media_buy_id: z.record(z.string(), z.union([z.unknown(), z.undefined()])).nullish(),
         context: ContextObjectSchema.nullish(),
         ext: ExtensionObjectSchema.nullish()
     })]);
@@ -2293,6 +2311,7 @@ export const GetMediaBuyArtifactsResponseSchema = z.union([z.object({
 export const GetCreativeFeaturesRequestSchema = z.object({
     creative_manifest: CreativeManifestSchema,
     feature_ids: z.array(z.string()).nullish(),
+    account: AccountReferenceSchema.nullish(),
     context: ContextObjectSchema.nullish(),
     ext: ExtensionObjectSchema.nullish()
 });
@@ -2486,6 +2505,13 @@ export const GetAdCPCapabilitiesResponseSchema = z.object({
         account_financials: z.boolean().nullish()
     }).nullish(),
     media_buy: z.object({
+        supported_pricing_models: z.array(PricingModelSchema).nullish(),
+        reporting: z.object({
+            supports_date_range: z.boolean().nullish(),
+            supports_daily_breakdown: z.boolean().nullish(),
+            supports_webhooks: z.boolean().nullish(),
+            available_dimensions: z.array(z.union([z.literal("geo"), z.literal("device_type"), z.literal("device_platform"), z.literal("audience"), z.literal("placement"), z.literal("creative"), z.literal("keyword"), z.literal("catalog_item")])).nullish()
+        }).nullish(),
         features: MediaBuyFeaturesSchema.nullish(),
         execution: z.object({
             axe_integrations: z.array(z.string()).nullish(),
@@ -2526,8 +2552,12 @@ export const GetAdCPCapabilitiesResponseSchema = z.object({
                 language: z.boolean().nullish(),
                 audience_include: z.boolean().nullish(),
                 audience_exclude: z.boolean().nullish(),
-                keyword_targets: z.boolean().nullish(),
-                negative_keywords: z.boolean().nullish(),
+                keyword_targets: z.object({
+                    supported_match_types: z.array(z.union([z.literal("broad"), z.literal("phrase"), z.literal("exact")]))
+                }).nullish(),
+                negative_keywords: z.object({
+                    supported_match_types: z.array(z.union([z.literal("broad"), z.literal("phrase"), z.literal("exact")]))
+                }).nullish(),
                 geo_proximity: z.object({
                     radius: z.boolean().nullish(),
                     travel_time: z.boolean().nullish(),
@@ -2537,7 +2567,8 @@ export const GetAdCPCapabilitiesResponseSchema = z.object({
             }).nullish()
         }).nullish(),
         audience_targeting: z.object({
-            supported_identifier_types: z.array(z.union([z.literal("hashed_email"), z.literal("hashed_phone"), z.literal("external_id")])),
+            supported_identifier_types: z.array(z.union([z.literal("hashed_email"), z.literal("hashed_phone")])),
+            supports_platform_customer_id: z.boolean().nullish(),
             supported_uid_types: z.array(UIDTypeSchema).nullish(),
             minimum_audience_size: z.number(),
             matching_latency_hours: z.object({
@@ -2553,8 +2584,8 @@ export const GetAdCPCapabilitiesResponseSchema = z.object({
             supported_action_sources: z.array(ActionSourceSchema).nullish(),
             attribution_windows: z.array(z.object({
                 event_type: EventTypeSchema.nullish(),
-                click_through: z.array(z.string()),
-                view_through: z.array(z.string()).nullish()
+                post_click: z.array(DurationSchema),
+                post_view: z.array(DurationSchema).nullish()
             })).nullish()
         }).nullish(),
         portfolio: z.object({
@@ -2607,7 +2638,7 @@ export const GetAdCPCapabilitiesResponseSchema = z.object({
         brand_url: z.string().nullish()
     }).nullish(),
     creative: z.object({
-        supports_brief: z.boolean().nullish()
+        supports_compliance: z.boolean().nullish()
     }).nullish(),
     extensions_supported: z.array(z.string()).nullish(),
     last_updated: z.string().nullish(),
@@ -2683,10 +2714,7 @@ export const SyncAccountsErrorSchema = z.object({
 
 export const ReportUsageRequestSchema = z.object({
     idempotency_key: z.string().nullish(),
-    reporting_period: z.object({
-        start: z.string(),
-        end: z.string()
-    }),
+    reporting_period: DatetimeRangeSchema,
     usage: z.array(z.object({
         account: AccountReferenceSchema,
         buyer_campaign_ref: z.string().nullish(),
@@ -2710,23 +2738,16 @@ export const ReportUsageResponseSchema = z.object({
     ext: ExtensionObjectSchema.nullish()
 });
 
-export const GetAccountFinancialsRequestSchema = z.object({
-    account: AccountReferenceSchema,
-    period: z.object({
-        start: z.string(),
-        end: z.string()
-    }).nullish(),
-    context: ContextObjectSchema.nullish(),
-    ext: ExtensionObjectSchema.nullish()
+export const DateRangeSchema = z.object({
+    start: z.string(),
+    end: z.string()
 });
 
 export const GetAccountFinancialsSuccessSchema = z.object({
     account: AccountReferenceSchema,
     currency: z.string(),
-    period: z.object({
-        start: z.string(),
-        end: z.string()
-    }),
+    period: DateRangeSchema,
+    timezone: z.string(),
     spend: z.object({
         total_spend: z.number(),
         media_buy_count: z.number().nullish()
@@ -2747,10 +2768,7 @@ export const GetAccountFinancialsSuccessSchema = z.object({
     payment_terms: z.string().nullish(),
     invoices: z.array(z.object({
         invoice_id: z.string(),
-        period: z.object({
-            start: z.string(),
-            end: z.string()
-        }).nullish(),
+        period: DateRangeSchema.nullish(),
         amount: z.number(),
         status: z.union([z.literal("draft"), z.literal("issued"), z.literal("paid"), z.literal("past_due"), z.literal("void")]),
         due_date: z.string().nullish(),
@@ -2772,6 +2790,7 @@ export const MediaBuySchema = z.object({
     buyer_campaign_ref: z.string().nullish(),
     account: AccountSchema.nullish(),
     status: MediaBuyStatusSchema,
+    rejection_reason: z.string().nullish(),
     total_budget: z.number(),
     packages: z.array(PackageSchema),
     creative_deadline: z.string().nullish(),
@@ -2791,7 +2810,7 @@ export const ProductSchema = z.object({
     delivery_type: DeliveryTypeSchema,
     pricing_options: z.array(PricingOptionSchema),
     forecast: DeliveryForecastSchema.nullish(),
-    measurement: MeasurementSchema.nullish(),
+    outcome_measurement: OutcomeMeasurementSchema.nullish(),
     delivery_measurement: z.object({
         provider: z.string(),
         notes: z.string().nullish()
@@ -2905,6 +2924,12 @@ export const GetProductsResponseSchema = z.object({
     errors: z.array(ErrorSchema).nullish(),
     property_list_applied: z.boolean().nullish(),
     catalog_applied: z.boolean().nullish(),
+    refinement_applied: z.array(z.object({
+        scope: z.union([z.literal("request"), z.literal("product"), z.literal("proposal")]).nullish(),
+        id: z.string().nullish(),
+        status: z.union([z.literal("applied"), z.literal("partial"), z.literal("unable")]),
+        notes: z.string().nullish()
+    })).nullish(),
     pagination: PaginationResponseSchema.nullish(),
     sandbox: z.boolean().nullish(),
     context: ContextObjectSchema.nullish(),
@@ -2919,16 +2944,6 @@ export const BaseIndividualAssetSchema = z.object({
     overlays: z.array(OverlaySchema).nullish()
 });
 
-export const OfferingAssetConstraintSchema = z.object({
-    asset_group_id: z.string(),
-    asset_type: AssetContentTypeSchema,
-    required: z.boolean().nullish(),
-    min_count: z.number().nullish(),
-    max_count: z.number().nullish(),
-    asset_requirements: AssetRequirementsSchema.nullish(),
-    ext: ExtensionObjectSchema.nullish()
-});
-
 export const PackageRequestSchema = z.object({
     buyer_ref: z.string(),
     product_id: z.string(),
@@ -2939,7 +2954,7 @@ export const PackageRequestSchema = z.object({
     bid_price: z.number().nullish(),
     impressions: z.number().nullish(),
     paused: z.boolean().nullish(),
-    catalog: CatalogSchema.nullish(),
+    catalogs: z.array(CatalogSchema).nullish(),
     optimization_goals: z.array(OptimizationGoalSchema).nullish(),
     targeting_overlay: TargetingOverlaySchema.nullish(),
     creative_assignments: z.array(CreativeAssignmentSchema).nullish(),
@@ -2948,6 +2963,25 @@ export const PackageRequestSchema = z.object({
 });
 
 export const CreateMediaBuyResponseSchema = z.union([CreateMediaBuySuccessSchema, CreateMediaBuyErrorSchema]);
+
+export const SyncCreativesRequestSchema = z.object({
+    account: AccountReferenceSchema,
+    creatives: z.array(CreativeAssetSchema),
+    creative_ids: z.array(z.string()).nullish(),
+    assignments: z.array(z.object({
+        creative_id: z.string(),
+        package_id: z.string(),
+        weight: z.number().nullish(),
+        placement_ids: z.array(z.string()).nullish()
+    })).nullish(),
+    idempotency_key: z.string().nullish(),
+    delete_missing: z.boolean().nullish(),
+    dry_run: z.boolean().nullish(),
+    validation_mode: ValidationModeSchema.nullish(),
+    push_notification_config: PushNotificationConfigSchema.nullish(),
+    context: ContextObjectSchema.nullish(),
+    ext: ExtensionObjectSchema.nullish()
+});
 
 export const ListCreativesRequestSchema = z.object({
     filters: CreativeFiltersSchema.nullish(),
@@ -2973,6 +3007,7 @@ export const UpdateMediaBuyRequestSchema = z.object({
     packages: z.array(PackageUpdateSchema).nullish(),
     reporting_webhook: ReportingWebhookSchema.nullish(),
     push_notification_config: PushNotificationConfigSchema.nullish(),
+    idempotency_key: z.string().nullish(),
     context: ContextObjectSchema.nullish(),
     ext: ExtensionObjectSchema.nullish()
 }).and(z.record(z.string(), z.union([z.unknown(), z.undefined()])));
@@ -3005,7 +3040,7 @@ export const GetMediaBuyDeliveryResponseSchema = z.object({
         media_buy_id: z.string(),
         buyer_ref: z.string().nullish(),
         buyer_campaign_ref: z.string().nullish(),
-        status: z.union([z.literal("pending_activation"), z.literal("pending"), z.literal("active"), z.literal("paused"), z.literal("completed"), z.literal("failed"), z.literal("reporting_delayed")]),
+        status: z.union([z.literal("pending_activation"), z.literal("pending"), z.literal("active"), z.literal("paused"), z.literal("completed"), z.literal("rejected"), z.literal("canceled"), z.literal("failed"), z.literal("reporting_delayed")]),
         expected_availability: z.string().nullish(),
         is_adjusted: z.boolean().nullish(),
         pricing_model: PricingModelSchema.nullish(),
@@ -3058,7 +3093,16 @@ export const GetMediaBuyDeliveryResponseSchema = z.object({
                 placement_id: z.string(),
                 placement_name: z.string().nullish()
             }))).nullish(),
-            by_placement_truncated: z.boolean().nullish()
+            by_placement_truncated: z.boolean().nullish(),
+            daily_breakdown: z.array(z.object({
+                date: z.string(),
+                impressions: z.number(),
+                spend: z.number(),
+                conversions: z.number().nullish(),
+                conversion_value: z.number().nullish(),
+                roas: z.number().nullish(),
+                new_to_brand_rate: z.number().nullish()
+            })).nullish()
         }))),
         daily_breakdown: z.array(z.object({
             date: z.string(),
@@ -3079,10 +3123,7 @@ export const GetMediaBuyDeliveryResponseSchema = z.object({
 export const ProvidePerformanceFeedbackRequestSchema = z.object({
     media_buy_id: z.string().nullish(),
     buyer_ref: z.string().nullish(),
-    measurement_period: z.object({
-        start: z.string(),
-        end: z.string()
-    }).nullish(),
+    measurement_period: DatetimeRangeSchema.nullish(),
     performance_index: z.number().nullish(),
     package_id: z.string().nullish(),
     creative_id: z.string().nullish(),
@@ -3112,29 +3153,16 @@ export const LogEventResponseSchema = z.union([LogEventSuccessSchema, LogEventEr
 
 export const SyncAudiencesResponseSchema = z.union([SyncAudiencesSuccessSchema, SyncAudiencesErrorSchema]);
 
-export const CreativeBriefSchema = z.object({
-    name: z.string(),
-    objective: z.union([z.literal("awareness"), z.literal("consideration"), z.literal("conversion"), z.literal("retention"), z.literal("engagement")]).nullish(),
-    tone: z.string().nullish(),
-    audience: z.string().nullish(),
-    territory: z.string().nullish(),
-    messaging: z.object({
-        headline: z.string().nullish(),
-        tagline: z.string().nullish(),
-        cta: z.string().nullish(),
-        key_messages: z.array(z.string()).nullish()
-    }).nullish(),
-    reference_assets: z.array(ReferenceAssetSchema).nullish()
-});
-
-export const CreativeBriefReferenceSchema = z.union([CreativeBriefSchema, z.string()]);
-
-export const BuildCreativeSuccessSchema = z.object({
-    creative_manifest: CreativeManifestSchema,
-    sandbox: z.boolean().nullish(),
+export const BuildCreativeRequestSchema = z.object({
+    message: z.string().nullish(),
+    creative_manifest: CreativeManifestSchema.nullish(),
+    target_format_id: FormatIDSchema,
+    brand: BrandReferenceSchema.nullish(),
     context: ContextObjectSchema.nullish(),
     ext: ExtensionObjectSchema.nullish()
 });
+
+export const BuildCreativeResponseSchema = z.union([BuildCreativeSuccessSchema, BuildCreativeErrorSchema]);
 
 export const PreviewCreativeRequestSchema = z.union([z.object({
         request_type: z.literal("single"),
@@ -3211,7 +3239,7 @@ export const GetCreativeDeliveryResponseSchema = z.object({
 });
 
 export const GetSignalsRequestSchema = z.record(z.string(), z.union([z.unknown(), z.undefined()])).and(z.object({
-    account_id: z.string().nullish(),
+    account: AccountReferenceSchema.nullish(),
     buyer_campaign_ref: z.string().nullish(),
     signal_spec: z.string().nullish(),
     signal_ids: z.array(SignalIDSchema).nullish(),
@@ -3255,33 +3283,30 @@ export const UpdatePropertyListResponseSchema = z.object({
 
 export const ListContentStandardsResponseSchema = z.union([z.object({
         standards: z.array(ContentStandardsSchema),
-        errors: z.record(z.string(), z.union([z.unknown(), z.undefined()])).nullish(),
         pagination: PaginationResponseSchema.nullish(),
         context: ContextObjectSchema.nullish(),
         ext: ExtensionObjectSchema.nullish()
     }), z.object({
         errors: z.array(ErrorSchema),
-        standards: z.record(z.string(), z.union([z.unknown(), z.undefined()])).nullish(),
         context: ContextObjectSchema.nullish(),
         ext: ExtensionObjectSchema.nullish()
     })]);
 
 export const GetContentStandardsResponseSchema = z.union([ContentStandardsSchema, z.object({
         errors: z.array(ErrorSchema),
-        standards_id: z.record(z.string(), z.union([z.unknown(), z.undefined()])).nullish(),
         context: ContextObjectSchema.nullish(),
         ext: ExtensionObjectSchema.nullish()
     })]);
 
+export const UpdateContentStandardsResponseSchema = z.union([UpdateContentStandardsSuccessSchema, UpdateContentStandardsErrorSchema]);
+
 export const GetCreativeFeaturesResponseSchema = z.union([z.object({
         results: z.array(CreativeFeatureResultSchema),
         detail_url: z.string().nullish(),
-        errors: z.record(z.string(), z.union([z.unknown(), z.undefined()])).nullish(),
         context: ContextObjectSchema.nullish(),
         ext: ExtensionObjectSchema.nullish()
     }), z.object({
         errors: z.array(ErrorSchema),
-        results: z.record(z.string(), z.union([z.unknown(), z.undefined()])).nullish(),
         context: ContextObjectSchema.nullish(),
         ext: ExtensionObjectSchema.nullish()
     })]);
@@ -3307,6 +3332,13 @@ export const A2UISurfaceSchema = z.object({
 
 export const SyncAccountsResponseSchema = z.union([SyncAccountsSuccessSchema, SyncAccountsErrorSchema]);
 
+export const GetAccountFinancialsRequestSchema = z.object({
+    account: AccountReferenceSchema,
+    period: DateRangeSchema.nullish(),
+    context: ContextObjectSchema.nullish(),
+    ext: ExtensionObjectSchema.nullish()
+});
+
 export const GetAccountFinancialsResponseSchema = z.union([GetAccountFinancialsSuccessSchema, GetAccountFinancialsErrorSchema]);
 
 export const AdCPAsyncResponseDataSchema = z.union([GetProductsResponseSchema, GetProductsAsyncWorkingSchema, GetProductsAsyncInputRequiredSchema, GetProductsAsyncSubmittedSchema, CreateMediaBuyResponseSchema, CreateMediaBuyAsyncWorkingSchema, CreateMediaBuyAsyncInputRequiredSchema, CreateMediaBuyAsyncSubmittedSchema, UpdateMediaBuyResponseSchema, UpdateMediaBuyAsyncWorkingSchema, UpdateMediaBuyAsyncInputRequiredSchema, UpdateMediaBuyAsyncSubmittedSchema, SyncCreativesResponseSchema, SyncCreativesAsyncWorkingSchema, SyncCreativesAsyncInputRequiredSchema, SyncCreativesAsyncSubmittedSchema, SyncCatalogsResponseSchema, SyncCatalogsAsyncWorkingSchema, SyncCatalogsAsyncInputRequiredSchema, SyncCatalogsAsyncSubmittedSchema]);
@@ -3324,32 +3356,81 @@ export const MCPWebhookPayloadSchema = z.object({
 });
 
 export const GetProductsRequestSchema = z.object({
-    buying_mode: z.union([z.literal("brief"), z.literal("wholesale")]),
+    buying_mode: z.union([z.literal("brief"), z.literal("wholesale"), z.literal("refine")]),
     brief: z.string().nullish(),
+    refine: z.array(z.union([z.object({
+            scope: z.literal("request"),
+            ask: z.string()
+        }), z.object({
+            scope: z.literal("product"),
+            id: z.string(),
+            action: z.union([z.literal("include"), z.literal("omit"), z.literal("more_like_this")]),
+            ask: z.string().nullish()
+        }), z.object({
+            scope: z.literal("proposal"),
+            id: z.string(),
+            action: z.union([z.literal("include"), z.literal("omit")]),
+            ask: z.string().nullish()
+        })])).nullish(),
     brand: BrandReferenceSchema.nullish(),
     catalog: CatalogSchema.nullish(),
     account: AccountReferenceSchema.nullish(),
     buyer_campaign_ref: z.string().nullish(),
     filters: ProductFiltersSchema.nullish(),
     property_list: PropertyListReferenceSchema.nullish(),
+    fields: z.array(z.union([z.literal("product_id"), z.literal("name"), z.literal("description"), z.literal("publisher_properties"), z.literal("channels"), z.literal("format_ids"), z.literal("placements"), z.literal("delivery_type"), z.literal("pricing_options"), z.literal("forecast"), z.literal("outcome_measurement"), z.literal("delivery_measurement"), z.literal("reporting_capabilities"), z.literal("creative_policy"), z.literal("catalog_types"), z.literal("metric_optimization"), z.literal("conversion_tracking"), z.literal("data_provider_signals"), z.literal("max_optimization_goals"), z.literal("catalog_match"), z.literal("brief_relevance"), z.literal("expires_at"), z.literal("product_card"), z.literal("product_card_detailed")])).nullish(),
     pagination: PaginationRequestSchema.nullish(),
     context: ContextObjectSchema.nullish(),
     ext: ExtensionObjectSchema.nullish()
 }).and(z.union([z.object({
-        buying_mode: z.literal("brief")
+        buying_mode: z.literal("brief"),
+        refine: z.never().optional()
     }), z.object({
         buying_mode: z.literal("wholesale"),
+        brief: z.never().optional(),
+        refine: z.never().optional()
+    }), z.object({
+        buying_mode: z.literal("refine"),
         brief: z.never().optional()
     })]));
 
-export const CatalogRequirementsSchema = z.object({
-    catalog_type: CatalogTypeSchema,
-    required: z.boolean().nullish(),
-    min_items: z.number().nullish(),
-    required_fields: z.array(z.string()).nullish(),
-    feed_formats: z.array(FeedFormatSchema).nullish(),
-    offering_asset_constraints: z.array(OfferingAssetConstraintSchema).nullish(),
-    field_bindings: z.array(CatalogFieldBindingSchema).nullish()
+export const FormatSchema = z.object({
+    format_id: FormatIDSchema,
+    name: z.string(),
+    description: z.string().nullish(),
+    example_url: z.string().nullish(),
+    type: FormatCategorySchema.nullish(),
+    accepts_parameters: z.array(FormatIDParameterSchema).nullish(),
+    renders: z.array(z.union([z.record(z.string(), z.union([z.unknown(), z.undefined()])), z.object({
+            parameters_from_format_id: z.literal(true)
+        })])).nullish(),
+    assets: z.array(z.union([BaseIndividualAssetSchema, z.object({
+            item_type: z.literal("repeatable_group"),
+            asset_group_id: z.string(),
+            required: z.boolean(),
+            min_count: z.number(),
+            max_count: z.number(),
+            selection_mode: z.union([z.literal("sequential"), z.literal("optimize")]).nullish(),
+            assets: z.array(BaseGroupAssetSchema)
+        })])).nullish(),
+    delivery: z.object({}).nullish(),
+    supported_macros: z.array(z.union([UniversalMacroSchema, z.string()])).nullish(),
+    input_format_ids: z.array(FormatIDSchema).nullish(),
+    output_format_ids: z.array(FormatIDSchema).nullish(),
+    format_card: z.object({
+        format_id: FormatIDSchema,
+        manifest: z.object({})
+    }).nullish(),
+    accessibility: z.object({
+        wcag_level: WCAGLevelSchema,
+        requires_accessible_assets: z.boolean().nullish()
+    }).nullish(),
+    supported_disclosure_positions: z.array(DisclosurePositionSchema).nullish(),
+    format_card_detailed: z.object({
+        format_id: FormatIDSchema,
+        manifest: z.object({})
+    }).nullish(),
+    reported_metrics: z.array(AvailableMetricSchema).nullish()
 });
 
 export const CreateMediaBuyRequestSchema = z.object({
@@ -3391,18 +3472,6 @@ export const LogEventRequestSchema = z.object({
     ext: ExtensionObjectSchema.nullish()
 });
 
-export const BuildCreativeRequestSchema = z.object({
-    message: z.string().nullish(),
-    creative_manifest: CreativeManifestSchema.nullish(),
-    target_format_id: FormatIDSchema,
-    brand: BrandReferenceSchema.nullish(),
-    creative_brief: CreativeBriefReferenceSchema.nullish(),
-    context: ContextObjectSchema.nullish(),
-    ext: ExtensionObjectSchema.nullish()
-});
-
-export const BuildCreativeResponseSchema = z.union([BuildCreativeSuccessSchema, BuildCreativeErrorSchema]);
-
 export const PreviewCreativeResponseSchema = z.union([PreviewCreativeSingleResponseSchema, PreviewCreativeBatchResponseSchema, PreviewCreativeVariantResponseSchema]);
 
 export const GetSignalsResponseSchema = z.object({
@@ -3412,6 +3481,11 @@ export const GetSignalsResponseSchema = z.object({
         name: z.string(),
         description: z.string(),
         value_type: SignalValueTypeSchema.nullish(),
+        categories: z.array(z.string()).nullish(),
+        range: z.object({
+            min: z.number(),
+            max: z.number()
+        }).nullish(),
         signal_type: SignalCatalogTypeSchema,
         data_provider: z.string(),
         coverage_percentage: z.number(),
@@ -3451,45 +3525,6 @@ export const SISendMessageResponseSchema = z.object({
     }).nullish(),
     errors: z.array(ErrorSchema).nullish(),
     ext: ExtensionObjectSchema.nullish()
-});
-
-export const FormatSchema = z.object({
-    format_id: FormatIDSchema,
-    name: z.string(),
-    description: z.string().nullish(),
-    example_url: z.string().nullish(),
-    type: FormatCategorySchema.nullish(),
-    accepts_parameters: z.array(FormatIDParameterSchema).nullish(),
-    renders: z.array(z.union([z.record(z.string(), z.union([z.unknown(), z.undefined()])), z.object({
-            parameters_from_format_id: z.literal(true)
-        })])).nullish(),
-    assets: z.array(z.union([BaseIndividualAssetSchema, z.object({
-            item_type: z.literal("repeatable_group"),
-            asset_group_id: z.string(),
-            required: z.boolean(),
-            min_count: z.number(),
-            max_count: z.number(),
-            selection_mode: z.union([z.literal("sequential"), z.literal("optimize")]).nullish(),
-            assets: z.array(BaseGroupAssetSchema)
-        })])).nullish(),
-    delivery: z.object({}).nullish(),
-    supported_macros: z.array(z.union([UniversalMacroSchema, z.string()])).nullish(),
-    input_format_ids: z.array(FormatIDSchema).nullish(),
-    output_format_ids: z.array(FormatIDSchema).nullish(),
-    format_card: z.object({
-        format_id: FormatIDSchema,
-        manifest: z.object({})
-    }).nullish(),
-    accessibility: z.object({
-        wcag_level: WCAGLevelSchema,
-        requires_accessible_assets: z.boolean().nullish()
-    }).nullish(),
-    format_card_detailed: z.object({
-        format_id: FormatIDSchema,
-        manifest: z.object({})
-    }).nullish(),
-    catalog_requirements: z.array(CatalogRequirementsSchema).nullish(),
-    reported_metrics: z.array(AvailableMetricSchema).nullish()
 });
 
 export const ListCreativeFormatsResponseSchema = z.object({

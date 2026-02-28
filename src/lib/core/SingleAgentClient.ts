@@ -60,7 +60,7 @@ import { adaptSyncCreativesRequestForV2 } from '../utils/sync-creatives-adapter'
 import { normalizeFormatsResponse } from '../utils/format-renders';
 import { normalizePreviewCreativeResponse } from '../utils/preview-normalizer';
 import { normalizeGetProductsResponse, adaptGetProductsRequestForV2 } from '../utils/pricing-adapter';
-import { brandManifestToBrandReference, promotedProductsToCatalog } from '../types/compat';
+import { normalizeRequestParams } from '../utils/request-normalizer';
 
 /**
  * Error class for v3 feature compatibility issues
@@ -875,7 +875,7 @@ export class SingleAgentClient {
     options?: TaskOptions
   ): Promise<TaskResult<T>> {
     // Normalize params for backwards compatibility before validation
-    const normalizedParams = this.normalizeRequestParams(taskType, params);
+    const normalizedParams = normalizeRequestParams(taskType, params);
 
     // Validate request params against schema
     this.validateRequest(taskType, normalizedParams);
@@ -1423,7 +1423,7 @@ export class SingleAgentClient {
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<T>> {
-    const normalizedParams = this.normalizeRequestParams(taskName, params);
+    const normalizedParams = normalizeRequestParams(taskName, params);
     const agent = await this.ensureEndpointDiscovered();
     return this.executor.executeTask<T>(agent, taskName, normalizedParams, inputHandler, options);
   }
@@ -2046,56 +2046,6 @@ export class SingleAgentClient {
     }
 
     return result.data.formats || [];
-  }
-
-  /**
-   * Normalize request params for backwards compatibility.
-   *
-   * Infers missing fields that can be derived from other params so callers
-   * written against older schema versions keep working.
-   */
-  private normalizeRequestParams(taskType: string, params: any): any {
-    if (!params) {
-      return params;
-    }
-
-    let normalized = { ...params };
-
-    // Strip brand_manifest → brand for tasks whose schema has a brand field (get_products, create_media_buy).
-    // update_media_buy has no brand field in either v2 or v3 — excluded deliberately.
-    // brand takes precedence if both are supplied.
-    if (taskType === 'get_products' || taskType === 'create_media_buy') {
-      if (normalized.brand_manifest && !normalized.brand) {
-        const brand = brandManifestToBrandReference(normalized.brand_manifest);
-        if (brand) {
-          normalized.brand = brand;
-        }
-      }
-      delete normalized.brand_manifest;
-    }
-
-    if (taskType !== 'get_products') {
-      return normalized;
-    }
-
-    // get_products-specific normalization below
-
-    // Infer buying_mode from brief presence if not supplied
-    if (!normalized.buying_mode) {
-      normalized = {
-        buying_mode: normalized.brief ? 'brief' : 'wholesale',
-        ...normalized,
-      };
-    }
-
-    // Convert legacy product_selectors (v3 beta / v2 era) → catalog so strict validation passes.
-    // catalog takes precedence if both are supplied.
-    if (normalized.product_selectors && !normalized.catalog) {
-      normalized.catalog = promotedProductsToCatalog(normalized.product_selectors);
-    }
-    delete normalized.product_selectors;
-
-    return normalized;
   }
 
   /**

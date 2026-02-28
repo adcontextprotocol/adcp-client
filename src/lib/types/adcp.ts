@@ -7,6 +7,7 @@ import type {
   CreateMediaBuyAsyncSubmitted,
   CreateMediaBuyAsyncWorking,
   FormatID,
+  FrequencyCap,
   CreateMediaBuyResponse,
   GetProductsResponse,
   GetProductsAsyncWorking,
@@ -21,6 +22,8 @@ import type {
   SyncCreativesAsyncSubmitted,
   SyncCreativesResponse,
 } from './core.generated';
+
+export type { FrequencyCap } from './core.generated';
 
 export interface MediaBuy {
   id: string;
@@ -155,11 +158,6 @@ export interface DeviceTargeting {
   device_types?: ('mobile' | 'tablet' | 'desktop' | 'connected_tv')[];
   operating_systems?: string[];
   browsers?: string[];
-}
-
-export interface FrequencyCap {
-  impressions: number;
-  time_period: 'day' | 'week' | 'month' | 'lifetime';
 }
 
 export interface DeliverySchedule {

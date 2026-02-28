@@ -734,6 +734,34 @@ function removeIndexSignatureTypes(typeDefinitions: string): string {
   return result;
 }
 
+/**
+ * Fix typed index signatures that are incompatible with optional properties.
+ *
+ * When a JSON Schema has typed additionalProperties (e.g. { $ref: "ForecastRange" })
+ * alongside optional named properties, json-schema-to-typescript generates:
+ *   grps?: ForecastRange;
+ *   [k: string]: ForecastRange;
+ *
+ * TypeScript requires the index signature to be compatible with ALL named properties.
+ * Optional properties are `Type | undefined`, so the index signature must also include
+ * `| undefined`. This function detects such cases and adds `| undefined`.
+ */
+function fixTypedIndexSignatures(typeDefinitions: string): string {
+  // Match typed index signatures (not `unknown`) that lack `| undefined`
+  // Pattern: `[k: string]: SomeType;` where SomeType is NOT `unknown` and NOT already `| undefined`
+  // NOTE: This regex only handles single-line type annotations. Multi-line unions,
+  // array types (SomeType[]), and object types ({}) are not matched. Currently those
+  // cases get | undefined from json-schema-to-typescript natively.
+  return typeDefinitions.replace(
+    /(\[k: string\]: )(\w[\w\s|&<>,]*?)(?<!\| undefined)(;\s*\n\s*\})/g,
+    (match, prefix, type, suffix) => {
+      // Only add | undefined if the type is not already `unknown`
+      if (type.trim() === 'unknown') return match;
+      return `${prefix}${type} | undefined${suffix}`;
+    }
+  );
+}
+
 // Remove numbered type duplicates like EventType1, Catalog1 that are identical to EventType, Catalog.
 // The json-schema-to-typescript compiler appends numbers when it encounters the same $ref multiple
 // times within a single compilation unit. We replace all references to the numbered variant with
@@ -1196,6 +1224,7 @@ async function generateTypes() {
   // Remove numbered type duplicates (e.g., EventType1 -> EventType) caused by multiple $ref
   // occurrences of the same schema within a single compilation unit
   toolTypes = removeNumberedTypeDuplicates(toolTypes);
+  toolTypes = fixTypedIndexSignatures(toolTypes);
 
   // Generate Agent classes
   const agentClasses = generateAgentClasses(tools);
@@ -1203,7 +1232,9 @@ async function generateTypes() {
   // Write files only if content changed
   const coreTypesPath = path.join(libOutputDir, 'core.generated.ts');
   // Remove index signature types that were incorrectly generated from oneOf schemas
-  const processedCoreTypes = removeIndexSignatureTypes(removeNumberedTypeDuplicates(coreTypes));
+  const processedCoreTypes = fixTypedIndexSignatures(
+    removeIndexSignatureTypes(removeNumberedTypeDuplicates(coreTypes))
+  );
   const coreChanged = writeFileIfChanged(coreTypesPath, processedCoreTypes);
 
   const toolTypesPath = path.join(libOutputDir, 'tools.generated.ts');

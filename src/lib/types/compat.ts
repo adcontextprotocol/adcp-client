@@ -3,6 +3,12 @@
  */
 
 import type { BrandReference, Catalog } from './tools.generated';
+import type { OutcomeMeasurement } from './core.generated';
+
+// ===== Measurement → OutcomeMeasurement rename =====
+
+/** @deprecated Use OutcomeMeasurement instead. */
+export type Measurement = OutcomeMeasurement;
 
 // ===== PromotedOfferings / PromotedProducts migration =====
 // promoted_offerings was replaced by a top-level brand field + per-package catalog field.

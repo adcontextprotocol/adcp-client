@@ -173,6 +173,11 @@ export type {
   GetSignalsResponse,
   ActivateSignalRequest,
   ActivateSignalResponse,
+  SignalPricingOption,
+  SignalPricing,
+  CpmPricing,
+  PercentOfMediaPricing,
+  FlatFeePricing,
   // Governance Domain - Property Lists
   CreatePropertyListRequest,
   CreatePropertyListResponse,
@@ -234,6 +239,15 @@ export type {
   CPAPricingOption,
   EventType,
   ActionSource,
+  OptimizationGoal,
+  ReachUnit,
+  TargetingOverlay,
+  OutcomeMeasurement,
+  Duration,
+  DeviceType,
+  DigitalSourceType,
+  FrequencyCap,
+  GeographicBreakdownSupport,
   // Catalog Domain
   Catalog,
   CatalogType,
@@ -243,15 +257,41 @@ export type {
   CatalogAction,
   CatalogItemStatus,
   CatalogFieldMapping,
-  CatalogFieldBinding,
-  ScalarBinding,
-  AssetPoolBinding,
   SyncCatalogsRequest,
   SyncCatalogsResponse,
   SyncCatalogsSuccess,
   SyncCatalogsError,
   // Format Assets
   Overlay,
+  // Creative Agent Domain
+  CreativeBrief,
+  CreativeManifest,
+  BuildCreativeRequest,
+  BuildCreativeResponse,
+  PreviewCreativeRequest,
+  PreviewCreativeResponse,
+  GetMediaBuysRequest,
+  GetMediaBuysResponse,
+  ImageAsset,
+  VideoAsset,
+  AudioAsset,
+  TextAsset,
+  URLAsset,
+  HTMLAsset,
+  VASTAsset,
+  DAASTAsset,
+  JavaScriptAsset,
+  WebhookAsset,
+  CSSAsset,
+  MarkdownAsset,
+  CatalogAsset,
+  BriefAsset,
+  ReferenceAsset,
+  Provenance,
+  PreviewOutputFormat,
+  DisclosurePosition,
+  // Event Tracking
+  EventCustomData,
   // Creative Delivery Domain
   GetCreativeDeliveryRequest,
   GetCreativeDeliveryResponse,
@@ -270,6 +310,12 @@ export type {
   PaginationResponse,
 } from './types/tools.generated';
 
+// ====== ERROR CODES ======
+// Standard error code vocabulary for programmatic error handling
+export type { Error as TaskErrorDetail } from './types/core.generated';
+export { STANDARD_ERROR_CODES, isStandardErrorCode, getErrorRecovery } from './types/error-codes';
+export type { StandardErrorCode, ErrorRecovery } from './types/error-codes';
+
 // ====== BACKWARDS COMPATIBILITY ======
 // Deprecated types from past protocol migrations
 export type {
@@ -278,8 +324,12 @@ export type {
   AssetContentType,
   PromotedProducts,
   PromotedOfferings,
+  Measurement,
 } from './types/compat';
 export { brandManifestToBrandReference, promotedProductsToCatalog, promotedOfferingsToCatalog } from './types/compat';
+
+// Request parameter normalization (deprecated field auto-conversion)
+export { normalizeRequestParams, normalizePackageParams } from './utils/request-normalizer';
 
 // ====== ZOD SCHEMAS (for runtime validation) ======
 // Re-export all Zod schemas for user validation needs

@@ -181,6 +181,7 @@ export class ContentStandardsAdapter implements IContentStandardsAdapter {
   async updateStandards(request: UpdateContentStandardsRequest): Promise<UpdateContentStandardsResponse> {
     if (!this.isSupported()) {
       return {
+        success: false as const,
         errors: [
           {
             code: ContentStandardsErrorCodes.NOT_SUPPORTED,
@@ -192,6 +193,7 @@ export class ContentStandardsAdapter implements IContentStandardsAdapter {
 
     // Override in subclass to implement update logic
     return {
+      success: false as const,
       errors: [
         {
           code: ContentStandardsErrorCodes.NOT_SUPPORTED,
