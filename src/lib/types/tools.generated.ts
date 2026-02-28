@@ -2661,7 +2661,7 @@ export type AuthenticationScheme = 'Bearer' | 'HMAC-SHA256';
  */
 export interface CreateMediaBuyRequest {
   /**
-   * Buyer's reference identifier for this media buy. Also serves as an idempotency key: sellers SHOULD deduplicate requests with the same buyer_ref and account, returning the existing media buy rather than creating a duplicate.
+   * Buyer's reference identifier for this media buy. Sellers SHOULD deduplicate requests with the same buyer_ref and account, returning the existing media buy rather than creating a duplicate.
    */
   buyer_ref: string;
   /**
@@ -2750,7 +2750,7 @@ export interface CreateMediaBuyRequest {
  */
 export interface PackageRequest {
   /**
-   * Buyer's reference identifier for this package
+   * Buyer's reference identifier for this package. Sellers SHOULD deduplicate requests with the same buyer_ref within a media buy, returning the existing package rather than creating a duplicate.
    */
   buyer_ref: string;
   /**
@@ -3100,7 +3100,7 @@ export interface Provenance {
      */
     name: string;
     /**
-     * Version identifier for the AI tool
+     * Version identifier for the AI tool or model (e.g., '25.1', '0125', '2.1'). For generative models, use the model version rather than the API version.
      */
     version?: string;
     /**
@@ -3825,7 +3825,7 @@ export interface Package {
    */
   package_id: string;
   /**
-   * Buyer's reference identifier for this package
+   * Buyer's reference identifier for this package. Sellers SHOULD deduplicate requests with the same buyer_ref within a media buy, returning the existing package rather than creating a duplicate.
    */
   buyer_ref?: string;
   /**

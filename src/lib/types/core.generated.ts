@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas vlatest
-// Generated at: 2026-02-28T22:29:55.674Z
+// Generated at: 2026-02-28T22:34:22.054Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -295,7 +295,7 @@ export interface MediaBuy {
    */
   media_buy_id: string;
   /**
-   * Buyer's reference identifier for this media buy
+   * Buyer's reference identifier for this media buy. Sellers SHOULD deduplicate requests with the same buyer_ref and account, returning the existing media buy rather than creating a duplicate.
    */
   buyer_ref?: string;
   /**
@@ -428,7 +428,7 @@ export interface Package {
    */
   package_id: string;
   /**
-   * Buyer's reference identifier for this package
+   * Buyer's reference identifier for this package. Sellers SHOULD deduplicate requests with the same buyer_ref within a media buy, returning the existing package rather than creating a duplicate.
    */
   buyer_ref?: string;
   /**
@@ -1262,7 +1262,7 @@ export interface Provenance {
      */
     name: string;
     /**
-     * Version identifier for the AI tool
+     * Version identifier for the AI tool or model (e.g., '25.1', '0125', '2.1'). For generative models, use the model version rather than the API version.
      */
     version?: string;
     /**
