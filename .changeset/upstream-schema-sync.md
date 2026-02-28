@@ -1,5 +1,5 @@
 ---
-"@adcp/client": major
+"@adcp/client": minor
 ---
 
 Sync upstream AdCP v3 schema changes
