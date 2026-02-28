@@ -64,6 +64,7 @@ const {
   normalizePricingOption,
   normalizeProductPricing,
   normalizeGetProductsResponse,
+  adaptGetProductsRequestForV2,
 } = require('../../dist/lib/utils/pricing-adapter.js');
 
 const { isCompatibleWith, COMPATIBLE_ADCP_VERSIONS } = require('../../dist/lib/version.js');
@@ -319,17 +320,17 @@ describe('Creative Assignment Adapter', () => {
       assert.deepStrictEqual(result.creative_ids, ['creative-1']);
     });
 
-    test('should strip catalog from package (v3-only field)', () => {
+    test('should strip catalogs from package (v3-only field)', () => {
       const v3Package = {
         package_id: 'pkg-1',
         budget: 5000,
-        catalog: { type: 'product', gtins: ['gtin-1', 'gtin-2'] },
+        catalogs: [{ type: 'product', gtins: ['gtin-1', 'gtin-2'] }],
         creative_assignments: [{ creative_id: 'creative-1' }],
       };
 
       const result = adaptPackageRequestForV2(v3Package);
 
-      assert.strictEqual(result.catalog, undefined);
+      assert.strictEqual(result.catalogs, undefined);
       assert.strictEqual(result.budget, 5000);
       assert.deepStrictEqual(result.creative_ids, ['creative-1']);
     });
@@ -417,6 +418,51 @@ describe('Creative Assignment Adapter', () => {
 
       assert.deepStrictEqual(result.brand, { brand_id: 'br_999' });
       assert.strictEqual(result.brand_manifest, undefined);
+    });
+  });
+
+  describe('adaptGetProductsRequestForV2', () => {
+    test('should convert catalog with type=product to promoted_offerings.product_selectors', () => {
+      const v3Request = {
+        buying_mode: 'wholesale',
+        catalog: { type: 'product', gtins: ['gtin-1', 'gtin-2'], tags: ['summer'] },
+      };
+
+      const result = adaptGetProductsRequestForV2(v3Request);
+
+      assert.strictEqual(result.catalog, undefined);
+      assert.deepStrictEqual(result.promoted_offerings, {
+        product_selectors: {
+          manifest_gtins: ['gtin-1', 'gtin-2'],
+          manifest_tags: ['summer'],
+        },
+      });
+    });
+
+    test('should convert catalog with type=offering to promoted_offerings.offerings', () => {
+      const v3Request = {
+        buying_mode: 'wholesale',
+        catalog: { type: 'offering', items: [{ offering_id: 'offer-1', name: 'Sponsored Slot' }] },
+      };
+
+      const result = adaptGetProductsRequestForV2(v3Request);
+
+      assert.strictEqual(result.catalog, undefined);
+      assert.deepStrictEqual(result.promoted_offerings, {
+        offerings: [{ offering_id: 'offer-1', name: 'Sponsored Slot' }],
+      });
+    });
+
+    test('should convert brand.domain to brand_manifest URL', () => {
+      const v3Request = {
+        buying_mode: 'wholesale',
+        brand: { domain: 'acme.com' },
+      };
+
+      const result = adaptGetProductsRequestForV2(v3Request);
+
+      assert.strictEqual(result.brand, undefined);
+      assert.strictEqual(result.brand_manifest, 'https://acme.com');
     });
   });
 
@@ -999,5 +1045,514 @@ describe('V3 Feature Guard Logic', () => {
     assert.ok(Array.isArray(emptyResponse.products));
     assert.strictEqual(emptyResponse.products.length, 0);
     assert.strictEqual(emptyResponse.property_list_applied, false);
+  });
+});
+
+// ============================================
+// Request Parameter Normalization Tests
+// ============================================
+
+const {
+  normalizeRequestParams,
+  normalizePackageParams,
+} = require('../../dist/lib/utils/request-normalizer.js');
+
+const { resetWarnings } = require('../../dist/lib/utils/deprecation.js');
+
+describe('Request Parameter Normalization', () => {
+  // Reset deprecation warnings before each test so warnOnce fires
+  // (node:test doesn't have beforeEach, but we can call inline)
+
+  describe('account_id → account', () => {
+    test('should convert bare account_id string to account object', () => {
+      resetWarnings();
+      const result = normalizeRequestParams('create_media_buy', {
+        account_id: 'acct_123',
+        buyer_ref: 'buyer-1',
+      });
+
+      assert.deepStrictEqual(result.account, { account_id: 'acct_123' });
+      assert.strictEqual(result.account_id, undefined);
+      assert.strictEqual(result.buyer_ref, 'buyer-1');
+    });
+
+    test('should not overwrite existing account field and should remove deprecated account_id', () => {
+      resetWarnings();
+      const result = normalizeRequestParams('get_media_buys', {
+        account_id: 'acct_old',
+        account: { account_id: 'acct_new' },
+      });
+
+      assert.deepStrictEqual(result.account, { account_id: 'acct_new' });
+      assert.strictEqual(result.account_id, undefined, 'deprecated account_id should be removed');
+    });
+
+    test('should not convert non-string account_id', () => {
+      resetWarnings();
+      const result = normalizeRequestParams('create_media_buy', {
+        account_id: 123,
+        buyer_ref: 'ref-1',
+      });
+
+      assert.strictEqual(result.account, undefined);
+    });
+
+    test('should work across all tool types', () => {
+      resetWarnings();
+      for (const tool of ['get_signals', 'activate_signal', 'sync_creatives', 'sync_audiences']) {
+        const result = normalizeRequestParams(tool, { account_id: 'acct_1' });
+        assert.deepStrictEqual(result.account, { account_id: 'acct_1' }, `Failed for ${tool}`);
+        assert.strictEqual(result.account_id, undefined, `account_id leaked for ${tool}`);
+      }
+    });
+  });
+
+  describe('campaign_ref → buyer_campaign_ref', () => {
+    test('should rename campaign_ref to buyer_campaign_ref', () => {
+      resetWarnings();
+      const result = normalizeRequestParams('create_media_buy', {
+        campaign_ref: 'camp_Q2',
+        buyer_ref: 'buyer-1',
+      });
+
+      assert.strictEqual(result.buyer_campaign_ref, 'camp_Q2');
+      assert.strictEqual(result.campaign_ref, undefined);
+    });
+
+    test('should not overwrite existing buyer_campaign_ref and should remove deprecated campaign_ref', () => {
+      resetWarnings();
+      const result = normalizeRequestParams('get_signals', {
+        campaign_ref: 'old_ref',
+        buyer_campaign_ref: 'new_ref',
+      });
+
+      assert.strictEqual(result.buyer_campaign_ref, 'new_ref');
+      assert.strictEqual(result.campaign_ref, undefined, 'deprecated campaign_ref should be removed');
+    });
+  });
+
+  describe('deployments → destinations (activate_signal)', () => {
+    test('should rename deployments to destinations for activate_signal', () => {
+      resetWarnings();
+      const deployments = [{ agent_url: 'https://dsp.example.com' }];
+      const result = normalizeRequestParams('activate_signal', {
+        signal_agent_segment_id: 'sig_1',
+        deployments,
+      });
+
+      assert.deepStrictEqual(result.destinations, deployments);
+      assert.strictEqual(result.deployments, undefined);
+    });
+
+    test('should not rename deployments for other tools', () => {
+      resetWarnings();
+      const result = normalizeRequestParams('get_signals', {
+        deployments: [{ agent_url: 'https://dsp.example.com' }],
+      });
+
+      // deployments is not a known field for get_signals, but normalizer should not touch it
+      // since the shim is scoped to activate_signal
+      assert.ok(result.deployments);
+      assert.strictEqual(result.destinations, undefined);
+    });
+
+    test('should not overwrite existing destinations and should remove deprecated deployments', () => {
+      resetWarnings();
+      const result = normalizeRequestParams('activate_signal', {
+        deployments: [{ agent_url: 'https://old.com' }],
+        destinations: [{ agent_url: 'https://new.com' }],
+      });
+
+      assert.deepStrictEqual(result.destinations, [{ agent_url: 'https://new.com' }]);
+      assert.strictEqual(result.deployments, undefined, 'deprecated deployments should be removed');
+    });
+  });
+
+  describe('deliver_to → destinations (get_signals)', () => {
+    test('should rename deliver_to to destinations for get_signals', () => {
+      resetWarnings();
+      const deliver_to = [{ agent_url: 'https://dsp.example.com' }];
+      const result = normalizeRequestParams('get_signals', {
+        signal_spec: 'auto intenders',
+        deliver_to,
+      });
+
+      assert.deepStrictEqual(result.destinations, deliver_to);
+      assert.strictEqual(result.deliver_to, undefined);
+    });
+
+    test('should not rename deliver_to for other tools', () => {
+      resetWarnings();
+      const result = normalizeRequestParams('activate_signal', {
+        deliver_to: [{ agent_url: 'https://dsp.example.com' }],
+        signal_agent_segment_id: 'sig_1',
+        destinations: [{ agent_url: 'https://x.com' }],
+      });
+
+      // deliver_to should be untouched for activate_signal
+      assert.ok(result.deliver_to);
+    });
+  });
+
+  describe('removed get_products fields', () => {
+    test('should strip feedback, product_ids, and proposal_id with warnings', () => {
+      resetWarnings();
+      const result = normalizeRequestParams('get_products', {
+        buying_mode: 'wholesale',
+        feedback: [{ product_id: 'p-1', rating: 5 }],
+        product_ids: ['p-1', 'p-2'],
+        proposal_id: 'prop-1',
+      });
+
+      assert.strictEqual(result.feedback, undefined);
+      assert.strictEqual(result.product_ids, undefined);
+      assert.strictEqual(result.proposal_id, undefined);
+      assert.strictEqual(result.buying_mode, 'wholesale');
+    });
+
+    test('should not strip removed fields for other tools', () => {
+      resetWarnings();
+      const result = normalizeRequestParams('create_media_buy', {
+        feedback: 'some_data',
+      });
+
+      // feedback is not stripped for non-get_products tools
+      assert.strictEqual(result.feedback, 'some_data');
+    });
+  });
+
+  describe('null/undefined params', () => {
+    test('should pass through null params unchanged', () => {
+      assert.strictEqual(normalizeRequestParams('get_products', null), null);
+    });
+
+    test('should pass through undefined params unchanged', () => {
+      assert.strictEqual(normalizeRequestParams('get_products', undefined), undefined);
+    });
+  });
+
+  describe('combined shims', () => {
+    test('should apply account_id + campaign_ref + package shims in a single request', () => {
+      resetWarnings();
+      const result = normalizeRequestParams('create_media_buy', {
+        account_id: 'acct_1',
+        campaign_ref: 'camp_Q2',
+        buyer_ref: 'buyer-1',
+        packages: [
+          {
+            product_id: 'prod-1',
+            optimization_goal: { kind: 'metric', metric: 'clicks' },
+            catalog: { type: 'product', gtins: ['gtin-1'] },
+            budget: 5000,
+          },
+        ],
+      });
+
+      assert.deepStrictEqual(result.account, { account_id: 'acct_1' });
+      assert.strictEqual(result.account_id, undefined);
+      assert.strictEqual(result.buyer_campaign_ref, 'camp_Q2');
+      assert.strictEqual(result.campaign_ref, undefined);
+      assert.deepStrictEqual(result.packages[0].optimization_goals, [{ kind: 'metric', metric: 'clicks' }]);
+      assert.strictEqual(result.packages[0].optimization_goal, undefined);
+      assert.deepStrictEqual(result.packages[0].catalogs, [{ type: 'product', gtins: ['gtin-1'] }]);
+      assert.strictEqual(result.packages[0].catalog, undefined);
+    });
+
+    test('should apply brand_manifest + account_id shims together', () => {
+      resetWarnings();
+      const result = normalizeRequestParams('get_products', {
+        account_id: 'acct_1',
+        brand_manifest: 'https://acme.com',
+        buying_mode: 'wholesale',
+      });
+
+      assert.deepStrictEqual(result.account, { account_id: 'acct_1' });
+      assert.deepStrictEqual(result.brand, { domain: 'acme.com' });
+      assert.strictEqual(result.account_id, undefined);
+      assert.strictEqual(result.brand_manifest, undefined);
+    });
+
+    test('should convert brand_manifest to brand for create_media_buy', () => {
+      resetWarnings();
+      const result = normalizeRequestParams('create_media_buy', {
+        buyer_ref: 'buyer-1',
+        brand_manifest: 'https://acme.com',
+        packages: [],
+      });
+
+      assert.deepStrictEqual(result.brand, { domain: 'acme.com' });
+      assert.strictEqual(result.brand_manifest, undefined);
+    });
+
+    test('should handle brand_manifest as object with url', () => {
+      resetWarnings();
+      const result = normalizeRequestParams('get_products', {
+        brand_manifest: { name: 'Acme', url: 'https://acme.com' },
+        buying_mode: 'wholesale',
+      });
+
+      assert.deepStrictEqual(result.brand, { domain: 'acme.com' });
+      assert.strictEqual(result.brand_manifest, undefined);
+    });
+
+    test('should not set brand when brand_manifest has no url', () => {
+      resetWarnings();
+      const result = normalizeRequestParams('get_products', {
+        brand_manifest: { name: 'Acme' },
+        buying_mode: 'wholesale',
+      });
+
+      assert.strictEqual(result.brand, undefined);
+      assert.strictEqual(result.brand_manifest, undefined);
+    });
+  });
+});
+
+describe('Package Parameter Normalization', () => {
+  test('should convert optimization_goal scalar to optimization_goals array', () => {
+    resetWarnings();
+    const result = normalizePackageParams({
+      product_id: 'prod-1',
+      optimization_goal: { kind: 'metric', metric: 'ctr' },
+      budget: 5000,
+    });
+
+    assert.deepStrictEqual(result.optimization_goals, [{ kind: 'metric', metric: 'ctr' }]);
+    assert.strictEqual(result.optimization_goal, undefined);
+    assert.strictEqual(result.budget, 5000);
+  });
+
+  test('should not overwrite existing optimization_goals', () => {
+    resetWarnings();
+    const goals = [{ kind: 'metric', metric: 'clicks' }, { kind: 'metric', metric: 'conversions' }];
+    const result = normalizePackageParams({
+      optimization_goal: { kind: 'metric', metric: 'ctr' },
+      optimization_goals: goals,
+    });
+
+    assert.deepStrictEqual(result.optimization_goals, goals);
+  });
+
+  test('should convert catalog scalar to catalogs array', () => {
+    resetWarnings();
+    const catalog = { type: 'product', gtins: ['gtin-1', 'gtin-2'] };
+    const result = normalizePackageParams({
+      package_id: 'pkg-1',
+      catalog,
+    });
+
+    assert.deepStrictEqual(result.catalogs, [catalog]);
+    assert.strictEqual(result.catalog, undefined);
+  });
+
+  test('should not overwrite existing catalogs', () => {
+    resetWarnings();
+    const catalogs = [{ type: 'product', gtins: ['gtin-1'] }, { type: 'offering', items: [{}] }];
+    const result = normalizePackageParams({
+      catalog: { type: 'store', ids: ['s-1'] },
+      catalogs,
+    });
+
+    assert.deepStrictEqual(result.catalogs, catalogs);
+  });
+
+  test('should pass through null/non-object values', () => {
+    assert.strictEqual(normalizePackageParams(null), null);
+    assert.strictEqual(normalizePackageParams(undefined), undefined);
+    assert.strictEqual(normalizePackageParams(42), 42);
+  });
+});
+
+// ============================================
+// New Type Shape Validation Tests
+// ============================================
+
+const {
+  DurationSchema,
+  FrequencyCapSchema,
+  ProvenanceSchema,
+  DeviceTypeSchema,
+  DigitalSourceTypeSchema,
+} = require('../../dist/lib/types/schemas.generated.js');
+
+describe('Duration type construction', () => {
+  test('should accept valid Duration with minutes', () => {
+    const result = DurationSchema.safeParse({ interval: 60, unit: 'minutes' });
+    assert.strictEqual(result.success, true);
+  });
+
+  test('should accept valid Duration with campaign unit', () => {
+    const result = DurationSchema.safeParse({ interval: 1, unit: 'campaign' });
+    assert.strictEqual(result.success, true);
+  });
+
+  test('should reject Duration with invalid unit', () => {
+    const result = DurationSchema.safeParse({ interval: 7, unit: 'weeks' });
+    assert.strictEqual(result.success, false);
+  });
+
+  test('should reject Duration without interval', () => {
+    const result = DurationSchema.safeParse({ unit: 'days' });
+    assert.strictEqual(result.success, false);
+  });
+});
+
+describe('FrequencyCap type construction', () => {
+  test('should accept recency-gate mode (suppress only)', () => {
+    const result = FrequencyCapSchema.safeParse({
+      suppress: { interval: 60, unit: 'minutes' },
+    });
+    assert.strictEqual(result.success, true);
+  });
+
+  test('should accept volumetric-cap mode (max_impressions + per + window)', () => {
+    const result = FrequencyCapSchema.safeParse({
+      max_impressions: 3,
+      per: 'individuals',
+      window: { interval: 7, unit: 'days' },
+    });
+    assert.strictEqual(result.success, true);
+  });
+
+  test('should accept both modes combined', () => {
+    const result = FrequencyCapSchema.safeParse({
+      suppress: { interval: 30, unit: 'minutes' },
+      max_impressions: 5,
+      per: 'households',
+      window: { interval: 1, unit: 'campaign' },
+    });
+    assert.strictEqual(result.success, true);
+  });
+
+  test('should accept legacy suppress_minutes', () => {
+    const result = FrequencyCapSchema.safeParse({
+      suppress_minutes: 60,
+    });
+    assert.strictEqual(result.success, true);
+  });
+});
+
+describe('Provenance type construction', () => {
+  test('should accept full provenance object', () => {
+    const result = ProvenanceSchema.safeParse({
+      digital_source_type: 'trained_algorithmic_media',
+      ai_tool: { name: 'Claude', version: '4', provider: 'Anthropic' },
+      human_oversight: 'directed',
+    });
+    assert.strictEqual(result.success, true);
+  });
+
+  test('should accept minimal provenance', () => {
+    const result = ProvenanceSchema.safeParse({});
+    assert.strictEqual(result.success, true);
+  });
+
+  test('should reject invalid digital_source_type', () => {
+    const result = DigitalSourceTypeSchema.safeParse('photoshop_filter');
+    assert.strictEqual(result.success, false);
+  });
+});
+
+describe('DeviceType type validation', () => {
+  test('should accept all valid device types', () => {
+    for (const dt of ['desktop', 'mobile', 'tablet', 'ctv', 'dooh', 'unknown']) {
+      const result = DeviceTypeSchema.safeParse(dt);
+      assert.strictEqual(result.success, true, `Failed for ${dt}`);
+    }
+  });
+
+  test('should reject invalid device type', () => {
+    const result = DeviceTypeSchema.safeParse('smartwatch');
+    assert.strictEqual(result.success, false);
+  });
+});
+
+// ── Standard Error Codes ──
+
+const {
+  STANDARD_ERROR_CODES,
+  isStandardErrorCode,
+  getErrorRecovery,
+} = require('../../dist/lib/types/error-codes.js');
+
+const { ErrorSchema } = require('../../dist/lib/types/schemas.generated.js');
+
+describe('Standard Error Codes', () => {
+  test('STANDARD_ERROR_CODES contains exactly 20 codes', () => {
+    const codes = Object.keys(STANDARD_ERROR_CODES);
+    assert.strictEqual(codes.length, 20);
+  });
+
+  test('every code has description and recovery', () => {
+    for (const [code, info] of Object.entries(STANDARD_ERROR_CODES)) {
+      assert.ok(info.description, `${code} missing description`);
+      assert.ok(
+        ['transient', 'correctable', 'terminal'].includes(info.recovery),
+        `${code} has invalid recovery: ${info.recovery}`
+      );
+    }
+  });
+
+  test('transient codes are retry-appropriate', () => {
+    const transientCodes = Object.entries(STANDARD_ERROR_CODES)
+      .filter(([, info]) => info.recovery === 'transient')
+      .map(([code]) => code);
+    assert.ok(transientCodes.includes('RATE_LIMITED'));
+    assert.ok(transientCodes.includes('SERVICE_UNAVAILABLE'));
+    assert.ok(transientCodes.includes('PRODUCT_UNAVAILABLE'));
+  });
+
+  test('terminal codes require human intervention', () => {
+    const terminalCodes = Object.entries(STANDARD_ERROR_CODES)
+      .filter(([, info]) => info.recovery === 'terminal')
+      .map(([code]) => code);
+    assert.ok(terminalCodes.includes('ACCOUNT_SUSPENDED'));
+    assert.ok(terminalCodes.includes('ACCOUNT_PAYMENT_REQUIRED'));
+    assert.ok(terminalCodes.includes('BUDGET_EXHAUSTED'));
+    assert.ok(terminalCodes.includes('UNSUPPORTED_FEATURE'));
+  });
+
+  test('isStandardErrorCode returns true for known codes', () => {
+    assert.strictEqual(isStandardErrorCode('RATE_LIMITED'), true);
+    assert.strictEqual(isStandardErrorCode('BUDGET_EXHAUSTED'), true);
+    assert.strictEqual(isStandardErrorCode('CONFLICT'), true);
+  });
+
+  test('isStandardErrorCode returns false for custom codes', () => {
+    assert.strictEqual(isStandardErrorCode('CUSTOM_VENDOR_ERROR'), false);
+    assert.strictEqual(isStandardErrorCode(''), false);
+  });
+
+  test('getErrorRecovery returns correct recovery for known codes', () => {
+    assert.strictEqual(getErrorRecovery('RATE_LIMITED'), 'transient');
+    assert.strictEqual(getErrorRecovery('INVALID_REQUEST'), 'correctable');
+    assert.strictEqual(getErrorRecovery('ACCOUNT_SUSPENDED'), 'terminal');
+  });
+
+  test('getErrorRecovery returns undefined for unknown codes', () => {
+    assert.strictEqual(getErrorRecovery('CUSTOM_VENDOR_ERROR'), undefined);
+  });
+
+  test('Error schema validates standard error with recovery', () => {
+    const error = {
+      code: 'RATE_LIMITED',
+      message: 'Too many requests',
+      recovery: 'transient',
+      retry_after: 30,
+    };
+    const result = ErrorSchema.safeParse(error);
+    assert.strictEqual(result.success, true);
+  });
+
+  test('Error schema validates error with field and suggestion', () => {
+    const error = {
+      code: 'BUDGET_TOO_LOW',
+      message: 'Budget below minimum',
+      field: 'packages[0].budget',
+      suggestion: 'Increase budget to at least $500',
+      recovery: 'correctable',
+    };
+    const result = ErrorSchema.safeParse(error);
+    assert.strictEqual(result.success, true);
   });
 });

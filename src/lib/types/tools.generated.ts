@@ -3,17 +3,68 @@
 
 // get_products parameters
 /**
- * Request parameters for discovering available advertising products
+ * Request parameters for discovering or refining advertising products. buying_mode declares the buyer's intent: 'brief' for curated discovery, 'wholesale' for raw catalog access, or 'refine' to iterate on known products and proposals.
  */
 export type GetProductsRequest = {
   /**
-   * Declares buyer intent for this request. 'brief': publisher curates product recommendations from the provided brief. 'wholesale': buyer requests raw inventory to apply their own audiences — brief must not be provided. When buying_mode is 'wholesale', publishers return only products that support buyer-directed targeting and omit proposals.
+   * Declares buyer intent for this request. 'brief': publisher curates product recommendations from the provided brief. 'wholesale': buyer requests raw inventory to apply their own audiences — brief must not be provided, and proposals are omitted. 'refine': iterate on products and proposals from a previous get_products response using the refine array of change requests.
    */
-  buying_mode: 'brief' | 'wholesale';
+  buying_mode: 'brief' | 'wholesale' | 'refine';
   /**
-   * Natural language description of campaign requirements. Required when buying_mode is 'brief'. Must not be provided when buying_mode is 'wholesale'.
+   * Natural language description of campaign requirements. Required when buying_mode is 'brief'. Must not be provided when buying_mode is 'wholesale' or 'refine'.
    */
   brief?: string;
+  /**
+   * Array of change requests for iterating on products and proposals from a previous get_products response. Each entry declares a scope (request, product, or proposal) and what the buyer is asking for. Only valid when buying_mode is 'refine'. The seller responds to each entry via refinement_applied in the response, matched by position.
+   */
+  refine?: (
+    | {
+        /**
+         * Change scoped to the overall request — direction for the selection as a whole.
+         */
+        scope: 'request';
+        /**
+         * What the buyer is asking for at the request level (e.g., 'more video options and less display', 'suggest how to combine these products').
+         */
+        ask: string;
+      }
+    | {
+        /**
+         * Change scoped to a specific product.
+         */
+        scope: 'product';
+        /**
+         * Product ID from a previous get_products response.
+         */
+        id: string;
+        /**
+         * 'include': return this product with updated pricing and data. 'omit': exclude this product from the response. 'more_like_this': find additional products similar to this one (the original is also returned).
+         */
+        action: 'include' | 'omit' | 'more_like_this';
+        /**
+         * What the buyer is asking for on this product. For 'include': specific changes to request (e.g., 'add 16:9 format'). For 'more_like_this': what 'similar' means (e.g., 'same audience but video format'). Ignored when action is 'omit'.
+         */
+        ask?: string;
+      }
+    | {
+        /**
+         * Change scoped to a specific proposal.
+         */
+        scope: 'proposal';
+        /**
+         * Proposal ID from a previous get_products response.
+         */
+        id: string;
+        /**
+         * 'include': return this proposal with updated allocations and pricing. 'omit': exclude this proposal from the response.
+         */
+        action: 'include' | 'omit';
+        /**
+         * What the buyer is asking for on this proposal (e.g., 'shift more budget toward video', 'reduce total by 10%'). Ignored when action is 'omit'.
+         */
+        ask?: string;
+      }
+  )[];
   brand?: BrandReference;
   catalog?: Catalog;
   account?: AccountReference;
@@ -23,15 +74,50 @@ export type GetProductsRequest = {
   buyer_campaign_ref?: string;
   filters?: ProductFilters;
   property_list?: PropertyListReference;
+  /**
+   * Specific product fields to include in the response. When omitted, all fields are returned. Use for lightweight discovery calls where only a subset of product data is needed (e.g., just IDs and pricing for comparison). Required fields (product_id, name) are always included regardless of selection.
+   */
+  fields?: (
+    | 'product_id'
+    | 'name'
+    | 'description'
+    | 'publisher_properties'
+    | 'channels'
+    | 'format_ids'
+    | 'placements'
+    | 'delivery_type'
+    | 'pricing_options'
+    | 'forecast'
+    | 'outcome_measurement'
+    | 'delivery_measurement'
+    | 'reporting_capabilities'
+    | 'creative_policy'
+    | 'catalog_types'
+    | 'metric_optimization'
+    | 'conversion_tracking'
+    | 'data_provider_signals'
+    | 'max_optimization_goals'
+    | 'catalog_match'
+    | 'brief_relevance'
+    | 'expires_at'
+    | 'product_card'
+    | 'product_card_detailed'
+  )[];
   pagination?: PaginationRequest;
   context?: ContextObject;
   ext?: ExtensionObject;
 } & (
   | {
       buying_mode: 'brief';
+      refine?: never;
     }
   | {
       buying_mode: 'wholesale';
+      brief?: never;
+      refine?: never;
+    }
+  | {
+      buying_mode: 'refine';
       brief?: never;
     }
 );
@@ -736,6 +822,27 @@ export interface GetProductsResponse {
    * Whether the seller filtered results based on the provided catalog. True if the seller matched catalog items against its inventory. Absent or false if no catalog was provided or the seller does not support catalog matching.
    */
   catalog_applied?: boolean;
+  /**
+   * Seller's response to each change request in the refine array, matched by position. Each entry acknowledges whether the corresponding ask was applied, partially applied, or unable to be fulfilled. MUST contain the same number of entries in the same order as the request's refine array. Only present when the request used buying_mode: 'refine'.
+   */
+  refinement_applied?: {
+    /**
+     * Echoes the scope from the corresponding refine entry. Allows orchestrators to cross-validate alignment.
+     */
+    scope?: 'request' | 'product' | 'proposal';
+    /**
+     * Echoes the id from the corresponding refine entry (for product and proposal scopes).
+     */
+    id?: string;
+    /**
+     * 'applied': the ask was fulfilled. 'partial': the ask was partially fulfilled — see notes for details. 'unable': the seller could not fulfill the ask — see notes for why.
+     */
+    status: 'applied' | 'partial' | 'unable';
+    /**
+     * Seller explanation of what was done, what couldn't be done, or why. Recommended when status is 'partial' or 'unable'.
+     */
+    notes?: string;
+  }[];
   pagination?: PaginationResponse;
   /**
    * When true, this response contains simulated data from sandbox mode.
@@ -782,7 +889,7 @@ export interface Product {
    */
   pricing_options: PricingOption[];
   forecast?: DeliveryForecast;
-  measurement?: Measurement;
+  outcome_measurement?: OutcomeMeasurement;
   /**
    * Measurement provider and methodology for delivery metrics. The buyer accepts the declared provider as the source of truth for the buy. REQUIRED for all products.
    */
@@ -836,7 +943,12 @@ export interface Product {
       | 'follows'
       | 'saves'
       | 'profile_visits'
+      | 'reach'
     )[];
+    /**
+     * Reach units this product can optimize for. Required when supported_metrics includes 'reach'. Buyers must set reach_unit to a value in this list on reach optimization goals — sellers reject unsupported values.
+     */
+    supported_reach_units?: ReachUnit[];
     /**
      * Video view duration thresholds (in seconds) this product supports for completed_views goals. Only relevant when supported_metrics includes 'completed_views'. When absent, the seller uses their platform default. Buyers must set view_duration_seconds to a value in this list — sellers reject unsupported values.
      */
@@ -1373,9 +1485,22 @@ export interface ForecastPoint {
    */
   budget: number;
   /**
-   * Forecasted metric values at this budget level. Keys are either forecastable-metric values for delivery/engagement (impressions, reach, spend, etc.) or event-type values for outcomes (purchase, lead, app_install, etc.). Values are ForecastRange objects (low/mid/high). Use { "mid": value } for point estimates. Include spend when the platform predicts it will differ from budget.
+   * Forecasted metric values at this budget level. Keys are forecastable-metric enum values for delivery/engagement or event-type enum values for outcomes. Values are ForecastRange objects (low/mid/high). Use { "mid": value } for point estimates. Include spend when the platform predicts it will differ from budget. Additional keys beyond the documented properties are allowed for event-type values (purchase, lead, app_install, etc.).
    */
   metrics: {
+    audience_size?: ForecastRange;
+    reach?: ForecastRange;
+    frequency?: ForecastRange;
+    impressions?: ForecastRange;
+    clicks?: ForecastRange;
+    spend?: ForecastRange;
+    views?: ForecastRange;
+    completed_views?: ForecastRange;
+    grps?: ForecastRange;
+    engagements?: ForecastRange;
+    follows?: ForecastRange;
+    saves?: ForecastRange;
+    profile_visits?: ForecastRange;
     [k: string]: ForecastRange | undefined;
   };
 }
@@ -1397,9 +1522,9 @@ export interface ForecastRange {
   high?: number;
 }
 /**
- * Measurement capabilities included with a product
+ * Business outcome measurement capabilities included with a product (e.g., incremental sales lift, brand lift, foot traffic). Distinct from delivery_measurement, which declares who counts ad impressions.
  */
-export interface Measurement {
+export interface OutcomeMeasurement {
   /**
    * Type of measurement
    */
@@ -1409,13 +1534,26 @@ export interface Measurement {
    */
   attribution: string;
   /**
-   * Attribution window
+   * Attribution window as a structured duration (e.g., {"interval": 30, "unit": "days"}).
    */
-  window?: string;
+  window?: Duration;
   /**
    * Reporting frequency and format
    */
   reporting: string;
+}
+/**
+ * A time duration expressed as an interval and unit. Used for frequency cap windows, attribution windows, reach optimization windows, and other time-based settings. When unit is 'campaign', interval must be 1 — the window spans the full campaign flight.
+ */
+export interface Duration {
+  /**
+   * Number of time units. Must be 1 when unit is 'campaign'.
+   */
+  interval: number;
+  /**
+   * Time unit. 'campaign' spans the full campaign flight.
+   */
+  unit: 'minutes' | 'hours' | 'days' | 'campaign';
 }
 /**
  * Reporting capabilities available for a product
@@ -1446,9 +1584,55 @@ export interface ReportingCapabilities {
    */
   supports_creative_breakdown?: boolean;
   /**
+   * Whether this product supports keyword-level metric breakdowns in delivery reporting (by_keyword within by_package)
+   */
+  supports_keyword_breakdown?: boolean;
+  supports_geo_breakdown?: GeographicBreakdownSupport;
+  /**
+   * Whether this product supports device type breakdowns in delivery reporting (by_device_type within by_package)
+   */
+  supports_device_type_breakdown?: boolean;
+  /**
+   * Whether this product supports device platform breakdowns in delivery reporting (by_device_platform within by_package)
+   */
+  supports_device_platform_breakdown?: boolean;
+  /**
+   * Whether this product supports audience segment breakdowns in delivery reporting (by_audience within by_package)
+   */
+  supports_audience_breakdown?: boolean;
+  /**
+   * Whether this product supports placement breakdowns in delivery reporting (by_placement within by_package)
+   */
+  supports_placement_breakdown?: boolean;
+  /**
    * Whether delivery data can be filtered to arbitrary date ranges. 'date_range' means the platform supports start_date/end_date parameters. 'lifetime_only' means the platform returns campaign lifetime totals and date range parameters are not accepted.
    */
   date_range_support: 'date_range' | 'lifetime_only';
+}
+/**
+ * Geographic breakdown support for this product. Declares which geo levels and systems are available for by_geo reporting within by_package.
+ */
+export interface GeographicBreakdownSupport {
+  /**
+   * Supports country-level geo breakdown (ISO 3166-1 alpha-2)
+   */
+  country?: boolean;
+  /**
+   * Supports region/state-level geo breakdown (ISO 3166-2)
+   */
+  region?: boolean;
+  /**
+   * Metro area breakdown support. Keys are metro-system enum values; true means supported.
+   */
+  metro?: {
+    [k: string]: boolean | undefined;
+  };
+  /**
+   * Postal area breakdown support. Keys are postal-system enum values; true means supported.
+   */
+  postal_area?: {
+    [k: string]: boolean | undefined;
+  };
 }
 /**
  * Creative requirements and restrictions for a product
@@ -1460,6 +1644,10 @@ export interface CreativePolicy {
    * Whether creative templates are provided
    */
   templates_available: boolean;
+  /**
+   * Whether creatives must include provenance metadata. When true, the seller requires buyers to attach provenance declarations to creative submissions. The seller may independently verify claims via get_creative_features.
+   */
+  provenance_required?: boolean;
 }
 /**
  * A proposed media plan with budget allocations across products. Represents the publisher's strategic recommendation for how to structure a campaign based on the brief. Proposals are actionable - buyers can execute them directly via create_media_buy by providing the proposal_id.
@@ -1574,7 +1762,7 @@ export interface DaypartTarget {
  */
 export interface Error {
   /**
-   * Error code for programmatic handling
+   * Error code for programmatic handling. Standard codes are defined in error-code.json and enable autonomous agent recovery. Sellers MAY use codes not in the standard vocabulary for platform-specific errors; agents MUST handle unknown codes gracefully by falling back to the recovery classification.
    */
   code: string;
   /**
@@ -1597,6 +1785,10 @@ export interface Error {
    * Additional task-specific error details
    */
   details?: {};
+  /**
+   * Agent recovery classification. transient: retry after delay (rate limit, service unavailable, timeout). correctable: fix the request and resend (invalid field, budget too low, creative rejected). terminal: requires human action (account suspended, payment required, account not found).
+   */
+  recovery?: 'transient' | 'correctable' | 'terminal';
 }
 /**
  * Standard cursor-based pagination metadata for list responses
@@ -1632,11 +1824,25 @@ export type AssetContentType =
   | 'vast'
   | 'daast'
   | 'url'
-  | 'webhook';
+  | 'webhook'
+  | 'brief'
+  | 'catalog';
 /**
  * Filter to formats that meet at least this WCAG conformance level (A < AA < AAA)
  */
 export type WCAGLevel = 'A' | 'AA' | 'AAA';
+/**
+ * Where a required disclosure should appear within a creative. Used by creative briefs to specify disclosure placement and by formats to declare which positions they can render.
+ */
+export type DisclosurePosition =
+  | 'prominent'
+  | 'footer'
+  | 'audio'
+  | 'subtitle'
+  | 'overlay'
+  | 'end_card'
+  | 'pre_roll'
+  | 'companion';
 
 /**
  * Request parameters for discovering supported creative formats
@@ -1676,6 +1882,10 @@ export interface ListCreativeFormatsRequest {
    */
   name_search?: string;
   wcag_level?: WCAGLevel;
+  /**
+   * Filter to formats whose supported_disclosure_positions include all of these positions. Use to find formats compatible with a brief's compliance requirements.
+   */
+  disclosure_positions?: DisclosurePosition[];
   /**
    * Filter to formats whose output_format_ids includes any of these format IDs. Returns formats that can produce these outputs — inspect each result's input_format_ids to see what inputs they accept.
    */
@@ -1766,44 +1976,6 @@ export type UniversalMacro =
   | 'DESTINATION_ID'
   | 'CREATIVE_VARIANT_ID'
   | 'APP_ITEM_ID';
-/**
- * Technical requirements for each item in this group (e.g., max_length for text, min_width/aspect_ratio for images). Applies uniformly to all items in the group.
- */
-export type AssetRequirements =
-  | ImageAssetRequirements
-  | VideoAssetRequirements
-  | AudioAssetRequirements
-  | TextAssetRequirements
-  | MarkdownAssetRequirements
-  | HTMLAssetRequirements
-  | CSSAssetRequirements
-  | JavaScriptAssetRequirements
-  | VASTAssetRequirements
-  | DAASTAssetRequirements
-  | URLAssetRequirements
-  | WebhookAssetRequirements;
-/**
- * Maps a format template slot to a catalog item field or typed asset pool. The 'kind' field identifies the binding variant. All bindings are optional — agents can still infer mappings without them.
- */
-export type CatalogFieldBinding =
-  | ScalarBinding
-  | AssetPoolBinding
-  | {
-      kind: 'catalog_group';
-      /**
-       * The asset_group_id of a repeatable_group in the format's assets array.
-       */
-      format_group_id: string;
-      /**
-       * Each repetition of the format's repeatable_group maps to one item from the catalog.
-       */
-      catalog_item: true;
-      /**
-       * Scalar and asset pool bindings that apply within each repetition of the group. Nested catalog_group bindings are not permitted.
-       */
-      per_item_bindings?: (ScalarBinding | AssetPoolBinding)[];
-      ext?: ExtensionObject;
-    };
 /**
  * Capabilities supported by creative agents for format handling
  */
@@ -1952,6 +2124,10 @@ export interface Format {
     requires_accessible_assets?: boolean;
   };
   /**
+   * Disclosure positions this format can render. Buyers use this to determine whether a format can satisfy their compliance requirements before submitting a creative. When omitted, the format makes no disclosure rendering guarantees — creative agents SHOULD treat this as incompatible with briefs that require specific disclosure positions. Values correspond to positions on creative-brief.json required_disclosures.
+   */
+  supported_disclosure_positions?: DisclosurePosition[];
+  /**
    * Optional detailed card with carousel and full specifications. Provides rich format documentation similar to ad spec pages.
    */
   format_card_detailed?: {
@@ -1961,10 +2137,6 @@ export interface Format {
      */
     manifest: {};
   };
-  /**
-   * Catalog feeds this format requires for rendering. Formats that display product listings, store locators, inventory availability, or promotional pricing declare what catalog types must be synced to the account. Buyers ensure the required catalogs are synced via sync_catalogs before submitting creatives in this format.
-   */
-  catalog_requirements?: CatalogRequirements[];
   /**
    * Metrics this format can produce in delivery reporting. Buyers receive the intersection of format reported_metrics and product available_metrics. If omitted, the format defers entirely to product-level metric declarations.
    */
@@ -1980,7 +2152,7 @@ export interface BaseIndividualAsset {
    */
   asset_id: string;
   /**
-   * Optional descriptive label for this asset's purpose (e.g., 'hero_image', 'logo', 'third_party_tracking'). Not used for referencing assets in manifests—use asset_id instead. This field is for human-readable documentation and UI display only.
+   * Descriptive label for this asset's purpose (e.g., 'hero_image', 'logo', 'third_party_tracking'). For documentation and UI display only — manifests key assets by asset_id, not asset_role.
    */
   asset_role?: string;
   /**
@@ -2053,7 +2225,7 @@ export interface BaseGroupAsset {
    */
   asset_id: string;
   /**
-   * Optional descriptive label for this asset's purpose. Not used for referencing assets in manifests—use asset_id instead. This field is for human-readable documentation and UI display only.
+   * Descriptive label for this asset's purpose. For documentation and UI display only — manifests key assets by asset_id, not asset_role.
    */
   asset_role?: string;
   /**
@@ -2066,386 +2238,6 @@ export interface BaseGroupAsset {
   overlays?: Overlay[];
 }
 /**
- * Format-level declaration of what catalog feeds a creative needs. Formats that render product listings, store locators, or promotional content declare which catalog types must be synced and what fields each catalog must provide. Buyers use this to ensure the right catalogs are synced before submitting creatives.
- */
-export interface CatalogRequirements {
-  catalog_type: CatalogType;
-  /**
-   * Whether this catalog type must be present. When true, creatives using this format must reference a synced catalog of this type.
-   */
-  required?: boolean;
-  /**
-   * Minimum number of items the catalog must contain for this format to render properly (e.g., a carousel might require at least 3 products)
-   */
-  min_items?: number;
-  /**
-   * Fields that must be present and non-empty on every item in the catalog. Field names are catalog-type-specific (e.g., 'title', 'price', 'image_url' for product catalogs; 'store_id', 'quantity' for inventory feeds).
-   */
-  required_fields?: string[];
-  /**
-   * Accepted feed formats for this catalog type. When specified, the synced catalog must use one of these formats. When omitted, any format is accepted.
-   */
-  feed_formats?: FeedFormat[];
-  /**
-   * Per-item creative asset requirements. Declares what asset groups (headlines, images, videos) each catalog item must provide in its assets array, along with count bounds and per-asset technical constraints. Applicable to 'offering' and all vertical catalog types (hotel, flight, job, etc.) whose items carry typed assets.
-   */
-  offering_asset_constraints?: OfferingAssetConstraint[];
-  /**
-   * Explicit mappings from format template slots to catalog item fields or typed asset pools. Optional — creative agents can infer mappings without them, but bindings make the relationship self-describing and enable validation. Covers scalar fields (asset_id → catalog_field), asset pools (asset_id → asset_group_id on the catalog item), and repeatable groups that iterate over catalog items.
-   */
-  field_bindings?: CatalogFieldBinding[];
-}
-/**
- * Declares per-group creative requirements that each offering must satisfy. Allows formats to specify what asset groups (headlines, images, videos) offerings must provide, along with count and per-asset technical constraints.
- */
-export interface OfferingAssetConstraint {
-  /**
-   * The asset group this constraint applies to. Values are format-defined vocabulary — each format chooses its own group IDs (e.g., 'headlines', 'images', 'videos'). Buyers discover them via list_creative_formats.
-   */
-  asset_group_id: string;
-  asset_type: AssetContentType;
-  /**
-   * Whether this asset group must be present in each offering. Defaults to true.
-   */
-  required?: boolean;
-  /**
-   * Minimum number of items required in this group.
-   */
-  min_count?: number;
-  /**
-   * Maximum number of items allowed in this group.
-   */
-  max_count?: number;
-  asset_requirements?: AssetRequirements;
-  ext?: ExtensionObject;
-}
-/**
- * Requirements for image creative assets. These define the technical constraints for image files.
- */
-export interface ImageAssetRequirements {
-  /**
-   * Minimum width in pixels. For exact dimensions, set min_width = max_width.
-   */
-  min_width?: number;
-  /**
-   * Maximum width in pixels. For exact dimensions, set min_width = max_width.
-   */
-  max_width?: number;
-  /**
-   * Minimum height in pixels. For exact dimensions, set min_height = max_height.
-   */
-  min_height?: number;
-  /**
-   * Maximum height in pixels. For exact dimensions, set min_height = max_height.
-   */
-  max_height?: number;
-  /**
-   * Required aspect ratio (e.g., '16:9', '1:1', '1.91:1')
-   */
-  aspect_ratio?: string;
-  /**
-   * Accepted image file formats
-   */
-  formats?: ('jpg' | 'jpeg' | 'png' | 'gif' | 'webp' | 'svg' | 'avif')[];
-  /**
-   * Maximum file size in kilobytes
-   */
-  max_file_size_kb?: number;
-  /**
-   * Whether the image must support transparency (requires PNG, WebP, or GIF)
-   */
-  transparency_required?: boolean;
-  /**
-   * Whether animated images (GIF, animated WebP) are accepted
-   */
-  animation_allowed?: boolean;
-  /**
-   * Maximum animation duration in milliseconds (if animation_allowed is true)
-   */
-  max_animation_duration_ms?: number;
-}
-/**
- * Requirements for video creative assets. These define the technical constraints for video files.
- */
-export interface VideoAssetRequirements {
-  /**
-   * Minimum width in pixels
-   */
-  min_width?: number;
-  /**
-   * Maximum width in pixels
-   */
-  max_width?: number;
-  /**
-   * Minimum height in pixels
-   */
-  min_height?: number;
-  /**
-   * Maximum height in pixels
-   */
-  max_height?: number;
-  /**
-   * Required aspect ratio (e.g., '16:9', '9:16')
-   */
-  aspect_ratio?: string;
-  /**
-   * Minimum duration in milliseconds
-   */
-  min_duration_ms?: number;
-  /**
-   * Maximum duration in milliseconds
-   */
-  max_duration_ms?: number;
-  /**
-   * Accepted video container formats
-   */
-  containers?: ('mp4' | 'webm' | 'mov' | 'avi' | 'mkv')[];
-  /**
-   * Accepted video codecs
-   */
-  codecs?: ('h264' | 'h265' | 'vp8' | 'vp9' | 'av1')[];
-  /**
-   * Maximum file size in kilobytes
-   */
-  max_file_size_kb?: number;
-  /**
-   * Minimum video bitrate in kilobits per second
-   */
-  min_bitrate_kbps?: number;
-  /**
-   * Maximum video bitrate in kilobits per second
-   */
-  max_bitrate_kbps?: number;
-  /**
-   * Accepted frame rates in frames per second (e.g., [24, 30, 60])
-   */
-  frame_rates?: number[];
-  /**
-   * Whether the video must include an audio track
-   */
-  audio_required?: boolean;
-}
-/**
- * Requirements for audio creative assets.
- */
-export interface AudioAssetRequirements {
-  /**
-   * Minimum duration in milliseconds
-   */
-  min_duration_ms?: number;
-  /**
-   * Maximum duration in milliseconds
-   */
-  max_duration_ms?: number;
-  /**
-   * Accepted audio file formats
-   */
-  formats?: ('mp3' | 'aac' | 'wav' | 'ogg' | 'flac')[];
-  /**
-   * Maximum file size in kilobytes
-   */
-  max_file_size_kb?: number;
-  /**
-   * Accepted sample rates in Hz (e.g., [44100, 48000])
-   */
-  sample_rates?: number[];
-  /**
-   * Accepted audio channel configurations
-   */
-  channels?: ('mono' | 'stereo')[];
-  /**
-   * Minimum audio bitrate in kilobits per second
-   */
-  min_bitrate_kbps?: number;
-  /**
-   * Maximum audio bitrate in kilobits per second
-   */
-  max_bitrate_kbps?: number;
-}
-/**
- * Requirements for text creative assets such as headlines, body copy, and CTAs.
- */
-export interface TextAssetRequirements {
-  /**
-   * Minimum character length
-   */
-  min_length?: number;
-  /**
-   * Maximum character length
-   */
-  max_length?: number;
-  /**
-   * Minimum number of lines
-   */
-  min_lines?: number;
-  /**
-   * Maximum number of lines
-   */
-  max_lines?: number;
-  /**
-   * Regex pattern defining allowed characters (e.g., '^[a-zA-Z0-9 .,!?-]+$')
-   */
-  character_pattern?: string;
-  /**
-   * List of prohibited words or phrases
-   */
-  prohibited_terms?: string[];
-}
-/**
- * Requirements for markdown creative assets.
- */
-export interface MarkdownAssetRequirements {
-  /**
-   * Maximum character length
-   */
-  max_length?: number;
-}
-/**
- * Requirements for HTML creative assets. These define the execution environment constraints that the HTML must be compatible with.
- */
-export interface HTMLAssetRequirements {
-  /**
-   * Maximum file size in kilobytes for the HTML asset
-   */
-  max_file_size_kb?: number;
-  /**
-   * Sandbox environment the HTML must be compatible with. 'none' = direct DOM access, 'iframe' = standard iframe isolation, 'safeframe' = IAB SafeFrame container, 'fencedframe' = Privacy Sandbox fenced frame
-   */
-  sandbox?: 'none' | 'iframe' | 'safeframe' | 'fencedframe';
-  /**
-   * Whether the HTML creative can load external resources (scripts, images, fonts, etc.). When false, all resources must be inlined or bundled.
-   */
-  external_resources_allowed?: boolean;
-  /**
-   * List of domains the HTML creative may reference for external resources. Only applicable when external_resources_allowed is true.
-   */
-  allowed_external_domains?: string[];
-}
-/**
- * Requirements for CSS creative assets.
- */
-export interface CSSAssetRequirements {
-  /**
-   * Maximum file size in kilobytes
-   */
-  max_file_size_kb?: number;
-}
-/**
- * Requirements for JavaScript creative assets. These define the execution environment constraints that the JavaScript must be compatible with.
- */
-export interface JavaScriptAssetRequirements {
-  /**
-   * Maximum file size in kilobytes for the JavaScript asset
-   */
-  max_file_size_kb?: number;
-  /**
-   * Required JavaScript module format. 'script' = classic script, 'module' = ES modules, 'iife' = immediately invoked function expression
-   */
-  module_type?: 'script' | 'module' | 'iife';
-  /**
-   * Whether the JavaScript must use strict mode
-   */
-  strict_mode_required?: boolean;
-  /**
-   * Whether the JavaScript can load external resources dynamically
-   */
-  external_resources_allowed?: boolean;
-  /**
-   * List of domains the JavaScript may reference for external resources. Only applicable when external_resources_allowed is true.
-   */
-  allowed_external_domains?: string[];
-}
-/**
- * Requirements for VAST (Video Ad Serving Template) creative assets.
- */
-export interface VASTAssetRequirements {
-  /**
-   * Required VAST version
-   */
-  vast_version?: '2.0' | '3.0' | '4.0' | '4.1' | '4.2';
-}
-/**
- * Requirements for DAAST (Digital Audio Ad Serving Template) creative assets.
- */
-export interface DAASTAssetRequirements {
-  /**
-   * Required DAAST version. DAAST 1.0 is the current IAB standard.
-   */
-  daast_version?: '1.0';
-}
-/**
- * Requirements for URL assets such as click-through URLs, tracking pixels, and landing pages.
- */
-export interface URLAssetRequirements {
-  /**
-   * Standard role for this URL asset. Use this to constrain which purposes are valid for this URL slot. Complements asset_role (which is a human-readable label) by providing a machine-readable enum.
-   */
-  role?:
-    | 'clickthrough'
-    | 'landing_page'
-    | 'impression_tracker'
-    | 'click_tracker'
-    | 'viewability_tracker'
-    | 'third_party_tracker';
-  /**
-   * Allowed URL protocols. HTTPS is recommended for all ad URLs.
-   */
-  protocols?: ('https' | 'http')[];
-  /**
-   * List of allowed domains for the URL
-   */
-  allowed_domains?: string[];
-  /**
-   * Maximum URL length in characters
-   */
-  max_length?: number;
-  /**
-   * Whether the URL supports macro substitution (e.g., ${CACHEBUSTER})
-   */
-  macro_support?: boolean;
-}
-/**
- * Requirements for webhook creative assets.
- */
-export interface WebhookAssetRequirements {
-  /**
-   * Allowed HTTP methods
-   */
-  methods?: ('GET' | 'POST')[];
-}
-/**
- * Maps an individual format asset to a catalog item field via dot-notation path.
- */
-export interface ScalarBinding {
-  kind: 'scalar';
-  /**
-   * The asset_id from the format's assets array. Identifies which individual template slot this binding applies to.
-   */
-  asset_id: string;
-  /**
-   * Dot-notation path to the field on the catalog item (e.g., 'name', 'price.amount', 'location.city').
-   */
-  catalog_field: string;
-  ext?: ExtensionObject;
-}
-/**
- * Maps an individual format asset to a typed asset pool on the catalog item (e.g., images_landscape, images_vertical, logo). The format slot receives the first item in the pool.
- */
-export interface AssetPoolBinding {
-  kind: 'asset_pool';
-  /**
-   * The asset_id from the format's assets array. Identifies which individual template slot this binding applies to.
-   */
-  asset_id: string;
-  /**
-   * The asset_group_id on the catalog item's assets array to pull from (e.g., 'images_landscape', 'images_vertical', 'logo').
-   */
-  asset_group_id: string;
-  ext?: ExtensionObject;
-}
-
-// create_media_buy parameters
-/**
  * Budget pacing strategy
  */
 export type Pacing = 'even' | 'asap' | 'front_loaded';
@@ -2456,7 +2248,7 @@ export type OptimizationGoal =
   | {
       kind: 'metric';
       /**
-       * Seller-native metric to optimize for. Delivery metrics: clicks (link clicks, swipe-throughs, CTA taps that navigate away), views (viewable impressions), completed_views (video/audio completions — see view_duration_seconds). Duration/score metrics: viewed_seconds (time in view per impression), attention_seconds (attention time per impression), attention_score (vendor-specific attention score). Audience action metrics: engagements (any direct interaction with the ad unit beyond viewing — social reactions/comments/shares, story/unit opens, interactive overlay taps, companion banner interactions on audio and CTV), follows (new followers, page likes, artist/podcast/channel subscribes), saves (saves, bookmarks, playlist adds, pins — signals of intent to return), profile_visits (visits to the brand's in-platform page — profile, artist page, channel, or storefront. Does not include external website clicks, which are covered by 'clicks').
+       * Seller-native metric to optimize for. Delivery metrics: clicks (link clicks, swipe-throughs, CTA taps that navigate away), views (viewable impressions), completed_views (video/audio completions — see view_duration_seconds), reach (unique audience reach — see reach_unit and target_frequency). Duration/score metrics: viewed_seconds (time in view per impression), attention_seconds (attention time per impression), attention_score (vendor-specific attention score). Audience action metrics: engagements (any direct interaction with the ad unit beyond viewing — social reactions/comments/shares, story/unit opens, interactive overlay taps, companion banner interactions on audio and CTV), follows (new followers, page likes, artist/podcast/channel subscribes), saves (saves, bookmarks, playlist adds, pins — signals of intent to return), profile_visits (visits to the brand's in-platform page — profile, artist page, channel, or storefront. Does not include external website clicks, which are covered by 'clicks').
        */
       metric:
         | 'clicks'
@@ -2468,7 +2260,18 @@ export type OptimizationGoal =
         | 'engagements'
         | 'follows'
         | 'saves'
-        | 'profile_visits';
+        | 'profile_visits'
+        | 'reach';
+      /**
+       * Unit for reach measurement. Required when metric is 'reach'. Must be a value declared in the product's metric_optimization.supported_reach_units.
+       */
+      reach_unit?: ReachUnit;
+      /**
+       * Target frequency band for reach optimization. Only applicable when metric is 'reach'. Frames frequency as an optimization signal: the seller should treat impressions toward entities already within the [min, max] band as lower-value, and impressions toward unreached entities as higher-value. This shifts budget toward fresh reach rather than re-reaching known users. When omitted, the seller maximizes unique reach without a frequency constraint. A hard cap can still be layered via targeting_overlay.frequency_cap if a ceiling is needed.
+       */
+      target_frequency?: {
+        [k: string]: unknown | undefined;
+      };
       /**
        * Minimum video view duration in seconds that qualifies as a completed_view for this goal. Only applicable when metric is 'completed_views'. When omitted, the seller uses their platform default (typically 2–15 seconds). Common values: 2 (Snap/LinkedIn default), 6 (TikTok), 15 (Snap 15-second views, Meta ThruPlay). Sellers declare which durations they support in metric_optimization.supported_view_durations. Sellers must reject goals with unsupported values — silent rounding would create measurement discrepancies.
        */
@@ -2546,13 +2349,13 @@ export type OptimizationGoal =
        */
       attribution_window?: {
         /**
-         * Click-through attribution window (e.g. '7d', '28d', '30d')
+         * Post-click attribution window. Conversions within this duration after a click are attributed to the ad (e.g. {"interval": 7, "unit": "days"}).
          */
-        click_through: string;
+        post_click: Duration;
         /**
-         * View-through attribution window (e.g. '1d', '7d')
+         * Post-view attribution window. Conversions within this duration after an ad impression (without click) are attributed to the ad (e.g. {"interval": 1, "unit": "days"}).
          */
-        view_through?: string;
+        post_view?: Duration;
       };
       /**
        * Relative priority among all optimization goals on this package. 1 = highest priority (primary goal); higher numbers are lower priority (secondary signals). When omitted, sellers may use array position as priority.
@@ -2575,6 +2378,33 @@ export type PostalCodeSystem =
   | 'ch_plz'
   | 'at_plz';
 /**
+ * Frequency capping settings for package-level application. Two types of frequency control can be used independently or together: suppress enforces a cooldown between consecutive exposures; max_impressions + per + window caps total exposures per entity in a time window. When both suppress and max_impressions are set, an impression is delivered only if both constraints permit it (AND semantics). At least one of suppress, suppress_minutes, or max_impressions must be set.
+ */
+export type FrequencyCap = {
+  [k: string]: unknown | undefined;
+} & {
+  /**
+   * Cooldown period between consecutive exposures to the same entity. Prevents back-to-back ad delivery (e.g. {"interval": 60, "unit": "minutes"} for a 1-hour cooldown). Preferred over suppress_minutes.
+   */
+  suppress?: Duration;
+  /**
+   * Deprecated — use suppress instead. Cooldown period in minutes between consecutive exposures to the same entity (e.g. 60 for a 1-hour cooldown).
+   */
+  suppress_minutes?: number;
+  /**
+   * Maximum number of impressions per entity per window. For duration windows, implementations typically use a rolling window; 'campaign' applies a fixed cap across the full flight.
+   */
+  max_impressions?: number;
+  /**
+   * Entity granularity for impression counting. Required when max_impressions is set.
+   */
+  per?: ReachUnit;
+  /**
+   * Time window for the max_impressions cap (e.g. {"interval": 7, "unit": "days"} or {"interval": 1, "unit": "campaign"} for the full flight). Required when max_impressions is set.
+   */
+  window?: Duration;
+};
+/**
  * Methods for verifying user age for compliance. Does not include 'inferred' as it is not accepted for regulatory compliance.
  */
 export type AgeVerificationMethod = 'facial_age_estimation' | 'id_document' | 'digital_id' | 'credit_card' | 'world_id';
@@ -2595,9 +2425,22 @@ export type DevicePlatform =
   | 'roku_os'
   | 'unknown';
 /**
- * JavaScript module type
+ * Device form factor categories for targeting and reporting. Complements device-platform (operating system) with hardware classification. OpenRTB mapping: 1 (Mobile/Tablet General) → mobile, 2 (PC) → desktop, 4 (Phone) → mobile, 5 (Tablet) → tablet, 6 (Connected Device) → ctv, 7 (Set Top Box) → ctv. DOOH inventory uses dooh.
  */
-export type JavaScriptModuleType = 'esm' | 'commonjs' | 'script';
+export type DeviceType = 'desktop' | 'mobile' | 'tablet' | 'ctv' | 'dooh' | 'unknown';
+/**
+ * IPTC-aligned classification of AI involvement in producing this content
+ */
+export type DigitalSourceType =
+  | 'digital_capture'
+  | 'digital_creation'
+  | 'trained_algorithmic_media'
+  | 'composite_with_trained_algorithmic_media'
+  | 'algorithmic_media'
+  | 'composite_capture'
+  | 'composite_synthetic'
+  | 'human_edits'
+  | 'data_driven_media';
 /**
  * VAST (Video Ad Serving Template) tag for third-party video ad serving
  */
@@ -2632,6 +2475,7 @@ export type VASTAsset =
        * URL to audio description track for visually impaired users
        */
       audio_description_url?: string;
+      provenance?: Provenance;
     }
   | {
       /**
@@ -2663,6 +2507,7 @@ export type VASTAsset =
        * URL to audio description track for visually impaired users
        */
       audio_description_url?: string;
+      provenance?: Provenance;
     };
 /**
  * VAST specification version
@@ -2688,6 +2533,26 @@ export type VASTTrackingEvent =
   | 'exitFullscreen'
   | 'playerExpand'
   | 'playerCollapse';
+/**
+ * Type of URL asset: 'clickthrough' for user click destination (landing page), 'tracker_pixel' for impression/event tracking via HTTP request (fires GET, expects pixel/204 response), 'tracker_script' for measurement SDKs that must load as <script> tag (OMID verification, native event trackers using method:2)
+ */
+export type URLAssetType = 'clickthrough' | 'tracker_pixel' | 'tracker_script';
+/**
+ * JavaScript module type
+ */
+export type JavaScriptModuleType = 'esm' | 'commonjs' | 'script';
+/**
+ * HTTP method
+ */
+export type HTTPMethod = 'GET' | 'POST';
+/**
+ * Expected content type of webhook response
+ */
+export type WebhookResponseType = 'html' | 'json' | 'xml' | 'javascript';
+/**
+ * Authentication method
+ */
+export type WebhookSecurityMethod = 'hmac_sha256' | 'api_key' | 'none';
 /**
  * DAAST (Digital Audio Ad Serving Template) tag for third-party audio ad serving
  */
@@ -2718,6 +2583,7 @@ export type DAASTAsset =
        * URL to text transcript of the audio content
        */
       transcript_url?: string;
+      provenance?: Provenance;
     }
   | {
       /**
@@ -2745,6 +2611,7 @@ export type DAASTAsset =
        * URL to text transcript of the audio content
        */
       transcript_url?: string;
+      provenance?: Provenance;
     };
 /**
  * DAAST specification version
@@ -2766,9 +2633,17 @@ export type DAASTTrackingEvent =
   | 'mute'
   | 'unmute';
 /**
- * Type of URL asset: 'clickthrough' for user click destination (landing page), 'tracker_pixel' for impression/event tracking via HTTP request (fires GET, expects pixel/204 response), 'tracker_script' for measurement SDKs that must load as <script> tag (OMID verification, native event trackers using method:2)
+ * Markdown flavor used. CommonMark for strict compatibility, GFM for tables/task lists/strikethrough.
  */
-export type URLAssetType = 'clickthrough' | 'tracker_pixel' | 'tracker_script';
+export type MarkdownFlavor = 'commonmark' | 'gfm';
+/**
+ * Campaign-level creative context as an asset. Carries the creative brief through the manifest so it travels with the creative through regeneration, resizing, and auditing.
+ */
+export type BriefAsset = CreativeBrief;
+/**
+ * A typed data feed as a creative asset. Carries catalog context (products, stores, jobs, etc.) within the manifest's assets map.
+ */
+export type CatalogAsset = Catalog;
 /**
  * For generative creatives: set to 'approved' to finalize, 'rejected' to request regeneration with updated assets/message. Omit for non-generative creatives (system will set based on processing state).
  */
@@ -2786,7 +2661,7 @@ export type AuthenticationScheme = 'Bearer' | 'HMAC-SHA256';
  */
 export interface CreateMediaBuyRequest {
   /**
-   * Buyer's reference identifier for this media buy
+   * Buyer's reference identifier for this media buy. Also serves as an idempotency key: sellers SHOULD deduplicate requests with the same buyer_ref and account, returning the existing media buy rather than creating a duplicate.
    */
   buyer_ref: string;
   /**
@@ -2907,7 +2782,10 @@ export interface PackageRequest {
    * Whether this package should be created in a paused state. Paused packages do not deliver impressions. Defaults to false.
    */
   paused?: boolean;
-  catalog?: Catalog;
+  /**
+   * Catalogs this package promotes. Each catalog MUST have a distinct type (e.g., one product catalog, one store catalog). This constraint is enforced at the application level — sellers MUST reject requests containing multiple catalogs of the same type with a validation_error. Makes the package catalog-driven: one budget envelope, platform optimizes across items.
+   */
+  catalogs?: Catalog[];
   /**
    * Optimization targets for this package. The seller optimizes delivery toward these goals in priority order. Common pattern: event goals (purchase, install) as primary targets at priority 1; metric goals (clicks, views) as secondary proxy signals at priority 2+.
    */
@@ -2926,7 +2804,7 @@ export interface PackageRequest {
   ext?: ExtensionObject;
 }
 /**
- * Optional restriction overlays for media buys. Most targeting should be expressed in the brief and handled by the publisher. These fields are for functional restrictions: geographic (RCT testing, regulatory compliance), age verification (alcohol, gambling), device platform (app compatibility), and language (localization).
+ * Optional restriction overlays for media buys. Most targeting should be expressed in the brief and handled by the publisher. These fields are for functional restrictions: geographic (RCT testing, regulatory compliance, proximity targeting), age verification (alcohol, gambling), device platform (app compatibility), language (localization), and keyword targeting (search/retail media).
  */
 export interface TargetingOverlay {
   /**
@@ -3029,6 +2907,14 @@ export interface TargetingOverlay {
    */
   device_platform?: DevicePlatform[];
   /**
+   * Restrict to specific device form factors. Use for campaigns targeting hardware categories rather than operating systems (e.g., mobile-only promotions, CTV campaigns).
+   */
+  device_type?: DeviceType[];
+  /**
+   * Exclude specific device form factors from delivery (e.g., exclude CTV for app-install campaigns).
+   */
+  device_type_exclude?: DeviceType[];
+  /**
    * Target users within store catchment areas from a synced store catalog. Each entry references a store-type catalog and optionally narrows to specific stores or catchment zones.
    */
   store_catchments?: {
@@ -3046,18 +2932,45 @@ export interface TargetingOverlay {
     catchment_ids?: string[];
   }[];
   /**
+   * Target users within travel time, distance, or a custom boundary around arbitrary geographic points. Multiple entries use OR semantics — a user within range of any listed point is eligible. For campaigns targeting 10+ locations, consider using store_catchments with a location catalog instead. Seller must declare support in get_adcp_capabilities.
+   */
+  geo_proximity?: {
+    [k: string]: unknown | undefined;
+  }[];
+  /**
    * Restrict to users with specific language preferences. ISO 639-1 codes (e.g., 'en', 'es', 'fr').
    */
   language?: string[];
-}
-/**
- * Frequency capping settings for package-level application
- */
-export interface FrequencyCap {
   /**
-   * Minutes to suppress after impression
+   * Keyword targeting for search and retail media platforms. Restricts delivery to queries matching the specified keywords. Each keyword is identified by the tuple (keyword, match_type) — the same keyword string with different match types are distinct targets. Sellers SHOULD reject duplicate (keyword, match_type) pairs within a single request. Seller must declare support in get_adcp_capabilities.
    */
-  suppress_minutes: number;
+  keyword_targets?: {
+    /**
+     * The keyword to target
+     */
+    keyword: string;
+    /**
+     * Match type: broad matches related queries, phrase matches queries containing the keyword phrase, exact matches the query exactly
+     */
+    match_type: 'broad' | 'phrase' | 'exact';
+    /**
+     * Per-keyword bid price, denominated in the same currency as the package's pricing option. Overrides the package-level bid_price for this keyword. Inherits the max_bid interpretation from the pricing option: when max_bid is true, this is the keyword's bid ceiling; when false, this is the exact bid. If omitted, the package bid_price applies.
+     */
+    bid_price?: number;
+  }[];
+  /**
+   * Keywords to exclude from delivery. Queries matching these keywords will not trigger the ad. Each negative keyword is identified by the tuple (keyword, match_type). Seller must declare support in get_adcp_capabilities.
+   */
+  negative_keywords?: {
+    /**
+     * The keyword to exclude
+     */
+    keyword: string;
+    /**
+     * Match type for exclusion
+     */
+    match_type: 'broad' | 'phrase' | 'exact';
+  }[];
 }
 /**
  * Assignment of a creative asset to a package with optional placement targeting. Used in create_media_buy and update_media_buy requests. Note: sync_creatives does not support placement_ids - use create/update_media_buy for placement-level targeting.
@@ -3068,7 +2981,7 @@ export interface CreativeAssignment {
    */
   creative_id: string;
   /**
-   * Delivery weight for this creative
+   * Relative delivery weight for this creative (0–100). When multiple creatives are assigned to the same package, weights determine impression distribution proportionally — a creative with weight 2 gets twice the delivery of weight 1. When omitted, the creative receives equal rotation with other unweighted creatives. A weight of 0 means the creative is assigned but paused (receives no delivery).
    */
   weight?: number;
   /**
@@ -3090,28 +3003,28 @@ export interface CreativeAsset {
   name: string;
   format_id: FormatID;
   /**
-   * Catalogs this creative renders. Each entry satisfies one of the format's catalog_requirements, matched by type. Each catalog can be inline (with items), a reference to a synced catalog (by catalog_id), or a URL to an external feed.
-   */
-  catalogs?: Catalog[];
-  /**
-   * Assets required by the format, keyed by asset_role
+   * Assets required by the format, keyed by asset_id
    */
   assets: {
     /**
      * This interface was referenced by `undefined`'s JSON-Schema definition
-     * via the `patternProperty` "^[a-zA-Z0-9_-]+$".
+     * via the `patternProperty` "^[a-z0-9_]+$".
      */
     [k: string]:
       | ImageAsset
       | VideoAsset
       | AudioAsset
-      | TextAsset
-      | HTMLAsset
-      | CSSAsset
-      | JavaScriptAsset
       | VASTAsset
+      | TextAsset
+      | URLAsset
+      | HTMLAsset
+      | JavaScriptAsset
+      | WebhookAsset
+      | CSSAsset
       | DAASTAsset
-      | URLAsset;
+      | MarkdownAsset
+      | BriefAsset
+      | CatalogAsset;
   };
   /**
    * Preview contexts for generative formats - defines what scenarios to generate previews for
@@ -3145,6 +3058,7 @@ export interface CreativeAsset {
    * Optional array of placement IDs where this creative should run when uploading via create_media_buy or update_media_buy. References placement_id values from the product's placements array. If omitted, creative runs on all placements. Only used during upload to media buy - not stored in creative library.
    */
   placement_ids?: string[];
+  provenance?: Provenance;
 }
 /**
  * Image asset with URL and dimensions
@@ -3170,6 +3084,116 @@ export interface ImageAsset {
    * Alternative text for accessibility
    */
   alt_text?: string;
+  provenance?: Provenance;
+}
+/**
+ * Provenance metadata for this asset, overrides manifest-level provenance
+ */
+export interface Provenance {
+  digital_source_type?: DigitalSourceType;
+  /**
+   * AI system used to generate or modify this content. Aligns with IPTC 2025.1 AI metadata fields and C2PA claim_generator.
+   */
+  ai_tool?: {
+    /**
+     * Name of the AI tool or model (e.g., 'DALL-E 3', 'Stable Diffusion XL', 'Gemini')
+     */
+    name: string;
+    /**
+     * Version identifier for the AI tool
+     */
+    version?: string;
+    /**
+     * Organization that provides the AI tool (e.g., 'OpenAI', 'Stability AI', 'Google')
+     */
+    provider?: string;
+  };
+  /**
+   * Level of human involvement in the AI-assisted creation process
+   */
+  human_oversight?: 'none' | 'prompt_only' | 'selected' | 'edited' | 'directed';
+  /**
+   * Party declaring this provenance. Identifies who attached the provenance claim, enabling receiving parties to assess trust.
+   */
+  declared_by?: {
+    /**
+     * URL of the agent or service that declared this provenance
+     */
+    agent_url?: string;
+    /**
+     * Role of the declaring party in the supply chain
+     */
+    role: 'creator' | 'advertiser' | 'agency' | 'platform' | 'tool';
+  };
+  /**
+   * When this content was created or generated (ISO 8601)
+   */
+  created_time?: string;
+  /**
+   * C2PA Content Credentials reference. Links to the cryptographic provenance manifest for this content. Because file-level C2PA bindings break during ad-tech transcoding, this URL reference preserves the chain of provenance through the supply chain.
+   */
+  c2pa?: {
+    /**
+     * URL to the C2PA manifest store for this content
+     */
+    manifest_url: string;
+  };
+  /**
+   * Regulatory disclosure requirements for this content. Indicates whether AI disclosure is required and under which jurisdictions.
+   */
+  disclosure?: {
+    /**
+     * Whether AI disclosure is required for this content based on applicable regulations
+     */
+    required: boolean;
+    /**
+     * Jurisdictions where disclosure obligations apply
+     */
+    jurisdictions?: {
+      /**
+       * ISO 3166-1 alpha-2 country code (e.g., 'US', 'DE', 'CN')
+       */
+      country: string;
+      /**
+       * Sub-national region code (e.g., 'CA' for California, 'BY' for Bavaria)
+       */
+      region?: string;
+      /**
+       * Regulation identifier (e.g., 'eu_ai_act_article_50', 'ca_sb_942', 'cn_deep_synthesis')
+       */
+      regulation: string;
+      /**
+       * Required disclosure label text for this jurisdiction, in the local language
+       */
+      label_text?: string;
+    }[];
+  };
+  /**
+   * Third-party verification or detection results for this content. Multiple services may independently evaluate the same content. Provenance is a claim — verification results attached by the declaring party are supplementary. The enforcing party (e.g., seller/publisher) should run its own verification via get_creative_features or calibrate_content.
+   */
+  verification?: {
+    /**
+     * Name of the verification service (e.g., 'DoubleVerify', 'Hive Moderation', 'Reality Defender')
+     */
+    verified_by: string;
+    /**
+     * When the verification was performed (ISO 8601)
+     */
+    verified_time?: string;
+    /**
+     * Verification outcome
+     */
+    result: 'authentic' | 'ai_generated' | 'ai_modified' | 'inconclusive';
+    /**
+     * Confidence score of the verification result (0.0 to 1.0)
+     */
+    confidence?: number;
+    /**
+     * URL to the full verification report
+     */
+    details_url?: string;
+  }[];
+  ext?: ExtensionObject;
 }
 /**
  * Video asset with URL and technical specifications including audio track properties
@@ -3291,6 +3315,7 @@ export interface VideoAsset {
    * URL to audio description track for visually impaired users
    */
   audio_description_url?: string;
+  provenance?: Provenance;
 }
 /**
  * Audio asset with URL and technical specifications
@@ -3344,6 +3369,7 @@ export interface AudioAsset {
    * URL to text transcript of the audio content
    */
   transcript_url?: string;
+  provenance?: Provenance;
 }
 /**
  * Text content asset
@@ -3357,6 +3383,22 @@ export interface TextAsset {
    * Language code (e.g., 'en', 'es', 'fr')
    */
   language?: string;
+  provenance?: Provenance;
+}
+/**
+ * URL reference asset
+ */
+export interface URLAsset {
+  /**
+   * URL reference
+   */
+  url: string;
+  url_type?: URLAssetType;
+  /**
+   * Description of what this URL points to
+   */
+  description?: string;
+  provenance?: Provenance;
 }
 /**
  * HTML content asset
@@ -3391,19 +3433,7 @@ export interface HTMLAsset {
      */
     screen_reader_tested?: boolean;
   };
-}
-/**
- * CSS stylesheet asset
- */
-export interface CSSAsset {
-  /**
-   * CSS content
-   */
-  content: string;
-  /**
-   * CSS media query context (e.g., 'screen', 'print')
-   */
-  media?: string;
+  provenance?: Provenance;
 }
 /**
  * JavaScript code asset
@@ -3435,18 +3465,177 @@ export interface JavaScriptAsset {
      */
     screen_reader_tested?: boolean;
   };
+  provenance?: Provenance;
 }
 /**
- * URL reference asset
+ * Webhook for server-side dynamic content rendering (DCO)
  */
-export interface URLAsset {
+export interface WebhookAsset {
   /**
-   * URL reference
+   * Webhook URL to call for dynamic content
    */
   url: string;
-  url_type?: URLAssetType;
+  method?: HTTPMethod;
   /**
-   * Description of what this URL points to
+   * Maximum time to wait for response in milliseconds
+   */
+  timeout_ms?: number;
+  /**
+   * Universal macros that can be passed to webhook (e.g., DEVICE_TYPE, COUNTRY). See docs/creative/universal-macros.mdx for full list.
+   */
+  supported_macros?: (UniversalMacro | string)[];
+  /**
+   * Universal macros that must be provided for webhook to function
+   */
+  required_macros?: (UniversalMacro | string)[];
+  response_type: WebhookResponseType;
+  /**
+   * Security configuration for webhook calls
+   */
+  security: {
+    method: WebhookSecurityMethod;
+    /**
+     * Header name for HMAC signature (e.g., 'X-Signature')
+     */
+    hmac_header?: string;
+    /**
+     * Header name for API key (e.g., 'X-API-Key')
+     */
+    api_key_header?: string;
+  };
+  provenance?: Provenance;
+}
+/**
+ * CSS stylesheet asset
+ */
+export interface CSSAsset {
+  /**
+   * CSS content
+   */
+  content: string;
+  /**
+   * CSS media query context (e.g., 'screen', 'print')
+   */
+  media?: string;
+  provenance?: Provenance;
+}
+/**
+ * Markdown-formatted text content following CommonMark specification
+ */
+export interface MarkdownAsset {
+  /**
+   * Markdown content following CommonMark spec with optional GitHub Flavored Markdown extensions
+   */
+  content: string;
+  /**
+   * Language code (e.g., 'en', 'es', 'fr')
+   */
+  language?: string;
+  markdown_flavor?: MarkdownFlavor;
+  /**
+   * Whether raw HTML blocks are allowed in the markdown. False recommended for security.
+   */
+  allow_raw_html?: boolean;
+}
+/**
+ * Campaign-level creative context for AI-powered creative generation. Provides the layer between brand identity (stable across campaigns) and individual creative execution (per-request). A brand has one identity (defined in brand.json) but different creative briefs for each campaign or flight.
+ */
+export interface CreativeBrief {
+  /**
+   * Campaign or flight name for identification
+   */
+  name: string;
+  /**
+   * Campaign objective that guides creative tone and call-to-action strategy
+   */
+  objective?: 'awareness' | 'consideration' | 'conversion' | 'retention' | 'engagement';
+  /**
+   * Desired tone for this campaign, modulating the brand's base tone (e.g., 'playful and festive', 'premium and aspirational')
+   */
+  tone?: string;
+  /**
+   * Target audience description for this campaign
+   */
+  audience?: string;
+  /**
+   * Creative territory or positioning the campaign should occupy
+   */
+  territory?: string;
+  /**
+   * Messaging framework for the campaign
+   */
+  messaging?: {
+    /**
+     * Primary headline
+     */
+    headline?: string;
+    /**
+     * Supporting tagline or sub-headline
+     */
+    tagline?: string;
+    /**
+     * Call-to-action text
+     */
+    cta?: string;
+    /**
+     * Key messages to communicate in priority order
+     */
+    key_messages?: string[];
+  };
+  /**
+   * Visual and strategic reference materials such as mood boards, product shots, example creatives, and strategy documents
+   */
+  reference_assets?: ReferenceAsset[];
+  /**
+   * Regulatory and legal compliance requirements for this campaign. Campaign-specific, regional, and product-based — distinct from brand-level disclaimers in brand.json.
+   */
+  compliance?: {
+    /**
+     * Disclosures that must appear in creatives for this campaign. Each disclosure specifies the text, where it should appear, and which jurisdictions require it.
+     */
+    required_disclosures?: {
+      /**
+       * The disclosure text that must appear in the creative
+       */
+      text: string;
+      position?: DisclosurePosition;
+      /**
+       * Jurisdictions where this disclosure is required. ISO 3166-1 alpha-2 country codes or ISO 3166-2 subdivision codes (e.g., 'US', 'GB', 'US-NJ', 'CA-QC'). If omitted, the disclosure applies to all jurisdictions in the campaign.
+       */
+      jurisdictions?: string[];
+      /**
+       * The regulation or legal authority requiring this disclosure (e.g., 'SEC Rule 156', 'FCA COBS 4.5', 'FDA 21 CFR 202')
+       */
+      regulation?: string;
+      /**
+       * Minimum display duration in milliseconds. For video/audio disclosures, how long the disclosure must be visible or audible. For static formats, how long the disclosure must remain on screen before any auto-advance.
+       */
+      min_duration_ms?: number;
+      /**
+       * Language of the disclosure text as a BCP 47 language tag (e.g., 'en', 'fr-CA', 'es'). When omitted, the disclosure is assumed to match the creative's language.
+       */
+      language?: string;
+    }[];
+    /**
+     * Claims that must not appear in creatives for this campaign. Creative agents should ensure generated content avoids these claims.
+     */
+    prohibited_claims?: string[];
+  };
+}
+/**
+ * A reference asset that provides creative context. Carries visual materials (mood boards, product shots, example creatives) with semantic roles that tell creative agents how to use them.
+ */
+export interface ReferenceAsset {
+  /**
+   * URL to the reference asset (image, video, or document)
+   */
+  url: string;
+  /**
+   * How the creative agent should use this asset. style_reference: match the visual style; product_shot: include this product; mood_board: overall look and feel; example_creative: example of a similar execution; logo: logo to use; strategy_doc: strategy or planning document for context
+   */
+  role: 'style_reference' | 'product_shot' | 'mood_board' | 'example_creative' | 'logo' | 'strategy_doc';
+  /**
+   * Human-readable description of the asset and how it should inform creative generation
    */
   description?: string;
 }
@@ -3660,6 +3849,14 @@ export interface Package {
    * Impression goal for this package
    */
   impressions?: number;
+  /**
+   * Catalogs this package promotes. Each catalog MUST have a distinct type (e.g., one product catalog, one store catalog). This constraint is enforced at the application level — sellers MUST reject requests containing multiple catalogs of the same type with a validation_error. Echoed from the create_media_buy request.
+   */
+  catalogs?: Catalog[];
+  /**
+   * Format IDs active for this package. Echoed from the create_media_buy request; omitted means all formats for the product are active.
+   */
+  format_ids?: FormatID[];
   targeting_overlay?: TargetingOverlay;
   /**
    * Creative assets assigned to this package
@@ -3714,17 +3911,30 @@ export interface SyncCreativesRequest {
    */
   creative_ids?: string[];
   /**
-   * Optional bulk assignment of creatives to packages
+   * Optional bulk assignment of creatives to packages. Each entry maps one creative to one package with optional weight and placement targeting.
    */
   assignments?: {
     /**
-     * Array of package IDs to assign this creative to
-     *
-     * This interface was referenced by `undefined`'s JSON-Schema definition
-     * via the `patternProperty` "^[a-zA-Z0-9_-]+$".
+     * ID of the creative to assign
      */
-    [k: string]: string[];
-  };
+    creative_id: string;
+    /**
+     * ID of the package to assign the creative to
+     */
+    package_id: string;
+    /**
+     * Relative delivery weight (0–100). When multiple creatives are assigned to the same package, weights determine impression distribution proportionally — a creative with weight 2 gets twice the delivery of weight 1. When omitted, the creative receives equal rotation with other unweighted creatives. A weight of 0 means the creative is assigned but paused (receives no delivery).
+     */
+    weight?: number;
+    /**
+     * Restrict this creative to specific placements within the package. When omitted, the creative is eligible for all placements.
+     */
+    placement_ids?: string[];
+  }[];
+  /**
+   * Client-generated idempotency key for safe retries. If a sync fails without a response, resending with the same idempotency_key guarantees at-most-once execution.
+   */
+  idempotency_key?: string;
   /**
    * When true, creatives not included in this sync will be archived. Use with caution for full library replacement.
    */
@@ -4053,28 +4263,28 @@ export interface ListCreativesResponse {
      */
     updated_date: string;
     /**
-     * Catalogs this creative renders, if any
-     */
-    catalogs?: Catalog[];
-    /**
-     * Assets for this creative, keyed by asset_role
+     * Assets for this creative, keyed by asset_id
      */
     assets?: {
       /**
        * This interface was referenced by `undefined`'s JSON-Schema definition
-       * via the `patternProperty` "^[a-zA-Z0-9_-]+$".
+       * via the `patternProperty` "^[a-z0-9_]+$".
        */
       [k: string]:
         | ImageAsset
         | VideoAsset
         | AudioAsset
-        | TextAsset
-        | HTMLAsset
-        | CSSAsset
-        | JavaScriptAsset
         | VASTAsset
+        | TextAsset
+        | URLAsset
+        | HTMLAsset
+        | JavaScriptAsset
+        | WebhookAsset
+        | CSSAsset
         | DAASTAsset
-        | URLAsset;
+        | MarkdownAsset
+        | BriefAsset
+        | CatalogAsset;
     };
     /**
      * User-defined tags for organization and searchability
@@ -4213,6 +4423,10 @@ export type UpdateMediaBuyRequest = {
   packages?: PackageUpdate[];
   reporting_webhook?: ReportingWebhook;
   push_notification_config?: PushNotificationConfig;
+  /**
+   * Client-generated idempotency key for safe retries. If an update fails without a response, resending with the same idempotency_key guarantees the update is applied at most once.
+   */
+  idempotency_key?: string;
   context?: ContextObject;
   ext?: ExtensionObject;
 } & {
@@ -4247,12 +4461,71 @@ export type PackageUpdate = {
    * Pause/resume specific package (true = paused, false = active)
    */
   paused?: boolean;
-  catalog?: Catalog;
+  /**
+   * Replace the catalogs this package promotes. Uses replacement semantics — the provided array replaces the current list. Omit to leave catalogs unchanged.
+   */
+  catalogs?: Catalog[];
   /**
    * Replace all optimization goals for this package. Uses replacement semantics — omit to leave goals unchanged.
    */
   optimization_goals?: OptimizationGoal[];
   targeting_overlay?: TargetingOverlay;
+  /**
+   * Keyword targets to add or update on this package. Upserts by (keyword, match_type) identity: if the pair already exists, its bid_price is updated; if not, a new keyword target is added. Use targeting_overlay.keyword_targets in create_media_buy to set the initial list.
+   */
+  keyword_targets_add?: {
+    /**
+     * The keyword to target
+     */
+    keyword: string;
+    /**
+     * Match type for this keyword
+     */
+    match_type: 'broad' | 'phrase' | 'exact';
+    /**
+     * Per-keyword bid price. Inherits currency and max_bid interpretation from the package's pricing option.
+     */
+    bid_price?: number;
+  }[];
+  /**
+   * Keyword targets to remove from this package. Removes matching (keyword, match_type) pairs. If a specified pair is not present, sellers SHOULD treat it as a no-op for that entry.
+   */
+  keyword_targets_remove?: {
+    /**
+     * The keyword to stop targeting
+     */
+    keyword: string;
+    /**
+     * Match type to remove
+     */
+    match_type: 'broad' | 'phrase' | 'exact';
+  }[];
+  /**
+   * Negative keywords to add to this package. Appends to the existing negative keyword list — does not replace it. If a keyword+match_type pair already exists, sellers SHOULD treat it as a no-op for that entry. Use targeting_overlay.negative_keywords in create_media_buy to set the initial list.
+   */
+  negative_keywords_add?: {
+    /**
+     * The keyword to exclude
+     */
+    keyword: string;
+    /**
+     * Match type for exclusion
+     */
+    match_type: 'broad' | 'phrase' | 'exact';
+  }[];
+  /**
+   * Negative keywords to remove from this package. Removes matching keyword+match_type pairs from the existing list. If a specified pair is not present, sellers SHOULD treat it as a no-op for that entry.
+   */
+  negative_keywords_remove?: {
+    /**
+     * The keyword to stop excluding
+     */
+    keyword: string;
+    /**
+     * Match type to remove
+     */
+    match_type: 'broad' | 'phrase' | 'exact';
+  }[];
   /**
    * Replace creative assignments for this package with optional weights and placement targeting. Uses replacement semantics - omit to leave assignments unchanged.
    */
@@ -4314,9 +4587,9 @@ export interface UpdateMediaBuyError {
 
 // get_media_buys parameters
 /**
- * Status of a media buy
+ * Status of a media buy.
  */
-export type MediaBuyStatus = 'pending_activation' | 'active' | 'paused' | 'completed';
+export type MediaBuyStatus = 'pending_activation' | 'active' | 'paused' | 'completed' | 'rejected' | 'canceled';
 
 /**
  * Request parameters for retrieving media buy status, creative approval state, and optional delivery snapshots
@@ -4380,6 +4653,14 @@ export interface GetMediaBuysResponse {
      * Total budget amount across all packages, denominated in media_buy.currency
      */
     total_budget: number;
+    /**
+     * ISO 8601 flight start time for this media buy (earliest package start_time). Avoids requiring buyers to compute min(packages[].start_time).
+     */
+    start_time?: string;
+    /**
+     * ISO 8601 flight end time for this media buy (latest package end_time). Avoids requiring buyers to compute max(packages[].end_time).
+     */
+    end_time?: string;
     /**
      * ISO 8601 timestamp for creative upload deadline
      */
@@ -4522,6 +4803,36 @@ export interface GetMediaBuysResponse {
   ext?: ExtensionObject;
 }
 /**
+ * Attribution model to use. When omitted, the seller applies their default model.
+ */
+export type AttributionModel = 'last_touch' | 'first_touch' | 'linear' | 'time_decay' | 'data_driven';
+/**
+ * Metric to sort breakdown rows by (descending). Falls back to 'spend' if the seller does not report the requested metric.
+ */
+export type SortMetric =
+  | 'impressions'
+  | 'spend'
+  | 'clicks'
+  | 'ctr'
+  | 'views'
+  | 'completed_views'
+  | 'completion_rate'
+  | 'conversions'
+  | 'conversion_value'
+  | 'roas'
+  | 'cost_per_acquisition'
+  | 'new_to_brand_rate'
+  | 'leads'
+  | 'grps'
+  | 'reach'
+  | 'frequency'
+  | 'engagements'
+  | 'follows'
+  | 'saves'
+  | 'profile_visits'
+  | 'engagement_rate'
+  | 'cost_per_click';
+/**
  * Request parameters for retrieving comprehensive delivery metrics
  */
 export interface GetMediaBuyDeliveryRequest {
@@ -4546,19 +4857,98 @@ export interface GetMediaBuyDeliveryRequest {
    * End date for reporting period (YYYY-MM-DD). When omitted along with start_date, returns campaign lifetime data. Only accepted when the product's reporting_capabilities.date_range_support is 'date_range'.
    */
   end_date?: string;
+  /**
+   * When true, include daily_breakdown arrays within each package in by_package. Useful for per-package pacing analysis and line-item monitoring. Omit or set false to reduce response size — package daily data can be large for multi-package buys over long flights.
+   */
+  include_package_daily_breakdown?: boolean;
+  /**
+   * Attribution window to apply for conversion metrics. When provided, the seller returns conversion data using the requested lookback windows instead of their platform default. The seller echoes the applied window in the response. Sellers that do not support configurable windows ignore this field and return their default. Check get_adcp_capabilities conversion_tracking.attribution_windows for available options.
+   */
+  attribution_window?: {
+    /**
+     * Post-click attribution window to apply.
+     */
+    post_click?: Duration;
+    /**
+     * Post-view attribution window to apply.
+     */
+    post_view?: Duration;
+    model?: AttributionModel;
+  };
+  /**
+   * Request dimensional breakdowns in delivery reporting. Each key enables a specific breakdown dimension within by_package — include as an empty object (e.g., "device_type": {}) to activate with defaults. Omit entirely for no breakdowns (backward compatible). Unsupported dimensions are silently omitted from the response. Note: keyword, catalog_item, and creative breakdowns are returned automatically when the seller supports them and are not controlled by this object.
+   */
+  reporting_dimensions?: {
+    /**
+     * Request geographic breakdown. Check reporting_capabilities.supports_geo_breakdown for available levels and systems.
+     */
+    geo?: {
+      geo_level: GeographicTargetingLevel;
+      /**
+       * Classification system for metro or postal_area levels (e.g., 'nielsen_dma', 'us_zip'). Required when geo_level is 'metro' or 'postal_area'.
+       */
+      system?: MetroAreaSystem | PostalCodeSystem;
+      /**
+       * Maximum number of geo entries to return. Defaults to 25. When truncated, by_geo_truncated is true in the response.
+       */
+      limit?: number;
+      sort_by?: SortMetric;
+    };
+    /**
+     * Request device type breakdown.
+     */
+    device_type?: {
+      /**
+       * Maximum number of entries to return. When omitted, all entries are returned (the enum is small and bounded).
+       */
+      limit?: number;
+      sort_by?: SortMetric;
+    };
+    /**
+     * Request device platform breakdown.
+     */
+    device_platform?: {
+      /**
+       * Maximum number of entries to return. When omitted, all entries are returned (the enum is small and bounded).
+       */
+      limit?: number;
+      sort_by?: SortMetric;
+    };
+    /**
+     * Request audience segment breakdown.
+     */
+    audience?: {
+      /**
+       * Maximum number of entries to return. Defaults to 25.
+       */
+      limit?: number;
+      sort_by?: SortMetric;
+    };
+    /**
+     * Request placement breakdown.
+     */
+    placement?: {
+      /**
+       * Maximum number of entries to return. Defaults to 25.
+       */
+      limit?: number;
+      sort_by?: SortMetric;
+    };
+  };
   context?: ContextObject;
   ext?: ExtensionObject;
 }
 
 // get_media_buy_delivery response
 /**
- * Attribution model used to assign credit when multiple touchpoints exist
- */
-export type AttributionModel = 'last_touch' | 'first_touch' | 'linear' | 'time_decay' | 'data_driven';
-/**
  * Pricing model used for this media buy
  */
 export type PricingModel = 'cpm' | 'vcpm' | 'cpc' | 'cpcv' | 'cpv' | 'cpp' | 'cpa' | 'flat_rate' | 'time';
+/**
+ * Origin of the audience segment (synced, platform, third_party, lookalike, retargeting, unknown)
+ */
+export type AudienceSource = 'synced' | 'platform' | 'third_party' | 'lookalike' | 'retargeting' | 'unknown';
+
 /**
  * Response payload for get_media_buy_delivery task
  */
@@ -4663,9 +5053,18 @@ export interface GetMediaBuyDeliveryResponse {
      */
     buyer_campaign_ref?: string;
     /**
-     * Current media buy status. Lifecycle states use the same taxonomy as media-buy-status (`pending_activation`, `active`, `paused`, `completed`). In webhook context, reporting_delayed indicates data temporarily unavailable. `pending` is accepted as a legacy alias for pending_activation.
+     * Current media buy status. Lifecycle states use the same taxonomy as media-buy-status (`pending_activation`, `active`, `paused`, `completed`, `rejected`, `canceled`). In webhook context, reporting_delayed indicates data temporarily unavailable. `pending` is accepted as a legacy alias for pending_activation.
      */
-    status: 'pending_activation' | 'pending' | 'active' | 'paused' | 'completed' | 'failed' | 'reporting_delayed';
+    status:
+      | 'pending_activation'
+      | 'pending'
+      | 'active'
+      | 'paused'
+      | 'completed'
+      | 'rejected'
+      | 'canceled'
+      | 'failed'
+      | 'reporting_delayed';
     /**
      * When delayed data is expected to be available (only present when status is reporting_delayed)
      */
@@ -4737,6 +5136,129 @@ export interface GetMediaBuyDeliveryResponse {
          */
         weight?: number;
       })[];
+      /**
+       * Metrics broken down by keyword within this package. One row per (keyword, match_type) pair — the same keyword with different match types appears as separate rows. Keyword-grain only: rows reflect aggregate performance of each targeted keyword, not individual search queries. Rows may not sum to package totals when a single impression is attributed to the triggering keyword only. Available for search and retail media packages when the seller supports keyword-level reporting.
+       */
+      by_keyword?: (DeliveryMetrics & {
+        /**
+         * The targeted keyword
+         */
+        keyword: string;
+        /**
+         * Match type for this keyword
+         */
+        match_type: 'broad' | 'phrase' | 'exact';
+      })[];
+      /**
+       * Delivery by geographic area within this package. Available when the buyer requests geo breakdown via reporting_dimensions and the seller supports it. Each dimension's rows are independent slices that should sum to the package total.
+       */
+      by_geo?: (DeliveryMetrics & {
+        geo_level: GeographicTargetingLevel;
+        /**
+         * Classification system for metro or postal_area levels (e.g., 'nielsen_dma', 'us_zip'). Present when geo_level is 'metro' or 'postal_area'.
+         */
+        system?: string;
+        /**
+         * Geographic code within the level and system. Country: ISO 3166-1 alpha-2 ('US'). Region: ISO 3166-2 with country prefix ('US-CA'). Metro/postal: system-specific code ('501', '10001').
+         */
+        geo_code: string;
+        /**
+         * Human-readable geographic name (e.g., 'United States', 'California', 'New York DMA')
+         */
+        geo_name?: string;
+      })[];
+      /**
+       * Whether by_geo was truncated due to the requested limit or a seller-imposed maximum. Sellers MUST return this flag whenever by_geo is present (false means the list is complete).
+       */
+      by_geo_truncated?: boolean;
+      /**
+       * Delivery by device form factor within this package. Available when the buyer requests device_type breakdown via reporting_dimensions and the seller supports it.
+       */
+      by_device_type?: (DeliveryMetrics & {
+        device_type: DeviceType;
+      })[];
+      /**
+       * Whether by_device_type was truncated. Sellers MUST return this flag whenever by_device_type is present (false means the list is complete).
+       */
+      by_device_type_truncated?: boolean;
+      /**
+       * Delivery by operating system within this package. Available when the buyer requests device_platform breakdown via reporting_dimensions and the seller supports it. Useful for CTV campaigns where tvOS vs Roku OS vs Fire OS matters.
+       */
+      by_device_platform?: (DeliveryMetrics & {
+        device_platform: DevicePlatform;
+      })[];
+      /**
+       * Whether by_device_platform was truncated. Sellers MUST return this flag whenever by_device_platform is present (false means the list is complete).
+       */
+      by_device_platform_truncated?: boolean;
+      /**
+       * Delivery by audience segment within this package. Available when the buyer requests audience breakdown via reporting_dimensions and the seller supports it. Only 'synced' audiences are directly targetable via the targeting overlay; other sources are informational.
+       */
+      by_audience?: (DeliveryMetrics & {
+        /**
+         * Audience segment identifier. For 'synced' source, matches audience_id from sync_audiences. For other sources, seller-defined.
+         */
+        audience_id: string;
+        audience_source: AudienceSource;
+        /**
+         * Human-readable audience segment name
+         */
+        audience_name?: string;
+      })[];
+      /**
+       * Whether by_audience was truncated. Sellers MUST return this flag whenever by_audience is present (false means the list is complete).
+       */
+      by_audience_truncated?: boolean;
+      /**
+       * Delivery by placement within this package. Available when the buyer requests placement breakdown via reporting_dimensions and the seller supports it. Placement IDs reference the product's placements array.
+       */
+      by_placement?: (DeliveryMetrics & {
+        /**
+         * Placement identifier from the product's placements array
+         */
+        placement_id: string;
+        /**
+         * Human-readable placement name
+         */
+        placement_name?: string;
+      })[];
+      /**
+       * Whether by_placement was truncated. Sellers MUST return this flag whenever by_placement is present (false means the list is complete).
+       */
+      by_placement_truncated?: boolean;
+      /**
+       * Day-by-day delivery for this package. Only present when include_package_daily_breakdown is true in the request. Enables per-package pacing analysis and line-item monitoring.
+       */
+      daily_breakdown?: {
+        /**
+         * Date (YYYY-MM-DD)
+         */
+        date: string;
+        /**
+         * Daily impressions for this package
+         */
+        impressions: number;
+        /**
+         * Daily spend for this package
+         */
+        spend: number;
+        /**
+         * Daily conversions for this package
+         */
+        conversions?: number;
+        /**
+         * Daily conversion value for this package
+         */
+        conversion_value?: number;
+        /**
+         * Daily return on ad spend (conversion_value / spend)
+         */
+        roas?: number;
+        /**
+         * Daily fraction of conversions from first-time brand buyers (0 = none, 1 = all)
+         */
+        new_to_brand_rate?: number;
+      }[];
     })[];
     /**
      * Day-by-day delivery
@@ -4788,13 +5310,13 @@ export interface GetMediaBuyDeliveryResponse {
  */
 export interface AttributionWindow {
   /**
-   * Click-through attribution window in days. Conversions occurring within this many days after a click are attributed to the ad.
+   * Post-click attribution window. Conversions occurring within this duration after a click are attributed to the ad.
    */
-  click_window_days?: number;
+  post_click?: Duration;
   /**
-   * View-through attribution window in days. Conversions occurring within this many days after an ad impression (without click) are attributed to the ad.
+   * Post-view attribution window. Conversions occurring within this duration after an ad impression (without click) are attributed to the ad.
    */
-  view_window_days?: number;
+  post_view?: Duration;
   model: AttributionModel;
 }
 /**
@@ -5036,19 +5558,7 @@ export type ProvidePerformanceFeedbackRequest = {
    * Buyer's reference for the media buy
    */
   buyer_ref?: string;
-  /**
-   * Time period for performance measurement
-   */
-  measurement_period?: {
-    /**
-     * ISO 8601 start timestamp for measurement period
-     */
-    start: string;
-    /**
-     * ISO 8601 end timestamp for measurement period
-     */
-    end: string;
-  };
+  measurement_period?: DatetimeRange;
   /**
    * Normalized performance score (0.0 = no value, 1.0 = expected, >1.0 = above expected)
    */
@@ -5089,6 +5599,19 @@ export type FeedbackSource =
   | 'platform_analytics'
   | 'verification_partner';
 
+/**
+ * Time period for performance measurement
+ */
+export interface DatetimeRange {
+  /**
+   * Start timestamp (inclusive), ISO 8601
+   */
+  start: string;
+  /**
+   * End timestamp (inclusive), ISO 8601
+   */
+  end: string;
+}
 
 // provide_performance_feedback response
 /**
@@ -5283,7 +5806,7 @@ export type UserMatch = {
 /**
  * Universal ID type
  */
-export type UIDType = 'rampid' | 'id5' | 'uid2' | 'euid' | 'pairid' | 'external_id' | 'maid' | 'other';
+export type UIDType = 'rampid' | 'id5' | 'uid2' | 'euid' | 'pairid' | 'maid' | 'other';
 /**
  * Request parameters for logging marketing events
  */
@@ -5459,11 +5982,15 @@ export interface LogEventError {
 
 // sync_audiences parameters
 /**
- * Hashed identifiers for a CRM audience member. All identifiers must be normalized before hashing: emails to lowercase+trim, phone numbers to E.164 format (e.g. +12065551234). At least one identifier is required. Providing multiple identifiers for the same person improves match rates. Composite identifiers (e.g. hashed first name + last name + zip for Google Customer Match) are not yet standardized — use the ext field for platform-specific extensions.
+ * A CRM audience member identified by a buyer-assigned external_id and at least one matchable identifier. All identifiers must be normalized before hashing: emails to lowercase+trim, phone numbers to E.164 format (e.g. +12065551234). Providing multiple identifiers for the same person improves match rates. Composite identifiers (e.g. hashed first name + last name + zip for Google Customer Match) are not yet standardized — use the ext field for platform-specific extensions.
  */
 export type AudienceMember = {
   [k: string]: unknown | undefined;
 } & {
+  /**
+   * Buyer-assigned stable identifier for this audience member (e.g. CRM record ID, loyalty ID). Used for deduplication, removal, and cross-referencing with buyer systems. Adapters for CDPs that don't natively assign IDs can derive one (e.g. hash of the member's identifiers).
+   */
+  external_id: string;
   /**
    * SHA-256 hash of lowercase, trimmed email address.
    */
@@ -5485,6 +6012,11 @@ export type AudienceMember = {
   ext?: ExtensionObject;
 };
 /**
+ * GDPR lawful basis for processing this audience list. Informational — not validated by the protocol, but required by some sellers operating in regulated markets (e.g. EU). When omitted, the buyer asserts they have a lawful basis appropriate to their jurisdiction.
+ */
+export type ConsentBasis = 'consent' | 'legitimate_interest' | 'contract' | 'legal_obligation';
+
+/**
  * Request parameters for managing CRM-based audiences on an account with upsert semantics. Existing audiences matched by audience_id are updated, new ones are created. Members are specified as delta operations: add appends new members, remove drops existing ones. Recommend no more than 100,000 members per call; for larger lists, chunk and call incrementally using add/remove deltas. When delete_missing is true, buyer-managed audiences on the account not in this request are removed — do not combine with omitted audiences or all buyer-managed audiences will be deleted. When audiences is omitted, the call is discovery-only: it returns all audiences on the account without modification.
  */
 export interface SyncAudiencesRequest {
@@ -5502,6 +6034,18 @@ export interface SyncAudiencesRequest {
      */
     name?: string;
     /**
+     * Human-readable description of this audience's composition or purpose (e.g., 'High-value customers who purchased in the last 90 days').
+     */
+    description?: string;
+    /**
+     * Intended use for this audience. 'crm': target these users. 'suppression': exclude these users from delivery. 'lookalike_seed': use as a seed for the seller's lookalike modeling. Sellers may handle audiences differently based on type (e.g., suppression lists bypass minimum size requirements on some platforms).
+     */
+    audience_type?: 'crm' | 'suppression' | 'lookalike_seed';
+    /**
+     * Buyer-defined tags for organizing and filtering audiences (e.g., 'holiday_2026', 'high_ltv'). Tags are stored by the seller and returned in discovery-only calls.
+     */
+    tags?: string[];
+    /**
      * Members to add to this audience. Hashed before sending — normalize emails to lowercase+trim, phones to E.164.
      */
     add?: AudienceMember[];
@@ -5513,10 +6057,7 @@ export interface SyncAudiencesRequest {
      * When true, delete this audience from the account entirely. All other fields on this audience object are ignored. Use this to delete a specific audience without affecting others.
      */
     delete?: boolean;
-    /**
-     * GDPR lawful basis for processing this audience list. Informational — not validated by the protocol, but required by some sellers operating in regulated markets (e.g. EU). When omitted, the buyer asserts they have a lawful basis appropriate to their jurisdiction.
-     */
-    consent_basis?: 'consent' | 'legitimate_interest' | 'contract' | 'legal_obligation';
+    consent_basis?: ConsentBasis;
   }[];
   /**
    * When true, buyer-managed audiences on the account not included in this sync will be removed. Does not affect seller-managed audiences. Do not combine with an omitted audiences array or all buyer-managed audiences will be deleted.
@@ -5564,6 +6105,10 @@ export interface SyncAudiencesSuccess {
      * Number of members submitted in this sync operation (delta, not cumulative). In discovery-only calls (no audiences array), this is 0.
      */
     uploaded_count?: number;
+    /**
+     * Cumulative number of members uploaded across all syncs for this audience. Compare with matched_count to calculate match rate (matched_count / total_uploaded_count). Populated when the seller tracks cumulative upload counts.
+     */
+    total_uploaded_count?: number;
     /**
      * Total members matched to platform users across all syncs (cumulative, not just this call). Populated when status is 'ready'.
      */
@@ -5740,34 +6285,16 @@ export interface SyncCatalogsError {
 
 // build_creative parameters
 /**
- * HTTP method
- */
-export type HTTPMethod = 'GET' | 'POST';
-/**
- * Expected content type of webhook response
- */
-export type WebhookResponseType = 'html' | 'json' | 'xml' | 'javascript';
-/**
- * Authentication method
- */
-export type WebhookSecurityMethod = 'hmac_sha256' | 'api_key' | 'none';
-/**
- * Campaign-level creative brief with objective, audience, messaging, and reference assets. Can be an inline brief object or a URL to a hosted brief. Supplements the natural language message with structured creative direction.
- */
-export type CreativeBriefReference = CreativeBrief | string;
-
-/**
  * Request to transform or generate a creative manifest. Takes a source manifest (which may be minimal for pure generation) and produces a target manifest in the specified format.
  */
 export interface BuildCreativeRequest {
   /**
-   * Natural language instructions for the transformation or generation. For pure generation, this is the creative brief. For transformation, this provides guidance on how to adapt the creative.
+   * Natural language instructions for the transformation or generation. For pure generation, this is the creative brief. For transformation, this provides guidance on how to adapt the creative. For refinement, this describes the desired changes.
    */
   message?: string;
   creative_manifest?: CreativeManifest;
   target_format_id: FormatID;
   brand?: BrandReference;
-  creative_brief?: CreativeBriefReference;
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -5776,10 +6303,6 @@ export interface BuildCreativeRequest {
  */
 export interface CreativeManifest {
   format_id: FormatID;
-  /**
-   * Catalogs this creative renders. Each entry satisfies one of the format's catalog_requirements, matched by type. Tells the creative what data to display — product listings for a carousel, job vacancies for a recruitment ad, store locations for a locator. This is a data reference, not a campaign expansion directive; campaign structure and budget allocation are handled by create_media_buy packages. Each catalog can be inline (with items), a reference to a synced catalog (by catalog_id), or a URL to an external feed.
-   */
-  catalogs?: Catalog[];
   /**
    * Map of asset IDs to actual asset content. Each key MUST match an asset_id from the format's assets array (e.g., 'banner_image', 'clickthrough_url', 'video_file', 'vast_tag'). The asset_id is the technical identifier used to match assets to format requirements.
    *
@@ -5801,113 +6324,13 @@ export interface CreativeManifest {
       | JavaScriptAsset
       | WebhookAsset
       | CSSAsset
-      | DAASTAsset;
+      | DAASTAsset
+      | MarkdownAsset
+      | BriefAsset
+      | CatalogAsset;
   };
+  provenance?: Provenance;
   ext?: ExtensionObject;
-}
-/**
- * Webhook for server-side dynamic content rendering (DCO)
- */
-export interface WebhookAsset {
-  /**
-   * Webhook URL to call for dynamic content
-   */
-  url: string;
-  method?: HTTPMethod;
-  /**
-   * Maximum time to wait for response in milliseconds
-   */
-  timeout_ms?: number;
-  /**
-   * Universal macros that can be passed to webhook (e.g., DEVICE_TYPE, COUNTRY). See docs/creative/universal-macros.mdx for full list.
-   */
-  supported_macros?: (UniversalMacro | string)[];
-  /**
-   * Universal macros that must be provided for webhook to function
-   */
-  required_macros?: (UniversalMacro | string)[];
-  response_type: WebhookResponseType;
-  /**
-   * Security configuration for webhook calls
-   */
-  security: {
-    method: WebhookSecurityMethod;
-    /**
-     * Header name for HMAC signature (e.g., 'X-Signature')
-     */
-    hmac_header?: string;
-    /**
-     * Header name for API key (e.g., 'X-API-Key')
-     */
-    api_key_header?: string;
-  };
-}
-/**
- * Inline creative brief object
- */
-export interface CreativeBrief {
-  /**
-   * Campaign or flight name for identification
-   */
-  name: string;
-  /**
-   * Campaign objective that guides creative tone and call-to-action strategy
-   */
-  objective?: 'awareness' | 'consideration' | 'conversion' | 'retention' | 'engagement';
-  /**
-   * Desired tone for this campaign, modulating the brand's base tone (e.g., 'playful and festive', 'premium and aspirational')
-   */
-  tone?: string;
-  /**
-   * Target audience description for this campaign
-   */
-  audience?: string;
-  /**
-   * Creative territory or positioning the campaign should occupy
-   */
-  territory?: string;
-  /**
-   * Messaging framework for the campaign
-   */
-  messaging?: {
-    /**
-     * Primary headline
-     */
-    headline?: string;
-    /**
-     * Supporting tagline or sub-headline
-     */
-    tagline?: string;
-    /**
-     * Call-to-action text
-     */
-    cta?: string;
-    /**
-     * Key messages to communicate in priority order
-     */
-    key_messages?: string[];
-  };
-  /**
-   * Visual and strategic reference materials such as mood boards, product shots, example creatives, and strategy documents
-   */
-  reference_assets?: ReferenceAsset[];
-}
-/**
- * A reference asset that provides creative context. Carries visual materials (mood boards, product shots, example creatives) with semantic roles that tell creative agents how to use them.
- */
-export interface ReferenceAsset {
-  /**
-   * URL to the reference asset (image, video, or document)
-   */
-  url: string;
-  /**
-   * How the creative agent should use this asset. style_reference: match the visual style; product_shot: include this product; mood_board: overall look and feel; example_creative: example of a similar execution; logo: logo to use; strategy_doc: strategy or planning document for context
-   */
-  role: 'style_reference' | 'product_shot' | 'mood_board' | 'example_creative' | 'logo' | 'strategy_doc';
-  /**
-   * Human-readable description of the asset and how it should inform creative generation
-   */
-  description?: string;
 }
 
 // build_creative response
@@ -6042,14 +6465,10 @@ export type PreviewCreativeRequest =
  */
 export type PreviewOutputFormat = 'url' | 'html';
 /**
- * Complete creative manifest with all required assets
+ * Complete creative manifest with all required assets.
  */
 export interface CreativeManifest1 {
   format_id: FormatID;
-  /**
-   * Catalogs this creative renders. Each entry satisfies one of the format's catalog_requirements, matched by type. Tells the creative what data to display — product listings for a carousel, job vacancies for a recruitment ad, store locations for a locator. This is a data reference, not a campaign expansion directive; campaign structure and budget allocation are handled by create_media_buy packages. Each catalog can be inline (with items), a reference to a synced catalog (by catalog_id), or a URL to an external feed.
-   */
-  catalogs?: Catalog[];
   /**
    * Map of asset IDs to actual asset content. Each key MUST match an asset_id from the format's assets array (e.g., 'banner_image', 'clickthrough_url', 'video_file', 'vast_tag'). The asset_id is the technical identifier used to match assets to format requirements.
    *
@@ -6071,8 +6490,12 @@ export interface CreativeManifest1 {
       | JavaScriptAsset
       | WebhookAsset
       | CSSAsset
-      | DAASTAsset;
+      | DAASTAsset
+      | MarkdownAsset
+      | BriefAsset
+      | CatalogAsset;
   };
+  provenance?: Provenance;
   ext?: ExtensionObject;
 }
 
@@ -6298,9 +6721,15 @@ export interface PreviewCreativeBatchResponse {
   ext?: ExtensionObject;
 }
 export interface PreviewBatchResultSuccess {
+  /**
+   * Indicates this preview request succeeded
+   */
   success?: true;
 }
 export interface PreviewBatchResultError {
+  /**
+   * Indicates this preview request failed
+   */
   success?: false;
 }
 /**
@@ -6373,19 +6802,7 @@ export type GetCreativeDeliveryRequest = {
    * Maximum number of variants to return per creative. When omitted, the agent returns all variants. Use this to limit response size for generative creatives that may produce large numbers of variants.
    */
   max_variants?: number;
-  /**
-   * Pagination parameters for the creatives array in the response. When omitted, the agent returns all matching creatives.
-   */
-  pagination?: {
-    /**
-     * Maximum number of creatives to return
-     */
-    limit?: number;
-    /**
-     * Number of creatives to skip
-     */
-    offset?: number;
-  };
+  pagination?: PaginationRequest;
   context?: ContextObject;
   ext?: ExtensionObject;
 };
@@ -6546,32 +6963,32 @@ export interface Identifier {
 
 // get_signals parameters
 /**
- * Request parameters for discovering signals. Use signal_spec for natural language discovery, signal_ids for exact lookups, or both (signal_ids take precedence for exact matches, signal_spec provides additional discovery context).
+ * Request parameters for discovering and refining signals. Use signal_spec for natural language discovery, signal_ids for exact lookups, or both to refine previous results (signal_ids anchor the starting set, signal_spec guides adjustments).
  */
 export type GetSignalsRequest = {
   [k: string]: unknown | undefined;
 } & {
+  account?: AccountReference;
+  /**
+   * The buyer's campaign reference. Used to correlate signal discovery with subsequent report_usage calls.
+   */
+  buyer_campaign_ref?: string;
   /**
    * Natural language description of the desired signals. When used alone, enables semantic discovery. When combined with signal_ids, provides context for the agent but signal_ids matches are returned first.
    */
   signal_spec?: string;
   /**
-   * Specific signals to look up by data provider and ID. Returns exact matches from the data provider's catalog. Takes precedence over signal_spec when both are provided.
+   * Specific signals to look up by data provider and ID. Returns exact matches from the data provider's catalog. When combined with signal_spec, these signals anchor the starting set and signal_spec guides adjustments.
    */
   signal_ids?: SignalID[];
   /**
-   * Deployment targets where signals need to be activated
+   * Filter signals to those activatable on specific agents/platforms. When omitted, returns all signals available on the current agent. If the authenticated caller matches one of these destinations, activation keys will be included in the response.
    */
-  deliver_to: {
-    /**
-     * List of deployment targets (DSPs, sales agents, etc.). If the authenticated caller matches one of these deployment targets, activation keys will be included in the response.
-     */
-    deployments: Destination[];
-    /**
-     * Countries where signals will be used (ISO codes)
-     */
-    countries: string[];
-  };
+  destinations?: Destination[];
+  /**
+   * Countries where signals will be used (ISO 3166-1 alpha-2 codes). When omitted, no geographic filter is applied.
+   */
+  countries?: string[];
   filters?: SignalFilters;
   /**
    * Maximum number of results to return
@@ -6631,9 +7048,13 @@ export interface SignalFilters {
    */
   data_providers?: string[];
   /**
-   * Maximum CPM price filter
+   * Maximum CPM filter. Applies only to signals with model='cpm'.
    */
   max_cpm?: number;
+  /**
+   * Maximum percent-of-media rate filter. Signals where all percent_of_media pricing options exceed this value are excluded. Does not account for max_cpm caps.
+   */
+  max_percent?: number;
   /**
    * Minimum coverage requirement
    */
@@ -6732,6 +7153,20 @@ export type ActivationKey =
       value: string;
     };
 /**
+ * A pricing option offered by a signals agent. Combines pricing_option_id with the signal pricing model fields at the same level — pass pricing_option_id in report_usage for billing verification.
+ */
+export type SignalPricingOption = {
+  /**
+   * Opaque identifier for this pricing option, unique within the signals agent. Pass this in report_usage to identify which pricing option was applied.
+   */
+  pricing_option_id: string;
+} & SignalPricing;
+/**
+ * Pricing model for a signal. Discriminated by model: 'cpm' (fixed CPM), 'percent_of_media' (percentage of spend with optional CPM cap), or 'flat_fee' (fixed charge per reporting period, e.g. monthly licensed segments).
+ */
+export type SignalPricing = CpmPricing | PercentOfMediaPricing | FlatFeePricing;
+
+/**
  * Response payload for get_signals task
  */
 export interface GetSignalsResponse {
@@ -6753,6 +7188,23 @@ export interface GetSignalsResponse {
      */
     description: string;
     value_type?: SignalValueType;
+    /**
+     * Valid values for categorical signals. Present when value_type is 'categorical'. Buyers must use one of these values in SignalTargeting.values.
+     */
+    categories?: string[];
+    /**
+     * Valid range for numeric signals. Present when value_type is 'numeric'.
+     */
+    range?: {
+      /**
+       * Minimum value (inclusive)
+       */
+      min: number;
+      /**
+       * Maximum value (inclusive)
+       */
+      max: number;
+    };
     signal_type: SignalCatalogType;
     /**
      * Human-readable name of the data provider
@@ -6769,7 +7221,7 @@ export interface GetSignalsResponse {
     /**
      * Pricing options available for this signal. The buyer selects one and passes its pricing_option_id in report_usage for billing verification.
      */
-    pricing_options: PricingOption[];
+    pricing_options: SignalPricingOption[];
   }[];
   /**
    * Task-specific errors and warnings (e.g., signal discovery or pricing issues)
@@ -6783,24 +7235,86 @@ export interface GetSignalsResponse {
   context?: ContextObject;
   ext?: ExtensionObject;
 }
+/**
+ * Fixed cost per thousand impressions
+ */
+export interface CpmPricing {
+  model: 'cpm';
+  /**
+   * Cost per thousand impressions
+   */
+  cpm: number;
+  /**
+   * ISO 4217 currency code
+   */
+  currency: string;
+  ext?: ExtensionObject;
+}
+/**
+ * Percentage of media spend charged for this signal. When max_cpm is set, the effective rate is capped at that CPM — useful for platforms like The Trade Desk that use percent-of-media pricing with a CPM ceiling.
+ */
+export interface PercentOfMediaPricing {
+  model: 'percent_of_media';
+  /**
+   * Percentage of media spend, e.g. 15 = 15%
+   */
+  percent: number;
+  /**
+   * Optional CPM cap. When set, the effective charge is min(percent × media_spend_per_mille, max_cpm).
+   */
+  max_cpm?: number;
+  /**
+   * ISO 4217 currency code for the resulting charge
+   */
+  currency: string;
+  ext?: ExtensionObject;
+}
+/**
+ * Fixed charge per billing period, regardless of impressions or spend. Used for licensed data bundles and audience subscriptions.
+ */
+export interface FlatFeePricing {
+  model: 'flat_fee';
+  /**
+   * Fixed charge for the billing period
+   */
+  amount: number;
+  /**
+   * Billing period for the flat fee.
+   */
+  period: 'monthly' | 'quarterly' | 'annual' | 'campaign';
+  /**
+   * ISO 4217 currency code
+   */
+  currency: string;
+  ext?: ExtensionObject;
+}
 
 // activate_signal parameters
 /**
- * Request parameters for activating a signal on a specific deployment target
+ * Request parameters for activating or deactivating a signal on deployment targets
  */
 export interface ActivateSignalRequest {
+  /**
+   * Whether to activate or deactivate the signal. Deactivating removes the segment from downstream platforms, required when campaigns end to comply with data governance policies (GDPR, CCPA). Defaults to 'activate' when omitted.
+   */
+  action?: 'activate' | 'deactivate';
   /**
    * The universal identifier for the signal to activate
    */
   signal_agent_segment_id: string;
   /**
-   * Target deployment(s) for activation. If the authenticated caller matches one of these deployment targets, activation keys will be included in the response.
+   * Target destination(s) for activation. If the authenticated caller matches one of these destinations, activation keys will be included in the response.
    */
-  deployments: Destination[];
+  destinations: Destination[];
   /**
-   * The pricing option selected from the signal's pricing_options in the get_signals response. Required when the signal has pricing options. Records the buyer's pricing commitment at activation time and is referenced in subsequent report_usage calls.
+   * The pricing option selected from the signal's pricing_options in the get_signals response. Required when the signal has pricing options. Records the buyer's pricing commitment at activation time; pass this same value in report_usage for billing verification.
    */
   pricing_option_id?: string;
+  account?: AccountReference;
+  /**
+   * The buyer's campaign reference for this activation. Enables the signals agent to correlate activations with subsequent report_usage calls.
+   */
+  buyer_campaign_ref?: string;
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -6927,13 +7441,13 @@ export interface DirectIdentifiersSource {
  */
 export interface PropertyListFilters {
   /**
-   * Property must have feature data for ALL listed countries (ISO codes). Required.
+   * Property must have feature data for ALL listed countries (ISO codes). When omitted, no country restriction is applied.
    */
-  countries_all: string[];
+  countries_all?: string[];
   /**
-   * Property must support ANY of the listed channels. Required.
+   * Property must support ANY of the listed channels. When omitted, no channel restriction is applied.
    */
-  channels_any: MediaChannel[];
+  channels_any?: MediaChannel[];
   /**
    * Filter to these property types
    */
@@ -7223,24 +7737,12 @@ export type ListContentStandardsResponse =
        * Array of content standards configurations matching the filter criteria
        */
       standards: ContentStandards[];
-      /**
-       * Field must not be present in success response
-       */
-      errors?: {
-        [k: string]: unknown | undefined;
-      };
       pagination?: PaginationResponse;
       context?: ContextObject;
       ext?: ExtensionObject;
     }
   | {
       errors: Error[];
-      /**
-       * Field must not be present in error response
-       */
-      standards?: {
-        [k: string]: unknown | undefined;
-      };
       context?: ContextObject;
       ext?: ExtensionObject;
     };
@@ -7364,6 +7866,7 @@ export interface Artifact {
          * Heading level (1-6), only for role=heading
          */
         heading_level?: number;
+        provenance?: Provenance;
       }
     | {
         type: 'image';
@@ -7388,6 +7891,7 @@ export interface Artifact {
          * Image height in pixels
          */
         height?: number;
+        provenance?: Provenance;
       }
     | {
         type: 'video';
@@ -7412,6 +7916,7 @@ export interface Artifact {
          * Video thumbnail URL
          */
         thumbnail_url?: string;
+        provenance?: Provenance;
       }
     | {
         type: 'audio';
@@ -7432,6 +7937,7 @@ export interface Artifact {
          * How the transcript was generated
          */
         transcript_source?: 'original_script' | 'closed_captions' | 'generated';
+        provenance?: Provenance;
       }
   )[];
   /**
@@ -7463,6 +7969,7 @@ export interface Artifact {
      */
     json_ld?: {}[];
   };
+  provenance?: Provenance;
   /**
    * Platform-specific identifiers for this artifact
    */
@@ -7511,12 +8018,6 @@ export type GetContentStandardsResponse =
   | ContentStandards
   | {
       errors: Error[];
-      /**
-       * Field must not be present in error response
-       */
-      standards_id?: {
-        [k: string]: unknown | undefined;
-      };
       context?: ContextObject;
       ext?: ExtensionObject;
     };
@@ -7608,12 +8109,6 @@ export type CreateContentStandardsResponse =
        * Unique identifier for the created standards configuration
        */
       standards_id: string;
-      /**
-       * Field must not be present in success response
-       */
-      errors?: {
-        [k: string]: unknown | undefined;
-      };
       context?: ContextObject;
       ext?: ExtensionObject;
     }
@@ -7623,12 +8118,6 @@ export type CreateContentStandardsResponse =
        * If the error is a scope conflict, the ID of the existing standards that conflict
        */
       conflicting_standards_id?: string;
-      /**
-       * Field must not be present in error response
-       */
-      standards_id?: {
-        [k: string]: unknown | undefined;
-      };
       context?: ContextObject;
       ext?: ExtensionObject;
     };
@@ -7721,15 +8210,29 @@ export interface UpdateContentStandardsRequest {
 /**
  * Response from updating a content standards configuration
  */
-export interface UpdateContentStandardsResponse {
+export type UpdateContentStandardsResponse = UpdateContentStandardsSuccess | UpdateContentStandardsError;
+
+export interface UpdateContentStandardsSuccess {
+  /**
+   * Indicates the update was applied successfully
+   */
+  success: true;
   /**
    * ID of the updated standards configuration
    */
-  standards_id?: string;
+  standards_id: string;
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+export interface UpdateContentStandardsError {
+  /**
+   * Indicates the update failed
+   */
+  success: false;
   /**
    * Errors that occurred during the update
    */
-  errors?: Error[];
+  errors: Error[];
   /**
    * If scope change conflicts with another configuration, the ID of the conflicting standards
    */
@@ -7785,21 +8288,13 @@ export type CalibrateContentResponse =
          */
         explanation?: string;
       }[];
-      /**
-       * Field must not be present in success response
-       */
-      errors?: {
-        [k: string]: unknown | undefined;
-      };
+      context?: ContextObject;
+      ext?: ExtensionObject;
     }
   | {
       errors: Error[];
-      /**
-       * Field must not be present in error response
-       */
-      verdict?: {
-        [k: string]: unknown | undefined;
-      };
+      context?: ContextObject;
+      ext?: ExtensionObject;
     };
 
 
@@ -7905,23 +8400,11 @@ export type ValidateContentDeliveryResponse =
           rule_id?: string;
         }[];
       }[];
-      /**
-       * Field must not be present in success response
-       */
-      errors?: {
-        [k: string]: unknown | undefined;
-      };
       context?: ContextObject;
       ext?: ExtensionObject;
     }
   | {
       errors: Error[];
-      /**
-       * Field must not be present in error response
-       */
-      summary?: {
-        [k: string]: unknown | undefined;
-      };
       context?: ContextObject;
       ext?: ExtensionObject;
     };
@@ -8059,30 +8542,18 @@ export type GetMediaBuyArtifactsResponse =
         method?: 'random' | 'stratified' | 'recent' | 'failures_only';
       };
       pagination?: PaginationResponse;
-      /**
-       * Field must not be present in success response
-       */
-      errors?: {
-        [k: string]: unknown | undefined;
-      };
       context?: ContextObject;
       ext?: ExtensionObject;
     }
   | {
       errors: Error[];
-      /**
-       * Field must not be present in error response
-       */
-      media_buy_id?: {
-        [k: string]: unknown | undefined;
-      };
       context?: ContextObject;
       ext?: ExtensionObject;
     };
 
 // get_creative_features parameters
 /**
- * Request payload for get_creative_features task. Evaluates a creative manifest and returns feature values from a creative governance agent.
+ * Request payload for the get_creative_features task. Submits a creative manifest for evaluation by a governance agent, which analyzes the creative and returns scored feature values (brand safety, content categorization, quality metrics, etc.).
  */
 export interface GetCreativeFeaturesRequest {
   creative_manifest: CreativeManifest;
@@ -8090,13 +8561,14 @@ export interface GetCreativeFeaturesRequest {
    * Optional filter to specific features. If omitted, returns all available features.
    */
   feature_ids?: string[];
+  account?: AccountReference;
   context?: ContextObject;
   ext?: ExtensionObject;
 }
 
 // get_creative_features response
 /**
- * Response payload for get_creative_features task. Returns feature values for the evaluated creative.
+ * Response payload for the get_creative_features task. Returns scored feature values from the governance agent's evaluation of the submitted creative manifest.
  */
 export type GetCreativeFeaturesResponse =
   | {
@@ -8108,23 +8580,11 @@ export type GetCreativeFeaturesResponse =
        * URL to the vendor's full assessment report. The vendor controls what information is disclosed and access control.
        */
       detail_url?: string;
-      /**
-       * Field must not be present in success response
-       */
-      errors?: {
-        [k: string]: unknown | undefined;
-      };
       context?: ContextObject;
       ext?: ExtensionObject;
     }
   | {
       errors: Error[];
-      /**
-       * Field must not be present in error response
-       */
-      results?: {
-        [k: string]: unknown | undefined;
-      };
       context?: ContextObject;
       ext?: ExtensionObject;
     };
@@ -8804,6 +9264,10 @@ export interface GetAdCPCapabilitiesRequest {
 
 // get_adcp_capabilities response
 /**
+ * Transportation modes for isochrone-based catchment area calculations. Determines how travel time translates to geographic reach.
+ */
+export type TransportMode = 'walking' | 'cycling' | 'driving' | 'public_transport';
+/**
  * Response payload for get_adcp_capabilities task. Protocol-level capability discovery across all AdCP protocols. Each domain protocol has its own capability section.
  */
 export interface GetAdCPCapabilitiesResponse {
@@ -8812,7 +9276,7 @@ export interface GetAdCPCapabilitiesResponse {
    */
   adcp: {
     /**
-     * AdCP major versions supported by this seller. Major versions indicate breaking changes.
+     * AdCP major versions supported by this seller. Major versions indicate breaking changes. When multiple versions are listed, the buyer declares its version during the capabilities handshake or via the adcp_version field on requests.
      */
     major_versions: number[];
   };
@@ -8853,6 +9317,40 @@ export interface GetAdCPCapabilitiesResponse {
    * Media-buy protocol capabilities. Only present if media_buy is in supported_protocols.
    */
   media_buy?: {
+    /**
+     * Pricing models this seller supports across its product portfolio. Buyers can use this for pre-flight filtering before querying individual products. Individual products may support a subset of these models.
+     */
+    supported_pricing_models?: PricingModel[];
+    /**
+     * Seller-level reporting capabilities. Summarizes what reporting features are available across the seller's product portfolio. Individual products may vary — check product-level reporting_capabilities for specifics.
+     */
+    reporting?: {
+      /**
+       * Whether any products support date range filtering (date_range_support: 'date_range'). When false, all products return lifetime-only data.
+       */
+      supports_date_range?: boolean;
+      /**
+       * Whether delivery reporting includes daily_breakdown at the media buy and/or package level.
+       */
+      supports_daily_breakdown?: boolean;
+      /**
+       * Whether any products support webhook-based reporting notifications.
+       */
+      supports_webhooks?: boolean;
+      /**
+       * Reporting dimensions available across the seller's portfolio. Individual products may support a subset. Dimensions geo, device_type, device_platform, audience, and placement are opt-in via reporting_dimensions on the delivery request. Dimensions creative, keyword, and catalog_item are included automatically when the seller supports them (not controlled by reporting_dimensions).
+       */
+      available_dimensions?: (
+        | 'geo'
+        | 'device_type'
+        | 'device_platform'
+        | 'audience'
+        | 'placement'
+        | 'creative'
+        | 'keyword'
+        | 'catalog_item'
+      )[];
+    };
     features?: MediaBuyFeatures;
     /**
      * Technical execution capabilities for media buying
@@ -8983,6 +9481,10 @@ export interface GetAdCPCapabilitiesResponse {
          */
         device_platform?: boolean;
         /**
+         * Whether seller supports device type targeting (form factor: desktop, mobile, tablet, ctv, dooh, unknown). When true, seller supports both device_type (include) and device_type_exclude (exclude) in targeting overlays.
+         */
+        device_type?: boolean;
+        /**
          * Whether seller supports language targeting (ISO 639-1 codes)
          */
         language?: boolean;
@@ -8994,6 +9496,45 @@ export interface GetAdCPCapabilitiesResponse {
          * Whether seller supports audience_exclude in targeting overlays (requires features.audience_targeting)
          */
         audience_exclude?: boolean;
+        /**
+         * Keyword targeting capabilities. Presence indicates support for targeting_overlay.keyword_targets and keyword_targets_add/remove in update_media_buy.
+         */
+        keyword_targets?: {
+          /**
+           * Match types this seller supports for keyword targets. Sellers must reject goals with unsupported match types.
+           */
+          supported_match_types: ('broad' | 'phrase' | 'exact')[];
+        };
+        /**
+         * Negative keyword capabilities. Presence indicates support for targeting_overlay.negative_keywords and negative_keywords_add/remove in update_media_buy.
+         */
+        negative_keywords?: {
+          /**
+           * Match types this seller supports for negative keywords. Sellers must reject goals with unsupported match types.
+           */
+          supported_match_types: ('broad' | 'phrase' | 'exact')[];
+        };
+        /**
+         * Proximity targeting capabilities from arbitrary coordinates via targeting_overlay.geo_proximity.
+         */
+        geo_proximity?: {
+          /**
+           * Whether seller supports simple radius targeting (distance circle from a point)
+           */
+          radius?: boolean;
+          /**
+           * Whether seller supports travel time isochrone targeting (requires a routing engine)
+           */
+          travel_time?: boolean;
+          /**
+           * Whether seller supports pre-computed GeoJSON geometry (buyer provides the polygon)
+           */
+          geometry?: boolean;
+          /**
+           * Transport modes supported for travel_time isochrones. Only relevant when travel_time is true.
+           */
+          transport_modes?: TransportMode[];
+        };
       };
     };
     /**
@@ -9001,9 +9542,13 @@ export interface GetAdCPCapabilitiesResponse {
      */
     audience_targeting?: {
       /**
-       * Hashed PII types accepted for audience matching. Buyers should only send identifiers the seller supports.
+       * PII-derived identifier types accepted for audience matching. Buyers should only send identifiers the seller supports.
        */
       supported_identifier_types: ('hashed_email' | 'hashed_phone')[];
+      /**
+       * Whether the seller accepts the buyer's CRM/loyalty ID as a matchable identifier. Only applicable when the seller operates a closed ecosystem with a shared ID namespace (e.g., a retailer matching against their loyalty program). When true, buyers can include platform_customer_id values in AudienceMember.identifiers for matching against the seller's identity graph. Reporting on matched platform_customer_ids typically requires a clean room or the seller's own reporting surface.
+       */
+      supports_platform_customer_id?: boolean;
       /**
        * Universal ID types accepted for audience matching (MAIDs, RampID, UID2, etc.). MAID support varies significantly by platform — check this field before sending uids with type: maid.
        */
@@ -9050,13 +9595,13 @@ export interface GetAdCPCapabilitiesResponse {
       attribution_windows?: {
         event_type?: EventType;
         /**
-         * Available click-through attribution windows (e.g. ["7d"], ["7d", "14d", "30d"])
+         * Available post-click attribution windows (e.g. [{"interval": 7, "unit": "days"}])
          */
-        click_through: string[];
+        post_click: Duration[];
         /**
-         * Available view-through attribution windows (e.g. ["1d"], ["1d", "7d", "14d"])
+         * Available post-view attribution windows (e.g. [{"interval": 1, "unit": "days"}])
          */
-        view_through?: string[];
+        post_view?: Duration[];
       }[];
     };
     /**
@@ -9222,9 +9767,9 @@ export interface GetAdCPCapabilitiesResponse {
    */
   creative?: {
     /**
-     * Whether this creative agent accepts creative_brief in build_creative requests for structured campaign-level creative direction
+     * When true, this creative agent can process briefs with compliance requirements (required_disclosures, prohibited_claims) and will validate that disclosures can be satisfied by the target format.
      */
-    supports_brief?: boolean;
+    supports_compliance?: boolean;
   };
   /**
    * Extension namespaces this agent supports. Buyers can expect meaningful data in ext.{namespace} fields on responses from this agent. Extension schemas are published in the AdCP extension registry.
@@ -9425,19 +9970,7 @@ export interface ReportUsageRequest {
    * Client-generated unique key for this request. If a request with the same key has already been accepted, the server returns the original response without re-processing. Use a UUID or other unique identifier. Prevents duplicate billing on retries.
    */
   idempotency_key?: string;
-  /**
-   * The time range covered by this usage report. Applies to all records in the request.
-   */
-  reporting_period: {
-    /**
-     * Start of the reporting period (inclusive), in UTC.
-     */
-    start: string;
-    /**
-     * End of the reporting period (inclusive), in UTC.
-     */
-    end: string;
-  };
+  reporting_period: DatetimeRange;
   /**
    * One or more usage records. Each record is self-contained: it carries its own account and buyer_campaign_ref, allowing a single request to span multiple accounts and campaigns.
    */
@@ -9507,21 +10040,22 @@ export interface ReportUsageResponse {
  */
 export interface GetAccountFinancialsRequest {
   account: AccountReference;
-  /**
-   * Date range for the spend summary. Defaults to the current billing cycle if omitted.
-   */
-  period?: {
-    /**
-     * Period start (ISO 8601 date)
-     */
-    start: string;
-    /**
-     * Period end (ISO 8601 date)
-     */
-    end: string;
-  };
+  period?: DateRange;
   context?: ContextObject;
   ext?: ExtensionObject;
+}
+/**
+ * Date range for the spend summary. Defaults to the current billing cycle if omitted.
+ */
+export interface DateRange {
+  /**
+   * Start date (inclusive), ISO 8601
+   */
+  start: string;
+  /**
+   * End date (inclusive), ISO 8601
+   */
+  end: string;
 }
 
 // get_account_financials response
@@ -9538,19 +10072,11 @@ export interface GetAccountFinancialsSuccess {
    * ISO 4217 currency code for all monetary amounts in this response
    */
   currency: string;
+  period: DateRange;
   /**
-   * The actual period covered by spend data. May differ from the requested period if the seller adjusts to billing cycle boundaries.
+   * IANA timezone of the seller's billing day boundaries (e.g., 'America/New_York'). All dates in this response — period, invoice periods, due dates — are calendar dates in this timezone. Buyers in a different timezone should expect spend boundaries to differ from their own calendar day.
    */
-  period: {
-    /**
-     * Period start (ISO 8601 date)
-     */
-    start: string;
-    /**
-     * Period end (ISO 8601 date)
-     */
-    end: string;
-  };
+  timezone: string;
   /**
    * Spend summary for the period
    */
@@ -9619,13 +10145,7 @@ export interface GetAccountFinancialsSuccess {
      * Seller-assigned invoice identifier
      */
     invoice_id: string;
-    /**
-     * Billing period covered by this invoice
-     */
-    period?: {
-      start: string;
-      end: string;
-    };
+    period?: DateRange;
     /**
      * Invoice total in currency
      */
