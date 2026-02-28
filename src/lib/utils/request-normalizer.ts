@@ -112,10 +112,7 @@ export function normalizeRequestParams(taskType: string, params: any): any {
   if (taskType === 'get_products') {
     // Infer buying_mode from brief presence if not supplied
     if (!normalized.buying_mode) {
-      normalized = {
-        buying_mode: normalized.brief ? 'brief' : 'wholesale',
-        ...normalized,
-      };
+      normalized.buying_mode = normalized.brief ? 'brief' : 'wholesale';
     }
 
     // Strip removed v2 fields that would fail strict validation

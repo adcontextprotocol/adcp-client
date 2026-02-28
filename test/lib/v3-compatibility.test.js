@@ -1218,6 +1218,34 @@ describe('Request Parameter Normalization', () => {
     });
   });
 
+  describe('product_selectors normalization', () => {
+    test('should convert product_selectors to catalog for get_products', () => {
+      resetWarnings();
+      const result = normalizeRequestParams('get_products', {
+        buying_mode: 'wholesale',
+        product_selectors: {
+          manifest_gtins: ['gtin-1', 'gtin-2'],
+          manifest_tags: ['summer'],
+        },
+      });
+
+      assert.ok(result.catalog, 'catalog should be set');
+      assert.strictEqual(result.product_selectors, undefined);
+    });
+
+    test('should not overwrite existing catalog with product_selectors', () => {
+      resetWarnings();
+      const result = normalizeRequestParams('get_products', {
+        buying_mode: 'wholesale',
+        catalog: { type: 'offering', items: [{}] },
+        product_selectors: { manifest_gtins: ['gtin-1'] },
+      });
+
+      assert.strictEqual(result.catalog.type, 'offering');
+      assert.strictEqual(result.product_selectors, undefined);
+    });
+  });
+
   describe('null/undefined params', () => {
     test('should pass through null params unchanged', () => {
       assert.strictEqual(normalizeRequestParams('get_products', null), null);

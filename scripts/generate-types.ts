@@ -749,6 +749,9 @@ function removeIndexSignatureTypes(typeDefinitions: string): string {
 function fixTypedIndexSignatures(typeDefinitions: string): string {
   // Match typed index signatures (not `unknown`) that lack `| undefined`
   // Pattern: `[k: string]: SomeType;` where SomeType is NOT `unknown` and NOT already `| undefined`
+  // NOTE: This regex only handles single-line type annotations. Multi-line unions,
+  // array types (SomeType[]), and object types ({}) are not matched. Currently those
+  // cases get | undefined from json-schema-to-typescript natively.
   return typeDefinitions.replace(
     /(\[k: string\]: )(\w[\w\s|&<>,]*?)(?<!\| undefined)(;\s*\n\s*\})/g,
     (match, prefix, type, suffix) => {

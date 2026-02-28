@@ -11,7 +11,7 @@ Sync upstream AdCP v3 schema changes
 - `Measurement` type renamed to `OutcomeMeasurement` on `Product.outcome_measurement`.
 - `SyncAccountsRequest` restructured: `house` account type removed; `brand` and `operator` (both required) replace the old free-form structure; billing enum values changed.
 - `SyncAccountsResponse`: `account_id` removed; `parent_account_id` replaced by `account_scope` enum.
-- `ActivateSignalRequest`: `deployments` renamed to `destinations`; new required `action: 'activate' | 'deactivate'` field added.
+- `ActivateSignalRequest`: `deployments` renamed to `destinations`; new optional `action: 'activate' | 'deactivate'` field added (defaults to `'activate'`).
 - `GetProductsRequest`: `feedback`, `product_ids`, and `proposal_id` fields removed; `refine` buying mode added.
 - `AudienceMember.external_id` is now a required field (was absent). All `sync_audiences` callers must supply a stable buyer-assigned ID per member.
 - `'external_id'` removed from `UIDType` union. Use the top-level `AudienceMember.external_id` field instead.
@@ -29,7 +29,6 @@ Sync upstream AdCP v3 schema changes
 - `ActivateSignalRequest` gains `account_id` and `buyer_campaign_ref`
 - `SignalFilters.max_percent` for filtering percent-of-media signals
 - `buying_mode: 'refine'` for iterative product selection workflows
-- `'external_id'` added to `supported_identifier_types` in audience targeting capabilities
 - `supports_keyword_breakdown` added to `ReportingCapabilities`
 - Keyword targeting capability flags (`keyword_targets`, `negative_keywords`) in `GetAdCPCapabilitiesResponse`
 - New exports: `OptimizationGoal`, `ReachUnit`, `TargetingOverlay`, `OutcomeMeasurement`, `SignalPricingOption`, `SignalPricing`, `CpmPricing`, `PercentOfMediaPricing`, `FlatFeePricing`
