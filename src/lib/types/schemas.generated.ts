@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-02-28T17:36:25.885Z
+// Generated at: 2026-02-28T22:29:57.155Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -747,7 +747,7 @@ export const SyncCreativesSuccessSchema = z.object({
         preview_url: z.string().nullish(),
         expires_at: z.string().nullish(),
         assigned_to: z.array(z.string()).nullish(),
-        assignment_errors: z.record(z.string(), z.string()).nullish()
+        assignment_errors: z.record(z.string(), z.union([z.string(), z.undefined()])).nullish()
     })),
     sandbox: z.boolean().nullish(),
     context: ContextObjectSchema.nullish(),
@@ -920,7 +920,7 @@ export const ReportingCapabilitiesSchema = z.object({
 
 export const ForecastPointSchema = z.object({
     budget: z.number(),
-    metrics: z.record(z.string(), ForecastRangeSchema).and(z.object({
+    metrics: z.record(z.string(), z.union([ForecastRangeSchema, z.undefined()])).and(z.object({
         audience_size: ForecastRangeSchema.nullish(),
         reach: ForecastRangeSchema.nullish(),
         frequency: ForecastRangeSchema.nullish(),
@@ -1233,7 +1233,7 @@ export const ListCreativesResponseSchema = z.object({
         }).nullish(),
         sub_assets: z.array(SubAssetSchema).nullish()
     })),
-    format_summary: z.record(z.string(), z.number()).nullish(),
+    format_summary: z.record(z.string(), z.union([z.number(), z.undefined()])).nullish(),
     status_summary: z.object({
         processing: z.number().nullish(),
         approved: z.number().nullish(),

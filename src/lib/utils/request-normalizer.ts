@@ -86,10 +86,7 @@ export function normalizeRequestParams(taskType: string, params: any): any {
   }
 
   // ── Package normalization (create_media_buy, update_media_buy) ──
-  if (
-    (taskType === 'create_media_buy' || taskType === 'update_media_buy') &&
-    Array.isArray(normalized.packages)
-  ) {
+  if ((taskType === 'create_media_buy' || taskType === 'update_media_buy') && Array.isArray(normalized.packages)) {
     normalized.packages = normalized.packages.map(normalizePackageParams);
   }
 

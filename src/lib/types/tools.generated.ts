@@ -4015,7 +4015,7 @@ export interface SyncCreativesSuccess {
        * This interface was referenced by `undefined`'s JSON-Schema definition
        * via the `patternProperty` "^[a-zA-Z0-9_-]+$".
        */
-      [k: string]: string;
+      [k: string]: string | undefined;
     };
   }[];
   /**
@@ -4360,7 +4360,7 @@ export interface ListCreativesResponse {
      * This interface was referenced by `undefined`'s JSON-Schema definition
      * via the `patternProperty` "^[a-zA-Z0-9_-]+$".
      */
-    [k: string]: number;
+    [k: string]: number | undefined;
   };
   /**
    * Breakdown of creatives by status

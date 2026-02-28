@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas vlatest
-// Generated at: 2026-02-28T17:36:24.512Z
+// Generated at: 2026-02-28T22:29:55.674Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -3442,7 +3442,7 @@ export interface SyncCreativesSuccess {
        * This interface was referenced by `undefined`'s JSON-Schema definition
        * via the `patternProperty` "^[a-zA-Z0-9_-]+$".
        */
-      [k: string]: string;
+      [k: string]: string | undefined;
     };
   }[];
   /**

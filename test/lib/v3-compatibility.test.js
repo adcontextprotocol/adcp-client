@@ -1052,10 +1052,7 @@ describe('V3 Feature Guard Logic', () => {
 // Request Parameter Normalization Tests
 // ============================================
 
-const {
-  normalizeRequestParams,
-  normalizePackageParams,
-} = require('../../dist/lib/utils/request-normalizer.js');
+const { normalizeRequestParams, normalizePackageParams } = require('../../dist/lib/utils/request-normalizer.js');
 
 const { resetWarnings } = require('../../dist/lib/utils/deprecation.js');
 
@@ -1324,7 +1321,10 @@ describe('Package Parameter Normalization', () => {
 
   test('should not overwrite existing optimization_goals', () => {
     resetWarnings();
-    const goals = [{ kind: 'metric', metric: 'clicks' }, { kind: 'metric', metric: 'conversions' }];
+    const goals = [
+      { kind: 'metric', metric: 'clicks' },
+      { kind: 'metric', metric: 'conversions' },
+    ];
     const result = normalizePackageParams({
       optimization_goal: { kind: 'metric', metric: 'ctr' },
       optimization_goals: goals,
@@ -1347,7 +1347,10 @@ describe('Package Parameter Normalization', () => {
 
   test('should not overwrite existing catalogs', () => {
     resetWarnings();
-    const catalogs = [{ type: 'product', gtins: ['gtin-1'] }, { type: 'offering', items: [{}] }];
+    const catalogs = [
+      { type: 'product', gtins: ['gtin-1'] },
+      { type: 'offering', items: [{}] },
+    ];
     const result = normalizePackageParams({
       catalog: { type: 'store', ids: ['s-1'] },
       catalogs,
@@ -1469,11 +1472,7 @@ describe('DeviceType type validation', () => {
 
 // ── Standard Error Codes ──
 
-const {
-  STANDARD_ERROR_CODES,
-  isStandardErrorCode,
-  getErrorRecovery,
-} = require('../../dist/lib/types/error-codes.js');
+const { STANDARD_ERROR_CODES, isStandardErrorCode, getErrorRecovery } = require('../../dist/lib/types/error-codes.js');
 
 const { ErrorSchema } = require('../../dist/lib/types/schemas.generated.js');
 
