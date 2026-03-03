@@ -8,5 +8,17 @@
   "homepage": "https://github.com/adcontextprotocol/adcp-client",
   "repository": "https://github.com/adcontextprotocol/adcp-client",
   "license": "Apache-2.0",
-  "keywords": ["adcp", "advertising", "mcp", "a2a", "protocol", "adtech", "programmatic", "testing", "compliance", "registry", "media-buy"]
+  "keywords": [
+    "adcp",
+    "advertising",
+    "mcp",
+    "a2a",
+    "protocol",
+    "adtech",
+    "programmatic",
+    "testing",
+    "compliance",
+    "registry",
+    "media-buy"
+  ]
 }
