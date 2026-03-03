@@ -9,7 +9,7 @@
  */
 
 import type { TestOptions, TestStepResult, AgentProfile, TaskResult } from '../types';
-import { createTestClient, runStep, discoverAgentProfile } from '../client';
+import { createTestClient, runStep, discoverAgentProfile, resolveAuthPrincipal } from '../client';
 import { SPONSORED_INTELLIGENCE_TOOLS } from '../../utils/capabilities';
 
 /**
@@ -62,7 +62,7 @@ export async function testSISessionLifecycle(
           offering_id: offeringId,
           context: options.si_context || 'E2E testing - checking SI offering availability',
           identity: {
-            principal: options.auth?.token || 'e2e-test-principal',
+            principal: resolveAuthPrincipal(options) || 'e2e-test-principal',
             device_id: 'e2e-test-device',
           },
         }) as Promise<TaskResult>
@@ -110,7 +110,7 @@ export async function testSISessionLifecycle(
           offering_id: options.si_offering_id || 'e2e-test-offering',
           offering_token: offeringToken,
           identity: {
-            principal: options.auth?.token || 'e2e-test-principal',
+            principal: resolveAuthPrincipal(options) || 'e2e-test-principal',
             device_id: 'e2e-test-device',
           },
           context: options.si_context || 'E2E testing - initiating conversation about products',
@@ -313,7 +313,7 @@ export async function testSIAvailability(
         offering_id: offeringId,
         context: options.si_context || 'E2E testing - checking SI availability',
         identity: {
-          principal: options.auth?.token || 'e2e-test-principal',
+          principal: resolveAuthPrincipal(options) || 'e2e-test-principal',
           device_id: 'e2e-test-device',
         },
       }) as Promise<TaskResult>

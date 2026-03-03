@@ -149,21 +149,11 @@ export async function callMCPTool(
         version: '1.0.0',
       });
 
-      // For SSE fallback, add auth to URL (SSEClientTransport does not support
-      // custom request headers — EventSource API limitation)
-      if (authToken) {
-        baseUrl.searchParams.set('auth', authToken);
-      }
-      if (customHeaders && Object.keys(customHeaders).length > 0) {
-        debugLogs.push({
-          type: 'warning',
-          message: `MCP: Custom headers not sent on SSE fallback connection (EventSource limitation)`,
-          timestamp: new Date().toISOString(),
-          customHeaderKeys: Object.keys(customHeaders),
-        });
-      }
-
-      const sseTransport = new SSEClientTransport(baseUrl);
+      // SSEClientTransport supports requestInit.headers via the eventsource npm package,
+      // so pass the same auth headers used on the StreamableHTTP path.
+      const sseTransport = new SSEClientTransport(baseUrl, {
+        requestInit: { headers: authHeaders },
+      });
       await mcpClient.connect(sseTransport);
 
       debugLogs.push({
