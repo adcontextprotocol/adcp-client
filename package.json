@@ -36,6 +36,8 @@
   "files": [
     "dist/lib/**/*",
     "bin/**/*.js",
+    "skills/**/*",
+    ".claude-plugin/**/*",
     "README.md",
     "LICENSE"
   ],

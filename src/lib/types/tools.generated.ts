@@ -7,7 +7,7 @@
  */
 export type GetProductsRequest = {
   /**
-   * Declares buyer intent for this request. 'brief': publisher curates product recommendations from the provided brief. 'wholesale': buyer requests raw inventory to apply their own audiences — brief must not be provided, and proposals are omitted. 'refine': iterate on products and proposals from a previous get_products response using the refine array of change requests.
+   * Declares buyer intent for this request. 'brief': publisher curates product recommendations from the provided brief. 'wholesale': buyer requests raw inventory to apply their own audiences — brief must not be provided, and proposals are omitted. 'refine': iterate on products and proposals from a previous get_products response using the refine array of change requests. v3 clients MUST include buying_mode. Sellers receiving requests from pre-v3 clients without buying_mode SHOULD default to 'brief'.
    */
   buying_mode: 'brief' | 'wholesale' | 'refine';
   /**
@@ -3631,9 +3631,9 @@ export interface ReferenceAsset {
    */
   url: string;
   /**
-   * How the creative agent should use this asset. style_reference: match the visual style; product_shot: include this product; mood_board: overall look and feel; example_creative: example of a similar execution; logo: logo to use; strategy_doc: strategy or planning document for context
+   * How the creative agent should use this asset. style_reference: match the visual style; product_shot: include this product; mood_board: overall look and feel; example_creative: example of a similar execution; logo: logo to use; strategy_doc: strategy or planning document for context; storyboard: sequential visual direction for video or multi-scene creative
    */
-  role: 'style_reference' | 'product_shot' | 'mood_board' | 'example_creative' | 'logo' | 'strategy_doc';
+  role: 'style_reference' | 'product_shot' | 'mood_board' | 'example_creative' | 'logo' | 'strategy_doc' | 'storyboard';
   /**
    * Human-readable description of the asset and how it should inform creative generation
    */
@@ -4595,7 +4595,7 @@ export type MediaBuyStatus = 'pending_activation' | 'active' | 'paused' | 'compl
  * Request parameters for retrieving media buy status, creative approval state, and optional delivery snapshots
  */
 export interface GetMediaBuysRequest {
-  account: AccountReference;
+  account?: AccountReference;
   /**
    * Array of publisher media buy IDs to retrieve. When omitted along with buyer_refs, returns a paginated set of accessible media buys matching status_filter.
    */
@@ -6285,6 +6285,11 @@ export interface SyncCatalogsError {
 
 // build_creative parameters
 /**
+ * Quality tier for generation. 'draft' produces fast, lower-fidelity output for iteration and review. 'production' produces full-quality output for final delivery. If omitted, the creative agent uses its own default. For non-generative transforms (e.g., format resizing), creative agents MAY ignore this field.
+ */
+export type CreativeQuality = 'draft' | 'production';
+
+/**
  * Request to transform or generate a creative manifest. Takes a source manifest (which may be minimal for pure generation) and produces a target manifest in the specified format.
  */
 export interface BuildCreativeRequest {
@@ -6295,6 +6300,11 @@ export interface BuildCreativeRequest {
   creative_manifest?: CreativeManifest;
   target_format_id: FormatID;
   brand?: BrandReference;
+  quality?: CreativeQuality;
+  /**
+   * Maximum number of catalog items to use when generating. When a catalog asset contains more items than this limit, the creative agent selects the top items based on relevance or catalog ordering. When item_limit exceeds the format's max_items, the creative agent SHOULD use the lesser of the two. Ignored when the manifest contains no catalog assets.
+   */
+  item_limit?: number;
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -6347,6 +6357,10 @@ export interface BuildCreativeSuccess {
    * When true, this response contains simulated data from sandbox mode.
    */
   sandbox?: boolean;
+  /**
+   * ISO 8601 timestamp when generated asset URLs in the manifest expire. Set to the earliest expiration across all generated assets. Re-build the creative after this time to get fresh URLs.
+   */
+  expires_at?: string;
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -6398,6 +6412,10 @@ export type PreviewCreativeRequest =
        */
       template_id?: string;
       output_format?: PreviewOutputFormat;
+      /**
+       * Maximum number of catalog items to render in the preview. For catalog-driven generative formats, caps how many items are rendered per preview variant. When item_limit exceeds the format's max_items, the creative agent SHOULD use the lesser of the two. Ignored when the manifest contains no catalog assets. Creative agents SHOULD default to a reasonable sample when omitted and the catalog is large.
+       */
+      item_limit?: number;
       context?: ContextObject;
       ext?: ExtensionObject;
     }
@@ -6438,6 +6456,10 @@ export type PreviewCreativeRequest =
          */
         template_id?: string;
         output_format?: PreviewOutputFormat;
+        /**
+         * Maximum number of catalog items to render in this preview.
+         */
+        item_limit?: number;
       }[];
       output_format?: PreviewOutputFormat;
       context?: ContextObject;
