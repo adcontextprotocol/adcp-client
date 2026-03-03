@@ -1,0 +1,17 @@
+{
+  "name": "adcp",
+  "owner": {
+    "name": "AdCP Community",
+    "email": "maintainers@adcontextprotocol.org"
+  },
+  "metadata": {
+    "description": "Plugins for the Ad Context Protocol (AdCP) ecosystem"
+  },
+  "plugins": [
+    {
+      "name": "adcp-client",
+      "source": "./",
+      "description": "Call AdCP advertising agent tools over MCP or A2A, run protocol compliance scenarios, and query the AdCP registry. Includes built-in test agents for zero-config use."
+    }
+  ]
+}
