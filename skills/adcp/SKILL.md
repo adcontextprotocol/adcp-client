@@ -73,14 +73,14 @@ adcp https://agent.example.com get_products '{}' --protocol a2a
 
 ## Test runner
 
-Run protocol compliance tests against any AdCP agent. 19 built-in scenarios.
+Run protocol compliance tests against any AdCP agent. 20 built-in scenarios.
 
 ```bash
 adcp test <agent> [scenario] [options]
 adcp test --list-scenarios
 ```
 
-### Scenarios (run `adcp test --list-scenarios` for all 19 with descriptions)
+### Scenarios (run `adcp test --list-scenarios` for all 20 with descriptions)
 | Scenario | What it tests |
 |----------|---------------|
 | `health_check` | Basic connectivity |
