@@ -541,6 +541,24 @@ npx @adcp/client --show-config
 
 See [docs/CLI.md](docs/CLI.md) for complete CLI documentation including webhook support for async operations.
 
+### Claude Code Plugin
+
+Install the AdCP CLI as a Claude Code plugin to use `/adcp-client:adcp` directly in your AI coding assistant:
+
+```bash
+# Add the marketplace (one time)
+/plugin marketplace add adcontextprotocol/adcp-client
+
+# Install the plugin
+/plugin install adcp-client@adcp
+```
+
+Or test locally during development:
+
+```bash
+claude --plugin-dir ./path/to/adcp-client
+```
+
 ## Testing
 
 Try the live testing UI at `http://localhost:8080` when running the server:
