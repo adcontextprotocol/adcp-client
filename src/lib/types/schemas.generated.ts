@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-02-28T22:29:57.155Z
+// Generated at: 2026-03-03T10:50:20.000Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -390,7 +390,7 @@ export const CatalogAssetSchema = CatalogSchema;
 
 export const ReferenceAssetSchema = z.object({
     url: z.string(),
-    role: z.union([z.literal("style_reference"), z.literal("product_shot"), z.literal("mood_board"), z.literal("example_creative"), z.literal("logo"), z.literal("strategy_doc")]),
+    role: z.union([z.literal("style_reference"), z.literal("product_shot"), z.literal("mood_board"), z.literal("example_creative"), z.literal("logo"), z.literal("strategy_doc"), z.literal("storyboard")]),
     description: z.string().nullish()
 });
 
@@ -1290,7 +1290,7 @@ export const UpdateMediaBuySuccessSchema = z.object({
 });
 
 export const GetMediaBuysRequestSchema = z.object({
-    account: AccountReferenceSchema,
+    account: AccountReferenceSchema.nullish(),
     media_buy_ids: z.array(z.string()).nullish(),
     buyer_refs: z.array(z.string()).nullish(),
     status_filter: z.union([MediaBuyStatusSchema, z.array(MediaBuyStatusSchema)]).nullish(),
@@ -1663,6 +1663,8 @@ export const SyncCatalogsRequestSchema = z.object({
 
 export const SyncCatalogsResponseSchema = z.union([SyncCatalogsSuccessSchema, SyncCatalogsErrorSchema]);
 
+export const CreativeQualitySchema = z.union([z.literal("draft"), z.literal("production")]);
+
 export const CreativeManifestSchema = z.object({
     format_id: FormatIDSchema,
     assets: z.record(z.string(), z.union([ImageAssetSchema, VideoAssetSchema, AudioAssetSchema, VASTAssetSchema, TextAssetSchema, URLAssetSchema, HTMLAssetSchema, JavaScriptAssetSchema, WebhookAssetSchema, CSSAssetSchema, DAASTAssetSchema, MarkdownAssetSchema, BriefAssetSchema, CatalogAssetSchema])),
@@ -1673,6 +1675,7 @@ export const CreativeManifestSchema = z.object({
 export const BuildCreativeSuccessSchema = z.object({
     creative_manifest: CreativeManifestSchema,
     sandbox: z.boolean().nullish(),
+    expires_at: z.string().nullish(),
     context: ContextObjectSchema.nullish(),
     ext: ExtensionObjectSchema.nullish()
 });
@@ -3158,6 +3161,8 @@ export const BuildCreativeRequestSchema = z.object({
     creative_manifest: CreativeManifestSchema.nullish(),
     target_format_id: FormatIDSchema,
     brand: BrandReferenceSchema.nullish(),
+    quality: CreativeQualitySchema.nullish(),
+    item_limit: z.number().nullish(),
     context: ContextObjectSchema.nullish(),
     ext: ExtensionObjectSchema.nullish()
 });
@@ -3175,6 +3180,7 @@ export const PreviewCreativeRequestSchema = z.union([z.object({
         })).nullish(),
         template_id: z.string().nullish(),
         output_format: PreviewOutputFormatSchema.nullish(),
+        item_limit: z.number().nullish(),
         context: ContextObjectSchema.nullish(),
         ext: ExtensionObjectSchema.nullish()
     }), z.object({
@@ -3188,7 +3194,8 @@ export const PreviewCreativeRequestSchema = z.union([z.object({
                 context_description: z.string().nullish()
             })).nullish(),
             template_id: z.string().nullish(),
-            output_format: PreviewOutputFormatSchema.nullish()
+            output_format: PreviewOutputFormatSchema.nullish(),
+            item_limit: z.number().nullish()
         })),
         output_format: PreviewOutputFormatSchema.nullish(),
         context: ContextObjectSchema.nullish(),
