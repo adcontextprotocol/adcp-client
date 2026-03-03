@@ -11,6 +11,15 @@ import type { TestOptions, TestStepResult, AgentProfile, TaskResult, Logger } fr
 const DEFAULT_BRAND_REF: BrandReference = { domain: 'test.example.com' };
 
 /**
+ * Extract a principal identifier from TestOptions auth.
+ * For bearer auth this is the token; for basic auth this is the username.
+ */
+export function resolveAuthPrincipal(options: TestOptions): string | undefined {
+  if (!options.auth) return undefined;
+  return options.auth.type === 'basic' ? options.auth.username : options.auth.token;
+}
+
+/**
  * Resolve the brand reference to use for a test call.
  * Prefers the new brand field, falls back to converting a legacy brand_manifest.
  */
@@ -69,6 +78,7 @@ export function createTestClient(agentUrl: string, protocol: 'mcp' | 'a2a' = 'mc
     agent_uri: string;
     protocol: 'mcp' | 'a2a';
     auth_token?: string;
+    headers?: Record<string, string>;
   } = {
     id: 'test',
     name: 'E2E Test Client',
@@ -76,9 +86,16 @@ export function createTestClient(agentUrl: string, protocol: 'mcp' | 'a2a' = 'mc
     protocol,
   };
 
-  // Add auth_token to agent config - the library will use it automatically
-  if (options.auth?.type === 'bearer' && options.auth?.token) {
-    agentConfig.auth_token = options.auth.token;
+  // Add auth to agent config - the library will use it automatically
+  if (options.auth) {
+    if (options.auth.type === 'basic') {
+      // basic: encode credentials here; library sends the Authorization header as-is
+      const encoded = Buffer.from(`${options.auth.username}:${options.auth.password}`).toString('base64');
+      agentConfig.headers = { Authorization: `Basic ${encoded}` };
+    } else {
+      // bearer: raw token stored; library prepends 'Bearer ' internally via createMCPAuthHeaders
+      agentConfig.auth_token = options.auth.token;
+    }
   }
 
   const multiClient = new ADCPMultiAgentClient([agentConfig], {

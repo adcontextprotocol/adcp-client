@@ -53,11 +53,13 @@ export interface TestOptions {
   channels?: string[];
   // Specific pricing models to test
   pricing_models?: string[];
-  // Authentication for agents that require it
-  auth?: {
-    type: 'bearer';
-    token: string;
-  };
+  /**
+   * Authentication for agents that require it.
+   *
+   * For `bearer`, provide the raw token — the library sends it as `Authorization: Bearer <token>`.
+   * For `basic`, provide cleartext `username` and `password` — the library encodes them internally.
+   */
+  auth?: { type: 'bearer'; token: string } | { type: 'basic'; username: string; password: string };
   // Brand manifest for creative testing
   brand_manifest?: {
     name: string;

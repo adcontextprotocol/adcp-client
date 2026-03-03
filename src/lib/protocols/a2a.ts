@@ -56,7 +56,12 @@ export async function callA2ATool(
       message: `A2A: Fetch to ${typeof url === 'string' ? url : url.toString()}`,
       timestamp: new Date().toISOString(),
       hasAuth: !!authToken,
-      headers: authToken ? { ...headers, Authorization: 'Bearer ***', 'x-adcp-auth': '***' } : headers,
+      headers: Object.fromEntries(
+        Object.entries(headers).map(([k, v]) => {
+          const lower = k.toLowerCase();
+          return lower === 'authorization' || lower === 'x-adcp-auth' ? [k, '***'] : [k, v];
+        })
+      ),
     });
 
     const response = await fetch(url, {
