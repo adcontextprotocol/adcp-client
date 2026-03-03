@@ -1,0 +1,12 @@
+{
+  "name": "adcp-client",
+  "description": "Claude Code plugin for the AdCP (Ad Context Protocol) CLI. Adds the /adcp skill for calling advertising agents, running compliance tests, and querying the registry. Supports MCP and A2A protocols with built-in test agents.",
+  "author": {
+    "name": "AdCP Community",
+    "email": "maintainers@adcontextprotocol.org"
+  },
+  "homepage": "https://github.com/adcontextprotocol/adcp-client",
+  "repository": "https://github.com/adcontextprotocol/adcp-client",
+  "license": "MIT",
+  "keywords": ["adcp", "advertising", "mcp", "a2a", "protocol", "adtech"]
+}
