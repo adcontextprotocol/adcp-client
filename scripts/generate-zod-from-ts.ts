@@ -97,6 +97,63 @@ function postProcessTuplesToArrays(content: string): string {
   return content.replace(/z\.tuple\(\[([^\]]+)\]\)\.rest\(\1\)/g, 'z.array($1)');
 }
 
+/**
+ * Post-process generated Zod schemas to add .passthrough() to all z.object() calls,
+ * including deeply nested inline objects.
+ *
+ * By default, Zod object schemas strip unknown keys during parsing. This causes real-world
+ * agent responses with extra/platform-specific fields to lose those fields after validation.
+ * Adding .passthrough() preserves unknown keys while still validating known fields.
+ *
+ * This uses balanced-parenthesis scanning. The body of each z.object() is accumulated and
+ * recursively post-processed before emitting, so nested inline z.object() calls also
+ * receive .passthrough().
+ *
+ * LIMITATION: The depth counter does not account for string literals or comments containing
+ * bare parentheses. This is safe for ts-to-zod output, which only places parentheses inside
+ * function-call syntax, never inside string values. If that assumption ever breaks, switch
+ * to an AST-based approach.
+ */
+function postProcessForPassthrough(content: string): string {
+  const MARKER = 'z.object(';
+  let result = '';
+  let i = 0;
+
+  while (i < content.length) {
+    if (content.startsWith(MARKER, i)) {
+      result += MARKER;
+      i += MARKER.length;
+
+      // Accumulate the body of z.object(...) by tracking balanced parens.
+      // We start with depth=1 (the opening `(` has already been consumed).
+      let depth = 1;
+      let body = '';
+      while (i < content.length && depth > 0) {
+        const ch = content[i];
+        if (ch === '(') {
+          depth++;
+        } else if (ch === ')') {
+          depth--;
+          if (depth === 0) {
+            // Recursively process the body so nested z.object() calls also get .passthrough()
+            result += postProcessForPassthrough(body);
+            result += ').passthrough()';
+            i++;
+            break;
+          }
+        }
+        body += ch;
+        i++;
+      }
+    } else {
+      result += content[i];
+      i++;
+    }
+  }
+
+  return result;
+}
+
 // Write file only if content differs (excluding timestamp)
 function writeFileIfChanged(filePath: string, newContent: string): boolean {
   const contentWithoutTimestamp = (content: string) => {
@@ -189,6 +246,11 @@ async function generateZodSchemas() {
     // ts-to-zod converts @minItems 1 to z.tuple([]).rest() which requires at least one element,
     // but agents in the wild return empty arrays. This relaxes validation for interoperability.
     zodSchemas = postProcessTuplesToArrays(zodSchemas);
+
+    // Post-process: Add .passthrough() to all z.object() schemas so unknown keys are preserved.
+    // Agents may return extra/platform-specific fields not in the schema. Without passthrough,
+    // Zod strips those fields, causing data loss for consumers who need them.
+    zodSchemas = postProcessForPassthrough(zodSchemas);
 
     // Create header with metadata
     const header = `// Generated Zod v4 schemas from TypeScript types
