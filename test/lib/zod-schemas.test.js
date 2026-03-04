@@ -335,8 +335,15 @@ describe('Zod Schema Validation', () => {
     };
 
     const result = schemas.BrandReferenceSchema.safeParse(input);
-    assert.ok(result.success, `BrandReference with extra field should succeed: ${JSON.stringify(result.error?.issues)}`);
-    assert.strictEqual(result.data.platform_specific_field, 'should be kept', 'Extra field should be preserved after parsing');
+    assert.ok(
+      result.success,
+      `BrandReference with extra field should succeed: ${JSON.stringify(result.error?.issues)}`
+    );
+    assert.strictEqual(
+      result.data.platform_specific_field,
+      'should be kept',
+      'Extra field should be preserved after parsing'
+    );
   });
 
   test('nested object schemas preserve unknown fields (passthrough)', async () => {
@@ -355,7 +362,11 @@ describe('Zod Schema Validation', () => {
     });
 
     assert.ok(result.success, `MediaBuy with extra field should succeed: ${JSON.stringify(result.error?.issues)}`);
-    assert.strictEqual(result.data.vendor_extension, 'top-level extra field', 'Top-level extra field should be preserved');
+    assert.strictEqual(
+      result.data.vendor_extension,
+      'top-level extra field',
+      'Top-level extra field should be preserved'
+    );
   });
 
   test('inline nested object schemas preserve unknown fields (passthrough)', async () => {
@@ -373,7 +384,10 @@ describe('Zod Schema Validation', () => {
       },
     });
 
-    assert.ok(result.success, `Provenance with nested extra field should succeed: ${JSON.stringify(result.error?.issues)}`);
+    assert.ok(
+      result.success,
+      `Provenance with nested extra field should succeed: ${JSON.stringify(result.error?.issues)}`
+    );
     assert.strictEqual(
       result.data.ai_tool.extra_platform_field,
       'should be kept inside nested object',

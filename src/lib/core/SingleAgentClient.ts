@@ -2058,10 +2058,9 @@ export class SingleAgentClient {
     }
 
     try {
-      // Use strict() to reject unknown keys instead of stripping them
-      // This ensures we fail fast on typos and invalid top-level fields
-      // NOTE: Nested objects will still use default Zod behavior (strip unknown fields)
-      // to maintain compatibility with agent implementations that may include extra metadata
+      // Use strict() to reject unknown top-level keys so callers get fast failures on typos.
+      // Nested objects have .passthrough() from the schema generator, so unknown nested
+      // fields are preserved rather than rejected.
       if (schema instanceof z.ZodObject) {
         schema.strict().parse(params);
       } else {
