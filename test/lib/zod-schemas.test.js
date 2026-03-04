@@ -321,4 +321,77 @@ describe('Zod Schema Validation', () => {
     assert.ok(schemas.GetCreativeFeaturesResponseSchema, 'GetCreativeFeaturesResponseSchema should exist');
     assert.ok(typeof schemas.GetCreativeFeaturesResponseSchema.safeParse === 'function');
   });
+
+  test('object schemas preserve unknown fields (passthrough)', async () => {
+    if (!schemas) {
+      schemas = await import('../../dist/lib/types/schemas.generated.js');
+    }
+
+    // BrandReferenceSchema is a simple object schema — unknown fields should be preserved
+    const input = {
+      domain: 'example.com',
+      brand_id: 'brand_123',
+      platform_specific_field: 'should be kept',
+    };
+
+    const result = schemas.BrandReferenceSchema.safeParse(input);
+    assert.ok(
+      result.success,
+      `BrandReference with extra field should succeed: ${JSON.stringify(result.error?.issues)}`
+    );
+    assert.strictEqual(
+      result.data.platform_specific_field,
+      'should be kept',
+      'Extra field should be preserved after parsing'
+    );
+  });
+
+  test('nested object schemas preserve unknown fields (passthrough)', async () => {
+    if (!schemas) {
+      schemas = await import('../../dist/lib/types/schemas.generated.js');
+    }
+
+    // MediaBuySchema contains nested objects — verify unknown fields are kept at all levels
+    const result = schemas.MediaBuySchema.safeParse({
+      media_buy_id: 'mb_123',
+      status: 'active',
+      promoted_offering: 'Test Campaign',
+      total_budget: 10000,
+      packages: [],
+      vendor_extension: 'top-level extra field',
+    });
+
+    assert.ok(result.success, `MediaBuy with extra field should succeed: ${JSON.stringify(result.error?.issues)}`);
+    assert.strictEqual(
+      result.data.vendor_extension,
+      'top-level extra field',
+      'Top-level extra field should be preserved'
+    );
+  });
+
+  test('inline nested object schemas preserve unknown fields (passthrough)', async () => {
+    if (!schemas) {
+      schemas = await import('../../dist/lib/types/schemas.generated.js');
+    }
+
+    // ProvenanceSchema has inline z.object() definitions for ai_tool, declared_by, c2pa, etc.
+    // These nested objects must also have .passthrough() so their unknown fields are kept.
+    const result = schemas.ProvenanceSchema.safeParse({
+      ai_tool: {
+        name: 'DALL-E',
+        provider: 'OpenAI',
+        extra_platform_field: 'should be kept inside nested object',
+      },
+    });
+
+    assert.ok(
+      result.success,
+      `Provenance with nested extra field should succeed: ${JSON.stringify(result.error?.issues)}`
+    );
+    assert.strictEqual(
+      result.data.ai_tool.extra_platform_field,
+      'should be kept inside nested object',
+      'Unknown fields inside nested inline objects should be preserved'
+    );
+  });
 });
