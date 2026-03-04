@@ -26,11 +26,15 @@ export type TestScenario =
   // v3 Governance protocol scenarios
   | 'governance_property_lists' // Property list CRUD operations
   | 'governance_content_standards' // Content standards lifecycle
+  | 'property_list_filters' // Property list filter round-trip: GARM, MFA, custom_tags, feature_requirements
   // v3 SI (Sponsored Intelligence) protocol scenarios
   | 'si_session_lifecycle' // Full SI session: initiate -> messages -> terminate
   | 'si_availability' // Check SI offering availability
+  | 'si_handoff' // ACP handoff flow: initiate -> purchase intent -> terminate with handoff_transaction
   // v3 Capability discovery
   | 'capability_discovery' // Verify get_adcp_capabilities response
+  // Schema compliance
+  | 'schema_compliance' // Validate v3 channel enum, pricing field names, format assets structure
   // Audience management
   | 'sync_audiences'; // Test CRM audience sync flow
 

@@ -47,13 +47,18 @@ export const SCENARIO_REQUIREMENTS: Partial<Record<TestScenario, string[]>> = {
   // Requires governance tools
   governance_property_lists: ['create_property_list'],
   governance_content_standards: ['list_content_standards'],
+  property_list_filters: ['create_property_list', 'get_property_list'],
 
   // Requires SI tools
   si_session_lifecycle: ['si_initiate_session'],
   si_availability: ['si_get_offering'],
+  si_handoff: ['si_initiate_session', 'si_terminate_session'],
 
   // Requires audience management tools
   sync_audiences: ['sync_audiences'],
+
+  // Schema compliance (requires product discovery)
+  schema_compliance: ['get_products'],
 };
 
 /**
@@ -79,8 +84,11 @@ export const DEFAULT_SCENARIOS: readonly TestScenario[] = [
   'signals_flow',
   'governance_property_lists',
   'governance_content_standards',
+  'property_list_filters',
   'si_session_lifecycle',
   'si_availability',
+  'si_handoff',
+  'schema_compliance',
   'sync_audiences',
 ] as const;
 
