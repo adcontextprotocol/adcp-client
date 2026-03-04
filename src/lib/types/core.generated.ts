@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas vlatest
-// Generated at: 2026-03-03T10:50:18.617Z
+// Generated at: 2026-03-04T14:01:38.275Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -798,7 +798,7 @@ export interface DaypartTarget {
   label?: string;
 }
 /**
- * A time duration expressed as an interval and unit. Used for frequency cap windows, attribution windows, reach optimization windows, and other time-based settings. When unit is 'campaign', interval must be 1 — the window spans the full campaign flight.
+ * A time duration expressed as an interval and unit. Used for frequency cap windows, attribution windows, reach optimization windows, time budgets, and other time-based settings. When unit is 'campaign', interval must be 1 — the window spans the full campaign flight.
  */
 export interface Duration {
   /**
@@ -806,9 +806,9 @@ export interface Duration {
    */
   interval: number;
   /**
-   * Time unit. 'campaign' spans the full campaign flight.
+   * Time unit. 'seconds' for sub-minute precision. 'campaign' spans the full campaign flight.
    */
-  unit: 'minutes' | 'hours' | 'days' | 'campaign';
+  unit: 'seconds' | 'minutes' | 'hours' | 'days' | 'campaign';
 }
 /**
  * Reference to a property list for targeting specific properties within this product. The package runs on the intersection of the product's publisher_properties and this list. Sellers SHOULD return a validation error if the product has property_targeting_allowed: false.
@@ -3016,6 +3016,23 @@ export interface GetProductsResponse {
      * Seller explanation of what was done, what couldn't be done, or why. Recommended when status is 'partial' or 'unable'.
      */
     notes?: string;
+  }[];
+  /**
+   * Declares what the seller could not finish within the buyer's time_budget or due to internal limits. Each entry identifies a scope that is missing or partial. Absent when the response is fully complete.
+   */
+  incomplete?: {
+    /**
+     * 'products': not all inventory sources were searched. 'pricing': products returned but pricing is absent or unconfirmed. 'forecast': products returned but forecast data is absent. 'proposals': proposals were not generated or are incomplete.
+     */
+    scope: 'products' | 'pricing' | 'forecast' | 'proposals';
+    /**
+     * Human-readable explanation of what is missing and why.
+     */
+    description: string;
+    /**
+     * How much additional time would resolve this scope. Allows the buyer to decide whether to retry with a larger time_budget.
+     */
+    estimated_wait?: Duration;
   }[];
   pagination?: PaginationResponse;
   /**

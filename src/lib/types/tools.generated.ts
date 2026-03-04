@@ -103,6 +103,10 @@ export type GetProductsRequest = {
     | 'product_card'
     | 'product_card_detailed'
   )[];
+  /**
+   * Maximum time the buyer will commit to this request. The seller returns the best results achievable within this budget and does not start processes (human approvals, expensive external queries) that cannot complete in time. When omitted, the seller decides timing.
+   */
+  time_budget?: Duration;
   pagination?: PaginationRequest;
   context?: ContextObject;
   ext?: ExtensionObject;
@@ -602,6 +606,19 @@ export interface PropertyListReference {
   auth_token?: string;
 }
 /**
+ * A time duration expressed as an interval and unit. Used for frequency cap windows, attribution windows, reach optimization windows, time budgets, and other time-based settings. When unit is 'campaign', interval must be 1 — the window spans the full campaign flight.
+ */
+export interface Duration {
+  /**
+   * Number of time units. Must be 1 when unit is 'campaign'.
+   */
+  interval: number;
+  /**
+   * Time unit. 'seconds' for sub-minute precision. 'campaign' spans the full campaign flight.
+   */
+  unit: 'seconds' | 'minutes' | 'hours' | 'days' | 'campaign';
+}
+/**
  * Standard cursor-based pagination parameters for list operations
  */
 export interface PaginationRequest {
@@ -842,6 +859,23 @@ export interface GetProductsResponse {
      * Seller explanation of what was done, what couldn't be done, or why. Recommended when status is 'partial' or 'unable'.
      */
     notes?: string;
+  }[];
+  /**
+   * Declares what the seller could not finish within the buyer's time_budget or due to internal limits. Each entry identifies a scope that is missing or partial. Absent when the response is fully complete.
+   */
+  incomplete?: {
+    /**
+     * 'products': not all inventory sources were searched. 'pricing': products returned but pricing is absent or unconfirmed. 'forecast': products returned but forecast data is absent. 'proposals': proposals were not generated or are incomplete.
+     */
+    scope: 'products' | 'pricing' | 'forecast' | 'proposals';
+    /**
+     * Human-readable explanation of what is missing and why.
+     */
+    description: string;
+    /**
+     * How much additional time would resolve this scope. Allows the buyer to decide whether to retry with a larger time_budget.
+     */
+    estimated_wait?: Duration;
   }[];
   pagination?: PaginationResponse;
   /**
@@ -1541,19 +1575,6 @@ export interface OutcomeMeasurement {
    * Reporting frequency and format
    */
   reporting: string;
-}
-/**
- * A time duration expressed as an interval and unit. Used for frequency cap windows, attribution windows, reach optimization windows, and other time-based settings. When unit is 'campaign', interval must be 1 — the window spans the full campaign flight.
- */
-export interface Duration {
-  /**
-   * Number of time units. Must be 1 when unit is 'campaign'.
-   */
-  interval: number;
-  /**
-   * Time unit. 'campaign' spans the full campaign flight.
-   */
-  unit: 'minutes' | 'hours' | 'days' | 'campaign';
 }
 /**
  * Reporting capabilities available for a product

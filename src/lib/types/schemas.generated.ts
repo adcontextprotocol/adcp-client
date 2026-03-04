@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-03-04T12:17:49.576Z
+// Generated at: 2026-03-04T14:01:39.851Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -34,7 +34,7 @@ export const DayOfWeekSchema = z.union([z.literal("monday"), z.literal("tuesday"
 
 export const DurationSchema = z.object({
     interval: z.number(),
-    unit: z.union([z.literal("minutes"), z.literal("hours"), z.literal("days"), z.literal("campaign")])
+    unit: z.union([z.literal("seconds"), z.literal("minutes"), z.literal("hours"), z.literal("days"), z.literal("campaign")])
 }).passthrough();
 
 export const ReachUnitSchema = z.union([z.literal("individuals"), z.literal("households"), z.literal("devices"), z.literal("accounts"), z.literal("cookies"), z.literal("custom")]);
@@ -2933,6 +2933,11 @@ export const GetProductsResponseSchema = z.object({
         status: z.union([z.literal("applied"), z.literal("partial"), z.literal("unable")]),
         notes: z.string().nullish()
     }).passthrough()).nullish(),
+    incomplete: z.array(z.object({
+        scope: z.union([z.literal("products"), z.literal("pricing"), z.literal("forecast"), z.literal("proposals")]),
+        description: z.string(),
+        estimated_wait: DurationSchema.nullish()
+    }).passthrough()).nullish(),
     pagination: PaginationResponseSchema.nullish(),
     sandbox: z.boolean().nullish(),
     context: ContextObjectSchema.nullish(),
@@ -3386,6 +3391,7 @@ export const GetProductsRequestSchema = z.object({
     filters: ProductFiltersSchema.nullish(),
     property_list: PropertyListReferenceSchema.nullish(),
     fields: z.array(z.union([z.literal("product_id"), z.literal("name"), z.literal("description"), z.literal("publisher_properties"), z.literal("channels"), z.literal("format_ids"), z.literal("placements"), z.literal("delivery_type"), z.literal("pricing_options"), z.literal("forecast"), z.literal("outcome_measurement"), z.literal("delivery_measurement"), z.literal("reporting_capabilities"), z.literal("creative_policy"), z.literal("catalog_types"), z.literal("metric_optimization"), z.literal("conversion_tracking"), z.literal("data_provider_signals"), z.literal("max_optimization_goals"), z.literal("catalog_match"), z.literal("brief_relevance"), z.literal("expires_at"), z.literal("product_card"), z.literal("product_card_detailed")])).nullish(),
+    time_budget: DurationSchema.nullish(),
     pagination: PaginationRequestSchema.nullish(),
     context: ContextObjectSchema.nullish(),
     ext: ExtensionObjectSchema.nullish()
