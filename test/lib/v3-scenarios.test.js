@@ -20,7 +20,10 @@ describe('v3 Scenario Exports', () => {
 
   test('new TestScenario values are in SCENARIO_REQUIREMENTS', () => {
     const { SCENARIO_REQUIREMENTS } = require('../../dist/lib/testing/index.js');
-    assert.ok('property_list_filters' in SCENARIO_REQUIREMENTS, 'property_list_filters should be in SCENARIO_REQUIREMENTS');
+    assert.ok(
+      'property_list_filters' in SCENARIO_REQUIREMENTS,
+      'property_list_filters should be in SCENARIO_REQUIREMENTS'
+    );
     assert.ok('si_handoff' in SCENARIO_REQUIREMENTS, 'si_handoff should be in SCENARIO_REQUIREMENTS');
     assert.ok('schema_compliance' in SCENARIO_REQUIREMENTS, 'schema_compliance should be in SCENARIO_REQUIREMENTS');
   });
@@ -50,7 +53,10 @@ describe('v3 Scenario Exports', () => {
 
   test('new scenarios are in DEFAULT_SCENARIOS', () => {
     const { DEFAULT_SCENARIOS } = require('../../dist/lib/testing/index.js');
-    assert.ok(DEFAULT_SCENARIOS.includes('property_list_filters'), 'property_list_filters should be in DEFAULT_SCENARIOS');
+    assert.ok(
+      DEFAULT_SCENARIOS.includes('property_list_filters'),
+      'property_list_filters should be in DEFAULT_SCENARIOS'
+    );
     assert.ok(DEFAULT_SCENARIOS.includes('si_handoff'), 'si_handoff should be in DEFAULT_SCENARIOS');
     assert.ok(DEFAULT_SCENARIOS.includes('schema_compliance'), 'schema_compliance should be in DEFAULT_SCENARIOS');
   });
@@ -68,7 +74,10 @@ describe('getApplicableScenarios with v3 scenarios', () => {
     const { getApplicableScenarios } = require('../../dist/lib/testing/index.js');
     const tools = ['create_property_list'];
     const applicable = getApplicableScenarios(tools);
-    assert.ok(!applicable.includes('property_list_filters'), 'should not include property_list_filters without get_property_list');
+    assert.ok(
+      !applicable.includes('property_list_filters'),
+      'should not include property_list_filters without get_property_list'
+    );
   });
 
   test('si_handoff is included when both SI tools present', () => {
@@ -107,10 +116,7 @@ describe('testAgent routes new scenarios', () => {
   test('compiled agent-tester has case for property_list_filters', () => {
     const fs = require('node:fs');
     const path = require('node:path');
-    const src = fs.readFileSync(
-      path.join(__dirname, '../../dist/lib/testing/agent-tester.js'),
-      'utf8'
-    );
+    const src = fs.readFileSync(path.join(__dirname, '../../dist/lib/testing/agent-tester.js'), 'utf8');
     assert.ok(src.includes("'property_list_filters'"), 'agent-tester should route property_list_filters');
     assert.ok(src.includes('testPropertyListFilters'), 'agent-tester should call testPropertyListFilters');
   });
@@ -118,10 +124,7 @@ describe('testAgent routes new scenarios', () => {
   test('compiled agent-tester has case for si_handoff', () => {
     const fs = require('node:fs');
     const path = require('node:path');
-    const src = fs.readFileSync(
-      path.join(__dirname, '../../dist/lib/testing/agent-tester.js'),
-      'utf8'
-    );
+    const src = fs.readFileSync(path.join(__dirname, '../../dist/lib/testing/agent-tester.js'), 'utf8');
     assert.ok(src.includes("'si_handoff'"), 'agent-tester should route si_handoff');
     assert.ok(src.includes('testSIHandoff'), 'agent-tester should call testSIHandoff');
   });
@@ -129,10 +132,7 @@ describe('testAgent routes new scenarios', () => {
   test('compiled agent-tester has case for schema_compliance', () => {
     const fs = require('node:fs');
     const path = require('node:path');
-    const src = fs.readFileSync(
-      path.join(__dirname, '../../dist/lib/testing/agent-tester.js'),
-      'utf8'
-    );
+    const src = fs.readFileSync(path.join(__dirname, '../../dist/lib/testing/agent-tester.js'), 'utf8');
     assert.ok(src.includes("'schema_compliance'"), 'agent-tester should route schema_compliance');
     assert.ok(src.includes('testSchemaCompliance'), 'agent-tester should call testSchemaCompliance');
   });
@@ -142,16 +142,29 @@ describe('schema_compliance channel validation logic', () => {
   test('compiled schema-compliance module contains all 19 v3 channel enum values', () => {
     const fs = require('node:fs');
     const path = require('node:path');
-    const src = fs.readFileSync(
-      path.join(__dirname, '../../dist/lib/testing/scenarios/schema-compliance.js'),
-      'utf8'
-    );
+    const src = fs.readFileSync(path.join(__dirname, '../../dist/lib/testing/scenarios/schema-compliance.js'), 'utf8');
 
     // All 19 v3 channels must be present in the compiled module (as bare identifiers)
     const expectedChannels = [
-      'display', 'olv', 'social', 'search', 'ctv', 'linear_tv', 'radio',
-      'streaming_audio', 'podcast', 'dooh', 'ooh', 'print', 'cinema',
-      'email', 'gaming', 'retail_media', 'influencer', 'affiliate', 'product_placement',
+      'display',
+      'olv',
+      'social',
+      'search',
+      'ctv',
+      'linear_tv',
+      'radio',
+      'streaming_audio',
+      'podcast',
+      'dooh',
+      'ooh',
+      'print',
+      'cinema',
+      'email',
+      'gaming',
+      'retail_media',
+      'influencer',
+      'affiliate',
+      'product_placement',
     ];
     for (const ch of expectedChannels) {
       assert.ok(src.includes(ch), `schema-compliance should include channel "${ch}"`);

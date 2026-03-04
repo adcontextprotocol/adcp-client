@@ -561,8 +561,7 @@ export async function testPropertyListFilters(
     return { steps, profile };
   }
 
-  const hasRequired =
-    profile.tools.includes('create_property_list') && profile.tools.includes('get_property_list');
+  const hasRequired = profile.tools.includes('create_property_list') && profile.tools.includes('get_property_list');
   if (!hasRequired) {
     steps.push({
       step: 'Property list filter support check',
@@ -684,7 +683,9 @@ export async function testPropertyListFilters(
         issues.push('garm_categories.exclude not preserved');
       }
       if (returnedFilters.mfa_thresholds?.min_score !== 0.75) {
-        issues.push(`mfa_thresholds.min_score mismatch: got ${returnedFilters.mfa_thresholds?.min_score}, expected 0.75`);
+        issues.push(
+          `mfa_thresholds.min_score mismatch: got ${returnedFilters.mfa_thresholds?.min_score}, expected 0.75`
+        );
       }
       if (!returnedFilters.custom_tags) {
         issues.push('custom_tags filter not preserved');
@@ -738,7 +739,9 @@ export async function testPropertyListFilters(
       passed: true,
       duration_ms: 0,
       details: `Skipped — agent does not advertise delete_property_list. Test list ${createdListId} may remain.`,
-      warnings: [`Test list ${createdListId} was created but cannot be cleaned up (delete_property_list not available)`],
+      warnings: [
+        `Test list ${createdListId} was created but cannot be cleaned up (delete_property_list not available)`,
+      ],
     });
   }
 
