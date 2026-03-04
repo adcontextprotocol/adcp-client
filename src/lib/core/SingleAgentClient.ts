@@ -41,6 +41,7 @@ import type {
 import type { Task as A2ATask, TaskStatusUpdateEvent } from '@a2a-js/sdk';
 
 import { TaskExecutor, DeferredTaskError } from './TaskExecutor';
+import { createMCPAuthHeaders } from '../auth';
 import { AuthenticationRequiredError, is401Error } from '../errors';
 import type { InputHandler, TaskOptions, TaskResult, ConversationConfig, TaskInfo } from './ConversationTypes';
 import type { Activity, AsyncHandlerConfig, WebhookMetadata } from './AsyncHandler';
@@ -290,6 +291,7 @@ export class SingleAgentClient {
     const fetchImpl = async (url: string | URL | Request, options?: RequestInit) => {
       const headers: Record<string, string> = {
         ...(options?.headers as Record<string, string>),
+        ...this.normalizedAgent.headers,
         ...(authToken && {
           Authorization: `Bearer ${authToken}`,
           'x-adcp-auth': authToken,
@@ -393,6 +395,8 @@ export class SingleAgentClient {
     const { discoverOAuthMetadata } = await import('../auth/oauth/discovery');
 
     const authToken = this.agent.auth_token;
+    const agentHeaders = this.agent.headers;
+    const authHeaders = { ...agentHeaders, ...createMCPAuthHeaders(authToken) };
 
     type EndpointTestResult = {
       success: boolean;
@@ -407,19 +411,11 @@ export class SingleAgentClient {
           version: '1.0.0',
         });
 
-        // Use requestInit with proper headers - simpler and more reliable than custom fetch
         const transportOptions: any = {
           requestInit: {
-            headers: {
-              Accept: 'application/json, text/event-stream',
-            },
+            headers: authHeaders,
           },
         };
-
-        if (authToken) {
-          transportOptions.requestInit.headers['Authorization'] = `Bearer ${authToken}`;
-          transportOptions.requestInit.headers['x-adcp-auth'] = authToken;
-        }
 
         const transport = new StreamableHTTPClientTransport(new URL(url), transportOptions);
 

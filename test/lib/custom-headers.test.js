@@ -113,6 +113,77 @@ test('AgentConfig.headers: A2A header merge preserves custom headers below auth'
   assert.strictEqual(merged['x-adcp-auth'], authToken);
 });
 
+test('AgentConfig.headers: A2A discovery fetch includes agent.headers between sdk-options and auth', () => {
+  // Mirrors the header merge order in fetchA2ACanonicalUrl:
+  // { ...options.headers, ...normalizedAgent.headers, ...authToken? }
+  const sdkOptions = { 'Content-Type': 'application/json' };
+  const agentHeaders = { Authorization: 'Basic dXNlcjpwYXNz', 'x-tenant': 'acme' };
+  const authToken = undefined; // Basic auth agent has no auth_token
+
+  const merged = {
+    ...sdkOptions,
+    ...agentHeaders,
+    ...(authToken && {
+      Authorization: `Bearer ${authToken}`,
+      'x-adcp-auth': authToken,
+    }),
+  };
+
+  // Basic auth header from agent.headers is preserved
+  assert.strictEqual(merged['Authorization'], 'Basic dXNlcjpwYXNz');
+  assert.strictEqual(merged['x-tenant'], 'acme');
+  assert.strictEqual(merged['Content-Type'], 'application/json');
+  assert.strictEqual(merged['x-adcp-auth'], undefined);
+});
+
+test('AgentConfig.headers: A2A discovery — bearer auth_token overrides Authorization from agent.headers', () => {
+  // When both headers.Authorization and auth_token are set, auth_token wins
+  const sdkOptions = {};
+  const agentHeaders = { Authorization: 'Basic dXNlcjpwYXNz' }; // misconfigured
+  const authToken = 'bearer-token';
+
+  const merged = {
+    ...sdkOptions,
+    ...agentHeaders,
+    ...(authToken && {
+      Authorization: `Bearer ${authToken}`,
+      'x-adcp-auth': authToken,
+    }),
+  };
+
+  assert.strictEqual(merged['Authorization'], `Bearer ${authToken}`);
+  assert.strictEqual(merged['x-adcp-auth'], authToken);
+});
+
+test('AgentConfig.headers: MCP discovery probe — Basic auth header survives createMCPAuthHeaders merge', () => {
+  // Mirrors the header merge in discoverMCPEndpoint:
+  // { ...agentHeaders, ...createMCPAuthHeaders(authToken) }
+  // When authToken is undefined, Basic auth from agentHeaders must survive.
+  const { createMCPAuthHeaders } = require('../../dist/lib/auth/index.js');
+
+  const agentHeaders = { Authorization: 'Basic dXNlcjpwYXNz' };
+  const authToken = undefined; // Basic auth agent has no auth_token
+
+  const merged = { ...agentHeaders, ...createMCPAuthHeaders(authToken) };
+
+  // Basic auth header preserved; createMCPAuthHeaders doesn't add Authorization when no token
+  assert.strictEqual(merged['Authorization'], 'Basic dXNlcjpwYXNz');
+  assert.ok(merged['Accept'], 'Accept header set by createMCPAuthHeaders');
+  assert.strictEqual(merged['x-adcp-auth'], undefined);
+});
+
+test('AgentConfig.headers: MCP discovery probe — auth_token overrides Authorization from agent.headers', () => {
+  const { createMCPAuthHeaders } = require('../../dist/lib/auth/index.js');
+
+  const agentHeaders = { Authorization: 'Basic dXNlcjpwYXNz' }; // misconfigured
+  const authToken = 'bearer-token';
+
+  const merged = { ...agentHeaders, ...createMCPAuthHeaders(authToken) };
+
+  assert.strictEqual(merged['Authorization'], `Bearer ${authToken}`);
+  assert.strictEqual(merged['x-adcp-auth'], authToken);
+});
+
 test('AgentConfig.headers: debug logs include custom header names but not token values', async () => {
   // callMCPTool will fail at the network level, but not before populating debug logs
   // with the auth configuration entry that includes customHeaderKeys
