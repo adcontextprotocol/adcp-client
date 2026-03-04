@@ -536,6 +536,216 @@ export async function testGovernanceContentStandards(
 }
 
 /**
+ * Test: Property List Filters
+ *
+ * Creates a property list with all filter types populated, retrieves it with
+ * resolve:true, and validates the filters round-trip correctly.
+ *
+ * Filter types tested:
+ * - garm_categories (exclude)
+ * - mfa_thresholds (min_score)
+ * - custom_tags (include/exclude)
+ * - feature_requirements (conditional on get_adcp_capabilities)
+ */
+export async function testPropertyListFilters(
+  agentUrl: string,
+  options: TestOptions
+): Promise<{ steps: TestStepResult[]; profile?: AgentProfile }> {
+  const steps: TestStepResult[] = [];
+  const client = createTestClient(agentUrl, options.protocol || 'mcp', options);
+
+  const { profile, step: profileStep } = await discoverAgentProfile(client);
+  steps.push(profileStep);
+
+  if (!profileStep.passed) {
+    return { steps, profile };
+  }
+
+  const hasRequired =
+    profile.tools.includes('create_property_list') && profile.tools.includes('get_property_list');
+  if (!hasRequired) {
+    steps.push({
+      step: 'Property list filter support check',
+      passed: false,
+      duration_ms: 0,
+      error: 'Agent requires create_property_list + get_property_list for filter testing',
+    });
+    return { steps, profile };
+  }
+
+  profile.supports_governance = true;
+
+  // Optionally discover feature IDs from get_adcp_capabilities
+  let featureRequirements: unknown[] | undefined;
+  if (profile.tools.includes('get_adcp_capabilities')) {
+    const { result: capResult, step: capStep } = await runStep<TaskResult>(
+      'Discover available features (for feature_requirements filter)',
+      'get_adcp_capabilities',
+      async () => client.executeTask('get_adcp_capabilities', {}) as Promise<TaskResult>
+    );
+    if (capResult?.success && capResult?.data) {
+      const rawFeatures = (capResult.data as any)?.media_buy?.features;
+      if (rawFeatures && typeof rawFeatures === 'object') {
+        // Use boolean feature keys as feature_ids (agents that support dynamic features will have IDs)
+        const featureIds = Object.keys(rawFeatures).filter(k => rawFeatures[k] === true);
+        if (featureIds.length > 0) {
+          featureRequirements = featureIds.map(id => ({
+            feature_id: id,
+            allowed_values: [true],
+            if_not_covered: 'exclude',
+          }));
+          capStep.details = `Found ${featureIds.length} feature(s) for filter testing: ${featureIds.join(', ')}`;
+        } else {
+          capStep.details = 'No active features found; skipping feature_requirements filter';
+        }
+      } else {
+        capStep.details = 'get_adcp_capabilities returned no feature data; skipping feature_requirements filter';
+      }
+    }
+    steps.push(capStep);
+  }
+
+  // Build filter object with all supported types
+  const filters: Record<string, unknown> = {
+    garm_categories: {
+      exclude: ['adult', 'arms', 'gambling', 'hate_speech'],
+    },
+    mfa_thresholds: {
+      min_score: 0.75,
+    },
+    custom_tags: {
+      include: [{ key: 'content_type', value: 'premium' }],
+      exclude: [{ key: 'content_type', value: 'user_generated' }],
+    },
+  };
+
+  if (featureRequirements) {
+    filters.feature_requirements = featureRequirements;
+  }
+
+  let createdListId: string | undefined;
+  let authToken: string | undefined;
+
+  // Create property list with all filters
+  const listName = `E2E Filter Test ${Date.now()}`;
+  const { result: createResult, step: createStep } = await runStep<TaskResult>(
+    'Create property list with all filter types',
+    'create_property_list',
+    async () =>
+      client.executeTask('create_property_list', {
+        name: listName,
+        description: 'E2E filter round-trip test',
+        base_properties: {
+          include: [{ identifier_type: 'domain', identifier_value: 'example.com' }],
+        },
+        filters,
+        brand_manifest: options.brand_manifest || {
+          name: 'E2E Test Brand',
+          url: 'https://test.example.com',
+        },
+      }) as Promise<TaskResult>
+  );
+
+  if (createResult?.success && createResult?.data) {
+    const data = createResult.data as any;
+    createdListId = data.list?.list_id || data.list_id;
+    authToken = data.auth_token;
+    createStep.created_id = createdListId;
+    createStep.details = `Created list: ${createdListId} with ${Object.keys(filters).length} filter type(s)`;
+  } else if (createResult && !createResult.success) {
+    createStep.passed = false;
+    createStep.error = createResult.error || 'create_property_list failed';
+  }
+  steps.push(createStep);
+
+  if (!createdListId) {
+    return { steps, profile };
+  }
+
+  // Retrieve with resolve:true and validate filter round-trip
+  const { result: getResult, step: getStep } = await runStep<TaskResult>(
+    'Get property list (resolve: true, validate filter round-trip)',
+    'get_property_list',
+    async () =>
+      client.executeTask('get_property_list', {
+        list_id: createdListId,
+        resolve: true,
+        max_results: 5,
+      }) as Promise<TaskResult>
+  );
+
+  if (getResult?.success && getResult?.data) {
+    const data = getResult.data as any;
+    const returnedFilters = data.list?.filters;
+    const issues: string[] = [];
+
+    if (returnedFilters) {
+      if (!returnedFilters.garm_categories?.exclude?.length) {
+        issues.push('garm_categories.exclude not preserved');
+      }
+      if (returnedFilters.mfa_thresholds?.min_score !== 0.75) {
+        issues.push(`mfa_thresholds.min_score mismatch: got ${returnedFilters.mfa_thresholds?.min_score}, expected 0.75`);
+      }
+      if (!returnedFilters.custom_tags) {
+        issues.push('custom_tags filter not preserved');
+      }
+      if (featureRequirements && !returnedFilters.feature_requirements?.length) {
+        issues.push('feature_requirements filter not preserved');
+      }
+    } else {
+      issues.push('filters object missing from get_property_list response');
+    }
+
+    getStep.passed = issues.length === 0;
+    getStep.details =
+      issues.length === 0
+        ? `All ${Object.keys(filters).length} filter types round-tripped correctly`
+        : `Filter round-trip issues: ${issues.join('; ')}`;
+    getStep.error = issues.length > 0 ? issues.join('; ') : undefined;
+    getStep.response_preview = JSON.stringify(
+      {
+        list_id: data.list?.list_id,
+        filters_returned: returnedFilters ? Object.keys(returnedFilters) : [],
+        round_trip_issues: issues,
+      },
+      null,
+      2
+    );
+  } else if (getResult && !getResult.success) {
+    getStep.passed = false;
+    getStep.error = getResult.error || 'get_property_list failed';
+  }
+  steps.push(getStep);
+
+  // Cleanup: delete if not dry-run
+  if (options.dry_run === false && profile.tools.includes('delete_property_list')) {
+    const { result: delResult, step: delStep } = await runStep<TaskResult>(
+      'Delete test property list (cleanup)',
+      'delete_property_list',
+      async () =>
+        client.executeTask('delete_property_list', {
+          list_id: createdListId,
+          auth_token: authToken,
+        }) as Promise<TaskResult>
+    );
+    if (delResult?.success) {
+      delStep.details = 'Test list cleaned up';
+    }
+    steps.push(delStep);
+  } else if (!profile.tools.includes('delete_property_list')) {
+    steps.push({
+      step: 'Delete test property list (cleanup)',
+      passed: true,
+      duration_ms: 0,
+      details: `Skipped — agent does not advertise delete_property_list. Test list ${createdListId} may remain.`,
+      warnings: [`Test list ${createdListId} was created but cannot be cleaned up (delete_property_list not available)`],
+    });
+  }
+
+  return { steps, profile };
+}
+
+/**
  * Check if agent has any governance protocol tools
  */
 export function hasGovernanceTools(tools: string[]): boolean {

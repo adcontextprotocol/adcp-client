@@ -59,10 +59,13 @@ import {
   // v3 scenarios
   testGovernancePropertyLists,
   testGovernanceContentStandards,
+  testPropertyListFilters,
   testSISessionLifecycle,
   testSIAvailability,
+  testSIHandoff,
   testCapabilityDiscovery,
   testSyncAudiences,
+  testSchemaCompliance,
 } from './scenarios';
 
 // Import types
@@ -210,6 +213,12 @@ export async function testAgent(
         profile = result.profile;
         break;
 
+      case 'property_list_filters':
+        result = await testPropertyListFilters(agentUrl, effectiveOptions);
+        steps = result.steps;
+        profile = result.profile;
+        break;
+
       // v3 SI protocol scenarios
       case 'si_session_lifecycle':
         result = await testSISessionLifecycle(agentUrl, effectiveOptions);
@@ -223,6 +232,12 @@ export async function testAgent(
         profile = result.profile;
         break;
 
+      case 'si_handoff':
+        result = await testSIHandoff(agentUrl, effectiveOptions);
+        steps = result.steps;
+        profile = result.profile;
+        break;
+
       // v3 Capability discovery
       case 'capability_discovery':
         result = await testCapabilityDiscovery(agentUrl, effectiveOptions);
@@ -232,6 +247,12 @@ export async function testAgent(
 
       case 'sync_audiences':
         result = await testSyncAudiences(agentUrl, effectiveOptions);
+        steps = result.steps;
+        profile = result.profile;
+        break;
+
+      case 'schema_compliance':
+        result = await testSchemaCompliance(agentUrl, effectiveOptions);
         steps = result.steps;
         profile = result.profile;
         break;
@@ -318,10 +339,13 @@ export {
   // v3 scenarios
   testGovernancePropertyLists,
   testGovernanceContentStandards,
+  testPropertyListFilters,
   testSISessionLifecycle,
   testSIAvailability,
+  testSIHandoff,
   testCapabilityDiscovery,
   testSyncAudiences,
+  testSchemaCompliance,
   // v3 helpers
   hasGovernanceTools,
   hasSITools,

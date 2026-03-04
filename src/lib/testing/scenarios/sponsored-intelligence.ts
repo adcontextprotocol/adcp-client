@@ -50,6 +50,7 @@ export async function testSISessionLifecycle(
   let sessionId: string | undefined;
   let offeringToken: string | undefined;
   let offeringAvailable = false;
+  const collectedUIElements: unknown[][] = [];
 
   // Test: si_get_offering
   if (profile.tools.includes('si_get_offering')) {
@@ -128,6 +129,9 @@ export async function testSISessionLifecycle(
       const data = result.data as any;
       sessionId = data.session_id;
       step.created_id = sessionId;
+      if (Array.isArray(data.response?.ui_elements) && data.response.ui_elements.length > 0) {
+        collectedUIElements.push(data.response.ui_elements);
+      }
       step.details = sessionId
         ? `Session created: ${sessionId}`
         : 'Session initiation completed (no session_id returned)';
@@ -180,6 +184,9 @@ export async function testSISessionLifecycle(
       let sessionEnded = false;
       if (result?.success && result?.data) {
         const data = result.data as any;
+        if (Array.isArray(data.response?.ui_elements) && data.response.ui_elements.length > 0) {
+          collectedUIElements.push(data.response.ui_elements);
+        }
         step.details = `Session status: ${data.session_status || 'active'}`;
         step.response_preview = JSON.stringify(
           {
@@ -202,6 +209,11 @@ export async function testSISessionLifecycle(
         break;
       }
     }
+
+    // Validate UI element schemas only when elements were actually returned
+    if (collectedUIElements.length > 0) {
+      steps.push(validateUIElements(collectedUIElements));
+    }
   }
 
   // Test: si_terminate_session (if we have a session)
@@ -212,7 +224,7 @@ export async function testSISessionLifecycle(
       async () =>
         client.executeTask('si_terminate_session', {
           session_id: sessionId,
-          reason: 'user_ended',
+          reason: 'user_exit',
           termination_context: {
             summary: 'E2E test session completed successfully',
           },
@@ -264,6 +276,293 @@ export async function testSISessionLifecycle(
         errorStep.details = 'Correctly rejected message to terminated session';
       }
       steps.push(errorStep);
+    }
+  }
+
+  return { steps, profile };
+}
+
+// Valid UI element types per si-ui-element.json schema
+const SI_UI_ELEMENT_TYPES = [
+  'text',
+  'link',
+  'image',
+  'product_card',
+  'carousel',
+  'action_button',
+  'app_handoff',
+  'integration_actions',
+] as const;
+
+// Required data fields per element type (per si-ui-element.json schema)
+const SI_UI_ELEMENT_REQUIRED_FIELDS: Record<string, string[]> = {
+  text: ['message'],
+  link: ['url', 'label'],
+  image: ['url', 'alt'],
+  product_card: ['title', 'price'],
+  carousel: ['items'],
+  action_button: ['label', 'action'],
+  app_handoff: [], // no required data fields in si-ui-element.json (uses top-level apps object)
+  integration_actions: ['actions'],
+};
+
+/**
+ * Validate UI elements collected from SI session responses.
+ * Returns a single TestStepResult summarizing all found types and any violations.
+ */
+function validateUIElements(elementArrays: unknown[][]): TestStepResult {
+  const foundTypes = new Set<string>();
+  const invalidElements: string[] = [];
+
+  for (const elements of elementArrays) {
+    for (const el of elements) {
+      if (!el || typeof el !== 'object') {
+        invalidElements.push('non-object element');
+        continue;
+      }
+      const element = el as Record<string, unknown>;
+      const type = element.type as string | undefined;
+
+      if (!type) {
+        invalidElements.push('element missing required "type" field');
+        continue;
+      }
+
+      if (!SI_UI_ELEMENT_TYPES.includes(type as (typeof SI_UI_ELEMENT_TYPES)[number])) {
+        invalidElements.push(`unknown type "${type}"`);
+        continue;
+      }
+
+      foundTypes.add(type);
+
+      // Check type-specific required fields in data
+      const requiredFields = SI_UI_ELEMENT_REQUIRED_FIELDS[type];
+      if (requiredFields && requiredFields.length > 0) {
+        if (!element.data || typeof element.data !== 'object') {
+          invalidElements.push(`${type} element missing required "data" object`);
+        } else {
+          const data = element.data as Record<string, unknown>;
+          for (const field of requiredFields) {
+            if (!(field in data)) {
+              invalidElements.push(`${type} element missing required data.${field}`);
+            }
+          }
+        }
+      }
+    }
+  }
+
+  const typesFound = Array.from(foundTypes);
+  const passed = invalidElements.length === 0;
+
+  return {
+    step: 'Validate SI UI element schemas',
+    passed,
+    duration_ms: 0,
+    details:
+      typesFound.length > 0
+        ? `Found ${typesFound.length} element type(s): ${typesFound.join(', ')}${invalidElements.length > 0 ? `. Violations: ${invalidElements.join('; ')}` : ''}`
+        : 'No UI elements returned (agent may not support rich media)',
+    error: passed ? undefined : `UI element schema violations: ${invalidElements.join('; ')}`,
+    response_preview: JSON.stringify({ found_types: typesFound, invalid_elements: invalidElements }, null, 2),
+    warnings: typesFound.length === 0 ? ['Agent returned no UI elements in this session'] : undefined,
+  };
+}
+
+/**
+ * Test: SI Handoff
+ *
+ * Tests the ACP handoff mechanism in si_terminate_session.
+ * Flow: si_get_offering -> si_initiate_session -> si_send_message (purchase intent)
+ *       -> si_terminate_session (reason: handoff_transaction) -> validate acp_handoff structure
+ */
+export async function testSIHandoff(
+  agentUrl: string,
+  options: TestOptions
+): Promise<{ steps: TestStepResult[]; profile?: AgentProfile }> {
+  const steps: TestStepResult[] = [];
+  const client = createTestClient(agentUrl, options.protocol || 'mcp', options);
+
+  const { profile, step: profileStep } = await discoverAgentProfile(client);
+  steps.push(profileStep);
+
+  if (!profileStep.passed) {
+    return { steps, profile };
+  }
+
+  const hasRequiredTools =
+    profile.tools.includes('si_initiate_session') && profile.tools.includes('si_terminate_session');
+  if (!hasRequiredTools) {
+    steps.push({
+      step: 'SI handoff support check',
+      passed: false,
+      duration_ms: 0,
+      error: 'Agent does not support si_initiate_session + si_terminate_session (required for handoff testing)',
+    });
+    return { steps, profile };
+  }
+
+  profile.supports_si = true;
+  let sessionId: string | undefined;
+  let offeringToken: string | undefined;
+
+  // Get offering token if available
+  if (profile.tools.includes('si_get_offering')) {
+    const { result, step } = await runStep<TaskResult>(
+      'Get SI offering (handoff)',
+      'si_get_offering',
+      async () =>
+        client.executeTask('si_get_offering', {
+          offering_id: options.si_offering_id || 'e2e-test-offering',
+          context: 'E2E testing - preparing for handoff flow',
+          identity: {
+            principal: resolveAuthPrincipal(options) || 'e2e-test-principal',
+            device_id: 'e2e-test-device',
+          },
+        }) as Promise<TaskResult>
+    );
+
+    if (result?.success && result?.data) {
+      offeringToken = (result.data as any).offering_token;
+      step.details = 'Offering retrieved for handoff test';
+    }
+    steps.push(step);
+  }
+
+  // Initiate session
+  const { result: initResult, step: initStep } = await runStep<TaskResult>(
+    'Initiate SI session (handoff)',
+    'si_initiate_session',
+    async () =>
+      client.executeTask('si_initiate_session', {
+        offering_id: options.si_offering_id || 'e2e-test-offering',
+        offering_token: offeringToken,
+        identity: {
+          principal: resolveAuthPrincipal(options) || 'e2e-test-principal',
+          device_id: 'e2e-test-device',
+        },
+        context: options.si_context || 'E2E testing - initiating session for handoff test',
+        placement: 'e2e-test-placement',
+        supported_capabilities: {
+          modalities: { conversational: true },
+        },
+      }) as Promise<TaskResult>
+  );
+
+  if (initResult?.success && initResult?.data) {
+    sessionId = (initResult.data as any).session_id;
+    initStep.details = sessionId ? `Session created: ${sessionId}` : 'Session created (no session_id)';
+  } else if (initResult && !initResult.success) {
+    const error = initResult.error || '';
+    if (error.includes('not supported') || error.includes('not implemented')) {
+      initStep.passed = true;
+      initStep.details = 'SI not supported by this agent';
+    } else {
+      initStep.passed = false;
+      initStep.error = initResult.error || 'si_initiate_session failed';
+    }
+  }
+  steps.push(initStep);
+
+  if (!sessionId) {
+    return { steps, profile };
+  }
+
+  // Send a purchase-intent message to set up the handoff
+  if (profile.tools.includes('si_send_message')) {
+    const { result, step } = await runStep<TaskResult>(
+      'Send purchase intent message',
+      'si_send_message',
+      async () =>
+        client.executeTask('si_send_message', {
+          session_id: sessionId,
+          message: "I'd like to purchase this product. Can you set up a transaction?",
+        }) as Promise<TaskResult>
+    );
+
+    if (result?.success) {
+      step.details = 'Purchase intent sent';
+    } else if (result && !result.success) {
+      step.passed = false;
+      step.error = result.error || 'si_send_message failed';
+    }
+    steps.push(step);
+  }
+
+  // Terminate with handoff_transaction reason
+  const { result: termResult, step: termStep } = await runStep<TaskResult>(
+    'Terminate SI session (handoff_transaction)',
+    'si_terminate_session',
+    async () =>
+      client.executeTask('si_terminate_session', {
+        session_id: sessionId,
+        reason: 'handoff_transaction',
+        termination_context: {
+          summary: 'E2E test - terminating for handoff validation',
+          transaction_intent: {
+            intent: 'purchase',
+          },
+        },
+      }) as Promise<TaskResult>
+  );
+
+  let termData: any;
+  if (termResult?.success && termResult?.data) {
+    termData = termResult.data as any;
+    termStep.details = termData.terminated
+      ? `Terminated with${termData.acp_handoff ? '' : 'out'} ACP handoff`
+      : 'Termination not confirmed';
+    termStep.response_preview = JSON.stringify(
+      {
+        session_id: termData.session_id,
+        terminated: termData.terminated,
+        acp_handoff: termData.acp_handoff ? '(present)' : undefined,
+      },
+      null,
+      2
+    );
+  } else if (termResult && !termResult.success) {
+    termStep.passed = false;
+    termStep.error = termResult.error || 'si_terminate_session failed';
+  }
+  steps.push(termStep);
+
+  // Validate acp_handoff structure (only when termination succeeded)
+  if (termData) {
+    if (termData.acp_handoff) {
+      const handoff = termData.acp_handoff;
+      const hasCheckoutUrl = typeof handoff.checkout_url === 'string';
+      const hasCheckoutToken = typeof handoff.checkout_token === 'string';
+      const hasAnyHandoffField = hasCheckoutUrl || hasCheckoutToken;
+
+      steps.push({
+        step: 'Validate ACP handoff structure',
+        passed: hasAnyHandoffField,
+        duration_ms: 0,
+        details: hasAnyHandoffField
+          ? `Handoff has ${[hasCheckoutUrl && 'checkout_url', hasCheckoutToken && 'checkout_token'].filter(Boolean).join(', ')}`
+          : 'acp_handoff returned but missing both checkout_url and checkout_token',
+        error: hasAnyHandoffField
+          ? undefined
+          : 'acp_handoff object present but has no checkout_url or checkout_token — at least one is required',
+        response_preview: JSON.stringify(
+          {
+            has_checkout_url: hasCheckoutUrl,
+            has_checkout_token: hasCheckoutToken,
+            has_product: !!handoff.product,
+          },
+          null,
+          2
+        ),
+      });
+    } else {
+      steps.push({
+        step: 'Validate ACP handoff structure',
+        passed: true,
+        duration_ms: 0,
+        details: 'No acp_handoff in response (agent may not support transaction handoff)',
+        warnings: ['Agent terminated with handoff_transaction reason but returned no acp_handoff object'],
+      });
     }
   }
 

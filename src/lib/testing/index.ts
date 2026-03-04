@@ -47,10 +47,13 @@ export {
   // v3 scenarios
   testGovernancePropertyLists,
   testGovernanceContentStandards,
+  testPropertyListFilters,
   testSISessionLifecycle,
   testSIAvailability,
+  testSIHandoff,
   testCapabilityDiscovery,
   testSyncAudiences,
+  testSchemaCompliance,
   // v3 helpers
   hasGovernanceTools,
   hasSITools,
