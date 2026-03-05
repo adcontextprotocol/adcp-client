@@ -1,5 +1,11 @@
 # Changelog
 
+## 4.5.1
+
+### Patch Changes
+
+- dbfff62: Improve type discoverability for platform implementors with naming convention guide in export comments
+
 ## 4.5.0
 
 ### Minor Changes
