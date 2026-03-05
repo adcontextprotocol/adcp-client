@@ -4673,7 +4673,7 @@ export interface GetMediaBuysResponse {
     /**
      * Total budget amount across all packages, denominated in media_buy.currency
      */
-    total_budget: number;
+    total_budget?: number;
     /**
      * ISO 8601 flight start time for this media buy (earliest package start_time). Avoids requiring buyers to compute min(packages[].start_time).
      */
@@ -4746,7 +4746,7 @@ export interface GetMediaBuysResponse {
          * Creative identifier
          */
         creative_id: string;
-        approval_status: CreativeApprovalStatus;
+        approval_status?: CreativeApprovalStatus;
         /**
          * Human-readable explanation of why the creative was rejected. Present only when approval_status is 'rejected'.
          */
@@ -5010,7 +5010,7 @@ export interface GetMediaBuyDeliveryResponse {
   /**
    * ISO 4217 currency code
    */
-  currency: string;
+  currency?: string;
   attribution_window?: AttributionWindow;
   /**
    * Combined metrics across all returned media buys. Only included in API responses (get_media_buy_delivery), not in webhook notifications.
@@ -5117,15 +5117,15 @@ export interface GetMediaBuyDeliveryResponse {
        * Delivery pace (1.0 = on track, <1.0 = behind, >1.0 = ahead)
        */
       pacing_index?: number;
-      pricing_model: PricingModel;
+      pricing_model?: PricingModel;
       /**
        * The pricing rate for this package in the specified currency. For fixed-rate pricing, this is the agreed rate (e.g., CPM rate of 12.50 means $12.50 per 1,000 impressions). For auction-based pricing, this represents the effective rate based on actual delivery.
        */
-      rate: number;
+      rate?: number;
       /**
        * ISO 4217 currency code (e.g., USD, EUR, GBP) for this package's pricing. Indicates the currency in which the rate and spend values are denominated. Different packages can use different currencies when supported by the publisher.
        */
-      currency: string;
+      currency?: string;
       /**
        * System-reported operational state of this package. Reflects actual delivery state independent of buyer pause control.
        */
@@ -5141,7 +5141,7 @@ export interface GetMediaBuyDeliveryResponse {
         /**
          * Catalog item identifier (e.g., SKU, GTIN, job_id, offering_id)
          */
-        content_id: string;
+        content_id?: string;
         content_id_type?: ContentIDType;
       })[];
       /**
@@ -5164,17 +5164,17 @@ export interface GetMediaBuyDeliveryResponse {
         /**
          * The targeted keyword
          */
-        keyword: string;
+        keyword?: string;
         /**
          * Match type for this keyword
          */
-        match_type: 'broad' | 'phrase' | 'exact';
+        match_type?: 'broad' | 'phrase' | 'exact';
       })[];
       /**
        * Delivery by geographic area within this package. Available when the buyer requests geo breakdown via reporting_dimensions and the seller supports it. Each dimension's rows are independent slices that should sum to the package total.
        */
       by_geo?: (DeliveryMetrics & {
-        geo_level: GeographicTargetingLevel;
+        geo_level?: GeographicTargetingLevel;
         /**
          * Classification system for metro or postal_area levels (e.g., 'nielsen_dma', 'us_zip'). Present when geo_level is 'metro' or 'postal_area'.
          */
@@ -5182,7 +5182,7 @@ export interface GetMediaBuyDeliveryResponse {
         /**
          * Geographic code within the level and system. Country: ISO 3166-1 alpha-2 ('US'). Region: ISO 3166-2 with country prefix ('US-CA'). Metro/postal: system-specific code ('501', '10001').
          */
-        geo_code: string;
+        geo_code?: string;
         /**
          * Human-readable geographic name (e.g., 'United States', 'California', 'New York DMA')
          */
@@ -5196,7 +5196,7 @@ export interface GetMediaBuyDeliveryResponse {
        * Delivery by device form factor within this package. Available when the buyer requests device_type breakdown via reporting_dimensions and the seller supports it.
        */
       by_device_type?: (DeliveryMetrics & {
-        device_type: DeviceType;
+        device_type?: DeviceType;
       })[];
       /**
        * Whether by_device_type was truncated. Sellers MUST return this flag whenever by_device_type is present (false means the list is complete).
@@ -5206,7 +5206,7 @@ export interface GetMediaBuyDeliveryResponse {
        * Delivery by operating system within this package. Available when the buyer requests device_platform breakdown via reporting_dimensions and the seller supports it. Useful for CTV campaigns where tvOS vs Roku OS vs Fire OS matters.
        */
       by_device_platform?: (DeliveryMetrics & {
-        device_platform: DevicePlatform;
+        device_platform?: DevicePlatform;
       })[];
       /**
        * Whether by_device_platform was truncated. Sellers MUST return this flag whenever by_device_platform is present (false means the list is complete).
@@ -5219,8 +5219,8 @@ export interface GetMediaBuyDeliveryResponse {
         /**
          * Audience segment identifier. For 'synced' source, matches audience_id from sync_audiences. For other sources, seller-defined.
          */
-        audience_id: string;
-        audience_source: AudienceSource;
+        audience_id?: string;
+        audience_source?: AudienceSource;
         /**
          * Human-readable audience segment name
          */
@@ -5237,7 +5237,7 @@ export interface GetMediaBuyDeliveryResponse {
         /**
          * Placement identifier from the product's placements array
          */
-        placement_id: string;
+        placement_id?: string;
         /**
          * Human-readable placement name
          */

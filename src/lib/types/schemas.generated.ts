@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-03-04T14:01:39.851Z
+// Generated at: 2026-03-05T21:57:56.148Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -1310,7 +1310,7 @@ export const GetMediaBuysResponseSchema = z.object({
         account: AccountSchema.nullish(),
         status: MediaBuyStatusSchema,
         currency: z.string(),
-        total_budget: z.number(),
+        total_budget: z.number().nullish(),
         start_time: z.string().nullish(),
         end_time: z.string().nullish(),
         creative_deadline: z.string().nullish(),
@@ -1329,7 +1329,7 @@ export const GetMediaBuysResponseSchema = z.object({
             paused: z.boolean().nullish(),
             creative_approvals: z.array(z.object({
                 creative_id: z.string(),
-                approval_status: CreativeApprovalStatusSchema,
+                approval_status: CreativeApprovalStatusSchema.nullish(),
                 rejection_reason: z.string().nullish()
             }).passthrough()).nullish(),
             format_ids_pending: z.array(FormatIDSchema).nullish(),
@@ -3030,7 +3030,7 @@ export const GetMediaBuyDeliveryResponseSchema = z.object({
         start: z.string(),
         end: z.string()
     }).passthrough(),
-    currency: z.string(),
+    currency: z.string().nullish(),
     attribution_window: AttributionWindowSchema.nullish(),
     aggregated_totals: z.object({
         impressions: z.number(),
@@ -3059,13 +3059,13 @@ export const GetMediaBuyDeliveryResponseSchema = z.object({
             package_id: z.string(),
             buyer_ref: z.string().nullish(),
             pacing_index: z.number().nullish(),
-            pricing_model: PricingModelSchema,
-            rate: z.number(),
-            currency: z.string(),
+            pricing_model: PricingModelSchema.nullish(),
+            rate: z.number().nullish(),
+            currency: z.string().nullish(),
             delivery_status: z.union([z.literal("delivering"), z.literal("completed"), z.literal("budget_exhausted"), z.literal("flight_ended"), z.literal("goal_met")]).nullish(),
             paused: z.boolean().nullish(),
             by_catalog_item: z.array(DeliveryMetricsSchema.and(z.object({
-                content_id: z.string(),
+                content_id: z.string().nullish(),
                 content_id_type: ContentIDTypeSchema.nullish()
             }).passthrough())).nullish(),
             by_creative: z.array(DeliveryMetricsSchema.and(z.object({
@@ -3073,32 +3073,32 @@ export const GetMediaBuyDeliveryResponseSchema = z.object({
                 weight: z.number().nullish()
             }).passthrough())).nullish(),
             by_keyword: z.array(DeliveryMetricsSchema.and(z.object({
-                keyword: z.string(),
-                match_type: z.union([z.literal("broad"), z.literal("phrase"), z.literal("exact")])
+                keyword: z.string().nullish(),
+                match_type: z.union([z.literal("broad"), z.literal("phrase"), z.literal("exact")]).nullish()
             }).passthrough())).nullish(),
             by_geo: z.array(DeliveryMetricsSchema.and(z.object({
-                geo_level: GeographicTargetingLevelSchema,
+                geo_level: GeographicTargetingLevelSchema.nullish(),
                 system: z.string().nullish(),
-                geo_code: z.string(),
+                geo_code: z.string().nullish(),
                 geo_name: z.string().nullish()
             }).passthrough())).nullish(),
             by_geo_truncated: z.boolean().nullish(),
             by_device_type: z.array(DeliveryMetricsSchema.and(z.object({
-                device_type: DeviceTypeSchema
+                device_type: DeviceTypeSchema.nullish()
             }).passthrough())).nullish(),
             by_device_type_truncated: z.boolean().nullish(),
             by_device_platform: z.array(DeliveryMetricsSchema.and(z.object({
-                device_platform: DevicePlatformSchema
+                device_platform: DevicePlatformSchema.nullish()
             }).passthrough())).nullish(),
             by_device_platform_truncated: z.boolean().nullish(),
             by_audience: z.array(DeliveryMetricsSchema.and(z.object({
-                audience_id: z.string(),
-                audience_source: AudienceSourceSchema,
+                audience_id: z.string().nullish(),
+                audience_source: AudienceSourceSchema.nullish(),
                 audience_name: z.string().nullish()
             }).passthrough())).nullish(),
             by_audience_truncated: z.boolean().nullish(),
             by_placement: z.array(DeliveryMetricsSchema.and(z.object({
-                placement_id: z.string(),
+                placement_id: z.string().nullish(),
                 placement_name: z.string().nullish()
             }).passthrough())).nullish(),
             by_placement_truncated: z.boolean().nullish(),

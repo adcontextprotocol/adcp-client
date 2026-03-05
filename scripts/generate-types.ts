@@ -85,6 +85,11 @@ function loadCachedSchema(schemaRef: string): any {
       schema = removeDeprecatedFields(schema, schemaName);
     }
 
+    // Make specified fields optional for backward compat with pre-v3 agents
+    if (BACKWARD_COMPAT_OPTIONAL_FIELDS[schemaName]) {
+      schema = makeFieldsOptional(schema, BACKWARD_COMPAT_OPTIONAL_FIELDS[schemaName]);
+    }
+
     return schema;
   } catch (error) {
     console.warn(`⚠️  Failed to load cached schema ${schemaRef}:`, error.message);
@@ -291,6 +296,45 @@ const DEPRECATED_SCHEMA_FIELDS: Record<string, string[]> = {
   Format: ['assets_required', 'preview_image'],
 };
 
+// Fields to make optional for backward compatibility with older agent implementations.
+// These fields are required in the v3 spec but were absent in v2.5/v2.6 schemas.
+// Applies a recursive removal from all 'required' arrays in the named schema.
+// Format: { schemaName (PascalCase from filename): ['field1', 'field2'] }
+//
+// How to identify fields needing this treatment:
+//   1. Field is in a `required` array in a v3 JSON schema
+//   2. Field did not exist in the corresponding v2 TypeScript type
+//   3. Real agents running v2 implementations will not send the field
+const BACKWARD_COMPAT_OPTIONAL_FIELDS: Record<string, string[]> = {
+  // get_media_buy_delivery: by_package items
+  // v2 by_package only had {package_id, buyer_ref?, pacing_index?} + DeliveryMetrics.
+  // pricing_model, rate, currency, and all breakdown ID fields are v3 additions.
+  GetMediaBuyDeliveryResponse: [
+    // by_package top-level fields new in v3
+    'pricing_model',
+    'rate',
+    'currency',
+    // breakdown array item IDs new in v3 (arrays themselves are optional but if provided,
+    // v2 agents may omit the ID fields)
+    'content_id', // by_catalog_item items
+    'keyword', // by_keyword items
+    'match_type', // by_keyword items
+    'geo_level', // by_geo items
+    'geo_code', // by_geo items
+    'device_type', // by_device_type items
+    'device_platform', // by_device_platform items
+    'audience_id', // by_audience items
+    'audience_source', // by_audience items
+    'placement_id', // by_placement items
+  ],
+  // get_media_buys: media_buy items
+  // total_budget and approval_status are new required fields in v3.
+  GetMediaBuysResponse: [
+    'total_budget', // media_buys[].total_budget - new in v3
+    'approval_status', // media_buys[].packages[].creative_approvals[].approval_status - new in v3
+  ],
+};
+
 // Deprecated schemas that should be excluded entirely
 const DEPRECATED_SCHEMAS = new Set([
   'adcp-extension', // Use get_adcp_capabilities tool instead
@@ -342,6 +386,29 @@ function removeDeprecatedFields(schema: any, schemaName: string): any {
   // Remove from required array if present
   if (cleaned.required && Array.isArray(cleaned.required)) {
     cleaned.required = cleaned.required.filter((r: string) => !fieldsToRemove.includes(r));
+  }
+
+  return cleaned;
+}
+
+/**
+ * Recursively remove specific field names from all 'required' arrays in a schema.
+ * Used for backward compatibility: makes v3-required fields optional so older agents pass validation.
+ */
+function makeFieldsOptional(schema: any, fieldsToMakeOptional: string[]): any {
+  if (!schema || typeof schema !== 'object') return schema;
+  if (Array.isArray(schema)) return schema.map(item => makeFieldsOptional(item, fieldsToMakeOptional));
+
+  const cleaned = { ...schema };
+
+  if (cleaned.required && Array.isArray(cleaned.required)) {
+    cleaned.required = cleaned.required.filter((r: string) => !fieldsToMakeOptional.includes(r));
+  }
+
+  for (const key of Object.keys(cleaned)) {
+    if (typeof cleaned[key] === 'object') {
+      cleaned[key] = makeFieldsOptional(cleaned[key], fieldsToMakeOptional);
+    }
   }
 
   return cleaned;
