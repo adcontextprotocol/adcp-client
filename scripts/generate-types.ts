@@ -316,22 +316,22 @@ const BACKWARD_COMPAT_OPTIONAL_FIELDS: Record<string, string[]> = {
     'currency',
     // breakdown array item IDs new in v3 (arrays themselves are optional but if provided,
     // v2 agents may omit the ID fields)
-    'content_id',     // by_catalog_item items
-    'keyword',        // by_keyword items
-    'match_type',     // by_keyword items
-    'geo_level',      // by_geo items
-    'geo_code',       // by_geo items
-    'device_type',    // by_device_type items
+    'content_id', // by_catalog_item items
+    'keyword', // by_keyword items
+    'match_type', // by_keyword items
+    'geo_level', // by_geo items
+    'geo_code', // by_geo items
+    'device_type', // by_device_type items
     'device_platform', // by_device_platform items
-    'audience_id',    // by_audience items
+    'audience_id', // by_audience items
     'audience_source', // by_audience items
-    'placement_id',   // by_placement items
+    'placement_id', // by_placement items
   ],
   // get_media_buys: media_buy items
   // total_budget and approval_status are new required fields in v3.
   GetMediaBuysResponse: [
-    'total_budget',     // media_buys[].total_budget - new in v3
-    'approval_status',  // media_buys[].packages[].creative_approvals[].approval_status - new in v3
+    'total_budget', // media_buys[].total_budget - new in v3
+    'approval_status', // media_buys[].packages[].creative_approvals[].approval_status - new in v3
   ],
 };
 

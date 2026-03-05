@@ -114,10 +114,7 @@ describe('Backward compat: get_media_buy_delivery schema', () => {
     };
 
     const result = schemas.GetMediaBuyDeliveryResponseSchema.safeParse(response);
-    assert.ok(
-      result.success,
-      `Mixed rate presence should pass: ${JSON.stringify(result.error?.issues)}`
-    );
+    assert.ok(result.success, `Mixed rate presence should pass: ${JSON.stringify(result.error?.issues)}`);
   });
 
   test('accepts by_keyword items without keyword field (v2 agent)', async () => {
@@ -148,10 +145,7 @@ describe('Backward compat: get_media_buy_delivery schema', () => {
     };
 
     const result = schemas.GetMediaBuyDeliveryResponseSchema.safeParse(response);
-    assert.ok(
-      result.success,
-      `Should accept by_keyword without keyword ID: ${JSON.stringify(result.error?.issues)}`
-    );
+    assert.ok(result.success, `Should accept by_keyword without keyword ID: ${JSON.stringify(result.error?.issues)}`);
   });
 
   test('still accepts fully compliant v3 response with all fields', async () => {
@@ -208,10 +202,7 @@ describe('Backward compat: get_media_buys schema', () => {
     };
 
     const result = schemas.GetMediaBuysResponseSchema.safeParse(response);
-    assert.ok(
-      result.success,
-      `Should accept missing total_budget: ${JSON.stringify(result.error?.issues)}`
-    );
+    assert.ok(result.success, `Should accept missing total_budget: ${JSON.stringify(result.error?.issues)}`);
   });
 
   test('accepts creative_approvals without approval_status (v2 agent response)', async () => {
