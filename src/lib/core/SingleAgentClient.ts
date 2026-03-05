@@ -870,11 +870,25 @@ export class SingleAgentClient {
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<T>> {
+    // Stash brand_manifest before normalization strips it. The normalizer
+    // converts brand_manifest → brand for schema validation (the latest schema
+    // uses brand, not brand_manifest), but many agents still require
+    // brand_manifest. Re-inject it after validation so it reaches the agent.
+    const stashedBrandManifest =
+      (taskType === 'get_products' || taskType === 'create_media_buy')
+        ? params?.brand_manifest
+        : undefined;
+
     // Normalize params for backwards compatibility before validation
     const normalizedParams = normalizeRequestParams(taskType, params);
 
     // Validate request params against schema
     this.validateRequest(taskType, normalizedParams);
+
+    // Re-inject brand_manifest after validation
+    if (stashedBrandManifest !== undefined) {
+      normalizedParams.brand_manifest = stashedBrandManifest;
+    }
 
     // Check for v3 features used against v2 servers - return empty result if unsupported
     const earlyResult = await this.getEarlyResultForUnsupportedFeatures<T>(taskType, normalizedParams);

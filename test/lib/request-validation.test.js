@@ -127,9 +127,7 @@ describe('SingleAgentClient Request Validation', () => {
       }, 'brand_manifest should be stripped before strict validation, not cause a validation error');
     });
 
-    test('should verify brand_manifest is not forwarded as an object to the server', async () => {
-      // Mock A2AClient to capture the parameters actually sent to the server so we can
-      // verify normalization happened — not just that Zod didn't reject the request.
+    test('should forward brand_manifest URL to v2 agents from manifest object', async () => {
       const capturedCalls = [];
       const A2AClient = require('@a2a-js/sdk/client').A2AClient;
       const originalFromCardUrl = A2AClient.fromCardUrl;
@@ -171,13 +169,13 @@ describe('SingleAgentClient Request Validation', () => {
         A2AClient.fromCardUrl = originalFromCardUrl;
       }
 
-      // If the request reached the server, verify brand_manifest was NOT forwarded as an object.
-      // (It should have been converted to either brand:{domain} for v3 or brand_manifest URL for v2.)
+      // For v2 agents, the manifest object is converted to a URL string.
       const mediaBuyCall = capturedCalls.find(d => d.skill === 'create_media_buy');
       if (mediaBuyCall) {
-        assert.ok(
-          typeof mediaBuyCall.parameters.brand_manifest !== 'object',
-          'brand_manifest must not be forwarded as an object — it should be converted before sending'
+        assert.strictEqual(
+          mediaBuyCall.parameters.brand_manifest,
+          'https://acme.com/brand.json',
+          'brand_manifest URL should be extracted from manifest object for v2 agents'
         );
       }
     });

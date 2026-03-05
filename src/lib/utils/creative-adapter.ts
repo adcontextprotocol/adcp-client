@@ -77,7 +77,7 @@ export function adaptPackageRequestForV2(pkg: PackageRequestV3): PackageRequestV
  * Strips v3-only top-level fields, converts brand → brand_manifest, and adapts packages.
  */
 export function adaptCreateMediaBuyRequestForV2(request: any): any {
-  const { account, proposal_id, total_budget, artifact_webhook, brand, ...rest } = request;
+  const { account, proposal_id, total_budget, artifact_webhook, brand, brand_manifest: inputManifest, ...rest } = request;
 
   // Proposal mode is v3-only. If packages are also present we can still satisfy the request
   // by dropping proposal_id/total_budget and using the explicit packages.
@@ -89,15 +89,16 @@ export function adaptCreateMediaBuyRequestForV2(request: any): any {
     );
   }
 
-  // Convert v3 BrandReference → v2 brand_manifest URL (bare domain, consistent with get_products).
-  // normalizeRequestParams has already stripped any incoming brand_manifest and
-  // promoted it to brand, so brand is the canonical source here.
-  const brand_manifest = brand?.domain ? `https://${brand.domain}` : undefined;
+  // v2 brand_manifest is a URL string. Prefer the caller's original manifest
+  // (which may have been re-injected after validation), falling back to
+  // deriving a URL from brand.domain.
+  const callerUrl = typeof inputManifest === 'string'
+    ? inputManifest
+    : (typeof inputManifest === 'object' && inputManifest?.url) ? inputManifest.url : undefined;
+  const brand_manifest = callerUrl || (brand?.domain ? `https://${brand.domain}` : undefined);
 
   return {
     ...rest,
-    // If brand is present but has no domain, preserve it — consistent with adaptGetProductsRequestForV2
-    // which also leaves brand on the object when it cannot convert it.
     ...(brand && !brand_manifest && { brand }),
     ...(brand_manifest !== undefined && { brand_manifest }),
     ...(rest.packages && { packages: rest.packages.map(adaptPackageRequestForV2) }),

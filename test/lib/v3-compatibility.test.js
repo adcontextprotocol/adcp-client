@@ -419,6 +419,7 @@ describe('Creative Assignment Adapter', () => {
       assert.deepStrictEqual(result.brand, { brand_id: 'br_999' });
       assert.strictEqual(result.brand_manifest, undefined);
     });
+
   });
 
   describe('adaptGetProductsRequestForV2', () => {
