@@ -149,7 +149,20 @@ export { InputRequiredError } from './core/TaskExecutor';
 export * from './types';
 
 // ====== TOOL TYPES ======
-// All ADCP task request/response types
+// Request and response types for each AdCP tool.
+//
+// Naming convention:
+//   {ToolName}Request  -- parameters for a tool call (e.g., CreateMediaBuyRequest)
+//   {ToolName}Response -- return value; often a union of {ToolName}Success | {ToolName}Error
+//
+// Nested domain types within requests use a Request suffix when the shape
+// differs from the response version:
+//   PackageRequest  -- creation-shaped (required: buyer_ref, product_id, budget, pricing_option_id)
+//   Package         -- response-shaped from core.generated (has package_id, most fields optional)
+//
+// Platform implementors: use Request types to type/validate incoming tool calls,
+// Response types to shape your return values.
+// Zod schemas for runtime validation are exported below (e.g., CreateMediaBuyRequestSchema).
 export type {
   // Media Buy Domain
   GetProductsRequest,
@@ -225,12 +238,12 @@ export type {
   SyncEventSourcesResponse,
   LogEventRequest,
   LogEventResponse,
-  // Core data structures
+  // Core data structures used within requests and responses
   Format,
   Product,
   Proposal,
   ProductAllocation,
-  PackageRequest,
+  PackageRequest, // Creation params for packages — not Package (response-shaped, from core.generated)
   CreativeAsset,
   CreativePolicy,
   BrandReference,

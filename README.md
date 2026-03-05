@@ -261,6 +261,25 @@ handlers: {
 }
 ```
 
+### Platform Implementors
+
+Building a server that receives AdCP tool calls? Import request types for handler signatures and Zod schemas for validation:
+
+```typescript
+import {
+  CreateMediaBuyRequest,
+  CreateMediaBuyResponse,
+  CreateMediaBuyRequestSchema,
+} from '@adcp/client';
+
+function handleCreateMediaBuy(rawParams: unknown): CreateMediaBuyResponse {
+  const request: CreateMediaBuyRequest = CreateMediaBuyRequestSchema.parse(rawParams);
+  // request.buyer_ref, request.account, request.brand — all typed
+}
+```
+
+Note: `PackageRequest` (creation-shaped, required fields) differs from `Package` (response-shaped). See the [type catalog](docs/ZOD-SCHEMAS.md#type-catalog) for all request types and their required fields.
+
 ## Multi-Agent Operations
 
 Execute across multiple agents simultaneously:

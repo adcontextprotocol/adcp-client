@@ -162,6 +162,87 @@ type MediaBuyInferred = z.infer<typeof MediaBuySchema>;
 // MediaBuyInferred is compatible with MediaBuy type!
 ```
 
+## Platform Implementation
+
+If you're building a platform that **receives** AdCP tool calls (a seller/publisher), you need request types for your handler signatures and schemas for runtime validation. Both are exported from `@adcp/client`.
+
+### Naming Convention
+
+| Pattern | Meaning | Example |
+|---------|---------|---------|
+| `{Tool}Request` | Parameters for a tool call | `CreateMediaBuyRequest` |
+| `{Tool}Response` | Return value from a tool call | `CreateMediaBuyResponse` |
+| `{Noun}Request` | Creation-shaped nested object (required fields) | `PackageRequest` |
+| `{Noun}` (no suffix) | Response-shaped object (from `core.generated`) | `Package` |
+| `*Schema` suffix | Zod runtime validator for any of the above | `CreateMediaBuyRequestSchema` |
+
+The `Request` suffix on `PackageRequest` means "creation-shaped" — it has required fields like `buyer_ref`, `product_id`, `budget`. The plain `Package` type is response-shaped with `package_id` and most fields optional.
+
+### Type Catalog
+
+| Tool | Request Type | Schema | Required Fields |
+|------|-------------|--------|-----------------|
+| `get_products` | `GetProductsRequest` | `GetProductsRequestSchema` | `buying_mode` |
+| `list_creative_formats` | `ListCreativeFormatsRequest` | `ListCreativeFormatsRequestSchema` | *(all optional filters)* |
+| `create_media_buy` | `CreateMediaBuyRequest` | `CreateMediaBuyRequestSchema` | `buyer_ref`, `account`, `brand`, `start_time`, `end_time` |
+| *(nested)* | `PackageRequest` | `PackageRequestSchema` | `buyer_ref`, `product_id`, `budget`, `pricing_option_id` |
+| `update_media_buy` | `UpdateMediaBuyRequest` | `UpdateMediaBuyRequestSchema` | *(identify by `media_buy_id` or `buyer_ref`)* |
+| `sync_creatives` | `SyncCreativesRequest` | `SyncCreativesRequestSchema` | `account`, `creatives` |
+| `get_media_buy_delivery` | `GetMediaBuyDeliveryRequest` | `GetMediaBuyDeliveryRequestSchema` | *(all optional filters)* |
+
+### Typed Handler Example
+
+```typescript
+import {
+  // TypeScript types for handler signatures
+  CreateMediaBuyRequest,
+  CreateMediaBuyResponse,
+  PackageRequest,
+  TargetingOverlay,
+  // Zod schema for runtime validation
+  CreateMediaBuyRequestSchema,
+} from '@adcp/client';
+
+function handleCreateMediaBuy(rawParams: unknown): CreateMediaBuyResponse {
+  // Validate and parse the incoming request
+  const request: CreateMediaBuyRequest = CreateMediaBuyRequestSchema.parse(rawParams);
+
+  // All fields are now typed — IDE autocomplete works
+  const { buyer_ref, account, brand, start_time, end_time } = request;
+
+  // Nested types are also fully typed
+  for (const pkg of request.packages ?? []) {
+    // pkg is PackageRequest — buyer_ref, product_id, budget are required
+    const overlay: TargetingOverlay | undefined = pkg.targeting_overlay;
+    if (overlay?.geo_countries) {
+      // geo_countries is string[]
+    }
+  }
+
+  // Return a typed response (CreateMediaBuyResponse = CreateMediaBuySuccess | CreateMediaBuyError)
+  return { media_buy_id: 'mb_123', buyer_ref, packages: [/* ... */] };
+}
+```
+
+### Quick Import Reference
+
+```typescript
+// Types — for handler signatures and return values
+import type {
+  CreateMediaBuyRequest, CreateMediaBuyResponse,
+  GetProductsRequest, GetProductsResponse,
+  SyncCreativesRequest, SyncCreativesResponse,
+  PackageRequest, TargetingOverlay, FrequencyCap,
+} from '@adcp/client';
+
+// Schemas — for runtime validation
+import {
+  CreateMediaBuyRequestSchema,
+  GetProductsRequestSchema,
+  SyncCreativesRequestSchema,
+} from '@adcp/client';
+```
+
 ## Example
 
 See `examples/zod-validation-example.ts` for complete examples.
