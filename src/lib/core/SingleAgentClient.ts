@@ -875,9 +875,7 @@ export class SingleAgentClient {
     // uses brand, not brand_manifest), but many agents still require
     // brand_manifest. Re-inject it after validation so it reaches the agent.
     const stashedBrandManifest =
-      (taskType === 'get_products' || taskType === 'create_media_buy')
-        ? params?.brand_manifest
-        : undefined;
+      taskType === 'get_products' || taskType === 'create_media_buy' ? params?.brand_manifest : undefined;
 
     // Normalize params for backwards compatibility before validation
     const normalizedParams = normalizeRequestParams(taskType, params);
