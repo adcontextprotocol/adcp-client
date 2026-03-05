@@ -104,11 +104,11 @@ describe('SingleAgentClient Request Validation', () => {
       );
     });
 
-    test('should strip brand_manifest and convert to brand before strict validation', async () => {
+    test('should pass validation with brand_manifest present', async () => {
       const client = new AdCPClient([mockAgent]);
       const agent = client.agent(mockAgent.id);
 
-      // brand_manifest is a legacy v2.5 field — should be stripped before strict validation
+      // brand_manifest is preserved by the normalizer and should not cause validation errors
       await assert.doesNotReject(async () => {
         try {
           await agent.createMediaBuy({
@@ -124,7 +124,7 @@ describe('SingleAgentClient Request Validation', () => {
             throw err;
           }
         }
-      }, 'brand_manifest should be stripped before strict validation, not cause a validation error');
+      }, 'brand_manifest should not cause a validation error');
     });
 
     test('should forward brand_manifest URL to v2 agents from manifest object', async () => {

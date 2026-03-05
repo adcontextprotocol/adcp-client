@@ -870,23 +870,11 @@ export class SingleAgentClient {
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<T>> {
-    // Stash brand_manifest before normalization strips it. The normalizer
-    // converts brand_manifest → brand for schema validation (the latest schema
-    // uses brand, not brand_manifest), but many agents still require
-    // brand_manifest. Re-inject it after validation so it reaches the agent.
-    const stashedBrandManifest =
-      taskType === 'get_products' || taskType === 'create_media_buy' ? params?.brand_manifest : undefined;
-
     // Normalize params for backwards compatibility before validation
     const normalizedParams = normalizeRequestParams(taskType, params);
 
     // Validate request params against schema
     this.validateRequest(taskType, normalizedParams);
-
-    // Re-inject brand_manifest after validation
-    if (stashedBrandManifest !== undefined) {
-      normalizedParams.brand_manifest = stashedBrandManifest;
-    }
 
     // Check for v3 features used against v2 servers - return empty result if unsupported
     const earlyResult = await this.getEarlyResultForUnsupportedFeatures<T>(taskType, normalizedParams);
@@ -2066,11 +2054,12 @@ export class SingleAgentClient {
     }
 
     try {
-      // Use strict() to reject unknown top-level keys so callers get fast failures on typos.
-      // Nested objects have .passthrough() from the schema generator, so unknown nested
-      // fields are preserved rather than rejected.
+      // Use strict() to reject unknown top-level keys so callers get fast failures
+      // on typos. Strip known deprecated fields that the normalizer preserves
+      // (e.g. brand_manifest) before the strict check so they don't trigger it.
       if (schema instanceof z.ZodObject) {
-        schema.strict().parse(params);
+        const { brand_manifest, ...validationParams } = params;
+        schema.strict().parse(validationParams);
       } else {
         schema.parse(params);
       }
