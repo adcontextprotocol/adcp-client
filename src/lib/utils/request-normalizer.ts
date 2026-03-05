@@ -74,7 +74,9 @@ export function normalizeRequestParams(taskType: string, params: any): any {
 
   // ── brand_manifest → brand (get_products, create_media_buy) ──
   // update_media_buy has no brand field in either v2 or v3 — excluded deliberately.
+  // Derive brand from brand_manifest when only the manifest is supplied.
   // brand takes precedence if both are supplied.
+  // brand_manifest is preserved — agents may still require it.
   if (taskType === 'get_products' || taskType === 'create_media_buy') {
     if (normalized.brand_manifest && !normalized.brand) {
       const brand = brandManifestToBrandReference(normalized.brand_manifest);
@@ -82,7 +84,6 @@ export function normalizeRequestParams(taskType: string, params: any): any {
         normalized.brand = brand;
       }
     }
-    delete normalized.brand_manifest;
   }
 
   // ── Package normalization (create_media_buy, update_media_buy) ──

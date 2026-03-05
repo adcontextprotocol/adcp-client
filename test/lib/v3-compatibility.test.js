@@ -1294,10 +1294,10 @@ describe('Request Parameter Normalization', () => {
       assert.deepStrictEqual(result.account, { account_id: 'acct_1' });
       assert.deepStrictEqual(result.brand, { domain: 'acme.com' });
       assert.strictEqual(result.account_id, undefined);
-      assert.strictEqual(result.brand_manifest, undefined);
+      assert.strictEqual(result.brand_manifest, 'https://acme.com');
     });
 
-    test('should convert brand_manifest to brand for create_media_buy', () => {
+    test('should derive brand from brand_manifest for create_media_buy', () => {
       resetWarnings();
       const result = normalizeRequestParams('create_media_buy', {
         buyer_ref: 'buyer-1',
@@ -1306,7 +1306,7 @@ describe('Request Parameter Normalization', () => {
       });
 
       assert.deepStrictEqual(result.brand, { domain: 'acme.com' });
-      assert.strictEqual(result.brand_manifest, undefined);
+      assert.strictEqual(result.brand_manifest, 'https://acme.com');
     });
 
     test('should handle brand_manifest as object with url', () => {
@@ -1317,10 +1317,10 @@ describe('Request Parameter Normalization', () => {
       });
 
       assert.deepStrictEqual(result.brand, { domain: 'acme.com' });
-      assert.strictEqual(result.brand_manifest, undefined);
+      assert.deepStrictEqual(result.brand_manifest, { name: 'Acme', url: 'https://acme.com' });
     });
 
-    test('should not set brand when brand_manifest has no url', () => {
+    test('should preserve brand_manifest when it has no url', () => {
       resetWarnings();
       const result = normalizeRequestParams('get_products', {
         brand_manifest: { name: 'Acme' },
@@ -1328,7 +1328,7 @@ describe('Request Parameter Normalization', () => {
       });
 
       assert.strictEqual(result.brand, undefined);
-      assert.strictEqual(result.brand_manifest, undefined);
+      assert.deepStrictEqual(result.brand_manifest, { name: 'Acme' });
     });
   });
 });
