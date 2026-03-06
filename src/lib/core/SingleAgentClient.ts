@@ -390,8 +390,7 @@ export class SingleAgentClient {
    * Note: This is async and called lazily on first agent interaction
    */
   private async discoverMCPEndpoint(providedUri: string): Promise<string> {
-    const { Client: MCPClient } = await import('@modelcontextprotocol/sdk/client/index.js');
-    const { StreamableHTTPClientTransport } = await import('@modelcontextprotocol/sdk/client/streamableHttp.js');
+    const { connectMCPWithFallback } = await import('../protocols/mcp');
     const { discoverOAuthMetadata } = await import('../auth/oauth/discovery');
 
     const authToken = this.agent.auth_token;
@@ -406,32 +405,12 @@ export class SingleAgentClient {
 
     const testEndpoint = async (url: string): Promise<EndpointTestResult> => {
       try {
-        const mcpClient = new MCPClient({
-          name: 'AdCP-Client',
-          version: '1.0.0',
-        });
-
-        const transportOptions: any = {
-          requestInit: {
-            headers: authHeaders,
-          },
-        };
-
-        const transport = new StreamableHTTPClientTransport(new URL(url), transportOptions);
-
-        await mcpClient.connect(transport);
-        await mcpClient.close();
+        const client = await connectMCPWithFallback(new URL(url), authHeaders);
+        await client.close();
         return { success: true };
       } catch (error: any) {
-        // Check for HTTP status in the error
-        // MCP SDK may throw errors with status code or wrap Response errors
-        const status = error?.status || error?.response?.status || error?.cause?.status;
-
-        return {
-          success: false,
-          status: is401Error(error) ? 401 : status,
-          error,
-        };
+        const status = is401Error(error) ? 401 : error?.status || error?.response?.status || error?.cause?.status;
+        return { success: false, status, error };
       }
     };
 

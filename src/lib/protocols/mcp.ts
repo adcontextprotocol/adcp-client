@@ -9,6 +9,7 @@ import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { UnauthorizedError } from '@modelcontextprotocol/sdk/client/auth.js';
 import type { OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js';
 import { createMCPAuthHeaders } from '../auth';
+import { is401Error } from '../errors';
 
 // Re-export for convenience
 export { UnauthorizedError };
@@ -41,6 +42,90 @@ export interface MCPConnectionResult {
   transport: StreamableHTTPClientTransport;
 }
 
+/**
+ * Connect an MCPClient to the given URL with automatic transport fallback.
+ *
+ * Strategy:
+ *  1. Try StreamableHTTPClientTransport.
+ *  2. If a 404 StreamableHTTPError is returned (stale session), retry once with a
+ *     fresh StreamableHTTP connection — the server supports the protocol, the
+ *     session just expired.
+ *  3. If a 401 is returned, throw immediately — auth failure is transport-agnostic.
+ *  4. For any other error, fall back to SSEClientTransport with the same headers.
+ *
+ * The returned client is connected and ready for use. Callers are responsible for
+ * calling client.close() when done.
+ */
+export async function connectMCPWithFallback(
+  url: URL,
+  authHeaders: Record<string, string>,
+  debugLogs: any[] = [],
+  label = 'connection'
+): Promise<MCPClient> {
+  const transportOptions = { requestInit: { headers: authHeaders } };
+
+  try {
+    const client = new MCPClient({ name: 'AdCP-Client', version: '1.0.0' });
+    debugLogs.push({
+      type: 'info',
+      message: `MCP: Attempting StreamableHTTP ${label} to ${url}`,
+      timestamp: new Date().toISOString(),
+    });
+    await client.connect(new StreamableHTTPClientTransport(url, transportOptions));
+    debugLogs.push({
+      type: 'success',
+      message: `MCP: Connected via StreamableHTTP for ${label}`,
+      timestamp: new Date().toISOString(),
+    });
+    return client;
+  } catch (error: any) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    debugLogs.push({
+      type: 'error',
+      message: `MCP: StreamableHTTP failed for ${label}: ${errorMessage}`,
+      timestamp: new Date().toISOString(),
+      error,
+    });
+
+    // Stale session — retry StreamableHTTP with a fresh connection
+    if (error instanceof StreamableHTTPError && error.code === 404) {
+      debugLogs.push({
+        type: 'info',
+        message: `MCP: Session error detected, retrying StreamableHTTP for ${label}`,
+        timestamp: new Date().toISOString(),
+      });
+      const client = new MCPClient({ name: 'AdCP-Client', version: '1.0.0' });
+      await client.connect(new StreamableHTTPClientTransport(url, transportOptions));
+      debugLogs.push({
+        type: 'success',
+        message: `MCP: Connected via StreamableHTTP (retry) for ${label}`,
+        timestamp: new Date().toISOString(),
+      });
+      return client;
+    }
+
+    // Auth failure — transport type won't change the outcome
+    if (is401Error(error)) {
+      throw error;
+    }
+
+    // Fall back to SSE
+    debugLogs.push({
+      type: 'info',
+      message: `MCP: Falling back to SSE transport for ${label}`,
+      timestamp: new Date().toISOString(),
+    });
+    const client = new MCPClient({ name: 'AdCP-Client', version: '1.0.0' });
+    await client.connect(new SSEClientTransport(url, { requestInit: { headers: authHeaders } }));
+    debugLogs.push({
+      type: 'success',
+      message: `MCP: Connected via SSE transport for ${label}`,
+      timestamp: new Date().toISOString(),
+    });
+    return client;
+  }
+}
+
 export async function callMCPTool(
   agentUrl: string,
   toolName: string,
@@ -68,101 +153,7 @@ export async function callMCPTool(
     customHeaderKeys: customHeaders ? Object.keys(customHeaders) : [],
   });
 
-  try {
-    // First, try to connect using StreamableHTTPClientTransport
-    debugLogs.push({
-      type: 'info',
-      message: `MCP: Attempting StreamableHTTP connection to ${baseUrl} for ${toolName}`,
-      timestamp: new Date().toISOString(),
-    });
-
-    mcpClient = new MCPClient({
-      name: 'AdCP-Testing-Framework',
-      version: '1.0.0',
-    });
-
-    // Use the SDK with requestInit headers for authentication
-    // The SDK's StreamableHTTPClientTransport will use these headers for ALL requests
-    // Note: authHeaders already includes 'Accept: application/json, text/event-stream' from createMCPAuthHeaders
-    const transport = new StreamableHTTPClientTransport(baseUrl, {
-      requestInit: {
-        headers: authHeaders,
-      },
-    });
-    await mcpClient.connect(transport);
-
-    debugLogs.push({
-      type: 'success',
-      message: `MCP: Connected using StreamableHTTP transport for ${toolName}`,
-      timestamp: new Date().toISOString(),
-    });
-  } catch (error) {
-    // Capture the connection error
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    debugLogs.push({
-      type: 'error',
-      message: `MCP: StreamableHTTP connection failed for ${toolName}: ${errorMessage}`,
-      timestamp: new Date().toISOString(),
-      error: error,
-    });
-
-    // A 404 StreamableHTTPError means the server supports StreamableHTTP but the
-    // session was stale/expired (the initialize POST succeeded, then the GET SSE
-    // stream got a 404 for the new session ID). Retry with a fresh connection
-    // instead of falling back to SSE.
-    const isSessionError = error instanceof StreamableHTTPError && error.code === 404;
-
-    if (isSessionError) {
-      debugLogs.push({
-        type: 'info',
-        message: `MCP: Session error detected, retrying StreamableHTTP for ${toolName}`,
-        timestamp: new Date().toISOString(),
-      });
-
-      mcpClient = new MCPClient({
-        name: 'AdCP-Testing-Framework',
-        version: '1.0.0',
-      });
-
-      const retryTransport = new StreamableHTTPClientTransport(baseUrl, {
-        requestInit: {
-          headers: authHeaders,
-        },
-      });
-      await mcpClient.connect(retryTransport);
-
-      debugLogs.push({
-        type: 'success',
-        message: `MCP: Connected using StreamableHTTP transport (retry) for ${toolName}`,
-        timestamp: new Date().toISOString(),
-      });
-    } else {
-      // Non-session error — fall back to SSE transport
-      debugLogs.push({
-        type: 'info',
-        message: `MCP: Falling back to SSE transport for ${toolName}`,
-        timestamp: new Date().toISOString(),
-      });
-
-      mcpClient = new MCPClient({
-        name: 'AdCP-Testing-Framework',
-        version: '1.0.0',
-      });
-
-      // SSEClientTransport supports requestInit.headers via the eventsource npm package,
-      // so pass the same auth headers used on the StreamableHTTP path.
-      const sseTransport = new SSEClientTransport(baseUrl, {
-        requestInit: { headers: authHeaders },
-      });
-      await mcpClient.connect(sseTransport);
-
-      debugLogs.push({
-        type: 'success',
-        message: `MCP: Connected using SSE transport for ${toolName}`,
-        timestamp: new Date().toISOString(),
-      });
-    }
-  }
+  mcpClient = await connectMCPWithFallback(baseUrl, authHeaders, debugLogs, toolName);
 
   try {
     // Call the tool using official MCP client
