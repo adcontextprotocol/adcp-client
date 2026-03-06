@@ -390,9 +390,7 @@ export class SingleAgentClient {
    * Note: This is async and called lazily on first agent interaction
    */
   private async discoverMCPEndpoint(providedUri: string): Promise<string> {
-    const { Client: MCPClient } = await import('@modelcontextprotocol/sdk/client/index.js');
-    const { StreamableHTTPClientTransport } = await import('@modelcontextprotocol/sdk/client/streamableHttp.js');
-    const { SSEClientTransport } = await import('@modelcontextprotocol/sdk/client/sse.js');
+    const { connectMCPWithFallback } = await import('../protocols/mcp');
     const { discoverOAuthMetadata } = await import('../auth/oauth/discovery');
 
     const authToken = this.agent.auth_token;
@@ -406,54 +404,15 @@ export class SingleAgentClient {
     };
 
     const testEndpoint = async (url: string): Promise<EndpointTestResult> => {
-      // Try StreamableHTTP first
       try {
-        const mcpClient = new MCPClient({
-          name: 'AdCP-Client',
-          version: '1.0.0',
-        });
-
-        const transportOptions: any = {
-          requestInit: {
-            headers: authHeaders,
-          },
-        };
-
-        const transport = new StreamableHTTPClientTransport(new URL(url), transportOptions);
-
-        await mcpClient.connect(transport);
-        await mcpClient.close();
+        const client = await connectMCPWithFallback(new URL(url), authHeaders);
+        await client.close();
         return { success: true };
-      } catch (streamableError: any) {
-        // If the server returned 401, it exists but requires auth — don't try SSE
-        if (is401Error(streamableError)) {
-          return { success: false, status: 401, error: streamableError };
-        }
-
-        // StreamableHTTP failed for a non-auth reason — fall back to SSE transport,
-        // mirroring the fallback logic in callMCPTool()
-        try {
-          const mcpClient = new MCPClient({
-            name: 'AdCP-Client',
-            version: '1.0.0',
-          });
-
-          const sseTransport = new SSEClientTransport(new URL(url), {
-            requestInit: { headers: authHeaders },
-          });
-
-          await mcpClient.connect(sseTransport);
-          await mcpClient.close();
-          return { success: true };
-        } catch (sseError: any) {
-          // Use whichever error gives us the most useful status code
-          const streamableStatus =
-            streamableError?.status || streamableError?.response?.status || streamableError?.cause?.status;
-          const sseStatus = sseError?.status || sseError?.response?.status || sseError?.cause?.status;
-          const status = is401Error(sseError) ? 401 : sseStatus || streamableStatus;
-
-          return { success: false, status, error: streamableError };
-        }
+      } catch (error: any) {
+        const status = is401Error(error)
+          ? 401
+          : error?.status || error?.response?.status || error?.cause?.status;
+        return { success: false, status, error };
       }
     };
 
