@@ -1,5 +1,14 @@
 # Changelog
 
+## 4.5.2
+
+### Patch Changes
+
+- fcf2da6: Preserve brand_manifest through request normalization so agents that require it receive it. The normalizer now derives brand from brand_manifest without deleting it.
+- d1c85f3: fix: add SSE transport fallback to MCP endpoint discovery
+
+  discoverMCPEndpoint() was only probing candidate URLs with StreamableHTTPClientTransport. Agents that exclusively support the older SSE transport were rejected at the discovery gate, even though callMCPTool() would have handled them correctly. The testEndpoint() helper now mirrors the StreamableHTTP → SSE fallback already present in the tool-call path, so SSE-only agents pass discovery and reach the tool call successfully.
+
 ## 4.5.1
 
 ### Patch Changes
