@@ -409,9 +409,7 @@ export class SingleAgentClient {
         await client.close();
         return { success: true };
       } catch (error: any) {
-        const status = is401Error(error)
-          ? 401
-          : error?.status || error?.response?.status || error?.cause?.status;
+        const status = is401Error(error) ? 401 : error?.status || error?.response?.status || error?.cause?.status;
         return { success: false, status, error };
       }
     };
