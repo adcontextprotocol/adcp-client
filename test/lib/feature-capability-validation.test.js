@@ -3,7 +3,13 @@
 const { test, describe } = require('node:test');
 const assert = require('node:assert');
 
-const { resolveFeature, listDeclaredFeatures, FeatureUnsupportedError } = require('../../dist/lib/index.js');
+const {
+  resolveFeature,
+  listDeclaredFeatures,
+  FeatureUnsupportedError,
+  SingleAgentClient,
+  ProtocolClient,
+} = require('../../dist/lib/index.js');
 
 /**
  * Build a capabilities object for testing.
@@ -142,5 +148,42 @@ describe('FeatureUnsupportedError', () => {
   test('handles empty declared features', () => {
     const err = new FeatureUnsupportedError(['signals'], [], 'https://empty.example.com');
     assert.ok(err.message.includes('(none)'), 'should say (none) for empty declared features');
+  });
+});
+
+describe('SingleAgentClient feature API exists', () => {
+  // SingleAgentClient.supports/require/refreshCapabilities are thin async wrappers
+  // around resolveFeature/listDeclaredFeatures (tested above). Full integration
+  // tests require a live MCP server; mocking the entire endpoint discovery chain
+  // would be brittle and mock-heavy. These tests verify the methods are exported.
+
+  test('SingleAgentClient has supports method', () => {
+    const client = new SingleAgentClient({
+      id: 'test',
+      name: 'Test',
+      agent_uri: 'https://example.com',
+      protocol: 'mcp',
+    });
+    assert.strictEqual(typeof client.supports, 'function');
+  });
+
+  test('SingleAgentClient has require method', () => {
+    const client = new SingleAgentClient({
+      id: 'test',
+      name: 'Test',
+      agent_uri: 'https://example.com',
+      protocol: 'mcp',
+    });
+    assert.strictEqual(typeof client.require, 'function');
+  });
+
+  test('SingleAgentClient has refreshCapabilities method', () => {
+    const client = new SingleAgentClient({
+      id: 'test',
+      name: 'Test',
+      agent_uri: 'https://example.com',
+      protocol: 'mcp',
+    });
+    assert.strictEqual(typeof client.refreshCapabilities, 'function');
   });
 });
