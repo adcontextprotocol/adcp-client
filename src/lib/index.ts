@@ -137,6 +137,7 @@ export {
   InvalidContextError,
   ConfigurationError,
   AuthenticationRequiredError,
+  FeatureUnsupportedError,
   isADCPError,
   isErrorOfType,
   extractErrorInfo,
@@ -398,6 +399,8 @@ export {
   supportsContentStandards,
   requiresOperatorAuth,
   requiresAccountForProducts,
+  resolveFeature,
+  listDeclaredFeatures,
   MEDIA_BUY_TOOLS,
   SIGNALS_TOOLS,
   GOVERNANCE_TOOLS,
@@ -413,6 +416,7 @@ export type {
   AccountCapabilities,
   MediaBuyFeatures,
   ToolInfo,
+  FeatureName,
 } from './utils/capabilities';
 
 // Creative assignment adapter (v2 creative_ids ↔ v3 creative_assignments)

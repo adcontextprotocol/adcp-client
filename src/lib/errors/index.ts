@@ -243,6 +243,24 @@ export class AuthenticationRequiredError extends ADCPError {
 }
 
 /**
+ * Error thrown when a required feature is not supported by the seller
+ */
+export class FeatureUnsupportedError extends ADCPError {
+  readonly code = 'FEATURE_UNSUPPORTED';
+
+  constructor(
+    public readonly unsupportedFeatures: string[],
+    public readonly declaredFeatures: string[],
+    public readonly agentUrl?: string
+  ) {
+    const missing = unsupportedFeatures.join(', ');
+    const declared = declaredFeatures.length > 0 ? declaredFeatures.join(', ') : '(none)';
+    const urlPart = agentUrl ? ` at ${agentUrl}` : '';
+    super(`Seller${urlPart} does not support: ${missing}\n  Declared features: ${declared}`);
+  }
+}
+
+/**
  * Check if an error indicates a 401 Unauthorized response
  *
  * This helper centralizes the fragile logic of detecting 401 errors from

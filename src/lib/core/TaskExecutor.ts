@@ -6,7 +6,7 @@ import type { AgentConfig } from '../types';
 import { ProtocolClient } from '../protocols';
 import type { Storage } from '../storage/interfaces';
 import { responseValidator } from './ResponseValidator';
-import { unwrapProtocolResponse } from '../utils/response-unwrapper';
+import { unwrapProtocolResponse, isAdcpError } from '../utils/response-unwrapper';
 import { normalizeGetProductsResponse } from '../utils/pricing-adapter';
 import type {
   Message,
@@ -283,7 +283,9 @@ export class TaskExecutor {
         // Check if the actual operation succeeded (not just the task)
         // Some agents return { success: false, message: "error" } even with status: completed
         // Some agents return { error: "..." } without success field
-        const operationSuccess = completedData?.success !== false && !completedData?.error;
+        // AdCP schemas use plural { errors: [...] } for error responses
+        const operationSuccess =
+          completedData?.success !== false && !completedData?.error && !isAdcpError(completedData);
 
         // Validate response against AdCP schema - validate extracted data, not protocol wrapper
         const validationResult = this.validateResponseSchema(completedData, taskName, debugLogs);
@@ -293,7 +295,12 @@ export class TaskExecutor {
         const finalError = !finalSuccess
           ? validationResult.errors.length > 0
             ? `Schema validation failed: ${validationResult.errors.join('; ')}`
-            : completedData?.error || completedData?.message || 'Operation failed'
+            : completedData?.error ||
+              (isAdcpError(completedData)
+                ? completedData.errors.map((e: any) => e.message || e.code).join('; ')
+                : null) ||
+              completedData?.message ||
+              'Operation failed'
           : undefined;
 
         return {
@@ -361,7 +368,7 @@ export class TaskExecutor {
           (defaultData !== response || response.structuredContent || response.result || response.data)
         ) {
           // Check if the actual operation succeeded
-          const defaultSuccess = defaultData?.success !== false && !defaultData?.error;
+          const defaultSuccess = defaultData?.success !== false && !defaultData?.error && !isAdcpError(defaultData);
 
           // Validate response against AdCP schema - validate extracted data, not protocol wrapper
           const defaultValidation = this.validateResponseSchema(defaultData, taskName, debugLogs);
@@ -371,7 +378,12 @@ export class TaskExecutor {
           const defaultFinalError = !defaultFinalSuccess
             ? defaultValidation.errors.length > 0
               ? `Schema validation failed: ${defaultValidation.errors.join('; ')}`
-              : defaultData?.error || defaultData?.message || 'Operation failed'
+              : defaultData?.error ||
+                (isAdcpError(defaultData)
+                  ? defaultData.errors.map((e: any) => e.message || e.code).join('; ')
+                  : null) ||
+                defaultData?.message ||
+                'Operation failed'
             : undefined;
 
           return {
