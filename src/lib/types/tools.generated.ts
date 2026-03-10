@@ -582,10 +582,6 @@ export interface MediaBuyFeatures {
    * Supports sync_catalogs task for catalog feed management with platform review and approval
    */
   catalog_management?: boolean;
-  /**
-   * Supports sandbox mode for operations without real platform calls or spend
-   */
-  sandbox?: boolean;
   [k: string]: boolean | undefined;
 }
 /**
@@ -1371,7 +1367,7 @@ export interface CPAPricingOption {
   min_spend_per_package?: number;
 }
 /**
- * Flat rate pricing for DOOH, sponsorships, and time-based campaigns. If fixed_price is present, it's fixed pricing. If absent, it's auction-based.
+ * Flat rate pricing for sponsorships, takeovers, and DOOH exclusive placements. A fixed total cost regardless of delivery volume. For duration-scaled pricing (rate × time units), use the `time` model instead. If fixed_price is present, it's fixed pricing. If absent, it's auction-based.
  */
 export interface FlatRatePricingOption {
   /**
@@ -1395,43 +1391,48 @@ export interface FlatRatePricingOption {
    */
   floor_price?: number;
   price_guidance?: PriceGuidance;
-  /**
-   * Flat rate parameters for DOOH and time-based campaigns
-   */
-  parameters?: {
-    /**
-     * Duration in hours for time-based pricing
-     */
-    duration_hours?: number;
-    /**
-     * Guaranteed share of voice (0-100)
-     */
-    sov_percentage?: number;
-    /**
-     * Duration of ad loop rotation in seconds
-     */
-    loop_duration_seconds?: number;
-    /**
-     * Minimum plays per hour
-     */
-    min_plays_per_hour?: number;
-    /**
-     * Named venue package identifier
-     */
-    venue_package?: string;
-    /**
-     * Estimated impressions (informational)
-     */
-    estimated_impressions?: number;
-    /**
-     * Specific daypart for time-based pricing
-     */
-    daypart?: string;
-  };
+  parameters?: DoohParameters;
   /**
    * Minimum spend requirement per package using this pricing option, in the specified currency
    */
   min_spend_per_package?: number;
+}
+/**
+ * DOOH inventory allocation parameters. Sponsorship and takeover flat_rate options omit this field entirely — only include for digital out-of-home inventory.
+ */
+export interface DoohParameters {
+  /**
+   * Discriminator identifying this as DOOH parameters
+   */
+  type: 'dooh';
+  /**
+   * Guaranteed share of voice as a percentage (0-100)
+   */
+  sov_percentage?: number;
+  /**
+   * Duration of the ad loop rotation in seconds
+   */
+  loop_duration_seconds?: number;
+  /**
+   * Minimum number of plays per hour guaranteed
+   */
+  min_plays_per_hour?: number;
+  /**
+   * Named collection of screens included in this buy
+   */
+  venue_package?: string;
+  /**
+   * Duration of the DOOH slot in hours (e.g., 24 for a full-day takeover)
+   */
+  duration_hours?: number;
+  /**
+   * Named daypart for this slot (e.g., morning_commute, evening_rush)
+   */
+  daypart?: string;
+  /**
+   * Estimated audience impressions for this slot (informational, not a delivery guarantee)
+   */
+  estimated_impressions?: number;
 }
 /**
  * Cost per time unit (hour, day, week, or month) - rate scales with campaign duration. If fixed_price is present, it's fixed pricing. If absent, it's auction-based.
@@ -1864,6 +1865,10 @@ export type DisclosurePosition =
   | 'end_card'
   | 'pre_roll'
   | 'companion';
+/**
+ * How long a disclosure must persist during content playback or display. Different jurisdictions and regulations require different persistence behaviors for AI-generated content labels. When multiple sources specify persistence for the same jurisdiction (e.g., brief and provenance), the most restrictive mode applies: continuous > initial > flexible.
+ */
+export type DisclosurePersistence = 'continuous' | 'initial' | 'flexible';
 
 /**
  * Request parameters for discovering supported creative formats
@@ -1904,9 +1909,13 @@ export interface ListCreativeFormatsRequest {
   name_search?: string;
   wcag_level?: WCAGLevel;
   /**
-   * Filter to formats whose supported_disclosure_positions include all of these positions. Use to find formats compatible with a brief's compliance requirements.
+   * Filter to formats that support all of these disclosure positions. When a format has disclosure_capabilities, match against those positions. Otherwise fall back to supported_disclosure_positions. Use to find formats compatible with a brief's compliance requirements.
    */
   disclosure_positions?: DisclosurePosition[];
+  /**
+   * Filter to formats where each requested persistence mode is supported by at least one position in disclosure_capabilities. Different positions may satisfy different modes. Use to find formats compatible with jurisdiction-specific persistence requirements (e.g., continuous for EU AI Act).
+   */
+  disclosure_persistence?: DisclosurePersistence[];
   /**
    * Filter to formats whose output_format_ids includes any of these format IDs. Returns formats that can produce these outputs — inspect each result's input_format_ids to see what inputs they accept.
    */
@@ -2148,6 +2157,16 @@ export interface Format {
    * Disclosure positions this format can render. Buyers use this to determine whether a format can satisfy their compliance requirements before submitting a creative. When omitted, the format makes no disclosure rendering guarantees — creative agents SHOULD treat this as incompatible with briefs that require specific disclosure positions. Values correspond to positions on creative-brief.json required_disclosures.
    */
   supported_disclosure_positions?: DisclosurePosition[];
+  /**
+   * Structured disclosure capabilities per position with persistence modes. Declares which persistence behaviors each disclosure position supports, enabling persistence-aware matching against provenance render guidance and brief requirements. When present, supersedes supported_disclosure_positions for persistence-aware queries. The flat supported_disclosure_positions field is retained for backward compatibility. Each position MUST appear at most once; validators and agents SHOULD reject duplicates.
+   */
+  disclosure_capabilities?: {
+    position: DisclosurePosition;
+    /**
+     * Persistence modes this position supports
+     */
+    persistence: DisclosurePersistence[];
+  }[];
   /**
    * Optional detailed card with carousel and full specifications. Provides rich format documentation similar to ad spec pages.
    */
@@ -3147,6 +3166,10 @@ export interface Provenance {
     role: 'creator' | 'advertiser' | 'agency' | 'platform' | 'tool';
   };
   /**
+   * When this provenance claim was made (ISO 8601). Distinct from created_time, which records when the content itself was produced. A provenance claim may be attached well after content creation, for example when retroactively declaring AI involvement for regulatory compliance.
+   */
+  declared_at?: string;
+  /**
    * When this content was created or generated (ISO 8601)
    */
   created_time?: string;
@@ -3187,6 +3210,21 @@ export interface Provenance {
        * Required disclosure label text for this jurisdiction, in the local language
        */
       label_text?: string;
+      /**
+       * How the disclosure should be rendered for this jurisdiction. Expresses the declaring party's intent for persistence and position based on regulatory requirements. Publishers control actual rendering but governance agents can audit whether guidance was followed.
+       */
+      render_guidance?: {
+        persistence?: DisclosurePersistence;
+        /**
+         * Minimum display duration in milliseconds for initial persistence. Recommended when persistence is initial — without it, the duration is at the publisher's discretion. At serve time the publisher reads this from provenance since the brief is not available.
+         */
+        min_duration_ms?: number;
+        /**
+         * Preferred disclosure positions in priority order. The first position a format supports should be used.
+         */
+        positions?: DisclosurePosition[];
+        ext?: ExtensionObject;
+      };
     }[];
   };
   /**
@@ -3636,6 +3674,7 @@ export interface CreativeBrief {
        * Language of the disclosure text as a BCP 47 language tag (e.g., 'en', 'fr-CA', 'es'). When omitted, the disclosure is assumed to match the creative's language.
        */
       language?: string;
+      persistence?: DisclosurePersistence;
     }[];
     /**
      * Claims that must not appear in creatives for this campaign. Creative agents should ensure generated content avoids these claims.
@@ -4697,118 +4736,7 @@ export interface GetMediaBuysResponse {
     /**
      * Packages within this media buy, augmented with creative approval status and optional delivery snapshots
      */
-    packages: {
-      /**
-       * Publisher's package identifier
-       */
-      package_id: string;
-      /**
-       * Buyer's reference identifier for this package
-       */
-      buyer_ref?: string;
-      /**
-       * Product identifier this package is purchased from
-       */
-      product_id?: string;
-      /**
-       * Package budget amount, denominated in package.currency when present, otherwise media_buy.currency
-       */
-      budget?: number;
-      /**
-       * ISO 4217 currency code for monetary values at this package level (budget, bid_price, snapshot.spend). When absent, inherit media_buy.currency.
-       */
-      currency?: string;
-      /**
-       * Current bid price for auction-based packages. Denominated in package.currency when present, otherwise media_buy.currency. Relevant for automated price optimization loops.
-       */
-      bid_price?: number;
-      /**
-       * Goal impression count for impression-based packages
-       */
-      impressions?: number;
-      /**
-       * ISO 8601 flight start time for this package. Use to determine whether the package is within its scheduled flight before interpreting delivery status.
-       */
-      start_time?: string;
-      /**
-       * ISO 8601 flight end time for this package
-       */
-      end_time?: string;
-      /**
-       * Whether this package is currently paused by the buyer
-       */
-      paused?: boolean;
-      /**
-       * Approval status for each creative assigned to this package. Absent when no creatives have been assigned.
-       */
-      creative_approvals?: {
-        /**
-         * Creative identifier
-         */
-        creative_id: string;
-        approval_status?: CreativeApprovalStatus;
-        /**
-         * Human-readable explanation of why the creative was rejected. Present only when approval_status is 'rejected'.
-         */
-        rejection_reason?: string;
-      }[];
-      /**
-       * Format IDs from the original create_media_buy format_ids_to_provide that have not yet been uploaded via sync_creatives. When empty or absent, all required formats have been provided.
-       */
-      format_ids_pending?: FormatID[];
-      /**
-       * Machine-readable reason the snapshot is omitted. Present only when include_snapshot was true and snapshot is unavailable for this package.
-       */
-      snapshot_unavailable_reason?:
-        | 'SNAPSHOT_UNSUPPORTED'
-        | 'SNAPSHOT_TEMPORARILY_UNAVAILABLE'
-        | 'SNAPSHOT_PERMISSION_DENIED';
-      /**
-       * Near-real-time delivery snapshot for this package. Only present when include_snapshot was true in the request. Represents the latest available entity-level stats from the platform — not billing-grade data.
-       */
-      snapshot?: {
-        /**
-         * ISO 8601 timestamp when this snapshot was captured by the platform
-         */
-        as_of: string;
-        /**
-         * Maximum age of this data in seconds. For example, 900 means the data may be up to 15 minutes old. Use this to interpret zero delivery: a value of 900 means zero impressions is likely real; a value of 14400 means reporting may still be catching up.
-         */
-        staleness_seconds: number;
-        /**
-         * Total impressions delivered since package start
-         */
-        impressions: number;
-        /**
-         * Total spend since package start, denominated in snapshot.currency when present, otherwise package.currency or media_buy.currency
-         */
-        spend: number;
-        /**
-         * ISO 4217 currency code for spend in this snapshot. Optional when unchanged from package.currency or media_buy.currency.
-         */
-        currency?: string;
-        /**
-         * Total clicks since package start (when available)
-         */
-        clicks?: number;
-        /**
-         * Current delivery pace relative to expected (1.0 = on track, <1.0 = behind, >1.0 = ahead). Absent when pacing cannot be determined.
-         */
-        pacing_index?: number;
-        /**
-         * Operational delivery state of this package. 'not_delivering' means the package is within its scheduled flight but has delivered zero impressions for at least one full staleness cycle — the signal for automated price adjustments or buyer alerts. Implementers must not return 'not_delivering' until at least staleness_seconds have elapsed since package activation.
-         */
-        delivery_status?:
-          | 'delivering'
-          | 'not_delivering'
-          | 'completed'
-          | 'budget_exhausted'
-          | 'flight_ended'
-          | 'goal_met';
-        ext?: ExtensionObject;
-      };
-      ext?: ExtensionObject;
-    }[];
+    packages: PackageStatus[];
     ext?: ExtensionObject;
   }[];
   /**
@@ -4821,6 +4749,115 @@ export interface GetMediaBuysResponse {
    */
   sandbox?: boolean;
   context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Current status of a package within a media buy — includes creative approval state and optional delivery snapshot. For the creation input shape, see PackageRequest. For the creation output shape, see Package.
+ */
+export interface PackageStatus {
+  /**
+   * Publisher's package identifier
+   */
+  package_id: string;
+  /**
+   * Buyer's reference identifier for this package
+   */
+  buyer_ref?: string;
+  /**
+   * Product identifier this package is purchased from
+   */
+  product_id?: string;
+  /**
+   * Package budget amount, denominated in package.currency when present, otherwise media_buy.currency
+   */
+  budget?: number;
+  /**
+   * ISO 4217 currency code for monetary values at this package level (budget, bid_price, snapshot.spend). When absent, inherit media_buy.currency.
+   */
+  currency?: string;
+  /**
+   * Current bid price for auction-based packages. Denominated in package.currency when present, otherwise media_buy.currency. Relevant for automated price optimization loops.
+   */
+  bid_price?: number;
+  /**
+   * Goal impression count for impression-based packages
+   */
+  impressions?: number;
+  /**
+   * ISO 8601 flight start time for this package. Use to determine whether the package is within its scheduled flight before interpreting delivery status.
+   */
+  start_time?: string;
+  /**
+   * ISO 8601 flight end time for this package
+   */
+  end_time?: string;
+  /**
+   * Whether this package is currently paused by the buyer
+   */
+  paused?: boolean;
+  /**
+   * Approval status for each creative assigned to this package. Absent when no creatives have been assigned.
+   */
+  creative_approvals?: {
+    /**
+     * Creative identifier
+     */
+    creative_id: string;
+    approval_status?: CreativeApprovalStatus;
+    /**
+     * Human-readable explanation of why the creative was rejected. Present only when approval_status is 'rejected'.
+     */
+    rejection_reason?: string;
+  }[];
+  /**
+   * Format IDs from the original create_media_buy format_ids_to_provide that have not yet been uploaded via sync_creatives. When empty or absent, all required formats have been provided.
+   */
+  format_ids_pending?: FormatID[];
+  /**
+   * Machine-readable reason the snapshot is omitted. Present only when include_snapshot was true and snapshot is unavailable for this package.
+   */
+  snapshot_unavailable_reason?:
+    | 'SNAPSHOT_UNSUPPORTED'
+    | 'SNAPSHOT_TEMPORARILY_UNAVAILABLE'
+    | 'SNAPSHOT_PERMISSION_DENIED';
+  /**
+   * Near-real-time delivery snapshot for this package. Only present when include_snapshot was true in the request. Represents the latest available entity-level stats from the platform — not billing-grade data.
+   */
+  snapshot?: {
+    /**
+     * ISO 8601 timestamp when this snapshot was captured by the platform
+     */
+    as_of: string;
+    /**
+     * Maximum age of this data in seconds. For example, 900 means the data may be up to 15 minutes old. Use this to interpret zero delivery: a value of 900 means zero impressions is likely real; a value of 14400 means reporting may still be catching up.
+     */
+    staleness_seconds: number;
+    /**
+     * Total impressions delivered since package start
+     */
+    impressions: number;
+    /**
+     * Total spend since package start, denominated in snapshot.currency when present, otherwise package.currency or media_buy.currency
+     */
+    spend: number;
+    /**
+     * ISO 4217 currency code for spend in this snapshot. Optional when unchanged from package.currency or media_buy.currency.
+     */
+    currency?: string;
+    /**
+     * Total clicks since package start (when available)
+     */
+    clicks?: number;
+    /**
+     * Current delivery pace relative to expected (1.0 = on track, <1.0 = behind, >1.0 = ahead). Absent when pacing cannot be determined.
+     */
+    pacing_index?: number;
+    /**
+     * Operational delivery state of this package. 'not_delivering' means the package is within its scheduled flight but has delivered zero impressions for at least one full staleness cycle — the signal for automated price adjustments or buyer alerts. Implementers must not return 'not_delivering' until at least staleness_seconds have elapsed since package activation.
+     */
+    delivery_status?: 'delivering' | 'not_delivering' | 'completed' | 'budget_exhausted' | 'flight_ended' | 'goal_met';
+    ext?: ExtensionObject;
+  };
   ext?: ExtensionObject;
 }
 /**
@@ -9332,11 +9369,7 @@ export interface GetAdCPCapabilitiesResponse {
    */
   account?: {
     /**
-     * How the seller resolves account references. explicit_account_id: accounts are managed out-of-band (advertiser portal, sales rep) and discovered via list_accounts. implicit_from_sync: buyer declares intent via sync_accounts and the seller provisions accounts.
-     */
-    account_resolution?: 'explicit_account_id' | 'implicit_from_sync';
-    /**
-     * Whether the seller requires operator-level credentials. When false (default), the seller trusts the agent's identity claims — the agent authenticates once and declares brands/operators via sync_accounts. When true, each operator must authenticate independently with the seller, and the agent opens a per-operator session using the operator's credential.
+     * Whether the seller requires operator-level credentials. When true (explicit accounts), operators authenticate independently with the seller and the buyer discovers accounts via list_accounts. When false (default, implicit accounts), the seller trusts the agent's identity claims — the agent authenticates once and declares brands/operators via sync_accounts.
      */
     require_operator_auth?: boolean;
     /**
@@ -9355,6 +9388,10 @@ export interface GetAdCPCapabilitiesResponse {
      * Whether this seller supports the get_account_financials task for querying account-level financial status (spend, credit, invoices). Only applicable to operator-billed accounts.
      */
     account_financials?: boolean;
+    /**
+     * Whether this seller supports sandbox accounts for testing. Buyers can provision a sandbox account via sync_accounts with sandbox: true, and all requests using that account_id will be treated as sandbox — no real platform calls or spend.
+     */
+    sandbox?: boolean;
   };
   /**
    * Media-buy protocol capabilities. Only present if media_buy is in supported_protocols.
