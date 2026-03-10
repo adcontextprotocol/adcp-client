@@ -280,12 +280,7 @@ export class TaskExecutor {
         const completedData = this.extractResponseData(response, debugLogs, taskName);
         this.updateTaskStatus(taskId, 'completed', completedData);
 
-        // Check if the actual operation succeeded (not just the task)
-        // Some agents return { success: false, message: "error" } even with status: completed
-        // Some agents return { error: "..." } without success field
-        // AdCP schemas use plural { errors: [...] } for error responses
-        const operationSuccess =
-          completedData?.success !== false && !completedData?.error && !isAdcpError(completedData);
+        const operationSuccess = this.isOperationSuccess(completedData);
 
         // Validate response against AdCP schema - validate extracted data, not protocol wrapper
         const validationResult = this.validateResponseSchema(completedData, taskName, debugLogs);
@@ -295,12 +290,7 @@ export class TaskExecutor {
         const finalError = !finalSuccess
           ? validationResult.errors.length > 0
             ? `Schema validation failed: ${validationResult.errors.join('; ')}`
-            : completedData?.error ||
-              (isAdcpError(completedData)
-                ? completedData.errors.map((e: any) => e.message || e.code).join('; ')
-                : null) ||
-              completedData?.message ||
-              'Operation failed'
+            : this.extractOperationError(completedData)
           : undefined;
 
         return {
@@ -367,8 +357,7 @@ export class TaskExecutor {
           defaultData &&
           (defaultData !== response || response.structuredContent || response.result || response.data)
         ) {
-          // Check if the actual operation succeeded
-          const defaultSuccess = defaultData?.success !== false && !defaultData?.error && !isAdcpError(defaultData);
+          const defaultSuccess = this.isOperationSuccess(defaultData);
 
           // Validate response against AdCP schema - validate extracted data, not protocol wrapper
           const defaultValidation = this.validateResponseSchema(defaultData, taskName, debugLogs);
@@ -378,12 +367,7 @@ export class TaskExecutor {
           const defaultFinalError = !defaultFinalSuccess
             ? defaultValidation.errors.length > 0
               ? `Schema validation failed: ${defaultValidation.errors.join('; ')}`
-              : defaultData?.error ||
-                (isAdcpError(defaultData)
-                  ? defaultData.errors.map((e: any) => e.message || e.code).join('; ')
-                  : null) ||
-                defaultData?.message ||
-                'Operation failed'
+              : this.extractOperationError(defaultData)
             : undefined;
 
           return {
@@ -480,6 +464,27 @@ export class TaskExecutor {
       // Fallback to full response
       return response;
     }
+  }
+
+  /**
+   * Check if extracted response data represents a successful operation.
+   * Handles singular `error`, plural `errors` (AdCP schema), and `success: false`.
+   */
+  private isOperationSuccess(data: any): boolean {
+    return data?.success !== false && !data?.error && !isAdcpError(data);
+  }
+
+  /**
+   * Extract a human-readable error message from response data.
+   * Handles singular `error`, plural `errors` array, and `message` field.
+   */
+  private extractOperationError(data: any): string {
+    return (
+      data?.error ||
+      (isAdcpError(data) ? data.errors.map((e: any) => e.message || e.code).join('; ') : null) ||
+      data?.message ||
+      'Operation failed'
+    );
   }
 
   /**
@@ -748,14 +753,13 @@ export class TaskExecutor {
       const status = await this.getTaskStatus(agent, taskId);
 
       if (status.status === ADCP_STATUS.COMPLETED) {
-        // Check if the actual operation succeeded
-        const pollSuccess = status.result?.success !== false && !status.result?.error;
+        const pollSuccess = this.isOperationSuccess(status.result);
 
         return {
           success: pollSuccess,
           status: 'completed',
           data: status.result,
-          error: pollSuccess ? undefined : status.result?.error || status.result?.message || 'Operation failed',
+          error: pollSuccess ? undefined : this.extractOperationError(status.result),
           metadata: {
             taskId,
             taskName: status.taskType,

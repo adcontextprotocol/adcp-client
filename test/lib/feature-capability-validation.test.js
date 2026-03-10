@@ -3,11 +3,7 @@
 const { test, describe } = require('node:test');
 const assert = require('node:assert');
 
-const {
-  resolveFeature,
-  listDeclaredFeatures,
-  FeatureUnsupportedError,
-} = require('../../dist/lib/index.js');
+const { resolveFeature, listDeclaredFeatures, FeatureUnsupportedError } = require('../../dist/lib/index.js');
 
 /**
  * Build a capabilities object for testing.

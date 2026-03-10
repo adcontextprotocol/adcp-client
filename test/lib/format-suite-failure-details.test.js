@@ -52,10 +52,7 @@ describe('formatSuiteResults includes step-level failure details', () => {
     assert.ok(output.includes('Missing required fields'), 'should include second failed step name');
 
     // Should include the error messages
-    assert.ok(
-      output.includes('Agent accepted negative budget'),
-      'should include error detail for budget step'
-    );
+    assert.ok(output.includes('Agent accepted negative budget'), 'should include error detail for budget step');
     assert.ok(
       output.includes('Agent accepted request without required product_id'),
       'should include error detail for missing fields step'
@@ -113,9 +110,7 @@ describe('formatSuiteResults includes step-level failure details', () => {
           overall_passed: false,
           summary: '0 passed, 1 failed',
           total_duration_ms: 100,
-          steps: [
-            { step: 'Agent responds', passed: false, duration_ms: 100, error: 'Connection refused' },
-          ],
+          steps: [{ step: 'Agent responds', passed: false, duration_ms: 100, error: 'Connection refused' }],
         },
       ],
       overall_passed: false,

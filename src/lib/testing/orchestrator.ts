@@ -220,7 +220,7 @@ export function formatSuiteResults(suite: SuiteResult): string {
     if (!result.overall_passed && result.steps) {
       const failedSteps = result.steps.filter(s => !s.passed);
       for (const step of failedSteps) {
-        output += `   ${step.passed ? '✅' : '❌'} **${step.step}**`;
+        output += `   ❌ **${step.step}**`;
         if (step.task) {
           output += ` (\`${step.task}\`)`;
         }
