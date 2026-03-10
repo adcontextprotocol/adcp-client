@@ -56,6 +56,7 @@ import {
   parseCapabilitiesResponse,
   resolveFeature,
   listDeclaredFeatures,
+  TASK_FEATURE_MAP,
 } from '../utils/capabilities';
 import {
   adaptCreateMediaBuyRequestForV2,
@@ -143,6 +144,14 @@ export interface SingleAgentClientConfig extends ConversationConfig {
    * @default 'daily'
    */
   reportingWebhookFrequency?: 'hourly' | 'daily' | 'monthly';
+  /**
+   * Validate that the seller supports required features before each task call.
+   * When true, tasks like syncAudiences will fail fast with FeatureUnsupportedError
+   * if the seller hasn't declared audience_management support.
+   *
+   * @default true
+   */
+  validateFeatures?: boolean;
   /**
    * Runtime schema validation options
    */
@@ -860,6 +869,9 @@ export class SingleAgentClient {
     // Validate request params against schema
     this.validateRequest(taskType, normalizedParams);
 
+    // Validate required features before sending request
+    await this.validateTaskFeatures(taskType);
+
     // Check for v3 features used against v2 servers - return empty result if unsupported
     const earlyResult = await this.getEarlyResultForUnsupportedFeatures<T>(taskType, normalizedParams);
     if (earlyResult) {
@@ -1404,6 +1416,7 @@ export class SingleAgentClient {
     options?: TaskOptions
   ): Promise<TaskResult<T>> {
     const normalizedParams = normalizeRequestParams(taskName, params);
+    await this.validateTaskFeatures(taskName);
     const agent = await this.ensureEndpointDiscovered();
     return this.executor.executeTask<T>(agent, taskName, normalizedParams, inputHandler, options);
   }
@@ -2012,6 +2025,21 @@ export class SingleAgentClient {
   async refreshCapabilities(): Promise<AdcpCapabilities> {
     this.cachedCapabilities = undefined;
     return this.getCapabilities();
+  }
+
+  /**
+   * Validate that the seller supports all features required by a task.
+   * Throws FeatureUnsupportedError if any required features are missing.
+   *
+   * Skipped when validateFeatures is false or the task has no feature requirements.
+   */
+  private async validateTaskFeatures(taskName: string): Promise<void> {
+    if (this.config.validateFeatures === false) return;
+
+    const requiredFeatures = TASK_FEATURE_MAP[taskName];
+    if (!requiredFeatures || requiredFeatures.length === 0) return;
+
+    await this.require(...requiredFeatures);
   }
 
   // ====== STATIC HELPER METHODS ======

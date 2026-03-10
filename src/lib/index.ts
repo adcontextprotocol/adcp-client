@@ -408,6 +408,7 @@ export {
   EVENT_TRACKING_TOOLS,
   ACCOUNT_TOOLS,
   PROTOCOL_TOOLS,
+  TASK_FEATURE_MAP,
 } from './utils/capabilities';
 export type {
   AdcpCapabilities,

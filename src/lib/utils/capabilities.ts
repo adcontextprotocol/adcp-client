@@ -323,6 +323,63 @@ export function requiresAccountForProducts(capabilities: AdcpCapabilities): bool
 export type FeatureName = string;
 
 /**
+ * Map of task names to features they require.
+ *
+ * When validateFeatures is enabled (default), SingleAgentClient checks
+ * these features against seller capabilities before sending a request.
+ * Tasks not listed here have no feature requirements.
+ */
+export const TASK_FEATURE_MAP: Record<string, FeatureName[]> = {
+  // Core media buy tasks require the media_buy protocol
+  get_products: ['media_buy'],
+  list_creative_formats: ['media_buy'],
+  create_media_buy: ['media_buy'],
+  update_media_buy: ['media_buy'],
+  get_media_buys: ['media_buy'],
+  get_media_buy_delivery: ['media_buy'],
+  provide_performance_feedback: ['media_buy'],
+
+  // Creative management requires media_buy + inline_creative_management
+  sync_creatives: ['media_buy', 'inline_creative_management'],
+  list_creatives: ['media_buy', 'inline_creative_management'],
+
+  // Audience management
+  sync_audiences: ['media_buy', 'audience_management'],
+
+  // Event tracking / conversion
+  sync_event_sources: ['media_buy', 'conversion_tracking'],
+  log_event: ['media_buy', 'conversion_tracking'],
+
+  // Signals protocol
+  get_signals: ['signals'],
+  activate_signal: ['signals'],
+
+  // Creative protocol
+  build_creative: ['creative'],
+  preview_creative: ['creative'],
+
+  // Governance protocol
+  create_property_list: ['governance'],
+  update_property_list: ['governance'],
+  get_property_list: ['governance'],
+  list_property_lists: ['governance'],
+  delete_property_list: ['governance'],
+  list_content_standards: ['governance', 'content_standards'],
+  get_content_standards: ['governance', 'content_standards'],
+  create_content_standards: ['governance', 'content_standards'],
+  update_content_standards: ['governance', 'content_standards'],
+  calibrate_content: ['governance', 'content_standards'],
+  validate_content_delivery: ['governance', 'content_standards'],
+  get_media_buy_artifacts: ['governance'],
+
+  // Sponsored intelligence protocol
+  si_get_offering: ['sponsored_intelligence'],
+  si_initiate_session: ['sponsored_intelligence'],
+  si_send_message: ['sponsored_intelligence'],
+  si_terminate_session: ['sponsored_intelligence'],
+};
+
+/**
  * Map of media_buy.features field names to their camelCase keys in MediaBuyFeatures.
  */
 const FEATURE_KEY_MAP: Record<string, keyof MediaBuyFeatures> = {

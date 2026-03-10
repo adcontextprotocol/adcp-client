@@ -9,6 +9,7 @@ const {
   FeatureUnsupportedError,
   SingleAgentClient,
   ProtocolClient,
+  TASK_FEATURE_MAP,
 } = require('../../dist/lib/index.js');
 
 /**
@@ -185,5 +186,57 @@ describe('SingleAgentClient feature API exists', () => {
       protocol: 'mcp',
     });
     assert.strictEqual(typeof client.refreshCapabilities, 'function');
+  });
+});
+
+describe('TASK_FEATURE_MAP', () => {
+  test('maps core media buy tasks to media_buy protocol', () => {
+    for (const task of ['get_products', 'create_media_buy', 'update_media_buy', 'get_media_buys']) {
+      assert.ok(TASK_FEATURE_MAP[task], `${task} should be in TASK_FEATURE_MAP`);
+      assert.ok(TASK_FEATURE_MAP[task].includes('media_buy'), `${task} should require media_buy`);
+    }
+  });
+
+  test('maps sync_audiences to audience_management', () => {
+    assert.ok(TASK_FEATURE_MAP.sync_audiences.includes('audience_management'));
+    assert.ok(TASK_FEATURE_MAP.sync_audiences.includes('media_buy'));
+  });
+
+  test('maps event tracking tasks to conversion_tracking', () => {
+    for (const task of ['sync_event_sources', 'log_event']) {
+      assert.ok(TASK_FEATURE_MAP[task].includes('conversion_tracking'), `${task} should require conversion_tracking`);
+    }
+  });
+
+  test('maps creative management tasks to inline_creative_management', () => {
+    for (const task of ['sync_creatives', 'list_creatives']) {
+      assert.ok(
+        TASK_FEATURE_MAP[task].includes('inline_creative_management'),
+        `${task} should require inline_creative_management`
+      );
+    }
+  });
+
+  test('maps signals tasks to signals protocol', () => {
+    for (const task of ['get_signals', 'activate_signal']) {
+      assert.ok(TASK_FEATURE_MAP[task].includes('signals'), `${task} should require signals`);
+    }
+  });
+
+  test('maps governance tasks to governance protocol', () => {
+    for (const task of ['create_property_list', 'get_property_list']) {
+      assert.ok(TASK_FEATURE_MAP[task].includes('governance'), `${task} should require governance`);
+    }
+  });
+
+  test('maps content standards tasks to governance + content_standards', () => {
+    for (const task of ['list_content_standards', 'calibrate_content']) {
+      assert.ok(TASK_FEATURE_MAP[task].includes('governance'), `${task} should require governance`);
+      assert.ok(TASK_FEATURE_MAP[task].includes('content_standards'), `${task} should require content_standards`);
+    }
+  });
+
+  test('does not map get_adcp_capabilities (meta task)', () => {
+    assert.strictEqual(TASK_FEATURE_MAP.get_adcp_capabilities, undefined);
   });
 });
