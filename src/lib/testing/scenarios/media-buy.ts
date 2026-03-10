@@ -615,7 +615,8 @@ export async function testSyncAudiences(
       task: 'sync_audiences',
       passed: false,
       duration_ms: 0,
-      error: 'No account available. Provide audience_account_id, use sandbox: true, or ensure list_accounts is supported.',
+      error:
+        'No account available. Provide audience_account_id, use sandbox: true, or ensure list_accounts is supported.',
     });
     return { steps, profile };
   }
