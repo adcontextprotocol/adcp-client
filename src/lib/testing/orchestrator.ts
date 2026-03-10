@@ -216,6 +216,20 @@ export function formatSuiteResults(suite: SuiteResult): string {
   for (const result of suite.results) {
     const emoji = result.overall_passed ? '✅' : '❌';
     output += `${emoji} **${result.scenario}**: ${result.summary} (${result.total_duration_ms}ms)\n`;
+
+    if (!result.overall_passed && result.steps) {
+      const failedSteps = result.steps.filter(s => !s.passed);
+      for (const step of failedSteps) {
+        output += `   ❌ **${step.step}**`;
+        if (step.task) {
+          output += ` (\`${step.task}\`)`;
+        }
+        output += ` - ${step.duration_ms}ms\n`;
+        if (step.error) {
+          output += `      ⚠️ Error: ${step.error}\n`;
+        }
+      }
+    }
   }
 
   return output;

@@ -42,7 +42,7 @@ import type { Task as A2ATask, TaskStatusUpdateEvent } from '@a2a-js/sdk';
 
 import { TaskExecutor, DeferredTaskError } from './TaskExecutor';
 import { createMCPAuthHeaders } from '../auth';
-import { AuthenticationRequiredError, is401Error } from '../errors';
+import { AuthenticationRequiredError, FeatureUnsupportedError, is401Error } from '../errors';
 import type { InputHandler, TaskOptions, TaskResult, ConversationConfig, TaskInfo } from './ConversationTypes';
 import type { Activity, AsyncHandlerConfig, WebhookMetadata } from './AsyncHandler';
 import { AsyncHandler } from './AsyncHandler';
@@ -50,8 +50,14 @@ import { unwrapProtocolResponse } from '../utils/response-unwrapper';
 import * as crypto from 'crypto';
 
 // v3.0 compatibility utilities
-import type { AdcpCapabilities, ToolInfo } from '../utils/capabilities';
-import { buildSyntheticCapabilities, parseCapabilitiesResponse } from '../utils/capabilities';
+import type { AdcpCapabilities, ToolInfo, FeatureName } from '../utils/capabilities';
+import {
+  buildSyntheticCapabilities,
+  parseCapabilitiesResponse,
+  resolveFeature,
+  listDeclaredFeatures,
+  TASK_FEATURE_MAP,
+} from '../utils/capabilities';
 import {
   adaptCreateMediaBuyRequestForV2,
   adaptUpdateMediaBuyRequestForV2,
@@ -138,6 +144,14 @@ export interface SingleAgentClientConfig extends ConversationConfig {
    * @default 'daily'
    */
   reportingWebhookFrequency?: 'hourly' | 'daily' | 'monthly';
+  /**
+   * Validate that the seller supports required features before each task call.
+   * When true, tasks like syncAudiences will fail fast with FeatureUnsupportedError
+   * if the seller hasn't declared audience_management support.
+   *
+   * @default true
+   */
+  validateFeatures?: boolean;
   /**
    * Runtime schema validation options
    */
@@ -855,6 +869,9 @@ export class SingleAgentClient {
     // Validate request params against schema
     this.validateRequest(taskType, normalizedParams);
 
+    // Validate required features before sending request
+    await this.validateTaskFeatures(taskType);
+
     // Check for v3 features used against v2 servers - return empty result if unsupported
     const earlyResult = await this.getEarlyResultForUnsupportedFeatures<T>(taskType, normalizedParams);
     if (earlyResult) {
@@ -1399,6 +1416,7 @@ export class SingleAgentClient {
     options?: TaskOptions
   ): Promise<TaskResult<T>> {
     const normalizedParams = normalizeRequestParams(taskName, params);
+    await this.validateTaskFeatures(taskName);
     const agent = await this.ensureEndpointDiscovered();
     return this.executor.executeTask<T>(agent, taskName, normalizedParams, inputHandler, options);
   }
@@ -1967,6 +1985,61 @@ export class SingleAgentClient {
   async supportsVersion(version: 2 | 3): Promise<boolean> {
     const capabilities = await this.getCapabilities();
     return capabilities.majorVersions.includes(version);
+  }
+
+  /**
+   * Check if the seller supports a feature.
+   *
+   * Feature names resolve as follows:
+   * - Protocol names ('media_buy', 'signals', etc.) check supported_protocols
+   * - 'ext:<name>' checks extensions_supported
+   * - 'targeting.<name>' checks media_buy.execution.targeting
+   * - Other names check media_buy.features (e.g., 'audience_targeting', 'conversion_tracking')
+   *
+   * Absent features return false.
+   */
+  async supports(feature: FeatureName): Promise<boolean> {
+    const capabilities = await this.getCapabilities();
+    return resolveFeature(capabilities, feature);
+  }
+
+  /**
+   * Require that the seller supports all listed features.
+   * Throws FeatureUnsupportedError if any are missing.
+   *
+   * Call this before making feature-dependent task calls to fail fast
+   * with an actionable error message.
+   */
+  async require(...features: FeatureName[]): Promise<void> {
+    const capabilities = await this.getCapabilities();
+    const missing = features.filter(f => !resolveFeature(capabilities, f));
+    if (missing.length > 0) {
+      throw new FeatureUnsupportedError(missing, listDeclaredFeatures(capabilities), this.agent.agent_uri);
+    }
+  }
+
+  /**
+   * Force-refresh cached capabilities from the server.
+   * Useful when seller capabilities may have changed.
+   */
+  async refreshCapabilities(): Promise<AdcpCapabilities> {
+    this.cachedCapabilities = undefined;
+    return this.getCapabilities();
+  }
+
+  /**
+   * Validate that the seller supports all features required by a task.
+   * Throws FeatureUnsupportedError if any required features are missing.
+   *
+   * Skipped when validateFeatures is false or the task has no feature requirements.
+   */
+  private async validateTaskFeatures(taskName: string): Promise<void> {
+    if (this.config.validateFeatures === false) return;
+
+    const requiredFeatures = TASK_FEATURE_MAP[taskName];
+    if (!requiredFeatures || requiredFeatures.length === 0) return;
+
+    await this.require(...requiredFeatures);
   }
 
   // ====== STATIC HELPER METHODS ======

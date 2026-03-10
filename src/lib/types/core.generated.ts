@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas vlatest
-// Generated at: 2026-03-04T14:01:38.275Z
+// Generated at: 2026-03-10T22:18:26.412Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -474,6 +474,14 @@ export interface Package {
    */
   optimization_goals?: OptimizationGoal[];
   /**
+   * Flight start date/time for this package in ISO 8601 format. When omitted, the package inherits the media buy's start_time. Sellers SHOULD always include the resolved value in responses, even when inherited.
+   */
+  start_time?: string;
+  /**
+   * Flight end date/time for this package in ISO 8601 format. When omitted, the package inherits the media buy's end_time. Sellers SHOULD always include the resolved value in responses, even when inherited.
+   */
+  end_time?: string;
+  /**
    * Whether this package is paused by the buyer. Paused packages do not deliver impressions. Defaults to false.
    */
   paused?: boolean;
@@ -860,6 +868,22 @@ export type DigitalSourceType =
   | 'human_edits'
   | 'data_driven_media';
 /**
+ * How long the disclosure must persist during content playback or display
+ */
+export type DisclosurePersistence = 'continuous' | 'initial' | 'flexible';
+/**
+ * Where a required disclosure should appear within a creative. Used by creative briefs to specify disclosure placement and by formats to declare which positions they can render.
+ */
+export type DisclosurePosition =
+  | 'prominent'
+  | 'footer'
+  | 'audio'
+  | 'subtitle'
+  | 'overlay'
+  | 'end_card'
+  | 'pre_roll'
+  | 'companion';
+/**
  * VAST (Video Ad Serving Template) tag for third-party video ad serving
  */
 export type VASTAsset =
@@ -1131,18 +1155,6 @@ export type MarkdownFlavor = 'commonmark' | 'gfm';
  */
 export type BriefAsset = CreativeBrief;
 /**
- * Where the disclosure should appear within the creative. prominent: clearly visible in the main creative area; footer: at the bottom of visual creatives; audio: spoken in audio/video creatives; subtitle: displayed in the subtitle or closed-caption track; overlay: superimposed on video content; end_card: displayed on video end card; pre_roll: spoken or displayed before main content; companion: in companion ad unit alongside primary creative
- */
-export type DisclosurePosition =
-  | 'prominent'
-  | 'footer'
-  | 'audio'
-  | 'subtitle'
-  | 'overlay'
-  | 'end_card'
-  | 'pre_roll'
-  | 'companion';
-/**
  * A typed data feed as a creative asset. Carries catalog context (products, stores, jobs, etc.) within the manifest's assets map.
  */
 export type CatalogAsset = Catalog;
@@ -1288,6 +1300,10 @@ export interface Provenance {
     role: 'creator' | 'advertiser' | 'agency' | 'platform' | 'tool';
   };
   /**
+   * When this provenance claim was made (ISO 8601). Distinct from created_time, which records when the content itself was produced. A provenance claim may be attached well after content creation, for example when retroactively declaring AI involvement for regulatory compliance.
+   */
+  declared_at?: string;
+  /**
    * When this content was created or generated (ISO 8601)
    */
   created_time?: string;
@@ -1328,6 +1344,21 @@ export interface Provenance {
        * Required disclosure label text for this jurisdiction, in the local language
        */
       label_text?: string;
+      /**
+       * How the disclosure should be rendered for this jurisdiction. Expresses the declaring party's intent for persistence and position based on regulatory requirements. Publishers control actual rendering but governance agents can audit whether guidance was followed.
+       */
+      render_guidance?: {
+        persistence?: DisclosurePersistence;
+        /**
+         * Minimum display duration in milliseconds for initial persistence. Recommended when persistence is initial — without it, the duration is at the publisher's discretion. At serve time the publisher reads this from provenance since the brief is not available.
+         */
+        min_duration_ms?: number;
+        /**
+         * Preferred disclosure positions in priority order. The first position a format supports should be used.
+         */
+        positions?: DisclosurePosition[];
+        ext?: ExtensionObject;
+      };
     }[];
   };
   /**
@@ -1777,6 +1808,7 @@ export interface CreativeBrief {
        * Language of the disclosure text as a BCP 47 language tag (e.g., 'en', 'fr-CA', 'es'). When omitted, the disclosure is assumed to match the creative's language.
        */
       language?: string;
+      persistence?: DisclosurePersistence;
     }[];
     /**
      * Claims that must not appear in creatives for this campaign. Creative agents should ensure generated content avoids these claims.
@@ -2483,7 +2515,7 @@ export interface CPAPricingOption {
   min_spend_per_package?: number;
 }
 /**
- * Flat rate pricing for DOOH, sponsorships, and time-based campaigns. If fixed_price is present, it's fixed pricing. If absent, it's auction-based.
+ * Flat rate pricing for sponsorships, takeovers, and DOOH exclusive placements. A fixed total cost regardless of delivery volume. For duration-scaled pricing (rate × time units), use the `time` model instead. If fixed_price is present, it's fixed pricing. If absent, it's auction-based.
  */
 export interface FlatRatePricingOption {
   /**
@@ -2507,43 +2539,48 @@ export interface FlatRatePricingOption {
    */
   floor_price?: number;
   price_guidance?: PriceGuidance;
-  /**
-   * Flat rate parameters for DOOH and time-based campaigns
-   */
-  parameters?: {
-    /**
-     * Duration in hours for time-based pricing
-     */
-    duration_hours?: number;
-    /**
-     * Guaranteed share of voice (0-100)
-     */
-    sov_percentage?: number;
-    /**
-     * Duration of ad loop rotation in seconds
-     */
-    loop_duration_seconds?: number;
-    /**
-     * Minimum plays per hour
-     */
-    min_plays_per_hour?: number;
-    /**
-     * Named venue package identifier
-     */
-    venue_package?: string;
-    /**
-     * Estimated impressions (informational)
-     */
-    estimated_impressions?: number;
-    /**
-     * Specific daypart for time-based pricing
-     */
-    daypart?: string;
-  };
+  parameters?: DoohParameters;
   /**
    * Minimum spend requirement per package using this pricing option, in the specified currency
    */
   min_spend_per_package?: number;
+}
+/**
+ * DOOH inventory allocation parameters. Sponsorship and takeover flat_rate options omit this field entirely — only include for digital out-of-home inventory.
+ */
+export interface DoohParameters {
+  /**
+   * Discriminator identifying this as DOOH parameters
+   */
+  type: 'dooh';
+  /**
+   * Guaranteed share of voice as a percentage (0-100)
+   */
+  sov_percentage?: number;
+  /**
+   * Duration of the ad loop rotation in seconds
+   */
+  loop_duration_seconds?: number;
+  /**
+   * Minimum number of plays per hour guaranteed
+   */
+  min_plays_per_hour?: number;
+  /**
+   * Named collection of screens included in this buy
+   */
+  venue_package?: string;
+  /**
+   * Duration of the DOOH slot in hours (e.g., 24 for a full-day takeover)
+   */
+  duration_hours?: number;
+  /**
+   * Named daypart for this slot (e.g., morning_commute, evening_rush)
+   */
+  daypart?: string;
+  /**
+   * Estimated audience impressions for this slot (informational, not a delivery guarantee)
+   */
+  estimated_impressions?: number;
 }
 /**
  * Cost per time unit (hour, day, week, or month) - rate scales with campaign duration. If fixed_price is present, it's fixed pricing. If absent, it's auction-based.
@@ -3122,6 +3159,14 @@ export interface ProductAllocation {
    * Categorical tags for this allocation (e.g., 'desktop', 'german', 'mobile') - useful for grouping/filtering allocations by dimension
    */
   tags?: string[];
+  /**
+   * Recommended flight start date/time for this allocation in ISO 8601 format. Allows publishers to propose per-flight scheduling within a proposal. When omitted, the allocation applies to the full campaign date range.
+   */
+  start_time?: string;
+  /**
+   * Recommended flight end date/time for this allocation in ISO 8601 format. Allows publishers to propose per-flight scheduling within a proposal. When omitted, the allocation applies to the full campaign date range.
+   */
+  end_time?: string;
   /**
    * Recommended time windows for this allocation in spot-plan proposals.
    */
