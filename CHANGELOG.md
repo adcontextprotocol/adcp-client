@@ -1,5 +1,11 @@
 # Changelog
 
+## 4.6.0
+
+### Minor Changes
+
+- c614f3d: Fix AdCP errors (plural) envelope detection in TaskExecutor, add step-level failure details to formatSuiteResults, and add feature capability validation API (supports/require)
+
 ## 4.5.2
 
 ### Patch Changes
