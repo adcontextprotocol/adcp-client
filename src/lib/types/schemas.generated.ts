@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-03-10T21:43:44.202Z
+// Generated at: 2026-03-10T22:18:27.844Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -968,6 +968,8 @@ export const ProductAllocationSchema = z.object({
     rationale: z.string().nullish(),
     sequence: z.number().nullish(),
     tags: z.array(z.string()).nullish(),
+    start_time: z.string().nullish(),
+    end_time: z.string().nullish(),
     daypart_targets: z.array(DaypartTargetSchema).nullish(),
     forecast: DeliveryForecastSchema.nullish(),
     ext: ExtensionObjectSchema.nullish()
@@ -1147,6 +1149,8 @@ export const PackageSchema = z.object({
     creative_assignments: z.array(CreativeAssignmentSchema).nullish(),
     format_ids_to_provide: z.array(FormatIDSchema).nullish(),
     optimization_goals: z.array(OptimizationGoalSchema).nullish(),
+    start_time: z.string().nullish(),
+    end_time: z.string().nullish(),
     paused: z.boolean().nullish(),
     ext: ExtensionObjectSchema.nullish()
 }).passthrough();
@@ -1266,6 +1270,8 @@ export const PackageUpdateSchema = z.object({
     pacing: PacingSchema.nullish(),
     bid_price: z.number().nullish(),
     impressions: z.number().nullish(),
+    start_time: z.string().nullish(),
+    end_time: z.string().nullish(),
     paused: z.boolean().nullish(),
     catalogs: z.array(CatalogSchema).nullish(),
     optimization_goals: z.array(OptimizationGoalSchema).nullish(),
@@ -2491,7 +2497,6 @@ export const GetAdCPCapabilitiesResponseSchema = z.object({
     }).passthrough(),
     supported_protocols: z.array(z.union([z.literal("media_buy"), z.literal("signals"), z.literal("governance"), z.literal("sponsored_intelligence"), z.literal("creative")])),
     account: z.object({
-        account_resolution: z.union([z.literal("explicit_account_id"), z.literal("implicit_from_sync")]).nullish(),
         require_operator_auth: z.boolean().nullish(),
         authorization_endpoint: z.string().nullish(),
         supported_billing: z.array(z.union([z.literal("operator"), z.literal("agent")])),
@@ -2953,6 +2958,8 @@ export const PackageRequestSchema = z.object({
     pricing_option_id: z.string(),
     bid_price: z.number().nullish(),
     impressions: z.number().nullish(),
+    start_time: z.string().nullish(),
+    end_time: z.string().nullish(),
     paused: z.boolean().nullish(),
     catalogs: z.array(CatalogSchema).nullish(),
     optimization_goals: z.array(OptimizationGoalSchema).nullish(),

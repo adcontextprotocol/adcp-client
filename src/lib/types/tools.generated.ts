@@ -1752,6 +1752,14 @@ export interface ProductAllocation {
    */
   tags?: string[];
   /**
+   * Recommended flight start date/time for this allocation in ISO 8601 format. Allows publishers to propose per-flight scheduling within a proposal. When omitted, the allocation applies to the full campaign date range.
+   */
+  start_time?: string;
+  /**
+   * Recommended flight end date/time for this allocation in ISO 8601 format. Allows publishers to propose per-flight scheduling within a proposal. When omitted, the allocation applies to the full campaign date range.
+   */
+  end_time?: string;
+  /**
    * Recommended time windows for this allocation in spot-plan proposals.
    */
   daypart_targets?: DaypartTarget[];
@@ -2818,6 +2826,14 @@ export interface PackageRequest {
    * Impression goal for this package
    */
   impressions?: number;
+  /**
+   * Flight start date/time for this package in ISO 8601 format. When omitted, the package inherits the media buy's start_time. Must fall within the media buy's date range.
+   */
+  start_time?: string;
+  /**
+   * Flight end date/time for this package in ISO 8601 format. When omitted, the package inherits the media buy's end_time. Must fall within the media buy's date range.
+   */
+  end_time?: string;
   /**
    * Whether this package should be created in a paused state. Paused packages do not deliver impressions. Defaults to false.
    */
@@ -3931,6 +3947,14 @@ export interface Package {
    */
   optimization_goals?: OptimizationGoal[];
   /**
+   * Flight start date/time for this package in ISO 8601 format. When omitted, the package inherits the media buy's start_time. Sellers SHOULD always include the resolved value in responses, even when inherited.
+   */
+  start_time?: string;
+  /**
+   * Flight end date/time for this package in ISO 8601 format. When omitted, the package inherits the media buy's end_time. Sellers SHOULD always include the resolved value in responses, even when inherited.
+   */
+  end_time?: string;
+  /**
    * Whether this package is paused by the buyer. Paused packages do not deliver impressions. Defaults to false.
    */
   paused?: boolean;
@@ -4517,6 +4541,14 @@ export type PackageUpdate = {
    * Updated impression goal for this package
    */
   impressions?: number;
+  /**
+   * Updated flight start date/time for this package in ISO 8601 format. Must fall within the media buy's date range.
+   */
+  start_time?: string;
+  /**
+   * Updated flight end date/time for this package in ISO 8601 format. Must fall within the media buy's date range.
+   */
+  end_time?: string;
   /**
    * Pause/resume specific package (true = paused, false = active)
    */
@@ -9369,11 +9401,7 @@ export interface GetAdCPCapabilitiesResponse {
    */
   account?: {
     /**
-     * How the seller resolves account references. explicit_account_id: accounts are managed out-of-band (advertiser portal, sales rep) and discovered via list_accounts. implicit_from_sync: buyer declares intent via sync_accounts and the seller provisions accounts.
-     */
-    account_resolution?: 'explicit_account_id' | 'implicit_from_sync';
-    /**
-     * Whether the seller requires operator-level credentials. When false (default), the seller trusts the agent's identity claims — the agent authenticates once and declares brands/operators via sync_accounts. When true, each operator must authenticate independently with the seller, and the agent opens a per-operator session using the operator's credential.
+     * Whether the seller requires operator-level credentials. When true (explicit accounts), operators authenticate independently with the seller and the buyer discovers accounts via list_accounts. When false (default, implicit accounts), the seller trusts the agent's identity claims — the agent authenticates once and declares brands/operators via sync_accounts.
      */
     require_operator_auth?: boolean;
     /**

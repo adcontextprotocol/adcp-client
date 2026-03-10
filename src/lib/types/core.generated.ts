@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas vlatest
-// Generated at: 2026-03-10T21:43:42.734Z
+// Generated at: 2026-03-10T22:18:26.412Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -473,6 +473,14 @@ export interface Package {
    * Optimization targets for this package. The seller optimizes delivery toward these goals in priority order. Common pattern: event goals (purchase, install) as primary targets at priority 1; metric goals (clicks, views) as secondary proxy signals at priority 2+.
    */
   optimization_goals?: OptimizationGoal[];
+  /**
+   * Flight start date/time for this package in ISO 8601 format. When omitted, the package inherits the media buy's start_time. Sellers SHOULD always include the resolved value in responses, even when inherited.
+   */
+  start_time?: string;
+  /**
+   * Flight end date/time for this package in ISO 8601 format. When omitted, the package inherits the media buy's end_time. Sellers SHOULD always include the resolved value in responses, even when inherited.
+   */
+  end_time?: string;
   /**
    * Whether this package is paused by the buyer. Paused packages do not deliver impressions. Defaults to false.
    */
@@ -3151,6 +3159,14 @@ export interface ProductAllocation {
    * Categorical tags for this allocation (e.g., 'desktop', 'german', 'mobile') - useful for grouping/filtering allocations by dimension
    */
   tags?: string[];
+  /**
+   * Recommended flight start date/time for this allocation in ISO 8601 format. Allows publishers to propose per-flight scheduling within a proposal. When omitted, the allocation applies to the full campaign date range.
+   */
+  start_time?: string;
+  /**
+   * Recommended flight end date/time for this allocation in ISO 8601 format. Allows publishers to propose per-flight scheduling within a proposal. When omitted, the allocation applies to the full campaign date range.
+   */
+  end_time?: string;
   /**
    * Recommended time windows for this allocation in spot-plan proposals.
    */
