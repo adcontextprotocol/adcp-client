@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas vlatest
-// Generated at: 2026-03-10T22:18:26.412Z
+// Generated at: 2026-03-10T23:43:40.383Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -400,7 +400,7 @@ export interface Account {
    */
   account_scope?: 'operator' | 'brand' | 'operator_brand' | 'agent';
   /**
-   * When true, this is a sandbox account. All requests using this account_id are treated as sandbox — no real platform calls, no real spend.
+   * When true, this is a sandbox account — no real platform calls, no real spend. Sandbox is part of the account's natural key: the same brand/operator pair can have both a production and sandbox account.
    */
   sandbox?: boolean;
   ext?: ExtensionObject;

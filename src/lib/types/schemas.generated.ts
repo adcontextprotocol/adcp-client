@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-03-10T22:18:27.844Z
+// Generated at: 2026-03-10T23:43:43.510Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -843,7 +843,8 @@ export const AccountReferenceSchema = z.union([z.object({
         account_id: z.string()
     }).passthrough(), z.object({
         brand: BrandReferenceSchema,
-        operator: z.string()
+        operator: z.string(),
+        sandbox: z.boolean().nullish()
     }).passthrough()]);
 
 export const PaginationRequestSchema = z.object({

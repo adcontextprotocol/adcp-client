@@ -8,6 +8,7 @@
  * - sync_creatives
  */
 
+import type { AccountReference } from '../../types/tools.generated';
 import type { TestOptions, TestStepResult, AgentProfile, TaskResult } from '../types';
 import { createTestClient, runStep, discoverAgentProfile, discoverAgentCapabilities, resolveBrand } from '../client';
 import { testDiscovery } from './discovery';
@@ -584,10 +585,15 @@ export async function testSyncAudiences(
     return { steps, profile };
   }
 
-  // Resolve account_id: use option, or discover via list_accounts
-  let accountId = options.audience_account_id;
+  // Resolve account reference: sandbox natural key > explicit option > list_accounts discovery
+  let accountRef: AccountReference | undefined;
 
-  if (!accountId && profile.tools.includes('list_accounts')) {
+  if (options.sandbox) {
+    // Sandbox mode: use natural key with sandbox: true — no provisioning needed
+    accountRef = { brand: resolveBrand(options), operator: resolveBrand(options).domain, sandbox: true };
+  } else if (options.audience_account_id) {
+    accountRef = { account_id: options.audience_account_id };
+  } else if (profile.tools.includes('list_accounts')) {
     const { result: accountsResult, step: accountsStep } = await runStep<TaskResult>(
       'Discover accounts for audience sync',
       'list_accounts',
@@ -597,17 +603,19 @@ export async function testSyncAudiences(
 
     if (accountsResult?.success && accountsResult?.data) {
       const accounts = (accountsResult.data as any).accounts ?? [];
-      accountId = accounts[0]?.account_id;
+      if (accounts[0]?.account_id) {
+        accountRef = { account_id: accounts[0].account_id };
+      }
     }
   }
 
-  if (!accountId) {
+  if (!accountRef) {
     steps.push({
       step: 'Sync audiences',
       task: 'sync_audiences',
       passed: false,
       duration_ms: 0,
-      error: 'No account_id available. Provide audience_account_id in options or ensure list_accounts is supported.',
+      error: 'No account available. Provide audience_account_id, use sandbox: true, or ensure list_accounts is supported.',
     });
     return { steps, profile };
   }
@@ -618,7 +626,7 @@ export async function testSyncAudiences(
     'sync_audiences',
     async () =>
       client.executeTask('sync_audiences', {
-        account_id: accountId,
+        account: accountRef,
       }) as Promise<TaskResult>
   );
 
@@ -651,7 +659,7 @@ export async function testSyncAudiences(
     'sync_audiences',
     async () =>
       client.executeTask('sync_audiences', {
-        account_id: accountId,
+        account: accountRef,
         audiences: [
           {
             audience_id: testAudienceId,
@@ -693,7 +701,7 @@ export async function testSyncAudiences(
     'sync_audiences',
     async () =>
       client.executeTask('sync_audiences', {
-        account_id: accountId,
+        account: accountRef,
         audiences: [
           {
             audience_id: testAudienceId,
