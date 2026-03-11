@@ -850,9 +850,7 @@ export class SingleAgentClient {
     }
 
     // Use raw body bytes when available; fall back to JSON.stringify for backward compat
-    const body = typeof rawBodyOrPayload === 'string'
-      ? rawBodyOrPayload
-      : JSON.stringify(rawBodyOrPayload);
+    const body = typeof rawBodyOrPayload === 'string' ? rawBodyOrPayload : JSON.stringify(rawBodyOrPayload);
 
     // Build message per AdCP spec: {timestamp}.{raw_body}
     const message = `${ts}.${body}`;

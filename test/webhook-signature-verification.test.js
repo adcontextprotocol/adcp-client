@@ -17,7 +17,8 @@ describe('Webhook Signature Verification (PR #86 Spec)', () => {
     const client = new AdCPClient([agent], { webhookSecret });
     const agentClient = client.agent('test_agent');
 
-    const rawBody = '{"event":"creative.status_changed","creative_id":"creative_123","status":"approved","timestamp":"2025-10-08T22:30:00Z"}';
+    const rawBody =
+      '{"event":"creative.status_changed","creative_id":"creative_123","status":"approved","timestamp":"2025-10-08T22:30:00Z"}';
 
     const timestamp = Math.floor(Date.now() / 1000);
 
