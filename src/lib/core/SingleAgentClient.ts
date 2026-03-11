@@ -566,7 +566,8 @@ export class SingleAgentClient {
     taskType: string,
     operationId: string,
     signature?: string,
-    timestamp?: string | number
+    timestamp?: string | number,
+    rawBody?: string
   ): Promise<boolean> {
     // Verify signature if secret is configured
     if (this.config.webhookSecret) {
@@ -574,7 +575,7 @@ export class SingleAgentClient {
         throw new Error('Webhook signature and timestamp required but not provided');
       }
 
-      const isValid = this.verifyWebhookSignature(payload, signature, timestamp);
+      const isValid = this.verifyWebhookSignature(rawBody ?? payload, signature, timestamp);
       if (!isValid) {
         throw new Error('Invalid webhook signature or timestamp too old');
       }
@@ -783,11 +784,16 @@ export class SingleAgentClient {
         const signature = req.headers['x-adcp-signature'] || req.headers['X-ADCP-Signature'];
         const timestamp = req.headers['x-adcp-timestamp'] || req.headers['X-ADCP-Timestamp'];
 
-        // Parse body if needed
+        // Capture raw body for signature verification, then parse
+        const rawBody = typeof req.body === 'string' ? req.body : JSON.stringify(req.body);
         const payload = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
 
-        // Handle webhook with automatic verification
-        const handled = await this.handleWebhook(payload, signature, timestamp);
+        // Extract routing params if available (e.g., Express route params)
+        const taskType = req.params?.task_type || req.params?.taskType || 'unknown';
+        const operationId = req.params?.operation_id || req.params?.operationId || 'unknown';
+
+        // Handle webhook with automatic verification using raw body bytes
+        const handled = await this.handleWebhook(payload, taskType, operationId, signature, timestamp, rawBody);
 
         // Return success
         if (res.json) {
@@ -811,17 +817,26 @@ export class SingleAgentClient {
   }
 
   /**
-   * Verify webhook signature using HMAC-SHA256 per AdCP PR #86 spec
+   * Verify webhook signature using HMAC-SHA256 per AdCP spec.
+   *
+   * HMAC is computed over the **raw HTTP body bytes** — the exact bytes received
+   * on the wire, before JSON parsing. This ensures cross-language interop since
+   * different JSON serializers may produce different byte representations of the
+   * same logical payload.
+   *
+   * For backward compatibility, a parsed object is still accepted but will be
+   * re-serialized with JSON.stringify, which may not match the sender's bytes.
+   * Always prefer passing the raw body string.
    *
    * Signature format: sha256={hex_signature}
-   * Message format: {timestamp}.{json_payload}
+   * Message format: {timestamp}.{raw_body}
    *
-   * @param payload - Webhook payload object
+   * @param rawBodyOrPayload - Raw HTTP body string (preferred) or parsed payload object (deprecated)
    * @param signature - X-ADCP-Signature header value (format: "sha256=...")
    * @param timestamp - X-ADCP-Timestamp header value (Unix timestamp)
    * @returns true if signature is valid
    */
-  verifyWebhookSignature(payload: any, signature: string, timestamp: string | number): boolean {
+  verifyWebhookSignature(rawBodyOrPayload: string | any, signature: string, timestamp: string | number): boolean {
     if (!this.config.webhookSecret) {
       return false;
     }
@@ -834,8 +849,11 @@ export class SingleAgentClient {
       return false; // Request too old or from future
     }
 
-    // Build message per AdCP spec: {timestamp}.{json_payload}
-    const message = `${ts}.${JSON.stringify(payload)}`;
+    // Use raw body bytes when available; fall back to JSON.stringify for backward compat
+    const body = typeof rawBodyOrPayload === 'string' ? rawBodyOrPayload : JSON.stringify(rawBodyOrPayload);
+
+    // Build message per AdCP spec: {timestamp}.{raw_body}
+    const message = `${ts}.${body}`;
 
     // Calculate expected signature
     const hmac = crypto.createHmac('sha256', this.config.webhookSecret);

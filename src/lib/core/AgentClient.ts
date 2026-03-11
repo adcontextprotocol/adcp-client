@@ -87,9 +87,10 @@ export class AgentClient {
     taskType: string,
     operationId: string,
     signature?: string,
-    timestamp?: string | number
+    timestamp?: string | number,
+    rawBody?: string
   ): Promise<boolean> {
-    return this.client.handleWebhook(payload, taskType, operationId, signature, timestamp);
+    return this.client.handleWebhook(payload, taskType, operationId, signature, timestamp, rawBody);
   }
 
   /**
@@ -104,15 +105,19 @@ export class AgentClient {
   }
 
   /**
-   * Verify webhook signature using HMAC-SHA256 per AdCP PR #86 spec
+   * Verify webhook signature using HMAC-SHA256 per AdCP spec.
    *
-   * @param payload - Webhook payload object
+   * Prefer passing the raw HTTP body string for correct cross-language interop.
+   * Passing a parsed object still works but re-serializes with JSON.stringify,
+   * which may not match the sender's byte representation.
+   *
+   * @param rawBodyOrPayload - Raw HTTP body string (preferred) or parsed payload object (deprecated)
    * @param signature - X-ADCP-Signature header value (format: "sha256=...")
    * @param timestamp - X-ADCP-Timestamp header value (Unix timestamp)
    * @returns true if signature is valid
    */
-  verifyWebhookSignature(payload: any, signature: string, timestamp: string | number): boolean {
-    return this.client.verifyWebhookSignature(payload, signature, timestamp);
+  verifyWebhookSignature(rawBodyOrPayload: string | any, signature: string, timestamp: string | number): boolean {
+    return this.client.verifyWebhookSignature(rawBodyOrPayload, signature, timestamp);
   }
 
   // ====== MEDIA BUY TASKS ======
