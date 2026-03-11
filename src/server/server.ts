@@ -3,6 +3,7 @@ import Fastify, { FastifyInstance } from 'fastify';
 import fastifyStatic from '@fastify/static';
 import fastifyCors from '@fastify/cors';
 import path from 'path';
+import { Readable } from 'stream';
 import {
   ADCPMultiAgentClient,
   ConfigurationManager,
@@ -59,6 +60,23 @@ const app: FastifyInstance = Fastify({
     level: process.env.LOG_LEVEL || 'info',
     transport: process.env.NODE_ENV === 'development' ? { target: 'pino-pretty' } : undefined,
   },
+});
+
+// Capture raw body on webhook routes for HMAC signature verification.
+// The raw bytes must be used (not re-serialized JSON) for cross-language interop.
+app.addHook('preParsing', async (request, _reply, payload) => {
+  if (request.url.startsWith('/webhook/')) {
+    const chunks: Buffer[] = [];
+    for await (const chunk of payload) {
+      chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk);
+    }
+    const rawBody = Buffer.concat(chunks).toString('utf8');
+    (request as any).rawBody = rawBody;
+
+    // Return a new readable stream so Fastify can still parse the body
+    return Readable.from([rawBody]);
+  }
+  return payload;
 });
 
 // Initialize ADCP client with configured agents
@@ -2033,6 +2051,9 @@ app.post<{
     const signature = request.headers['x-adcp-signature'] as string | undefined;
     const timestamp = request.headers['x-adcp-timestamp'] as string | undefined;
 
+    // Use raw body for HMAC verification when available, fall back to re-serialized payload
+    const rawBody = (request as any).rawBody as string | undefined;
+
     app.log.info(`Webhook received: ${taskType} for operation ${operationId}`);
 
     // TODO: Validate payload against JSON schema for task_type
@@ -2052,7 +2073,7 @@ app.post<{
     // The webhook URL was generated with this agent_id during operation setup
     // We use it to look up the correct agent configuration (auth, protocol, etc)
     const agent = adcpClient.agent(agentId);
-    const handled = await agent.handleWebhook(payload, taskType, operationId, signature, timestamp);
+    const handled = await agent.handleWebhook(payload, taskType, operationId, signature, timestamp, rawBody);
 
     if (!handled) {
       app.log.warn(`Webhook not handled - no handlers configured`);
