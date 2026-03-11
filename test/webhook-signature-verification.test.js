@@ -155,6 +155,40 @@ describe('Webhook Signature Verification (PR #86 Spec)', () => {
     assert.strictEqual(isValid, true);
   });
 
+  test('should verify signature from Python json.dumps() sender (cross-language interop)', () => {
+    const client = new AdCPClient([agent], { webhookSecret });
+    const agentClient = client.agent('test_agent');
+
+    // Python's json.dumps() produces spaces after ":" and "," by default
+    // e.g. json.dumps({"event": "creative.status_changed", "num": 1.0})
+    // produces: '{"event": "creative.status_changed", "num": 1.0}'
+    const pythonRawBody =
+      '{"event": "creative.status_changed", "creative_id": "creative_123", "status": "approved", "budget": 1500.0}';
+
+    const timestamp = Math.floor(Date.now() / 1000);
+
+    // Simulate Python signing: hmac.new(secret, f"{ts}.{raw_body}".encode(), hashlib.sha256)
+    const message = `${timestamp}.${pythonRawBody}`;
+    const hmac = crypto.createHmac('sha256', webhookSecret);
+    hmac.update(message);
+    const signature = `sha256=${hmac.digest('hex')}`;
+
+    // JS receiver verifies using the raw body — should pass
+    const isValid = agentClient.verifyWebhookSignature(pythonRawBody, signature, timestamp);
+    assert.strictEqual(isValid, true, 'Raw body from Python sender should verify correctly');
+
+    // If we had parsed and re-serialized, it would fail because:
+    // JSON.stringify produces: {"event":"creative.status_changed","creative_id":"creative_123","status":"approved","budget":1500}
+    // Note: no spaces, 1500.0 becomes 1500
+    const parsed = JSON.parse(pythonRawBody);
+    const isValidParsed = agentClient.verifyWebhookSignature(parsed, signature, timestamp);
+    assert.strictEqual(
+      isValidParsed,
+      false,
+      'Re-serialized Python payload should NOT verify (different spacing and number format)'
+    );
+  });
+
   test('should return false when webhookSecret not configured', () => {
     const client = new AdCPClient([agent], {}); // No webhookSecret
     const agentClient = client.agent('test_agent');
