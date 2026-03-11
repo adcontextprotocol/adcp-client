@@ -201,3 +201,120 @@ describe('Webhook Signature Verification (PR #86 Spec)', () => {
     assert.strictEqual(isValid, false);
   });
 });
+
+/**
+ * Official AdCP spec test vectors from:
+ * https://github.com/adcontextprotocol/adcp/blob/main/static/test-vectors/webhook-hmac-sha256.json
+ *
+ * These are static, known-good HMAC signatures that all AdCP implementations
+ * must produce identically. Validates cross-language interop.
+ */
+describe('AdCP Spec Test Vectors (webhook-hmac-sha256.json)', () => {
+  const secret = 'test-secret-key-minimum-32-characters-long';
+
+  const vectors = [
+    {
+      description: 'compact JSON (JS-style JSON.stringify)',
+      timestamp: 1700000000,
+      raw_body: '{"event":"creative.status_changed","creative_id":"creative_123","status":"approved"}',
+      expected_signature: 'sha256=c4faf82609efe07621706df0d28c801de2b5145f427e129f243a3839df891a4e',
+    },
+    {
+      description: 'spaced JSON (Python-style json.dumps with default separators)',
+      timestamp: 1700000000,
+      raw_body: '{"event": "creative.status_changed", "creative_id": "creative_123", "status": "approved"}',
+      expected_signature: 'sha256=4acce503547a93922a2b41c32f5f0e646b71a36572fd1536d3d7fcd88a4e5c5f',
+    },
+    {
+      description: 'empty object',
+      timestamp: 1700000000,
+      raw_body: '{}',
+      expected_signature: 'sha256=fc66235ab6cf0a5927d76d88194036fa99c7e08c75d55c9de5008288d448f1a0',
+    },
+    {
+      description: 'nested objects and arrays',
+      timestamp: 1700000000,
+      raw_body:
+        '{"task_id":"task_456","operation_id":"op_789","result":{"media_buy_id":"mb_001","packages":[{"package_id":"pkg_1"},{"package_id":"pkg_2"}]}}',
+      expected_signature: 'sha256=a90052e145bd73ba69a236748df05a3887ef9e73ddd429ef179bdd498ddb97ba',
+    },
+    {
+      description: 'unicode characters (literal UTF-8, not escaped)',
+      timestamp: 1700000000,
+      raw_body: '{"brand_name":"Café Münchën","tagline":"日本語テスト"}',
+      expected_signature: 'sha256=4383aa943264c461c5b9796734fdd9ae51934ecbdf7d38fcf94d330bfa590576',
+    },
+    {
+      description: 'pretty-printed JSON (multiline with indentation)',
+      timestamp: 1700000000,
+      raw_body: '{\n  "status": "completed",\n  "result": {\n    "id": "mb_001"\n  }\n}',
+      expected_signature: 'sha256=ad4858d6a7a38207ee178502b4bffc700080258a433e127919b445b68794f085',
+    },
+    {
+      description: 'numeric values, booleans, and null',
+      timestamp: 1700000000,
+      raw_body: '{"price":19.99,"count":1000,"active":true,"discount":null}',
+      expected_signature: 'sha256=12d4173bebd369c066880bd8f12952c4c1f6f48addbc1dc5267d8ba8de205a4f',
+    },
+    {
+      description: 'empty body',
+      timestamp: 1700000000,
+      raw_body: '',
+      expected_signature: 'sha256=9ab3f90245d5919d344a849a4a1b0ec20b75fcf8f29d817e63b23b54fce52294',
+    },
+    {
+      description: 'timestamp zero',
+      timestamp: 0,
+      raw_body: '{"event":"test"}',
+      expected_signature: 'sha256=446cc9dbe11ee98af9445a27dfcf9d52530c874583e5750d295bad336a406c3c',
+    },
+    {
+      description: 'large timestamp (year 2040)',
+      timestamp: 2208988800,
+      raw_body: '{"event":"test"}',
+      expected_signature: 'sha256=a0fdee5e93b2ac2efdf8d3d22b7a03ae8e6df157b493d0140f7902ef32f6be60',
+    },
+  ];
+
+  // First, verify our HMAC computation matches all spec vectors directly
+  for (const vector of vectors) {
+    test(`HMAC matches spec: ${vector.description}`, () => {
+      const message = `${vector.timestamp}.${vector.raw_body}`;
+      const hmac = crypto.createHmac('sha256', secret);
+      hmac.update(message);
+      const computed = `sha256=${hmac.digest('hex')}`;
+      assert.strictEqual(computed, vector.expected_signature);
+    });
+  }
+
+  // Then, verify verifyWebhookSignature accepts all spec vectors via raw body path.
+  // Timestamp validation is bypassed by using vectors with timestamps far from "now",
+  // so we only test the vectors where timestamp freshness won't reject them.
+  // For full coverage, we test HMAC computation directly above.
+  const agent = {
+    id: 'test_agent',
+    name: 'Test Agent',
+    agent_uri: 'https://test.example.com',
+    protocol: 'mcp',
+  };
+
+  for (const vector of vectors) {
+    test(`verifyWebhookSignature accepts spec vector: ${vector.description}`, () => {
+      // Mock Date.now so the timestamp freshness check passes
+      const originalNow = Date.now;
+      Date.now = () => vector.timestamp * 1000;
+      try {
+        const client = new AdCPClient([agent], { webhookSecret: secret });
+        const agentClient = client.agent('test_agent');
+        const isValid = agentClient.verifyWebhookSignature(
+          vector.raw_body,
+          vector.expected_signature,
+          vector.timestamp
+        );
+        assert.strictEqual(isValid, true, `Vector "${vector.description}" should verify`);
+      } finally {
+        Date.now = originalNow;
+      }
+    });
+  }
+});
