@@ -218,6 +218,10 @@ export type AccountReference =
        * Domain of the entity operating on the brand's behalf. When the brand operates directly, this is the brand's domain.
        */
       operator: string;
+      /**
+       * When true, references the sandbox account for this brand/operator pair. Defaults to false (production account).
+       */
+      sandbox?: boolean;
     };
 /**
  * Type of inventory delivery
@@ -3887,7 +3891,7 @@ export interface Account {
    */
   account_scope?: 'operator' | 'brand' | 'operator_brand' | 'agent';
   /**
-   * When true, this is a sandbox account. All requests using this account_id are treated as sandbox — no real platform calls, no real spend.
+   * When true, this is a sandbox account — no real platform calls, no real spend. Sandbox is part of the account's natural key: the same brand/operator pair can have both a production and sandbox account.
    */
   sandbox?: boolean;
   ext?: ExtensionObject;
@@ -9956,7 +9960,7 @@ export interface SyncAccountsRequest {
      */
     billing: 'operator' | 'agent';
     /**
-     * When true, provision this as a sandbox account. No real platform calls or billing. Sandbox accounts are identified by account_id in subsequent requests.
+     * When true, provision this as a sandbox account. No real platform calls or billing. The sandbox flag is part of the natural key — use brand + operator + sandbox: true in subsequent account references.
      */
     sandbox?: boolean;
   }[];

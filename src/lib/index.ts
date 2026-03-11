@@ -399,6 +399,7 @@ export {
   supportsContentStandards,
   requiresOperatorAuth,
   requiresAccountForProducts,
+  supportsSandbox,
   resolveFeature,
   listDeclaredFeatures,
   MEDIA_BUY_TOOLS,

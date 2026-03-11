@@ -65,6 +65,13 @@ export interface AccountCapabilities {
    * Whether an active account is required before calling get_products.
    */
   requiredForProducts: boolean;
+
+  /**
+   * Whether the seller supports sandbox accounts for testing.
+   * When true, buyers can use the natural key with sandbox: true
+   * regardless of account model — no provisioning or discovery needed.
+   */
+  sandbox: boolean;
 }
 
 /**
@@ -251,6 +258,7 @@ export function parseCapabilitiesResponse(response: any): AdcpCapabilities {
       supportedBilling: response.account.supported_billing ?? [],
       defaultBilling: response.account.default_billing,
       requiredForProducts: response.account.required_for_products ?? false,
+      sandbox: response.account.sandbox ?? false,
     };
   }
 
@@ -309,6 +317,13 @@ export function requiresOperatorAuth(capabilities: AdcpCapabilities): boolean {
  */
 export function requiresAccountForProducts(capabilities: AdcpCapabilities): boolean {
   return capabilities.account?.requiredForProducts ?? false;
+}
+
+/**
+ * Check if the seller supports sandbox accounts
+ */
+export function supportsSandbox(capabilities: AdcpCapabilities): boolean {
+  return capabilities.account?.sandbox ?? false;
 }
 
 /**
