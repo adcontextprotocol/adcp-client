@@ -664,7 +664,7 @@ export async function testSyncAudiences(
   const { accountRef, steps: accountSteps } = await resolveAccountForAudiences(
     options,
     profile.tools,
-    async (params) => client.executeTask('list_accounts', params) as Promise<TaskResult>
+    async params => client.executeTask('list_accounts', params) as Promise<TaskResult>
   );
   steps.push(...accountSteps);
 

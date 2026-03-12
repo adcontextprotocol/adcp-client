@@ -11,7 +11,9 @@ describe('resolveAccountForAudiences', () => {
     const { accountRef, steps } = await resolveAccountForAudiences(
       { ...defaultOptions, audience_account_id: 'acct-123', sandbox: true },
       ['list_accounts', 'sync_audiences'],
-      async () => { throw new Error('should not be called'); }
+      async () => {
+        throw new Error('should not be called');
+      }
     );
 
     assert.deepStrictEqual(accountRef, { account_id: 'acct-123' });
@@ -64,7 +66,9 @@ describe('resolveAccountForAudiences', () => {
     const { accountRef, steps } = await resolveAccountForAudiences(
       { ...defaultOptions, sandbox: true },
       ['sync_audiences'],
-      async () => { throw new Error('should not be called'); }
+      async () => {
+        throw new Error('should not be called');
+      }
     );
 
     assert.strictEqual(accountRef.sandbox, true);
@@ -114,7 +118,9 @@ describe('resolveAccountForAudiences', () => {
     const { accountRef, steps } = await resolveAccountForAudiences(
       defaultOptions,
       ['list_accounts', 'sync_audiences'],
-      async () => { throw new Error('network timeout'); }
+      async () => {
+        throw new Error('network timeout');
+      }
     );
 
     assert.strictEqual(accountRef, undefined);
@@ -124,11 +130,9 @@ describe('resolveAccountForAudiences', () => {
   });
 
   test('no sandbox and no list_accounts yields undefined', async () => {
-    const { accountRef, steps } = await resolveAccountForAudiences(
-      defaultOptions,
-      ['sync_audiences'],
-      async () => { throw new Error('should not be called'); }
-    );
+    const { accountRef, steps } = await resolveAccountForAudiences(defaultOptions, ['sync_audiences'], async () => {
+      throw new Error('should not be called');
+    });
 
     assert.strictEqual(accountRef, undefined);
     assert.strictEqual(steps.length, 0);
@@ -139,7 +143,7 @@ describe('resolveAccountForAudiences', () => {
     await resolveAccountForAudiences(
       { ...defaultOptions, sandbox: true },
       ['list_accounts', 'sync_audiences'],
-      async (params) => {
+      async params => {
         capturedParams = params;
         return { success: true, data: { accounts: [] } };
       }
@@ -150,14 +154,10 @@ describe('resolveAccountForAudiences', () => {
 
   test('non-sandbox list_accounts passes empty params', async () => {
     let capturedParams;
-    await resolveAccountForAudiences(
-      defaultOptions,
-      ['list_accounts', 'sync_audiences'],
-      async (params) => {
-        capturedParams = params;
-        return { success: true, data: { accounts: [{ account_id: 'x' }] } };
-      }
-    );
+    await resolveAccountForAudiences(defaultOptions, ['list_accounts', 'sync_audiences'], async params => {
+      capturedParams = params;
+      return { success: true, data: { accounts: [{ account_id: 'x' }] } };
+    });
 
     assert.deepStrictEqual(capturedParams, {});
   });
@@ -166,7 +166,9 @@ describe('resolveAccountForAudiences', () => {
     const { accountRef, steps } = await resolveAccountForAudiences(
       { ...defaultOptions, sandbox: true },
       ['list_accounts', 'sync_audiences'],
-      async () => { throw new Error('network timeout'); }
+      async () => {
+        throw new Error('network timeout');
+      }
     );
 
     // Should fall back to natural key
