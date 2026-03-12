@@ -68,8 +68,9 @@ export interface AccountCapabilities {
 
   /**
    * Whether the seller supports sandbox accounts for testing.
-   * When true, buyers can use the natural key with sandbox: true
-   * regardless of account model — no provisioning or discovery needed.
+   * For implicit accounts (require_operator_auth: false), declare sandbox via sync_accounts
+   * with sandbox: true and reference by natural key. For explicit accounts
+   * (require_operator_auth: true), discover pre-existing test accounts via list_accounts.
    */
   sandbox: boolean;
 }

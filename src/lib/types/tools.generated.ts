@@ -3891,7 +3891,7 @@ export interface Account {
    */
   account_scope?: 'operator' | 'brand' | 'operator_brand' | 'agent';
   /**
-   * When true, this is a sandbox account — no real platform calls, no real spend. Sandbox is part of the account's natural key: the same brand/operator pair can have both a production and sandbox account.
+   * When true, this is a sandbox account — no real platform calls, no real spend. For explicit accounts (require_operator_auth: true), sandbox accounts are pre-existing test accounts on the platform discovered via list_accounts. For implicit accounts, sandbox is part of the natural key: the same brand/operator pair can have both a production and sandbox account.
    */
   sandbox?: boolean;
   ext?: ExtensionObject;
@@ -9914,7 +9914,7 @@ export interface ListAccountsRequest {
   status?: 'active' | 'pending_approval' | 'rejected' | 'payment_required' | 'suspended' | 'closed';
   pagination?: PaginationRequest;
   /**
-   * Filter by sandbox status. true returns only sandbox accounts, false returns only production accounts. Omit to return all accounts.
+   * Filter by sandbox status. true returns only sandbox accounts, false returns only production accounts. Omit to return all accounts. Primarily used with explicit accounts (require_operator_auth: true) where sandbox accounts are pre-existing test accounts on the platform.
    */
   sandbox?: boolean;
   context?: ContextObject;
@@ -9960,7 +9960,7 @@ export interface SyncAccountsRequest {
      */
     billing: 'operator' | 'agent';
     /**
-     * When true, provision this as a sandbox account. No real platform calls or billing. The sandbox flag is part of the natural key — use brand + operator + sandbox: true in subsequent account references.
+     * When true, provision this as a sandbox account with no real platform calls or billing. Only applicable to implicit accounts (require_operator_auth: false). For explicit accounts, sandbox accounts are pre-existing test accounts discovered via list_accounts.
      */
     sandbox?: boolean;
   }[];
@@ -10057,7 +10057,7 @@ export interface SyncAccountsSuccess {
      */
     warnings?: string[];
     /**
-     * Whether this is a sandbox account, echoed from the request.
+     * Whether this is a sandbox account, echoed from the request. Only present for implicit accounts.
      */
     sandbox?: boolean;
   }[];
