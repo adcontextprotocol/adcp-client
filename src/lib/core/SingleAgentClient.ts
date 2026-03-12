@@ -1436,7 +1436,19 @@ export class SingleAgentClient {
     const normalizedParams = normalizeRequestParams(taskName, params);
     await this.validateTaskFeatures(taskName);
     const agent = await this.ensureEndpointDiscovered();
-    return this.executor.executeTask<T>(agent, taskName, normalizedParams, inputHandler, options);
+
+    // Adapt request for the server's protocol version (e.g. strip v3-only
+    // fields like buying_mode when talking to v2 agents).
+    const adaptedParams = await this.adaptRequestForServerVersion(taskName, normalizedParams);
+
+    const result = await this.executor.executeTask<T>(agent, taskName, adaptedParams, inputHandler, options);
+
+    // Normalize response to v3 format for consistent API surface
+    if (result.success && result.data) {
+      result.data = this.normalizeResponseToV3(taskName, result.data) as T;
+    }
+
+    return result;
   }
 
   // ====== DEFERRED TASK MANAGEMENT ======
