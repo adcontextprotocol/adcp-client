@@ -53,6 +53,7 @@ export {
   testSIHandoff,
   testCapabilityDiscovery,
   testSyncAudiences,
+  resolveAccountForAudiences,
   testSchemaCompliance,
   // v3 helpers
   hasGovernanceTools,

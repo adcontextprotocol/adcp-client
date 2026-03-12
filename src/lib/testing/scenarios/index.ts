@@ -17,6 +17,7 @@ export {
   testCreativeSync,
   testCreativeInline,
   testSyncAudiences,
+  resolveAccountForAudiences,
   selectProduct,
   selectPricingOption,
   buildCreateMediaBuyRequest,
