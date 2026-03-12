@@ -585,14 +585,31 @@ export async function testSyncAudiences(
     return { steps, profile };
   }
 
-  // Resolve account reference: sandbox natural key > explicit option > list_accounts discovery
+  // Resolve account reference: explicit option > sandbox > list_accounts discovery
   let accountRef: AccountReference | undefined;
 
-  if (options.sandbox) {
-    // Sandbox mode: use natural key with sandbox: true — no provisioning needed
-    accountRef = { brand: resolveBrand(options), operator: resolveBrand(options).domain, sandbox: true };
-  } else if (options.audience_account_id) {
+  if (options.audience_account_id) {
     accountRef = { account_id: options.audience_account_id };
+  } else if (options.sandbox && profile.tools.includes('list_accounts')) {
+    // Sandbox with list_accounts: try explicit sandbox path first (discover pre-existing test accounts)
+    const { result: sandboxResult, step: sandboxStep } = await runStep<TaskResult>(
+      'Discover sandbox accounts',
+      'list_accounts',
+      async () => client.executeTask('list_accounts', { sandbox: true }) as Promise<TaskResult>
+    );
+    steps.push(sandboxStep);
+
+    const sandboxAccounts = sandboxResult?.success ? ((sandboxResult.data as any)?.accounts ?? []) : [];
+    if (sandboxAccounts[0]?.account_id) {
+      // Explicit account model: use discovered sandbox account_id
+      accountRef = { account_id: sandboxAccounts[0].account_id };
+    } else {
+      // Implicit account model: use natural key with sandbox: true
+      accountRef = { brand: resolveBrand(options), operator: resolveBrand(options).domain, sandbox: true };
+    }
+  } else if (options.sandbox) {
+    // Sandbox without list_accounts: implicit account model, use natural key
+    accountRef = { brand: resolveBrand(options), operator: resolveBrand(options).domain, sandbox: true };
   } else if (profile.tools.includes('list_accounts')) {
     const { result: accountsResult, step: accountsStep } = await runStep<TaskResult>(
       'Discover accounts for audience sync',
