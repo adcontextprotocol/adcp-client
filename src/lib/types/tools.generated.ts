@@ -10133,7 +10133,7 @@ export interface SyncAccountsSuccess {
     /**
      * Payment terms (e.g., 'net_30', 'prepay')
      */
-    payment_terms?: 'net_15' | 'net_30' | 'net_45' | 'net_60' | 'net_90' | 'prepay';
+    payment_terms?: string;
     credit_limit?: {
       amount: number;
       currency: string;
@@ -10340,9 +10340,9 @@ export interface GetAccountFinancialsSuccess {
    */
   payment_status?: 'current' | 'past_due' | 'suspended';
   /**
-   * Payment terms in effect (e.g., 'net_30', 'prepay')
+   * Payment terms in effect for this account
    */
-  payment_terms?: string;
+  payment_terms?: 'net_15' | 'net_30' | 'net_45' | 'net_60' | 'net_90' | 'prepay';
   /**
    * Recent invoices. Sellers may limit the number returned.
    */
