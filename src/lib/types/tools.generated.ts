@@ -3859,9 +3859,9 @@ export interface Account {
    */
   rate_card?: string;
   /**
-   * Payment terms (e.g., 'net_30', 'prepay')
+   * Payment terms agreed for this account. Binding for all invoices when the account is active.
    */
-  payment_terms?: string;
+  payment_terms?: 'net_15' | 'net_30' | 'net_45' | 'net_60' | 'net_90' | 'prepay';
   /**
    * Maximum outstanding balance allowed
    */
@@ -3972,513 +3972,6 @@ export interface CreateMediaBuyError {
    * Array of errors explaining why the operation failed
    */
   errors: Error[];
-  context?: ContextObject;
-  ext?: ExtensionObject;
-}
-
-// sync_creatives parameters
-/**
- * Validation strictness. 'strict' fails entire sync on any validation error. 'lenient' processes valid creatives and reports errors.
- */
-export type ValidationMode = 'strict' | 'lenient';
-/**
- * Request parameters for syncing creative assets with upsert semantics - supports bulk operations, scoped updates, and assignment management
- */
-export interface SyncCreativesRequest {
-  account: AccountReference;
-  /**
-   * Array of creative assets to sync (create or update)
-   *
-   * @maxItems 100
-   */
-  creatives: CreativeAsset[];
-  /**
-   * Optional filter to limit sync scope to specific creative IDs. When provided, only these creatives will be created/updated. Other creatives in the library are unaffected. Useful for partial updates and error recovery.
-   *
-   * @maxItems 100
-   */
-  creative_ids?: string[];
-  /**
-   * Optional bulk assignment of creatives to packages. Each entry maps one creative to one package with optional weight and placement targeting.
-   */
-  assignments?: {
-    /**
-     * ID of the creative to assign
-     */
-    creative_id: string;
-    /**
-     * ID of the package to assign the creative to
-     */
-    package_id: string;
-    /**
-     * Relative delivery weight (0–100). When multiple creatives are assigned to the same package, weights determine impression distribution proportionally — a creative with weight 2 gets twice the delivery of weight 1. When omitted, the creative receives equal rotation with other unweighted creatives. A weight of 0 means the creative is assigned but paused (receives no delivery).
-     */
-    weight?: number;
-    /**
-     * Restrict this creative to specific placements within the package. When omitted, the creative is eligible for all placements.
-     */
-    placement_ids?: string[];
-  }[];
-  /**
-   * Client-generated idempotency key for safe retries. If a sync fails without a response, resending with the same idempotency_key guarantees at-most-once execution.
-   */
-  idempotency_key?: string;
-  /**
-   * When true, creatives not included in this sync will be archived. Use with caution for full library replacement.
-   */
-  delete_missing?: boolean;
-  /**
-   * When true, preview changes without applying them. Returns what would be created/updated/deleted.
-   */
-  dry_run?: boolean;
-  validation_mode?: ValidationMode;
-  push_notification_config?: PushNotificationConfig;
-  context?: ContextObject;
-  ext?: ExtensionObject;
-}
-
-// sync_creatives response
-/**
- * Response from creative sync operation. Returns either per-creative results (best-effort processing) OR operation-level errors (complete failure). This enforces atomic semantics at the operation level while allowing per-item failures within successful operations.
- */
-export type SyncCreativesResponse = SyncCreativesSuccess | SyncCreativesError;
-/**
- * Action taken for this creative
- */
-export type CreativeAction = 'created' | 'updated' | 'unchanged' | 'failed' | 'deleted';
-
-/**
- * Success response - sync operation processed creatives (may include per-item failures)
- */
-export interface SyncCreativesSuccess {
-  /**
-   * Whether this was a dry run (no actual changes made)
-   */
-  dry_run?: boolean;
-  /**
-   * Results for each creative processed. Items with action='failed' indicate per-item validation/processing failures, not operation-level failures.
-   */
-  creatives: {
-    /**
-     * Creative ID from the request
-     */
-    creative_id: string;
-    account?: Account;
-    action: CreativeAction;
-    /**
-     * Platform-specific ID assigned to the creative
-     */
-    platform_id?: string;
-    /**
-     * Field names that were modified (only present when action='updated')
-     */
-    changes?: string[];
-    /**
-     * Validation or processing errors (only present when action='failed')
-     */
-    errors?: string[];
-    /**
-     * Non-fatal warnings about this creative
-     */
-    warnings?: string[];
-    /**
-     * Preview URL for generative creatives (only present for generative formats)
-     */
-    preview_url?: string;
-    /**
-     * ISO 8601 timestamp when preview link expires (only present when preview_url exists)
-     */
-    expires_at?: string;
-    /**
-     * Package IDs this creative was successfully assigned to (only present when assignments were requested)
-     */
-    assigned_to?: string[];
-    /**
-     * Assignment errors by package ID (only present when assignment failures occurred)
-     */
-    assignment_errors?: {
-      /**
-       * Error message for this package assignment
-       *
-       * This interface was referenced by `undefined`'s JSON-Schema definition
-       * via the `patternProperty` "^[a-zA-Z0-9_-]+$".
-       */
-      [k: string]: string | undefined;
-    };
-  }[];
-  /**
-   * When true, this response contains simulated data from sandbox mode.
-   */
-  sandbox?: boolean;
-  context?: ContextObject;
-  ext?: ExtensionObject;
-}
-/**
- * Error response - operation failed completely, no creatives were processed
- */
-export interface SyncCreativesError {
-  /**
-   * Operation-level errors that prevented processing any creatives (e.g., authentication failure, service unavailable, invalid request format)
-   */
-  errors: Error[];
-  context?: ContextObject;
-  ext?: ExtensionObject;
-}
-
-// list_creatives parameters
-/**
- * Field to sort by
- */
-export type CreativeSortField =
-  | 'created_date'
-  | 'updated_date'
-  | 'name'
-  | 'status'
-  | 'assignment_count'
-  | 'performance_score';
-/**
- * Sort direction
- */
-export type SortDirection = 'asc' | 'desc';
-
-/**
- * Request parameters for querying creative assets from the centralized library with filtering, sorting, and pagination
- */
-export interface ListCreativesRequest {
-  filters?: CreativeFilters;
-  /**
-   * Sorting parameters
-   */
-  sort?: {
-    field?: CreativeSortField;
-    direction?: SortDirection;
-  };
-  pagination?: PaginationRequest;
-  /**
-   * Include package assignment information in response
-   */
-  include_assignments?: boolean;
-  /**
-   * Include aggregated performance metrics in response
-   */
-  include_performance?: boolean;
-  /**
-   * Include sub-assets (for carousel/native formats) in response
-   */
-  include_sub_assets?: boolean;
-  /**
-   * Specific fields to include in response (omit for all fields)
-   */
-  fields?: (
-    | 'creative_id'
-    | 'name'
-    | 'format'
-    | 'status'
-    | 'created_date'
-    | 'updated_date'
-    | 'tags'
-    | 'assignments'
-    | 'performance'
-    | 'sub_assets'
-  )[];
-  context?: ContextObject;
-  ext?: ExtensionObject;
-}
-/**
- * Filter criteria for querying creative assets from the centralized library. By default, archived creatives are excluded from results. To include archived creatives, explicitly filter by status='archived' or include 'archived' in the statuses array.
- */
-export interface CreativeFilters {
-  /**
-   * Filter creatives by owning accounts. Useful for agencies managing multiple client accounts.
-   */
-  accounts?: AccountReference[];
-  /**
-   * Filter by creative format types (e.g., video, audio, display)
-   */
-  formats?: string[];
-  /**
-   * Filter by creative approval statuses
-   */
-  statuses?: CreativeStatus[];
-  /**
-   * Filter by creative tags (all tags must match)
-   */
-  tags?: string[];
-  /**
-   * Filter by creative tags (any tag must match)
-   */
-  tags_any?: string[];
-  /**
-   * Filter by creative names containing this text (case-insensitive)
-   */
-  name_contains?: string;
-  /**
-   * Filter by specific creative IDs
-   *
-   * @maxItems 100
-   */
-  creative_ids?: string[];
-  /**
-   * Filter creatives created after this date (ISO 8601)
-   */
-  created_after?: string;
-  /**
-   * Filter creatives created before this date (ISO 8601)
-   */
-  created_before?: string;
-  /**
-   * Filter creatives last updated after this date (ISO 8601)
-   */
-  updated_after?: string;
-  /**
-   * Filter creatives last updated before this date (ISO 8601)
-   */
-  updated_before?: string;
-  /**
-   * Filter creatives assigned to any of these packages
-   */
-  assigned_to_packages?: string[];
-  /**
-   * Filter creatives assigned to any of these media buys
-   */
-  media_buy_ids?: string[];
-  /**
-   * Filter creatives assigned to media buys with any of these buyer references
-   */
-  buyer_refs?: string[];
-  /**
-   * Filter for unassigned creatives when true, assigned creatives when false
-   */
-  unassigned?: boolean;
-  /**
-   * Filter creatives that have performance data when true
-   */
-  has_performance_data?: boolean;
-}
-
-// list_creatives response
-/**
- * Sub-asset for multi-asset creative formats, including carousel images and native ad template variables
- */
-export type SubAsset =
-  | {
-      /**
-       * Discriminator indicating this is a media asset with content_uri
-       */
-      asset_kind: 'media';
-      /**
-       * Type of asset. Common types: thumbnail_image, product_image, featured_image, logo
-       */
-      asset_type: string;
-      /**
-       * Unique identifier for the asset within the creative
-       */
-      asset_id: string;
-      /**
-       * URL for media assets (images, videos, etc.)
-       */
-      content_uri: string;
-    }
-  | {
-      /**
-       * Discriminator indicating this is a text asset with content
-       */
-      asset_kind: 'text';
-      /**
-       * Type of asset. Common types: headline, body_text, cta_text, price_text, sponsor_name, author_name, click_url
-       */
-      asset_type: string;
-      /**
-       * Unique identifier for the asset within the creative
-       */
-      asset_id: string;
-      /**
-       * Text content for text-based assets like headlines, body text, CTA text, etc.
-       */
-      content: string | string[];
-    };
-
-/**
- * Response from creative library query with filtered results, metadata, and optional enriched data
- */
-export interface ListCreativesResponse {
-  /**
-   * Summary of the query that was executed
-   */
-  query_summary: {
-    /**
-     * Total number of creatives matching filters (across all pages)
-     */
-    total_matching?: number;
-    /**
-     * Number of creatives returned in this response
-     */
-    returned?: number;
-    /**
-     * List of filters that were applied to the query
-     */
-    filters_applied?: string[];
-    /**
-     * Sort order that was applied
-     */
-    sort_applied?: {
-      field?: string;
-      direction?: SortDirection;
-    };
-  };
-  pagination: PaginationResponse;
-  /**
-   * Array of creative assets matching the query
-   */
-  creatives: {
-    /**
-     * Unique identifier for the creative
-     */
-    creative_id: string;
-    account?: Account;
-    /**
-     * Human-readable creative name
-     */
-    name: string;
-    format_id: FormatID;
-    status: CreativeStatus;
-    /**
-     * When the creative was uploaded to the library
-     */
-    created_date: string;
-    /**
-     * When the creative was last modified
-     */
-    updated_date: string;
-    /**
-     * Assets for this creative, keyed by asset_id
-     */
-    assets?: {
-      /**
-       * This interface was referenced by `undefined`'s JSON-Schema definition
-       * via the `patternProperty` "^[a-z0-9_]+$".
-       */
-      [k: string]:
-        | ImageAsset
-        | VideoAsset
-        | AudioAsset
-        | VASTAsset
-        | TextAsset
-        | URLAsset
-        | HTMLAsset
-        | JavaScriptAsset
-        | WebhookAsset
-        | CSSAsset
-        | DAASTAsset
-        | MarkdownAsset
-        | BriefAsset
-        | CatalogAsset;
-    };
-    /**
-     * User-defined tags for organization and searchability
-     */
-    tags?: string[];
-    /**
-     * Current package assignments (included when include_assignments=true)
-     */
-    assignments?: {
-      /**
-       * Total number of active package assignments
-       */
-      assignment_count: number;
-      /**
-       * List of packages this creative is assigned to
-       */
-      assigned_packages?: {
-        /**
-         * Package identifier
-         */
-        package_id: string;
-        /**
-         * Buyer's reference identifier for this package
-         */
-        buyer_ref?: string;
-        /**
-         * When this assignment was created
-         */
-        assigned_date: string;
-      }[];
-    };
-    /**
-     * Aggregated performance metrics (included when include_performance=true)
-     */
-    performance?: {
-      /**
-       * Total impressions across all assignments
-       */
-      impressions?: number;
-      /**
-       * Total clicks across all assignments
-       */
-      clicks?: number;
-      /**
-       * Click-through rate (clicks/impressions)
-       */
-      ctr?: number;
-      /**
-       * Conversion rate across all assignments
-       */
-      conversion_rate?: number;
-      /**
-       * Aggregated performance score (0-100)
-       */
-      performance_score?: number;
-      /**
-       * When performance data was last updated
-       */
-      last_updated: string;
-    };
-    /**
-     * Sub-assets for multi-asset formats (included when include_sub_assets=true)
-     */
-    sub_assets?: SubAsset[];
-  }[];
-  /**
-   * Breakdown of creatives by format type
-   */
-  format_summary?: {
-    /**
-     * Number of creatives with this format
-     *
-     * This interface was referenced by `undefined`'s JSON-Schema definition
-     * via the `patternProperty` "^[a-zA-Z0-9_-]+$".
-     */
-    [k: string]: number | undefined;
-  };
-  /**
-   * Breakdown of creatives by status
-   */
-  status_summary?: {
-    /**
-     * Number of creatives being processed
-     */
-    processing?: number;
-    /**
-     * Number of approved creatives
-     */
-    approved?: number;
-    /**
-     * Number of creatives pending review
-     */
-    pending_review?: number;
-    /**
-     * Number of rejected creatives
-     */
-    rejected?: number;
-    /**
-     * Number of archived creatives
-     */
-    archived?: number;
-  };
-  /**
-   * When true, this response contains simulated data from sandbox mode.
-   */
-  sandbox?: boolean;
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -6242,6 +5735,10 @@ export interface SyncAudiencesError {
 
 // sync_catalogs parameters
 /**
+ * Validation strictness. 'strict' fails entire sync on any validation error. 'lenient' processes valid catalogs and reports errors.
+ */
+export type ValidationMode = 'strict' | 'lenient';
+/**
  * Request parameters for syncing catalog feeds with upsert semantics. Supports bulk operations across multiple catalog types (products, inventory, stores, promotions, offerings). Existing catalogs matched by catalog_id are updated, new ones are created. When catalogs is omitted, the call is discovery-only: returns all catalogs on the account without modification.
  */
 export interface SyncCatalogsRequest {
@@ -6384,7 +5881,7 @@ export interface SyncCatalogsError {
 export type CreativeQuality = 'draft' | 'production';
 
 /**
- * Request to transform or generate a creative manifest. Takes a source manifest (which may be minimal for pure generation) and produces a target manifest in the specified format.
+ * Request to transform, generate, or retrieve a creative manifest. Supports three modes: (1) generation from a brief or seed assets, (2) transformation of an existing manifest, (3) retrieval from a creative library by creative_id. Produces a target manifest in the specified format.
  */
 export interface BuildCreativeRequest {
   /**
@@ -6392,6 +5889,22 @@ export interface BuildCreativeRequest {
    */
   message?: string;
   creative_manifest?: CreativeManifest;
+  /**
+   * Reference to a creative in the agent's library. The creative agent resolves this to a manifest from its library. Use this instead of creative_manifest when retrieving an existing creative for tag generation or format adaptation.
+   */
+  creative_id?: string;
+  /**
+   * Creative concept containing the creative. Creative agents SHOULD assign globally unique creative_id values; when they cannot guarantee uniqueness, concept_id is REQUIRED to disambiguate.
+   */
+  concept_id?: string;
+  /**
+   * Buyer's media buy reference for tag generation context. When the creative agent is also the ad server, this provides the trafficking context needed to generate placement-specific tags (e.g., CM360 placement ID). Not needed when tags are generated at the creative level (most creative platforms). This is the buyer's reference — the same value used as buyer_ref in create_media_buy.
+   */
+  media_buy_id?: string;
+  /**
+   * Buyer's package or line item reference within the media buy. Used with media_buy_id when the creative agent needs line-item-level context for tag generation. Omit to get a tag not scoped to a specific package.
+   */
+  package_id?: string;
   target_format_id: FormatID;
   brand?: BrandReference;
   quality?: CreativeQuality;
@@ -6399,11 +5912,17 @@ export interface BuildCreativeRequest {
    * Maximum number of catalog items to use when generating. When a catalog asset contains more items than this limit, the creative agent selects the top items based on relevance or catalog ordering. When item_limit exceeds the format's max_items, the creative agent SHOULD use the lesser of the two. Ignored when the manifest contains no catalog assets.
    */
   item_limit?: number;
+  /**
+   * Macro values to pre-substitute into the output manifest's assets. Keys are universal macro names (e.g., CLICK_URL, CACHEBUSTER); values are the substitution strings. The creative agent translates universal macros to its platform's native syntax. Substitution is literal — all occurrences of each macro in output assets are replaced with the provided value. The caller is responsible for URL-encoding values if the output context requires it. Macros not provided here remain as {MACRO} placeholders for the sales agent to resolve at serve time. Creative agents MUST ignore keys they do not recognize — unknown macro names are not an error.
+   */
+  macro_values?: {
+    [k: string]: string | undefined;
+  };
   context?: ContextObject;
   ext?: ExtensionObject;
 }
 /**
- * Creative manifest to transform or generate from. For pure generation, this should include the target format_id and any required input assets. For transformation (e.g., resizing, reformatting), this is the complete creative to adapt.
+ * Creative manifest to transform or generate from. For pure generation, this should include the target format_id and any required input assets. For transformation (e.g., resizing, reformatting), this is the complete creative to adapt. When creative_id is provided, the agent resolves the creative from its library and this field is ignored.
  */
 export interface CreativeManifest {
   format_id: FormatID;
@@ -7075,6 +6594,561 @@ export interface Identifier {
    * The identifier value. For domain type: 'example.com' matches base domain plus www and m subdomains; 'edition.example.com' matches that specific subdomain; '*.example.com' matches ALL subdomains but NOT base domain
    */
   value: string;
+}
+
+// list_creatives parameters
+/**
+ * Field to sort by
+ */
+export type CreativeSortField = 'created_date' | 'updated_date' | 'name' | 'status' | 'assignment_count';
+/**
+ * Sort direction
+ */
+export type SortDirection = 'asc' | 'desc';
+
+/**
+ * Request parameters for querying creative assets from a creative library with filtering, sorting, and pagination. Implemented by any agent that hosts a creative library — creative agents (ad servers, creative platforms) and sales agents that manage creatives.
+ */
+export interface ListCreativesRequest {
+  filters?: CreativeFilters;
+  /**
+   * Sorting parameters
+   */
+  sort?: {
+    field?: CreativeSortField;
+    direction?: SortDirection;
+  };
+  pagination?: PaginationRequest;
+  /**
+   * Include package assignment information in response
+   */
+  include_assignments?: boolean;
+  /**
+   * Include a lightweight delivery snapshot per creative (lifetime impressions and last-served date). For detailed performance analytics, use get_creative_delivery.
+   */
+  include_snapshot?: boolean;
+  /**
+   * Include items for multi-asset formats like carousels and native ads
+   */
+  include_items?: boolean;
+  /**
+   * Include dynamic content variable definitions (DCO slots) for each creative
+   */
+  include_variables?: boolean;
+  /**
+   * Specific fields to include in response (omit for all fields). The 'concept' value returns both concept_id and concept_name.
+   */
+  fields?: (
+    | 'creative_id'
+    | 'name'
+    | 'format_id'
+    | 'status'
+    | 'created_date'
+    | 'updated_date'
+    | 'tags'
+    | 'assignments'
+    | 'snapshot'
+    | 'items'
+    | 'variables'
+    | 'concept'
+  )[];
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Filter criteria for querying creatives from a creative library. By default, archived creatives are excluded from results. To include archived creatives, explicitly filter by status='archived' or include 'archived' in the statuses array.
+ */
+export interface CreativeFilters {
+  /**
+   * Filter creatives by owning accounts. Useful for agencies managing multiple client accounts.
+   */
+  accounts?: AccountReference[];
+  /**
+   * Filter by high-level format types (e.g., 'video', 'audio', 'display'). For specific format matching, use format_ids instead.
+   */
+  format_types?: string[];
+  /**
+   * Filter by creative approval statuses
+   */
+  statuses?: CreativeStatus[];
+  /**
+   * Filter by creative tags (all tags must match)
+   */
+  tags?: string[];
+  /**
+   * Filter by creative tags (any tag must match)
+   */
+  tags_any?: string[];
+  /**
+   * Filter by creative names containing this text (case-insensitive)
+   */
+  name_contains?: string;
+  /**
+   * Filter by specific creative IDs
+   *
+   * @maxItems 100
+   */
+  creative_ids?: string[];
+  /**
+   * Filter creatives created after this date (ISO 8601)
+   */
+  created_after?: string;
+  /**
+   * Filter creatives created before this date (ISO 8601)
+   */
+  created_before?: string;
+  /**
+   * Filter creatives last updated after this date (ISO 8601)
+   */
+  updated_after?: string;
+  /**
+   * Filter creatives last updated before this date (ISO 8601)
+   */
+  updated_before?: string;
+  /**
+   * Filter creatives assigned to any of these packages. Sales-agent-specific — standalone creative agents SHOULD ignore this filter.
+   */
+  assigned_to_packages?: string[];
+  /**
+   * Filter creatives assigned to any of these media buys. Sales-agent-specific — standalone creative agents SHOULD ignore this filter.
+   */
+  media_buy_ids?: string[];
+  /**
+   * Filter creatives assigned to media buys with any of these buyer references. Sales-agent-specific — standalone creative agents SHOULD ignore this filter.
+   */
+  buyer_refs?: string[];
+  /**
+   * Filter for unassigned creatives when true, assigned creatives when false. Sales-agent-specific — standalone creative agents SHOULD ignore this filter.
+   */
+  unassigned?: boolean;
+  /**
+   * When true, return only creatives that have served at least one impression. When false, return only creatives that have never served.
+   */
+  has_served?: boolean;
+  /**
+   * Filter by creative concept IDs. Concepts group related creatives across sizes and formats (e.g., Flashtalking concepts, Celtra campaign folders, CM360 creative groups).
+   */
+  concept_ids?: string[];
+  /**
+   * Filter by structured format IDs. Returns creatives that match any of these formats.
+   */
+  format_ids?: FormatID[];
+  /**
+   * When true, return only creatives with dynamic variables (DCO). When false, return only static creatives.
+   */
+  has_variables?: boolean;
+}
+
+// list_creatives response
+/**
+ * Item within a multi-asset creative format. Used for carousel products, native ad components, and other formats composed of multiple distinct elements.
+ */
+export type CreativeItem =
+  | {
+      /**
+       * Discriminator indicating this is a media asset with content_uri
+       */
+      asset_kind: 'media';
+      /**
+       * Type of asset. Common types: thumbnail_image, product_image, featured_image, logo
+       */
+      asset_type: string;
+      /**
+       * Unique identifier for the asset within the creative
+       */
+      asset_id: string;
+      /**
+       * URL for media assets (images, videos, etc.)
+       */
+      content_uri: string;
+    }
+  | {
+      /**
+       * Discriminator indicating this is a text asset with content
+       */
+      asset_kind: 'text';
+      /**
+       * Type of asset. Common types: headline, body_text, cta_text, price_text, sponsor_name, author_name, click_url
+       */
+      asset_type: string;
+      /**
+       * Unique identifier for the asset within the creative
+       */
+      asset_id: string;
+      /**
+       * Text content for text-based assets like headlines, body text, CTA text, etc.
+       */
+      content: string | string[];
+    };
+
+/**
+ * Response from creative library query with filtered results, metadata, and optional enriched data
+ */
+export interface ListCreativesResponse {
+  /**
+   * Summary of the query that was executed
+   */
+  query_summary: {
+    /**
+     * Total number of creatives matching filters (across all pages)
+     */
+    total_matching: number;
+    /**
+     * Number of creatives returned in this response
+     */
+    returned: number;
+    /**
+     * List of filters that were applied to the query
+     */
+    filters_applied?: string[];
+    /**
+     * Sort order that was applied
+     */
+    sort_applied?: {
+      field?: string;
+      direction?: SortDirection;
+    };
+  };
+  pagination: PaginationResponse;
+  /**
+   * Array of creative assets matching the query
+   */
+  creatives: {
+    /**
+     * Unique identifier for the creative
+     */
+    creative_id: string;
+    account?: Account;
+    /**
+     * Human-readable creative name
+     */
+    name: string;
+    format_id: FormatID;
+    status: CreativeStatus;
+    /**
+     * When the creative was created
+     */
+    created_date: string;
+    /**
+     * When the creative was last modified
+     */
+    updated_date: string;
+    /**
+     * Assets for this creative, keyed by asset_id
+     */
+    assets?: {
+      /**
+       * This interface was referenced by `undefined`'s JSON-Schema definition
+       * via the `patternProperty` "^[a-z0-9_]+$".
+       */
+      [k: string]:
+        | ImageAsset
+        | VideoAsset
+        | AudioAsset
+        | VASTAsset
+        | TextAsset
+        | URLAsset
+        | HTMLAsset
+        | JavaScriptAsset
+        | WebhookAsset
+        | CSSAsset
+        | DAASTAsset
+        | MarkdownAsset
+        | BriefAsset
+        | CatalogAsset;
+    };
+    /**
+     * User-defined tags for organization and searchability
+     */
+    tags?: string[];
+    /**
+     * Creative concept this creative belongs to. Concepts group related creatives across sizes and formats.
+     */
+    concept_id?: string;
+    /**
+     * Human-readable concept name
+     */
+    concept_name?: string;
+    /**
+     * Dynamic content variables (DCO slots) for this creative. Included when include_variables=true.
+     */
+    variables?: CreativeVariable[];
+    /**
+     * Current package assignments (included when include_assignments=true)
+     */
+    assignments?: {
+      /**
+       * Total number of active package assignments
+       */
+      assignment_count: number;
+      /**
+       * List of packages this creative is assigned to
+       */
+      assigned_packages?: {
+        /**
+         * Package identifier
+         */
+        package_id: string;
+        /**
+         * Buyer's reference identifier for this package
+         */
+        buyer_ref?: string;
+        /**
+         * When this assignment was created
+         */
+        assigned_date: string;
+      }[];
+    };
+    /**
+     * Lightweight delivery snapshot (included when include_snapshot=true). For detailed performance analytics, use get_creative_delivery.
+     */
+    snapshot?: {
+      /**
+       * When this snapshot was captured by the platform
+       */
+      as_of: string;
+      /**
+       * Maximum age of this data in seconds. For example, 3600 means the data may be up to 1 hour old.
+       */
+      staleness_seconds: number;
+      /**
+       * Lifetime impressions across all assignments. Not scoped to any date range.
+       */
+      impressions: number;
+      /**
+       * Last time this creative served an impression. Absent when the creative has never served.
+       */
+      last_served?: string;
+    };
+    /**
+     * Machine-readable reason the snapshot is omitted. Present only when include_snapshot was true and snapshot data is unavailable for this creative.
+     */
+    snapshot_unavailable_reason?:
+      | 'SNAPSHOT_UNSUPPORTED'
+      | 'SNAPSHOT_TEMPORARILY_UNAVAILABLE'
+      | 'SNAPSHOT_PERMISSION_DENIED';
+    /**
+     * Items for multi-asset formats like carousels and native ads (included when include_items=true)
+     */
+    items?: CreativeItem[];
+  }[];
+  /**
+   * Breakdown of creatives by format. Keys are agent-defined format identifiers, optionally including dimensions (e.g., 'display_static_300x250', 'video_30s_vast'). Key construction is platform-specific — there is no required format.
+   */
+  format_summary?: {
+    /**
+     * Number of creatives with this format
+     *
+     * This interface was referenced by `undefined`'s JSON-Schema definition
+     * via the `patternProperty` "^[a-zA-Z0-9_-]+$".
+     */
+    [k: string]: number | undefined;
+  };
+  /**
+   * Breakdown of creatives by status
+   */
+  status_summary?: {
+    /**
+     * Number of creatives being processed
+     */
+    processing?: number;
+    /**
+     * Number of approved creatives
+     */
+    approved?: number;
+    /**
+     * Number of creatives pending review
+     */
+    pending_review?: number;
+    /**
+     * Number of rejected creatives
+     */
+    rejected?: number;
+    /**
+     * Number of archived creatives
+     */
+    archived?: number;
+  };
+  /**
+   * Task-specific errors (e.g., invalid filters, account not found)
+   */
+  errors?: Error[];
+  /**
+   * When true, this response contains simulated data from sandbox mode.
+   */
+  sandbox?: boolean;
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * A dynamic content variable (DCO slot) on a creative. Variables represent content that can change at serve time — headlines, images, product data, etc.
+ */
+export interface CreativeVariable {
+  /**
+   * Variable identifier on the creative platform
+   */
+  variable_id: string;
+  /**
+   * Human-readable variable name
+   */
+  name: string;
+  /**
+   * Data type of the variable. Each type represents a semantic content slot: text (headlines, body copy), image/video/audio (media URLs), url (clickthrough or tracking URLs), number (prices, counts), boolean (conditional flags like show_discount or is_raining), color (hex color values), date (ISO 8601 date-time for countdowns and offer expirations).
+   */
+  variable_type: 'text' | 'image' | 'video' | 'audio' | 'url' | 'number' | 'boolean' | 'color' | 'date';
+  /**
+   * Default value used when no dynamic value is provided at serve time. All types are string-encoded: text/image/video/audio/url as literal strings, number as decimal (e.g., "42.99"), boolean as "true"/"false", color as "#RRGGBB", date as ISO 8601 (e.g., "2026-12-25T00:00:00Z").
+   */
+  default_value?: string;
+  /**
+   * Whether this variable must have a value for the creative to serve
+   */
+  required?: boolean;
+}
+
+// sync_creatives parameters
+/**
+ * Request parameters for syncing creative assets with upsert semantics - supports bulk operations, scoped updates, and assignment management
+ */
+export interface SyncCreativesRequest {
+  account: AccountReference;
+  /**
+   * Array of creative assets to sync (create or update)
+   *
+   * @maxItems 100
+   */
+  creatives: CreativeAsset[];
+  /**
+   * Optional filter to limit sync scope to specific creative IDs. When provided, only these creatives will be created/updated. Other creatives in the library are unaffected. Useful for partial updates and error recovery.
+   *
+   * @maxItems 100
+   */
+  creative_ids?: string[];
+  /**
+   * Optional bulk assignment of creatives to packages. Each entry maps one creative to one package with optional weight and placement targeting. Standalone creative agents that do not manage media buys ignore this field.
+   */
+  assignments?: {
+    /**
+     * ID of the creative to assign
+     */
+    creative_id: string;
+    /**
+     * ID of the package to assign the creative to
+     */
+    package_id: string;
+    /**
+     * Relative delivery weight (0-100). When multiple creatives are assigned to the same package, weights determine impression distribution proportionally. When omitted, the creative receives equal rotation with other unweighted creatives. A weight of 0 means the creative is assigned but paused (receives no delivery).
+     */
+    weight?: number;
+    /**
+     * Restrict this creative to specific placements within the package. When omitted, the creative is eligible for all placements.
+     */
+    placement_ids?: string[];
+  }[];
+  /**
+   * Client-generated idempotency key for safe retries. If a sync fails without a response, resending with the same idempotency_key guarantees at-most-once execution.
+   */
+  idempotency_key?: string;
+  /**
+   * When true, creatives not included in this sync will be archived. Use with caution for full library replacement. Invalid when creative_ids is provided — delete_missing applies to the entire library scope, not a filtered subset.
+   */
+  delete_missing?: boolean;
+  /**
+   * When true, preview changes without applying them. Returns what would be created/updated/deleted.
+   */
+  dry_run?: boolean;
+  validation_mode?: ValidationMode;
+  push_notification_config?: PushNotificationConfig;
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+
+// sync_creatives response
+/**
+ * Response from creative sync operation. Returns either per-creative results (best-effort processing) OR operation-level errors (complete failure). This enforces atomic semantics at the operation level while allowing per-item failures within successful operations.
+ */
+export type SyncCreativesResponse = SyncCreativesSuccess | SyncCreativesError;
+/**
+ * Action taken for this creative
+ */
+export type CreativeAction = 'created' | 'updated' | 'unchanged' | 'failed' | 'deleted';
+
+/**
+ * Success response - sync operation processed creatives (may include per-item failures)
+ */
+export interface SyncCreativesSuccess {
+  /**
+   * Whether this was a dry run (no actual changes made)
+   */
+  dry_run?: boolean;
+  /**
+   * Results for each creative processed. Items with action='failed' indicate per-item validation/processing failures, not operation-level failures.
+   */
+  creatives: {
+    /**
+     * Creative ID from the request
+     */
+    creative_id: string;
+    account?: Account;
+    action: CreativeAction;
+    /**
+     * Platform-specific ID assigned to the creative
+     */
+    platform_id?: string;
+    /**
+     * Field names that were modified (only present when action='updated')
+     */
+    changes?: string[];
+    /**
+     * Validation or processing errors (only present when action='failed')
+     */
+    errors?: string[];
+    /**
+     * Non-fatal warnings about this creative
+     */
+    warnings?: string[];
+    /**
+     * Preview URL for generative creatives (only present for generative formats)
+     */
+    preview_url?: string;
+    /**
+     * ISO 8601 timestamp when preview link expires (only present when preview_url exists)
+     */
+    expires_at?: string;
+    /**
+     * Package IDs this creative was successfully assigned to (only present when assignments were requested)
+     */
+    assigned_to?: string[];
+    /**
+     * Assignment errors by package ID (only present when assignment failures occurred)
+     */
+    assignment_errors?: {
+      /**
+       * Error message for this package assignment
+       *
+       * This interface was referenced by `undefined`'s JSON-Schema definition
+       * via the `patternProperty` "^[a-zA-Z0-9_-]+$".
+       */
+      [k: string]: string | undefined;
+    };
+  }[];
+  /**
+   * When true, this response contains simulated data from sandbox mode.
+   */
+  sandbox?: boolean;
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Error response - operation failed completely, no creatives were processed
+ */
+export interface SyncCreativesError {
+  /**
+   * Operation-level errors that prevented processing any creatives (e.g., authentication failure, service unavailable, invalid request format)
+   */
+  errors: Error[];
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 
 // get_signals parameters
@@ -9886,6 +9960,18 @@ export interface GetAdCPCapabilitiesResponse {
      * When true, this creative agent can process briefs with compliance requirements (required_disclosures, prohibited_claims) and will validate that disclosures can be satisfied by the target format.
      */
     supports_compliance?: boolean;
+    /**
+     * When true, this agent hosts a creative library and supports list_creatives and creative_id references in build_creative. Creative agents with a library should also implement the accounts protocol (sync_accounts / list_accounts) so buyers can establish access.
+     */
+    has_creative_library?: boolean;
+    /**
+     * When true, this agent can generate creatives from natural language briefs via build_creative. The buyer provides a message with creative direction, and the agent produces a manifest with generated assets. When false, build_creative only supports transformation or library retrieval.
+     */
+    supports_generation?: boolean;
+    /**
+     * When true, this agent can transform or resize existing manifests via build_creative. The buyer provides a creative_manifest and a target_format_id, and the agent adapts the creative to the new format.
+     */
+    supports_transformation?: boolean;
   };
   /**
    * Extension namespaces this agent supports. Buyers can expect meaningful data in ext.{namespace} fields on responses from this agent. Extension schemas are published in the AdCP extension registry.
@@ -9959,6 +10045,10 @@ export interface SyncAccountsRequest {
      * Who should be invoiced. operator: seller invoices the operator (agency or brand buying direct). agent: agent consolidates billing across brands. The seller must either accept this billing model or reject the request.
      */
     billing: 'operator' | 'agent';
+    /**
+     * Payment terms for this account. The seller must either accept these terms or reject the account — terms are never silently remapped. When omitted, the seller applies its default terms.
+     */
+    payment_terms?: 'net_15' | 'net_30' | 'net_45' | 'net_60' | 'net_90' | 'prepay';
     /**
      * When true, provision this as a sandbox account with no real platform calls or billing. Only applicable to implicit accounts (require_operator_auth: false). For explicit accounts, sandbox accounts are pre-existing test accounts discovered via list_accounts.
      */
@@ -10041,9 +10131,9 @@ export interface SyncAccountsSuccess {
      */
     rate_card?: string;
     /**
-     * Payment terms (e.g., 'net_30', 'prepay')
+     * Payment terms agreed for this account. When the account is active, these are the binding terms for all invoices on this account.
      */
-    payment_terms?: string;
+    payment_terms?: 'net_15' | 'net_30' | 'net_45' | 'net_60' | 'net_90' | 'prepay';
     credit_limit?: {
       amount: number;
       currency: string;
@@ -10250,9 +10340,9 @@ export interface GetAccountFinancialsSuccess {
    */
   payment_status?: 'current' | 'past_due' | 'suspended';
   /**
-   * Payment terms in effect (e.g., 'net_30', 'prepay')
+   * Payment terms in effect for this account
    */
-  payment_terms?: string;
+  payment_terms?: 'net_15' | 'net_30' | 'net_45' | 'net_60' | 'net_90' | 'prepay';
   /**
    * Recent invoices. Sellers may limit the number returned.
    */

@@ -209,12 +209,23 @@ describe('TASK_FEATURE_MAP', () => {
   });
 
   test('maps creative management tasks to inline_creative_management', () => {
-    for (const task of ['sync_creatives', 'list_creatives']) {
-      assert.ok(
-        TASK_FEATURE_MAP[task].includes('inline_creative_management'),
-        `${task} should require inline_creative_management`
-      );
-    }
+    // sync_creatives requires media_buy + inline_creative_management
+    assert.ok(
+      TASK_FEATURE_MAP.sync_creatives.includes('inline_creative_management'),
+      'sync_creatives should require inline_creative_management'
+    );
+    // list_creatives and list_creative_formats are intentionally omitted from
+    // TASK_FEATURE_MAP because they serve both media-buy and creative domains
+    assert.strictEqual(
+      TASK_FEATURE_MAP.list_creatives,
+      undefined,
+      'list_creatives should not be in TASK_FEATURE_MAP (dual-domain)'
+    );
+    assert.strictEqual(
+      TASK_FEATURE_MAP.list_creative_formats,
+      undefined,
+      'list_creative_formats should not be in TASK_FEATURE_MAP (dual-domain)'
+    );
   });
 
   test('maps signals tasks to signals protocol', () => {

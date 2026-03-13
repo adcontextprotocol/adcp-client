@@ -178,6 +178,7 @@ export type {
   SyncCreativesResponse,
   ListCreativesRequest,
   ListCreativesResponse,
+  CreativeFilters,
   GetMediaBuyDeliveryRequest,
   GetMediaBuyDeliveryResponse,
   ProvidePerformanceFeedbackRequest,
@@ -280,6 +281,7 @@ export type {
   // Creative Agent Domain
   CreativeBrief,
   CreativeManifest,
+  CreativeVariable,
   BuildCreativeRequest,
   BuildCreativeResponse,
   PreviewCreativeRequest,

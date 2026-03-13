@@ -1,6 +1,6 @@
 #!/usr/bin/env tsx
 
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'fs';
+import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, statSync, rmSync, symlinkSync } from 'fs';
 import path from 'path';
 
 // AdCP Schema Configuration
@@ -75,24 +75,7 @@ async function downloadSchema(
   semanticVersion?: string
 ): Promise<void> {
   const url = `${ADCP_BASE_URL}${schemaRef}`;
-
-  // Strip the version prefix from the schema path to get the local path
-  // e.g., /schemas/2.4.0/core/product.json -> core/product.json
-  // Note: When adcpVersion is "v2", schemas still use "2.4.0" in their $refs
-  let localPath: string;
-  if (schemaRef.startsWith('/schemas/')) {
-    // Remove /schemas/ prefix
-    let relativePath = schemaRef.substring('/schemas/'.length);
-    // Remove version segment (e.g., "2.4.0/" or "v1/" or "v2/")
-    const firstSlash = relativePath.indexOf('/');
-    if (firstSlash > 0) {
-      relativePath = relativePath.substring(firstSlash + 1);
-    }
-    localPath = path.join(cacheDir, relativePath);
-  } else {
-    // Fallback for paths without /schemas/ prefix
-    localPath = path.join(cacheDir, path.basename(schemaRef));
-  }
+  const localPath = refToLocalPath(schemaRef, cacheDir);
 
   // Create directory if it doesn't exist
   mkdirSync(path.dirname(localPath), { recursive: true });
@@ -129,6 +112,53 @@ function extractRefs(schema: any, refs: Set<string> = new Set()): Set<string> {
   }
 
   return refs;
+}
+
+// Convert a $ref path to a local file path within the cache directory
+function refToLocalPath(ref: string, cacheDir: string): string {
+  if (ref.startsWith('/schemas/')) {
+    let relativePath = ref.substring('/schemas/'.length);
+    const firstSlash = relativePath.indexOf('/');
+    if (firstSlash > 0) {
+      relativePath = relativePath.substring(firstSlash + 1);
+    }
+    return path.join(cacheDir, relativePath);
+  }
+  return path.join(cacheDir, path.basename(ref));
+}
+
+// Scan all .json files in cacheDir for $refs that point to missing local files.
+// Returns the set of $ref paths that need downloading.
+// `alreadyAttempted` refs are excluded to avoid retrying known failures.
+function findMissingRefs(cacheDir: string, alreadyAttempted: Set<string>): Set<string> {
+  const missing = new Set<string>();
+
+  function scanDir(dir: string) {
+    for (const entry of readdirSync(dir)) {
+      const fullPath = path.join(dir, entry);
+      const stat = statSync(fullPath);
+      if (stat.isDirectory()) {
+        scanDir(fullPath);
+      } else if (entry.endsWith('.json')) {
+        try {
+          const schema = JSON.parse(readFileSync(fullPath, 'utf8'));
+          const refs = extractRefs(schema);
+          for (const ref of refs) {
+            if (alreadyAttempted.has(ref)) continue;
+            const localPath = refToLocalPath(ref, cacheDir);
+            if (!existsSync(localPath)) {
+              missing.add(ref);
+            }
+          }
+        } catch {
+          // Skip files that can't be parsed
+        }
+      }
+    }
+  }
+
+  scanDir(cacheDir);
+  return missing;
 }
 
 // Sync all schemas for a specific AdCP version
@@ -205,66 +235,44 @@ async function syncSchemas(version?: string): Promise<void> {
   await Promise.allSettled(downloadPromises);
 
   // Recursively download nested $ref dependencies
-  console.log('🔗 Checking for nested $ref dependencies...');
+  // Scan ALL local schema files for $ref chains pointing to files not yet on disk.
+  // This is more robust than tracking "intended" downloads because it catches refs
+  // that were added by newly downloaded schemas at any depth.
+  console.log('🔗 Resolving nested $ref dependencies...');
 
-  const downloadedRefs = new Set<string>(allRefs);
+  const attemptedRefs = new Set<string>(); // track refs we've already tried to download
   let depth = 0;
   const maxDepth = 10; // Prevent infinite loops
 
   while (depth < maxDepth) {
-    const nestedRefs = new Set<string>();
+    // Scan every .json file in the cache for $refs pointing to missing local files
+    const missingRefs = findMissingRefs(versionCacheDir, attemptedRefs);
 
-    // Check all downloaded schemas for nested refs
-    for (const ref of downloadedRefs) {
-      try {
-        // Use the same path extraction logic as downloadSchema
-        let localPath: string;
-        if (ref.startsWith('/schemas/')) {
-          // Remove /schemas/ prefix
-          let relativePath = ref.substring('/schemas/'.length);
-          // Remove version segment (e.g., "2.4.0/" or "v1/" or "v2/")
-          const firstSlash = relativePath.indexOf('/');
-          if (firstSlash > 0) {
-            relativePath = relativePath.substring(firstSlash + 1);
-          }
-          localPath = path.join(versionCacheDir, relativePath);
-        } else {
-          localPath = path.join(versionCacheDir, path.basename(ref));
-        }
-
-        if (existsSync(localPath)) {
-          const schema = JSON.parse(require('fs').readFileSync(localPath, 'utf8'));
-          const refs = extractRefs(schema);
-          refs.forEach(r => {
-            // Only add refs we haven't downloaded yet
-            if (!downloadedRefs.has(r)) {
-              nestedRefs.add(r);
-            }
-          });
-        }
-      } catch (error) {
-        console.warn(`⚠️  Failed to parse ${ref} for nested refs:`, error.message);
-      }
-    }
-
-    if (nestedRefs.size === 0) {
-      console.log(`✅ No more nested references found (depth ${depth})`);
+    if (missingRefs.size === 0) {
+      console.log(`✅ All $ref dependencies resolved (depth ${depth})`);
       break;
     }
 
-    console.log(`📋 Found ${nestedRefs.size} additional nested references at depth ${depth + 1}`);
-    const nestedDownloadPromises = Array.from(nestedRefs).map(ref =>
+    console.log(`📋 Found ${missingRefs.size} missing $ref dependencies at depth ${depth + 1}`);
+    const nestedDownloadPromises = Array.from(missingRefs).map(ref =>
       downloadSchema(ref, versionCacheDir, adcpVersion, semanticVersion)
     );
     await Promise.allSettled(nestedDownloadPromises);
 
-    // Add newly downloaded refs to the set
-    nestedRefs.forEach(r => downloadedRefs.add(r));
+    // Mark these as attempted so we don't retry on next iteration
+    missingRefs.forEach(r => attemptedRefs.add(r));
     depth++;
   }
 
   if (depth >= maxDepth) {
     console.warn(`⚠️  Reached maximum recursion depth (${maxDepth})`);
+  }
+
+  // Final verification: report any remaining unresolved refs
+  const remaining = findMissingRefs(versionCacheDir, new Set());
+  if (remaining.size > 0) {
+    console.warn(`⚠️  ${remaining.size} unresolved $ref(s) after sync:`);
+    remaining.forEach(r => console.warn(`   ❌ ${r}`));
   }
 
   // Create latest symlink (skip if version is already "latest" to avoid circular symlink)
@@ -273,9 +281,9 @@ async function syncSchemas(version?: string): Promise<void> {
     try {
       if (existsSync(latestLink)) {
         // Use rmSync with recursive:true to handle both symlinks and directories
-        require('fs').rmSync(latestLink, { recursive: true, force: true });
+        rmSync(latestLink, { recursive: true, force: true });
       }
-      require('fs').symlinkSync(adcpVersion, latestLink);
+      symlinkSync(adcpVersion, latestLink);
       console.log(`🔗 Created latest symlink -> ${adcpVersion}`);
     } catch (error) {
       console.warn(`⚠️  Failed to create latest symlink:`, error.message);

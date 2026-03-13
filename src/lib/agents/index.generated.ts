@@ -12,10 +12,6 @@ import type {
   ListCreativeFormatsResponse,
   CreateMediaBuyRequest,
   CreateMediaBuyResponse,
-  SyncCreativesRequest,
-  SyncCreativesResponse,
-  ListCreativesRequest,
-  ListCreativesResponse,
   UpdateMediaBuyRequest,
   UpdateMediaBuyResponse,
   GetMediaBuysRequest,
@@ -38,6 +34,10 @@ import type {
   PreviewCreativeResponse,
   GetCreativeDeliveryRequest,
   GetCreativeDeliveryResponse,
+  ListCreativesRequest,
+  ListCreativesResponse,
+  SyncCreativesRequest,
+  SyncCreativesResponse,
   GetSignalsRequest,
   GetSignalsResponse,
   ActivateSignalRequest,
@@ -149,20 +149,6 @@ export class Agent {
   }
 
   /**
-   * Official AdCP sync_creatives tool schema
-   */
-  async syncCreatives(params: SyncCreativesRequest): Promise<SyncCreativesResponse> {
-    return this.callTool<SyncCreativesResponse>('sync_creatives', params);
-  }
-
-  /**
-   * Official AdCP list_creatives tool schema
-   */
-  async listCreatives(params: ListCreativesRequest): Promise<ListCreativesResponse> {
-    return this.callTool<ListCreativesResponse>('list_creatives', params);
-  }
-
-  /**
    * Official AdCP update_media_buy tool schema
    */
   async updateMediaBuy(params: UpdateMediaBuyRequest): Promise<UpdateMediaBuyResponse> {
@@ -237,6 +223,20 @@ export class Agent {
    */
   async getCreativeDelivery(params: GetCreativeDeliveryRequest): Promise<GetCreativeDeliveryResponse> {
     return this.callTool<GetCreativeDeliveryResponse>('get_creative_delivery', params);
+  }
+
+  /**
+   * Official AdCP list_creatives tool schema
+   */
+  async listCreatives(params: ListCreativesRequest): Promise<ListCreativesResponse> {
+    return this.callTool<ListCreativesResponse>('list_creatives', params);
+  }
+
+  /**
+   * Official AdCP sync_creatives tool schema
+   */
+  async syncCreatives(params: SyncCreativesRequest): Promise<SyncCreativesResponse> {
+    return this.callTool<SyncCreativesResponse>('sync_creatives', params);
   }
 
   /**
@@ -439,20 +439,6 @@ export class AgentCollection {
   }
 
   /**
-   * Official AdCP sync_creatives tool schema (across multiple agents)
-   */
-  async syncCreatives(params: SyncCreativesRequest): Promise<SyncCreativesResponse[]> {
-    return this.callToolOnAll<SyncCreativesResponse>('sync_creatives', params);
-  }
-
-  /**
-   * Official AdCP list_creatives tool schema (across multiple agents)
-   */
-  async listCreatives(params: ListCreativesRequest): Promise<ListCreativesResponse[]> {
-    return this.callToolOnAll<ListCreativesResponse>('list_creatives', params);
-  }
-
-  /**
    * Official AdCP get_media_buys tool schema (across multiple agents)
    */
   async getMediaBuys(params: GetMediaBuysRequest): Promise<GetMediaBuysResponse[]> {
@@ -520,6 +506,20 @@ export class AgentCollection {
    */
   async getCreativeDelivery(params: GetCreativeDeliveryRequest): Promise<GetCreativeDeliveryResponse[]> {
     return this.callToolOnAll<GetCreativeDeliveryResponse>('get_creative_delivery', params);
+  }
+
+  /**
+   * Official AdCP list_creatives tool schema (across multiple agents)
+   */
+  async listCreatives(params: ListCreativesRequest): Promise<ListCreativesResponse[]> {
+    return this.callToolOnAll<ListCreativesResponse>('list_creatives', params);
+  }
+
+  /**
+   * Official AdCP sync_creatives tool schema (across multiple agents)
+   */
+  async syncCreatives(params: SyncCreativesRequest): Promise<SyncCreativesResponse[]> {
+    return this.callToolOnAll<SyncCreativesResponse>('sync_creatives', params);
   }
 
   /**

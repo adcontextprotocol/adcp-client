@@ -2,9 +2,16 @@
 
 import { SingleAgentClient } from './SingleAgentClient';
 import type { SingleAgentClientConfig } from './SingleAgentClient';
+import type { InputHandler, TaskOptions } from './ConversationTypes';
 import type { AgentConfig } from '../types';
 import type { FormatID } from '../types/core.generated';
-import type { ListCreativeFormatsRequest, ListCreativeFormatsResponse, Format } from '../types/tools.generated';
+import type {
+  ListCreativeFormatsRequest,
+  ListCreativeFormatsResponse,
+  ListCreativesRequest,
+  ListCreativesResponse,
+  Format,
+} from '../types/tools.generated';
 
 /**
  * Configuration for CreativeAgentClient
@@ -147,6 +154,34 @@ export class CreativeAgentClient {
   async findById(formatId: string): Promise<CreativeFormat | undefined> {
     const allFormats = await this.listFormats();
     return allFormats.find(f => f.format_id.id === formatId);
+  }
+
+  /**
+   * List creatives in the agent's library
+   *
+   * @param params - Optional filtering, sorting, and pagination parameters
+   * @returns Promise resolving to the list creatives response
+   *
+   * @example
+   * ```typescript
+   * const result = await creativeAgent.listCreatives({
+   *   filters: { statuses: ['approved'], has_variables: true },
+   *   include_variables: true
+   * });
+   * ```
+   */
+  async listCreatives(
+    params: ListCreativesRequest = {},
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<ListCreativesResponse> {
+    const result = await this.client.listCreatives(params, inputHandler, options);
+
+    if (!result.success || !result.data) {
+      throw new Error(`Failed to list creatives: ${result.error || 'Unknown error'}`);
+    }
+
+    return result.data;
   }
 
   /**

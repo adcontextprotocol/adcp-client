@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas vlatest
-// Generated at: 2026-03-12T18:26:30.756Z
+// Generated at: 2026-03-13T13:07:47.032Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -368,9 +368,9 @@ export interface Account {
    */
   rate_card?: string;
   /**
-   * Payment terms (e.g., 'net_30', 'prepay')
+   * Payment terms agreed for this account. Binding for all invoices when the account is active.
    */
-  payment_terms?: string;
+  payment_terms?: 'net_15' | 'net_30' | 'net_45' | 'net_60' | 'net_90' | 'prepay';
   /**
    * Maximum outstanding balance allowed
    */
@@ -2943,6 +2943,10 @@ export type AdCPAsyncResponseData =
   | UpdateMediaBuyAsyncWorking
   | UpdateMediaBuyAsyncInputRequired
   | UpdateMediaBuyAsyncSubmitted
+  | BuildCreativeResponse
+  | BuildCreativeAsyncWorking
+  | BuildCreativeAsyncInputRequired
+  | BuildCreativeAsyncSubmitted
   | SyncCreativesResponse
   | SyncCreativesAsyncWorking
   | SyncCreativesAsyncInputRequired
@@ -2959,6 +2963,10 @@ export type CreateMediaBuyResponse = CreateMediaBuySuccess | CreateMediaBuyError
  * Response for completed or failed update_media_buy
  */
 export type UpdateMediaBuyResponse = UpdateMediaBuySuccess | UpdateMediaBuyError;
+/**
+ * Response for completed or failed build_creative
+ */
+export type BuildCreativeResponse = BuildCreativeSuccess | BuildCreativeError;
 /**
  * Response for completed or failed sync_creatives
  */
@@ -3445,6 +3453,112 @@ export interface UpdateMediaBuyAsyncInputRequired {
  * Acknowledgment for submitted update_media_buy
  */
 export interface UpdateMediaBuyAsyncSubmitted {
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Success response - creative manifest generated successfully
+ */
+export interface BuildCreativeSuccess {
+  creative_manifest: CreativeManifest;
+  /**
+   * When true, this response contains simulated data from sandbox mode.
+   */
+  sandbox?: boolean;
+  /**
+   * ISO 8601 timestamp when generated asset URLs in the manifest expire. Set to the earliest expiration across all generated assets. Re-build the creative after this time to get fresh URLs.
+   */
+  expires_at?: string;
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * The generated or transformed creative manifest
+ */
+export interface CreativeManifest {
+  format_id: FormatID;
+  /**
+   * Map of asset IDs to actual asset content. Each key MUST match an asset_id from the format's assets array (e.g., 'banner_image', 'clickthrough_url', 'video_file', 'vast_tag'). The asset_id is the technical identifier used to match assets to format requirements.
+   *
+   * IMPORTANT: Full validation requires format context. The format defines what type each asset_id should be. Standalone schema validation only checks structural conformance — each asset must match at least one valid asset type schema.
+   */
+  assets: {
+    /**
+     * This interface was referenced by `undefined`'s JSON-Schema definition
+     * via the `patternProperty` "^[a-z0-9_]+$".
+     */
+    [k: string]:
+      | ImageAsset
+      | VideoAsset
+      | AudioAsset
+      | VASTAsset
+      | TextAsset
+      | URLAsset
+      | HTMLAsset
+      | JavaScriptAsset
+      | WebhookAsset
+      | CSSAsset
+      | DAASTAsset
+      | MarkdownAsset
+      | BriefAsset
+      | CatalogAsset;
+  };
+  provenance?: Provenance;
+  ext?: ExtensionObject;
+}
+/**
+ * Error response - creative generation failed
+ */
+export interface BuildCreativeError {
+  /**
+   * Array of errors explaining why creative generation failed
+   */
+  errors: Error[];
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Progress data for working build_creative
+ */
+export interface BuildCreativeAsyncWorking {
+  /**
+   * Completion percentage (0-100)
+   */
+  percentage?: number;
+  /**
+   * Current step or phase of the operation (e.g., 'generating_assets', 'resolving_macros', 'rendering_preview')
+   */
+  current_step?: string;
+  /**
+   * Total number of steps in the operation
+   */
+  total_steps?: number;
+  /**
+   * Current step number
+   */
+  step_number?: number;
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Input requirements for build_creative needing user input
+ */
+export interface BuildCreativeAsyncInputRequired {
+  /**
+   * Reason code indicating why input is needed
+   */
+  reason?: 'APPROVAL_REQUIRED' | 'CREATIVE_DIRECTION_NEEDED' | 'ASSET_SELECTION_NEEDED';
+  /**
+   * Optional validation errors or warnings explaining why input is required.
+   */
+  errors?: Error[];
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Acknowledgment for submitted build_creative
+ */
+export interface BuildCreativeAsyncSubmitted {
   context?: ContextObject;
   ext?: ExtensionObject;
 }
