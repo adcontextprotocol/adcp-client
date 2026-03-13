@@ -68,6 +68,14 @@ import type {
   GetMediaBuyArtifactsResponse,
   GetCreativeFeaturesRequest,
   GetCreativeFeaturesResponse,
+  SyncPlansRequest,
+  SyncPlansResponse,
+  ReportPlanOutcomeRequest,
+  ReportPlanOutcomeResponse,
+  GetPlanAuditLogsRequest,
+  GetPlanAuditLogsResponse,
+  CheckGovernanceRequest,
+  CheckGovernanceResponse,
   SIGetOfferingRequest,
   SIGetOfferingResponse,
   SIInitiateSessionRequest,
@@ -345,6 +353,34 @@ export class Agent {
   }
 
   /**
+   * Official AdCP sync_plans tool schema
+   */
+  async syncPlans(params: SyncPlansRequest): Promise<SyncPlansResponse> {
+    return this.callTool<SyncPlansResponse>('sync_plans', params);
+  }
+
+  /**
+   * Official AdCP report_plan_outcome tool schema
+   */
+  async reportPlanOutcome(params: ReportPlanOutcomeRequest): Promise<ReportPlanOutcomeResponse> {
+    return this.callTool<ReportPlanOutcomeResponse>('report_plan_outcome', params);
+  }
+
+  /**
+   * Official AdCP get_plan_audit_logs tool schema
+   */
+  async getPlanAuditLogs(params: GetPlanAuditLogsRequest): Promise<GetPlanAuditLogsResponse> {
+    return this.callTool<GetPlanAuditLogsResponse>('get_plan_audit_logs', params);
+  }
+
+  /**
+   * Official AdCP check_governance tool schema
+   */
+  async checkGovernance(params: CheckGovernanceRequest): Promise<CheckGovernanceResponse> {
+    return this.callTool<CheckGovernanceResponse>('check_governance', params);
+  }
+
+  /**
    * Official AdCP si_get_offering tool schema
    */
   async siGetOffering(params: SIGetOfferingRequest): Promise<SIGetOfferingResponse> {
@@ -590,6 +626,34 @@ export class AgentCollection {
    */
   async getCreativeFeatures(params: GetCreativeFeaturesRequest): Promise<GetCreativeFeaturesResponse[]> {
     return this.callToolOnAll<GetCreativeFeaturesResponse>('get_creative_features', params);
+  }
+
+  /**
+   * Official AdCP sync_plans tool schema (across multiple agents)
+   */
+  async syncPlans(params: SyncPlansRequest): Promise<SyncPlansResponse[]> {
+    return this.callToolOnAll<SyncPlansResponse>('sync_plans', params);
+  }
+
+  /**
+   * Official AdCP report_plan_outcome tool schema (across multiple agents)
+   */
+  async reportPlanOutcome(params: ReportPlanOutcomeRequest): Promise<ReportPlanOutcomeResponse[]> {
+    return this.callToolOnAll<ReportPlanOutcomeResponse>('report_plan_outcome', params);
+  }
+
+  /**
+   * Official AdCP get_plan_audit_logs tool schema (across multiple agents)
+   */
+  async getPlanAuditLogs(params: GetPlanAuditLogsRequest): Promise<GetPlanAuditLogsResponse[]> {
+    return this.callToolOnAll<GetPlanAuditLogsResponse>('get_plan_audit_logs', params);
+  }
+
+  /**
+   * Official AdCP check_governance tool schema (across multiple agents)
+   */
+  async checkGovernance(params: CheckGovernanceRequest): Promise<CheckGovernanceResponse[]> {
+    return this.callToolOnAll<CheckGovernanceResponse>('check_governance', params);
   }
 
   /**

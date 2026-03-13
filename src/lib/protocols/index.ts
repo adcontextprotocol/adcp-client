@@ -9,6 +9,7 @@ import type { AgentConfig } from '../types';
 import type { PushNotificationConfig } from '../types/tools.generated';
 import { getAuthToken } from '../auth';
 import { validateAgentUrl } from '../validation';
+import { withSpan } from '../observability/tracing';
 
 /**
  * Universal protocol client - automatically routes to the correct protocol implementation
@@ -37,44 +38,55 @@ export class ProtocolClient {
     webhookSecret?: string,
     webhookToken?: string
   ): Promise<any> {
-    validateAgentUrl(agent.agent_uri);
+    return withSpan(
+      `adcp.${agent.protocol}.call_tool`,
+      {
+        'adcp.agent_id': agent.id,
+        'adcp.protocol': agent.protocol,
+        'adcp.tool': toolName,
+        'http.url': agent.agent_uri,
+      },
+      async () => {
+        validateAgentUrl(agent.agent_uri);
 
-    const authToken = getAuthToken(agent);
+        const authToken = getAuthToken(agent);
 
-    // Build push_notification_config for ASYNC TASK STATUS notifications
-    // (NOT for reporting_webhook - that stays in args)
-    // Schema: https://adcontextprotocol.org/schemas/v1/core/push-notification-config.json
-    const pushNotificationConfig: PushNotificationConfig | undefined = webhookUrl
-      ? {
-          url: webhookUrl,
-          ...(webhookToken && { token: webhookToken }),
-          authentication: {
-            schemes: ['HMAC-SHA256'],
-            credentials: webhookSecret || 'placeholder_secret_min_32_characters_required',
-          },
+        // Build push_notification_config for ASYNC TASK STATUS notifications
+        // (NOT for reporting_webhook - that stays in args)
+        // Schema: https://adcontextprotocol.org/schemas/v1/core/push-notification-config.json
+        const pushNotificationConfig: PushNotificationConfig | undefined = webhookUrl
+          ? {
+              url: webhookUrl,
+              ...(webhookToken && { token: webhookToken }),
+              authentication: {
+                schemes: ['HMAC-SHA256'],
+                credentials: webhookSecret || 'placeholder_secret_min_32_characters_required',
+              },
+            }
+          : undefined;
+
+        if (agent.protocol === 'mcp') {
+          // For MCP, include push_notification_config in tool arguments (MCP spec)
+          const argsWithWebhook = pushNotificationConfig
+            ? { ...args, push_notification_config: pushNotificationConfig }
+            : args;
+          return callMCPTool(agent.agent_uri, toolName, argsWithWebhook, authToken, debugLogs, agent.headers);
+        } else if (agent.protocol === 'a2a') {
+          // For A2A, pass pushNotificationConfig separately (not in skill parameters)
+          return callA2ATool(
+            agent.agent_uri,
+            toolName,
+            args, // This maps to 'parameters' in callA2ATool
+            authToken,
+            debugLogs,
+            pushNotificationConfig,
+            agent.headers
+          );
+        } else {
+          throw new Error(`Unsupported protocol: ${agent.protocol}`);
         }
-      : undefined;
-
-    if (agent.protocol === 'mcp') {
-      // For MCP, include push_notification_config in tool arguments (MCP spec)
-      const argsWithWebhook = pushNotificationConfig
-        ? { ...args, push_notification_config: pushNotificationConfig }
-        : args;
-      return callMCPTool(agent.agent_uri, toolName, argsWithWebhook, authToken, debugLogs, agent.headers);
-    } else if (agent.protocol === 'a2a') {
-      // For A2A, pass pushNotificationConfig separately (not in skill parameters)
-      return callA2ATool(
-        agent.agent_uri,
-        toolName,
-        args, // This maps to 'parameters' in callA2ATool
-        authToken,
-        debugLogs,
-        pushNotificationConfig,
-        agent.headers
-      );
-    } else {
-      throw new Error(`Unsupported protocol: ${agent.protocol}`);
-    }
+      }
+    );
   }
 }
 

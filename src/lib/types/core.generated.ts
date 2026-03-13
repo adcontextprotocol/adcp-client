@@ -1,11 +1,15 @@
 // Generated AdCP core types from official schemas vlatest
-// Generated at: 2026-03-13T14:10:43.891Z
+// Generated at: 2026-03-13T19:50:59.437Z
 
 // MEDIA-BUY SCHEMA
 /**
  * Brand identifier within the house portfolio. Optional for single-brand domains.
  */
 export type BrandID = string;
+/**
+ * Authentication schemes for push notification endpoints
+ */
+export type AuthenticationScheme = 'Bearer' | 'HMAC-SHA256';
 /**
  * Status of a media buy.
  */
@@ -399,6 +403,29 @@ export interface Account {
    * How the seller scoped this account. operator: shared across all brands for this operator. brand: shared across all operators for this brand. operator_brand: dedicated to a specific operator+brand combination. agent: the agent's default account with no brand or operator association.
    */
   account_scope?: 'operator' | 'brand' | 'operator_brand' | 'agent';
+  /**
+   * Governance agent endpoints for this account. When present, the seller MUST call these agents for governance approval before confirming media buy requests. Each agent can be scoped to specific validation categories. All applicable agents must approve for the action to proceed (unanimous approval).
+   */
+  governance_agents?: {
+    /**
+     * Governance agent endpoint URL.
+     */
+    url: string;
+    authentication: {
+      /**
+       * @maxItems 1
+       */
+      schemes: [] | [AuthenticationScheme];
+      /**
+       * Authentication credential (e.g., Bearer token).
+       */
+      credentials: string;
+    };
+    /**
+     * Governance categories this agent handles (e.g., ['budget_authority', 'strategic_alignment']). When omitted, the agent handles all categories.
+     */
+    categories?: string[];
+  }[];
   /**
    * When true, this is a sandbox account — no real platform calls, no real spend. For explicit accounts (require_operator_auth: true), sandbox accounts are pre-existing test accounts on the platform discovered via list_accounts. For implicit accounts, sandbox is part of the natural key: the same brand/operator pair can have both a production and sandbox account.
    */
@@ -2069,9 +2096,9 @@ export interface Product {
   forecast?: DeliveryForecast;
   outcome_measurement?: OutcomeMeasurement;
   /**
-   * Measurement provider and methodology for delivery metrics. The buyer accepts the declared provider as the source of truth for the buy. REQUIRED for all products.
+   * Measurement provider and methodology for delivery metrics. The buyer accepts the declared provider as the source of truth for the buy. When absent, buyers should apply their own measurement defaults.
    */
-  delivery_measurement: {
+  delivery_measurement?: {
     /**
      * Measurement provider(s) used for this product (e.g., 'Google Ad Manager with IAS viewability', 'Nielsen DAR', 'Geopath for DOOH impressions')
      */
@@ -2206,6 +2233,10 @@ export interface Product {
      */
     manifest: {};
   };
+  /**
+   * Registry policy IDs the seller enforces for this product. Enforcement level comes from the policy registry. Buyers can filter products by required policies.
+   */
+  enforced_policies?: string[];
   ext?: ExtensionObject;
 }
 /**
@@ -2968,6 +2999,152 @@ export type UpdateMediaBuyResponse = UpdateMediaBuySuccess | UpdateMediaBuyError
  */
 export type BuildCreativeResponse = BuildCreativeSuccess | BuildCreativeMultiSuccess | BuildCreativeError;
 /**
+ * A single rendered piece of a creative preview with discriminated output format
+ */
+export type PreviewRender =
+  | {
+      /**
+       * Unique identifier for this rendered piece within the variant
+       */
+      render_id: string;
+      /**
+       * Discriminator indicating preview_url is provided
+       */
+      output_format: 'url';
+      /**
+       * URL to an HTML page that renders this piece. Can be embedded in an iframe.
+       */
+      preview_url: string;
+      /**
+       * Semantic role of this rendered piece. Use 'primary' for main content, 'companion' for associated banners, descriptive strings for device variants or custom roles.
+       */
+      role: string;
+      /**
+       * Dimensions for this rendered piece
+       */
+      dimensions?: {
+        width: number;
+        height: number;
+      };
+      /**
+       * Optional security and embedding metadata for safe iframe integration
+       */
+      embedding?: {
+        /**
+         * Recommended iframe sandbox attribute value (e.g., 'allow-scripts allow-same-origin')
+         */
+        recommended_sandbox?: string;
+        /**
+         * Whether this output requires HTTPS for secure embedding
+         */
+        requires_https?: boolean;
+        /**
+         * Whether this output supports fullscreen mode
+         */
+        supports_fullscreen?: boolean;
+        /**
+         * Content Security Policy requirements for embedding
+         */
+        csp_policy?: string;
+      };
+    }
+  | {
+      /**
+       * Unique identifier for this rendered piece within the variant
+       */
+      render_id: string;
+      /**
+       * Discriminator indicating preview_html is provided
+       */
+      output_format: 'html';
+      /**
+       * Raw HTML for this rendered piece. Can be embedded directly in the page without iframe. Security warning: Only use with trusted creative agents as this bypasses iframe sandboxing.
+       */
+      preview_html: string;
+      /**
+       * Semantic role of this rendered piece. Use 'primary' for main content, 'companion' for associated banners, descriptive strings for device variants or custom roles.
+       */
+      role: string;
+      /**
+       * Dimensions for this rendered piece
+       */
+      dimensions?: {
+        width: number;
+        height: number;
+      };
+      /**
+       * Optional security and embedding metadata
+       */
+      embedding?: {
+        /**
+         * Recommended iframe sandbox attribute value (e.g., 'allow-scripts allow-same-origin')
+         */
+        recommended_sandbox?: string;
+        /**
+         * Whether this output requires HTTPS for secure embedding
+         */
+        requires_https?: boolean;
+        /**
+         * Whether this output supports fullscreen mode
+         */
+        supports_fullscreen?: boolean;
+        /**
+         * Content Security Policy requirements for embedding
+         */
+        csp_policy?: string;
+      };
+    }
+  | {
+      /**
+       * Unique identifier for this rendered piece within the variant
+       */
+      render_id: string;
+      /**
+       * Discriminator indicating both preview_url and preview_html are provided
+       */
+      output_format: 'both';
+      /**
+       * URL to an HTML page that renders this piece. Can be embedded in an iframe.
+       */
+      preview_url: string;
+      /**
+       * Raw HTML for this rendered piece. Can be embedded directly in the page without iframe. Security warning: Only use with trusted creative agents as this bypasses iframe sandboxing.
+       */
+      preview_html: string;
+      /**
+       * Semantic role of this rendered piece. Use 'primary' for main content, 'companion' for associated banners, descriptive strings for device variants or custom roles.
+       */
+      role: string;
+      /**
+       * Dimensions for this rendered piece
+       */
+      dimensions?: {
+        width: number;
+        height: number;
+      };
+      /**
+       * Optional security and embedding metadata for safe iframe integration
+       */
+      embedding?: {
+        /**
+         * Recommended iframe sandbox attribute value (e.g., 'allow-scripts allow-same-origin')
+         */
+        recommended_sandbox?: string;
+        /**
+         * Whether this output requires HTTPS for secure embedding
+         */
+        requires_https?: boolean;
+        /**
+         * Whether this output supports fullscreen mode
+         */
+        supports_fullscreen?: boolean;
+        /**
+         * Content Security Policy requirements for embedding
+         */
+        csp_policy?: string;
+      };
+    };
+/**
  * Response for completed or failed sync_creatives
  */
 export type SyncCreativesResponse = SyncCreativesSuccess | SyncCreativesError;
@@ -3314,11 +3491,60 @@ export interface CreateMediaBuySuccess {
    * Array of created packages with complete state information
    */
   packages: Package[];
+  planned_delivery?: PlannedDelivery;
   /**
    * When true, this response contains simulated data from sandbox mode.
    */
   sandbox?: boolean;
   context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * The seller's interpreted delivery parameters. Describes what the seller will actually run -- geo, channels, flight dates, frequency caps, and budget. Present when the account has governance_agents or when the seller chooses to provide delivery transparency.
+ */
+export interface PlannedDelivery {
+  /**
+   * Geographic targeting the seller will apply.
+   */
+  geo?: {
+    /**
+     * ISO 3166-1 alpha-2 country codes where ads will deliver.
+     */
+    countries?: string[];
+    /**
+     * ISO 3166-2 subdivision codes where ads will deliver.
+     */
+    regions?: string[];
+  };
+  /**
+   * Channels the seller will deliver on.
+   */
+  channels?: MediaChannel[];
+  /**
+   * Actual flight start the seller will use.
+   */
+  start_time?: string;
+  /**
+   * Actual flight end the seller will use.
+   */
+  end_time?: string;
+  frequency_cap?: FrequencyCap;
+  /**
+   * Human-readable summary of the audience the seller will target.
+   */
+  audience_summary?: string;
+  /**
+   * Total budget the seller will deliver against.
+   */
+  total_budget?: number;
+  /**
+   * ISO 4217 currency code for the budget.
+   */
+  currency?: string;
+  /**
+   * Registry policy IDs the seller will enforce for this delivery.
+   */
+  enforced_policies?: string[];
   ext?: ExtensionObject;
 }
 /**
@@ -3469,6 +3695,52 @@ export interface BuildCreativeSuccess {
    * ISO 8601 timestamp when generated asset URLs in the manifest expire. Set to the earliest expiration across all generated assets. Re-build the creative after this time to get fresh URLs.
    */
   expires_at?: string;
+  /**
+   * Preview renders included when the request set include_preview to true and the agent supports it. Contains the same content fields as a preview_creative single response (previews, interactive_url, expires_at) minus the response_type discriminator, so clients can reuse the same preview rendering logic.
+   */
+  preview?: {
+    /**
+     * Array of preview variants. Each preview corresponds to an input set from preview_inputs, or a single default preview if no inputs were provided.
+     */
+    previews: {
+      /**
+       * Unique identifier for this preview variant
+       */
+      preview_id: string;
+      /**
+       * Array of rendered pieces for this preview variant. Most formats render as a single piece. Companion ad formats render as multiple pieces.
+       */
+      renders: PreviewRender[];
+      /**
+       * The input parameters that generated this preview variant. Echoes back the request input or shows defaults used.
+       */
+      input: {
+        /**
+         * Human-readable name for this variant
+         */
+        name: string;
+        /**
+         * Macro values applied to this variant
+         */
+        macros?: {
+          [k: string]: string | undefined;
+        };
+        /**
+         * Context description applied to this variant
+         */
+        context_description?: string;
+      };
+    }[];
+    /**
+     * Optional URL to an interactive testing page that shows all preview variants with controls to switch between them.
+     */
+    interactive_url?: string;
+    /**
+     * ISO 8601 timestamp when preview URLs expire. May differ from the manifest's expires_at.
+     */
+    expires_at: string;
+  };
+  preview_error?: Error;
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -3522,6 +3794,53 @@ export interface BuildCreativeMultiSuccess {
    * ISO 8601 timestamp when the earliest generated asset URL expires across all manifests. Re-build after this time to get fresh URLs.
    */
   expires_at?: string;
+  /**
+   * Preview renders included when the request set include_preview to true and the agent supports it. Contains one default preview per requested format. preview_inputs is ignored for multi-format requests.
+   */
+  preview?: {
+    /**
+     * Array of preview entries, one per requested format. Array order matches creative_manifests. Each entry includes a format_id for explicit correlation.
+     */
+    previews: {
+      /**
+       * Unique identifier for this preview
+       */
+      preview_id: string;
+      format_id: FormatID;
+      /**
+       * Array of rendered pieces for this format's preview. Most formats render as a single piece. Companion ad formats render as multiple pieces.
+       */
+      renders: PreviewRender[];
+      /**
+       * The input parameters that generated this preview. For multi-format responses, this is always a default input.
+       */
+      input: {
+        /**
+         * Human-readable name for this preview
+         */
+        name: string;
+        /**
+         * Macro values applied to this preview
+         */
+        macros?: {
+          [k: string]: string | undefined;
+        };
+        /**
+         * Context description applied to this preview
+         */
+        context_description?: string;
+      };
+    }[];
+    /**
+     * Optional URL to an interactive testing page that shows all format previews with controls to switch between them.
+     */
+    interactive_url?: string;
+    /**
+     * ISO 8601 timestamp when preview URLs expire. May differ from the manifest's expires_at.
+     */
+    expires_at: string;
+  };
+  preview_error?: Error;
   context?: ContextObject;
   ext?: ExtensionObject;
 }

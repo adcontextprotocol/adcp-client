@@ -514,6 +514,17 @@ export {
   VERSION_INFO,
 } from './version';
 
+// ====== OBSERVABILITY ======
+// OpenTelemetry tracing utilities (no-op if @opentelemetry/api not installed)
+export {
+  getTracer,
+  isTracingEnabled,
+  injectTraceHeaders,
+  withSpan,
+  addSpanAttributes,
+  recordSpanException,
+} from './observability';
+
 // ====== AGENT CLASSES ======
 // Primary agent interface - returns raw AdCP responses
 export { Agent, AgentCollection } from './agents/index.generated';

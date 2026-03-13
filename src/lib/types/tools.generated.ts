@@ -109,6 +109,10 @@ export type GetProductsRequest = {
   time_budget?: Duration;
   pagination?: PaginationRequest;
   context?: ContextObject;
+  /**
+   * Registry policy IDs that the buyer requires to be enforced for products in this response. Sellers filter products to only those that comply with or already enforce the requested policies.
+   */
+  required_policies?: string[];
   ext?: ExtensionObject;
 } & (
   | {
@@ -925,9 +929,9 @@ export interface Product {
   forecast?: DeliveryForecast;
   outcome_measurement?: OutcomeMeasurement;
   /**
-   * Measurement provider and methodology for delivery metrics. The buyer accepts the declared provider as the source of truth for the buy. REQUIRED for all products.
+   * Measurement provider and methodology for delivery metrics. The buyer accepts the declared provider as the source of truth for the buy. When absent, buyers should apply their own measurement defaults.
    */
-  delivery_measurement: {
+  delivery_measurement?: {
     /**
      * Measurement provider(s) used for this product (e.g., 'Google Ad Manager with IAS viewability', 'Nielsen DAR', 'Geopath for DOOH impressions')
      */
@@ -1062,6 +1066,10 @@ export interface Product {
      */
     manifest: {};
   };
+  /**
+   * Registry policy IDs the seller enforces for this product. Enforcement level comes from the policy registry. Buyers can filter products by required policies.
+   */
+  enforced_policies?: string[];
   ext?: ExtensionObject;
 }
 /**
@@ -2720,6 +2728,10 @@ export interface CreateMediaBuyRequest {
    * Buyer's campaign reference label. Groups related discovery and buy operations under a single campaign for CRM and ad server correlation (e.g., 'NovaDrink_Meals_Q2').
    */
   buyer_campaign_ref?: string;
+  /**
+   * Campaign governance plan identifier. Required when the account has governance_agents. The seller includes this in the committed check_governance request so the governance agent can validate against the correct plan.
+   */
+  plan_id?: string;
   account: AccountReference;
   /**
    * ID of a proposal from get_products to execute. When provided with total_budget, the publisher converts the proposal's allocation percentages into packages automatically. Alternative to providing packages array.
@@ -3814,6 +3826,7 @@ export interface CreateMediaBuySuccess {
    * Array of created packages with complete state information
    */
   packages: Package[];
+  planned_delivery?: PlannedDelivery;
   /**
    * When true, this response contains simulated data from sandbox mode.
    */
@@ -3891,6 +3904,29 @@ export interface Account {
    */
   account_scope?: 'operator' | 'brand' | 'operator_brand' | 'agent';
   /**
+   * Governance agent endpoints for this account. When present, the seller MUST call these agents for governance approval before confirming media buy requests. Each agent can be scoped to specific validation categories. All applicable agents must approve for the action to proceed (unanimous approval).
+   */
+  governance_agents?: {
+    /**
+     * Governance agent endpoint URL.
+     */
+    url: string;
+    authentication: {
+      /**
+       * @maxItems 1
+       */
+      schemes: [] | [AuthenticationScheme];
+      /**
+       * Authentication credential (e.g., Bearer token).
+       */
+      credentials: string;
+    };
+    /**
+     * Governance categories this agent handles (e.g., ['budget_authority', 'strategic_alignment']). When omitted, the agent handles all categories.
+     */
+    categories?: string[];
+  }[];
+  /**
    * When true, this is a sandbox account — no real platform calls, no real spend. For explicit accounts (require_operator_auth: true), sandbox accounts are pre-existing test accounts on the platform discovered via list_accounts. For implicit accounts, sandbox is part of the natural key: the same brand/operator pair can have both a production and sandbox account.
    */
   sandbox?: boolean;
@@ -3962,6 +3998,54 @@ export interface Package {
    * Whether this package is paused by the buyer. Paused packages do not deliver impressions. Defaults to false.
    */
   paused?: boolean;
+  ext?: ExtensionObject;
+}
+/**
+ * The seller's interpreted delivery parameters. Describes what the seller will actually run -- geo, channels, flight dates, frequency caps, and budget. Present when the account has governance_agents or when the seller chooses to provide delivery transparency.
+ */
+export interface PlannedDelivery {
+  /**
+   * Geographic targeting the seller will apply.
+   */
+  geo?: {
+    /**
+     * ISO 3166-1 alpha-2 country codes where ads will deliver.
+     */
+    countries?: string[];
+    /**
+     * ISO 3166-2 subdivision codes where ads will deliver.
+     */
+    regions?: string[];
+  };
+  /**
+   * Channels the seller will deliver on.
+   */
+  channels?: MediaChannel[];
+  /**
+   * Actual flight start the seller will use.
+   */
+  start_time?: string;
+  /**
+   * Actual flight end the seller will use.
+   */
+  end_time?: string;
+  frequency_cap?: FrequencyCap;
+  /**
+   * Human-readable summary of the audience the seller will target.
+   */
+  audience_summary?: string;
+  /**
+   * Total budget the seller will deliver against.
+   */
+  total_budget?: number;
+  /**
+   * ISO 4217 currency code for the budget.
+   */
+  currency?: string;
+  /**
+   * Registry policy IDs the seller will enforce for this delivery.
+   */
+  enforced_policies?: string[];
   ext?: ExtensionObject;
 }
 /**
@@ -5912,6 +5996,30 @@ export type BuildCreativeRequest = {
    */
   item_limit?: number;
   /**
+   * When true, requests the creative agent to include preview renders in the response alongside the manifest. Agents that support this return a 'preview' object in the response using the same structure as preview_creative. Agents that do not support inline preview simply omit the field. This avoids a separate preview_creative round trip for platforms that generate previews as a byproduct of building.
+   */
+  include_preview?: boolean;
+  /**
+   * Input sets for preview generation when include_preview is true. Each input set defines macros and context values for one preview variant. If include_preview is true but this is omitted, the agent generates a single default preview. Only supported with target_format_id (single-format requests). Ignored when using target_format_ids — multi-format requests generate one default preview per format. Ignored when include_preview is false or omitted.
+   */
+  preview_inputs?: {
+    /**
+     * Human-readable name for this input set (e.g., 'Sunny morning on mobile', 'Evening podcast ad')
+     */
+    name: string;
+    /**
+     * Macro values to use for this preview variant
+     */
+    macros?: {
+      [k: string]: string | undefined;
+    };
+    /**
+     * Natural language description of the context for AI-generated content
+     */
+    context_description?: string;
+  }[];
+  preview_output_format?: PreviewOutputFormat;
+  /**
    * Macro values to pre-substitute into the output manifest's assets. Keys are universal macro names (e.g., CLICK_URL, CACHEBUSTER); values are the substitution strings. The creative agent translates universal macros to its platform's native syntax. Substitution is literal — all occurrences of each macro in output assets are replaced with the provided value. The caller is responsible for URL-encoding values if the output context requires it. Macros not provided here remain as {MACRO} placeholders for the sales agent to resolve at serve time. Creative agents MUST ignore keys they do not recognize — unknown macro names are not an error.
    */
   macro_values?: {
@@ -5931,6 +6039,10 @@ export type BuildCreativeRequest = {
  * Quality tier for generation. 'draft' produces fast, lower-fidelity output for iteration and review. 'production' produces full-quality output for final delivery. If omitted, the creative agent uses its own default. For non-generative transforms (e.g., format resizing), creative agents MAY ignore this field.
  */
 export type CreativeQuality = 'draft' | 'production';
+/**
+ * Output format for preview renders when include_preview is true. 'url' returns preview_url (iframe-embeddable URL), 'html' returns preview_html (raw HTML). Ignored when include_preview is false or omitted.
+ */
+export type PreviewOutputFormat = 'url' | 'html';
 
 /**
  * Creative manifest to transform or generate from. For pure generation, this should include the target format_id and any required input assets. For transformation (e.g., resizing, reformatting), this is the complete creative to adapt. When creative_id is provided, the agent resolves the creative from its library and this field is ignored.
@@ -5972,172 +6084,6 @@ export interface CreativeManifest {
  * Response containing the transformed or generated creative manifest(s), ready for use with preview_creative or sync_creatives. Returns either a single creative_manifest, an array of creative_manifests (for multi-format requests), or error information.
  */
 export type BuildCreativeResponse = BuildCreativeSuccess | BuildCreativeMultiSuccess | BuildCreativeError;
-/**
- * Single-format success response. Returned when the request used target_format_id.
- */
-export interface BuildCreativeSuccess {
-  creative_manifest: CreativeManifest;
-  /**
-   * When true, this response contains simulated data from sandbox mode.
-   */
-  sandbox?: boolean;
-  /**
-   * ISO 8601 timestamp when generated asset URLs in the manifest expire. Set to the earliest expiration across all generated assets. Re-build the creative after this time to get fresh URLs.
-   */
-  expires_at?: string;
-  context?: ContextObject;
-  ext?: ExtensionObject;
-}
-/**
- * Multi-format success response. Returned when the request used target_format_ids. Contains one manifest per requested format. Multi-format requests are atomic — all formats must succeed or the entire request fails with an error response. Array order corresponds to the target_format_ids request order.
- */
-export interface BuildCreativeMultiSuccess {
-  /**
-   * Array of generated creative manifests, one per requested format. Each manifest contains its own format_id identifying which format it was generated for.
-   */
-  creative_manifests: CreativeManifest[];
-  /**
-   * When true, this response contains simulated data from sandbox mode.
-   */
-  sandbox?: boolean;
-  /**
-   * ISO 8601 timestamp when the earliest generated asset URL expires across all manifests. Re-build after this time to get fresh URLs.
-   */
-  expires_at?: string;
-  context?: ContextObject;
-  ext?: ExtensionObject;
-}
-/**
- * Error response - creative generation failed
- */
-export interface BuildCreativeError {
-  /**
-   * Array of errors explaining why creative generation failed
-   */
-  errors: Error[];
-  context?: ContextObject;
-  ext?: ExtensionObject;
-}
-
-// preview_creative parameters
-/**
- * Request to generate previews of one or more creative manifests. Accepts either a single creative request or an array of requests for batch processing.
- */
-export type PreviewCreativeRequest =
-  | {
-      /**
-       * Discriminator indicating this is a single preview request
-       */
-      request_type: 'single';
-      format_id?: FormatID;
-      creative_manifest: CreativeManifest;
-      /**
-       * Array of input sets for generating multiple preview variants. Each input set defines macros and context values for one preview rendering. If not provided, creative agent will generate default previews.
-       */
-      inputs?: {
-        /**
-         * Human-readable name for this input set (e.g., 'Sunny morning on mobile', 'Evening podcast ad', 'Desktop dark mode')
-         */
-        name: string;
-        /**
-         * Macro values to use for this preview. Supports all universal macros from the format's supported_macros list. See docs/creative/universal-macros.md for available macros.
-         */
-        macros?: {
-          [k: string]: string | undefined;
-        };
-        /**
-         * Natural language description of the context for AI-generated content (e.g., 'User just searched for running shoes', 'Podcast discussing weather patterns', 'Article about electric vehicles')
-         */
-        context_description?: string;
-      }[];
-      /**
-       * Specific template ID for custom format rendering
-       */
-      template_id?: string;
-      output_format?: PreviewOutputFormat;
-      /**
-       * Maximum number of catalog items to render in the preview. For catalog-driven generative formats, caps how many items are rendered per preview variant. When item_limit exceeds the format's max_items, the creative agent SHOULD use the lesser of the two. Ignored when the manifest contains no catalog assets. Creative agents SHOULD default to a reasonable sample when omitted and the catalog is large.
-       */
-      item_limit?: number;
-      context?: ContextObject;
-      ext?: ExtensionObject;
-    }
-  | {
-      /**
-       * Discriminator indicating this is a batch preview request
-       */
-      request_type: 'batch';
-      /**
-       * Array of preview requests (1-50 items). Each follows the single request structure.
-       *
-       * @maxItems 50
-       */
-      requests: {
-        format_id?: FormatID;
-        creative_manifest: CreativeManifest;
-        /**
-         * Array of input sets for generating multiple preview variants
-         */
-        inputs?: {
-          /**
-           * Human-readable name for this input set
-           */
-          name: string;
-          /**
-           * Macro values to use for this preview
-           */
-          macros?: {
-            [k: string]: string | undefined;
-          };
-          /**
-           * Natural language description of the context for AI-generated content
-           */
-          context_description?: string;
-        }[];
-        /**
-         * Specific template ID for custom format rendering
-         */
-        template_id?: string;
-        output_format?: PreviewOutputFormat;
-        /**
-         * Maximum number of catalog items to render in this preview.
-         */
-        item_limit?: number;
-      }[];
-      output_format?: PreviewOutputFormat;
-      context?: ContextObject;
-      ext?: ExtensionObject;
-    }
-  | {
-      /**
-       * Discriminator indicating this is a variant preview request
-       */
-      request_type: 'variant';
-      /**
-       * Platform-assigned variant identifier from get_creative_delivery response
-       */
-      variant_id: string;
-      /**
-       * Creative identifier for context
-       */
-      creative_id?: string;
-      output_format?: PreviewOutputFormat;
-      context?: ContextObject;
-      ext?: ExtensionObject;
-    };
-/**
- * Output format for previews. 'url' returns preview_url (iframe-embeddable URL), 'html' returns preview_html (raw HTML for direct embedding). Default: 'url' for backward compatibility.
- */
-export type PreviewOutputFormat = 'url' | 'html';
-
-// preview_creative response
-/**
- * Response containing preview links for one or more creatives. Format matches the request: single preview response for single requests, batch results for batch requests.
- */
-export type PreviewCreativeResponse =
-  | PreviewCreativeSingleResponse
-  | PreviewCreativeBatchResponse
-  | PreviewCreativeVariantResponse;
 /**
  * A single rendered piece of a creative preview with discriminated output format
  */
@@ -6284,6 +6230,262 @@ export type PreviewRender =
         csp_policy?: string;
       };
     };
+
+/**
+ * Single-format success response. Returned when the request used target_format_id.
+ */
+export interface BuildCreativeSuccess {
+  creative_manifest: CreativeManifest;
+  /**
+   * When true, this response contains simulated data from sandbox mode.
+   */
+  sandbox?: boolean;
+  /**
+   * ISO 8601 timestamp when generated asset URLs in the manifest expire. Set to the earliest expiration across all generated assets. Re-build the creative after this time to get fresh URLs.
+   */
+  expires_at?: string;
+  /**
+   * Preview renders included when the request set include_preview to true and the agent supports it. Contains the same content fields as a preview_creative single response (previews, interactive_url, expires_at) minus the response_type discriminator, so clients can reuse the same preview rendering logic.
+   */
+  preview?: {
+    /**
+     * Array of preview variants. Each preview corresponds to an input set from preview_inputs, or a single default preview if no inputs were provided.
+     */
+    previews: {
+      /**
+       * Unique identifier for this preview variant
+       */
+      preview_id: string;
+      /**
+       * Array of rendered pieces for this preview variant. Most formats render as a single piece. Companion ad formats render as multiple pieces.
+       */
+      renders: PreviewRender[];
+      /**
+       * The input parameters that generated this preview variant. Echoes back the request input or shows defaults used.
+       */
+      input: {
+        /**
+         * Human-readable name for this variant
+         */
+        name: string;
+        /**
+         * Macro values applied to this variant
+         */
+        macros?: {
+          [k: string]: string | undefined;
+        };
+        /**
+         * Context description applied to this variant
+         */
+        context_description?: string;
+      };
+    }[];
+    /**
+     * Optional URL to an interactive testing page that shows all preview variants with controls to switch between them.
+     */
+    interactive_url?: string;
+    /**
+     * ISO 8601 timestamp when preview URLs expire. May differ from the manifest's expires_at.
+     */
+    expires_at: string;
+  };
+  preview_error?: Error;
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Multi-format success response. Returned when the request used target_format_ids. Contains one manifest per requested format. Multi-format requests are atomic — all formats must succeed or the entire request fails with an error response. Array order corresponds to the target_format_ids request order.
+ */
+export interface BuildCreativeMultiSuccess {
+  /**
+   * Array of generated creative manifests, one per requested format. Each manifest contains its own format_id identifying which format it was generated for.
+   */
+  creative_manifests: CreativeManifest[];
+  /**
+   * When true, this response contains simulated data from sandbox mode.
+   */
+  sandbox?: boolean;
+  /**
+   * ISO 8601 timestamp when the earliest generated asset URL expires across all manifests. Re-build after this time to get fresh URLs.
+   */
+  expires_at?: string;
+  /**
+   * Preview renders included when the request set include_preview to true and the agent supports it. Contains one default preview per requested format. preview_inputs is ignored for multi-format requests.
+   */
+  preview?: {
+    /**
+     * Array of preview entries, one per requested format. Array order matches creative_manifests. Each entry includes a format_id for explicit correlation.
+     */
+    previews: {
+      /**
+       * Unique identifier for this preview
+       */
+      preview_id: string;
+      format_id: FormatID;
+      /**
+       * Array of rendered pieces for this format's preview. Most formats render as a single piece. Companion ad formats render as multiple pieces.
+       */
+      renders: PreviewRender[];
+      /**
+       * The input parameters that generated this preview. For multi-format responses, this is always a default input.
+       */
+      input: {
+        /**
+         * Human-readable name for this preview
+         */
+        name: string;
+        /**
+         * Macro values applied to this preview
+         */
+        macros?: {
+          [k: string]: string | undefined;
+        };
+        /**
+         * Context description applied to this preview
+         */
+        context_description?: string;
+      };
+    }[];
+    /**
+     * Optional URL to an interactive testing page that shows all format previews with controls to switch between them.
+     */
+    interactive_url?: string;
+    /**
+     * ISO 8601 timestamp when preview URLs expire. May differ from the manifest's expires_at.
+     */
+    expires_at: string;
+  };
+  preview_error?: Error;
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Error response - creative generation failed
+ */
+export interface BuildCreativeError {
+  /**
+   * Array of errors explaining why creative generation failed
+   */
+  errors: Error[];
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+
+// preview_creative parameters
+/**
+ * Request to generate previews of one or more creative manifests. Accepts either a single creative request or an array of requests for batch processing.
+ */
+export type PreviewCreativeRequest =
+  | {
+      /**
+       * Discriminator indicating this is a single preview request
+       */
+      request_type: 'single';
+      format_id?: FormatID;
+      creative_manifest: CreativeManifest;
+      /**
+       * Array of input sets for generating multiple preview variants. Each input set defines macros and context values for one preview rendering. If not provided, creative agent will generate default previews.
+       */
+      inputs?: {
+        /**
+         * Human-readable name for this input set (e.g., 'Sunny morning on mobile', 'Evening podcast ad', 'Desktop dark mode')
+         */
+        name: string;
+        /**
+         * Macro values to use for this preview. Supports all universal macros from the format's supported_macros list. See docs/creative/universal-macros.md for available macros.
+         */
+        macros?: {
+          [k: string]: string | undefined;
+        };
+        /**
+         * Natural language description of the context for AI-generated content (e.g., 'User just searched for running shoes', 'Podcast discussing weather patterns', 'Article about electric vehicles')
+         */
+        context_description?: string;
+      }[];
+      /**
+       * Specific template ID for custom format rendering
+       */
+      template_id?: string;
+      output_format?: PreviewOutputFormat;
+      /**
+       * Maximum number of catalog items to render in the preview. For catalog-driven generative formats, caps how many items are rendered per preview variant. When item_limit exceeds the format's max_items, the creative agent SHOULD use the lesser of the two. Ignored when the manifest contains no catalog assets. Creative agents SHOULD default to a reasonable sample when omitted and the catalog is large.
+       */
+      item_limit?: number;
+      context?: ContextObject;
+      ext?: ExtensionObject;
+    }
+  | {
+      /**
+       * Discriminator indicating this is a batch preview request
+       */
+      request_type: 'batch';
+      /**
+       * Array of preview requests (1-50 items). Each follows the single request structure.
+       *
+       * @maxItems 50
+       */
+      requests: {
+        format_id?: FormatID;
+        creative_manifest: CreativeManifest;
+        /**
+         * Array of input sets for generating multiple preview variants
+         */
+        inputs?: {
+          /**
+           * Human-readable name for this input set
+           */
+          name: string;
+          /**
+           * Macro values to use for this preview
+           */
+          macros?: {
+            [k: string]: string | undefined;
+          };
+          /**
+           * Natural language description of the context for AI-generated content
+           */
+          context_description?: string;
+        }[];
+        /**
+         * Specific template ID for custom format rendering
+         */
+        template_id?: string;
+        output_format?: PreviewOutputFormat;
+        /**
+         * Maximum number of catalog items to render in this preview.
+         */
+        item_limit?: number;
+      }[];
+      output_format?: PreviewOutputFormat;
+      context?: ContextObject;
+      ext?: ExtensionObject;
+    }
+  | {
+      /**
+       * Discriminator indicating this is a variant preview request
+       */
+      request_type: 'variant';
+      /**
+       * Platform-assigned variant identifier from get_creative_delivery response
+       */
+      variant_id: string;
+      /**
+       * Creative identifier for context
+       */
+      creative_id?: string;
+      output_format?: PreviewOutputFormat;
+      context?: ContextObject;
+      ext?: ExtensionObject;
+    };
+
+// preview_creative response
+/**
+ * Response containing preview links for one or more creatives. Format matches the request: single preview response for single requests, batch results for batch requests.
+ */
+export type PreviewCreativeResponse =
+  | PreviewCreativeSingleResponse
+  | PreviewCreativeBatchResponse
+  | PreviewCreativeVariantResponse;
 /**
  * Single preview response - each preview URL returns an HTML page that can be embedded in an iframe
  */
@@ -8234,7 +8436,11 @@ export interface CreateContentStandardsRequest {
     description?: string;
   };
   /**
-   * Natural language policy describing acceptable and unacceptable content contexts. Used by LLMs and human reviewers to make judgments.
+   * Registry policy IDs to use as the evaluation basis for this content standard. When provided, the agent resolves policies from the registry and uses their policy text and exemplars as the evaluation criteria. The 'policy' field becomes optional when registry_policy_ids is provided.
+   */
+  registry_policy_ids?: string[];
+  /**
+   * Natural language policy describing acceptable and unacceptable content contexts. Used by LLMs and human reviewers to make judgments. Optional when registry_policy_ids is provided.
    */
   policy: string;
   /**
@@ -8338,6 +8544,10 @@ export interface UpdateContentStandardsRequest {
      */
     description?: string;
   };
+  /**
+   * Registry policy IDs to use as the evaluation basis. When provided, the agent resolves policies from the registry and uses their policy text and exemplars as the evaluation criteria.
+   */
+  registry_policy_ids?: string[];
   /**
    * Updated natural language policy describing acceptable and unacceptable content contexts.
    */
@@ -8779,7 +8989,7 @@ export type GetCreativeFeaturesResponse =
  */
 export interface CreativeFeatureResult {
   /**
-   * The feature that was evaluated (e.g., 'auto_redirect', 'brand_consistency', 'iab_casinos_gambling')
+   * The feature that was evaluated (e.g., 'auto_redirect', 'brand_consistency'). Features prefixed with 'registry:' reference standardized policies from the shared policy registry (e.g., 'registry:eu_ai_act_article_50'). Unprefixed feature IDs are agent-defined.
    */
   feature_id: string;
   /**
@@ -8812,6 +9022,857 @@ export interface CreativeFeatureResult {
   details?: {};
   ext?: ExtensionObject;
 }
+
+// sync_plans parameters
+/**
+ * Budget authority level for the orchestrator agent.
+ */
+export type BudgetAuthorityLevel = 'agent_full' | 'agent_limited' | 'human_required';
+/**
+ * Authority level granted to this agent.
+ */
+export type DelegationAuthority = 'full' | 'execute_only' | 'propose_only';
+
+/**
+ * Push campaign plans to the governance agent. A plan defines the authorized parameters for a campaign -- budget limits, channels, flight dates, and authorized markets.
+ */
+export interface SyncPlansRequest {
+  /**
+   * One or more campaign plans to sync.
+   */
+  plans: {
+    /**
+     * Unique identifier for this plan.
+     */
+    plan_id: string;
+    brand: BrandReference;
+    /**
+     * Natural language campaign objectives. Used for strategic alignment validation.
+     */
+    objectives: string;
+    /**
+     * Budget authorization parameters.
+     */
+    budget: {
+      /**
+       * Total authorized budget.
+       */
+      total: number;
+      /**
+       * ISO 4217 currency code.
+       */
+      currency: string;
+      authority_level: BudgetAuthorityLevel;
+      /**
+       * Maximum percentage of budget that can go to a single seller.
+       */
+      per_seller_max_pct?: number;
+      /**
+       * Amount above which reallocations require escalation (for agent_limited).
+       */
+      reallocation_threshold?: number;
+    };
+    /**
+     * Channel constraints. If omitted, all channels are allowed.
+     */
+    channels?: {
+      /**
+       * Channels that must be included in the media mix.
+       */
+      required?: MediaChannel[];
+      /**
+       * Channels the orchestrator may use.
+       */
+      allowed?: MediaChannel[];
+      /**
+       * Target allocation ranges per channel, keyed by channel ID.
+       */
+      mix_targets?: {
+        [k: string]:
+          | {
+              min_pct?: number;
+              max_pct?: number;
+            }
+          | undefined;
+      };
+    };
+    /**
+     * Authorized flight dates. Media buys with dates outside this window are rejected.
+     */
+    flight: {
+      /**
+       * Flight start (ISO 8601).
+       */
+      start: string;
+      /**
+       * Flight end (ISO 8601).
+       */
+      end: string;
+    };
+    /**
+     * ISO 3166-1 alpha-2 country codes for authorized markets (e.g., ['US', 'GB']). The governance agent rejects media buys targeting outside these countries and resolves applicable policies by matching against policy jurisdictions.
+     */
+    countries?: string[];
+    /**
+     * ISO 3166-2 subdivision codes for authorized sub-national markets (e.g., ['US-MA', 'US-CA']). When present, the governance agent restricts buys to these specific regions rather than the full country. Use for campaigns limited to specific states or provinces (e.g., cannabis in legal states). Policy resolution matches against both the subdivision and its parent country.
+     */
+    regions?: string[];
+    /**
+     * Registry policy IDs to enforce for this plan. The governance agent resolves full policy definitions from the registry and evaluates actions against them. Intersected with the plan's countries/regions to activate only geographically relevant policies.
+     */
+    policy_ids?: string[];
+    /**
+     * Natural language policy statements specific to this campaign (e.g., 'No advertising adjacent to competitor content'). Applied regardless of geography.
+     */
+    custom_policies?: string[];
+    /**
+     * List of approved seller agent URLs. null means any seller.
+     */
+    approved_sellers?: string[] | null;
+    /**
+     * Agents authorized to execute against this plan. Each delegation scopes an agent's authority by budget, markets, and expiration. The governance agent validates that the requesting agent matches a delegation before approving actions.
+     */
+    delegations?: {
+      /**
+       * URL of the delegated agent.
+       */
+      agent_url: string;
+      authority: DelegationAuthority;
+      /**
+       * Maximum budget this agent can commit. When omitted, the agent can commit up to the plan's total budget.
+       */
+      budget_limit?: {
+        amount: number;
+        currency: string;
+      };
+      /**
+       * ISO 3166-1/3166-2 codes this agent is authorized for. When omitted, the agent can operate in all plan markets.
+       */
+      markets?: string[];
+      /**
+       * When this delegation expires. After expiration, the governance agent denies actions from this agent.
+       */
+      expires_at?: string;
+    }[];
+    /**
+     * Portfolio-level governance constraints. When present, this plan acts as a portfolio plan that governs member plans. Portfolio plans define cross-brand constraints that no individual brand plan can override.
+     */
+    portfolio?: {
+      /**
+       * Plan IDs governed by this portfolio plan. The governance agent validates member plan actions against portfolio constraints.
+       */
+      member_plan_ids: string[];
+      /**
+       * Maximum aggregate budget across all member plans.
+       */
+      total_budget_cap?: {
+        amount: number;
+        currency: string;
+      };
+      /**
+       * Registry policy IDs enforced across all member plans, regardless of individual brand configuration.
+       */
+      shared_policy_ids?: string[];
+      /**
+       * Natural language exclusion rules applied across all member plans (e.g., 'No advertising on properties owned by competitor holding companies').
+       */
+      shared_exclusions?: string[];
+    };
+    ext?: ExtensionObject;
+  }[];
+}
+
+// sync_plans response
+/**
+ * Enforcement level for this policy.
+ */
+export type PolicyEnforcementLevel = 'must' | 'should' | 'may';
+
+/**
+ * Response from syncing campaign plans. Returns status and active validation categories for each plan.
+ */
+export interface SyncPlansResponse {
+  /**
+   * Status for each synced plan.
+   */
+  plans: {
+    /**
+     * Plan identifier.
+     */
+    plan_id: string;
+    /**
+     * Sync result status. 'active' means sync succeeded; 'error' means sync failed.
+     */
+    status: 'active' | 'error';
+    /**
+     * Plan version (increments on each sync).
+     */
+    version: number;
+    /**
+     * Validation categories active for this plan.
+     */
+    categories?: {
+      /**
+       * Validation category identifier.
+       */
+      category_id: string;
+      /**
+       * Whether this category is active for this plan.
+       */
+      status: 'active' | 'inactive';
+    }[];
+    /**
+     * Policies the governance agent will enforce for this plan. Includes explicitly referenced policies from the brand compliance configuration and auto-applied policies matched by jurisdiction or vertical. Present when the governance agent supports policy resolution.
+     */
+    resolved_policies?: {
+      /**
+       * Registry policy ID.
+       */
+      policy_id: string;
+      /**
+       * How this policy was included. 'explicit': referenced in the brand compliance configuration. 'auto_applied': matched automatically by jurisdiction, vertical, or category.
+       */
+      source: 'explicit' | 'auto_applied';
+      enforcement: PolicyEnforcementLevel;
+      /**
+       * Why this policy was included (e.g., 'Matched jurisdiction US and vertical pharmaceutical').
+       */
+      reason?: string;
+    }[];
+  }[];
+}
+
+
+// report_plan_outcome parameters
+/**
+ * Outcome type.
+ */
+export type OutcomeType = 'completed' | 'failed' | 'delivery';
+/**
+ * Report the outcome of an action to the governance agent. Called by the orchestrator (buyer-side agent) after a seller responds. This is the 'after' half of the governance loop. Sellers do not call this task -- they report delivery data via check_governance with phase 'delivery'.
+ */
+export interface ReportPlanOutcomeRequest {
+  /**
+   * The plan this outcome is for.
+   */
+  plan_id: string;
+  /**
+   * The check_id from check_governance. Links the outcome to the governance check that authorized it. Required for 'completed' and 'failed' outcomes.
+   */
+  check_id?: string;
+  /**
+   * Campaign identifier.
+   */
+  buyer_campaign_ref: string;
+  outcome: OutcomeType;
+  /**
+   * The seller's full response. Required when outcome is 'completed'.
+   */
+  seller_response?: {
+    /**
+     * Seller's media buy identifier.
+     */
+    media_buy_id?: string;
+    /**
+     * The buyer reference echoed back by the seller.
+     */
+    buyer_ref?: string;
+    /**
+     * Confirmed packages with actual budget and targeting.
+     */
+    packages?: {}[];
+    planned_delivery?: PlannedDelivery;
+    /**
+     * ISO 8601 deadline for creative submission.
+     */
+    creative_deadline?: string;
+  };
+  /**
+   * Delivery metrics. Required when outcome is 'delivery'.
+   */
+  delivery?: {
+    /**
+     * The media buy being reported on.
+     */
+    media_buy_id?: string;
+    /**
+     * Start and end timestamps for the reporting window.
+     */
+    reporting_period?: {
+      start: string;
+      end: string;
+    };
+    /**
+     * Impressions delivered in the period.
+     */
+    impressions?: number;
+    /**
+     * Spend in the period.
+     */
+    spend?: number;
+    /**
+     * Effective CPM for the period.
+     */
+    cpm?: number;
+    /**
+     * Viewability rate (0-1).
+     */
+    viewability_rate?: number;
+    /**
+     * Video completion rate (0-1).
+     */
+    completion_rate?: number;
+  };
+  /**
+   * Error details. Required when outcome is 'failed'.
+   */
+  error?: {
+    /**
+     * Error code from the seller.
+     */
+    code?: string;
+    /**
+     * Human-readable error description.
+     */
+    message?: string;
+  };
+}
+
+// report_plan_outcome response
+/**
+ * Finding severity.
+ */
+export type EscalationSeverity = 'info' | 'warning' | 'critical';
+
+/**
+ * Response from reporting an action outcome. Only returned to the orchestrator (buyer-side agent) that manages the plan. Sellers report delivery data via check_governance with phase 'delivery', not via this task.
+ */
+export interface ReportPlanOutcomeResponse {
+  /**
+   * Unique identifier for this outcome record.
+   */
+  outcome_id: string;
+  /**
+   * 'accepted' means state updated with no issues. 'findings' means issues were detected.
+   */
+  status: 'accepted' | 'findings';
+  /**
+   * Budget committed from this outcome. Present for 'completed' and 'failed' outcomes.
+   */
+  committed_budget?: number;
+  /**
+   * Issues detected. Present only when status is 'findings'.
+   */
+  findings?: {
+    /**
+     * Which validation category flagged the issue.
+     */
+    category_id: string;
+    severity: EscalationSeverity;
+    /**
+     * Human-readable description of the issue.
+     */
+    explanation: string;
+    /**
+     * Structured details for programmatic consumption.
+     */
+    details?: {};
+  }[];
+  /**
+   * Updated plan budget state. Present for 'completed' and 'failed' outcomes.
+   */
+  plan_summary?: {
+    /**
+     * Total budget committed across all campaigns in the plan.
+     */
+    total_committed?: number;
+    /**
+     * Authorized budget minus total committed.
+     */
+    budget_remaining?: number;
+  };
+}
+
+
+// get_plan_audit_logs parameters
+/**
+ * Retrieve governance state and audit trail for one or more plans.
+ */
+export type GetPlanAuditLogsRequest = {
+  [k: string]: unknown | undefined;
+} & {
+  /**
+   * Plan IDs to retrieve. For a single plan, pass a one-element array.
+   */
+  plan_ids?: string[];
+  /**
+   * Portfolio plan IDs. The governance agent expands each to its member_plan_ids and returns combined audit data.
+   */
+  portfolio_plan_ids?: string[];
+  /**
+   * Filter to a specific campaign. Omit for plan-level aggregate.
+   */
+  buyer_campaign_ref?: string;
+  /**
+   * Include the full audit trail. Default: false.
+   */
+  include_entries?: boolean;
+};
+
+
+// get_plan_audit_logs response
+/**
+ * Governance state and audit trail for one or more plans.
+ */
+export interface GetPlanAuditLogsResponse {
+  /**
+   * Audit data for each requested plan.
+   */
+  plans: {
+    /**
+     * Plan identifier.
+     */
+    plan_id: string;
+    /**
+     * Current plan version.
+     */
+    plan_version: number;
+    /**
+     * Plan lifecycle status.
+     */
+    status: 'active' | 'suspended' | 'completed';
+    /**
+     * Budget state.
+     */
+    budget: {
+      /**
+       * Total authorized budget from the plan.
+       */
+      authorized?: number;
+      /**
+       * Total budget committed from confirmed outcomes.
+       */
+      committed?: number;
+      /**
+       * Authorized minus committed.
+       */
+      remaining?: number;
+      /**
+       * Committed as a percentage of authorized.
+       */
+      utilization_pct?: number;
+    };
+    /**
+     * Current channel mix. Keyed by channel ID.
+     */
+    channel_allocation?: {
+      [k: string]:
+        | {
+            /**
+             * Budget committed to this channel.
+             */
+            committed?: number;
+            /**
+             * Channel's share of the authorized total budget.
+             */
+            pct?: number;
+          }
+        | undefined;
+    };
+    /**
+     * Per-campaign breakdown.
+     */
+    campaigns: {
+      /**
+       * Campaign identifier.
+       */
+      buyer_campaign_ref: string;
+      /**
+       * Campaign status.
+       */
+      status: 'active' | 'suspended' | 'completed';
+      /**
+       * Budget committed in this campaign.
+       */
+      committed: number;
+      /**
+       * Media buy IDs currently active.
+       */
+      active_media_buys?: string[];
+    }[];
+    /**
+     * Aggregate validation and outcome statistics.
+     */
+    summary: {
+      /**
+       * Total governance checks performed.
+       */
+      checks_performed?: number;
+      /**
+       * Total outcomes reported.
+       */
+      outcomes_reported?: number;
+      /**
+       * Count of each governance check status.
+       */
+      statuses?: {
+        approved?: number;
+        denied?: number;
+        conditions?: number;
+        escalated?: number;
+      };
+      /**
+       * Total findings across all checks and outcomes.
+       */
+      findings_count?: number;
+      /**
+       * All escalations and their resolutions.
+       */
+      escalations?: {
+        /**
+         * The escalated governance check.
+         */
+        check_id: string;
+        /**
+         * Why it was escalated.
+         */
+        reason: string;
+        /**
+         * How it was resolved (e.g., 'approved_by_human', 'rejected_by_human').
+         */
+        resolution?: string;
+        /**
+         * ISO 8601 resolution timestamp.
+         */
+        resolved_at?: string;
+      }[];
+      /**
+       * Aggregate governance metrics for detecting oversight drift. A declining escalation rate may indicate well-calibrated governance or eroding human oversight -- surfacing the trend lets the organization make that judgment.
+       */
+      drift_metrics?: {
+        /**
+         * Fraction of checks that resulted in escalation.
+         */
+        escalation_rate?: number;
+        /**
+         * Direction of escalation rate over the plan's lifetime.
+         */
+        escalation_rate_trend?: 'increasing' | 'stable' | 'declining';
+        /**
+         * Fraction of checks approved without human intervention.
+         */
+        auto_approval_rate?: number;
+        /**
+         * Fraction of escalations where the human overrode the governance agent's recommendation.
+         */
+        human_override_rate?: number;
+        /**
+         * Average confidence score across all findings. Present when findings include confidence scores.
+         */
+        mean_confidence?: number;
+        /**
+         * Organization-defined thresholds for drift metrics. When a metric crosses its threshold, the governance agent SHOULD include a finding on the next check. Set by the organization in governance agent configuration, echoed here for visibility.
+         */
+        thresholds?: {
+          /**
+           * Maximum acceptable escalation rate. A rate above this suggests policy miscalibration.
+           */
+          escalation_rate_max?: number;
+          /**
+           * Minimum acceptable escalation rate. A rate below this may indicate eroding oversight.
+           */
+          escalation_rate_min?: number;
+          /**
+           * Maximum acceptable auto-approval rate.
+           */
+          auto_approval_rate_max?: number;
+          /**
+           * Maximum acceptable human override rate. A high rate suggests the governance agent's recommendations are poorly calibrated.
+           */
+          human_override_rate_max?: number;
+        };
+      };
+    };
+    /**
+     * Ordered audit trail. Only present when include_entries is true.
+     */
+    entries?: {
+      /**
+       * Entry identifier.
+       */
+      id: string;
+      /**
+       * Entry type.
+       */
+      type: 'check' | 'outcome';
+      /**
+       * ISO 8601 timestamp.
+       */
+      timestamp: string;
+      /**
+       * Plan this entry belongs to. Present when querying multiple plans or a portfolio.
+       */
+      plan_id?: string;
+      /**
+       * URL of the agent that made the request. Resolved from the credentials used on the governance callback.
+       */
+      caller?: string;
+      /**
+       * The AdCP tool (present for check entries).
+       */
+      tool?: string;
+      /**
+       * Governance check status (present for check entries).
+       */
+      status?: 'approved' | 'denied' | 'conditions' | 'escalated';
+      /**
+       * Whether the check was proposed or committed (present for check entries).
+       */
+      binding?: 'proposed' | 'committed';
+      /**
+       * Human-readable explanation of the governance decision (present for check entries).
+       */
+      explanation?: string;
+      /**
+       * Registry policy IDs evaluated during this check (present for check entries).
+       */
+      policies_evaluated?: string[];
+      /**
+       * Governance categories evaluated (e.g., 'budget_authority', 'regulatory_compliance'). Present for check entries.
+       */
+      categories_evaluated?: string[];
+      /**
+       * Findings from this check or outcome. Same structure as check_governance response findings.
+       */
+      findings?: {
+        category_id: string;
+        policy_id?: string;
+        severity: EscalationSeverity;
+        explanation: string;
+        confidence?: number;
+      }[];
+      outcome?: OutcomeType;
+      /**
+       * Budget committed (present for completed outcome entries).
+       */
+      committed_budget?: number;
+      /**
+       * Media buy ID (present for delivery outcome entries).
+       */
+      media_buy_id?: string;
+      /**
+       * Outcome status (present for outcome entries).
+       */
+      outcome_status?: string;
+    }[];
+  }[];
+}
+
+
+// check_governance parameters
+/**
+ * The phase of the media buy lifecycle. 'purchase': initial create_media_buy. 'modification': update_media_buy. 'delivery': periodic delivery reporting. Defaults to 'purchase' if omitted.
+ */
+export type GovernancePhase = 'purchase' | 'modification' | 'delivery';
+/**
+ * Universal governance check for campaign actions. Called by the orchestrator before sending to a seller (proposed) or by the seller before executing (committed). The governance agent evaluates the action against the campaign plan and returns a status.
+ */
+export interface CheckGovernanceRequest {
+  /**
+   * Campaign governance plan identifier.
+   */
+  plan_id: string;
+  /**
+   * Buyer's campaign identifier. The governance agent tracks state per campaign within a plan.
+   */
+  buyer_campaign_ref: string;
+  /**
+   * Whether this is an advisory check or a binding commitment. 'proposed': the orchestrator is checking before sending to a seller — no budget is committed. 'committed': the seller is about to execute — the governance agent validates the planned delivery against the plan. Budget is committed later via report_plan_outcome, not on approval.
+   */
+  binding: 'proposed' | 'committed';
+  /**
+   * URL of the agent making the request (orchestrator for proposed, seller for committed).
+   */
+  caller: string;
+  /**
+   * The AdCP tool being checked (e.g., 'create_media_buy', 'get_products'). Expected for proposed checks. The governance agent uses this to apply tool-specific validation rules.
+   */
+  tool?: string;
+  /**
+   * The full tool arguments as they would be sent to the seller. Expected for proposed checks. The governance agent can inspect any field to validate against the plan.
+   */
+  payload?: {};
+  /**
+   * The seller's identifier for the media buy. Expected for committed checks.
+   */
+  media_buy_id?: string;
+  /**
+   * The buyer's reference identifier from the create_media_buy request.
+   */
+  buyer_ref?: string;
+  phase?: GovernancePhase;
+  planned_delivery?: PlannedDelivery;
+  /**
+   * Actual delivery performance data. MUST be present for 'delivery' phase. The governance agent compares these metrics against the planned delivery to detect drift.
+   */
+  delivery_metrics?: {
+    /**
+     * Start and end timestamps for the reporting window.
+     */
+    reporting_period: {
+      start: string;
+      end: string;
+    };
+    /**
+     * Total spend during the reporting period.
+     */
+    spend?: number;
+    /**
+     * Total spend since the media buy started.
+     */
+    cumulative_spend?: number;
+    /**
+     * Impressions delivered during the reporting period.
+     */
+    impressions?: number;
+    /**
+     * Total impressions since the media buy started.
+     */
+    cumulative_impressions?: number;
+    /**
+     * Actual geographic distribution. Keys are ISO 3166-1 alpha-2 codes, values are percentages.
+     */
+    geo_distribution?: {
+      [k: string]: number | undefined;
+    };
+    /**
+     * Actual channel distribution. Keys are channel enum values, values are percentages.
+     */
+    channel_distribution?: {
+      [k: string]: number | undefined;
+    };
+    /**
+     * Whether delivery is ahead of, on track with, or behind the planned pace.
+     */
+    pacing?: 'ahead' | 'on_track' | 'behind';
+  };
+  /**
+   * Human-readable summary of what changed. SHOULD be present for 'modification' phase.
+   */
+  modification_summary?: string;
+}
+
+// check_governance response
+/**
+ * The governance mode under which this check was evaluated. Present so audit trails can distinguish 'denied in advisory mode (action proceeded)' from 'denied in enforce mode (action blocked)'.
+ */
+export type GovernanceMode = 'audit' | 'advisory' | 'enforce';
+/**
+ * Governance agent's response to a check request. Returns whether the action is approved under the campaign plan.
+ */
+export interface CheckGovernanceResponse {
+  /**
+   * Unique identifier for this governance check record. Use in report_plan_outcome to link outcomes to the check that authorized them.
+   */
+  check_id: string;
+  /**
+   * Governance decision. 'approved': proceed as planned. 'denied': do not proceed. 'conditions': approved if the caller accepts the listed conditions, then re-calls check_governance with the adjusted parameters. 'escalated': halted pending human review.
+   */
+  status: 'approved' | 'denied' | 'conditions' | 'escalated';
+  /**
+   * Echoed from request. Lets the caller confirm the governance agent understood the commitment level.
+   */
+  binding: 'proposed' | 'committed';
+  /**
+   * Echoed from request.
+   */
+  plan_id: string;
+  /**
+   * Echoed from request.
+   */
+  buyer_campaign_ref: string;
+  /**
+   * Human-readable explanation of the governance decision.
+   */
+  explanation: string;
+  mode?: GovernanceMode;
+  /**
+   * Specific issues found during the governance check. Present when status is 'denied', 'conditions', or 'escalated'. MAY also be present on 'approved' for advisory findings (e.g., budget approaching limit).
+   */
+  findings?: {
+    /**
+     * Validation category that flagged the issue (e.g., 'budget_compliance', 'regulatory_compliance', 'brand_safety').
+     */
+    category_id: string;
+    /**
+     * Registry policy ID that triggered this finding. Present when the finding originates from a specific registry policy. Enables programmatic routing of compliance failures.
+     */
+    policy_id?: string;
+    severity: EscalationSeverity;
+    /**
+     * Human-readable description of the issue.
+     */
+    explanation: string;
+    /**
+     * Structured details for programmatic consumption.
+     */
+    details?: {};
+    /**
+     * Confidence score (0-1) in this finding. Distinguishes 'this definitely violates the policy' (0.95) from 'this might violate depending on how audience segments resolve' (0.6). When absent, the finding is presented without a confidence qualifier.
+     */
+    confidence?: number;
+    /**
+     * Explanation of why confidence is below 1.0 (e.g., 'Targeting includes regions that partially overlap jurisdiction boundaries'). Present when confidence is below a governance-agent-defined threshold.
+     */
+    uncertainty_reason?: string;
+  }[];
+  /**
+   * Present when status is 'conditions'. Specific adjustments the caller must make. After applying conditions, the caller MUST re-call check_governance with the adjusted parameters before proceeding.
+   */
+  conditions?: {
+    /**
+     * Dot-path to the field that needs adjustment (in payload for proposed, in planned_delivery for committed).
+     */
+    field: string;
+    /**
+     * The value the field must have for approval. When present, the condition is machine-actionable. When absent, the condition is advisory.
+     */
+    required_value?: {
+      [k: string]: unknown | undefined;
+    };
+    /**
+     * Why this condition is required.
+     */
+    reason: string;
+  }[];
+  /**
+   * Present when status is 'escalated'. The action is halted pending human review.
+   */
+  escalation?: {
+    /**
+     * Human-readable explanation of why the action was escalated.
+     */
+    reason: string;
+    severity: EscalationSeverity;
+    /**
+     * Whether human approval is required before proceeding.
+     */
+    requires_human: boolean;
+    /**
+     * Organizational role or tier required to resolve this escalation. The value is organization-defined; the governance agent infers the tier from the escalation context. Common values include 'manager', 'director', 'legal', 'cfo'. Enables programmatic routing of escalations to the right person.
+     */
+    approval_tier?: string;
+  };
+  /**
+   * When this approval expires. Present when status is 'approved' or 'conditions'. The caller must act before this time or re-call check_governance. A lapsed approval is no approval.
+   */
+  expires_at?: string;
+  /**
+   * When the seller should next call check_governance with delivery metrics. Present when the governance agent expects ongoing delivery reporting.
+   */
+  next_check?: string;
+}
+
 
 // si_get_offering parameters
 /**
@@ -10048,6 +11109,32 @@ export interface SyncAccountsRequest {
      * When true, provision this as a sandbox account with no real platform calls or billing. Only applicable to implicit accounts (require_operator_auth: false). For explicit accounts, sandbox accounts are pre-existing test accounts discovered via list_accounts.
      */
     sandbox?: boolean;
+    /**
+     * Governance agent endpoints for this account. When present, the seller MUST call these agents for governance approval before confirming media buy requests. Each agent can be scoped to specific validation categories. The seller routes check_governance calls to the appropriate agent based on the action being validated. All applicable agents must approve for the action to proceed (unanimous approval).
+     */
+    governance_agents?: {
+      /**
+       * Governance agent endpoint URL.
+       */
+      url: string;
+      /**
+       * Authentication the seller presents when calling this governance agent.
+       */
+      authentication: {
+        /**
+         * @maxItems 1
+         */
+        schemes: [] | [AuthenticationScheme];
+        /**
+         * Authentication credential (e.g., Bearer token).
+         */
+        credentials: string;
+      };
+      /**
+       * Governance categories this agent handles (e.g., ['budget_authority', 'strategic_alignment']). When omitted, the agent handles all categories.
+       */
+      categories?: string[];
+    }[];
   }[];
   /**
    * When true, accounts previously synced by this agent but not included in this request will be deactivated. Scoped to the authenticated agent — does not affect accounts managed by other agents. Use with caution.

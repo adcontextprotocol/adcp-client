@@ -5,12 +5,42 @@ const A2AClient = clientModule.A2AClient;
 import type { PushNotificationConfig } from '../types/tools.generated';
 import { AuthenticationRequiredError, is401Error } from '../errors';
 import { discoverOAuthMetadata } from '../auth/oauth/discovery';
+import { withSpan, injectTraceHeaders } from '../observability/tracing';
 
 if (!A2AClient) {
   throw new Error('A2A SDK client is required. Please install @a2a-js/sdk');
 }
 
 export async function callA2ATool(
+  agentUrl: string,
+  toolName: string,
+  parameters: Record<string, any>,
+  authToken?: string,
+  debugLogs: any[] = [],
+  pushNotificationConfig?: PushNotificationConfig,
+  customHeaders?: Record<string, string>
+): Promise<any> {
+  return withSpan(
+    'adcp.a2a.call_tool',
+    {
+      'adcp.tool': toolName,
+      'http.url': agentUrl,
+    },
+    async () => {
+      return callA2AToolImpl(
+        agentUrl,
+        toolName,
+        parameters,
+        authToken,
+        debugLogs,
+        pushNotificationConfig,
+        customHeaders
+      );
+    }
+  );
+}
+
+async function callA2AToolImpl(
   agentUrl: string,
   toolName: string,
   parameters: Record<string, any>,
@@ -41,9 +71,16 @@ export async function callA2ATool(
       }
     }
 
-    // Merge: existing < custom < auth (auth always wins)
+    // Only inject trace context headers for actual tool requests, not discovery
+    // The agent card endpoint is external/untrusted - don't leak trace IDs to it
+    const urlString = typeof url === 'string' ? url : url.toString();
+    const isDiscoveryRequest = urlString.includes('/.well-known/agent-card.json');
+    const traceHeaders = isDiscoveryRequest ? {} : injectTraceHeaders();
+
+    // Merge: existing < trace < custom < auth (auth always wins)
     const headers: Record<string, string> = {
       ...existingHeaders,
+      ...traceHeaders,
       ...customHeaders,
       ...(authToken && {
         Authorization: `Bearer ${authToken}`,

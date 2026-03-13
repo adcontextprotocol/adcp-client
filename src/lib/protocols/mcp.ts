@@ -10,6 +10,7 @@ import { UnauthorizedError } from '@modelcontextprotocol/sdk/client/auth.js';
 import type { OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js';
 import { createMCPAuthHeaders } from '../auth';
 import { is401Error } from '../errors';
+import { withSpan, injectTraceHeaders } from '../observability/tracing';
 
 // Re-export for convenience
 export { UnauthorizedError };
@@ -57,6 +58,24 @@ export interface MCPConnectionResult {
  * calling client.close() when done.
  */
 export async function connectMCPWithFallback(
+  url: URL,
+  authHeaders: Record<string, string>,
+  debugLogs: any[] = [],
+  label = 'connection'
+): Promise<MCPClient> {
+  return withSpan(
+    'adcp.mcp.connect',
+    {
+      'http.url': url.toString(),
+      'adcp.connection_label': label,
+    },
+    async () => {
+      return connectMCPWithFallbackImpl(url, authHeaders, debugLogs, label);
+    }
+  );
+}
+
+async function connectMCPWithFallbackImpl(
   url: URL,
   authHeaders: Record<string, string>,
   debugLogs: any[] = [],
@@ -134,12 +153,36 @@ export async function callMCPTool(
   debugLogs: any[] = [],
   customHeaders?: Record<string, string>
 ): Promise<any> {
+  return withSpan(
+    'adcp.mcp.call_tool',
+    {
+      'adcp.tool': toolName,
+      'http.url': agentUrl,
+    },
+    async () => {
+      return callMCPToolImpl(agentUrl, toolName, args, authToken, debugLogs, customHeaders);
+    }
+  );
+}
+
+async function callMCPToolImpl(
+  agentUrl: string,
+  toolName: string,
+  args: any,
+  authToken?: string,
+  debugLogs: any[] = [],
+  customHeaders?: Record<string, string>
+): Promise<any> {
   let mcpClient: MCPClient | undefined = undefined;
   const baseUrl = new URL(agentUrl);
 
-  // Merge: custom < auth (auth always wins)
+  // Inject trace context headers for distributed tracing
+  const traceHeaders = injectTraceHeaders();
+
+  // Merge: custom < trace < auth (auth always wins)
   const authHeaders = {
     ...customHeaders,
+    ...traceHeaders,
     ...(authToken ? createMCPAuthHeaders(authToken) : {}),
   };
 
