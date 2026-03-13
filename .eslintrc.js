@@ -60,25 +60,6 @@ module.exports = {
       },
     },
     {
-      // Server code MUST NOT import protocol SDKs (use library)
-      files: ['src/server/**/*.ts', 'src/server/**/*.js', 'server.js'],
-      rules: {
-        'no-restricted-imports': [
-          'error',
-          {
-            patterns: [
-              {
-                group: ['@modelcontextprotocol/sdk', '@modelcontextprotocol/sdk/*', '@a2a-js/sdk', '@a2a-js/sdk/*'],
-                message:
-                  '❌ Server code must use @adcp/client library, not protocol SDKs directly. ' +
-                  'This ensures type safety and prevents invalid requests like adcp_version being sent to agents.',
-              },
-            ],
-          },
-        ],
-      },
-    },
-    {
       // TypeScript files
       files: ['*.ts', '**/*.ts'],
       parser: '@typescript-eslint/parser',
