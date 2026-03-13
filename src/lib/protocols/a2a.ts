@@ -27,7 +27,15 @@ export async function callA2ATool(
       'http.url': agentUrl,
     },
     async () => {
-      return callA2AToolImpl(agentUrl, toolName, parameters, authToken, debugLogs, pushNotificationConfig, customHeaders);
+      return callA2AToolImpl(
+        agentUrl,
+        toolName,
+        parameters,
+        authToken,
+        debugLogs,
+        pushNotificationConfig,
+        customHeaders
+      );
     }
   );
 }

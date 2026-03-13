@@ -4,14 +4,8 @@ const assert = require('node:assert');
 describe('Observability utilities', () => {
   describe('tracing exports', () => {
     it('exports all expected functions', async () => {
-      const {
-        getTracer,
-        isTracingEnabled,
-        injectTraceHeaders,
-        withSpan,
-        addSpanAttributes,
-        recordSpanException,
-      } = await import('../../dist/lib/index.js');
+      const { getTracer, isTracingEnabled, injectTraceHeaders, withSpan, addSpanAttributes, recordSpanException } =
+        await import('../../dist/lib/index.js');
 
       assert.strictEqual(typeof getTracer, 'function');
       assert.strictEqual(typeof isTracingEnabled, 'function');
@@ -88,7 +82,9 @@ describe('Observability utilities', () => {
       const mockSpan = {
         setStatus: () => {},
         recordException: () => {},
-        end: () => { spanCreated = true; },
+        end: () => {
+          spanCreated = true;
+        },
       };
 
       const mockTracer = {

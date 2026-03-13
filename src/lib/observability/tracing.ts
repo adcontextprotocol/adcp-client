@@ -79,26 +79,22 @@ export async function withSpan<T>(
     }
   }
 
-  return tracer.startActiveSpan(
-    name,
-    { kind: api.SpanKind.CLIENT, attributes: filteredAttrs },
-    async (span: Span) => {
-      try {
-        const result = await fn();
-        span.setStatus({ code: api.SpanStatusCode.OK });
-        return result;
-      } catch (error) {
-        span.setStatus({
-          code: api.SpanStatusCode.ERROR,
-          message: error instanceof Error ? error.message : String(error),
-        });
-        span.recordException(error as Error);
-        throw error;
-      } finally {
-        span.end();
-      }
+  return tracer.startActiveSpan(name, { kind: api.SpanKind.CLIENT, attributes: filteredAttrs }, async (span: Span) => {
+    try {
+      const result = await fn();
+      span.setStatus({ code: api.SpanStatusCode.OK });
+      return result;
+    } catch (error) {
+      span.setStatus({
+        code: api.SpanStatusCode.ERROR,
+        message: error instanceof Error ? error.message : String(error),
+      });
+      span.recordException(error as Error);
+      throw error;
+    } finally {
+      span.end();
     }
-  );
+  });
 }
 
 /**

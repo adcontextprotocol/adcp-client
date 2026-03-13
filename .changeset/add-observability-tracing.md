@@ -11,4 +11,4 @@ Add OpenTelemetry tracing support for observability
 - All tracing is no-op when `@opentelemetry/api` is not installed
 - Exported utilities: `getTracer`, `isTracingEnabled`, `injectTraceHeaders`, `withSpan`, `addSpanAttributes`, `recordSpanException`
 
-When consumers use an OTel-compatible observability system (like `@scope3data/observability-js` with `enableOtel: true`), spans from this library automatically appear as children of the consuming application's traces.
+When consumers use an OTel-compatible observability system (Sentry, Datadog, etc.), spans from this library automatically appear as children of the consuming application's traces.
