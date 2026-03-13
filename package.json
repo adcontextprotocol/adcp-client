@@ -115,11 +115,18 @@
   },
   "peerDependencies": {
     "@a2a-js/sdk": "^0.3.4",
-    "@modelcontextprotocol/sdk": "^1.17.5"
+    "@modelcontextprotocol/sdk": "^1.17.5",
+    "@opentelemetry/api": "^1.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@opentelemetry/api": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@a2a-js/sdk": "^0.3.4",
     "@apidevtools/json-schema-ref-parser": "^14.2.1",
+    "@opentelemetry/api": "^1.9.0",
     "@changesets/cli": "^2.29.7",
     "@commitlint/cli": "^19.6.0",
     "@commitlint/config-conventional": "^19.6.0",
