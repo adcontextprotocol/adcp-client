@@ -157,5 +157,57 @@ describe('Test Helpers', () => {
     assert.strictEqual(typeof creativeAgent.findByType, 'function', 'should have findByType method');
     assert.strictEqual(typeof creativeAgent.findByDimensions, 'function', 'should have findByDimensions method');
     assert.strictEqual(typeof creativeAgent.findById, 'function', 'should have findById method');
+    assert.strictEqual(typeof creativeAgent.listCreatives, 'function', 'should have listCreatives method');
+  });
+});
+
+describe('CreativeAgentClient', () => {
+  const { CreativeAgentClient } = require('../../dist/lib/core/CreativeAgentClient.js');
+
+  test('listCreatives throws on failure', async () => {
+    const client = new CreativeAgentClient({
+      agentUrl: 'https://creative.example.com/mcp',
+    });
+    // getClient() returns the underlying SingleAgentClient — override its listCreatives
+    const inner = client.getClient();
+    inner.listCreatives = async () => ({ success: false, error: 'Agent unreachable' });
+
+    await assert.rejects(
+      () => client.listCreatives(),
+      (err) => {
+        assert.ok(err.message.includes('Failed to list creatives'));
+        assert.ok(err.message.includes('Agent unreachable'));
+        return true;
+      }
+    );
+  });
+
+  test('listCreatives returns data on success', async () => {
+    const client = new CreativeAgentClient({
+      agentUrl: 'https://creative.example.com/mcp',
+    });
+    const inner = client.getClient();
+    const mockResponse = { creatives: [{ creative_id: 'c1', name: 'Banner' }] };
+    inner.listCreatives = async () => ({ success: true, data: mockResponse });
+
+    const result = await client.listCreatives();
+    assert.deepStrictEqual(result, mockResponse);
+  });
+
+  test('listCreatives passes params to underlying client', async () => {
+    const client = new CreativeAgentClient({
+      agentUrl: 'https://creative.example.com/mcp',
+    });
+    const inner = client.getClient();
+    let capturedParams;
+    inner.listCreatives = async (params) => {
+      capturedParams = params;
+      return { success: true, data: { creatives: [] } };
+    };
+
+    const filters = { statuses: ['approved'], has_variables: true };
+    await client.listCreatives({ filters, include_variables: true });
+    assert.deepStrictEqual(capturedParams.filters, filters);
+    assert.strictEqual(capturedParams.include_variables, true);
   });
 });

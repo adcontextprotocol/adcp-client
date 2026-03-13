@@ -135,7 +135,7 @@ export const MEDIA_BUY_TOOLS = [
   'create_media_buy',
   'update_media_buy',
   'sync_creatives',
-  'list_creatives',
+  'list_creatives', // Also in CREATIVE_TOOLS - serves both domains
   'get_media_buy_delivery',
   'provide_performance_feedback',
   'sync_audiences',
@@ -160,7 +160,7 @@ export const GOVERNANCE_TOOLS = [
   'get_media_buy_artifacts',
 ] as const;
 
-export const CREATIVE_TOOLS = ['build_creative', 'list_creative_formats', 'preview_creative'] as const;
+export const CREATIVE_TOOLS = ['build_creative', 'list_creative_formats', 'preview_creative', 'list_creatives'] as const;
 
 export const SPONSORED_INTELLIGENCE_TOOLS = [
   'si_get_offering',
@@ -348,7 +348,7 @@ export type FeatureName = string;
 export const TASK_FEATURE_MAP: Record<string, FeatureName[]> = {
   // Core media buy tasks require the media_buy protocol
   get_products: ['media_buy'],
-  list_creative_formats: ['media_buy'],
+  // list_creative_formats intentionally omitted — serves both media-buy and creative domains
   create_media_buy: ['media_buy'],
   update_media_buy: ['media_buy'],
   get_media_buys: ['media_buy'],
@@ -357,7 +357,7 @@ export const TASK_FEATURE_MAP: Record<string, FeatureName[]> = {
 
   // Creative management requires media_buy + inline_creative_management
   sync_creatives: ['media_buy', 'inline_creative_management'],
-  list_creatives: ['media_buy', 'inline_creative_management'],
+  // list_creatives intentionally omitted — serves both media-buy and creative domains
 
   // Audience management
   sync_audiences: ['media_buy', 'audience_management'],
