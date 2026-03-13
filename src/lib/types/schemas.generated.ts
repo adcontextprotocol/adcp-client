@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-03-13T00:33:46.093Z
+// Generated at: 2026-03-13T00:37:51.983Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -2661,7 +2661,7 @@ export const SyncAccountsSuccessSchema = z.object({
             expires_at: z.string().nullish()
         }).passthrough().nullish(),
         rate_card: z.string().nullish(),
-        payment_terms: z.string().nullish(),
+        payment_terms: z.union([z.literal("net_15"), z.literal("net_30"), z.literal("net_45"), z.literal("net_60"), z.literal("net_90"), z.literal("prepay")]).nullish(),
         credit_limit: z.object({
             amount: z.number(),
             currency: z.string()
@@ -2733,7 +2733,7 @@ export const GetAccountFinancialsSuccessSchema = z.object({
         }).passthrough().nullish()
     }).passthrough().nullish(),
     payment_status: z.union([z.literal("current"), z.literal("past_due"), z.literal("suspended")]).nullish(),
-    payment_terms: z.union([z.literal("net_15"), z.literal("net_30"), z.literal("net_45"), z.literal("net_60"), z.literal("net_90"), z.literal("prepay")]).nullish(),
+    payment_terms: z.string().nullish(),
     invoices: z.array(z.object({
         invoice_id: z.string(),
         period: DateRangeSchema.nullish(),
