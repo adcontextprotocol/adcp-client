@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas vlatest
-// Generated at: 2026-03-13T00:52:51.370Z
+// Generated at: 2026-03-13T00:56:48.784Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -368,9 +368,9 @@ export interface Account {
    */
   rate_card?: string;
   /**
-   * Payment terms (e.g., 'net_30', 'prepay')
+   * Payment terms agreed for this account. Binding for all invoices when the account is active.
    */
-  payment_terms?: string;
+  payment_terms?: 'net_15' | 'net_30' | 'net_45' | 'net_60' | 'net_90' | 'prepay';
   /**
    * Maximum outstanding balance allowed
    */
