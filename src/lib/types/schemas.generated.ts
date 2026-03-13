@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-03-13T13:07:48.803Z
+// Generated at: 2026-03-13T14:10:46.796Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -1564,14 +1564,14 @@ export const SyncCatalogsRequestSchema = z.object({
 
 export const SyncCatalogsResponseSchema = z.union([SyncCatalogsSuccessSchema, SyncCatalogsErrorSchema]);
 
-export const CreativeQualitySchema = z.union([z.literal("draft"), z.literal("production")]);
-
 export const CreativeManifestSchema = z.object({
     format_id: FormatIDSchema,
     assets: z.record(z.string(), z.union([ImageAssetSchema, VideoAssetSchema, AudioAssetSchema, VASTAssetSchema, TextAssetSchema, URLAssetSchema, HTMLAssetSchema, JavaScriptAssetSchema, WebhookAssetSchema, CSSAssetSchema, DAASTAssetSchema, MarkdownAssetSchema, BriefAssetSchema, CatalogAssetSchema])),
     provenance: ProvenanceSchema.nullish(),
     ext: ExtensionObjectSchema.nullish()
 }).passthrough();
+
+export const CreativeQualitySchema = z.union([z.literal("draft"), z.literal("production")]);
 
 export const BuildCreativeSuccessSchema = z.object({
     creative_manifest: CreativeManifestSchema,
@@ -1581,14 +1581,15 @@ export const BuildCreativeSuccessSchema = z.object({
     ext: ExtensionObjectSchema.nullish()
 }).passthrough();
 
-export const PreviewOutputFormatSchema = z.union([z.literal("url"), z.literal("html")]);
-
-export const CreativeManifest1Schema = z.object({
-    format_id: FormatIDSchema,
-    assets: z.record(z.string(), z.union([ImageAssetSchema, VideoAssetSchema, AudioAssetSchema, VASTAssetSchema, TextAssetSchema, URLAssetSchema, HTMLAssetSchema, JavaScriptAssetSchema, WebhookAssetSchema, CSSAssetSchema, DAASTAssetSchema, MarkdownAssetSchema, BriefAssetSchema, CatalogAssetSchema])),
-    provenance: ProvenanceSchema.nullish(),
+export const BuildCreativeMultiSuccessSchema = z.object({
+    creative_manifests: z.array(CreativeManifestSchema),
+    sandbox: z.boolean().nullish(),
+    expires_at: z.string().nullish(),
+    context: ContextObjectSchema.nullish(),
     ext: ExtensionObjectSchema.nullish()
 }).passthrough();
+
+export const PreviewOutputFormatSchema = z.union([z.literal("url"), z.literal("html")]);
 
 export const PreviewRenderSchema = z.union([z.object({
         render_id: z.string(),
@@ -2832,7 +2833,7 @@ export const GetProductsAsyncInputRequiredSchema = z.object({
 
 export const UpdateMediaBuyResponseSchema = z.union([UpdateMediaBuySuccessSchema, UpdateMediaBuyErrorSchema]);
 
-export const BuildCreativeResponseSchema = z.union([BuildCreativeSuccessSchema, BuildCreativeErrorSchema]);
+export const BuildCreativeResponseSchema = z.union([BuildCreativeSuccessSchema, BuildCreativeMultiSuccessSchema, BuildCreativeErrorSchema]);
 
 export const CreateMediaBuySuccessSchema = z.object({
     media_buy_id: z.string(),
@@ -3149,14 +3150,19 @@ export const BuildCreativeRequestSchema = z.object({
     concept_id: z.string().nullish(),
     media_buy_id: z.string().nullish(),
     package_id: z.string().nullish(),
-    target_format_id: FormatIDSchema,
+    target_format_id: FormatIDSchema.nullish(),
+    target_format_ids: z.array(FormatIDSchema).nullish(),
     brand: BrandReferenceSchema.nullish(),
     quality: CreativeQualitySchema.nullish(),
     item_limit: z.number().nullish(),
     macro_values: z.record(z.string(), z.union([z.string(), z.undefined()])).nullish(),
     context: ContextObjectSchema.nullish(),
     ext: ExtensionObjectSchema.nullish()
-}).passthrough();
+}).passthrough().and(z.union([z.object({
+        target_format_ids: z.never().optional()
+    }).passthrough(), z.object({
+        target_format_id: z.never().optional()
+    }).passthrough()]));
 
 export const PreviewCreativeRequestSchema = z.union([z.object({
         request_type: z.literal("single"),
@@ -3176,7 +3182,7 @@ export const PreviewCreativeRequestSchema = z.union([z.object({
         request_type: z.literal("batch"),
         requests: z.array(z.object({
             format_id: FormatIDSchema.nullish(),
-            creative_manifest: CreativeManifest1Schema,
+            creative_manifest: CreativeManifestSchema,
             inputs: z.array(z.object({
                 name: z.string(),
                 macros: z.record(z.string(), z.union([z.string(), z.undefined()])).nullish(),

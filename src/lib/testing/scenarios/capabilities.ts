@@ -260,9 +260,7 @@ function crossValidateProtocolsAndTools(capabilities: AdcpCapabilities, tools: s
     } else if (missingTools.length > 0) {
       // Partial coverage is a warning, not a failure — agents can legitimately
       // implement a subset of tools within a protocol.
-      warnings.push(
-        `Protocol '${protocol}' has partial tool coverage: missing [${missingTools.join(', ')}]`
-      );
+      warnings.push(`Protocol '${protocol}' has partial tool coverage: missing [${missingTools.join(', ')}]`);
       perProtocolDiffs[protocol] = {
         expected: [...protocolTools],
         found: [...matchingTools],

@@ -5876,14 +5876,9 @@ export interface SyncCatalogsError {
 
 // build_creative parameters
 /**
- * Quality tier for generation. 'draft' produces fast, lower-fidelity output for iteration and review. 'production' produces full-quality output for final delivery. If omitted, the creative agent uses its own default. For non-generative transforms (e.g., format resizing), creative agents MAY ignore this field.
+ * Request to transform, generate, or retrieve a creative manifest. Supports three modes: (1) generation from a brief or seed assets, (2) transformation of an existing manifest, (3) retrieval from a creative library by creative_id. Produces target manifest(s) in the specified format(s). Provide either target_format_id for a single format or target_format_ids for multiple formats.
  */
-export type CreativeQuality = 'draft' | 'production';
-
-/**
- * Request to transform, generate, or retrieve a creative manifest. Supports three modes: (1) generation from a brief or seed assets, (2) transformation of an existing manifest, (3) retrieval from a creative library by creative_id. Produces a target manifest in the specified format.
- */
-export interface BuildCreativeRequest {
+export type BuildCreativeRequest = {
   /**
    * Natural language instructions for the transformation or generation. For pure generation, this is the creative brief. For transformation, this provides guidance on how to adapt the creative. For refinement, this describes the desired changes.
    */
@@ -5905,7 +5900,11 @@ export interface BuildCreativeRequest {
    * Buyer's package or line item reference within the media buy. Used with media_buy_id when the creative agent needs line-item-level context for tag generation. Omit to get a tag not scoped to a specific package.
    */
   package_id?: string;
-  target_format_id: FormatID;
+  target_format_id?: FormatID;
+  /**
+   * Array of format IDs to generate in a single call. Mutually exclusive with target_format_id. The creative agent produces one manifest per format. Each format definition specifies its own required input assets and output structure.
+   */
+  target_format_ids?: FormatID[];
   brand?: BrandReference;
   quality?: CreativeQuality;
   /**
@@ -5920,7 +5919,19 @@ export interface BuildCreativeRequest {
   };
   context?: ContextObject;
   ext?: ExtensionObject;
-}
+} & (
+  | {
+      target_format_ids?: never;
+    }
+  | {
+      target_format_id?: never;
+    }
+);
+/**
+ * Quality tier for generation. 'draft' produces fast, lower-fidelity output for iteration and review. 'production' produces full-quality output for final delivery. If omitted, the creative agent uses its own default. For non-generative transforms (e.g., format resizing), creative agents MAY ignore this field.
+ */
+export type CreativeQuality = 'draft' | 'production';
+
 /**
  * Creative manifest to transform or generate from. For pure generation, this should include the target format_id and any required input assets. For transformation (e.g., resizing, reformatting), this is the complete creative to adapt. When creative_id is provided, the agent resolves the creative from its library and this field is ignored.
  */
@@ -5958,11 +5969,11 @@ export interface CreativeManifest {
 
 // build_creative response
 /**
- * Response containing the transformed or generated creative manifest, ready for use with preview_creative or sync_creatives. Returns either the complete creative manifest OR error information, never both.
+ * Response containing the transformed or generated creative manifest(s), ready for use with preview_creative or sync_creatives. Returns either a single creative_manifest, an array of creative_manifests (for multi-format requests), or error information.
  */
-export type BuildCreativeResponse = BuildCreativeSuccess | BuildCreativeError;
+export type BuildCreativeResponse = BuildCreativeSuccess | BuildCreativeMultiSuccess | BuildCreativeError;
 /**
- * Success response - creative manifest generated successfully
+ * Single-format success response. Returned when the request used target_format_id.
  */
 export interface BuildCreativeSuccess {
   creative_manifest: CreativeManifest;
@@ -5972,6 +5983,25 @@ export interface BuildCreativeSuccess {
   sandbox?: boolean;
   /**
    * ISO 8601 timestamp when generated asset URLs in the manifest expire. Set to the earliest expiration across all generated assets. Re-build the creative after this time to get fresh URLs.
+   */
+  expires_at?: string;
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Multi-format success response. Returned when the request used target_format_ids. Contains one manifest per requested format. Multi-format requests are atomic — all formats must succeed or the entire request fails with an error response. Array order corresponds to the target_format_ids request order.
+ */
+export interface BuildCreativeMultiSuccess {
+  /**
+   * Array of generated creative manifests, one per requested format. Each manifest contains its own format_id identifying which format it was generated for.
+   */
+  creative_manifests: CreativeManifest[];
+  /**
+   * When true, this response contains simulated data from sandbox mode.
+   */
+  sandbox?: boolean;
+  /**
+   * ISO 8601 timestamp when the earliest generated asset URL expires across all manifests. Re-build after this time to get fresh URLs.
    */
   expires_at?: string;
   context?: ContextObject;
@@ -6044,7 +6074,7 @@ export type PreviewCreativeRequest =
        */
       requests: {
         format_id?: FormatID;
-        creative_manifest: CreativeManifest1;
+        creative_manifest: CreativeManifest;
         /**
          * Array of input sets for generating multiple preview variants
          */
@@ -6099,41 +6129,6 @@ export type PreviewCreativeRequest =
  * Output format for previews. 'url' returns preview_url (iframe-embeddable URL), 'html' returns preview_html (raw HTML for direct embedding). Default: 'url' for backward compatibility.
  */
 export type PreviewOutputFormat = 'url' | 'html';
-/**
- * Complete creative manifest with all required assets.
- */
-export interface CreativeManifest1 {
-  format_id: FormatID;
-  /**
-   * Map of asset IDs to actual asset content. Each key MUST match an asset_id from the format's assets array (e.g., 'banner_image', 'clickthrough_url', 'video_file', 'vast_tag'). The asset_id is the technical identifier used to match assets to format requirements.
-   *
-   * IMPORTANT: Full validation requires format context. The format defines what type each asset_id should be. Standalone schema validation only checks structural conformance — each asset must match at least one valid asset type schema.
-   */
-  assets: {
-    /**
-     * This interface was referenced by `undefined`'s JSON-Schema definition
-     * via the `patternProperty` "^[a-z0-9_]+$".
-     */
-    [k: string]:
-      | ImageAsset
-      | VideoAsset
-      | AudioAsset
-      | VASTAsset
-      | TextAsset
-      | URLAsset
-      | HTMLAsset
-      | JavaScriptAsset
-      | WebhookAsset
-      | CSSAsset
-      | DAASTAsset
-      | MarkdownAsset
-      | BriefAsset
-      | CatalogAsset;
-  };
-  provenance?: Provenance;
-  ext?: ExtensionObject;
-}
-
 
 // preview_creative response
 /**

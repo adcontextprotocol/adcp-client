@@ -228,7 +228,10 @@ export function formatSuiteResults(suite: SuiteResult): string {
         if (step.details) output += `      ${step.details}\n`;
         if (step.error) output += `      ⚠️ Error: ${step.error}\n`;
         if (step.response_preview) {
-          output += '\n<details><summary>Diagnostic details</summary>\n\n```json\n' + step.response_preview + '\n```\n\n</details>\n\n';
+          output +=
+            '\n<details><summary>Diagnostic details</summary>\n\n```json\n' +
+            step.response_preview +
+            '\n```\n\n</details>\n\n';
         }
       }
     }

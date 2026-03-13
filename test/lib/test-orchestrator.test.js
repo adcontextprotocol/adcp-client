@@ -311,7 +311,8 @@ describe('formatSuiteResults', () => {
               duration_ms: 0,
               details: "Protocol 'media_buy' reported but no matching tools found",
               error: 'cross-validation mismatch',
-              response_preview: '{"reported_protocols":["media_buy"],"per_protocol":{"media_buy":{"expected":["get_products"],"found":[],"missing":["get_products"]}}}',
+              response_preview:
+                '{"reported_protocols":["media_buy"],"per_protocol":{"media_buy":{"expected":["get_products"],"found":[],"missing":["get_products"]}}}',
             },
           ],
         },
@@ -342,9 +343,7 @@ describe('formatSuiteResults', () => {
       agent_profile: { name: 'Test Agent', tools: [] },
       scenarios_run: ['health_check'],
       scenarios_skipped: [],
-      results: [
-        { scenario: 'health_check', overall_passed: false, summary: '1 failed', total_duration_ms: 50 },
-      ],
+      results: [{ scenario: 'health_check', overall_passed: false, summary: '1 failed', total_duration_ms: 50 }],
       overall_passed: false,
       passed_count: 0,
       failed_count: 1,
@@ -371,9 +370,7 @@ describe('formatSuiteResults', () => {
           overall_passed: false,
           summary: '1 failed',
           total_duration_ms: 50,
-          steps: [
-            { step: 'Check health endpoint', passed: false, duration_ms: 50, details: 'Connection refused' },
-          ],
+          steps: [{ step: 'Check health endpoint', passed: false, duration_ms: 50, details: 'Connection refused' }],
         },
       ],
       overall_passed: false,
