@@ -18,6 +18,7 @@ import {
   CREATIVE_TOOLS,
   SPONSORED_INTELLIGENCE_TOOLS,
   type AdcpCapabilities,
+  type AdcpProtocol,
 } from '../../utils/capabilities';
 
 /**
@@ -229,68 +230,87 @@ function validateCapabilitiesResponse(response: any, tools: string[]): { steps: 
 function crossValidateProtocolsAndTools(capabilities: AdcpCapabilities, tools: string[]): { steps: TestStepResult[] } {
   const steps: TestStepResult[] = [];
   const issues: string[] = [];
+  const warnings: string[] = [];
+
+  const protocolToolMap: Record<string, readonly string[]> = {
+    media_buy: MEDIA_BUY_TOOLS,
+    signals: SIGNALS_TOOLS,
+    governance: GOVERNANCE_TOOLS,
+    creative: CREATIVE_TOOLS,
+    sponsored_intelligence: SPONSORED_INTELLIGENCE_TOOLS,
+  };
 
   // Check each reported protocol has at least one corresponding tool
-  for (const protocol of capabilities.protocols) {
-    let protocolTools: readonly string[];
-    switch (protocol) {
-      case 'media_buy':
-        protocolTools = MEDIA_BUY_TOOLS;
-        break;
-      case 'signals':
-        protocolTools = SIGNALS_TOOLS;
-        break;
-      case 'governance':
-        protocolTools = GOVERNANCE_TOOLS;
-        break;
-      case 'creative':
-        protocolTools = CREATIVE_TOOLS;
-        break;
-      case 'sponsored_intelligence':
-        protocolTools = SPONSORED_INTELLIGENCE_TOOLS;
-        break;
-      default:
-        protocolTools = [];
-    }
+  const perProtocolDiffs: Record<string, { expected: string[]; found: string[]; missing: string[] }> = {};
 
+  for (const protocol of capabilities.protocols) {
+    const protocolTools = protocolToolMap[protocol] || [];
     const matchingTools = protocolTools.filter(t => tools.includes(t));
+    const missingTools = protocolTools.filter(t => !tools.includes(t));
+
     if (matchingTools.length === 0 && protocolTools.length > 0) {
-      issues.push(`Protocol '${protocol}' reported but no matching tools found`);
+      issues.push(
+        `Protocol '${protocol}' reported but no matching tools found. Expected one of: [${[...protocolTools].join(', ')}]`
+      );
+      perProtocolDiffs[protocol] = {
+        expected: [...protocolTools],
+        found: [],
+        missing: [...protocolTools],
+      };
+    } else if (missingTools.length > 0) {
+      // Partial coverage is a warning, not a failure — agents can legitimately
+      // implement a subset of tools within a protocol.
+      warnings.push(`Protocol '${protocol}' has partial tool coverage: missing [${missingTools.join(', ')}]`);
+      perProtocolDiffs[protocol] = {
+        expected: [...protocolTools],
+        found: [...matchingTools],
+        missing: missingTools,
+      };
     }
   }
 
   // Check for tools that suggest protocols not reported
   const unreportedProtocols: string[] = [];
 
-  if (!capabilities.protocols.includes('media_buy') && MEDIA_BUY_TOOLS.some(t => tools.includes(t))) {
-    unreportedProtocols.push('media_buy');
-  }
-  if (!capabilities.protocols.includes('signals') && SIGNALS_TOOLS.some(t => tools.includes(t))) {
-    unreportedProtocols.push('signals');
-  }
-  if (!capabilities.protocols.includes('governance') && GOVERNANCE_TOOLS.some(t => tools.includes(t))) {
-    unreportedProtocols.push('governance');
-  }
-  if (!capabilities.protocols.includes('creative') && CREATIVE_TOOLS.some(t => tools.includes(t))) {
-    unreportedProtocols.push('creative');
-  }
-  if (
-    !capabilities.protocols.includes('sponsored_intelligence') &&
-    SPONSORED_INTELLIGENCE_TOOLS.some(t => tools.includes(t))
-  ) {
-    unreportedProtocols.push('sponsored_intelligence');
+  for (const [protocol, expectedTools] of Object.entries(protocolToolMap)) {
+    if (!capabilities.protocols.includes(protocol as AdcpProtocol)) {
+      const presentTools = expectedTools.filter(t => tools.includes(t));
+      if (presentTools.length > 0) {
+        unreportedProtocols.push(protocol);
+        perProtocolDiffs[protocol] = {
+          expected: [],
+          found: [...presentTools],
+          missing: [],
+        };
+      }
+    }
   }
 
   if (unreportedProtocols.length > 0) {
-    issues.push(`Tools suggest unreported protocols: ${unreportedProtocols.join(', ')}`);
+    issues.push(
+      `Tools suggest unreported protocols: ${unreportedProtocols.map(p => `${p} (has: [${perProtocolDiffs[p].found.join(', ')}])`).join('; ')}`
+    );
   }
+
+  const allMessages = [...issues, ...warnings];
+  const hasDiffs = Object.keys(perProtocolDiffs).length > 0;
 
   steps.push({
     step: 'Cross-validate protocols and tools',
     passed: issues.length === 0,
     duration_ms: 0,
-    details: issues.length === 0 ? 'Reported protocols match available tools' : issues.join('; '),
-    warnings: issues.length > 0 ? issues : undefined,
+    details: allMessages.length === 0 ? 'Reported protocols match available tools' : allMessages.join('; '),
+    warnings: allMessages.length > 0 ? allMessages : undefined,
+    response_preview: hasDiffs
+      ? JSON.stringify(
+          {
+            reported_protocols: capabilities.protocols,
+            per_protocol: perProtocolDiffs,
+          },
+          null,
+          2
+        )
+      : undefined,
   });
 
   return { steps };

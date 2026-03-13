@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas vlatest
-// Generated at: 2026-03-13T13:07:47.032Z
+// Generated at: 2026-03-13T14:10:43.891Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -2966,7 +2966,7 @@ export type UpdateMediaBuyResponse = UpdateMediaBuySuccess | UpdateMediaBuyError
 /**
  * Response for completed or failed build_creative
  */
-export type BuildCreativeResponse = BuildCreativeSuccess | BuildCreativeError;
+export type BuildCreativeResponse = BuildCreativeSuccess | BuildCreativeMultiSuccess | BuildCreativeError;
 /**
  * Response for completed or failed sync_creatives
  */
@@ -3457,7 +3457,7 @@ export interface UpdateMediaBuyAsyncSubmitted {
   ext?: ExtensionObject;
 }
 /**
- * Success response - creative manifest generated successfully
+ * Single-format success response. Returned when the request used target_format_id.
  */
 export interface BuildCreativeSuccess {
   creative_manifest: CreativeManifest;
@@ -3504,6 +3504,25 @@ export interface CreativeManifest {
       | CatalogAsset;
   };
   provenance?: Provenance;
+  ext?: ExtensionObject;
+}
+/**
+ * Multi-format success response. Returned when the request used target_format_ids. Contains one manifest per requested format. Multi-format requests are atomic — all formats must succeed or the entire request fails with an error response. Array order corresponds to the target_format_ids request order.
+ */
+export interface BuildCreativeMultiSuccess {
+  /**
+   * Array of generated creative manifests, one per requested format. Each manifest contains its own format_id identifying which format it was generated for.
+   */
+  creative_manifests: CreativeManifest[];
+  /**
+   * When true, this response contains simulated data from sandbox mode.
+   */
+  sandbox?: boolean;
+  /**
+   * ISO 8601 timestamp when the earliest generated asset URL expires across all manifests. Re-build after this time to get fresh URLs.
+   */
+  expires_at?: string;
+  context?: ContextObject;
   ext?: ExtensionObject;
 }
 /**
