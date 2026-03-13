@@ -174,7 +174,7 @@ describe('CreativeAgentClient', () => {
 
     await assert.rejects(
       () => client.listCreatives(),
-      (err) => {
+      err => {
         assert.ok(err.message.includes('Failed to list creatives'));
         assert.ok(err.message.includes('Agent unreachable'));
         return true;
@@ -200,7 +200,7 @@ describe('CreativeAgentClient', () => {
     });
     const inner = client.getClient();
     let capturedParams;
-    inner.listCreatives = async (params) => {
+    inner.listCreatives = async params => {
       capturedParams = params;
       return { success: true, data: { creatives: [] } };
     };

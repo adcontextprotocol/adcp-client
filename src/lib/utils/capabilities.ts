@@ -160,7 +160,12 @@ export const GOVERNANCE_TOOLS = [
   'get_media_buy_artifacts',
 ] as const;
 
-export const CREATIVE_TOOLS = ['build_creative', 'list_creative_formats', 'preview_creative', 'list_creatives'] as const;
+export const CREATIVE_TOOLS = [
+  'build_creative',
+  'list_creative_formats',
+  'preview_creative',
+  'list_creatives',
+] as const;
 
 export const SPONSORED_INTELLIGENCE_TOOLS = [
   'si_get_offering',

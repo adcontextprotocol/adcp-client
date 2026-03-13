@@ -5,7 +5,13 @@ import type { SingleAgentClientConfig } from './SingleAgentClient';
 import type { InputHandler, TaskOptions } from './ConversationTypes';
 import type { AgentConfig } from '../types';
 import type { FormatID } from '../types/core.generated';
-import type { ListCreativeFormatsRequest, ListCreativeFormatsResponse, ListCreativesRequest, ListCreativesResponse, Format } from '../types/tools.generated';
+import type {
+  ListCreativeFormatsRequest,
+  ListCreativeFormatsResponse,
+  ListCreativesRequest,
+  ListCreativesResponse,
+  Format,
+} from '../types/tools.generated';
 
 /**
  * Configuration for CreativeAgentClient
@@ -167,7 +173,7 @@ export class CreativeAgentClient {
   async listCreatives(
     params: ListCreativesRequest = {},
     inputHandler?: InputHandler,
-    options?: TaskOptions,
+    options?: TaskOptions
   ): Promise<ListCreativesResponse> {
     const result = await this.client.listCreatives(params, inputHandler, options);
 
