@@ -8989,7 +8989,7 @@ export type GetCreativeFeaturesResponse =
  */
 export interface CreativeFeatureResult {
   /**
-   * The feature that was evaluated (e.g., 'auto_redirect', 'brand_consistency', 'iab_casinos_gambling')
+   * The feature that was evaluated (e.g., 'auto_redirect', 'brand_consistency'). Features prefixed with 'registry:' reference standardized policies from the shared policy registry (e.g., 'registry:eu_ai_act_article_50'). Unprefixed feature IDs are agent-defined.
    */
   feature_id: string;
   /**
