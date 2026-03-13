@@ -3859,9 +3859,9 @@ export interface Account {
    */
   rate_card?: string;
   /**
-   * Payment terms agreed for this account. Binding for all invoices when the account is active.
+   * Payment terms (e.g., 'net_30', 'prepay')
    */
-  payment_terms?: 'net_15' | 'net_30' | 'net_45' | 'net_60' | 'net_90' | 'prepay';
+  payment_terms?: string;
   /**
    * Maximum outstanding balance allowed
    */
@@ -10045,6 +10045,10 @@ export interface SyncAccountsRequest {
      * Who should be invoiced. operator: seller invoices the operator (agency or brand buying direct). agent: agent consolidates billing across brands. The seller must either accept this billing model or reject the request.
      */
     billing: 'operator' | 'agent';
+    /**
+     * Payment terms for this account. The seller must either accept these terms or reject the account — terms are never silently remapped. When omitted, the seller applies its default terms.
+     */
+    payment_terms?: 'net_15' | 'net_30' | 'net_45' | 'net_60' | 'net_90' | 'prepay';
     /**
      * When true, provision this as a sandbox account with no real platform calls or billing. Only applicable to implicit accounts (require_operator_auth: false). For explicit accounts, sandbox accounts are pre-existing test accounts discovered via list_accounts.
      */
