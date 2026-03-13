@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-03-13T01:33:13.284Z
+// Generated at: 2026-03-13T09:25:26.876Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -667,7 +667,7 @@ export const AccountSchema = z.object({
     operator: z.string().nullish(),
     billing: z.union([z.literal("operator"), z.literal("agent")]).nullish(),
     rate_card: z.string().nullish(),
-    payment_terms: z.union([z.literal("net_15"), z.literal("net_30"), z.literal("net_45"), z.literal("net_60"), z.literal("net_90"), z.literal("prepay")]).nullish(),
+    payment_terms: z.string().nullish(),
     credit_limit: z.object({
         amount: z.number(),
         currency: z.string()
