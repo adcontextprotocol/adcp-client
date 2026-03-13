@@ -8,6 +8,7 @@
  * - sync_creatives
  */
 
+import type { AccountReference } from '../../types/tools.generated';
 import type { TestOptions, TestStepResult, AgentProfile, TaskResult } from '../types';
 import { createTestClient, runStep, discoverAgentProfile, discoverAgentCapabilities, resolveBrand } from '../client';
 import { testDiscovery } from './discovery';
@@ -555,6 +556,82 @@ const TEST_HASHED_EMAIL = 'a' + '0'.repeat(63);
 const TEST_HASHED_PHONE = 'b' + '0'.repeat(63);
 
 /**
+ * Resolve which account reference to use for audience sync.
+ *
+ * Priority: explicit account_id > sandbox discovery > sandbox natural key > list_accounts discovery.
+ *
+ * Extracted for testability — the listAccounts callback abstracts the client call.
+ */
+export async function resolveAccountForAudiences(
+  options: TestOptions,
+  tools: string[],
+  listAccounts: (params: Record<string, unknown>) => Promise<TaskResult>
+): Promise<{ accountRef: AccountReference | undefined; steps: TestStepResult[] }> {
+  const steps: TestStepResult[] = [];
+
+  if (options.audience_account_id) {
+    return { accountRef: { account_id: options.audience_account_id }, steps };
+  }
+
+  if (options.sandbox && tools.includes('list_accounts')) {
+    // Sandbox with list_accounts: try explicit sandbox path first (discover pre-existing test accounts)
+    const { result: sandboxResult, step: sandboxStep } = await runStep<TaskResult>(
+      'Discover sandbox accounts',
+      'list_accounts',
+      async () => listAccounts({ sandbox: true })
+    );
+
+    const sandboxAccounts = sandboxResult?.success ? ((sandboxResult.data as any)?.accounts ?? []) : [];
+    if (sandboxAccounts[0]?.account_id) {
+      sandboxStep.details = `Using sandbox account: ${sandboxAccounts[0].account_id}`;
+      steps.push(sandboxStep);
+      return { accountRef: { account_id: sandboxAccounts[0].account_id }, steps };
+    }
+
+    // Fall back to natural key — mark step as informational, not a failure
+    const brand = resolveBrand(options);
+    if (!sandboxResult?.success) {
+      sandboxStep.details = 'list_accounts failed; falling back to natural key';
+    } else {
+      sandboxStep.details = 'No explicit sandbox accounts found; falling back to natural key';
+    }
+    sandboxStep.passed = true;
+    sandboxStep.error = undefined;
+    steps.push(sandboxStep);
+    return { accountRef: { brand, operator: brand.domain, sandbox: true }, steps };
+  }
+
+  if (options.sandbox) {
+    // Sandbox without list_accounts: implicit account model, use natural key
+    const brand = resolveBrand(options);
+    return { accountRef: { brand, operator: brand.domain, sandbox: true }, steps };
+  }
+
+  if (tools.includes('list_accounts')) {
+    const { result: accountsResult, step: accountsStep } = await runStep<TaskResult>(
+      'Discover accounts for audience sync',
+      'list_accounts',
+      async () => listAccounts({})
+    );
+
+    if (accountsResult?.success && accountsResult?.data) {
+      const accounts = (accountsResult.data as any).accounts ?? [];
+      if (accounts[0]?.account_id) {
+        accountsStep.details = `Using account: ${accounts[0].account_id}`;
+        steps.push(accountsStep);
+        return { accountRef: { account_id: accounts[0].account_id }, steps };
+      }
+      accountsStep.details = 'list_accounts returned no accounts';
+    } else {
+      accountsStep.details = 'list_accounts call failed';
+    }
+    steps.push(accountsStep);
+  }
+
+  return { accountRef: undefined, steps };
+}
+
+/**
  * Test: Audience Sync
  * Tests sync_audiences: discovery -> create audience -> delete audience
  */
@@ -584,30 +661,21 @@ export async function testSyncAudiences(
     return { steps, profile };
   }
 
-  // Resolve account_id: use option, or discover via list_accounts
-  let accountId = options.audience_account_id;
+  const { accountRef, steps: accountSteps } = await resolveAccountForAudiences(
+    options,
+    profile.tools,
+    async params => client.executeTask('list_accounts', params) as Promise<TaskResult>
+  );
+  steps.push(...accountSteps);
 
-  if (!accountId && profile.tools.includes('list_accounts')) {
-    const { result: accountsResult, step: accountsStep } = await runStep<TaskResult>(
-      'Discover accounts for audience sync',
-      'list_accounts',
-      async () => client.executeTask('list_accounts', {}) as Promise<TaskResult>
-    );
-    steps.push(accountsStep);
-
-    if (accountsResult?.success && accountsResult?.data) {
-      const accounts = (accountsResult.data as any).accounts ?? [];
-      accountId = accounts[0]?.account_id;
-    }
-  }
-
-  if (!accountId) {
+  if (!accountRef) {
     steps.push({
       step: 'Sync audiences',
       task: 'sync_audiences',
       passed: false,
       duration_ms: 0,
-      error: 'No account_id available. Provide audience_account_id in options or ensure list_accounts is supported.',
+      error:
+        'No account available. Provide audience_account_id, use sandbox: true, or ensure list_accounts is supported.',
     });
     return { steps, profile };
   }
@@ -618,7 +686,7 @@ export async function testSyncAudiences(
     'sync_audiences',
     async () =>
       client.executeTask('sync_audiences', {
-        account_id: accountId,
+        account: accountRef,
       }) as Promise<TaskResult>
   );
 
@@ -651,7 +719,7 @@ export async function testSyncAudiences(
     'sync_audiences',
     async () =>
       client.executeTask('sync_audiences', {
-        account_id: accountId,
+        account: accountRef,
         audiences: [
           {
             audience_id: testAudienceId,
@@ -693,7 +761,7 @@ export async function testSyncAudiences(
     'sync_audiences',
     async () =>
       client.executeTask('sync_audiences', {
-        account_id: accountId,
+        account: accountRef,
         audiences: [
           {
             audience_id: testAudienceId,

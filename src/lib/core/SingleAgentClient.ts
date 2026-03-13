@@ -42,7 +42,7 @@ import type { Task as A2ATask, TaskStatusUpdateEvent } from '@a2a-js/sdk';
 
 import { TaskExecutor, DeferredTaskError } from './TaskExecutor';
 import { createMCPAuthHeaders } from '../auth';
-import { AuthenticationRequiredError, is401Error } from '../errors';
+import { AuthenticationRequiredError, FeatureUnsupportedError, is401Error } from '../errors';
 import type { InputHandler, TaskOptions, TaskResult, ConversationConfig, TaskInfo } from './ConversationTypes';
 import type { Activity, AsyncHandlerConfig, WebhookMetadata } from './AsyncHandler';
 import { AsyncHandler } from './AsyncHandler';
@@ -50,8 +50,14 @@ import { unwrapProtocolResponse } from '../utils/response-unwrapper';
 import * as crypto from 'crypto';
 
 // v3.0 compatibility utilities
-import type { AdcpCapabilities, ToolInfo } from '../utils/capabilities';
-import { buildSyntheticCapabilities, parseCapabilitiesResponse } from '../utils/capabilities';
+import type { AdcpCapabilities, ToolInfo, FeatureName } from '../utils/capabilities';
+import {
+  buildSyntheticCapabilities,
+  parseCapabilitiesResponse,
+  resolveFeature,
+  listDeclaredFeatures,
+  TASK_FEATURE_MAP,
+} from '../utils/capabilities';
 import {
   adaptCreateMediaBuyRequestForV2,
   adaptUpdateMediaBuyRequestForV2,
@@ -138,6 +144,14 @@ export interface SingleAgentClientConfig extends ConversationConfig {
    * @default 'daily'
    */
   reportingWebhookFrequency?: 'hourly' | 'daily' | 'monthly';
+  /**
+   * Validate that the seller supports required features before each task call.
+   * When true, tasks like syncAudiences will fail fast with FeatureUnsupportedError
+   * if the seller hasn't declared audience_management support.
+   *
+   * @default true
+   */
+  validateFeatures?: boolean;
   /**
    * Runtime schema validation options
    */
@@ -552,7 +566,8 @@ export class SingleAgentClient {
     taskType: string,
     operationId: string,
     signature?: string,
-    timestamp?: string | number
+    timestamp?: string | number,
+    rawBody?: string
   ): Promise<boolean> {
     // Verify signature if secret is configured
     if (this.config.webhookSecret) {
@@ -560,7 +575,7 @@ export class SingleAgentClient {
         throw new Error('Webhook signature and timestamp required but not provided');
       }
 
-      const isValid = this.verifyWebhookSignature(payload, signature, timestamp);
+      const isValid = this.verifyWebhookSignature(rawBody ?? payload, signature, timestamp);
       if (!isValid) {
         throw new Error('Invalid webhook signature or timestamp too old');
       }
@@ -769,11 +784,16 @@ export class SingleAgentClient {
         const signature = req.headers['x-adcp-signature'] || req.headers['X-ADCP-Signature'];
         const timestamp = req.headers['x-adcp-timestamp'] || req.headers['X-ADCP-Timestamp'];
 
-        // Parse body if needed
+        // Capture raw body for signature verification, then parse
+        const rawBody = typeof req.body === 'string' ? req.body : JSON.stringify(req.body);
         const payload = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
 
-        // Handle webhook with automatic verification
-        const handled = await this.handleWebhook(payload, signature, timestamp);
+        // Extract routing params if available (e.g., Express route params)
+        const taskType = req.params?.task_type || req.params?.taskType || 'unknown';
+        const operationId = req.params?.operation_id || req.params?.operationId || 'unknown';
+
+        // Handle webhook with automatic verification using raw body bytes
+        const handled = await this.handleWebhook(payload, taskType, operationId, signature, timestamp, rawBody);
 
         // Return success
         if (res.json) {
@@ -797,17 +817,26 @@ export class SingleAgentClient {
   }
 
   /**
-   * Verify webhook signature using HMAC-SHA256 per AdCP PR #86 spec
+   * Verify webhook signature using HMAC-SHA256 per AdCP spec.
+   *
+   * HMAC is computed over the **raw HTTP body bytes** — the exact bytes received
+   * on the wire, before JSON parsing. This ensures cross-language interop since
+   * different JSON serializers may produce different byte representations of the
+   * same logical payload.
+   *
+   * For backward compatibility, a parsed object is still accepted but will be
+   * re-serialized with JSON.stringify, which may not match the sender's bytes.
+   * Always prefer passing the raw body string.
    *
    * Signature format: sha256={hex_signature}
-   * Message format: {timestamp}.{json_payload}
+   * Message format: {timestamp}.{raw_body}
    *
-   * @param payload - Webhook payload object
+   * @param rawBodyOrPayload - Raw HTTP body string (preferred) or parsed payload object (deprecated)
    * @param signature - X-ADCP-Signature header value (format: "sha256=...")
    * @param timestamp - X-ADCP-Timestamp header value (Unix timestamp)
    * @returns true if signature is valid
    */
-  verifyWebhookSignature(payload: any, signature: string, timestamp: string | number): boolean {
+  verifyWebhookSignature(rawBodyOrPayload: string | any, signature: string, timestamp: string | number): boolean {
     if (!this.config.webhookSecret) {
       return false;
     }
@@ -820,8 +849,11 @@ export class SingleAgentClient {
       return false; // Request too old or from future
     }
 
-    // Build message per AdCP spec: {timestamp}.{json_payload}
-    const message = `${ts}.${JSON.stringify(payload)}`;
+    // Use raw body bytes when available; fall back to JSON.stringify for backward compat
+    const body = typeof rawBodyOrPayload === 'string' ? rawBodyOrPayload : JSON.stringify(rawBodyOrPayload);
+
+    // Build message per AdCP spec: {timestamp}.{raw_body}
+    const message = `${ts}.${body}`;
 
     // Calculate expected signature
     const hmac = crypto.createHmac('sha256', this.config.webhookSecret);
@@ -854,6 +886,9 @@ export class SingleAgentClient {
 
     // Validate request params against schema
     this.validateRequest(taskType, normalizedParams);
+
+    // Validate required features before sending request
+    await this.validateTaskFeatures(taskType);
 
     // Check for v3 features used against v2 servers - return empty result if unsupported
     const earlyResult = await this.getEarlyResultForUnsupportedFeatures<T>(taskType, normalizedParams);
@@ -1399,8 +1434,21 @@ export class SingleAgentClient {
     options?: TaskOptions
   ): Promise<TaskResult<T>> {
     const normalizedParams = normalizeRequestParams(taskName, params);
+    await this.validateTaskFeatures(taskName);
     const agent = await this.ensureEndpointDiscovered();
-    return this.executor.executeTask<T>(agent, taskName, normalizedParams, inputHandler, options);
+
+    // Adapt request for the server's protocol version (e.g. strip v3-only
+    // fields like buying_mode when talking to v2 agents).
+    const adaptedParams = await this.adaptRequestForServerVersion(taskName, normalizedParams);
+
+    const result = await this.executor.executeTask<T>(agent, taskName, adaptedParams, inputHandler, options);
+
+    // Normalize response to v3 format for consistent API surface
+    if (result.success && result.data) {
+      result.data = this.normalizeResponseToV3(taskName, result.data) as T;
+    }
+
+    return result;
   }
 
   // ====== DEFERRED TASK MANAGEMENT ======
@@ -1967,6 +2015,61 @@ export class SingleAgentClient {
   async supportsVersion(version: 2 | 3): Promise<boolean> {
     const capabilities = await this.getCapabilities();
     return capabilities.majorVersions.includes(version);
+  }
+
+  /**
+   * Check if the seller supports a feature.
+   *
+   * Feature names resolve as follows:
+   * - Protocol names ('media_buy', 'signals', etc.) check supported_protocols
+   * - 'ext:<name>' checks extensions_supported
+   * - 'targeting.<name>' checks media_buy.execution.targeting
+   * - Other names check media_buy.features (e.g., 'audience_targeting', 'conversion_tracking')
+   *
+   * Absent features return false.
+   */
+  async supports(feature: FeatureName): Promise<boolean> {
+    const capabilities = await this.getCapabilities();
+    return resolveFeature(capabilities, feature);
+  }
+
+  /**
+   * Require that the seller supports all listed features.
+   * Throws FeatureUnsupportedError if any are missing.
+   *
+   * Call this before making feature-dependent task calls to fail fast
+   * with an actionable error message.
+   */
+  async require(...features: FeatureName[]): Promise<void> {
+    const capabilities = await this.getCapabilities();
+    const missing = features.filter(f => !resolveFeature(capabilities, f));
+    if (missing.length > 0) {
+      throw new FeatureUnsupportedError(missing, listDeclaredFeatures(capabilities), this.agent.agent_uri);
+    }
+  }
+
+  /**
+   * Force-refresh cached capabilities from the server.
+   * Useful when seller capabilities may have changed.
+   */
+  async refreshCapabilities(): Promise<AdcpCapabilities> {
+    this.cachedCapabilities = undefined;
+    return this.getCapabilities();
+  }
+
+  /**
+   * Validate that the seller supports all features required by a task.
+   * Throws FeatureUnsupportedError if any required features are missing.
+   *
+   * Skipped when validateFeatures is false or the task has no feature requirements.
+   */
+  private async validateTaskFeatures(taskName: string): Promise<void> {
+    if (this.config.validateFeatures === false) return;
+
+    const requiredFeatures = TASK_FEATURE_MAP[taskName];
+    if (!requiredFeatures || requiredFeatures.length === 0) return;
+
+    await this.require(...requiredFeatures);
   }
 
   // ====== STATIC HELPER METHODS ======

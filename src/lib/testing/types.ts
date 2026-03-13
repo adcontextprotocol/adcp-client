@@ -111,6 +111,9 @@ export interface TestOptions {
   si_context?: string;
   // For audience testing: account ID to use with sync_audiences
   audience_account_id?: string;
+  // When true, use sandbox mode. For implicit accounts, uses the natural key with
+  // sandbox: true. For explicit accounts, discovers sandbox accounts via list_accounts.
+  sandbox?: boolean;
 }
 
 export interface TestStepResult {

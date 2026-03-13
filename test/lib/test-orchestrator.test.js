@@ -325,8 +325,8 @@ describe('formatSuiteResults', () => {
     };
 
     const output = formatSuiteResults(suite);
-    // Should show the failed step details
-    assert.ok(output.includes('Cross-validate protocols and tools'), 'should show failed step name');
+    // Should show the failed step with bold name and duration
+    assert.ok(output.includes('**Cross-validate protocols and tools**'), 'should show bold failed step name');
     assert.ok(output.includes("Protocol 'media_buy'"), 'should show step details');
     assert.ok(output.includes('cross-validation mismatch'), 'should show step error');
     // Should include diagnostic details block

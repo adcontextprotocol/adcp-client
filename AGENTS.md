@@ -6,13 +6,15 @@ This document contains essential guidelines for AI coding assistants (Claude, Co
 
 **@adcp/client** is the official TypeScript client library for the Ad Context Protocol (AdCP), documented at [docs.adcontextprotocol.org](https://docs.adcontextprotocol.org/docs/).
 
-**Two main components:**
+**Components:**
+
 1. **Library** (`src/lib/`) - NPM package for AdCP agent communication
-2. **Testing Framework** (`src/`) - Live testing UI deployed on Fly.io
+2. **CLI** (`bin/`) - Command-line tooling for testing agents
 
 ## 🚨 CRITICAL REQUIREMENTS - MUST FOLLOW 🚨
 
 ### 1. ALWAYS USE OFFICIAL PROTOCOL CLIENTS
+
 - **A2A Protocol**: ALWAYS use the official `@a2a-js/sdk` client
 - **MCP Protocol**: ALWAYS use the official `@modelcontextprotocol/sdk` client
 - **NEVER** implement custom HTTP fallbacks or protocol implementations
@@ -21,6 +23,7 @@ This document contains essential guidelines for AI coding assistants (Claude, Co
 - If an official client fails to import, FIX THE IMPORT - don't create workarounds
 
 ### 2. NEVER USE MOCK DATA
+
 - **NEVER** inject mock products, formats, or any other fake data
 - **NEVER** provide fallback data when agents return empty responses
 - **ALWAYS** return exactly what the agents provide
@@ -35,28 +38,12 @@ The MCP SDK automatically handles initialization. Authentication must be provide
 const transport = new StreamableHTTPClientTransport(url, {
   requestInit: {
     headers: {
-      'x-adcp-auth': authToken
-    }
-  }
+      'x-adcp-auth': authToken,
+    },
+  },
 });
 await client.connect(transport); // This automatically calls initialize internally
 ```
-
-### 4. FLY.IO DEPLOYMENT REQUIREMENTS - CRITICAL
-
-**Server MUST listen on 0.0.0.0:8080 in production** - Fly.io requires this for external access:
-
-```javascript
-const host = process.env.HOST || (process.env.NODE_ENV === 'production' ? '0.0.0.0' : '127.0.0.1');
-const port = parseInt(process.env.PORT || '8080');
-```
-
-**Common deployment failure**: Server listening on `127.0.0.1` will cause "instance refused connection" errors.
-
-**Files to check when deploying**:
-- `src/server.ts` - Fastify server host/port configuration
-- `server.js` - Express server host/port configuration (if used)
-- `fly.toml` - Should have `internal_port = 8080`
 
 ## Critical Architecture Patterns
 
@@ -65,7 +52,7 @@ const port = parseInt(process.env.PORT || '8080');
 The library supports both **A2A** and **MCP** protocols via unified interface:
 
 ```typescript
-import { ProtocolClient } from "./src/lib/protocols";
+import { ProtocolClient } from './src/lib/protocols';
 // Routes to: callA2ATool() or callMCPTool() based on agent.protocol
 ```
 
@@ -76,6 +63,7 @@ The A2A protocol has specific implementation requirements that differ from MCP:
 **1. Artifact Field Names**
 
 A2A artifacts use `artifactId` per @a2a-js/sdk Artifact interface, NOT `name`:
+
 ```typescript
 // Correct (per @a2a-js/sdk)
 if (!artifact.artifactId) {
@@ -93,6 +81,7 @@ if (!artifact.name) { ... }
 Used for receiving task completion/progress notifications. Placement differs by protocol:
 
 - **A2A Protocol**: Goes in `params.configuration.pushNotificationConfig` (camelCase)
+
   ```typescript
   await a2aClient.sendMessage({
     message: { /* task content */ },
@@ -154,7 +143,7 @@ All operations follow 5 status patterns based on agent response:
 
 ```typescript
 // Core flow in src/lib/core/TaskExecutor.ts
-const result = await executor.executeTask(agent, "get_products", params, inputHandler);
+const result = await executor.executeTask(agent, 'get_products', params, inputHandler);
 // Status determines next steps: polling, webhook wait, or input handling
 ```
 
@@ -167,12 +156,12 @@ const client = new AdCPClient(agent, {
   handlers: {
     onGetProductsStatusChange: (response, metadata) => {
       // Fires for ALL status changes: sync completion, webhook delivery, etc.
-    }
-  }
+    },
+  },
 });
 
 // Input handler pattern for clarifications
-const handler = async (context) => {
+const handler = async context => {
   return context.inputRequest.field === 'budget' ? 50000 : context.deferToHuman();
 };
 ```
@@ -190,6 +179,7 @@ npm run changeset          # Create changeset for changes
 ```
 
 **The correct separation:**
+
 - `package.json` version = **Library version** (managed by changesets)
 - `src/lib/version.ts` ADCP_VERSION = **AdCP schema version** (can differ from library version)
 
@@ -230,7 +220,6 @@ npm run test:all          # Full test suite
 - `src/lib/core/` - Main client classes (AdCPClient, TaskExecutor)
 - `src/lib/protocols/` - A2A/MCP protocol implementations
 - `src/lib/types/` - Generated TypeScript types from schemas
-- `src/server/` - Testing framework server
 - `test/lib/` - Library unit tests
 - `test/e2e/` - Integration tests
 - `examples/` - Usage examples and demos
@@ -240,13 +229,15 @@ npm run test:all          # Full test suite
 **This is a published npm library. Callers on older versions must not break when we add new required fields.**
 
 When adding a new required field to a request schema:
+
 1. **Infer it from existing fields** in `SingleAgentClient.normalizeRequestParams()` so callers that don't send it still work
-2. **Update all internal callers** (testing scenarios, server handlers) to send the field explicitly
+2. **Update all internal callers** (testing scenarios) to send the field explicitly
 3. **Add tests** verifying the inference works and that explicit values are preserved
 
 Example: `buying_mode` was added as required on `get_products`. The client infers it from `brief` presence — callers that only sent `{ brief: '...' }` keep working.
 
 The pattern:
+
 - `normalizeRequestParams()` runs before validation, filling in derivable fields
 - `validateRequest()` runs Zod schemas after normalization
 - `adaptRequestForServerVersion()` handles v3→v2 downgrades for older servers
@@ -256,66 +247,9 @@ The pattern:
 ## Common Gotchas
 
 1. **Protocol clients**: Always use official `@a2a-js/sdk` and `@modelcontextprotocol/sdk`
-2. **Host binding**: Localhost-only servers fail on Fly.io deployment
-3. **Mock data**: Never inject fallback data when agents return empty responses
-4. **Version management**: Let changesets handle package.json, edit ADCP_VERSION separately
-5. **Debug logs**: UI expects specific format with separate request/response entries
-6. **Backwards compatibility**: New required schema fields need inference in `normalizeRequestParams()`
-
-## Debug Log Format (DO NOT CHANGE)
-
-The UI expects debug logs in this specific format:
-```javascript
-[
-  {
-    type: 'request',
-    method: 'tool_name',
-    protocol: 'a2a' | 'mcp',
-    url: 'agent_url',
-    headers: {},
-    body: 'request_body',
-    timestamp: 'ISO_string'
-  },
-  {
-    type: 'response',
-    status: 'status_code',
-    statusText: 'status_text',
-    body: response_data,
-    timestamp: 'ISO_string'
-  }
-]
-```
-
-## API Response Structure
-
-The `/api/sales/agents` endpoint must return:
-```javascript
-{
-  success: true,
-  data: {
-    agents: [...],
-    total: number
-  },
-  timestamp: 'ISO_string'
-}
-```
-
-## Testing Checklist
-
-### Pre-Deployment Testing
-- [ ] Debug logs show actual method names, not "Unknown [undefined]"
-- [ ] Agents load correctly in the dropdown
-- [ ] No 404 errors in browser console
-- [ ] Request/response pairs display correctly in debug panel
-- [ ] **Server configuration**: Verify host/port settings for production deployment
-
-### Deployment Testing (Fly.io)
-- [ ] **Pre-deploy**: Run `npm test` to ensure server configuration is correct
-- [ ] **Pre-deploy**: Run `npm run build` locally to catch TypeScript errors
-- [ ] **Pre-deploy**: Verify `src/server.ts` has correct host/port configuration
-- [ ] **Post-deploy**: Check `fly logs -n | grep "Server listening"` shows `http://0.0.0.0:8080`
-- [ ] **Post-deploy**: Test `curl -I https://adcp-testing.fly.dev` returns 200 OK
-- [ ] **Post-deploy**: Verify `fly status` shows machine in "started" state with healthy checks
+2. **Mock data**: Never inject fallback data when agents return empty responses
+3. **Version management**: Let changesets handle package.json, edit ADCP_VERSION separately
+4. **Backwards compatibility**: New required schema fields need inference in `normalizeRequestParams()`
 
 ## References
 

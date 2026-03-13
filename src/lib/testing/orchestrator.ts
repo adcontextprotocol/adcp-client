@@ -217,14 +217,16 @@ export function formatSuiteResults(suite: SuiteResult): string {
     const emoji = result.overall_passed ? '✅' : '❌';
     output += `${emoji} **${result.scenario}**: ${result.summary} (${result.total_duration_ms}ms)\n`;
 
-    // Show step-level details for failed scenarios
     if (!result.overall_passed) {
-      const failedSteps = (result.steps || []).filter(s => !s.passed);
+      const failedSteps = (result.steps ?? []).filter(s => !s.passed);
       for (const step of failedSteps) {
-        output += `  - ❌ ${step.step}`;
-        if (step.details) output += `: ${step.details}`;
-        if (step.error) output += ` — error: ${step.error}`;
-        output += `\n`;
+        output += `   ❌ **${step.step}**`;
+        if (step.task) {
+          output += ` (\`${step.task}\`)`;
+        }
+        output += ` - ${step.duration_ms}ms\n`;
+        if (step.details) output += `      ${step.details}\n`;
+        if (step.error) output += `      ⚠️ Error: ${step.error}\n`;
         if (step.response_preview) {
           output += '\n<details><summary>Diagnostic details</summary>\n\n```json\n' + step.response_preview + '\n```\n\n</details>\n\n';
         }

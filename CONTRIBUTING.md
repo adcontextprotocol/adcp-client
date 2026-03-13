@@ -9,6 +9,7 @@ We love your input! We want to make contributing to the AdCP client library as e
 - Becoming a maintainer
 
 ## Intellectual Property Rights
+
 Before contributing to the AdCP project, ensure that you have read and agree with our [Intellectual Property Rights Policy](https://github.com/adcontextprotocol/adcp/blob/main/IPR_POLICY.md).
 
 ## Development Process
@@ -33,13 +34,7 @@ npm install
 # Run the test suite
 npm test
 
-# Start the development server (testing UI)
-npm run dev
-
 # Build the library
-npm run build:lib
-
-# Build everything (library + server)
 npm run build
 ```
 
@@ -54,8 +49,6 @@ npm run build
 │   │   ├── auth/          # Authentication helpers
 │   │   ├── validation/    # Validation utilities
 │   │   └── utils/         # Shared utilities
-│   ├── server/            # Testing framework (not published)
-│   └── public/            # Web UI assets
 ├── examples/              # Usage examples
 ├── test/                  # Test files
 └── docs/                  # Additional documentation
@@ -73,16 +66,12 @@ npm run build
 ### Library vs Server Code
 
 **Library Code (`src/lib/`)**:
+
 - Must be framework-agnostic
 - Minimal dependencies (only protocol SDKs)
 - Pure functions where possible
 - Comprehensive error handling
 - Full TypeScript types
-
-**Server Code (`src/server/`)**:
-- Can use web frameworks (Fastify, Express)
-- Server-specific dependencies
-- Primarily for testing/demo purposes
 
 ### Testing
 
@@ -116,6 +105,7 @@ We follow the [Conventional Commits](https://www.conventionalcommits.org/) speci
 - `chore:` updating build tasks, package manager configs, etc.
 
 Examples:
+
 ```bash
 feat: add request interceptors for custom processing
 fix: handle MCP connection timeouts gracefully
@@ -146,14 +136,8 @@ git checkout -b fix/issue-description
 # Run the full test suite
 npm test
 
-# Test the library build
-npm run build:lib
-
-# Test the complete build
+# Test the build
 npm run build
-
-# Start the dev server to test manually
-npm run dev
 ```
 
 ### 4. Update Documentation
@@ -175,24 +159,28 @@ npm run dev
 Your PR will be reviewed for:
 
 ✅ **Code Quality**
+
 - Follows TypeScript best practices
 - Has comprehensive error handling
 - Includes appropriate logging
 - No console.log statements in library code
 
 ✅ **Testing**
+
 - All existing tests pass
 - New tests for new functionality
 - Tests cover edge cases
 - Integration tests for protocol changes
 
 ✅ **Documentation**
+
 - JSDoc comments for all public APIs
 - README updates for API changes
 - Examples demonstrate new features
 - CHANGELOG.md entry
 
 ✅ **Compatibility**
+
 - Works with Node.js >=18.0.0
 - Compatible with both CommonJS and ESM
 - No breaking changes without major version bump
@@ -228,26 +216,31 @@ Use our [feature request template](https://github.com/adcontextprotocol/adcp-cli
 When contributing to the library API:
 
 ### 1. **Developer Experience First**
+
 - APIs should be intuitive and hard to misuse
 - Provide sensible defaults
 - Clear error messages with actionable advice
 
 ### 2. **Type Safety**
+
 - Use TypeScript extensively
 - Avoid `any` types
 - Provide generic type parameters where helpful
 
 ### 3. **Protocol Agnostic**
+
 - Library users shouldn't need to know about MCP vs A2A differences
 - Hide protocol complexity behind clean abstractions
 - Consistent error handling across protocols
 
 ### 4. **Performance Conscious**
+
 - Avoid unnecessary object creation
 - Use connection pooling where appropriate
 - Implement timeouts and circuit breakers
 
 ### 5. **Security First**
+
 - Validate all inputs
 - Prevent SSRF attacks
 - Handle authentication securely
@@ -326,6 +319,7 @@ By contributing, you agree that your contributions will be licensed under the sa
 ## Recognition
 
 Contributors are recognized in:
+
 - README.md contributor section
 - Release notes for their contributions
 - Annual contributor highlights

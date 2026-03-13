@@ -65,6 +65,14 @@ export interface AccountCapabilities {
    * Whether an active account is required before calling get_products.
    */
   requiredForProducts: boolean;
+
+  /**
+   * Whether the seller supports sandbox accounts for testing.
+   * For implicit accounts (require_operator_auth: false), declare sandbox via sync_accounts
+   * with sandbox: true and reference by natural key. For explicit accounts
+   * (require_operator_auth: true), discover pre-existing test accounts via list_accounts.
+   */
+  sandbox: boolean;
 }
 
 /**
@@ -127,7 +135,7 @@ export const MEDIA_BUY_TOOLS = [
   'create_media_buy',
   'update_media_buy',
   'sync_creatives',
-  'list_creatives',
+  'list_creatives', // Also in CREATIVE_TOOLS - serves both domains
   'get_media_buy_delivery',
   'provide_performance_feedback',
   'sync_audiences',
@@ -152,7 +160,12 @@ export const GOVERNANCE_TOOLS = [
   'get_media_buy_artifacts',
 ] as const;
 
-export const CREATIVE_TOOLS = ['build_creative', 'list_creative_formats', 'preview_creative'] as const;
+export const CREATIVE_TOOLS = [
+  'build_creative',
+  'list_creative_formats',
+  'preview_creative',
+  'list_creatives',
+] as const;
 
 export const SPONSORED_INTELLIGENCE_TOOLS = [
   'si_get_offering',
@@ -251,6 +264,7 @@ export function parseCapabilitiesResponse(response: any): AdcpCapabilities {
       supportedBilling: response.account.supported_billing ?? [],
       defaultBilling: response.account.default_billing,
       requiredForProducts: response.account.required_for_products ?? false,
+      sandbox: response.account.sandbox ?? false,
     };
   }
 
@@ -309,4 +323,171 @@ export function requiresOperatorAuth(capabilities: AdcpCapabilities): boolean {
  */
 export function requiresAccountForProducts(capabilities: AdcpCapabilities): boolean {
   return capabilities.account?.requiredForProducts ?? false;
+}
+
+/**
+ * Check if the seller supports sandbox accounts
+ */
+export function supportsSandbox(capabilities: AdcpCapabilities): boolean {
+  return capabilities.account?.sandbox ?? false;
+}
+
+/**
+ * Feature name that can be checked via supports()/require().
+ *
+ * Supported namespaces:
+ * - Plain names resolve to media_buy.features (e.g., 'audience_targeting')
+ * - 'media_buy', 'signals', etc. check supported_protocols
+ * - 'ext:<name>' checks extensions_supported (e.g., 'ext:scope3')
+ * - 'targeting.<name>' checks media_buy.execution.targeting (e.g., 'targeting.geo_countries')
+ */
+export type FeatureName = string;
+
+/**
+ * Map of task names to features they require.
+ *
+ * When validateFeatures is enabled (default), SingleAgentClient checks
+ * these features against seller capabilities before sending a request.
+ * Tasks not listed here have no feature requirements.
+ */
+export const TASK_FEATURE_MAP: Record<string, FeatureName[]> = {
+  // Core media buy tasks require the media_buy protocol
+  get_products: ['media_buy'],
+  // list_creative_formats intentionally omitted — serves both media-buy and creative domains
+  create_media_buy: ['media_buy'],
+  update_media_buy: ['media_buy'],
+  get_media_buys: ['media_buy'],
+  get_media_buy_delivery: ['media_buy'],
+  provide_performance_feedback: ['media_buy'],
+
+  // Creative management requires media_buy + inline_creative_management
+  sync_creatives: ['media_buy', 'inline_creative_management'],
+  // list_creatives intentionally omitted — serves both media-buy and creative domains
+
+  // Audience management
+  sync_audiences: ['media_buy', 'audience_management'],
+
+  // Event tracking / conversion
+  sync_event_sources: ['media_buy', 'conversion_tracking'],
+  log_event: ['media_buy', 'conversion_tracking'],
+
+  // Signals protocol
+  get_signals: ['signals'],
+  activate_signal: ['signals'],
+
+  // Creative protocol
+  build_creative: ['creative'],
+  preview_creative: ['creative'],
+
+  // Governance protocol
+  create_property_list: ['governance'],
+  update_property_list: ['governance'],
+  get_property_list: ['governance'],
+  list_property_lists: ['governance'],
+  delete_property_list: ['governance'],
+  list_content_standards: ['governance', 'content_standards'],
+  get_content_standards: ['governance', 'content_standards'],
+  create_content_standards: ['governance', 'content_standards'],
+  update_content_standards: ['governance', 'content_standards'],
+  calibrate_content: ['governance', 'content_standards'],
+  validate_content_delivery: ['governance', 'content_standards'],
+  get_media_buy_artifacts: ['governance'],
+
+  // Sponsored intelligence protocol
+  si_get_offering: ['sponsored_intelligence'],
+  si_initiate_session: ['sponsored_intelligence'],
+  si_send_message: ['sponsored_intelligence'],
+  si_terminate_session: ['sponsored_intelligence'],
+};
+
+/**
+ * Map of media_buy.features field names to their camelCase keys in MediaBuyFeatures.
+ */
+const FEATURE_KEY_MAP: Record<string, keyof MediaBuyFeatures> = {
+  inline_creative_management: 'inlineCreativeManagement',
+  property_list_filtering: 'propertyListFiltering',
+  content_standards: 'contentStandards',
+  conversion_tracking: 'conversionTracking',
+  audience_targeting: 'audienceManagement',
+  audience_management: 'audienceManagement',
+};
+
+/**
+ * Resolve whether a single feature is supported by the given capabilities.
+ *
+ * Absent = unsupported (returns false).
+ */
+export function resolveFeature(capabilities: AdcpCapabilities, feature: FeatureName): boolean {
+  // Protocol-level check (e.g., 'media_buy', 'signals')
+  if (capabilities.protocols.includes(feature as AdcpProtocol)) {
+    return true;
+  }
+
+  // Extension check (e.g., 'ext:scope3')
+  if (feature.startsWith('ext:')) {
+    const extName = feature.slice(4);
+    return capabilities.extensions.includes(extName);
+  }
+
+  // Targeting check (e.g., 'targeting.geo_countries')
+  if (feature.startsWith('targeting.')) {
+    const targetingKey = feature.slice(10);
+    const raw = capabilities._raw as any;
+    const targeting = raw?.media_buy?.execution?.targeting;
+    if (!targeting) return false;
+    return !!targeting[targetingKey];
+  }
+
+  // Media buy features (e.g., 'audience_targeting', 'conversion_tracking')
+  const featureKey = FEATURE_KEY_MAP[feature];
+  if (featureKey) {
+    return capabilities.features[featureKey] ?? false;
+  }
+
+  // Check raw media_buy.features for features not in the normalized map
+  const raw = capabilities._raw as any;
+  const rawFeatures = raw?.media_buy?.features;
+  if (rawFeatures && feature in rawFeatures) {
+    return !!rawFeatures[feature];
+  }
+
+  // Unknown feature — absent means unsupported
+  return false;
+}
+
+/**
+ * List all declared feature names from capabilities (for error messages).
+ */
+export function listDeclaredFeatures(capabilities: AdcpCapabilities): string[] {
+  const features: string[] = [];
+
+  // Protocols
+  for (const p of capabilities.protocols) {
+    features.push(p);
+  }
+
+  // Media buy features
+  for (const [snakeKey, camelKey] of Object.entries(FEATURE_KEY_MAP)) {
+    if (capabilities.features[camelKey]) {
+      features.push(snakeKey);
+    }
+  }
+
+  // Extensions
+  for (const ext of capabilities.extensions) {
+    features.push(`ext:${ext}`);
+  }
+
+  // Targeting (from raw response)
+  const raw = capabilities._raw as any;
+  const targeting = raw?.media_buy?.execution?.targeting;
+  if (targeting && typeof targeting === 'object') {
+    for (const [key, value] of Object.entries(targeting)) {
+      if (value === true || (typeof value === 'object' && value !== null)) {
+        features.push(`targeting.${key}`);
+      }
+    }
+  }
+
+  return [...new Set(features)];
 }
