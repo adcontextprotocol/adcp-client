@@ -38,7 +38,7 @@ export function formatTestResults(result: TestResult): string {
 
   output += `### Test Steps\n\n`;
 
-  for (const step of result.steps) {
+  for (const step of result.steps ?? []) {
     const stepEmoji = step.passed ? '✅' : '❌';
     output += `${stepEmoji} **${step.step}**`;
     if (step.task) {
@@ -87,11 +87,12 @@ export function formatTestResultsJSON(result: TestResult): string {
  */
 export function formatTestResultsSummary(result: TestResult): string {
   const statusEmoji = result.overall_passed ? '✅' : '❌';
-  const passedCount = result.steps.filter(s => s.passed).length;
-  const failedCount = result.steps.filter(s => !s.passed).length;
-  const warningCount = result.steps.filter(s => s.warnings && s.warnings.length > 0).length;
+  const steps = result.steps ?? [];
+  const passedCount = steps.filter(s => s.passed).length;
+  const failedCount = steps.filter(s => !s.passed).length;
+  const warningCount = steps.filter(s => s.warnings && s.warnings.length > 0).length;
 
-  let summary = `${statusEmoji} ${result.scenario}: ${passedCount}/${result.steps.length} passed (${result.total_duration_ms}ms)`;
+  let summary = `${statusEmoji} ${result.scenario}: ${passedCount}/${steps.length} passed (${result.total_duration_ms}ms)`;
   if (failedCount > 0) {
     summary += ` - ${failedCount} failed`;
   }

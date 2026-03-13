@@ -291,6 +291,104 @@ describe('formatSuiteResults', () => {
     assert.ok(output.includes('0 passed, 1 failed'), 'should show counts');
   });
 
+  test('shows step-level details for failed scenarios', () => {
+    const suite = {
+      agent_url: 'https://example.com/mcp/',
+      agent_profile: { name: 'Test Agent', tools: [] },
+      scenarios_run: ['capability_discovery'],
+      scenarios_skipped: [],
+      results: [
+        {
+          scenario: 'capability_discovery',
+          overall_passed: false,
+          summary: '1 failed',
+          total_duration_ms: 50,
+          steps: [
+            { step: 'Discover agent profile', passed: true, duration_ms: 30 },
+            {
+              step: 'Cross-validate protocols and tools',
+              passed: false,
+              duration_ms: 0,
+              details: "Protocol 'media_buy' reported but no matching tools found",
+              error: 'cross-validation mismatch',
+              response_preview: '{"reported_protocols":["media_buy"],"per_protocol":{"media_buy":{"expected":["get_products"],"found":[],"missing":["get_products"]}}}',
+            },
+          ],
+        },
+      ],
+      overall_passed: false,
+      passed_count: 0,
+      failed_count: 1,
+      total_duration_ms: 50,
+      tested_at: '2025-01-01T00:00:00.000Z',
+      dry_run: true,
+    };
+
+    const output = formatSuiteResults(suite);
+    // Should show the failed step details
+    assert.ok(output.includes('Cross-validate protocols and tools'), 'should show failed step name');
+    assert.ok(output.includes("Protocol 'media_buy'"), 'should show step details');
+    assert.ok(output.includes('cross-validation mismatch'), 'should show step error');
+    // Should include diagnostic details block
+    assert.ok(output.includes('<details>'), 'should include collapsible details');
+    assert.ok(output.includes('reported_protocols'), 'should include diagnostic JSON');
+    // Should NOT show passed steps
+    assert.ok(!output.includes('Discover agent profile'), 'should not show passed steps');
+  });
+
+  test('handles failed scenario without steps array', () => {
+    const suite = {
+      agent_url: 'https://example.com/mcp/',
+      agent_profile: { name: 'Test Agent', tools: [] },
+      scenarios_run: ['health_check'],
+      scenarios_skipped: [],
+      results: [
+        { scenario: 'health_check', overall_passed: false, summary: '1 failed', total_duration_ms: 50 },
+      ],
+      overall_passed: false,
+      passed_count: 0,
+      failed_count: 1,
+      total_duration_ms: 50,
+      tested_at: '2025-01-01T00:00:00.000Z',
+      dry_run: true,
+    };
+
+    // Should not throw even without steps
+    const output = formatSuiteResults(suite);
+    assert.ok(output.includes('❌'), 'should show fail emoji');
+    assert.ok(output.includes('health_check'), 'should show scenario name');
+  });
+
+  test('omits diagnostic details when step has no response_preview', () => {
+    const suite = {
+      agent_url: 'https://example.com/mcp/',
+      agent_profile: { name: 'Test Agent', tools: [] },
+      scenarios_run: ['health_check'],
+      scenarios_skipped: [],
+      results: [
+        {
+          scenario: 'health_check',
+          overall_passed: false,
+          summary: '1 failed',
+          total_duration_ms: 50,
+          steps: [
+            { step: 'Check health endpoint', passed: false, duration_ms: 50, details: 'Connection refused' },
+          ],
+        },
+      ],
+      overall_passed: false,
+      passed_count: 0,
+      failed_count: 1,
+      total_duration_ms: 50,
+      tested_at: '2025-01-01T00:00:00.000Z',
+      dry_run: true,
+    };
+
+    const output = formatSuiteResults(suite);
+    assert.ok(output.includes('Connection refused'), 'should show step details');
+    assert.ok(!output.includes('<details>'), 'should not include details block without response_preview');
+  });
+
   test('formats a no-scenarios suite with distinct message', () => {
     const suite = {
       agent_url: 'https://example.com/mcp/',

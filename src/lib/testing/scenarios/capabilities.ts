@@ -230,6 +230,7 @@ function validateCapabilitiesResponse(response: any, tools: string[]): { steps: 
 function crossValidateProtocolsAndTools(capabilities: AdcpCapabilities, tools: string[]): { steps: TestStepResult[] } {
   const steps: TestStepResult[] = [];
   const issues: string[] = [];
+  const warnings: string[] = [];
 
   const protocolToolMap: Record<string, readonly string[]> = {
     media_buy: MEDIA_BUY_TOOLS,
@@ -257,6 +258,11 @@ function crossValidateProtocolsAndTools(capabilities: AdcpCapabilities, tools: s
         missing: [...protocolTools],
       };
     } else if (missingTools.length > 0) {
+      // Partial coverage is a warning, not a failure — agents can legitimately
+      // implement a subset of tools within a protocol.
+      warnings.push(
+        `Protocol '${protocol}' has partial tool coverage: missing [${missingTools.join(', ')}]`
+      );
       perProtocolDiffs[protocol] = {
         expected: [...protocolTools],
         found: [...matchingTools],
@@ -288,19 +294,19 @@ function crossValidateProtocolsAndTools(capabilities: AdcpCapabilities, tools: s
     );
   }
 
+  const allMessages = [...issues, ...warnings];
   const hasDiffs = Object.keys(perProtocolDiffs).length > 0;
 
   steps.push({
     step: 'Cross-validate protocols and tools',
     passed: issues.length === 0,
     duration_ms: 0,
-    details: issues.length === 0 ? 'Reported protocols match available tools' : issues.join('; '),
-    warnings: issues.length > 0 ? issues : undefined,
+    details: allMessages.length === 0 ? 'Reported protocols match available tools' : allMessages.join('; '),
+    warnings: allMessages.length > 0 ? allMessages : undefined,
     response_preview: hasDiffs
       ? JSON.stringify(
           {
             reported_protocols: capabilities.protocols,
-            agent_tools: tools,
             per_protocol: perProtocolDiffs,
           },
           null,

@@ -159,7 +159,7 @@ export interface TestResult {
   agent_url: string;
   scenario: TestScenario;
   overall_passed: boolean;
-  steps: TestStepResult[];
+  steps?: TestStepResult[];
   summary: string;
   total_duration_ms: number;
   tested_at: string;
