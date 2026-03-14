@@ -158,6 +158,13 @@ export const GOVERNANCE_TOOLS = [
   'calibrate_content',
   'validate_content_delivery',
   'get_media_buy_artifacts',
+  // Campaign governance
+  'sync_plans',
+  'check_governance',
+  'report_plan_outcome',
+  'get_plan_audit_logs',
+  // Creative governance
+  'get_creative_features',
 ] as const;
 
 export const CREATIVE_TOOLS = [
@@ -392,6 +399,15 @@ export const TASK_FEATURE_MAP: Record<string, FeatureName[]> = {
   calibrate_content: ['governance', 'content_standards'],
   validate_content_delivery: ['governance', 'content_standards'],
   get_media_buy_artifacts: ['governance'],
+
+  // Campaign governance
+  sync_plans: ['governance'],
+  check_governance: ['governance'],
+  report_plan_outcome: ['governance'],
+  get_plan_audit_logs: ['governance'],
+
+  // Creative governance
+  get_creative_features: ['governance'],
 
   // Sponsored intelligence protocol
   si_get_offering: ['sponsored_intelligence'],

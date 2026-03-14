@@ -60,6 +60,10 @@ import {
   testGovernancePropertyLists,
   testGovernanceContentStandards,
   testPropertyListFilters,
+  testCampaignGovernance,
+  testCampaignGovernanceDenied,
+  testCampaignGovernanceConditions,
+  testCampaignGovernanceDelivery,
   testSISessionLifecycle,
   testSIAvailability,
   testSIHandoff,
@@ -220,6 +224,31 @@ export async function testAgent(
         profile = result.profile;
         break;
 
+      // v3 Campaign governance scenarios
+      case 'campaign_governance':
+        result = await testCampaignGovernance(agentUrl, effectiveOptions);
+        steps = result.steps;
+        profile = result.profile;
+        break;
+
+      case 'campaign_governance_denied':
+        result = await testCampaignGovernanceDenied(agentUrl, effectiveOptions);
+        steps = result.steps;
+        profile = result.profile;
+        break;
+
+      case 'campaign_governance_conditions':
+        result = await testCampaignGovernanceConditions(agentUrl, effectiveOptions);
+        steps = result.steps;
+        profile = result.profile;
+        break;
+
+      case 'campaign_governance_delivery':
+        result = await testCampaignGovernanceDelivery(agentUrl, effectiveOptions);
+        steps = result.steps;
+        profile = result.profile;
+        break;
+
       // v3 SI protocol scenarios
       case 'si_session_lifecycle':
         result = await testSISessionLifecycle(agentUrl, effectiveOptions);
@@ -341,6 +370,10 @@ export {
   testGovernancePropertyLists,
   testGovernanceContentStandards,
   testPropertyListFilters,
+  testCampaignGovernance,
+  testCampaignGovernanceDenied,
+  testCampaignGovernanceConditions,
+  testCampaignGovernanceDelivery,
   testSISessionLifecycle,
   testSIAvailability,
   testSIHandoff,
@@ -350,6 +383,7 @@ export {
   testSchemaCompliance,
   // v3 helpers
   hasGovernanceTools,
+  hasCampaignGovernanceTools,
   hasSITools,
   likelySupportsV3,
 } from './scenarios';

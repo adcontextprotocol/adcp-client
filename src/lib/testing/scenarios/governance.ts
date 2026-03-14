@@ -748,9 +748,858 @@ export async function testPropertyListFilters(
   return { steps, profile };
 }
 
+// Campaign governance tools
+const CAMPAIGN_GOVERNANCE_TOOLS = [
+  'sync_plans',
+  'check_governance',
+  'report_plan_outcome',
+  'get_plan_audit_logs',
+] as const;
+
+/**
+ * Test: Campaign Governance - Full Lifecycle
+ *
+ * Flow: sync_plans -> check_governance(proposed, approved) -> create_media_buy
+ *       -> report_plan_outcome(completed)
+ *
+ * Tests the happy path: buyer syncs a plan, gets approval, executes,
+ * and reports the outcome back to the governance agent.
+ */
+export async function testCampaignGovernance(
+  agentUrl: string,
+  options: TestOptions
+): Promise<{ steps: TestStepResult[]; profile?: AgentProfile }> {
+  const steps: TestStepResult[] = [];
+  const client = createTestClient(agentUrl, options.protocol || 'mcp', options);
+
+  // Discover agent profile
+  const { profile, step: profileStep } = await discoverAgentProfile(client);
+  steps.push(profileStep);
+
+  if (!profileStep.passed) {
+    return { steps, profile };
+  }
+
+  // Check if agent supports campaign governance tools
+  const hasCampaignGovernance = CAMPAIGN_GOVERNANCE_TOOLS.some(t => profile.tools.includes(t));
+  if (!hasCampaignGovernance) {
+    steps.push({
+      step: 'Campaign governance support check',
+      passed: false,
+      duration_ms: 0,
+      error: 'Agent does not support campaign governance tools',
+      details: `Required: at least one of ${CAMPAIGN_GOVERNANCE_TOOLS.join(', ')}. Available: ${profile.tools.join(', ')}`,
+    });
+    return { steps, profile };
+  }
+
+  profile.supports_governance = true;
+
+  const testPlanId = `test-plan-${Date.now()}`;
+  const testCampaignRef = `test-campaign-${Date.now()}`;
+  const callerUrl = 'https://test-orchestrator.example.com';
+  const flightStart = new Date();
+  const flightEnd = new Date(flightStart.getTime() + 30 * 24 * 60 * 60 * 1000); // 30 days
+
+  // Step 1: sync_plans
+  if (profile.tools.includes('sync_plans')) {
+    const { result, step } = await runStep<TaskResult>(
+      'Sync campaign governance plan',
+      'sync_plans',
+      async () =>
+        client.executeTask('sync_plans', {
+          plans: [
+            {
+              plan_id: testPlanId,
+              brand: options.brand || { domain: 'test.example.com' },
+              objectives: 'E2E test campaign for governance protocol validation',
+              budget: {
+                total: options.budget || 10000,
+                currency: 'USD',
+                authority_level: 'agent_full',
+              },
+              flight: {
+                start: flightStart.toISOString(),
+                end: flightEnd.toISOString(),
+              },
+              countries: ['US'],
+              channels: {
+                allowed: ['display', 'video'],
+              },
+              delegations: [
+                {
+                  agent_url: callerUrl,
+                  authority: 'full',
+                },
+              ],
+            },
+          ],
+        }) as Promise<TaskResult>
+    );
+
+    if (result?.success && result?.data) {
+      const data = result.data as any;
+      const plans = data.plans || [];
+      const synced = plans.find((p: any) => p.plan_id === testPlanId);
+      if (synced?.status === 'active') {
+        step.details = `Plan synced: ${testPlanId}, version ${synced.version}, ${(synced.categories || []).length} categories active`;
+        step.response_preview = JSON.stringify(
+          {
+            plan_id: synced.plan_id,
+            status: synced.status,
+            version: synced.version,
+            categories: synced.categories?.map((c: any) => c.category_id),
+            resolved_policies: synced.resolved_policies?.length || 0,
+          },
+          null,
+          2
+        );
+      } else {
+        step.passed = false;
+        step.error = synced
+          ? `Plan sync returned status '${synced.status}' instead of 'active'`
+          : 'Plan not found in sync response';
+      }
+    } else if (result && !result.success) {
+      step.passed = false;
+      step.error = result.error || 'sync_plans failed';
+    }
+    steps.push(step);
+  }
+
+  // Step 2: check_governance (proposed, expecting approved)
+  let checkId: string | undefined;
+  if (profile.tools.includes('check_governance')) {
+    const { result, step } = await runStep<TaskResult>(
+      'Check governance (proposed buy)',
+      'check_governance',
+      async () =>
+        client.executeTask('check_governance', {
+          plan_id: testPlanId,
+          buyer_campaign_ref: testCampaignRef,
+          binding: 'proposed',
+          caller: callerUrl,
+          tool: 'create_media_buy',
+          payload: {
+            buyer_ref: `e2e-test-${Date.now()}`,
+            channel: 'display',
+            budget: { total: 1000, currency: 'USD' },
+            flight: {
+              start: flightStart.toISOString(),
+              end: flightEnd.toISOString(),
+            },
+            countries: ['US'],
+          },
+        }) as Promise<TaskResult>
+    );
+
+    if (result?.success && result?.data) {
+      const data = result.data as any;
+      checkId = data.check_id;
+      const status = data.status;
+
+      step.details = `Governance check: status=${status}, binding=${data.binding}, mode=${data.mode || 'unknown'}`;
+      step.response_preview = JSON.stringify(
+        {
+          check_id: data.check_id,
+          status: data.status,
+          binding: data.binding,
+          mode: data.mode,
+          explanation: data.explanation,
+          findings_count: data.findings?.length || 0,
+          expires_at: data.expires_at,
+        },
+        null,
+        2
+      );
+
+      // Any status is valid — we're testing the protocol, not the policy
+      if (!['approved', 'denied', 'conditions', 'escalated'].includes(status)) {
+        step.passed = false;
+        step.error = `Unexpected governance status: ${status}`;
+      }
+    } else if (result && !result.success) {
+      step.passed = false;
+      step.error = result.error || 'check_governance failed';
+    }
+    steps.push(step);
+  }
+
+  // Step 3: report_plan_outcome (completed)
+  if (profile.tools.includes('report_plan_outcome') && checkId) {
+    const { result, step } = await runStep<TaskResult>(
+      'Report plan outcome (completed)',
+      'report_plan_outcome',
+      async () =>
+        client.executeTask('report_plan_outcome', {
+          plan_id: testPlanId,
+          check_id: checkId,
+          buyer_campaign_ref: testCampaignRef,
+          outcome: 'completed',
+          seller_response: {
+            media_buy_id: `test-mb-${Date.now()}`,
+            buyer_ref: `e2e-test-${Date.now()}`,
+            packages: [
+              {
+                package_id: 'test-pkg-1',
+                name: 'E2E Test Package',
+                budget: { total: 1000, currency: 'USD' },
+              },
+            ],
+          },
+        }) as Promise<TaskResult>
+    );
+
+    if (result?.success && result?.data) {
+      step.details = 'Outcome reported to governance agent';
+      step.response_preview = JSON.stringify(result.data, null, 2);
+    } else if (result && !result.success) {
+      step.passed = false;
+      step.error = result.error || 'report_plan_outcome failed';
+    }
+    steps.push(step);
+  }
+
+  // Step 4: get_plan_audit_logs
+  if (profile.tools.includes('get_plan_audit_logs')) {
+    const { result, step } = await runStep<TaskResult>(
+      'Get plan audit logs',
+      'get_plan_audit_logs',
+      async () =>
+        client.executeTask('get_plan_audit_logs', {
+          plan_ids: [testPlanId],
+          buyer_campaign_ref: testCampaignRef,
+          include_entries: true,
+        }) as Promise<TaskResult>
+    );
+
+    if (result?.success && result?.data) {
+      const data = result.data as any;
+      step.details = 'Audit logs retrieved';
+      step.response_preview = JSON.stringify(
+        {
+          plans_returned: data.plans?.length || 0,
+          has_entries: !!(data.plans?.[0]?.entries?.length),
+          budget: data.plans?.[0]?.budget,
+        },
+        null,
+        2
+      );
+    } else if (result && !result.success) {
+      step.passed = false;
+      step.error = result.error || 'get_plan_audit_logs failed';
+    }
+    steps.push(step);
+  }
+
+  return { steps, profile };
+}
+
+/**
+ * Test: Campaign Governance - Denied Flow
+ *
+ * Sends a check_governance request that should be denied (budget exceeds plan,
+ * unauthorized market). Validates that the governance agent returns meaningful
+ * findings and explanations.
+ */
+export async function testCampaignGovernanceDenied(
+  agentUrl: string,
+  options: TestOptions
+): Promise<{ steps: TestStepResult[]; profile?: AgentProfile }> {
+  const steps: TestStepResult[] = [];
+  const client = createTestClient(agentUrl, options.protocol || 'mcp', options);
+
+  const { profile, step: profileStep } = await discoverAgentProfile(client);
+  steps.push(profileStep);
+
+  if (!profileStep.passed) {
+    return { steps, profile };
+  }
+
+  if (!profile.tools.includes('sync_plans') || !profile.tools.includes('check_governance')) {
+    steps.push({
+      step: 'Campaign governance denied flow support check',
+      passed: false,
+      duration_ms: 0,
+      error: 'Agent requires sync_plans + check_governance for denied flow testing',
+    });
+    return { steps, profile };
+  }
+
+  profile.supports_governance = true;
+
+  const testPlanId = `test-denied-plan-${Date.now()}`;
+  const testCampaignRef = `test-denied-campaign-${Date.now()}`;
+  const callerUrl = 'https://test-orchestrator.example.com';
+  const flightStart = new Date();
+  const flightEnd = new Date(flightStart.getTime() + 7 * 24 * 60 * 60 * 1000);
+
+  // Sync a restrictive plan: small budget, US only
+  const { result: syncResult, step: syncStep } = await runStep<TaskResult>(
+    'Sync restrictive plan (small budget, US only)',
+    'sync_plans',
+    async () =>
+      client.executeTask('sync_plans', {
+        plans: [
+          {
+            plan_id: testPlanId,
+            brand: options.brand || { domain: 'test.example.com' },
+            objectives: 'E2E denial test: budget and geo restrictions',
+            budget: {
+              total: 500,
+              currency: 'USD',
+              authority_level: 'agent_limited',
+              reallocation_threshold: 100,
+            },
+            flight: {
+              start: flightStart.toISOString(),
+              end: flightEnd.toISOString(),
+            },
+            countries: ['US'],
+            channels: {
+              allowed: ['display'],
+            },
+          },
+        ],
+      }) as Promise<TaskResult>
+  );
+  steps.push(syncStep);
+
+  if (!syncResult?.success) {
+    return { steps, profile };
+  }
+
+  // Check governance with over-budget request
+  const { result: overBudgetResult, step: overBudgetStep } = await runStep<TaskResult>(
+    'Check governance (over-budget, expecting denial or conditions)',
+    'check_governance',
+    async () =>
+      client.executeTask('check_governance', {
+        plan_id: testPlanId,
+        buyer_campaign_ref: testCampaignRef,
+        binding: 'proposed',
+        caller: callerUrl,
+        tool: 'create_media_buy',
+        payload: {
+          buyer_ref: `e2e-overbudget-${Date.now()}`,
+          channel: 'display',
+          budget: { total: 50000, currency: 'USD' },
+          flight: {
+            start: flightStart.toISOString(),
+            end: flightEnd.toISOString(),
+          },
+          countries: ['US'],
+        },
+      }) as Promise<TaskResult>
+  );
+
+  if (overBudgetResult?.success && overBudgetResult?.data) {
+    const data = overBudgetResult.data as any;
+    overBudgetStep.details = `Over-budget check: status=${data.status}, explanation: ${data.explanation}`;
+    overBudgetStep.response_preview = JSON.stringify(
+      {
+        status: data.status,
+        explanation: data.explanation,
+        findings: data.findings?.map((f: any) => ({
+          category_id: f.category_id,
+          severity: f.severity,
+          explanation: f.explanation,
+        })),
+        conditions: data.conditions,
+      },
+      null,
+      2
+    );
+
+    if (data.status === 'approved') {
+      overBudgetStep.warnings = ['Governance approved a $50,000 buy against a $500 plan — may indicate audit/advisory mode'];
+    }
+  } else if (overBudgetResult && !overBudgetResult.success) {
+    overBudgetStep.passed = false;
+    overBudgetStep.error = overBudgetResult.error || 'check_governance failed';
+  }
+  steps.push(overBudgetStep);
+
+  // Check governance with unauthorized market
+  const { result: geoResult, step: geoStep } = await runStep<TaskResult>(
+    'Check governance (unauthorized market, expecting denial or conditions)',
+    'check_governance',
+    async () =>
+      client.executeTask('check_governance', {
+        plan_id: testPlanId,
+        buyer_campaign_ref: testCampaignRef,
+        binding: 'proposed',
+        caller: callerUrl,
+        tool: 'create_media_buy',
+        payload: {
+          buyer_ref: `e2e-badgeo-${Date.now()}`,
+          channel: 'display',
+          budget: { total: 100, currency: 'USD' },
+          flight: {
+            start: flightStart.toISOString(),
+            end: flightEnd.toISOString(),
+          },
+          countries: ['CN', 'RU'],
+        },
+      }) as Promise<TaskResult>
+  );
+
+  if (geoResult?.success && geoResult?.data) {
+    const data = geoResult.data as any;
+    geoStep.details = `Unauthorized market check: status=${data.status}`;
+    geoStep.response_preview = JSON.stringify(
+      {
+        status: data.status,
+        explanation: data.explanation,
+        findings: data.findings?.map((f: any) => ({
+          category_id: f.category_id,
+          explanation: f.explanation,
+        })),
+      },
+      null,
+      2
+    );
+
+    if (data.status === 'approved') {
+      geoStep.warnings = ['Governance approved targeting CN/RU against US-only plan — may indicate audit/advisory mode'];
+    }
+  } else if (geoResult && !geoResult.success) {
+    geoStep.passed = false;
+    geoStep.error = geoResult.error || 'check_governance failed';
+  }
+  steps.push(geoStep);
+
+  // Report failed outcome
+  if (profile.tools.includes('report_plan_outcome') && overBudgetResult?.data?.check_id) {
+    const { step: outcomeStep } = await runStep<TaskResult>(
+      'Report failed outcome for denied check',
+      'report_plan_outcome',
+      async () =>
+        client.executeTask('report_plan_outcome', {
+          plan_id: testPlanId,
+          check_id: overBudgetResult.data.check_id,
+          buyer_campaign_ref: testCampaignRef,
+          outcome: 'failed',
+          error: {
+            code: 'governance_denied',
+            message: 'Action blocked by governance check',
+          },
+        }) as Promise<TaskResult>
+    );
+    steps.push(outcomeStep);
+  }
+
+  return { steps, profile };
+}
+
+/**
+ * Test: Campaign Governance - Conditions Flow
+ *
+ * Syncs a plan, sends a check that may trigger conditions (e.g., budget
+ * concentration limit), applies machine-actionable conditions, and re-checks.
+ */
+export async function testCampaignGovernanceConditions(
+  agentUrl: string,
+  options: TestOptions
+): Promise<{ steps: TestStepResult[]; profile?: AgentProfile }> {
+  const steps: TestStepResult[] = [];
+  const client = createTestClient(agentUrl, options.protocol || 'mcp', options);
+
+  const { profile, step: profileStep } = await discoverAgentProfile(client);
+  steps.push(profileStep);
+
+  if (!profileStep.passed) {
+    return { steps, profile };
+  }
+
+  if (!profile.tools.includes('sync_plans') || !profile.tools.includes('check_governance')) {
+    steps.push({
+      step: 'Campaign governance conditions flow support check',
+      passed: false,
+      duration_ms: 0,
+      error: 'Agent requires sync_plans + check_governance for conditions flow testing',
+    });
+    return { steps, profile };
+  }
+
+  profile.supports_governance = true;
+
+  const testPlanId = `test-conditions-plan-${Date.now()}`;
+  const testCampaignRef = `test-conditions-campaign-${Date.now()}`;
+  const callerUrl = 'https://test-orchestrator.example.com';
+  const flightStart = new Date();
+  const flightEnd = new Date(flightStart.getTime() + 14 * 24 * 60 * 60 * 1000);
+
+  // Sync a plan with per_seller_max_pct constraint
+  const { result: syncResult, step: syncStep } = await runStep<TaskResult>(
+    'Sync plan with seller concentration limit',
+    'sync_plans',
+    async () =>
+      client.executeTask('sync_plans', {
+        plans: [
+          {
+            plan_id: testPlanId,
+            brand: options.brand || { domain: 'test.example.com' },
+            objectives: 'E2E conditions test: budget cap per seller',
+            budget: {
+              total: 5000,
+              currency: 'USD',
+              authority_level: 'agent_limited',
+              per_seller_max_pct: 50,
+              reallocation_threshold: 500,
+            },
+            flight: {
+              start: flightStart.toISOString(),
+              end: flightEnd.toISOString(),
+            },
+            countries: ['US'],
+            channels: {
+              allowed: ['display', 'video'],
+              mix_targets: {
+                display: { min_pct: 30, max_pct: 70 },
+                video: { min_pct: 30, max_pct: 70 },
+              },
+            },
+          },
+        ],
+      }) as Promise<TaskResult>
+  );
+  steps.push(syncStep);
+
+  if (!syncResult?.success) {
+    return { steps, profile };
+  }
+
+  // First check: send budget that might trigger conditions
+  const { result: checkResult, step: checkStep } = await runStep<TaskResult>(
+    'Check governance (may trigger conditions)',
+    'check_governance',
+    async () =>
+      client.executeTask('check_governance', {
+        plan_id: testPlanId,
+        buyer_campaign_ref: testCampaignRef,
+        binding: 'proposed',
+        caller: callerUrl,
+        tool: 'create_media_buy',
+        payload: {
+          buyer_ref: `e2e-conditions-${Date.now()}`,
+          channel: 'display',
+          budget: { total: 4000, currency: 'USD' },
+          flight: {
+            start: flightStart.toISOString(),
+            end: flightEnd.toISOString(),
+          },
+          countries: ['US'],
+        },
+      }) as Promise<TaskResult>
+  );
+
+  if (checkResult?.success && checkResult?.data) {
+    const data = checkResult.data as any;
+    checkStep.details = `Initial check: status=${data.status}`;
+    checkStep.response_preview = JSON.stringify(
+      {
+        check_id: data.check_id,
+        status: data.status,
+        explanation: data.explanation,
+        conditions: data.conditions,
+        findings: data.findings?.map((f: any) => ({
+          category_id: f.category_id,
+          explanation: f.explanation,
+        })),
+      },
+      null,
+      2
+    );
+
+    // If we got conditions, apply them and re-check
+    if (data.status === 'conditions' && data.conditions?.length > 0) {
+      const conditions = data.conditions;
+      const appliedConditions = conditions
+        .filter((c: any) => c.required_value !== undefined)
+        .map((c: any) => `${c.field}=${JSON.stringify(c.required_value)}`);
+
+      checkStep.details += `. Conditions received: ${conditions.length} (${appliedConditions.length} machine-actionable)`;
+
+      // Build adjusted payload by applying conditions
+      const adjustedPayload: any = {
+        buyer_ref: `e2e-conditions-adjusted-${Date.now()}`,
+        channel: 'display',
+        budget: { total: 4000, currency: 'USD' },
+        flight: {
+          start: flightStart.toISOString(),
+          end: flightEnd.toISOString(),
+        },
+        countries: ['US'],
+      };
+
+      for (const condition of conditions) {
+        if (condition.required_value !== undefined) {
+          setNestedField(adjustedPayload, condition.field, condition.required_value);
+        }
+      }
+
+      // Re-check with adjusted parameters
+      const { result: recheckResult, step: recheckStep } = await runStep<TaskResult>(
+        'Re-check governance (after applying conditions)',
+        'check_governance',
+        async () =>
+          client.executeTask('check_governance', {
+            plan_id: testPlanId,
+            buyer_campaign_ref: testCampaignRef,
+            binding: 'proposed',
+            caller: callerUrl,
+            tool: 'create_media_buy',
+            payload: adjustedPayload,
+          }) as Promise<TaskResult>
+      );
+
+      if (recheckResult?.success && recheckResult?.data) {
+        const recheckData = recheckResult.data as any;
+        recheckStep.details = `Re-check after conditions: status=${recheckData.status}`;
+        recheckStep.response_preview = JSON.stringify(
+          {
+            check_id: recheckData.check_id,
+            status: recheckData.status,
+            explanation: recheckData.explanation,
+          },
+          null,
+          2
+        );
+      } else if (recheckResult && !recheckResult.success) {
+        recheckStep.passed = false;
+        recheckStep.error = recheckResult.error || 'Re-check after conditions failed';
+      }
+      steps.push(recheckStep);
+    }
+  } else if (checkResult && !checkResult.success) {
+    checkStep.passed = false;
+    checkStep.error = checkResult.error || 'check_governance failed';
+  }
+  steps.push(checkStep);
+
+  return { steps, profile };
+}
+
+/**
+ * Test: Campaign Governance - Delivery Monitoring
+ *
+ * Tests delivery-phase check_governance with delivery_metrics, including
+ * normal pacing and overspend drift detection.
+ */
+export async function testCampaignGovernanceDelivery(
+  agentUrl: string,
+  options: TestOptions
+): Promise<{ steps: TestStepResult[]; profile?: AgentProfile }> {
+  const steps: TestStepResult[] = [];
+  const client = createTestClient(agentUrl, options.protocol || 'mcp', options);
+
+  const { profile, step: profileStep } = await discoverAgentProfile(client);
+  steps.push(profileStep);
+
+  if (!profileStep.passed) {
+    return { steps, profile };
+  }
+
+  if (!profile.tools.includes('check_governance')) {
+    steps.push({
+      step: 'Campaign governance delivery monitoring support check',
+      passed: false,
+      duration_ms: 0,
+      error: 'Agent requires check_governance for delivery monitoring testing',
+    });
+    return { steps, profile };
+  }
+
+  profile.supports_governance = true;
+
+  const testPlanId = `test-delivery-plan-${Date.now()}`;
+  const testCampaignRef = `test-delivery-campaign-${Date.now()}`;
+  const callerUrl = 'https://test-seller.example.com';
+  const flightStart = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+  const flightEnd = new Date(Date.now() + 23 * 24 * 60 * 60 * 1000);
+
+  // Sync plan if supported
+  if (profile.tools.includes('sync_plans')) {
+    const { result: syncResult, step: syncStep } = await runStep<TaskResult>(
+      'Sync plan for delivery monitoring',
+      'sync_plans',
+      async () =>
+        client.executeTask('sync_plans', {
+          plans: [
+            {
+              plan_id: testPlanId,
+              brand: options.brand || { domain: 'test.example.com' },
+              objectives: 'E2E delivery monitoring test',
+              budget: {
+                total: 10000,
+                currency: 'USD',
+                authority_level: 'agent_full',
+              },
+              flight: {
+                start: flightStart.toISOString(),
+                end: flightEnd.toISOString(),
+              },
+              countries: ['US'],
+            },
+          ],
+        }) as Promise<TaskResult>
+    );
+    steps.push(syncStep);
+
+    if (!syncResult?.success) {
+      return { steps, profile };
+    }
+  }
+
+  // Delivery-phase committed check with metrics
+  const reportingStart = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  const reportingEnd = new Date();
+
+  const { result: deliveryResult, step: deliveryStep } = await runStep<TaskResult>(
+    'Check governance (delivery phase with metrics)',
+    'check_governance',
+    async () =>
+      client.executeTask('check_governance', {
+        plan_id: testPlanId,
+        buyer_campaign_ref: testCampaignRef,
+        binding: 'committed',
+        caller: callerUrl,
+        media_buy_id: `test-mb-${Date.now()}`,
+        phase: 'delivery',
+        planned_delivery: {
+          total_budget: 3000,
+          currency: 'USD',
+          channels: ['display'],
+          geo: { countries: ['US'] },
+        },
+        delivery_metrics: {
+          reporting_period: {
+            start: reportingStart.toISOString(),
+            end: reportingEnd.toISOString(),
+          },
+          spend: 450,
+          cumulative_spend: 2800,
+          impressions: 15000,
+          cumulative_impressions: 85000,
+          geo_distribution: { US: 100 },
+          channel_distribution: { display: 100 },
+          pacing: 'on_track',
+        },
+      }) as Promise<TaskResult>
+  );
+
+  if (deliveryResult?.success && deliveryResult?.data) {
+    const data = deliveryResult.data as any;
+    deliveryStep.details = `Delivery check: status=${data.status}, next_check=${data.next_check || 'not specified'}`;
+    deliveryStep.response_preview = JSON.stringify(
+      {
+        check_id: data.check_id,
+        status: data.status,
+        binding: data.binding,
+        explanation: data.explanation,
+        findings: data.findings?.map((f: any) => ({
+          category_id: f.category_id,
+          severity: f.severity,
+          explanation: f.explanation,
+        })),
+        next_check: data.next_check,
+      },
+      null,
+      2
+    );
+  } else if (deliveryResult && !deliveryResult.success) {
+    deliveryStep.passed = false;
+    deliveryStep.error = deliveryResult.error || 'Delivery-phase check_governance failed';
+  }
+  steps.push(deliveryStep);
+
+  // Delivery-phase check with drift (overspend)
+  const { result: driftResult, step: driftStep } = await runStep<TaskResult>(
+    'Check governance (delivery phase with overspend drift)',
+    'check_governance',
+    async () =>
+      client.executeTask('check_governance', {
+        plan_id: testPlanId,
+        buyer_campaign_ref: testCampaignRef,
+        binding: 'committed',
+        caller: callerUrl,
+        media_buy_id: `test-mb-${Date.now()}`,
+        phase: 'delivery',
+        planned_delivery: {
+          total_budget: 3000,
+          currency: 'USD',
+          channels: ['display'],
+          geo: { countries: ['US'] },
+        },
+        delivery_metrics: {
+          reporting_period: {
+            start: reportingStart.toISOString(),
+            end: reportingEnd.toISOString(),
+          },
+          spend: 2000,
+          cumulative_spend: 9500,
+          impressions: 5000,
+          cumulative_impressions: 90000,
+          pacing: 'ahead',
+        },
+      }) as Promise<TaskResult>
+  );
+
+  if (driftResult?.success && driftResult?.data) {
+    const data = driftResult.data as any;
+    driftStep.details = `Overspend drift check: status=${data.status}`;
+    driftStep.response_preview = JSON.stringify(
+      {
+        status: data.status,
+        explanation: data.explanation,
+        findings: data.findings?.map((f: any) => ({
+          category_id: f.category_id,
+          severity: f.severity,
+          explanation: f.explanation,
+        })),
+      },
+      null,
+      2
+    );
+
+    if (data.status === 'approved' && !data.findings?.length) {
+      driftStep.warnings = ['Governance approved delivery at 95% budget with no findings — verify drift detection'];
+    }
+  } else if (driftResult && !driftResult.success) {
+    driftStep.passed = false;
+    driftStep.error = driftResult.error || 'Drift detection check_governance failed';
+  }
+  steps.push(driftStep);
+
+  return { steps, profile };
+}
+
+/**
+ * Set a value at a dot-path in an object (e.g., "budget.total" -> obj.budget.total).
+ */
+function setNestedField(obj: any, dotPath: string, value: any): void {
+  const parts = dotPath.split('.');
+  let current = obj;
+  for (let i = 0; i < parts.length - 1; i++) {
+    if (current[parts[i]] === undefined) {
+      current[parts[i]] = {};
+    }
+    current = current[parts[i]];
+  }
+  current[parts[parts.length - 1]] = value;
+}
+
 /**
  * Check if agent has any governance protocol tools
  */
 export function hasGovernanceTools(tools: string[]): boolean {
   return GOVERNANCE_TOOLS.some(t => tools.includes(t));
+}
+
+/**
+ * Check if agent has campaign governance tools
+ */
+export function hasCampaignGovernanceTools(tools: string[]): boolean {
+  return CAMPAIGN_GOVERNANCE_TOOLS.some(t => tools.includes(t));
 }

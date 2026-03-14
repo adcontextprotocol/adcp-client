@@ -49,6 +49,12 @@ export const SCENARIO_REQUIREMENTS: Partial<Record<TestScenario, string[]>> = {
   governance_content_standards: ['list_content_standards'],
   property_list_filters: ['create_property_list', 'get_property_list'],
 
+  // Requires campaign governance tools
+  campaign_governance: ['sync_plans', 'check_governance'],
+  campaign_governance_denied: ['sync_plans', 'check_governance'],
+  campaign_governance_conditions: ['sync_plans', 'check_governance'],
+  campaign_governance_delivery: ['check_governance'],
+
   // Requires SI tools
   si_session_lifecycle: ['si_initiate_session'],
   si_availability: ['si_get_offering'],
@@ -85,6 +91,10 @@ export const DEFAULT_SCENARIOS: readonly TestScenario[] = [
   'governance_property_lists',
   'governance_content_standards',
   'property_list_filters',
+  'campaign_governance',
+  'campaign_governance_denied',
+  'campaign_governance_conditions',
+  'campaign_governance_delivery',
   'si_session_lifecycle',
   'si_availability',
   'si_handoff',

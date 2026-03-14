@@ -24,6 +24,8 @@ import type {
 import { normalizeHandlerResponse, isDeferResponse, isAbortResponse } from '../handlers/types';
 import { ProtocolResponseParser, ADCP_STATUS, type ADCPStatus } from './ProtocolResponseParser';
 import type { Activity } from './AsyncHandler';
+import { GovernanceMiddleware } from './GovernanceMiddleware';
+import type { GovernanceConfig } from './GovernanceTypes';
 /**
  * Custom errors for task execution
  */
@@ -84,6 +86,7 @@ export class TaskExecutor {
   private responseParser: ProtocolResponseParser;
   private activeTasks = new Map<string, TaskState>();
   private conversationStorage?: Map<string, Message[]>;
+  private governanceMiddleware?: GovernanceMiddleware;
 
   constructor(
     private config: {
@@ -111,11 +114,16 @@ export class TaskExecutor {
       logSchemaViolations?: boolean;
       /** Global activity callback for observability */
       onActivity?: (activity: Activity) => void | Promise<void>;
+      /** Governance configuration for buyer-side campaign governance */
+      governance?: GovernanceConfig;
     } = {}
   ) {
     this.responseParser = new ProtocolResponseParser();
     if (config.enableConversationStorage) {
       this.conversationStorage = new Map();
+    }
+    if (config.governance) {
+      this.governanceMiddleware = new GovernanceMiddleware(config.governance, config.onActivity);
     }
   }
 
@@ -175,20 +183,16 @@ export class TaskExecutor {
       agent.id
     );
 
-    // Create initial message
-    const initialMessage: Message = {
-      id: randomUUID(),
-      role: 'user',
-      content: { tool: taskName, params },
-      timestamp: new Date().toISOString(),
-      metadata: { toolName: taskName, type: 'request' },
-    };
-
     // Start streaming connection
     const debugLogs: any[] = [];
 
     // Generate webhook URL if template is configured
     const webhookUrl = this.generateWebhookUrl(taskName, taskId);
+
+    // Governance state (scoped outside try so catch can access)
+    let governanceCheckId: string | undefined;
+    let governanceResult: any; // Store the governance check result for attaching to final result
+    let effectiveParams = params;
 
     try {
       // Emit protocol_request activity
@@ -204,11 +208,92 @@ export class TaskExecutor {
         timestamp: new Date().toISOString(),
       });
 
+      // Run governance check if configured for this tool
+      if (this.governanceMiddleware?.requiresCheck(taskName)) {
+        const { result: govResult, params: adjustedParams } = await this.governanceMiddleware.checkProposed(
+          taskName,
+          params,
+          debugLogs,
+        );
+
+        if (govResult.status === 'denied') {
+          return {
+            success: false,
+            status: 'governance-denied',
+            error: govResult.explanation,
+            governance: govResult,
+            metadata: {
+              taskId,
+              taskName,
+              agent: { id: agent.id, name: agent.name, protocol: agent.protocol },
+              responseTimeMs: Date.now() - startTime,
+              timestamp: new Date().toISOString(),
+              clarificationRounds: 0,
+              status: 'governance-denied' as TaskStatus,
+            },
+            debug_logs: debugLogs,
+          } as TaskResult<T>;
+        }
+
+        if (govResult.status === 'escalated') {
+          return {
+            success: false,
+            status: 'governance-escalated',
+            error: govResult.explanation,
+            governance: govResult,
+            metadata: {
+              taskId,
+              taskName,
+              agent: { id: agent.id, name: agent.name, protocol: agent.protocol },
+              responseTimeMs: Date.now() - startTime,
+              timestamp: new Date().toISOString(),
+              clarificationRounds: 0,
+              status: 'governance-escalated' as TaskStatus,
+            },
+            debug_logs: debugLogs,
+          } as TaskResult<T>;
+        }
+
+        if (govResult.status === 'conditions' && !govResult.conditionsApplied) {
+          // Advisory conditions that couldn't be auto-applied
+          return {
+            success: false,
+            status: 'governance-denied',
+            error: govResult.explanation,
+            governance: govResult,
+            metadata: {
+              taskId,
+              taskName,
+              agent: { id: agent.id, name: agent.name, protocol: agent.protocol },
+              responseTimeMs: Date.now() - startTime,
+              timestamp: new Date().toISOString(),
+              clarificationRounds: 0,
+              status: 'governance-denied' as TaskStatus,
+            },
+            debug_logs: debugLogs,
+          } as TaskResult<T>;
+        }
+
+        // Approved (possibly after conditions were applied)
+        governanceCheckId = govResult.checkId;
+        governanceResult = govResult;
+        effectiveParams = adjustedParams;
+      }
+
+      // Create initial message (uses effectiveParams which may have governance-applied conditions)
+      const initialMessage: Message = {
+        id: randomUUID(),
+        role: 'user',
+        content: { tool: taskName, params: effectiveParams },
+        timestamp: new Date().toISOString(),
+        metadata: { toolName: taskName, type: 'request' },
+      };
+
       // Send initial request and get streaming response with webhook URL
       const response = await ProtocolClient.callTool(
         agent,
         taskName,
-        params,
+        effectiveParams,
         debugLogs,
         webhookUrl,
         this.config.webhookSecret
@@ -240,7 +325,7 @@ export class TaskExecutor {
       const messages = [initialMessage, responseMessage];
 
       // Handle response based on status
-      return await this.handleAsyncResponse<T>(
+      const result = await this.handleAsyncResponse<T>(
         agent,
         taskId,
         taskName,
@@ -252,7 +337,45 @@ export class TaskExecutor {
         debugLogs,
         startTime
       );
+
+      // Attach governance check result to the task result
+      if (governanceResult) {
+        result.governance = governanceResult;
+      }
+
+      // Report governance outcome if we had a governance check
+      if (governanceCheckId && this.governanceMiddleware) {
+        if (result.status === 'completed') {
+          result.governanceOutcome = await this.governanceMiddleware.reportOutcome(
+            governanceCheckId,
+            'completed',
+            result.data as Record<string, unknown> | undefined,
+            undefined,
+            debugLogs,
+          );
+        } else if (result.error) {
+          result.governanceOutcome = await this.governanceMiddleware.reportOutcome(
+            governanceCheckId,
+            'failed',
+            undefined,
+            { message: result.error },
+            debugLogs,
+          );
+        }
+      }
+
+      return result;
     } catch (error) {
+      // Report failed outcome on error
+      if (governanceCheckId && this.governanceMiddleware) {
+        await this.governanceMiddleware.reportOutcome(
+          governanceCheckId,
+          'failed',
+          undefined,
+          { message: (error as Error).message },
+          debugLogs,
+        );
+      }
       return this.createErrorResult<T>(taskId, agent, error, debugLogs, startTime);
     }
   }
