@@ -16,6 +16,7 @@ import type {
 } from '../types/tools.generated';
 import { ProtocolClient } from '../protocols';
 import type { AgentConfig } from '../types';
+import { unwrapProtocolResponse } from '../utils/response-unwrapper';
 
 /**
  * Configuration for the seller-side governance adapter.
@@ -117,13 +118,24 @@ export class GovernanceAdapter implements IGovernanceAdapter {
       modification_summary: request.modificationSummary,
     };
 
-    const response = await ProtocolClient.callTool(
-      this.agentConfig.agent,
-      'check_governance',
-      checkRequest as unknown as Record<string, unknown>
-    );
+    try {
+      const response = await ProtocolClient.callTool(
+        this.agentConfig.agent,
+        'check_governance',
+        checkRequest as unknown as Record<string, unknown>
+      );
 
-    return response?.structuredContent ?? response?.result ?? response;
+      return unwrapProtocolResponse(response) as unknown as CheckGovernanceResponse;
+    } catch (err) {
+      return {
+        check_id: '',
+        status: 'denied',
+        binding: 'committed',
+        plan_id: request.planId,
+        buyer_campaign_ref: request.buyerCampaignRef,
+        explanation: `Governance agent unreachable: ${(err as Error).message}`,
+      };
+    }
   }
 }
 

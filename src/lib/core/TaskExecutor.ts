@@ -25,7 +25,7 @@ import { normalizeHandlerResponse, isDeferResponse, isAbortResponse } from '../h
 import { ProtocolResponseParser, ADCP_STATUS, type ADCPStatus } from './ProtocolResponseParser';
 import type { Activity } from './AsyncHandler';
 import { GovernanceMiddleware } from './GovernanceMiddleware';
-import type { GovernanceConfig } from './GovernanceTypes';
+import type { GovernanceConfig, GovernanceCheckResult } from './GovernanceTypes';
 /**
  * Custom errors for task execution
  */
@@ -191,7 +191,7 @@ export class TaskExecutor {
 
     // Governance state (scoped outside try so catch can access)
     let governanceCheckId: string | undefined;
-    let governanceResult: any; // Store the governance check result for attaching to final result
+    let governanceResult: GovernanceCheckResult | undefined;
     let effectiveParams = params;
 
     try {
@@ -216,7 +216,11 @@ export class TaskExecutor {
           debugLogs
         );
 
-        if (govResult.status === 'denied') {
+        // In advisory/audit modes, attach findings but allow execution to proceed.
+        // In enforce mode (default), block on denial/escalation/unapplied conditions.
+        const isBlocking = !govResult.mode || govResult.mode === 'enforce';
+
+        if (govResult.status === 'denied' && isBlocking) {
           return {
             success: false,
             status: 'governance-denied',
@@ -235,7 +239,7 @@ export class TaskExecutor {
           } as TaskResult<T>;
         }
 
-        if (govResult.status === 'escalated') {
+        if (govResult.status === 'escalated' && isBlocking) {
           return {
             success: false,
             status: 'governance-escalated',
@@ -254,8 +258,7 @@ export class TaskExecutor {
           } as TaskResult<T>;
         }
 
-        if (govResult.status === 'conditions' && !govResult.conditionsApplied) {
-          // Advisory conditions that couldn't be auto-applied
+        if (govResult.status === 'conditions' && !govResult.conditionsApplied && isBlocking) {
           return {
             success: false,
             status: 'governance-denied',
@@ -274,7 +277,7 @@ export class TaskExecutor {
           } as TaskResult<T>;
         }
 
-        // Approved (possibly after conditions were applied)
+        // Approved, or non-blocking mode (advisory/audit) allows execution to proceed
         governanceCheckId = govResult.checkId;
         governanceResult = govResult;
         effectiveParams = adjustedParams;

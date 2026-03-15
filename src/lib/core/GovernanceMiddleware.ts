@@ -12,7 +12,12 @@
  */
 
 import type { AgentConfig } from '../types';
-import type { CheckGovernanceRequest, ReportPlanOutcomeRequest, OutcomeType } from '../types/tools.generated';
+import type {
+  CheckGovernanceRequest,
+  CheckGovernanceResponse,
+  ReportPlanOutcomeRequest,
+  OutcomeType,
+} from '../types/tools.generated';
 import { ProtocolClient } from '../protocols';
 import type { Activity } from './AsyncHandler';
 import type {
@@ -25,12 +30,20 @@ import type {
 import { toolRequiresGovernance, parseCheckResponse } from './GovernanceTypes';
 import { unwrapProtocolResponse } from '../utils/response-unwrapper';
 
+/** Path segments that would cause prototype pollution if used as object keys. */
+const FORBIDDEN_PATH_SEGMENTS = new Set(['__proto__', 'constructor', 'prototype']);
+
 /**
  * Set a value at a dot-path in an object. Creates intermediate objects as needed.
  * e.g., setAtPath(obj, 'packages.0.budget', 25000)
  */
 function setAtPath(obj: Record<string, any>, path: string, value: unknown): void {
   const parts = path.split('.');
+  for (const part of parts) {
+    if (FORBIDDEN_PATH_SEGMENTS.has(part)) {
+      throw new Error(`Forbidden path segment: ${part}`);
+    }
+  }
   let current = obj;
   for (let i = 0; i < parts.length - 1; i++) {
     const key = parts[i];
@@ -129,7 +142,7 @@ export class GovernanceMiddleware {
         response: responseData,
       });
 
-      const checkResult = parseCheckResponse(responseData as any);
+      const checkResult = parseCheckResponse(responseData as unknown as CheckGovernanceResponse);
 
       if (checkResult.status === 'approved') {
         return { result: checkResult, params: currentParams };
