@@ -13,31 +13,33 @@
  * Requires: training agent running at http://localhost:4100/mcp
  */
 
-const { describe, it, before, beforeEach } = require('node:test');
+const { describe, it, before } = require('node:test');
 const assert = require('node:assert/strict');
+const { execFileSync } = require('node:child_process');
 
 const AGENT_URL = process.env.TEST_AGENT_URL || 'http://localhost:4100/mcp';
 
-// Check if the training agent is reachable before running tests
+// Synchronous connectivity check so skipReason is available at describe registration time.
+// Uses a child process to make an HTTP request and exit 0 (reachable) or 1 (unreachable).
 let agentAvailable = false;
+try {
+  execFileSync(
+    process.execPath,
+    [
+      '-e',
+      `fetch('${AGENT_URL}',{method:'POST',headers:{'Content-Type':'application/json'},body:'{"jsonrpc":"2.0","method":"ping","id":0}',signal:AbortSignal.timeout(2000)}).then(r=>process.exit(r.ok||r.status===400?0:1)).catch(()=>process.exit(1))`,
+    ],
+    { timeout: 5000, stdio: 'ignore' }
+  );
+  agentAvailable = true;
+} catch {
+  agentAvailable = false;
+}
 
 // Dynamic import so we use the built output (ESM from CJS)
 let SingleAgentClient, GovernanceMiddleware;
 
 before(async () => {
-  // Check agent connectivity
-  try {
-    const resp = await fetch(AGENT_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ jsonrpc: '2.0', method: 'ping', id: 0 }),
-      signal: AbortSignal.timeout(2000),
-    });
-    agentAvailable = resp.ok || resp.status === 400; // 400 = MCP server responded
-  } catch {
-    agentAvailable = false;
-  }
-
   const lib = await import('../../dist/lib/index.js');
   SingleAgentClient = lib.SingleAgentClient;
   GovernanceMiddleware = lib.GovernanceMiddleware;
@@ -67,12 +69,10 @@ function createGovernedClient(planId, opts = {}) {
   });
 }
 
-// Skip all tests when training agent isn't running (evaluated at test time, after before() hook)
-beforeEach(t => {
-  if (!agentAvailable) t.skip('Training agent not reachable at ' + AGENT_URL);
-});
+// Now evaluated synchronously — agentAvailable is set before describes are registered
+const skipReason = !agentAvailable && 'Training agent not reachable at ' + AGENT_URL;
 
-describe('Governance E2E: SDK integration with training agent', () => {
+describe('Governance E2E: SDK integration with training agent', { skip: skipReason }, () => {
   const planId = `e2e-plan-${Date.now()}`;
   const campaignRef = `e2e-campaign-${Date.now()}`;
   let client;
@@ -80,7 +80,6 @@ describe('Governance E2E: SDK integration with training agent', () => {
   let testProduct; // { product_id, pricing_option_id }
 
   before(async () => {
-    if (!agentAvailable) return;
     governanceAgent = trainingAgent();
     client = createGovernedClient(planId, { campaignRef });
 
@@ -292,14 +291,13 @@ describe('Governance E2E: SDK integration with training agent', () => {
   });
 });
 
-describe('Governance E2E: Delivery monitoring', () => {
+describe('Governance E2E: Delivery monitoring', { skip: skipReason }, () => {
   const planId = `e2e-delivery-${Date.now()}`;
   const campaignRef = `e2e-delivery-campaign-${Date.now()}`;
   let client;
   let governanceAgent;
 
   before(async () => {
-    if (!agentAvailable) return;
     governanceAgent = trainingAgent();
     client = createGovernedClient(planId, { campaignRef });
 
@@ -399,7 +397,7 @@ describe('Governance E2E: Delivery monitoring', () => {
   });
 });
 
-describe('Governance E2E: Capabilities discovery', () => {
+describe('Governance E2E: Capabilities discovery', { skip: skipReason }, () => {
   it('should return capabilities via get_adcp_capabilities', async () => {
     const agent = trainingAgent();
     const client = new SingleAgentClient(agent, {
@@ -448,14 +446,13 @@ describe('Governance E2E: Capabilities discovery', () => {
   });
 });
 
-describe('Governance E2E: Escalation flow', () => {
+describe('Governance E2E: Escalation flow', { skip: skipReason }, () => {
   const planId = `e2e-escalation-${Date.now()}`;
   const campaignRef = `e2e-escalation-campaign-${Date.now()}`;
   let client;
   let governanceAgent;
 
   before(async () => {
-    if (!agentAvailable) return;
     governanceAgent = trainingAgent();
     client = createGovernedClient(planId, { campaignRef });
 
@@ -531,11 +528,10 @@ describe('Governance E2E: Escalation flow', () => {
   });
 });
 
-describe('Governance E2E: Advisory and audit modes', () => {
+describe('Governance E2E: Advisory and audit modes', { skip: skipReason }, () => {
   let governanceAgent;
 
   before(async () => {
-    if (!agentAvailable) return;
     governanceAgent = trainingAgent();
   });
 
@@ -641,14 +637,13 @@ describe('Governance E2E: Advisory and audit modes', () => {
   });
 });
 
-describe('Governance E2E: Channel compliance', () => {
+describe('Governance E2E: Channel compliance', { skip: skipReason }, () => {
   const planId = `e2e-channel-${Date.now()}`;
   const campaignRef = `e2e-channel-campaign-${Date.now()}`;
   let client;
   let governanceAgent;
 
   before(async () => {
-    if (!agentAvailable) return;
     governanceAgent = trainingAgent();
     client = createGovernedClient(planId, { campaignRef });
 
@@ -718,7 +713,7 @@ describe('Governance E2E: Channel compliance', () => {
   });
 });
 
-describe('Governance E2E: Flight compliance', () => {
+describe('Governance E2E: Flight compliance', { skip: skipReason }, () => {
   const planId = `e2e-flight-${Date.now()}`;
   const campaignRef = `e2e-flight-campaign-${Date.now()}`;
   let client;
@@ -727,7 +722,6 @@ describe('Governance E2E: Flight compliance', () => {
   const planEnd = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // 30 days
 
   before(async () => {
-    if (!agentAvailable) return;
     governanceAgent = trainingAgent();
     client = createGovernedClient(planId, { campaignRef });
 
@@ -802,14 +796,13 @@ describe('Governance E2E: Flight compliance', () => {
   });
 });
 
-describe('Governance E2E: Delegation authority', () => {
+describe('Governance E2E: Delegation authority', { skip: skipReason }, () => {
   const planId = `e2e-delegation-${Date.now()}`;
   const campaignRef = `e2e-delegation-campaign-${Date.now()}`;
   let client;
   let governanceAgent;
 
   before(async () => {
-    if (!agentAvailable) return;
     governanceAgent = trainingAgent();
     // Use a caller URL that is NOT in the delegations list
     client = createGovernedClient(planId, {
@@ -914,7 +907,7 @@ describe('Governance E2E: Delegation authority', () => {
   });
 });
 
-describe('Governance E2E: Plan not found', () => {
+describe('Governance E2E: Plan not found', { skip: skipReason }, () => {
   it('should deny check against non-existent plan', async () => {
     const agent = trainingAgent();
     const client = new SingleAgentClient(agent, {
@@ -936,7 +929,7 @@ describe('Governance E2E: Plan not found', () => {
   });
 });
 
-describe('Governance E2E: Plan sync and update', () => {
+describe('Governance E2E: Plan sync and update', { skip: skipReason }, () => {
   it('should increment version on plan re-sync', async () => {
     const planId = `e2e-resync-${Date.now()}`;
     const agent = trainingAgent();
@@ -1010,14 +1003,13 @@ describe('Governance E2E: Plan sync and update', () => {
   });
 });
 
-describe('Governance E2E: Outcome reporting', () => {
+describe('Governance E2E: Outcome reporting', { skip: skipReason }, () => {
   const planId = `e2e-outcome-${Date.now()}`;
   const campaignRef = `e2e-outcome-campaign-${Date.now()}`;
   let client;
   let governanceAgent;
 
   before(async () => {
-    if (!agentAvailable) return;
     governanceAgent = trainingAgent();
     client = createGovernedClient(planId, { campaignRef });
 
@@ -1109,14 +1101,13 @@ describe('Governance E2E: Outcome reporting', () => {
   });
 });
 
-describe('Governance E2E: Audit log detail', () => {
+describe('Governance E2E: Audit log detail', { skip: skipReason }, () => {
   const planId = `e2e-audit-detail-${Date.now()}`;
   const campaignRef = `e2e-audit-detail-campaign-${Date.now()}`;
   let client;
   let governanceAgent;
 
   before(async () => {
-    if (!agentAvailable) return;
     governanceAgent = trainingAgent();
     client = createGovernedClient(planId, { campaignRef });
 
@@ -1211,14 +1202,13 @@ describe('Governance E2E: Audit log detail', () => {
   });
 });
 
-describe('Governance E2E: Multiple findings in single check', () => {
+describe('Governance E2E: Multiple findings in single check', { skip: skipReason }, () => {
   const planId = `e2e-multi-findings-${Date.now()}`;
   const campaignRef = `e2e-multi-findings-campaign-${Date.now()}`;
   let client;
   let governanceAgent;
 
   before(async () => {
-    if (!agentAvailable) return;
     governanceAgent = trainingAgent();
     client = createGovernedClient(planId, { campaignRef });
 
@@ -1273,7 +1263,7 @@ describe('Governance E2E: Multiple findings in single check', () => {
   });
 });
 
-describe('Governance E2E: Approval expiration', () => {
+describe('Governance E2E: Approval expiration', { skip: skipReason }, () => {
   it('should include expires_at on approved checks', async () => {
     const planId = `e2e-expiry-${Date.now()}`;
     const agent = trainingAgent();
@@ -1318,7 +1308,7 @@ describe('Governance E2E: Approval expiration', () => {
   });
 });
 
-describe('Governance E2E: CLI test scenarios', () => {
+describe('Governance E2E: CLI test scenarios', { skip: skipReason }, () => {
   it('campaign_governance scenario passes', async () => {
     const { testCampaignGovernance } = await import('../../dist/lib/testing/scenarios/governance.js');
     const result = await testCampaignGovernance(AGENT_URL, { protocol: 'mcp' });
