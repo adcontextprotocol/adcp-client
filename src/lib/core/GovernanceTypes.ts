@@ -7,11 +7,7 @@
  */
 
 import type { AgentConfig } from '../types';
-import type {
-  CheckGovernanceResponse,
-  EscalationSeverity,
-  GovernanceMode,
-} from '../types/tools.generated';
+import type { CheckGovernanceResponse, EscalationSeverity, GovernanceMode } from '../types/tools.generated';
 
 /**
  * Campaign governance agent configuration.
@@ -175,12 +171,14 @@ export function parseCheckResponse(response: CheckGovernanceResponse): Governanc
       requiredValue: c.required_value,
       reason: c.reason,
     })),
-    escalation: response.escalation ? {
-      reason: response.escalation.reason,
-      severity: response.escalation.severity,
-      requiresHuman: response.escalation.requires_human,
-      approvalTier: response.escalation.approval_tier,
-    } : undefined,
+    escalation: response.escalation
+      ? {
+          reason: response.escalation.reason,
+          severity: response.escalation.severity,
+          requiresHuman: response.escalation.requires_human,
+          approvalTier: response.escalation.approval_tier,
+        }
+      : undefined,
     expiresAt: response.expires_at,
   };
 }

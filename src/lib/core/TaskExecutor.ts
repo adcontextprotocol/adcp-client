@@ -213,7 +213,7 @@ export class TaskExecutor {
         const { result: govResult, params: adjustedParams } = await this.governanceMiddleware.checkProposed(
           taskName,
           params,
-          debugLogs,
+          debugLogs
         );
 
         if (govResult.status === 'denied') {
@@ -351,7 +351,7 @@ export class TaskExecutor {
             'completed',
             result.data as Record<string, unknown> | undefined,
             undefined,
-            debugLogs,
+            debugLogs
           );
         } else if (result.error) {
           result.governanceOutcome = await this.governanceMiddleware.reportOutcome(
@@ -359,7 +359,7 @@ export class TaskExecutor {
             'failed',
             undefined,
             { message: result.error },
-            debugLogs,
+            debugLogs
           );
         }
       }
@@ -373,7 +373,7 @@ export class TaskExecutor {
           'failed',
           undefined,
           { message: (error as Error).message },
-          debugLogs,
+          debugLogs
         );
       }
       return this.createErrorResult<T>(taskId, agent, error, debugLogs, startTime);

@@ -979,7 +979,7 @@ export async function testCampaignGovernance(
       step.response_preview = JSON.stringify(
         {
           plans_returned: data.plans?.length || 0,
-          has_entries: !!(data.plans?.[0]?.entries?.length),
+          has_entries: !!data.plans?.[0]?.entries?.length,
           budget: data.plans?.[0]?.budget,
         },
         null,
@@ -1112,7 +1112,9 @@ export async function testCampaignGovernanceDenied(
     );
 
     if (data.status === 'approved') {
-      overBudgetStep.warnings = ['Governance approved a $50,000 buy against a $500 plan — may indicate audit/advisory mode'];
+      overBudgetStep.warnings = [
+        'Governance approved a $50,000 buy against a $500 plan — may indicate audit/advisory mode',
+      ];
     }
   } else if (overBudgetResult && !overBudgetResult.success) {
     overBudgetStep.passed = false;
@@ -1161,7 +1163,9 @@ export async function testCampaignGovernanceDenied(
     );
 
     if (data.status === 'approved') {
-      geoStep.warnings = ['Governance approved targeting CN/RU against US-only plan — may indicate audit/advisory mode'];
+      geoStep.warnings = [
+        'Governance approved targeting CN/RU against US-only plan — may indicate audit/advisory mode',
+      ];
     }
   } else if (geoResult && !geoResult.success) {
     geoStep.passed = false;

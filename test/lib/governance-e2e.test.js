@@ -18,10 +18,26 @@ const assert = require('node:assert/strict');
 
 const AGENT_URL = process.env.TEST_AGENT_URL || 'http://localhost:4100/mcp';
 
+// Check if the training agent is reachable before running tests
+let agentAvailable = false;
+
 // Dynamic import so we use the built output (ESM from CJS)
 let SingleAgentClient, GovernanceMiddleware;
 
 before(async () => {
+  // Check agent connectivity
+  try {
+    const resp = await fetch(AGENT_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', method: 'ping', id: 0 }),
+      signal: AbortSignal.timeout(2000),
+    });
+    agentAvailable = resp.ok || resp.status === 400; // 400 = MCP server responded
+  } catch {
+    agentAvailable = false;
+  }
+
   const lib = await import('../../dist/lib/index.js');
   SingleAgentClient = lib.SingleAgentClient;
   GovernanceMiddleware = lib.GovernanceMiddleware;
@@ -51,7 +67,10 @@ function createGovernedClient(planId, opts = {}) {
   });
 }
 
-describe('Governance E2E: SDK integration with training agent', () => {
+// Skip all E2E governance tests when the training agent isn't running
+const skipReason = !agentAvailable && 'Training agent not reachable at ' + AGENT_URL;
+
+describe('Governance E2E: SDK integration with training agent', { skip: skipReason }, () => {
   const planId = `e2e-plan-${Date.now()}`;
   const campaignRef = `e2e-campaign-${Date.now()}`;
   let client;
@@ -80,29 +99,33 @@ describe('Governance E2E: SDK integration with training agent', () => {
 
     // Sync a plan first
     const syncResult = await client.syncPlans(governanceAgent, {
-      plans: [{
-        plan_id: planId,
-        brand: { domain: 'test.example.com' },
-        objectives: 'E2E SDK governance integration test',
-        budget: {
-          total: 10000,
-          currency: 'USD',
-          authority_level: 'agent_full',
-          per_seller_max_pct: 60,
+      plans: [
+        {
+          plan_id: planId,
+          brand: { domain: 'test.example.com' },
+          objectives: 'E2E SDK governance integration test',
+          budget: {
+            total: 10000,
+            currency: 'USD',
+            authority_level: 'agent_full',
+            per_seller_max_pct: 60,
+          },
+          flight: {
+            start: new Date().toISOString(),
+            end: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+          },
+          countries: ['US'],
+          channels: {
+            allowed: ['display', 'video'],
+          },
+          delegations: [
+            {
+              agent_url: 'https://test-orchestrator.example.com',
+              authority: 'full',
+            },
+          ],
         },
-        flight: {
-          start: new Date().toISOString(),
-          end: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
-        },
-        countries: ['US'],
-        channels: {
-          allowed: ['display', 'video'],
-        },
-        delegations: [{
-          agent_url: 'https://test-orchestrator.example.com',
-          authority: 'full',
-        }],
-      }],
+      ],
     });
 
     assert.ok(syncResult.success, `syncPlans failed: ${syncResult.error}`);
@@ -119,11 +142,13 @@ describe('Governance E2E: SDK integration with training agent', () => {
       start_time: new Date().toISOString(),
       end_time: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
       total_budget: { amount: 1000, currency: 'USD' },
-      packages: [{
-        product_id: testProduct.product_id,
-        pricing_option_id: testProduct.pricing_option_id,
-        budget: 1000,
-      }],
+      packages: [
+        {
+          product_id: testProduct.product_id,
+          pricing_option_id: testProduct.pricing_option_id,
+          budget: 1000,
+        },
+      ],
       // Governance-relevant fields that the middleware extracts
       channel: 'display',
       countries: ['US'],
@@ -153,11 +178,13 @@ describe('Governance E2E: SDK integration with training agent', () => {
       start_time: new Date().toISOString(),
       end_time: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
       total_budget: { amount: 50000, currency: 'USD' },
-      packages: [{
-        product_id: testProduct.product_id,
-        pricing_option_id: testProduct.pricing_option_id,
-        budget: 50000,
-      }],
+      packages: [
+        {
+          product_id: testProduct.product_id,
+          pricing_option_id: testProduct.pricing_option_id,
+          budget: 50000,
+        },
+      ],
     });
 
     assert.equal(result.success, false);
@@ -166,9 +193,7 @@ describe('Governance E2E: SDK integration with training agent', () => {
     assert.equal(result.governance.status, 'denied');
     assert.ok(result.governance.findings?.length > 0, 'Expected findings');
 
-    const budgetFinding = result.governance.findings.find(
-      f => f.categoryId === 'budget_authority'
-    );
+    const budgetFinding = result.governance.findings.find(f => f.categoryId === 'budget_authority');
     assert.ok(budgetFinding, 'Expected budget_authority finding');
   });
 
@@ -181,11 +206,13 @@ describe('Governance E2E: SDK integration with training agent', () => {
       start_time: new Date().toISOString(),
       end_time: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
       total_budget: { amount: 500, currency: 'USD' },
-      packages: [{
-        product_id: testProduct.product_id,
-        pricing_option_id: testProduct.pricing_option_id,
-        budget: 500,
-      }],
+      packages: [
+        {
+          product_id: testProduct.product_id,
+          pricing_option_id: testProduct.pricing_option_id,
+          budget: 500,
+        },
+      ],
       channel: 'display',
       countries: ['CN', 'RU'],
     });
@@ -193,9 +220,7 @@ describe('Governance E2E: SDK integration with training agent', () => {
     assert.equal(result.success, false);
     assert.equal(result.status, 'governance-denied');
 
-    const geoFinding = result.governance?.findings?.find(
-      f => f.categoryId === 'geo_compliance'
-    );
+    const geoFinding = result.governance?.findings?.find(f => f.categoryId === 'geo_compliance');
     assert.ok(geoFinding, 'Expected geo_compliance finding');
   });
 
@@ -209,11 +234,13 @@ describe('Governance E2E: SDK integration with training agent', () => {
       start_time: new Date().toISOString(),
       end_time: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
       total_budget: { amount: 8000, currency: 'USD' },
-      packages: [{
-        product_id: testProduct.product_id,
-        pricing_option_id: testProduct.pricing_option_id,
-        budget: 8000,
-      }],
+      packages: [
+        {
+          product_id: testProduct.product_id,
+          pricing_option_id: testProduct.pricing_option_id,
+          budget: 8000,
+        },
+      ],
       channel: 'display',
       countries: ['US'],
     });
@@ -262,7 +289,7 @@ describe('Governance E2E: SDK integration with training agent', () => {
   });
 });
 
-describe('Governance E2E: Delivery monitoring', () => {
+describe('Governance E2E: Delivery monitoring', { skip: skipReason }, () => {
   const planId = `e2e-delivery-${Date.now()}`;
   const campaignRef = `e2e-delivery-campaign-${Date.now()}`;
   let client;
@@ -274,21 +301,23 @@ describe('Governance E2E: Delivery monitoring', () => {
 
     // Sync plan
     const syncResult = await client.syncPlans(governanceAgent, {
-      plans: [{
-        plan_id: planId,
-        brand: { domain: 'test.example.com' },
-        objectives: 'Delivery monitoring test',
-        budget: {
-          total: 10000,
-          currency: 'USD',
-          authority_level: 'agent_full',
+      plans: [
+        {
+          plan_id: planId,
+          brand: { domain: 'test.example.com' },
+          objectives: 'Delivery monitoring test',
+          budget: {
+            total: 10000,
+            currency: 'USD',
+            authority_level: 'agent_full',
+          },
+          flight: {
+            start: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
+            end: new Date(Date.now() + 23 * 24 * 60 * 60 * 1000).toISOString(),
+          },
+          countries: ['US'],
         },
-        flight: {
-          start: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
-          end: new Date(Date.now() + 23 * 24 * 60 * 60 * 1000).toISOString(),
-        },
-        countries: ['US'],
-      }],
+      ],
     });
 
     assert.ok(syncResult.success, `syncPlans failed: ${syncResult.error}`);
@@ -366,7 +395,7 @@ describe('Governance E2E: Delivery monitoring', () => {
   });
 });
 
-describe('Governance E2E: Capabilities discovery', () => {
+describe('Governance E2E: Capabilities discovery', { skip: skipReason }, () => {
   it('should return capabilities via get_adcp_capabilities', async () => {
     const agent = trainingAgent();
     const client = new SingleAgentClient(agent, {
@@ -384,7 +413,7 @@ describe('Governance E2E: Capabilities discovery', () => {
     assert.ok(data.tasks.includes('create_media_buy'), 'Expected create_media_buy in tasks');
     assert.ok(
       data.supported_protocols?.includes('governance') || data.features?.governance === true,
-      'Expected governance support declared',
+      'Expected governance support declared'
     );
   });
 
@@ -395,16 +424,18 @@ describe('Governance E2E: Capabilities discovery', () => {
 
     // Sync a plan so governance is active
     await client.syncPlans(agent, {
-      plans: [{
-        plan_id: planId,
-        brand: { domain: 'test.example.com' },
-        objectives: 'Capabilities test',
-        budget: { total: 1000, currency: 'USD', authority_level: 'agent_full' },
-        flight: {
-          start: new Date().toISOString(),
-          end: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+      plans: [
+        {
+          plan_id: planId,
+          brand: { domain: 'test.example.com' },
+          objectives: 'Capabilities test',
+          budget: { total: 1000, currency: 'USD', authority_level: 'agent_full' },
+          flight: {
+            start: new Date().toISOString(),
+            end: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+          },
         },
-      }],
+      ],
     });
 
     const result = await client.executeTask('get_adcp_capabilities', {});
@@ -413,7 +444,7 @@ describe('Governance E2E: Capabilities discovery', () => {
   });
 });
 
-describe('Governance E2E: Escalation flow', () => {
+describe('Governance E2E: Escalation flow', { skip: skipReason }, () => {
   const planId = `e2e-escalation-${Date.now()}`;
   const campaignRef = `e2e-escalation-campaign-${Date.now()}`;
   let client;
@@ -425,26 +456,30 @@ describe('Governance E2E: Escalation flow', () => {
 
     // Sync plan with human_required authority
     const syncResult = await client.syncPlans(governanceAgent, {
-      plans: [{
-        plan_id: planId,
-        brand: { domain: 'test.example.com' },
-        objectives: 'Escalation flow test',
-        budget: {
-          total: 10000,
-          currency: 'USD',
-          authority_level: 'human_required',
+      plans: [
+        {
+          plan_id: planId,
+          brand: { domain: 'test.example.com' },
+          objectives: 'Escalation flow test',
+          budget: {
+            total: 10000,
+            currency: 'USD',
+            authority_level: 'human_required',
+          },
+          flight: {
+            start: new Date().toISOString(),
+            end: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+          },
+          countries: ['US'],
+          channels: { allowed: ['display', 'video'] },
+          delegations: [
+            {
+              agent_url: 'https://test-orchestrator.example.com',
+              authority: 'full',
+            },
+          ],
         },
-        flight: {
-          start: new Date().toISOString(),
-          end: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
-        },
-        countries: ['US'],
-        channels: { allowed: ['display', 'video'] },
-        delegations: [{
-          agent_url: 'https://test-orchestrator.example.com',
-          authority: 'full',
-        }],
-      }],
+      ],
     });
     assert.ok(syncResult.success, `syncPlans failed: ${syncResult.error}`);
   });
@@ -491,7 +526,7 @@ describe('Governance E2E: Escalation flow', () => {
   });
 });
 
-describe('Governance E2E: Advisory and audit modes', () => {
+describe('Governance E2E: Advisory and audit modes', { skip: skipReason }, () => {
   let governanceAgent;
 
   before(async () => {
@@ -505,23 +540,27 @@ describe('Governance E2E: Advisory and audit modes', () => {
 
     // Sync plan in advisory mode with restricted geo
     await client.syncPlans(governanceAgent, {
-      plans: [{
-        plan_id: planId,
-        brand: { domain: 'test.example.com' },
-        objectives: 'Advisory mode test',
-        budget: { total: 10000, currency: 'USD', authority_level: 'agent_full' },
-        flight: {
-          start: new Date().toISOString(),
-          end: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+      plans: [
+        {
+          plan_id: planId,
+          brand: { domain: 'test.example.com' },
+          objectives: 'Advisory mode test',
+          budget: { total: 10000, currency: 'USD', authority_level: 'agent_full' },
+          flight: {
+            start: new Date().toISOString(),
+            end: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+          },
+          countries: ['US'],
+          channels: { allowed: ['display'] },
+          mode: 'advisory',
+          delegations: [
+            {
+              agent_url: 'https://test-orchestrator.example.com',
+              authority: 'full',
+            },
+          ],
         },
-        countries: ['US'],
-        channels: { allowed: ['display'] },
-        mode: 'advisory',
-        delegations: [{
-          agent_url: 'https://test-orchestrator.example.com',
-          authority: 'full',
-        }],
-      }],
+      ],
     });
 
     // Send a check with unauthorized market — should be approved (advisory) but with findings
@@ -554,22 +593,26 @@ describe('Governance E2E: Advisory and audit modes', () => {
 
     // Sync plan in audit mode
     await client.syncPlans(governanceAgent, {
-      plans: [{
-        plan_id: planId,
-        brand: { domain: 'test.example.com' },
-        objectives: 'Audit mode test',
-        budget: { total: 5000, currency: 'USD', authority_level: 'agent_full' },
-        flight: {
-          start: new Date().toISOString(),
-          end: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+      plans: [
+        {
+          plan_id: planId,
+          brand: { domain: 'test.example.com' },
+          objectives: 'Audit mode test',
+          budget: { total: 5000, currency: 'USD', authority_level: 'agent_full' },
+          flight: {
+            start: new Date().toISOString(),
+            end: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+          },
+          countries: ['US'],
+          mode: 'audit',
+          delegations: [
+            {
+              agent_url: 'https://test-orchestrator.example.com',
+              authority: 'full',
+            },
+          ],
         },
-        countries: ['US'],
-        mode: 'audit',
-        delegations: [{
-          agent_url: 'https://test-orchestrator.example.com',
-          authority: 'full',
-        }],
-      }],
+      ],
     });
 
     // Send massively over-budget check — should still be approved in audit mode
@@ -592,7 +635,7 @@ describe('Governance E2E: Advisory and audit modes', () => {
   });
 });
 
-describe('Governance E2E: Channel compliance', () => {
+describe('Governance E2E: Channel compliance', { skip: skipReason }, () => {
   const planId = `e2e-channel-${Date.now()}`;
   const campaignRef = `e2e-channel-campaign-${Date.now()}`;
   let client;
@@ -603,24 +646,28 @@ describe('Governance E2E: Channel compliance', () => {
     client = createGovernedClient(planId, { campaignRef });
 
     await client.syncPlans(governanceAgent, {
-      plans: [{
-        plan_id: planId,
-        brand: { domain: 'test.example.com' },
-        objectives: 'Channel compliance test',
-        budget: { total: 10000, currency: 'USD', authority_level: 'agent_full' },
-        flight: {
-          start: new Date().toISOString(),
-          end: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+      plans: [
+        {
+          plan_id: planId,
+          brand: { domain: 'test.example.com' },
+          objectives: 'Channel compliance test',
+          budget: { total: 10000, currency: 'USD', authority_level: 'agent_full' },
+          flight: {
+            start: new Date().toISOString(),
+            end: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+          },
+          countries: ['US'],
+          channels: {
+            allowed: ['display', 'video'],
+          },
+          delegations: [
+            {
+              agent_url: 'https://test-orchestrator.example.com',
+              authority: 'full',
+            },
+          ],
         },
-        countries: ['US'],
-        channels: {
-          allowed: ['display', 'video'],
-        },
-        delegations: [{
-          agent_url: 'https://test-orchestrator.example.com',
-          authority: 'full',
-        }],
-      }],
+      ],
     });
   });
 
@@ -664,7 +711,7 @@ describe('Governance E2E: Channel compliance', () => {
   });
 });
 
-describe('Governance E2E: Flight compliance', () => {
+describe('Governance E2E: Flight compliance', { skip: skipReason }, () => {
   const planId = `e2e-flight-${Date.now()}`;
   const campaignRef = `e2e-flight-campaign-${Date.now()}`;
   let client;
@@ -677,22 +724,26 @@ describe('Governance E2E: Flight compliance', () => {
     client = createGovernedClient(planId, { campaignRef });
 
     await client.syncPlans(governanceAgent, {
-      plans: [{
-        plan_id: planId,
-        brand: { domain: 'test.example.com' },
-        objectives: 'Flight compliance test',
-        budget: { total: 10000, currency: 'USD', authority_level: 'agent_full' },
-        flight: {
-          start: planStart.toISOString(),
-          end: planEnd.toISOString(),
+      plans: [
+        {
+          plan_id: planId,
+          brand: { domain: 'test.example.com' },
+          objectives: 'Flight compliance test',
+          budget: { total: 10000, currency: 'USD', authority_level: 'agent_full' },
+          flight: {
+            start: planStart.toISOString(),
+            end: planEnd.toISOString(),
+          },
+          countries: ['US'],
+          channels: { allowed: ['display'] },
+          delegations: [
+            {
+              agent_url: 'https://test-orchestrator.example.com',
+              authority: 'full',
+            },
+          ],
         },
-        countries: ['US'],
-        channels: { allowed: ['display'] },
-        delegations: [{
-          agent_url: 'https://test-orchestrator.example.com',
-          authority: 'full',
-        }],
-      }],
+      ],
     });
   });
 
@@ -743,7 +794,7 @@ describe('Governance E2E: Flight compliance', () => {
   });
 });
 
-describe('Governance E2E: Delegation authority', () => {
+describe('Governance E2E: Delegation authority', { skip: skipReason }, () => {
   const planId = `e2e-delegation-${Date.now()}`;
   const campaignRef = `e2e-delegation-campaign-${Date.now()}`;
   let client;
@@ -758,22 +809,26 @@ describe('Governance E2E: Delegation authority', () => {
     });
 
     await client.syncPlans(governanceAgent, {
-      plans: [{
-        plan_id: planId,
-        brand: { domain: 'test.example.com' },
-        objectives: 'Delegation authority test',
-        budget: { total: 10000, currency: 'USD', authority_level: 'agent_full' },
-        flight: {
-          start: new Date().toISOString(),
-          end: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+      plans: [
+        {
+          plan_id: planId,
+          brand: { domain: 'test.example.com' },
+          objectives: 'Delegation authority test',
+          budget: { total: 10000, currency: 'USD', authority_level: 'agent_full' },
+          flight: {
+            start: new Date().toISOString(),
+            end: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+          },
+          countries: ['US'],
+          channels: { allowed: ['display'] },
+          delegations: [
+            {
+              agent_url: 'https://authorized-orchestrator.example.com',
+              authority: 'full',
+            },
+          ],
         },
-        countries: ['US'],
-        channels: { allowed: ['display'] },
-        delegations: [{
-          agent_url: 'https://authorized-orchestrator.example.com',
-          authority: 'full',
-        }],
-      }],
+      ],
     });
   });
 
@@ -795,7 +850,10 @@ describe('Governance E2E: Delegation authority', () => {
     assert.equal(result.data.status, 'denied', 'Expected denied for unauthorized caller');
     const delegationFinding = result.data.findings?.find(f => f.category_id === 'delegation_authority');
     assert.ok(delegationFinding, 'Expected delegation_authority finding');
-    assert.ok(delegationFinding.explanation.includes('unauthorized-orchestrator'), 'Expected finding to reference the caller');
+    assert.ok(
+      delegationFinding.explanation.includes('unauthorized-orchestrator'),
+      'Expected finding to reference the caller'
+    );
   });
 
   it('should deny expired delegation', async () => {
@@ -803,23 +861,27 @@ describe('Governance E2E: Delegation authority', () => {
     const expiredClient = createGovernedClient(expiredPlanId, { campaignRef });
 
     await expiredClient.syncPlans(governanceAgent, {
-      plans: [{
-        plan_id: expiredPlanId,
-        brand: { domain: 'test.example.com' },
-        objectives: 'Expired delegation test',
-        budget: { total: 10000, currency: 'USD', authority_level: 'agent_full' },
-        flight: {
-          start: new Date().toISOString(),
-          end: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+      plans: [
+        {
+          plan_id: expiredPlanId,
+          brand: { domain: 'test.example.com' },
+          objectives: 'Expired delegation test',
+          budget: { total: 10000, currency: 'USD', authority_level: 'agent_full' },
+          flight: {
+            start: new Date().toISOString(),
+            end: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+          },
+          countries: ['US'],
+          channels: { allowed: ['display'] },
+          delegations: [
+            {
+              agent_url: 'https://test-orchestrator.example.com',
+              authority: 'full',
+              expires_at: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(), // expired yesterday
+            },
+          ],
         },
-        countries: ['US'],
-        channels: { allowed: ['display'] },
-        delegations: [{
-          agent_url: 'https://test-orchestrator.example.com',
-          authority: 'full',
-          expires_at: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(), // expired yesterday
-        }],
-      }],
+      ],
     });
 
     const result = await expiredClient.executeTask('check_governance', {
@@ -843,7 +905,7 @@ describe('Governance E2E: Delegation authority', () => {
   });
 });
 
-describe('Governance E2E: Plan not found', () => {
+describe('Governance E2E: Plan not found', { skip: skipReason }, () => {
   it('should deny check against non-existent plan', async () => {
     const agent = trainingAgent();
     const client = new SingleAgentClient(agent, {
@@ -865,7 +927,7 @@ describe('Governance E2E: Plan not found', () => {
   });
 });
 
-describe('Governance E2E: Plan sync and update', () => {
+describe('Governance E2E: Plan sync and update', { skip: skipReason }, () => {
   it('should increment version on plan re-sync', async () => {
     const planId = `e2e-resync-${Date.now()}`;
     const agent = trainingAgent();
@@ -873,32 +935,36 @@ describe('Governance E2E: Plan sync and update', () => {
 
     // First sync
     const sync1 = await client.syncPlans(agent, {
-      plans: [{
-        plan_id: planId,
-        brand: { domain: 'test.example.com' },
-        objectives: 'Version test',
-        budget: { total: 5000, currency: 'USD', authority_level: 'agent_full' },
-        flight: {
-          start: new Date().toISOString(),
-          end: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+      plans: [
+        {
+          plan_id: planId,
+          brand: { domain: 'test.example.com' },
+          objectives: 'Version test',
+          budget: { total: 5000, currency: 'USD', authority_level: 'agent_full' },
+          flight: {
+            start: new Date().toISOString(),
+            end: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+          },
         },
-      }],
+      ],
     });
     assert.ok(sync1.success);
     assert.equal(sync1.data.plans[0].version, 1);
 
     // Second sync
     const sync2 = await client.syncPlans(agent, {
-      plans: [{
-        plan_id: planId,
-        brand: { domain: 'test.example.com' },
-        objectives: 'Updated version test',
-        budget: { total: 8000, currency: 'USD', authority_level: 'agent_full' },
-        flight: {
-          start: new Date().toISOString(),
-          end: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+      plans: [
+        {
+          plan_id: planId,
+          brand: { domain: 'test.example.com' },
+          objectives: 'Updated version test',
+          budget: { total: 8000, currency: 'USD', authority_level: 'agent_full' },
+          flight: {
+            start: new Date().toISOString(),
+            end: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+          },
         },
-      }],
+      ],
     });
     assert.ok(sync2.success);
     assert.equal(sync2.data.plans[0].version, 2, 'Expected version 2 on re-sync');
@@ -910,16 +976,18 @@ describe('Governance E2E: Plan sync and update', () => {
     const client = createGovernedClient(planId);
 
     const syncResult = await client.syncPlans(agent, {
-      plans: [{
-        plan_id: planId,
-        brand: { domain: 'test.example.com' },
-        objectives: 'Categories test',
-        budget: { total: 5000, currency: 'USD', authority_level: 'agent_full' },
-        flight: {
-          start: new Date().toISOString(),
-          end: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+      plans: [
+        {
+          plan_id: planId,
+          brand: { domain: 'test.example.com' },
+          objectives: 'Categories test',
+          budget: { total: 5000, currency: 'USD', authority_level: 'agent_full' },
+          flight: {
+            start: new Date().toISOString(),
+            end: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+          },
         },
-      }],
+      ],
     });
 
     assert.ok(syncResult.success);
@@ -933,7 +1001,7 @@ describe('Governance E2E: Plan sync and update', () => {
   });
 });
 
-describe('Governance E2E: Outcome reporting', () => {
+describe('Governance E2E: Outcome reporting', { skip: skipReason }, () => {
   const planId = `e2e-outcome-${Date.now()}`;
   const campaignRef = `e2e-outcome-campaign-${Date.now()}`;
   let client;
@@ -944,21 +1012,25 @@ describe('Governance E2E: Outcome reporting', () => {
     client = createGovernedClient(planId, { campaignRef });
 
     await client.syncPlans(governanceAgent, {
-      plans: [{
-        plan_id: planId,
-        brand: { domain: 'test.example.com' },
-        objectives: 'Outcome reporting test',
-        budget: { total: 10000, currency: 'USD', authority_level: 'agent_full' },
-        flight: {
-          start: new Date().toISOString(),
-          end: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+      plans: [
+        {
+          plan_id: planId,
+          brand: { domain: 'test.example.com' },
+          objectives: 'Outcome reporting test',
+          budget: { total: 10000, currency: 'USD', authority_level: 'agent_full' },
+          flight: {
+            start: new Date().toISOString(),
+            end: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+          },
+          countries: ['US'],
+          delegations: [
+            {
+              agent_url: 'https://test-orchestrator.example.com',
+              authority: 'full',
+            },
+          ],
         },
-        countries: ['US'],
-        delegations: [{
-          agent_url: 'https://test-orchestrator.example.com',
-          authority: 'full',
-        }],
-      }],
+      ],
     });
   });
 
@@ -1027,7 +1099,7 @@ describe('Governance E2E: Outcome reporting', () => {
   });
 });
 
-describe('Governance E2E: Audit log detail', () => {
+describe('Governance E2E: Audit log detail', { skip: skipReason }, () => {
   const planId = `e2e-audit-detail-${Date.now()}`;
   const campaignRef = `e2e-audit-detail-campaign-${Date.now()}`;
   let client;
@@ -1038,21 +1110,25 @@ describe('Governance E2E: Audit log detail', () => {
     client = createGovernedClient(planId, { campaignRef });
 
     await client.syncPlans(governanceAgent, {
-      plans: [{
-        plan_id: planId,
-        brand: { domain: 'test.example.com' },
-        objectives: 'Audit detail test',
-        budget: { total: 10000, currency: 'USD', authority_level: 'agent_full' },
-        flight: {
-          start: new Date().toISOString(),
-          end: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+      plans: [
+        {
+          plan_id: planId,
+          brand: { domain: 'test.example.com' },
+          objectives: 'Audit detail test',
+          budget: { total: 10000, currency: 'USD', authority_level: 'agent_full' },
+          flight: {
+            start: new Date().toISOString(),
+            end: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+          },
+          countries: ['US'],
+          delegations: [
+            {
+              agent_url: 'https://test-orchestrator.example.com',
+              authority: 'full',
+            },
+          ],
         },
-        countries: ['US'],
-        delegations: [{
-          agent_url: 'https://test-orchestrator.example.com',
-          authority: 'full',
-        }],
-      }],
+      ],
     });
 
     // Perform a check and report an outcome to populate audit logs
@@ -1124,7 +1200,7 @@ describe('Governance E2E: Audit log detail', () => {
   });
 });
 
-describe('Governance E2E: Multiple findings in single check', () => {
+describe('Governance E2E: Multiple findings in single check', { skip: skipReason }, () => {
   const planId = `e2e-multi-findings-${Date.now()}`;
   const campaignRef = `e2e-multi-findings-campaign-${Date.now()}`;
   let client;
@@ -1135,22 +1211,26 @@ describe('Governance E2E: Multiple findings in single check', () => {
     client = createGovernedClient(planId, { campaignRef });
 
     await client.syncPlans(governanceAgent, {
-      plans: [{
-        plan_id: planId,
-        brand: { domain: 'test.example.com' },
-        objectives: 'Multiple findings test',
-        budget: { total: 5000, currency: 'USD', authority_level: 'agent_full' },
-        flight: {
-          start: new Date(Date.now() + 1 * 24 * 60 * 60 * 1000).toISOString(),
-          end: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+      plans: [
+        {
+          plan_id: planId,
+          brand: { domain: 'test.example.com' },
+          objectives: 'Multiple findings test',
+          budget: { total: 5000, currency: 'USD', authority_level: 'agent_full' },
+          flight: {
+            start: new Date(Date.now() + 1 * 24 * 60 * 60 * 1000).toISOString(),
+            end: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+          },
+          countries: ['US'],
+          channels: { allowed: ['display'] },
+          delegations: [
+            {
+              agent_url: 'https://test-orchestrator.example.com',
+              authority: 'full',
+            },
+          ],
         },
-        countries: ['US'],
-        channels: { allowed: ['display'] },
-        delegations: [{
-          agent_url: 'https://test-orchestrator.example.com',
-          authority: 'full',
-        }],
-      }],
+      ],
     });
   });
 
@@ -1181,28 +1261,32 @@ describe('Governance E2E: Multiple findings in single check', () => {
   });
 });
 
-describe('Governance E2E: Approval expiration', () => {
+describe('Governance E2E: Approval expiration', { skip: skipReason }, () => {
   it('should include expires_at on approved checks', async () => {
     const planId = `e2e-expiry-${Date.now()}`;
     const agent = trainingAgent();
     const client = createGovernedClient(planId);
 
     await client.syncPlans(agent, {
-      plans: [{
-        plan_id: planId,
-        brand: { domain: 'test.example.com' },
-        objectives: 'Expiry test',
-        budget: { total: 10000, currency: 'USD', authority_level: 'agent_full' },
-        flight: {
-          start: new Date().toISOString(),
-          end: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+      plans: [
+        {
+          plan_id: planId,
+          brand: { domain: 'test.example.com' },
+          objectives: 'Expiry test',
+          budget: { total: 10000, currency: 'USD', authority_level: 'agent_full' },
+          flight: {
+            start: new Date().toISOString(),
+            end: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+          },
+          countries: ['US'],
+          delegations: [
+            {
+              agent_url: 'https://test-orchestrator.example.com',
+              authority: 'full',
+            },
+          ],
         },
-        countries: ['US'],
-        delegations: [{
-          agent_url: 'https://test-orchestrator.example.com',
-          authority: 'full',
-        }],
-      }],
+      ],
     });
 
     const result = await client.executeTask('check_governance', {
@@ -1222,7 +1306,7 @@ describe('Governance E2E: Approval expiration', () => {
   });
 });
 
-describe('Governance E2E: CLI test scenarios', () => {
+describe('Governance E2E: CLI test scenarios', { skip: skipReason }, () => {
   it('campaign_governance scenario passes', async () => {
     const { testCampaignGovernance } = await import('../../dist/lib/testing/scenarios/governance.js');
     const result = await testCampaignGovernance(AGENT_URL, { protocol: 'mcp' });

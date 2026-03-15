@@ -120,7 +120,7 @@ export class GovernanceAdapter implements IGovernanceAdapter {
     const response = await ProtocolClient.callTool(
       this.agentConfig.agent,
       'check_governance',
-      checkRequest as unknown as Record<string, unknown>,
+      checkRequest as unknown as Record<string, unknown>
     );
 
     return response?.structuredContent ?? response?.result ?? response;

@@ -1404,15 +1404,9 @@ export class SingleAgentClient {
     governanceAgent: AgentConfig,
     params: SyncPlansRequest,
     inputHandler?: InputHandler,
-    options?: TaskOptions,
+    options?: TaskOptions
   ): Promise<TaskResult<SyncPlansResponse>> {
-    return this.executor.executeTask<SyncPlansResponse>(
-      governanceAgent,
-      'sync_plans',
-      params,
-      inputHandler,
-      options,
-    );
+    return this.executor.executeTask<SyncPlansResponse>(governanceAgent, 'sync_plans', params, inputHandler, options);
   }
 
   /**
@@ -1424,14 +1418,14 @@ export class SingleAgentClient {
   async getPlanAuditLogs(
     governanceAgent: AgentConfig,
     params: GetPlanAuditLogsRequest,
-    options?: TaskOptions,
+    options?: TaskOptions
   ): Promise<TaskResult<GetPlanAuditLogsResponse>> {
     return this.executor.executeTask<GetPlanAuditLogsResponse>(
       governanceAgent,
       'get_plan_audit_logs',
       params,
       undefined,
-      options,
+      options
     );
   }
 

@@ -53,7 +53,7 @@ function deepClone<T>(obj: T): T {
 export class GovernanceMiddleware {
   constructor(
     private governanceConfig: GovernanceConfig,
-    private onActivity?: (activity: Activity) => void | Promise<void>,
+    private onActivity?: (activity: Activity) => void | Promise<void>
   ) {}
 
   /**
@@ -84,7 +84,7 @@ export class GovernanceMiddleware {
   async checkProposed(
     tool: string,
     params: Record<string, unknown>,
-    debugLogs: any[] = [],
+    debugLogs: any[] = []
   ): Promise<{ result: GovernanceCheckResult; params: Record<string, unknown> }> {
     const config = this.governanceConfig.campaign;
     if (!config) {
@@ -116,7 +116,7 @@ export class GovernanceMiddleware {
         config.agent,
         'check_governance',
         request as unknown as Record<string, unknown>,
-        debugLogs,
+        debugLogs
       );
 
       // Unwrap protocol response (MCP text content, structuredContent, A2A artifacts)
@@ -190,7 +190,7 @@ export class GovernanceMiddleware {
     outcome: OutcomeType,
     sellerResponse?: Record<string, unknown>,
     error?: { code?: string; message: string },
-    debugLogs: any[] = [],
+    debugLogs: any[] = []
   ): Promise<GovernanceOutcome | undefined> {
     const config = this.governanceConfig.campaign;
     if (!config) return undefined;
@@ -215,7 +215,7 @@ export class GovernanceMiddleware {
         config.agent,
         'report_plan_outcome',
         request as unknown as Record<string, unknown>,
-        debugLogs,
+        debugLogs
       );
 
       const responseData = unwrapProtocolResponse(response) as any;
@@ -236,10 +236,12 @@ export class GovernanceMiddleware {
           explanation: f.explanation,
           details: f.details,
         })),
-        planSummary: responseData.plan_summary ? {
-          totalCommitted: responseData.plan_summary.total_committed,
-          budgetRemaining: responseData.plan_summary.budget_remaining,
-        } : undefined,
+        planSummary: responseData.plan_summary
+          ? {
+              totalCommitted: responseData.plan_summary.total_committed,
+              budgetRemaining: responseData.plan_summary.budget_remaining,
+            }
+          : undefined,
       };
     } catch (err) {
       // Outcome reporting failure shouldn't fail the task

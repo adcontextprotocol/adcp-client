@@ -221,7 +221,14 @@ export interface TaskResult<T = any> {
   /** Whether the task is progressing without errors (true for all intermediate states and successful completion) */
   success: boolean;
   /** Task execution status */
-  status: 'completed' | 'deferred' | 'submitted' | 'input-required' | 'working' | 'governance-denied' | 'governance-escalated';
+  status:
+    | 'completed'
+    | 'deferred'
+    | 'submitted'
+    | 'input-required'
+    | 'working'
+    | 'governance-denied'
+    | 'governance-escalated';
   /** Task result data (if successful) */
   data?: T;
   /** Error message (if failed) */
