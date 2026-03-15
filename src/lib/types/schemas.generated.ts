@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-03-14T16:08:25.762Z
+// Generated at: 2026-03-15T01:01:17.563Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -1702,6 +1702,7 @@ export const PreviewCreativeRequestSchema = z.union([z.object({
             context_description: z.string().nullish()
         }).passthrough()).nullish(),
         template_id: z.string().nullish(),
+        quality: CreativeQualitySchema.nullish(),
         output_format: PreviewOutputFormatSchema.nullish(),
         item_limit: z.number().nullish(),
         context: ContextObjectSchema.nullish(),
@@ -1717,9 +1718,11 @@ export const PreviewCreativeRequestSchema = z.union([z.object({
                 context_description: z.string().nullish()
             }).passthrough()).nullish(),
             template_id: z.string().nullish(),
+            quality: CreativeQualitySchema.nullish(),
             output_format: PreviewOutputFormatSchema.nullish(),
             item_limit: z.number().nullish()
         }).passthrough()),
+        quality: CreativeQualitySchema.nullish(),
         output_format: PreviewOutputFormatSchema.nullish(),
         context: ContextObjectSchema.nullish(),
         ext: ExtensionObjectSchema.nullish()
@@ -3533,6 +3536,7 @@ export const BuildCreativeRequestSchema = z.object({
         macros: z.record(z.string(), z.union([z.string(), z.undefined()])).nullish(),
         context_description: z.string().nullish()
     }).passthrough()).nullish(),
+    preview_quality: CreativeQualitySchema.nullish(),
     preview_output_format: PreviewOutputFormatSchema.nullish(),
     macro_values: z.record(z.string(), z.union([z.string(), z.undefined()])).nullish(),
     context: ContextObjectSchema.nullish(),

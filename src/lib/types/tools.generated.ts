@@ -6018,6 +6018,7 @@ export type BuildCreativeRequest = {
      */
     context_description?: string;
   }[];
+  preview_quality?: CreativeQuality;
   preview_output_format?: PreviewOutputFormat;
   /**
    * Macro values to pre-substitute into the output manifest's assets. Keys are universal macro names (e.g., CLICK_URL, CACHEBUSTER); values are the substitution strings. The creative agent translates universal macros to its platform's native syntax. Substitution is literal — all occurrences of each macro in output assets are replaced with the provided value. The caller is responsible for URL-encoding values if the output context requires it. Macros not provided here remain as {MACRO} placeholders for the sales agent to resolve at serve time. Creative agents MUST ignore keys they do not recognize — unknown macro names are not an error.
@@ -6406,6 +6407,7 @@ export type PreviewCreativeRequest =
        * Specific template ID for custom format rendering
        */
       template_id?: string;
+      quality?: CreativeQuality;
       output_format?: PreviewOutputFormat;
       /**
        * Maximum number of catalog items to render in the preview. For catalog-driven generative formats, caps how many items are rendered per preview variant. When item_limit exceeds the format's max_items, the creative agent SHOULD use the lesser of the two. Ignored when the manifest contains no catalog assets. Creative agents SHOULD default to a reasonable sample when omitted and the catalog is large.
@@ -6450,12 +6452,14 @@ export type PreviewCreativeRequest =
          * Specific template ID for custom format rendering
          */
         template_id?: string;
+        quality?: CreativeQuality;
         output_format?: PreviewOutputFormat;
         /**
          * Maximum number of catalog items to render in this preview.
          */
         item_limit?: number;
       }[];
+      quality?: CreativeQuality;
       output_format?: PreviewOutputFormat;
       context?: ContextObject;
       ext?: ExtensionObject;
