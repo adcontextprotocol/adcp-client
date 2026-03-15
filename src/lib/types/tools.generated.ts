@@ -72,6 +72,10 @@ export type GetProductsRequest = {
    * Buyer's campaign reference label. Groups related discovery and buy operations under a single campaign for CRM and ad server correlation (e.g., 'NovaDrink_Meals_Q2').
    */
   buyer_campaign_ref?: string;
+  /**
+   * Delivery types the buyer prefers, in priority order. Unlike filters.delivery_type which excludes non-matching products, this signals preference for curation — the publisher may still include other delivery types when they match the brief well.
+   */
+  preferred_delivery_types?: DeliveryType[];
   filters?: ProductFilters;
   property_list?: PropertyListReference;
   /**
@@ -86,6 +90,7 @@ export type GetProductsRequest = {
     | 'format_ids'
     | 'placements'
     | 'delivery_type'
+    | 'exclusivity'
     | 'pricing_options'
     | 'forecast'
     | 'outcome_measurement'
@@ -98,6 +103,8 @@ export type GetProductsRequest = {
     | 'data_provider_signals'
     | 'max_optimization_goals'
     | 'catalog_match'
+    | 'show_ids'
+    | 'episodes'
     | 'brief_relevance'
     | 'expires_at'
     | 'product_card'
@@ -232,6 +239,10 @@ export type AccountReference =
  */
 export type DeliveryType = 'guaranteed' | 'non_guaranteed';
 /**
+ * Filter by exclusivity level. Returns products matching the specified exclusivity (e.g., 'exclusive' returns only sole-sponsorship products).
+ */
+export type Exclusivity = 'none' | 'category' | 'exclusive';
+/**
  * DEPRECATED: High-level categories for creative formats. These categories are lossy abstractions that don't scale well to emerging ad formats. Use the assets array in Format objects to understand creative requirements instead - it provides precise information about what asset types are needed (video, image, text, etc.).
  */
 export type FormatCategory = 'audio' | 'video' | 'display' | 'native' | 'dooh' | 'rich_media' | 'universal';
@@ -261,7 +272,8 @@ export type MediaChannel =
   | 'retail_media'
   | 'influencer'
   | 'affiliate'
-  | 'product_placement';
+  | 'product_placement'
+  | 'ai_media';
 /**
  * Geographic targeting level (country, region, metro, postal_area)
  */
@@ -461,6 +473,7 @@ export interface ExtensionObject {}
  */
 export interface ProductFilters {
   delivery_type?: DeliveryType;
+  exclusivity?: Exclusivity;
   /**
    * Filter by pricing availability: true = products offering fixed pricing (at least one option with fixed_price), false = products offering auction pricing (at least one option without fixed_price). Products with both fixed and auction options match both true and false.
    */
@@ -815,6 +828,63 @@ export type ActionSource =
   | 'system_generated'
   | 'other';
 /**
+ * Lifecycle status of the episode
+ */
+export type EpisodeStatus = 'scheduled' | 'tentative' | 'live' | 'postponed' | 'cancelled' | 'aired' | 'published';
+/**
+ * Rating system used
+ */
+export type ContentRatingSystem = 'tv_parental' | 'mpaa' | 'podcast' | 'esrb' | 'bbfc' | 'fsk' | 'acb' | 'custom';
+/**
+ * Role of this person on the show or episode
+ */
+export type TalentRole = 'host' | 'guest' | 'creator' | 'cast' | 'narrator' | 'producer' | 'correspondent';
+/**
+ * What kind of derivative content this is
+ */
+export type DerivativeType = 'clip' | 'highlight' | 'recap' | 'trailer' | 'bonus';
+/**
+ * How frequently the show releases new episodes
+ */
+export type ShowCadence = 'daily' | 'weekly' | 'seasonal' | 'event' | 'irregular';
+/**
+ * Lifecycle status of the show
+ */
+export type ShowStatus = 'active' | 'hiatus' | 'ended' | 'upcoming';
+/**
+ * Production quality tier. Seller-declared. Maps to OpenRTB content.prodq (professional=1, prosumer=2, ugc=3).
+ */
+export type ProductionQuality = 'professional' | 'prosumer' | 'ugc';
+/**
+ * Type of distribution identifier
+ */
+export type DistributionIdentifierType =
+  | 'apple_podcast_id'
+  | 'spotify_show_id'
+  | 'rss_url'
+  | 'podcast_guid'
+  | 'amazon_music_id'
+  | 'iheart_id'
+  | 'podcast_index_id'
+  | 'youtube_channel_id'
+  | 'youtube_playlist_id'
+  | 'amazon_title_id'
+  | 'roku_channel_id'
+  | 'pluto_channel_id'
+  | 'tubi_id'
+  | 'peacock_id'
+  | 'tiktok_id'
+  | 'twitch_channel'
+  | 'imdb_id'
+  | 'gracenote_id'
+  | 'eidr_id'
+  | 'domain'
+  | 'substack_id';
+/**
+ * How the shows are related
+ */
+export type ShowRelationship = 'spinoff' | 'companion' | 'sequel' | 'prequel' | 'crossover';
+/**
  * Days of the week for daypart targeting
  */
 export type DayOfWeek = 'monday' | 'tuesday' | 'wednesday' | 'thursday' | 'friday' | 'saturday' | 'sunday';
@@ -827,6 +897,10 @@ export interface GetProductsResponse {
    * Array of matching products
    */
   products: Product[];
+  /**
+   * Shows referenced by products in this response. Only includes shows referenced by the returned products. Under pagination, each page includes all show objects needed for that page's products.
+   */
+  shows?: Show[];
   /**
    * Optional array of proposed media plans with budget allocations across products. Publishers include proposals when they can provide strategic guidance based on the brief. Proposals are actionable - buyers can refine them via follow-up get_products calls within the same session, or execute them directly via create_media_buy.
    */
@@ -922,6 +996,7 @@ export interface Product {
    */
   placements?: Placement[];
   delivery_type: DeliveryType;
+  exclusivity?: Exclusivity;
   /**
    * Available pricing models for this product
    */
@@ -1066,6 +1141,14 @@ export interface Product {
      */
     manifest: {};
   };
+  /**
+   * References to shows in the response's top-level shows array. When present, the product covers inventory associated with these shows. A product can span multiple shows (e.g., a podcast network bundle).
+   */
+  show_ids?: string[];
+  /**
+   * Specific episodes included in this product. Each episode references its parent show via show_id when the product spans multiple shows. When absent with show_ids present, the product covers the shows broadly (run-of-show).
+   */
+  episodes?: Episode[];
   /**
    * Registry policy IDs the seller enforces for this product. Enforcement level comes from the policy registry. Buyers can filter products by required policies.
    */
@@ -1682,6 +1765,193 @@ export interface CreativePolicy {
    * Whether creatives must include provenance metadata. When true, the seller requires buyers to attach provenance declarations to creative submissions. The seller may independently verify claims via get_creative_features.
    */
   provenance_required?: boolean;
+}
+/**
+ * A specific installment of a show. Episodes inherit show-level fields they don't override: content_rating defaults to the show's baseline, guest_talent is additive to the show's recurring talent, and topics add context beyond the show's genre.
+ */
+export interface Episode {
+  /**
+   * Unique identifier for this episode within the show
+   */
+  episode_id: string;
+  /**
+   * Parent show reference. Required when the product spans multiple shows (has multiple entries in show_ids on the product).
+   */
+  show_id?: string;
+  /**
+   * Episode title
+   */
+  name?: string;
+  /**
+   * Season identifier (e.g., '1', '2024', 'spring_2026')
+   */
+  season?: string;
+  /**
+   * Episode number within the season (e.g., '3', '47')
+   */
+  episode_number?: string;
+  /**
+   * When the episode airs or publishes (ISO 8601)
+   */
+  scheduled_at?: string;
+  status?: EpisodeStatus;
+  /**
+   * Expected duration of the episode in seconds
+   */
+  duration_seconds?: number;
+  /**
+   * Whether the end time is approximate (live events, sports)
+   */
+  flexible_end?: boolean;
+  /**
+   * When this episode data expires and should be re-queried. Agents should re-query before committing budget to products with tentative episodes.
+   */
+  valid_until?: string;
+  content_rating?: ContentRating;
+  /**
+   * Content topics for this episode. Uses the same taxonomy as the show's genre_taxonomy when present. Enables episode-level brand safety evaluation beyond content_rating.
+   */
+  topics?: string[];
+  /**
+   * Episode-specific guests and talent. Additive to the show's recurring talent.
+   */
+  guest_talent?: Talent[];
+  ad_inventory?: AdInventoryConfiguration;
+  /**
+   * When this episode is a clip, highlight, or recap derived from a full episode. The source episode_id must reference an episode within the same response.
+   */
+  derivative_of?: {
+    /**
+     * The source episode this content is derived from
+     */
+    episode_id: string;
+    type: DerivativeType;
+  };
+  ext?: ExtensionObject;
+}
+/**
+ * Episode-specific content rating. Overrides the show's baseline content_rating when present.
+ */
+export interface ContentRating {
+  system: ContentRatingSystem;
+  /**
+   * Rating value within the system (e.g., 'TV-PG', 'R', 'explicit')
+   */
+  rating: string;
+}
+/**
+ * A person associated with a show or episode, with an optional link to their brand.json identity
+ */
+export interface Talent {
+  role: TalentRole;
+  /**
+   * Person's name as credited on the show
+   */
+  name: string;
+  /**
+   * URL to this person's brand.json entry. Enables buyer agents to evaluate the talent's brand identity and associations.
+   */
+  brand_url?: string;
+}
+/**
+ * Break-based ad inventory for this episode. For non-break formats (host reads, integrations), use product placements.
+ */
+export interface AdInventoryConfiguration {
+  /**
+   * Number of planned ad breaks in the episode
+   */
+  expected_breaks: number;
+  /**
+   * Total seconds of ad time across all breaks
+   */
+  total_ad_seconds?: number;
+  /**
+   * Maximum duration in seconds for a single ad within a break. Buyers need this to know whether their creative fits.
+   */
+  max_ad_duration_seconds?: number;
+  /**
+   * Whether ad breaks are dynamic and driven by live conditions (sports timeouts, election coverage). When false, all breaks are pre-defined.
+   */
+  unplanned_breaks?: boolean;
+  /**
+   * Ad format types supported in breaks (e.g., 'video', 'audio', 'display')
+   */
+  supported_formats?: string[];
+}
+/**
+ * A persistent content program that produces episodes over time. Shows are reusable objects that products reference by show_id. The show_id is seller-scoped — use distribution identifiers for cross-seller matching.
+ */
+export interface Show {
+  /**
+   * Seller-assigned identifier for this show. Unique within a single get_products response but not globally unique across sellers. Use distribution identifiers for cross-seller matching.
+   */
+  show_id: string;
+  /**
+   * Human-readable show name
+   */
+  name: string;
+  /**
+   * What the show is about
+   */
+  description?: string;
+  /**
+   * Genre tags. When genre_taxonomy is present, values are taxonomy IDs (e.g., IAB Content Taxonomy 3.0 codes). Otherwise free-form.
+   */
+  genre?: string[];
+  /**
+   * Taxonomy system for genre values (e.g., 'iab_content_3.0'). When present, genre values should be valid taxonomy IDs. Recommended for machine-readable brand safety evaluation.
+   */
+  genre_taxonomy?: string;
+  /**
+   * Primary language (BCP 47 tag, e.g., 'en', 'es-MX')
+   */
+  language?: string;
+  content_rating?: ContentRating;
+  cadence?: ShowCadence;
+  /**
+   * Current or most recent season identifier (e.g., '3', '2026', 'spring_2026'). A lightweight label — not a full season object.
+   */
+  season?: string;
+  status?: ShowStatus;
+  production_quality?: ProductionQuality;
+  /**
+   * Hosts, recurring cast, creators associated with the show. Each talent entry may include a brand_url linking to their brand.json identity.
+   */
+  talent?: Talent[];
+  /**
+   * Where this show is distributed. Each entry maps the show to a publisher platform with platform-specific identifiers. Shows SHOULD include at least one platform-independent identifier (imdb_id, gracenote_id, eidr_id) when available.
+   */
+  distribution?: ShowDistribution[];
+  /**
+   * Relationships to other shows (spin-offs, companion shows, etc.). Each entry references another show by show_id within the same response.
+   */
+  related_shows?: {
+    /**
+     * The related show's show_id within this seller's response
+     */
+    show_id: string;
+    relationship: ShowRelationship;
+  }[];
+  ext?: ExtensionObject;
+}
+/**
+ * A show's presence on a specific publisher platform, identified by platform-specific identifiers. Enables cross-seller matching when the same show is sold by different agents.
+ */
+export interface ShowDistribution {
+  /**
+   * Domain of the publisher platform where the show is distributed (e.g., 'youtube.com', 'spotify.com')
+   */
+  publisher_domain: string;
+  /**
+   * Platform-specific identifiers for the show on this publisher
+   */
+  identifiers: {
+    type: DistributionIdentifierType;
+    /**
+     * The identifier value
+     */
+    value: string;
+  }[];
 }
 /**
  * A proposed media plan with budget allocations across products. Represents the publisher's strategic recommendation for how to structure a campaign based on the brief. Proposals are actionable - buyers can execute them directly via create_media_buy by providing the proposal_id.
@@ -6037,6 +6307,25 @@ export type BuildCreativeRequest = {
     }
 );
 /**
+ * Types of rights usage that can be licensed through the brand protocol. Aligned with DDEX UseType direction for interoperability with music and media rights systems.
+ */
+export type RightUse =
+  | 'likeness'
+  | 'voice'
+  | 'name'
+  | 'endorsement'
+  | 'motion_capture'
+  | 'signature'
+  | 'catchphrase'
+  | 'sync'
+  | 'background_music'
+  | 'editorial'
+  | 'commercial';
+/**
+ * Type of rights (talent, music, etc.). Helps identify constraints when a creative combines multiple rights types.
+ */
+export type RightType = 'talent' | 'character' | 'brand_ip' | 'music' | 'stock_media';
+/**
  * Quality tier for generation. 'draft' produces fast, lower-fidelity output for iteration and review. 'production' produces full-quality output for final delivery. If omitted, the creative agent uses its own default. For non-generative transforms (e.g., format resizing), creative agents MAY ignore this field.
  */
 export type CreativeQuality = 'draft' | 'production';
@@ -6076,7 +6365,67 @@ export interface CreativeManifest {
       | BriefAsset
       | CatalogAsset;
   };
+  /**
+   * Rights constraints attached to this creative. Each entry represents constraints from a single rights holder. A creative may combine multiple rights constraints (e.g., talent likeness + music license). For v1, rights constraints are informational metadata — the buyer/orchestrator manages creative lifecycle against these terms.
+   */
+  rights?: RightsConstraint[];
   provenance?: Provenance;
+  ext?: ExtensionObject;
+}
+/**
+ * Rights metadata attached to a creative manifest. Each entry represents constraints from a single rights holder. A creative may combine multiple rights constraints (e.g., talent likeness + music license). For v1, rights constraints are informational metadata — the buyer/orchestrator manages creative lifecycle against these terms.
+ */
+export interface RightsConstraint {
+  /**
+   * Rights grant identifier from the acquire_rights response
+   */
+  rights_id: string;
+  /**
+   * The agent that granted these rights
+   */
+  rights_agent: {
+    /**
+     * MCP endpoint URL of the rights agent
+     */
+    url: string;
+    /**
+     * Agent identifier
+     */
+    id: string;
+  };
+  /**
+   * Start of the rights validity period
+   */
+  valid_from?: string;
+  /**
+   * End of the rights validity period. Creative should not be served after this time.
+   */
+  valid_until?: string;
+  /**
+   * Rights uses covered by this constraint
+   */
+  uses: RightUse[];
+  /**
+   * Countries where this creative may be served under these rights (ISO 3166-1 alpha-2). If omitted, no country restriction. When both countries and excluded_countries are present, the effective set is countries minus excluded_countries.
+   */
+  countries?: string[];
+  /**
+   * Countries excluded from rights availability (ISO 3166-1 alpha-2). Use when the grant is worldwide except specific markets.
+   */
+  excluded_countries?: string[];
+  /**
+   * Maximum total impressions allowed for the full validity period (valid_from to valid_until). This is the absolute cap across all creatives using this rights grant, not a per-creative or per-period limit.
+   */
+  impression_cap?: number;
+  right_type?: RightType;
+  /**
+   * Approval status from the rights holder at manifest creation time (snapshot, not a live value)
+   */
+  approval_status?: 'pending' | 'approved' | 'rejected';
+  /**
+   * URL where downstream supply chain participants can verify this rights grant is active. Returns HTTP 200 with the current grant status, or 404 if revoked. Enables SSPs and verification vendors to confirm rights before serving.
+   */
+  verification_url?: string;
   ext?: ExtensionObject;
 }
 
@@ -10592,7 +10941,7 @@ export interface GetAdCPCapabilitiesResponse {
   /**
    * Which AdCP domain protocols this seller supports
    */
-  supported_protocols: ('media_buy' | 'signals' | 'governance' | 'sponsored_intelligence' | 'creative')[];
+  supported_protocols: ('media_buy' | 'signals' | 'governance' | 'sponsored_intelligence' | 'creative' | 'brand')[];
   /**
    * Account management capabilities. Describes how accounts are established, what billing models are supported, and whether an account is required before browsing products.
    */
@@ -11072,6 +11421,35 @@ export interface GetAdCPCapabilitiesResponse {
     brand_url?: string;
   };
   /**
+   * Brand protocol capabilities. Only present if brand is in supported_protocols. Brand agents provide identity data (logos, colors, tone, assets) and optionally rights clearance for licensable content (talent, music, stock media).
+   */
+  brand?: {
+    /**
+     * Supports get_brand_identity for retrieving brand identity data
+     */
+    identity?: boolean;
+    /**
+     * Supports get_rights and acquire_rights for rights discovery and clearance
+     */
+    rights?: boolean;
+    /**
+     * Types of rights available through this agent
+     */
+    right_types?: RightType[];
+    /**
+     * Rights uses available across this agent's roster
+     */
+    available_uses?: RightUse[];
+    /**
+     * LLM/generation providers this agent can issue credentials for
+     */
+    generation_providers?: string[];
+    /**
+     * Description of the agent's brand protocol capabilities
+     */
+    description?: string;
+  };
+  /**
    * Creative protocol capabilities. Only present if creative is in supported_protocols.
    */
   creative?: {
@@ -11359,6 +11737,10 @@ export interface ReportUsageRequest {
      * Content standards configuration identifier. Required for governance agents.
      */
     standards_id?: string;
+    /**
+     * Rights grant identifier from acquire_rights. Required for brand/rights agents. Links usage records to specific rights grants for cap tracking, billing verification, and overage calculation.
+     */
+    rights_id?: string;
   }[];
   context?: ContextObject;
   ext?: ExtensionObject;

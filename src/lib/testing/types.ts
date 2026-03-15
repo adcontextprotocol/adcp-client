@@ -10,7 +10,7 @@ export type TestScenario =
   | 'full_sales_flow' // Full lifecycle: discovery -> create -> update -> delivery
   | 'creative_sync' // Test sync_creatives flow
   | 'creative_inline' // Test inline creatives in create_media_buy
-  | 'creative_reference' // Test reference creatives (creative_ids)
+  | 'creative_reference' // Build -> sync -> reference a creative via creative_ids
   | 'pricing_models' // Test different pricing models the agent supports
   | 'creative_flow' // Creative agent: list_formats -> build -> preview
   | 'signals_flow' // Signals agent: get_signals -> activate

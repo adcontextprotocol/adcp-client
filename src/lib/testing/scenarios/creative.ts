@@ -13,7 +13,7 @@
  */
 
 import type { TestOptions, TestStepResult, AgentProfile, TaskResult } from '../types';
-import { createTestClient, runStep, discoverAgentProfile, discoverCreativeFormats } from '../client';
+import { createTestClient, runStep, discoverAgentProfile, discoverCreativeFormats, resolveBrand } from '../client';
 
 /**
  * Test: Creative Flow (for creative agents)
@@ -57,25 +57,28 @@ export async function testCreativeFlow(
         'build_creative',
         async () =>
           client.executeTask('build_creative', {
-            format_id: format.format_id,
-            brand_manifest: options.brand_manifest || getDefaultBrandManifest(),
-            prompt: `Create a ${format.type || 'display'} ad for an e-commerce brand promoting summer sale`,
+            target_format_id: format.format_id,
+            brand: resolveBrand(options),
+            message: `Create a ${format.type || 'display'} ad for an e-commerce brand promoting summer sale`,
+            quality: 'draft',
+            include_preview: true,
           }) as Promise<TaskResult>
       );
 
       if (result?.success && result?.data) {
         const data = result.data as any;
-        step.details = `Built creative for format ${format.format_id}`;
+        const manifest = data.creative_manifest || data.creative_manifests?.[0];
+        step.details = `Built creative manifest for format ${manifest?.format_id || format.format_id}`;
         step.response_preview = JSON.stringify(
           {
-            creative_id: data.creative_id || data.creative?.creative_id,
-            format_id: data.format_id || data.creative?.format_id,
-            has_assets: !!(data.assets?.length || data.creative?.assets?.length),
+            format_id: manifest?.format_id || format.format_id,
+            asset_keys: Object.keys(manifest?.assets || {}),
+            has_preview: !!data.preview,
+            preview_count: data.preview?.previews?.length || 0,
           },
           null,
           2
         );
-        step.created_id = data.creative_id || data.creative?.creative_id;
       } else if (result && !result.success) {
         step.passed = false;
         step.error = result.error || 'build_creative failed';
@@ -252,36 +255,4 @@ function getTestAssetUrl(assetName: string): string {
     default:
       return 'https://via.placeholder.com/300x250.png?text=Test+Asset';
   }
-}
-
-/**
- * Get default brand manifest for testing
- */
-function getDefaultBrandManifest() {
-  return {
-    name: 'E2E Test Brand',
-    url: 'https://test.example.com',
-    tagline: 'Testing the future of advertising',
-    logos: [
-      {
-        url: 'https://via.placeholder.com/200x50.png?text=Logo',
-        orientation: 'horizontal',
-        background: 'light-bg',
-        variant: 'primary',
-        width: 200,
-        height: 50,
-      },
-    ],
-    tone: {
-      voice: 'Professional and trustworthy',
-      attributes: ['innovative', 'reliable', 'customer-focused'],
-      dos: ['Use clear, direct language', 'Emphasize value proposition'],
-      donts: ['Use jargon', 'Make unsubstantiated claims'],
-    },
-    colors: {
-      primary: '#0066CC',
-      secondary: '#FFFFFF',
-      accent: '#FF6600',
-    },
-  };
 }

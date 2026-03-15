@@ -14,8 +14,6 @@ import type { TestScenario, TestOptions, TestResult, SuiteResult } from './types
  * ALL listed tools must be present in the agent's tool list.
  * Scenarios with an empty array are always applicable.
  *
- * Scenarios omitted from this map are not orchestrated:
- * - creative_reference: not yet implemented
  */
 export const SCENARIO_REQUIREMENTS: Partial<Record<TestScenario, string[]>> = {
   // Always applicable
@@ -27,6 +25,7 @@ export const SCENARIO_REQUIREMENTS: Partial<Record<TestScenario, string[]>> = {
   create_media_buy: ['get_products', 'create_media_buy'],
   full_sales_flow: ['get_products', 'create_media_buy'],
   creative_inline: ['get_products', 'create_media_buy'],
+  creative_reference: ['get_products', 'create_media_buy', 'build_creative', 'sync_creatives'],
   temporal_validation: ['get_products', 'create_media_buy'],
   creative_sync: ['get_products', 'create_media_buy', 'sync_creatives'],
 
@@ -80,6 +79,7 @@ export const DEFAULT_SCENARIOS: readonly TestScenario[] = [
   'full_sales_flow',
   'creative_sync',
   'creative_inline',
+  'creative_reference',
   'pricing_edge_cases',
   'error_handling',
   'validation',

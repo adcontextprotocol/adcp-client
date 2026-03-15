@@ -16,6 +16,7 @@ export {
   testFullSalesFlow,
   testCreativeSync,
   testCreativeInline,
+  testCreativeReference,
   testSyncAudiences,
   resolveAccountForAudiences,
   selectProduct,

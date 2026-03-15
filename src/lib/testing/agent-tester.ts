@@ -48,6 +48,7 @@ import {
   testFullSalesFlow,
   testCreativeSync,
   testCreativeInline,
+  testCreativeReference,
   testCreativeFlow,
   testSignalsFlow,
   testErrorHandling,
@@ -138,16 +139,9 @@ export async function testAgent(
         break;
 
       case 'creative_reference':
-        // Reference creative testing tests the creative_ids flow in create_media_buy.
-        // This is lower priority since testCreativeInline covers most creative attachment scenarios.
-        steps = [
-          {
-            step: 'Test reference creatives',
-            passed: false,
-            duration_ms: 0,
-            error: 'creative_reference scenario not yet implemented - use creative_inline instead',
-          },
-        ];
+        result = await testCreativeReference(agentUrl, effectiveOptions);
+        steps = result.steps;
+        profile = result.profile;
         break;
 
       case 'pricing_models':
