@@ -27,6 +27,11 @@ export type TestScenario =
   | 'governance_property_lists' // Property list CRUD operations
   | 'governance_content_standards' // Content standards lifecycle
   | 'property_list_filters' // Property list filter round-trip: GARM, MFA, custom_tags, feature_requirements
+  // v3 Campaign governance scenarios
+  | 'campaign_governance' // Full lifecycle: sync_plans -> check -> execute -> report outcome
+  | 'campaign_governance_denied' // Denied flow: over-budget, unauthorized market
+  | 'campaign_governance_conditions' // Conditions flow: apply conditions -> re-check
+  | 'campaign_governance_delivery' // Delivery monitoring with drift detection
   // v3 SI (Sponsored Intelligence) protocol scenarios
   | 'si_session_lifecycle' // Full SI session: initiate -> messages -> terminate
   | 'si_availability' // Check SI offering availability

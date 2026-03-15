@@ -30,6 +30,10 @@ import type {
   Format,
   GetAdCPCapabilitiesRequest,
   GetAdCPCapabilitiesResponse,
+  SyncPlansRequest,
+  SyncPlansResponse,
+  GetPlanAuditLogsRequest,
+  GetPlanAuditLogsResponse,
 } from '../types/tools.generated';
 
 import type {
@@ -172,6 +176,8 @@ export interface SingleAgentClientConfig extends ConversationConfig {
      */
     logSchemaViolations?: boolean;
   };
+  /** Governance configuration for buyer-side campaign governance */
+  governance?: import('./GovernanceTypes').GovernanceConfig;
 }
 
 /**
@@ -214,6 +220,7 @@ export class SingleAgentClient {
       strictSchemaValidation: config.validation?.strictSchemaValidation !== false, // Default: true
       logSchemaViolations: config.validation?.logSchemaViolations !== false, // Default: true
       onActivity: config.onActivity,
+      governance: config.governance,
     });
 
     // Create async handler if handlers are provided
@@ -1380,6 +1387,44 @@ export class SingleAgentClient {
       'onActivateSignalStatusChange',
       params,
       inputHandler,
+      options
+    );
+  }
+
+  // ====== GOVERNANCE TASKS ======
+
+  /**
+   * Sync campaign plans to a governance agent.
+   * Plans define authorized parameters: budget, channels, flight dates, markets, policies, delegations.
+   *
+   * Note: This calls the governance agent directly (not the sales agent).
+   * The governance agent must be configured in the governance config.
+   */
+  async syncPlans(
+    governanceAgent: AgentConfig,
+    params: SyncPlansRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<SyncPlansResponse>> {
+    return this.executor.executeTask<SyncPlansResponse>(governanceAgent, 'sync_plans', params, inputHandler, options);
+  }
+
+  /**
+   * Get governance audit logs for one or more plans.
+   * Returns budget state, channel allocation, per-campaign breakdown, and audit trail.
+   *
+   * Note: This calls the governance agent directly (not the sales agent).
+   */
+  async getPlanAuditLogs(
+    governanceAgent: AgentConfig,
+    params: GetPlanAuditLogsRequest,
+    options?: TaskOptions
+  ): Promise<TaskResult<GetPlanAuditLogsResponse>> {
+    return this.executor.executeTask<GetPlanAuditLogsResponse>(
+      governanceAgent,
+      'get_plan_audit_logs',
+      params,
+      undefined,
       options
     );
   }

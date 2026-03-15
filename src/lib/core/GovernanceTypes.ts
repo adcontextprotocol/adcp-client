@@ -1,0 +1,184 @@
+/**
+ * Governance middleware types for buyer-side campaign governance.
+ *
+ * The governance middleware intercepts tool calls and checks them against
+ * a campaign governance agent before execution. It handles the full lifecycle:
+ * check → execute → report outcome.
+ */
+
+import type { AgentConfig } from '../types';
+import type { CheckGovernanceResponse, EscalationSeverity, GovernanceMode } from '../types/tools.generated';
+
+/**
+ * Campaign governance agent configuration.
+ * The campaign governance agent handles check_governance, sync_plans,
+ * report_plan_outcome, and get_plan_audit_logs.
+ */
+export interface CampaignGovernanceConfig {
+  /** The governance agent to call */
+  agent: AgentConfig;
+  /** Plan ID for this advertiser's campaign */
+  planId: string;
+  /** Buyer's campaign reference (groups checks within a plan) */
+  buyerCampaignRef?: string;
+  /** Caller URL for the check_governance request */
+  callerUrl?: string;
+  /** Max conditions loops before returning to caller. Default: 3 */
+  maxConditionsIterations?: number;
+}
+
+/**
+ * Multi-domain governance configuration.
+ *
+ * Different governance agents can handle different domains:
+ * - campaign: check_governance, sync_plans, report_plan_outcome, get_plan_audit_logs
+ * - property: property feature evaluation
+ * - creative: creative feature evaluation (get_creative_features)
+ * - contentStandards: content delivery validation
+ */
+export interface GovernanceConfig {
+  /** Campaign governance agent */
+  campaign?: CampaignGovernanceConfig;
+  /** Property governance agent — evaluates property features */
+  property?: { agent: AgentConfig };
+  /** Creative governance agent — evaluates creative features */
+  creative?: { agent: AgentConfig };
+  /** Content standards governance agent — validates content delivery */
+  contentStandards?: { agent: AgentConfig };
+  /**
+   * Which tools require governance checks.
+   * Default: all tools except get_adcp_capabilities.
+   * Provide a list of tool names, or a function that returns true for tools that need checks.
+   */
+  scope?: 'all' | string[] | ((tool: string) => boolean);
+}
+
+/** Tools that are excluded from governance by default */
+const DEFAULT_EXCLUDED_TOOLS = new Set([
+  'get_adcp_capabilities',
+  // Governance tools themselves don't go through governance
+  'sync_plans',
+  'check_governance',
+  'report_plan_outcome',
+  'get_plan_audit_logs',
+]);
+
+/**
+ * Determine whether a tool requires a governance check given the config.
+ */
+export function toolRequiresGovernance(tool: string, config: GovernanceConfig): boolean {
+  if (!config.campaign) return false;
+
+  if (config.scope === 'all') return !DEFAULT_EXCLUDED_TOOLS.has(tool);
+
+  if (Array.isArray(config.scope)) return config.scope.includes(tool);
+
+  if (typeof config.scope === 'function') return config.scope(tool);
+
+  // Default: all tools except excluded set
+  return !DEFAULT_EXCLUDED_TOOLS.has(tool);
+}
+
+/**
+ * A single finding from a governance check.
+ */
+export interface GovernanceFinding {
+  categoryId: string;
+  policyId?: string;
+  severity: EscalationSeverity;
+  explanation: string;
+  confidence?: number;
+  uncertaintyReason?: string;
+  details?: Record<string, unknown>;
+}
+
+/**
+ * A condition that must be met before the action can proceed.
+ */
+export interface GovernanceCondition {
+  /** Dot-path to the field that needs adjustment */
+  field: string;
+  /** The value the field must have for approval. When present, condition is machine-actionable. */
+  requiredValue?: unknown;
+  /** Why this condition is required */
+  reason: string;
+}
+
+/**
+ * Escalation details when a governance check requires human review.
+ */
+export interface GovernanceEscalation {
+  reason: string;
+  severity: EscalationSeverity;
+  requiresHuman: boolean;
+  approvalTier?: string;
+}
+
+/**
+ * Governance check result attached to TaskResult.
+ */
+export interface GovernanceCheckResult {
+  checkId: string;
+  status: 'approved' | 'denied' | 'conditions' | 'escalated';
+  binding: 'proposed' | 'committed';
+  explanation: string;
+  mode?: GovernanceMode;
+  findings?: GovernanceFinding[];
+  conditions?: GovernanceCondition[];
+  escalation?: GovernanceEscalation;
+  expiresAt?: string;
+  /** Whether conditions were auto-applied by the middleware */
+  conditionsApplied?: boolean;
+  /** The modified params after conditions were applied */
+  modifiedParams?: Record<string, unknown>;
+}
+
+/**
+ * Outcome metadata from report_plan_outcome, attached to TaskResult after completion.
+ */
+export interface GovernanceOutcome {
+  outcomeId: string;
+  status: 'accepted' | 'findings';
+  committedBudget?: number;
+  findings?: GovernanceFinding[];
+  planSummary?: {
+    totalCommitted: number;
+    budgetRemaining: number;
+  };
+}
+
+/**
+ * Parse a CheckGovernanceResponse into GovernanceCheckResult.
+ */
+export function parseCheckResponse(response: CheckGovernanceResponse): GovernanceCheckResult {
+  return {
+    checkId: response.check_id,
+    status: response.status,
+    binding: response.binding,
+    explanation: response.explanation,
+    mode: response.mode,
+    findings: response.findings?.map(f => ({
+      categoryId: f.category_id,
+      policyId: f.policy_id,
+      severity: f.severity,
+      explanation: f.explanation,
+      confidence: f.confidence,
+      uncertaintyReason: f.uncertainty_reason,
+      details: f.details,
+    })),
+    conditions: response.conditions?.map(c => ({
+      field: c.field,
+      requiredValue: c.required_value,
+      reason: c.reason,
+    })),
+    escalation: response.escalation
+      ? {
+          reason: response.escalation.reason,
+          severity: response.escalation.severity,
+          requiresHuman: response.escalation.requires_human,
+          approvalTier: response.escalation.approval_tier,
+        }
+      : undefined,
+    expiresAt: response.expires_at,
+  };
+}

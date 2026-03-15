@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-03-13T19:51:01.047Z
+// Generated at: 2026-03-15T01:01:17.563Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -1702,6 +1702,7 @@ export const PreviewCreativeRequestSchema = z.union([z.object({
             context_description: z.string().nullish()
         }).passthrough()).nullish(),
         template_id: z.string().nullish(),
+        quality: CreativeQualitySchema.nullish(),
         output_format: PreviewOutputFormatSchema.nullish(),
         item_limit: z.number().nullish(),
         context: ContextObjectSchema.nullish(),
@@ -1717,9 +1718,11 @@ export const PreviewCreativeRequestSchema = z.union([z.object({
                 context_description: z.string().nullish()
             }).passthrough()).nullish(),
             template_id: z.string().nullish(),
+            quality: CreativeQualitySchema.nullish(),
             output_format: PreviewOutputFormatSchema.nullish(),
             item_limit: z.number().nullish()
         }).passthrough()),
+        quality: CreativeQualitySchema.nullish(),
         output_format: PreviewOutputFormatSchema.nullish(),
         context: ContextObjectSchema.nullish(),
         ext: ExtensionObjectSchema.nullish()
@@ -2393,6 +2396,8 @@ export const BudgetAuthorityLevelSchema = z.union([z.literal("agent_full"), z.li
 
 export const DelegationAuthoritySchema = z.union([z.literal("full"), z.literal("execute_only"), z.literal("propose_only")]);
 
+export const GovernanceModeSchema = z.union([z.literal("audit"), z.literal("advisory"), z.literal("enforce")]);
+
 export const SyncPlansRequestSchema = z.object({
     plans: z.array(z.object({
         plan_id: z.string(),
@@ -2441,6 +2446,7 @@ export const SyncPlansRequestSchema = z.object({
             shared_policy_ids: z.array(z.string()).nullish(),
             shared_exclusions: z.array(z.string()).nullish()
         }).passthrough().nullish(),
+        mode: GovernanceModeSchema.nullish(),
         ext: ExtensionObjectSchema.nullish()
     }).passthrough())
 }).passthrough();
@@ -2475,7 +2481,10 @@ export const ReportPlanOutcomeRequestSchema = z.object({
     seller_response: z.object({
         media_buy_id: z.string().nullish(),
         buyer_ref: z.string().nullish(),
-        packages: z.array(z.object({}).passthrough()).nullish(),
+        committed_budget: z.number().nullish(),
+        packages: z.array(z.object({
+            budget: z.number().nullish()
+        }).passthrough()).nullish(),
         planned_delivery: PlannedDeliverySchema.nullish(),
         creative_deadline: z.string().nullish()
     }).passthrough().nullish(),
@@ -2602,34 +2611,19 @@ export const GetPlanAuditLogsResponseSchema = z.object({
 
 export const GovernancePhaseSchema = z.union([z.literal("purchase"), z.literal("modification"), z.literal("delivery")]);
 
-export const CheckGovernanceRequestSchema = z.object({
-    plan_id: z.string(),
-    buyer_campaign_ref: z.string(),
-    binding: z.union([z.literal("proposed"), z.literal("committed")]),
-    caller: z.string(),
-    tool: z.string().nullish(),
-    payload: z.object({}).passthrough().nullish(),
-    media_buy_id: z.string().nullish(),
-    buyer_ref: z.string().nullish(),
-    phase: GovernancePhaseSchema.nullish(),
-    planned_delivery: PlannedDeliverySchema.nullish(),
-    delivery_metrics: z.object({
-        reporting_period: z.object({
-            start: z.string(),
-            end: z.string()
-        }).passthrough(),
-        spend: z.number().nullish(),
-        cumulative_spend: z.number().nullish(),
-        impressions: z.number().nullish(),
-        cumulative_impressions: z.number().nullish(),
-        geo_distribution: z.record(z.string(), z.union([z.number(), z.undefined()])).nullish(),
-        channel_distribution: z.record(z.string(), z.union([z.number(), z.undefined()])).nullish(),
-        pacing: z.union([z.literal("ahead"), z.literal("on_track"), z.literal("behind")]).nullish()
+export const GovernanceContextSchema = z.object({
+    total_budget: z.object({
+        amount: z.number(),
+        currency: z.string()
     }).passthrough().nullish(),
-    modification_summary: z.string().nullish()
+    countries: z.array(z.string()).nullish(),
+    channels: z.array(z.string()).nullish(),
+    flight: z.object({
+        start: z.string(),
+        end: z.string()
+    }).passthrough().nullish(),
+    seller_url: z.string().nullish()
 }).passthrough();
-
-export const GovernanceModeSchema = z.union([z.literal("audit"), z.literal("advisory"), z.literal("enforce")]);
 
 export const CheckGovernanceResponseSchema = z.object({
     check_id: z.string(),
@@ -2660,7 +2654,9 @@ export const CheckGovernanceResponseSchema = z.object({
         approval_tier: z.string().nullish()
     }).passthrough().nullish(),
     expires_at: z.string().nullish(),
-    next_check: z.string().nullish()
+    next_check: z.string().nullish(),
+    categories_evaluated: z.array(z.string()).nullish(),
+    policies_evaluated: z.array(z.string()).nullish()
 }).passthrough();
 
 export const SIGetOfferingRequestSchema = z.object({
@@ -3540,6 +3536,7 @@ export const BuildCreativeRequestSchema = z.object({
         macros: z.record(z.string(), z.union([z.string(), z.undefined()])).nullish(),
         context_description: z.string().nullish()
     }).passthrough()).nullish(),
+    preview_quality: CreativeQualitySchema.nullish(),
     preview_output_format: PreviewOutputFormatSchema.nullish(),
     macro_values: z.record(z.string(), z.union([z.string(), z.undefined()])).nullish(),
     context: ContextObjectSchema.nullish(),
@@ -3729,6 +3726,34 @@ export const GetCreativeFeaturesResponseSchema = z.union([z.object({
         context: ContextObjectSchema.nullish(),
         ext: ExtensionObjectSchema.nullish()
     }).passthrough()]);
+
+export const CheckGovernanceRequestSchema = z.object({
+    plan_id: z.string(),
+    buyer_campaign_ref: z.string(),
+    binding: z.union([z.literal("proposed"), z.literal("committed")]),
+    caller: z.string(),
+    tool: z.string().nullish(),
+    payload: z.object({}).passthrough().nullish(),
+    governance_context: GovernanceContextSchema.nullish(),
+    media_buy_id: z.string().nullish(),
+    buyer_ref: z.string().nullish(),
+    phase: GovernancePhaseSchema.nullish(),
+    planned_delivery: PlannedDeliverySchema.nullish(),
+    delivery_metrics: z.object({
+        reporting_period: z.object({
+            start: z.string(),
+            end: z.string()
+        }).passthrough(),
+        spend: z.number().nullish(),
+        cumulative_spend: z.number().nullish(),
+        impressions: z.number().nullish(),
+        cumulative_impressions: z.number().nullish(),
+        geo_distribution: z.record(z.string(), z.union([z.number(), z.undefined()])).nullish(),
+        channel_distribution: z.record(z.string(), z.union([z.number(), z.undefined()])).nullish(),
+        pacing: z.union([z.literal("ahead"), z.literal("on_track"), z.literal("behind")]).nullish()
+    }).passthrough().nullish(),
+    modification_summary: z.string().nullish()
+}).passthrough();
 
 export const SIInitiateSessionRequestSchema = z.object({
     context: z.string(),

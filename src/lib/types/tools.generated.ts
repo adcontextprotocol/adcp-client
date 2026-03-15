@@ -6018,6 +6018,7 @@ export type BuildCreativeRequest = {
      */
     context_description?: string;
   }[];
+  preview_quality?: CreativeQuality;
   preview_output_format?: PreviewOutputFormat;
   /**
    * Macro values to pre-substitute into the output manifest's assets. Keys are universal macro names (e.g., CLICK_URL, CACHEBUSTER); values are the substitution strings. The creative agent translates universal macros to its platform's native syntax. Substitution is literal — all occurrences of each macro in output assets are replaced with the provided value. The caller is responsible for URL-encoding values if the output context requires it. Macros not provided here remain as {MACRO} placeholders for the sales agent to resolve at serve time. Creative agents MUST ignore keys they do not recognize — unknown macro names are not an error.
@@ -6406,6 +6407,7 @@ export type PreviewCreativeRequest =
        * Specific template ID for custom format rendering
        */
       template_id?: string;
+      quality?: CreativeQuality;
       output_format?: PreviewOutputFormat;
       /**
        * Maximum number of catalog items to render in the preview. For catalog-driven generative formats, caps how many items are rendered per preview variant. When item_limit exceeds the format's max_items, the creative agent SHOULD use the lesser of the two. Ignored when the manifest contains no catalog assets. Creative agents SHOULD default to a reasonable sample when omitted and the catalog is large.
@@ -6450,12 +6452,14 @@ export type PreviewCreativeRequest =
          * Specific template ID for custom format rendering
          */
         template_id?: string;
+        quality?: CreativeQuality;
         output_format?: PreviewOutputFormat;
         /**
          * Maximum number of catalog items to render in this preview.
          */
         item_limit?: number;
       }[];
+      quality?: CreativeQuality;
       output_format?: PreviewOutputFormat;
       context?: ContextObject;
       ext?: ExtensionObject;
@@ -9032,6 +9036,10 @@ export type BudgetAuthorityLevel = 'agent_full' | 'agent_limited' | 'human_requi
  * Authority level granted to this agent.
  */
 export type DelegationAuthority = 'full' | 'execute_only' | 'propose_only';
+/**
+ * Governance enforcement mode for this plan. 'enforce': denied actions are blocked. 'advisory': denied actions proceed with findings logged. 'audit': all actions proceed, findings logged. Defaults to 'enforce' if omitted.
+ */
+export type GovernanceMode = 'audit' | 'advisory' | 'enforce';
 
 /**
  * Push campaign plans to the governance agent. A plan defines the authorized parameters for a campaign -- budget limits, channels, flight dates, and authorized markets.
@@ -9178,6 +9186,7 @@ export interface SyncPlansRequest {
        */
       shared_exclusions?: string[];
     };
+    mode?: GovernanceMode;
     ext?: ExtensionObject;
   }[];
 }
@@ -9278,9 +9287,15 @@ export interface ReportPlanOutcomeRequest {
      */
     buyer_ref?: string;
     /**
+     * Total budget committed across all confirmed packages. When present, the governance agent uses this directly instead of summing package budgets.
+     */
+    committed_budget?: number;
+    /**
      * Confirmed packages with actual budget and targeting.
      */
-    packages?: {}[];
+    packages?: {
+      budget?: number;
+    }[];
     planned_delivery?: PlannedDelivery;
     /**
      * ISO 8601 deadline for creative submission.
@@ -9702,6 +9717,7 @@ export interface CheckGovernanceRequest {
    * The full tool arguments as they would be sent to the seller. Expected for proposed checks. The governance agent can inspect any field to validate against the plan.
    */
   payload?: {};
+  governance_context?: GovernanceContext;
   /**
    * The seller's identifier for the media buy. Expected for committed checks.
    */
@@ -9761,12 +9777,51 @@ export interface CheckGovernanceRequest {
    */
   modification_summary?: string;
 }
+/**
+ * Normalized governance-relevant fields extracted from the tool payload. When present, the governance agent SHOULD use these fields for plan validation instead of parsing the payload directly. The caller is responsible for extracting these from the tool arguments.
+ */
+export interface GovernanceContext {
+  /**
+   * Total budget for the action.
+   */
+  total_budget?: {
+    /**
+     * Budget amount.
+     */
+    amount: number;
+    /**
+     * ISO 4217 currency code.
+     */
+    currency: string;
+  };
+  /**
+   * ISO 3166-1 alpha-2 country codes targeted by this action.
+   */
+  countries?: string[];
+  /**
+   * Channels targeted by this action.
+   */
+  channels?: string[];
+  /**
+   * Flight dates for this action.
+   */
+  flight?: {
+    /**
+     * Flight start (ISO 8601).
+     */
+    start: string;
+    /**
+     * Flight end (ISO 8601).
+     */
+    end: string;
+  };
+  /**
+   * URL of the seller agent this action targets.
+   */
+  seller_url?: string;
+}
 
 // check_governance response
-/**
- * The governance mode under which this check was evaluated. Present so audit trails can distinguish 'denied in advisory mode (action proceeded)' from 'denied in enforce mode (action blocked)'.
- */
-export type GovernanceMode = 'audit' | 'advisory' | 'enforce';
 /**
  * Governance agent's response to a check request. Returns whether the action is approved under the campaign plan.
  */
@@ -9871,6 +9926,14 @@ export interface CheckGovernanceResponse {
    * When the seller should next call check_governance with delivery metrics. Present when the governance agent expects ongoing delivery reporting.
    */
   next_check?: string;
+  /**
+   * Governance categories evaluated during this check.
+   */
+  categories_evaluated?: string[];
+  /**
+   * Registry policy IDs evaluated during this check.
+   */
+  policies_evaluated?: string[];
 }
 
 

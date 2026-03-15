@@ -79,6 +79,18 @@ export type {
   ConversationConfig,
 } from './core/ConversationTypes';
 
+// ====== GOVERNANCE MIDDLEWARE TYPES ======
+export type {
+  GovernanceConfig,
+  CampaignGovernanceConfig,
+  GovernanceCheckResult,
+  GovernanceOutcome,
+  GovernanceFinding,
+  GovernanceCondition,
+  GovernanceEscalation,
+} from './core/GovernanceTypes';
+export { GovernanceMiddleware } from './core/GovernanceMiddleware';
+
 // ====== TASK EVENT TYPES ======
 export type {
   BaseTaskEvent,
@@ -221,6 +233,27 @@ export type {
   ValidateContentDeliveryResponse,
   ContentStandards,
   Artifact,
+  // Governance Domain - Campaign Governance
+  SyncPlansRequest,
+  SyncPlansResponse,
+  CheckGovernanceRequest,
+  CheckGovernanceResponse,
+  ReportPlanOutcomeRequest,
+  ReportPlanOutcomeResponse,
+  GetPlanAuditLogsRequest,
+  GetPlanAuditLogsResponse,
+  // Governance Domain - Types & Enums
+  PlannedDelivery,
+  BudgetAuthorityLevel,
+  DelegationAuthority,
+  GovernancePhase,
+  GovernanceMode,
+  EscalationSeverity,
+  PolicyEnforcementLevel,
+  OutcomeType,
+  // Governance Domain - Creative Features
+  GetCreativeFeaturesRequest,
+  GetCreativeFeaturesResponse,
   // Sponsored Intelligence Domain
   SIGetOfferingRequest,
   SIGetOfferingResponse,
@@ -560,6 +593,14 @@ export {
   type SISession,
   SIErrorCodes,
   defaultSISessionManager,
+  // Governance (seller-side committed checks)
+  GovernanceAdapter,
+  type IGovernanceAdapter,
+  type GovernanceAdapterConfig,
+  type CommittedCheckRequest,
+  GovernanceAdapterErrorCodes,
+  isGovernanceAdapterError,
+  defaultGovernanceAdapter,
 } from './adapters';
 
 // ====== BACKWARD COMPATIBILITY & ENVIRONMENT LOADING ======
