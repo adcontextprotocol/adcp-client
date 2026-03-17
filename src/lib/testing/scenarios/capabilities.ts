@@ -260,7 +260,11 @@ function validateCapabilitiesResponse(response: any, tools: string[]): { steps: 
       accountWarnings.push('account.require_operator_auth=true but list_accounts is not advertised');
     }
 
-    if (response.account.required_for_products && !tools.includes('list_accounts') && !tools.includes('sync_accounts')) {
+    if (
+      response.account.required_for_products &&
+      !tools.includes('list_accounts') &&
+      !tools.includes('sync_accounts')
+    ) {
       accountPassed = false;
       accountWarnings.push('account.required_for_products=true but no account management tool is advertised');
     }
