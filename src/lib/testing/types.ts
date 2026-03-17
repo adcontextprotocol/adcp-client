@@ -2,6 +2,8 @@
  * Types for AdCP Agent E2E Testing
  */
 
+import type { FormatID } from '../types/core.generated';
+
 // Test scenarios that can be run
 export type TestScenario =
   | 'health_check' // Just check if agent responds
@@ -145,7 +147,7 @@ export interface AgentProfile {
   delivery_types?: string[];
   // For creative agents
   supported_formats?: Array<{
-    format_id: string;
+    format_id: FormatID;
     name?: string;
     type?: string;
     required_assets?: string[];
@@ -202,6 +204,7 @@ export interface SuiteResult {
 // Generic task result from executeTask
 export interface TaskResult {
   success: boolean;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- holds different response types per tool
   data?: any;
   error?: string;
 }

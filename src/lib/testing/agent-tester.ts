@@ -71,7 +71,6 @@ import {
   testSIHandoff,
   testCapabilityDiscovery,
   testSyncAudiences,
-  resolveAccountForAudiences,
   testSchemaCompliance,
 } from './scenarios';
 

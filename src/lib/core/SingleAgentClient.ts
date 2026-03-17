@@ -27,9 +27,43 @@ import type {
   ActivateSignalResponse,
   PreviewCreativeRequest,
   PreviewCreativeResponse,
+  BuildCreativeRequest,
+  BuildCreativeResponse,
   Format,
   GetAdCPCapabilitiesRequest,
   GetAdCPCapabilitiesResponse,
+  ListAccountsRequest,
+  ListAccountsResponse,
+  SyncAccountsRequest,
+  SyncAccountsResponse,
+  SyncAudiencesRequest,
+  SyncAudiencesResponse,
+  CreatePropertyListRequest,
+  CreatePropertyListResponse,
+  GetPropertyListRequest,
+  GetPropertyListResponse,
+  UpdatePropertyListRequest,
+  UpdatePropertyListResponse,
+  ListPropertyListsRequest,
+  ListPropertyListsResponse,
+  DeletePropertyListRequest,
+  DeletePropertyListResponse,
+  ListContentStandardsRequest,
+  ListContentStandardsResponse,
+  GetContentStandardsRequest,
+  GetContentStandardsResponse,
+  CalibrateContentRequest,
+  CalibrateContentResponse,
+  ValidateContentDeliveryRequest,
+  ValidateContentDeliveryResponse,
+  SIGetOfferingRequest,
+  SIGetOfferingResponse,
+  SIInitiateSessionRequest,
+  SIInitiateSessionResponse,
+  SISendMessageRequest,
+  SISendMessageResponse,
+  SITerminateSessionRequest,
+  SITerminateSessionResponse,
   SyncPlansRequest,
   SyncPlansResponse,
   GetPlanAuditLogsRequest,
@@ -1479,6 +1513,303 @@ export class SingleAgentClient {
     return this.executor.executeTask<GetAdCPCapabilitiesResponse>(
       agent,
       'get_adcp_capabilities',
+      params,
+      inputHandler,
+      options
+    );
+  }
+
+  // ====== CREATIVE BUILD TASKS ======
+
+  /**
+   * Build a creative from a format and brand context
+   */
+  async buildCreative(
+    params: BuildCreativeRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<BuildCreativeResponse>> {
+    return this.executeAndHandle<BuildCreativeResponse>(
+      'build_creative',
+      'onBuildCreativeStatusChange',
+      params,
+      inputHandler,
+      options
+    );
+  }
+
+  // ====== ACCOUNT & AUDIENCE TASKS ======
+
+  /**
+   * List accounts
+   */
+  async listAccounts(
+    params: ListAccountsRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ListAccountsResponse>> {
+    return this.executeAndHandle<ListAccountsResponse>(
+      'list_accounts',
+      'onListAccountsStatusChange',
+      params,
+      inputHandler,
+      options
+    );
+  }
+
+  /**
+   * Sync accounts
+   */
+  async syncAccounts(
+    params: SyncAccountsRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<SyncAccountsResponse>> {
+    return this.executeAndHandle<SyncAccountsResponse>(
+      'sync_accounts',
+      'onSyncAccountsStatusChange',
+      params,
+      inputHandler,
+      options
+    );
+  }
+
+  /**
+   * Sync audiences
+   */
+  async syncAudiences(
+    params: SyncAudiencesRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<SyncAudiencesResponse>> {
+    return this.executeAndHandle<SyncAudiencesResponse>(
+      'sync_audiences',
+      'onSyncAudiencesStatusChange',
+      params,
+      inputHandler,
+      options
+    );
+  }
+
+  // ====== GOVERNANCE TASKS ======
+
+  /**
+   * Create a property list
+   */
+  async createPropertyList(
+    params: CreatePropertyListRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<CreatePropertyListResponse>> {
+    return this.executeAndHandle<CreatePropertyListResponse>(
+      'create_property_list',
+      'onCreatePropertyListStatusChange',
+      params,
+      inputHandler,
+      options
+    );
+  }
+
+  /**
+   * Get a property list
+   */
+  async getPropertyList(
+    params: GetPropertyListRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<GetPropertyListResponse>> {
+    return this.executeAndHandle<GetPropertyListResponse>(
+      'get_property_list',
+      'onGetPropertyListStatusChange',
+      params,
+      inputHandler,
+      options
+    );
+  }
+
+  /**
+   * Update a property list
+   */
+  async updatePropertyList(
+    params: UpdatePropertyListRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<UpdatePropertyListResponse>> {
+    return this.executeAndHandle<UpdatePropertyListResponse>(
+      'update_property_list',
+      'onUpdatePropertyListStatusChange',
+      params,
+      inputHandler,
+      options
+    );
+  }
+
+  /**
+   * List property lists
+   */
+  async listPropertyLists(
+    params: ListPropertyListsRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ListPropertyListsResponse>> {
+    return this.executeAndHandle<ListPropertyListsResponse>(
+      'list_property_lists',
+      'onListPropertyListsStatusChange',
+      params,
+      inputHandler,
+      options
+    );
+  }
+
+  /**
+   * Delete a property list
+   */
+  async deletePropertyList(
+    params: DeletePropertyListRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<DeletePropertyListResponse>> {
+    return this.executeAndHandle<DeletePropertyListResponse>(
+      'delete_property_list',
+      'onDeletePropertyListStatusChange',
+      params,
+      inputHandler,
+      options
+    );
+  }
+
+  /**
+   * List content standards
+   */
+  async listContentStandards(
+    params: ListContentStandardsRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ListContentStandardsResponse>> {
+    return this.executeAndHandle<ListContentStandardsResponse>(
+      'list_content_standards',
+      'onListContentStandardsStatusChange',
+      params,
+      inputHandler,
+      options
+    );
+  }
+
+  /**
+   * Get content standards
+   */
+  async getContentStandards(
+    params: GetContentStandardsRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<GetContentStandardsResponse>> {
+    return this.executeAndHandle<GetContentStandardsResponse>(
+      'get_content_standards',
+      'onGetContentStandardsStatusChange',
+      params,
+      inputHandler,
+      options
+    );
+  }
+
+  /**
+   * Calibrate content against standards
+   */
+  async calibrateContent(
+    params: CalibrateContentRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<CalibrateContentResponse>> {
+    return this.executeAndHandle<CalibrateContentResponse>(
+      'calibrate_content',
+      'onCalibrateContentStatusChange',
+      params,
+      inputHandler,
+      options
+    );
+  }
+
+  /**
+   * Validate content delivery
+   */
+  async validateContentDelivery(
+    params: ValidateContentDeliveryRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ValidateContentDeliveryResponse>> {
+    return this.executeAndHandle<ValidateContentDeliveryResponse>(
+      'validate_content_delivery',
+      'onValidateContentDeliveryStatusChange',
+      params,
+      inputHandler,
+      options
+    );
+  }
+
+  // ====== SPONSORED INTELLIGENCE TASKS ======
+
+  /**
+   * Get an SI offering
+   */
+  async siGetOffering(
+    params: SIGetOfferingRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<SIGetOfferingResponse>> {
+    return this.executeAndHandle<SIGetOfferingResponse>(
+      'si_get_offering',
+      'onSIGetOfferingStatusChange',
+      params,
+      inputHandler,
+      options
+    );
+  }
+
+  /**
+   * Initiate an SI session
+   */
+  async siInitiateSession(
+    params: SIInitiateSessionRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<SIInitiateSessionResponse>> {
+    return this.executeAndHandle<SIInitiateSessionResponse>(
+      'si_initiate_session',
+      'onSIInitiateSessionStatusChange',
+      params,
+      inputHandler,
+      options
+    );
+  }
+
+  /**
+   * Send a message in an SI session
+   */
+  async siSendMessage(
+    params: SISendMessageRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<SISendMessageResponse>> {
+    return this.executeAndHandle<SISendMessageResponse>(
+      'si_send_message',
+      'onSISendMessageStatusChange',
+      params,
+      inputHandler,
+      options
+    );
+  }
+
+  /**
+   * Terminate an SI session
+   */
+  async siTerminateSession(
+    params: SITerminateSessionRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<SITerminateSessionResponse>> {
+    return this.executeAndHandle<SITerminateSessionResponse>(
+      'si_terminate_session',
+      'onSITerminateSessionStatusChange',
       params,
       inputHandler,
       options

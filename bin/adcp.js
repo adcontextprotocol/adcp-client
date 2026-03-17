@@ -460,6 +460,321 @@ async function handleTestCommand(args) {
   }
 }
 
+/**
+ * Parse common agent/auth options shared by test, comply, and convince commands.
+ */
+function parseAgentOptions(args) {
+  const authIndex = args.indexOf('--auth');
+  let authToken = process.env.ADCP_AUTH_TOKEN;
+  if (authIndex !== -1 && authIndex + 1 < args.length && !args[authIndex + 1].startsWith('--')) {
+    authToken = args[authIndex + 1];
+  }
+
+  const protocolIndex = args.indexOf('--protocol');
+  let protocolFlag = null;
+  if (protocolIndex !== -1 && protocolIndex + 1 < args.length && !args[protocolIndex + 1].startsWith('--')) {
+    protocolFlag = args[protocolIndex + 1];
+  }
+
+  const briefIndex = args.indexOf('--brief');
+  let brief;
+  if (briefIndex !== -1 && briefIndex + 1 < args.length && !args[briefIndex + 1].startsWith('--')) {
+    brief = args[briefIndex + 1];
+  }
+
+  const jsonOutput = args.includes('--json');
+  const debug = args.includes('--debug') || process.env.ADCP_DEBUG === 'true';
+  const dryRun = !args.includes('--no-dry-run');
+
+  // Filter out flags to find positional args
+  const positionalArgs = args.filter(
+    arg => !arg.startsWith('--') && arg !== authToken && arg !== protocolFlag && arg !== brief
+  );
+
+  return { authToken, protocolFlag, brief, jsonOutput, debug, dryRun, positionalArgs };
+}
+
+/**
+ * Resolve an agent argument (alias or URL) to { agentUrl, protocol, authToken }
+ *
+ * Auth resolution order:
+ *   1. Explicit --auth token from CLI
+ *   2. ADCP_AUTH_TOKEN env var
+ *   3. Saved OAuth tokens (if alias has them and they're valid)
+ *   4. Static auth_token from alias or built-in
+ *   5. None
+ */
+async function resolveAgent(agentArg, authToken, protocolFlag, jsonOutput) {
+  let agentUrl;
+  let protocol = protocolFlag;
+  let finalAuthToken = authToken;
+
+  if (BUILT_IN_AGENTS[agentArg]) {
+    const builtIn = BUILT_IN_AGENTS[agentArg];
+    agentUrl = builtIn.url;
+    protocol = protocol || builtIn.protocol;
+    finalAuthToken = finalAuthToken || builtIn.auth_token;
+  } else if (isAlias(agentArg)) {
+    const savedAgent = getAgent(agentArg);
+    agentUrl = savedAgent.url;
+    protocol = protocol || savedAgent.protocol;
+    // Use getEffectiveAuthToken: prefers valid OAuth tokens, falls back to static token
+    finalAuthToken = finalAuthToken || getEffectiveAuthToken(savedAgent);
+  } else if (agentArg.startsWith('http://') || agentArg.startsWith('https://')) {
+    agentUrl = agentArg;
+  } else {
+    console.error(`ERROR: '${agentArg}' is not a valid agent alias or URL\n`);
+    console.error('Built-in aliases: test-mcp, test-a2a, creative');
+    console.error(`Saved aliases: ${Object.keys(listAgents()).join(', ') || 'none'}\n`);
+    process.exit(2);
+  }
+
+  // Auto-detect protocol if not specified
+  if (!protocol) {
+    if (!jsonOutput) console.error('Auto-detecting protocol...');
+    try {
+      protocol = await detectProtocol(agentUrl);
+      if (!jsonOutput) console.error(`Detected protocol: ${protocol.toUpperCase()}\n`);
+    } catch (error) {
+      console.error(`ERROR: Failed to detect protocol: ${error.message}\n`);
+      process.exit(2);
+    }
+  }
+
+  return { agentUrl, protocol, authToken: finalAuthToken };
+}
+
+async function handleComplyCommand(args) {
+  if (args.includes('--help') || args.length === 0) {
+    console.log(`
+AdCP Comply - Compliance Assessment
+
+USAGE:
+  adcp comply <agent> [options]
+
+DESCRIPTION:
+  Runs all applicable capability tracks against an agent and reports
+  results for every track. Never stops at the first failure — shows
+  the full picture.
+
+  Tracks: core, products, media_buy, creative, reporting, governance,
+          signals, si, audiences
+
+OPTIONS:
+  --auth TOKEN        Authentication token (overrides saved tokens)
+  --protocol PROTO    Force protocol: mcp or a2a
+  --tracks TRACKS     Comma-separated tracks to run (default: all applicable)
+  --brief TEXT        Custom brief for product discovery
+  --json              Output raw JSON
+  --debug             Show debug output
+  --no-dry-run        Run in live mode (default: dry run)
+
+EXAMPLES:
+  adcp comply test-mcp
+  adcp comply myagent                                    # uses saved OAuth tokens automatically
+  adcp comply test-mcp --tracks core,products,media_buy
+  adcp comply https://my-agent.com/mcp --auth my-token
+  adcp comply test-mcp --json | jq '.summary'
+`);
+    return;
+  }
+
+  const opts = parseAgentOptions(args);
+
+  if (opts.positionalArgs.length === 0) {
+    console.error('ERROR: comply requires an agent alias or URL\n');
+    process.exit(2);
+  }
+
+  const {
+    agentUrl,
+    protocol,
+    authToken: finalAuthToken,
+  } = await resolveAgent(opts.positionalArgs[0], opts.authToken, opts.protocolFlag, opts.jsonOutput);
+
+  // Parse --tracks
+  const tracksIndex = args.indexOf('--tracks');
+  let tracks;
+  if (tracksIndex !== -1 && tracksIndex + 1 < args.length) {
+    tracks = args[tracksIndex + 1].split(',');
+  }
+
+  const testOptions = {
+    protocol,
+    dry_run: opts.dryRun,
+    brief: opts.brief,
+    tracks,
+    ...(finalAuthToken && { auth: { type: 'bearer', token: finalAuthToken } }),
+  };
+
+  if (!opts.jsonOutput) {
+    console.log(`\n🔍 Running compliance assessment against ${agentUrl}`);
+    console.log(`   Protocol: ${protocol.toUpperCase()}`);
+    console.log(`   Mode: ${opts.dryRun ? 'Dry Run' : 'Live'}`);
+    console.log(`   Auth: ${finalAuthToken ? 'configured' : 'none'}\n`);
+  }
+
+  try {
+    const { comply, formatComplianceResults, formatComplianceResultsJSON } =
+      await import('../dist/lib/testing/compliance/index.js');
+
+    // Silence logger unless debug
+    const { setAgentTesterLogger } = await import('../dist/lib/testing/client.js');
+    if (!opts.debug) {
+      setAgentTesterLogger({ info: () => {}, error: () => {}, warn: () => {}, debug: () => {} });
+    }
+
+    const result = await comply(agentUrl, testOptions);
+
+    if (opts.jsonOutput) {
+      console.log(formatComplianceResultsJSON(result));
+    } else {
+      console.log(formatComplianceResults(result));
+    }
+
+    const hasFailures = result.summary.tracks_failed > 0;
+    process.exit(hasFailures ? 3 : 0);
+  } catch (error) {
+    console.error(`\n❌ Compliance assessment failed: ${error.message}`);
+    if (opts.debug) console.error(error.stack);
+    process.exit(1);
+  }
+}
+
+async function handleConvinceCommand(args) {
+  if (args.includes('--help') || args.length === 0) {
+    console.log(`
+AdCP Convince - AI-Assessed Merchandising Quality
+
+USAGE:
+  adcp convince <agent> [options]
+
+DESCRIPTION:
+  Runs sample briefs against the agent's get_products endpoint and
+  uses an LLM to evaluate the quality of responses. Tests whether
+  your products would convince a buyer to transact.
+
+  Dimensions assessed: relevance, specificity, completeness, pricing,
+  merchandising
+
+OPTIONS:
+  --auth TOKEN           Authentication token (overrides saved tokens)
+  --protocol PROTO       Force protocol: mcp or a2a
+  --anthropic-key KEY    Anthropic API key (or set ANTHROPIC_API_KEY env var)
+  --gemini-key KEY       Google Gemini API key (or set GEMINI_API_KEY env var)
+  --briefs IDS           Comma-separated brief IDs to run (default: all)
+  --list-briefs          List available sample briefs
+  --brief TEXT           Custom brief for product discovery
+  --model MODEL          LLM model override
+  --json                 Output raw JSON
+  --debug                Show debug output
+  --no-dry-run           Run in live mode (default: dry run)
+
+EXAMPLES:
+  adcp convince myagent --anthropic-key sk-ant-...       # uses saved OAuth tokens automatically
+  adcp convince test-mcp --anthropic-key sk-ant-...
+  adcp convince test-mcp --briefs luxury_auto_ev,dtc_skincare_genZ
+  adcp convince test-mcp --list-briefs
+  ANTHROPIC_API_KEY=sk-ant-... adcp convince test-mcp
+`);
+    return;
+  }
+
+  // Handle --list-briefs
+  if (args.includes('--list-briefs')) {
+    const { SAMPLE_BRIEFS } = await import('../dist/lib/testing/compliance/briefs.js');
+    console.log('\n📋 Available Sample Briefs:\n');
+    for (const brief of SAMPLE_BRIEFS) {
+      console.log(`  ${brief.id}`);
+      console.log(`    ${brief.name} (${brief.vertical})`);
+      console.log(`    Budget: ${brief.budget_context || 'Not specified'}`);
+      console.log(`    ${brief.brief.slice(0, 100)}...`);
+      console.log('');
+    }
+    return;
+  }
+
+  const opts = parseAgentOptions(args);
+
+  if (opts.positionalArgs.length === 0) {
+    console.error('ERROR: convince requires an agent alias or URL\n');
+    process.exit(2);
+  }
+
+  const {
+    agentUrl,
+    protocol,
+    authToken: finalAuthToken,
+  } = await resolveAgent(opts.positionalArgs[0], opts.authToken, opts.protocolFlag, opts.jsonOutput);
+
+  // Parse LLM keys
+  const anthropicKeyIndex = args.indexOf('--anthropic-key');
+  const geminiKeyIndex = args.indexOf('--gemini-key');
+  const modelIndex = args.indexOf('--model');
+  const briefsIndex = args.indexOf('--briefs');
+
+  const anthropic_api_key = anthropicKeyIndex !== -1 ? args[anthropicKeyIndex + 1] : process.env.ANTHROPIC_API_KEY;
+  const gemini_api_key = geminiKeyIndex !== -1 ? args[geminiKeyIndex + 1] : process.env.GEMINI_API_KEY;
+  const model = modelIndex !== -1 ? args[modelIndex + 1] : undefined;
+  const brief_ids = briefsIndex !== -1 ? args[briefsIndex + 1].split(',') : undefined;
+
+  if (!anthropic_api_key && !gemini_api_key) {
+    console.error('ERROR: convince requires an LLM API key\n');
+    console.error('Provide one of:');
+    console.error('  --anthropic-key KEY    or set ANTHROPIC_API_KEY');
+    console.error('  --gemini-key KEY       or set GEMINI_API_KEY\n');
+    process.exit(2);
+  }
+
+  const testOptions = {
+    protocol,
+    dry_run: opts.dryRun,
+    brief: opts.brief,
+    anthropic_api_key,
+    gemini_api_key,
+    model,
+    brief_ids,
+    ...(finalAuthToken && { auth: { type: 'bearer', token: finalAuthToken } }),
+  };
+
+  const evaluator = anthropic_api_key ? 'Anthropic' : 'Gemini';
+  const briefCount = brief_ids ? brief_ids.length : 'all';
+
+  if (!opts.jsonOutput) {
+    console.log(`\n🎯 Running convince assessment against ${agentUrl}`);
+    console.log(`   Protocol: ${protocol.toUpperCase()}`);
+    console.log(`   Evaluator: ${evaluator}`);
+    console.log(`   Briefs: ${briefCount}`);
+    console.log(`   Mode: ${opts.dryRun ? 'Dry Run' : 'Live'}`);
+    console.log(`   Auth: ${finalAuthToken ? 'configured' : 'none'}\n`);
+  }
+
+  try {
+    const { convince, formatConvinceResults, formatConvinceResultsJSON } =
+      await import('../dist/lib/testing/compliance/index.js');
+
+    // Silence logger unless debug
+    const { setAgentTesterLogger } = await import('../dist/lib/testing/client.js');
+    if (!opts.debug) {
+      setAgentTesterLogger({ info: () => {}, error: () => {}, warn: () => {}, debug: () => {} });
+    }
+
+    const result = await convince(agentUrl, testOptions);
+
+    if (opts.jsonOutput) {
+      console.log(formatConvinceResultsJSON(result));
+    } else {
+      console.log(formatConvinceResults(result));
+    }
+
+    process.exit(0);
+  } catch (error) {
+    console.error(`\n❌ Convince assessment failed: ${error.message}`);
+    if (opts.debug) console.error(error.stack);
+    process.exit(1);
+  }
+}
+
 function printUsage() {
   console.log(`
 AdCP CLI Tool - Direct Agent Communication
@@ -510,6 +825,17 @@ AGENT TESTING:
                               full_sales_flow, error_handling, validation, and more
                               Default scenario: discovery
   test --list-scenarios       List all available test scenarios
+
+COMPLIANCE & QUALITY:
+  comply <agent> [options]    Run compliance assessment across all capability tracks
+                              Tracks: core, products, media_buy, creative, reporting,
+                              governance, signals, si, audiences
+  comply --help               Full comply usage
+
+  convince <agent> [options]  AI-assessed merchandising quality against sample briefs
+                              Requires: --anthropic-key or --gemini-key (or env vars)
+  convince --list-briefs      List available sample briefs
+  convince --help             Full convince usage
 
 REGISTRY:
   registry brand <domain>                          Look up a brand
@@ -867,6 +1193,18 @@ async function main() {
   if (args[0] === 'test') {
     await handleTestCommand(args.slice(1));
     return; // handleTestCommand exits, but return for clarity
+  }
+
+  // Handle comply command
+  if (args[0] === 'comply') {
+    await handleComplyCommand(args.slice(1));
+    return;
+  }
+
+  // Handle convince command
+  if (args[0] === 'convince') {
+    await handleConvinceCommand(args.slice(1));
+    return;
   }
 
   // Parse arguments

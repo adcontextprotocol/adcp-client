@@ -29,6 +29,42 @@ import type {
   ActivateSignalResponse,
   GetAdCPCapabilitiesRequest,
   GetAdCPCapabilitiesResponse,
+  PreviewCreativeRequest,
+  PreviewCreativeResponse,
+  BuildCreativeRequest,
+  BuildCreativeResponse,
+  ListAccountsRequest,
+  ListAccountsResponse,
+  SyncAccountsRequest,
+  SyncAccountsResponse,
+  SyncAudiencesRequest,
+  SyncAudiencesResponse,
+  CreatePropertyListRequest,
+  CreatePropertyListResponse,
+  GetPropertyListRequest,
+  GetPropertyListResponse,
+  UpdatePropertyListRequest,
+  UpdatePropertyListResponse,
+  ListPropertyListsRequest,
+  ListPropertyListsResponse,
+  DeletePropertyListRequest,
+  DeletePropertyListResponse,
+  ListContentStandardsRequest,
+  ListContentStandardsResponse,
+  GetContentStandardsRequest,
+  GetContentStandardsResponse,
+  CalibrateContentRequest,
+  CalibrateContentResponse,
+  ValidateContentDeliveryRequest,
+  ValidateContentDeliveryResponse,
+  SIGetOfferingRequest,
+  SIGetOfferingResponse,
+  SIInitiateSessionRequest,
+  SIInitiateSessionResponse,
+  SISendMessageRequest,
+  SISendMessageResponse,
+  SITerminateSessionRequest,
+  SITerminateSessionResponse,
 } from '../types/tools.generated';
 
 /**
@@ -47,6 +83,25 @@ export type TaskResponseTypeMap = {
   provide_performance_feedback: ProvidePerformanceFeedbackResponse;
   get_signals: GetSignalsResponse;
   activate_signal: ActivateSignalResponse;
+  get_adcp_capabilities: GetAdCPCapabilitiesResponse;
+  preview_creative: PreviewCreativeResponse;
+  build_creative: BuildCreativeResponse;
+  list_accounts: ListAccountsResponse;
+  sync_accounts: SyncAccountsResponse;
+  sync_audiences: SyncAudiencesResponse;
+  create_property_list: CreatePropertyListResponse;
+  get_property_list: GetPropertyListResponse;
+  update_property_list: UpdatePropertyListResponse;
+  list_property_lists: ListPropertyListsResponse;
+  delete_property_list: DeletePropertyListResponse;
+  list_content_standards: ListContentStandardsResponse;
+  get_content_standards: GetContentStandardsResponse;
+  calibrate_content: CalibrateContentResponse;
+  validate_content_delivery: ValidateContentDeliveryResponse;
+  si_get_offering: SIGetOfferingResponse;
+  si_initiate_session: SIInitiateSessionResponse;
+  si_send_message: SISendMessageResponse;
+  si_terminate_session: SITerminateSessionResponse;
 };
 
 /**
@@ -371,6 +426,336 @@ export class AgentClient {
    */
   async getCapabilities(): Promise<AdcpCapabilities> {
     return this.client.getCapabilities();
+  }
+
+  /**
+   * Preview a creative
+   */
+  async previewCreative(
+    params: PreviewCreativeRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<PreviewCreativeResponse>> {
+    const result = await this.client.previewCreative(params, inputHandler, {
+      ...options,
+      contextId: this.currentContextId,
+    });
+    if (result.success) {
+      this.currentContextId = result.metadata.taskId;
+    }
+    return result;
+  }
+
+  /**
+   * Build a creative from format and brand context
+   */
+  async buildCreative(
+    params: BuildCreativeRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<BuildCreativeResponse>> {
+    const result = await this.client.buildCreative(params, inputHandler, {
+      ...options,
+      contextId: this.currentContextId,
+    });
+    if (result.success) {
+      this.currentContextId = result.metadata.taskId;
+    }
+    return result;
+  }
+
+  // ====== ACCOUNT & AUDIENCE TASKS ======
+
+  /**
+   * List accounts
+   */
+  async listAccounts(
+    params: ListAccountsRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ListAccountsResponse>> {
+    const result = await this.client.listAccounts(params, inputHandler, {
+      ...options,
+      contextId: this.currentContextId,
+    });
+    if (result.success) {
+      this.currentContextId = result.metadata.taskId;
+    }
+    return result;
+  }
+
+  /**
+   * Sync accounts
+   */
+  async syncAccounts(
+    params: SyncAccountsRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<SyncAccountsResponse>> {
+    const result = await this.client.syncAccounts(params, inputHandler, {
+      ...options,
+      contextId: this.currentContextId,
+    });
+    if (result.success) {
+      this.currentContextId = result.metadata.taskId;
+    }
+    return result;
+  }
+
+  /**
+   * Sync audiences
+   */
+  async syncAudiences(
+    params: SyncAudiencesRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<SyncAudiencesResponse>> {
+    const result = await this.client.syncAudiences(params, inputHandler, {
+      ...options,
+      contextId: this.currentContextId,
+    });
+    if (result.success) {
+      this.currentContextId = result.metadata.taskId;
+    }
+    return result;
+  }
+
+  // ====== GOVERNANCE TASKS ======
+
+  /**
+   * Create a property list
+   */
+  async createPropertyList(
+    params: CreatePropertyListRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<CreatePropertyListResponse>> {
+    const result = await this.client.createPropertyList(params, inputHandler, {
+      ...options,
+      contextId: this.currentContextId,
+    });
+    if (result.success) {
+      this.currentContextId = result.metadata.taskId;
+    }
+    return result;
+  }
+
+  /**
+   * Get a property list
+   */
+  async getPropertyList(
+    params: GetPropertyListRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<GetPropertyListResponse>> {
+    const result = await this.client.getPropertyList(params, inputHandler, {
+      ...options,
+      contextId: this.currentContextId,
+    });
+    if (result.success) {
+      this.currentContextId = result.metadata.taskId;
+    }
+    return result;
+  }
+
+  /**
+   * Update a property list
+   */
+  async updatePropertyList(
+    params: UpdatePropertyListRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<UpdatePropertyListResponse>> {
+    const result = await this.client.updatePropertyList(params, inputHandler, {
+      ...options,
+      contextId: this.currentContextId,
+    });
+    if (result.success) {
+      this.currentContextId = result.metadata.taskId;
+    }
+    return result;
+  }
+
+  /**
+   * List property lists
+   */
+  async listPropertyLists(
+    params: ListPropertyListsRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ListPropertyListsResponse>> {
+    const result = await this.client.listPropertyLists(params, inputHandler, {
+      ...options,
+      contextId: this.currentContextId,
+    });
+    if (result.success) {
+      this.currentContextId = result.metadata.taskId;
+    }
+    return result;
+  }
+
+  /**
+   * Delete a property list
+   */
+  async deletePropertyList(
+    params: DeletePropertyListRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<DeletePropertyListResponse>> {
+    const result = await this.client.deletePropertyList(params, inputHandler, {
+      ...options,
+      contextId: this.currentContextId,
+    });
+    if (result.success) {
+      this.currentContextId = result.metadata.taskId;
+    }
+    return result;
+  }
+
+  /**
+   * List content standards
+   */
+  async listContentStandards(
+    params: ListContentStandardsRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ListContentStandardsResponse>> {
+    const result = await this.client.listContentStandards(params, inputHandler, {
+      ...options,
+      contextId: this.currentContextId,
+    });
+    if (result.success) {
+      this.currentContextId = result.metadata.taskId;
+    }
+    return result;
+  }
+
+  /**
+   * Get content standards
+   */
+  async getContentStandards(
+    params: GetContentStandardsRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<GetContentStandardsResponse>> {
+    const result = await this.client.getContentStandards(params, inputHandler, {
+      ...options,
+      contextId: this.currentContextId,
+    });
+    if (result.success) {
+      this.currentContextId = result.metadata.taskId;
+    }
+    return result;
+  }
+
+  /**
+   * Calibrate content against standards
+   */
+  async calibrateContent(
+    params: CalibrateContentRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<CalibrateContentResponse>> {
+    const result = await this.client.calibrateContent(params, inputHandler, {
+      ...options,
+      contextId: this.currentContextId,
+    });
+    if (result.success) {
+      this.currentContextId = result.metadata.taskId;
+    }
+    return result;
+  }
+
+  /**
+   * Validate content delivery
+   */
+  async validateContentDelivery(
+    params: ValidateContentDeliveryRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ValidateContentDeliveryResponse>> {
+    const result = await this.client.validateContentDelivery(params, inputHandler, {
+      ...options,
+      contextId: this.currentContextId,
+    });
+    if (result.success) {
+      this.currentContextId = result.metadata.taskId;
+    }
+    return result;
+  }
+
+  // ====== SPONSORED INTELLIGENCE TASKS ======
+
+  /**
+   * Get an SI offering
+   */
+  async siGetOffering(
+    params: SIGetOfferingRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<SIGetOfferingResponse>> {
+    const result = await this.client.siGetOffering(params, inputHandler, {
+      ...options,
+      contextId: this.currentContextId,
+    });
+    if (result.success) {
+      this.currentContextId = result.metadata.taskId;
+    }
+    return result;
+  }
+
+  /**
+   * Initiate an SI session
+   */
+  async siInitiateSession(
+    params: SIInitiateSessionRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<SIInitiateSessionResponse>> {
+    const result = await this.client.siInitiateSession(params, inputHandler, {
+      ...options,
+      contextId: this.currentContextId,
+    });
+    if (result.success) {
+      this.currentContextId = result.metadata.taskId;
+    }
+    return result;
+  }
+
+  /**
+   * Send a message in an SI session
+   */
+  async siSendMessage(
+    params: SISendMessageRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<SISendMessageResponse>> {
+    const result = await this.client.siSendMessage(params, inputHandler, {
+      ...options,
+      contextId: this.currentContextId,
+    });
+    if (result.success) {
+      this.currentContextId = result.metadata.taskId;
+    }
+    return result;
+  }
+
+  /**
+   * Terminate an SI session
+   */
+  async siTerminateSession(
+    params: SITerminateSessionRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<SITerminateSessionResponse>> {
+    const result = await this.client.siTerminateSession(params, inputHandler, {
+      ...options,
+      contextId: this.currentContextId,
+    });
+    if (result.success) {
+      this.currentContextId = result.metadata.taskId;
+    }
+    return result;
   }
 
   // ====== CONVERSATION MANAGEMENT ======

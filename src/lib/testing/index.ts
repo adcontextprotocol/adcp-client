@@ -77,3 +77,36 @@ export {
   type TaskResult,
   type Logger,
 } from './agent-tester';
+
+// Compliance & Convince assessment
+export {
+  // Comply
+  comply,
+  formatComplianceResults,
+  formatComplianceResultsJSON,
+  // Convince
+  convince,
+  formatConvinceResults,
+  formatConvinceResultsJSON,
+  // Brief library
+  SAMPLE_BRIEFS,
+  getBriefById,
+  getBriefsByVertical,
+  // Types
+  type ComplyOptions,
+  type FullConvinceOptions,
+  type ComplianceTrack,
+  type TrackResult,
+  type TrackStatus,
+  type ComplianceResult,
+  type ComplianceSummary,
+  type AdvisoryObservation,
+  type SampleBrief,
+  type ConvinceDimension,
+  type ConvinceRating,
+  type DimensionScore,
+  type ScenarioAssessment,
+  type ConvinceResult,
+  type ConvincePattern,
+  type ConvinceOptions,
+} from './compliance';
