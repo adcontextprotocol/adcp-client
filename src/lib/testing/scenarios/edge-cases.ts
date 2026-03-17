@@ -14,7 +14,14 @@
  */
 
 import type { Product, PricingOption } from '../../types/core.generated';
-import type { CreateMediaBuyRequest, GetProductsRequest, SyncCreativesRequest, GetMediaBuyDeliveryRequest, GetProductsResponse, ListCreativesResponse } from '../../types/tools.generated';
+import type {
+  CreateMediaBuyRequest,
+  GetProductsRequest,
+  SyncCreativesRequest,
+  GetMediaBuyDeliveryRequest,
+  GetProductsResponse,
+  ListCreativesResponse,
+} from '../../types/tools.generated';
 import type { TestOptions, TestStepResult, AgentProfile, TaskResult } from '../types';
 import { createTestClient, runStep, resolveBrand, resolveAccount, discoverAgentProfile } from '../client';
 import { testDiscovery } from './discovery';

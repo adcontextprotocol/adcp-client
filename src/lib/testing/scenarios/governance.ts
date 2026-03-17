@@ -713,9 +713,7 @@ export async function testPropertyListFilters(
       }
       const mfaThresholds = returnedFilters.mfa_thresholds as unknown as Record<string, unknown> | undefined;
       if (mfaThresholds?.min_score !== 0.75) {
-        issues.push(
-          `mfa_thresholds.min_score mismatch: got ${mfaThresholds?.min_score}, expected 0.75`
-        );
+        issues.push(`mfa_thresholds.min_score mismatch: got ${mfaThresholds?.min_score}, expected 0.75`);
       }
       if (!returnedFilters.custom_tags) {
         issues.push('custom_tags filter not preserved');

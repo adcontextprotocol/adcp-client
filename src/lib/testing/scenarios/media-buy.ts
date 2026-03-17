@@ -75,7 +75,8 @@ export function buildCreateMediaBuyRequest(
   const endTime = new Date(startTime.getTime() + 7 * 24 * 60 * 60 * 1000); // 7 days later
 
   const isAuction =
-    !('fixed_price' in pricingOption) && (pricingOption.floor_price !== undefined || pricingOption.price_guidance !== undefined);
+    !('fixed_price' in pricingOption) &&
+    (pricingOption.floor_price !== undefined || pricingOption.price_guidance !== undefined);
 
   const packageRequest: Record<string, unknown> = {
     buyer_ref: `pkg-test-${Date.now()}`,
@@ -203,7 +204,7 @@ export async function testCreateMediaBuy(
         buying_mode: 'brief',
         brief: options.brief || 'Looking for display advertising products',
         brand: resolveBrand(options),
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- intentional: test request bypasses strict typing
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- intentional: test request bypasses strict typing
       } as any) as Promise<TaskResult>
   );
 
@@ -317,7 +318,7 @@ export async function testFullSalesFlow(
               budget: (options.budget || 1000) * 1.5,
             },
           ],
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- intentional: test request bypasses strict typing
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any -- intentional: test request bypasses strict typing
         } as any) as Promise<TaskResult>
     );
 
@@ -400,7 +401,7 @@ export async function testFullSalesFlow(
       async () =>
         client.getMediaBuyDelivery({
           media_buy_ids: [mediaBuyId],
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- intentional: test request bypasses strict typing
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any -- intentional: test request bypasses strict typing
         } as any) as Promise<TaskResult>
     );
 
@@ -453,7 +454,10 @@ export async function testCreativeSync(
   }
 
   // Get format info first
-  let formatId: Record<string, unknown> = { agent_url: 'https://creative.adcontextprotocol.org', id: 'display_300x250' };
+  let formatId: Record<string, unknown> = {
+    agent_url: 'https://creative.adcontextprotocol.org',
+    id: 'display_300x250',
+  };
   if (profile.tools.includes('list_creative_formats')) {
     const { result: formatsResult } = await runStep<TaskResult>(
       'Get formats for creative',
@@ -500,7 +504,7 @@ export async function testCreativeSync(
       client.syncCreatives({
         account: resolveAccount(options),
         creatives: [testCreative],
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- intentional: test request bypasses strict typing
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- intentional: test request bypasses strict typing
       } as any) as Promise<TaskResult>
   );
 
@@ -610,7 +614,7 @@ export async function testCreativeInline(
         buying_mode: 'brief',
         brief: options.brief || 'Looking for display advertising products',
         brand: resolveBrand(options),
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- intentional: test request bypasses strict typing
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- intentional: test request bypasses strict typing
       } as any) as Promise<TaskResult>
   );
 
@@ -942,7 +946,9 @@ export async function resolveAccountForAudiences(
       async () => listAccounts({ sandbox: true })
     );
 
-    const sandboxData = sandboxResult?.success ? (sandboxResult.data as unknown as ListAccountsResponse | undefined) : undefined;
+    const sandboxData = sandboxResult?.success
+      ? (sandboxResult.data as unknown as ListAccountsResponse | undefined)
+      : undefined;
     const sandboxAccounts = sandboxData?.accounts ?? [];
     if (sandboxAccounts[0]?.account_id) {
       sandboxStep.details = `Using sandbox account: ${sandboxAccounts[0].account_id}`;
@@ -1051,7 +1057,7 @@ export async function testSyncAudiences(
     async () =>
       client.syncAudiences({
         account: accountRef,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- intentional: test request bypasses strict typing
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- intentional: test request bypasses strict typing
       } as any) as Promise<TaskResult>
   );
 
@@ -1093,7 +1099,7 @@ export async function testSyncAudiences(
             add: [{ hashed_email: TEST_HASHED_EMAIL }, { hashed_phone: TEST_HASHED_PHONE }],
           },
         ],
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- intentional: test request bypasses strict typing
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- intentional: test request bypasses strict typing
       } as any) as Promise<TaskResult>
   );
 
@@ -1136,7 +1142,7 @@ export async function testSyncAudiences(
             delete: true,
           },
         ],
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- intentional: test request bypasses strict typing
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- intentional: test request bypasses strict typing
       } as any) as Promise<TaskResult>
   );
 

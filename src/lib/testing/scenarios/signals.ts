@@ -103,7 +103,7 @@ export async function testSignalsFlow(
               options: {
                 dry_run: options.dry_run !== false,
               },
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- bypasses strict request typing
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any -- bypasses strict request typing
             } as any) as Promise<TaskResult>
         );
 
@@ -120,7 +120,11 @@ export async function testSignalsFlow(
             null,
             2
           );
-          step.created_id = firstDeployment ? ('platform' in firstDeployment ? firstDeployment.platform : firstDeployment.agent_url) : undefined;
+          step.created_id = firstDeployment
+            ? 'platform' in firstDeployment
+              ? firstDeployment.platform
+              : firstDeployment.agent_url
+            : undefined;
         } else if (result && !result.success) {
           // Check if this is an expected failure (e.g., destination not supported)
           const error = result.error || '';
@@ -147,7 +151,7 @@ export async function testSignalsFlow(
             platform: 'test-platform',
             account_id: 'test-account',
           },
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- bypasses strict request typing
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any -- bypasses strict request typing
         } as any) as Promise<TaskResult>
     );
 

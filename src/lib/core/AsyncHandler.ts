@@ -212,19 +212,52 @@ export interface AsyncHandlerConfig {
   onListAccountsStatusChange?: (response: ListAccountsResponse, metadata: WebhookMetadata) => void | Promise<void>;
   onSyncAccountsStatusChange?: (response: SyncAccountsResponse, metadata: WebhookMetadata) => void | Promise<void>;
   onSyncAudiencesStatusChange?: (response: SyncAudiencesResponse, metadata: WebhookMetadata) => void | Promise<void>;
-  onCreatePropertyListStatusChange?: (response: CreatePropertyListResponse, metadata: WebhookMetadata) => void | Promise<void>;
-  onGetPropertyListStatusChange?: (response: GetPropertyListResponse, metadata: WebhookMetadata) => void | Promise<void>;
-  onUpdatePropertyListStatusChange?: (response: UpdatePropertyListResponse, metadata: WebhookMetadata) => void | Promise<void>;
-  onListPropertyListsStatusChange?: (response: ListPropertyListsResponse, metadata: WebhookMetadata) => void | Promise<void>;
-  onDeletePropertyListStatusChange?: (response: DeletePropertyListResponse, metadata: WebhookMetadata) => void | Promise<void>;
-  onListContentStandardsStatusChange?: (response: ListContentStandardsResponse, metadata: WebhookMetadata) => void | Promise<void>;
-  onGetContentStandardsStatusChange?: (response: GetContentStandardsResponse, metadata: WebhookMetadata) => void | Promise<void>;
-  onCalibrateContentStatusChange?: (response: CalibrateContentResponse, metadata: WebhookMetadata) => void | Promise<void>;
-  onValidateContentDeliveryStatusChange?: (response: ValidateContentDeliveryResponse, metadata: WebhookMetadata) => void | Promise<void>;
+  onCreatePropertyListStatusChange?: (
+    response: CreatePropertyListResponse,
+    metadata: WebhookMetadata
+  ) => void | Promise<void>;
+  onGetPropertyListStatusChange?: (
+    response: GetPropertyListResponse,
+    metadata: WebhookMetadata
+  ) => void | Promise<void>;
+  onUpdatePropertyListStatusChange?: (
+    response: UpdatePropertyListResponse,
+    metadata: WebhookMetadata
+  ) => void | Promise<void>;
+  onListPropertyListsStatusChange?: (
+    response: ListPropertyListsResponse,
+    metadata: WebhookMetadata
+  ) => void | Promise<void>;
+  onDeletePropertyListStatusChange?: (
+    response: DeletePropertyListResponse,
+    metadata: WebhookMetadata
+  ) => void | Promise<void>;
+  onListContentStandardsStatusChange?: (
+    response: ListContentStandardsResponse,
+    metadata: WebhookMetadata
+  ) => void | Promise<void>;
+  onGetContentStandardsStatusChange?: (
+    response: GetContentStandardsResponse,
+    metadata: WebhookMetadata
+  ) => void | Promise<void>;
+  onCalibrateContentStatusChange?: (
+    response: CalibrateContentResponse,
+    metadata: WebhookMetadata
+  ) => void | Promise<void>;
+  onValidateContentDeliveryStatusChange?: (
+    response: ValidateContentDeliveryResponse,
+    metadata: WebhookMetadata
+  ) => void | Promise<void>;
   onSIGetOfferingStatusChange?: (response: SIGetOfferingResponse, metadata: WebhookMetadata) => void | Promise<void>;
-  onSIInitiateSessionStatusChange?: (response: SIInitiateSessionResponse, metadata: WebhookMetadata) => void | Promise<void>;
+  onSIInitiateSessionStatusChange?: (
+    response: SIInitiateSessionResponse,
+    metadata: WebhookMetadata
+  ) => void | Promise<void>;
   onSISendMessageStatusChange?: (response: SISendMessageResponse, metadata: WebhookMetadata) => void | Promise<void>;
-  onSITerminateSessionStatusChange?: (response: SITerminateSessionResponse, metadata: WebhookMetadata) => void | Promise<void>;
+  onSITerminateSessionStatusChange?: (
+    response: SITerminateSessionResponse,
+    metadata: WebhookMetadata
+  ) => void | Promise<void>;
 
   // Fallback handler for any task status change
   onTaskStatusChange?: (response: any, metadata: WebhookMetadata) => void | Promise<void>;

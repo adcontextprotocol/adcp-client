@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas vlatest
-// Generated at: 2026-03-17T02:13:25.732Z
+// Generated at: 2026-03-17T20:18:14.554Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -1933,7 +1933,7 @@ export type MediaChannel =
   | 'influencer'
   | 'affiliate'
   | 'product_placement'
-  | 'ai_media';
+  | 'sponsored_intelligence';
 /**
  * Type of inventory delivery
  */

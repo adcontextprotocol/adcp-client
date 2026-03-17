@@ -81,7 +81,10 @@ export async function testCapabilityDiscovery(
       steps.push(step);
 
       // Validate response structure
-      const { steps: validationSteps } = validateCapabilitiesResponse(result.data as GetAdCPCapabilitiesResponse, profile.tools);
+      const { steps: validationSteps } = validateCapabilitiesResponse(
+        result.data as GetAdCPCapabilitiesResponse,
+        profile.tools
+      );
       steps.push(...validationSteps);
     } else if (result && !result.success) {
       step.passed = false;
@@ -165,7 +168,10 @@ export async function testCapabilityDiscovery(
 /**
  * Validate the structure and content of a get_adcp_capabilities response
  */
-function validateCapabilitiesResponse(response: GetAdCPCapabilitiesResponse, tools: string[]): { steps: TestStepResult[] } {
+function validateCapabilitiesResponse(
+  response: GetAdCPCapabilitiesResponse,
+  tools: string[]
+): { steps: TestStepResult[] } {
   const steps: TestStepResult[] = [];
 
   // Check for required fields
@@ -233,11 +239,7 @@ function validateCapabilitiesResponse(response: GetAdCPCapabilitiesResponse, too
       creativeWarnings.push('creative.has_creative_library=true but list_creatives is not advertised');
     }
 
-    if (
-      creative?.has_creative_library &&
-      !tools.includes('list_accounts') &&
-      !tools.includes('sync_accounts')
-    ) {
+    if (creative?.has_creative_library && !tools.includes('list_accounts') && !tools.includes('sync_accounts')) {
       creativeWarnings.push(
         'creative.has_creative_library=true but no account management tool is advertised (expected sync_accounts or list_accounts)'
       );

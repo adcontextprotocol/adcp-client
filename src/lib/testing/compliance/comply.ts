@@ -21,10 +21,7 @@ import type {
 /**
  * Maps each track to its constituent scenarios and a human-readable label.
  */
-const TRACK_DEFINITIONS: Record<
-  ComplianceTrack,
-  { label: string; scenarios: TestScenario[] }
-> = {
+const TRACK_DEFINITIONS: Record<ComplianceTrack, { label: string; scenarios: TestScenario[] }> = {
   core: {
     label: 'Core Protocol',
     scenarios: ['health_check', 'discovery', 'capability_discovery', 'schema_compliance'],
@@ -406,10 +403,8 @@ export async function comply(agentUrl: string, options: ComplyOptions = {}): Pro
     const observations = collectObservations(track, results, profile);
 
     // Detect auth-only failures when running without auth
-    const hasAuth = !!(effectiveOptions.auth);
-    const authSkippedScenarios = !hasAuth
-      ? results.filter(r => isAuthOnlyFailure(r)).map(r => r.scenario)
-      : [];
+    const hasAuth = !!effectiveOptions.auth;
+    const authSkippedScenarios = !hasAuth ? results.filter(r => isAuthOnlyFailure(r)).map(r => r.scenario) : [];
 
     if (authSkippedScenarios.length > 0) {
       observations.push({
@@ -502,13 +497,7 @@ export function formatComplianceResults(result: ComplianceResult): string {
 
   for (const track of result.tracks) {
     const icon =
-      track.status === 'pass'
-        ? '✅'
-        : track.status === 'fail'
-          ? '❌'
-          : track.status === 'partial'
-            ? '⚠️'
-            : '⏭️';
+      track.status === 'pass' ? '✅' : track.status === 'fail' ? '❌' : track.status === 'partial' ? '⚠️' : '⏭️';
     const scenarioCount = track.scenarios.length;
     const passedCount = track.scenarios.filter(s => s.overall_passed).length;
 
@@ -551,7 +540,13 @@ export function formatComplianceResults(result: ComplianceResult): string {
     for (const [_category, observations] of byCategory) {
       for (const obs of observations) {
         const icon =
-          obs.severity === 'error' ? '❌' : obs.severity === 'warning' ? '⚠️' : obs.severity === 'suggestion' ? '💡' : 'ℹ️';
+          obs.severity === 'error'
+            ? '❌'
+            : obs.severity === 'warning'
+              ? '⚠️'
+              : obs.severity === 'suggestion'
+                ? '💡'
+                : 'ℹ️';
         output += `${icon}  ${obs.message}\n`;
       }
     }

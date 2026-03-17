@@ -273,7 +273,7 @@ export type MediaChannel =
   | 'influencer'
   | 'affiliate'
   | 'product_placement'
-  | 'ai_media';
+  | 'sponsored_intelligence';
 /**
  * Geographic targeting level (country, region, metro, postal_area)
  */

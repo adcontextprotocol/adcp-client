@@ -103,7 +103,10 @@ export async function testCreativeFlow(
         client.previewCreative({
           request_type: 'single',
           creative_manifest: {
-            format_id: formatsToTest[0]?.format_id || { agent_url: 'https://creative.adcontextprotocol.org', id: 'display_300x250' },
+            format_id: formatsToTest[0]?.format_id || {
+              agent_url: 'https://creative.adcontextprotocol.org',
+              id: 'display_300x250',
+            },
             name: 'Minimal Test Creative',
             assets: {},
           },

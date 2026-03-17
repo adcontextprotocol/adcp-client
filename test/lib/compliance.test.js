@@ -98,7 +98,14 @@ describe('formatComplianceResults', () => {
         status: 'pass',
         label: 'Core Protocol',
         scenarios: [
-          { scenario: 'health_check', overall_passed: true, steps: [], summary: 'Passed', total_duration_ms: 100, dry_run: true },
+          {
+            scenario: 'health_check',
+            overall_passed: true,
+            steps: [],
+            summary: 'Passed',
+            total_duration_ms: 100,
+            dry_run: true,
+          },
         ],
         skipped_scenarios: [],
         observations: [],
@@ -112,9 +119,7 @@ describe('formatComplianceResults', () => {
           {
             scenario: 'pricing_edge_cases',
             overall_passed: false,
-            steps: [
-              { step: 'Check pricing', passed: false, duration_ms: 50, error: 'No pricing options' },
-            ],
+            steps: [{ step: 'Check pricing', passed: false, duration_ms: 50, error: 'No pricing options' }],
             summary: 'Failed',
             total_duration_ms: 50,
             dry_run: true,
@@ -141,9 +146,7 @@ describe('formatComplianceResults', () => {
       tracks_partial: 0,
       headline: '1 passing, 1 failing',
     },
-    observations: [
-      { category: 'completeness', severity: 'warning', message: 'Missing fields' },
-    ],
+    observations: [{ category: 'completeness', severity: 'warning', message: 'Missing fields' }],
     tested_at: new Date().toISOString(),
     total_duration_ms: 150,
     dry_run: true,
@@ -212,9 +215,7 @@ describe('formatConvinceResults', () => {
         top_actions: ['Add CPC pricing', 'Improve descriptions'],
       },
     ],
-    patterns: [
-      { pattern: 'pricing is consistently weak', frequency: 'Weak in 1 of 1', impact: 'Price matters' },
-    ],
+    patterns: [{ pattern: 'pricing is consistently weak', frequency: 'Weak in 1 of 1', impact: 'Price matters' }],
     overall_summary: 'Needs pricing work',
     tested_at: new Date().toISOString(),
     total_duration_ms: 5000,

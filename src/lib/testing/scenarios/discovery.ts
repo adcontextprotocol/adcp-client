@@ -50,8 +50,8 @@ export async function testDiscovery(
       step.details = `Found ${formatCount} format(s), ${creativeAgents.length} creative agent(s)`;
       step.response_preview = JSON.stringify(
         {
-          format_ids: formats.map((f) => f.format_id).slice(0, 5),
-          creative_agents: creativeAgents.map((a) => a.agent_url),
+          format_ids: formats.map(f => f.format_id).slice(0, 5),
+          creative_agents: creativeAgents.map(a => a.agent_url),
         },
         null,
         2

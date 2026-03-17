@@ -158,22 +158,15 @@ function parseEvaluation(text: string): {
     summary?: string;
     top_actions?: string[];
   };
-  const validDimensions: ConvinceDimension[] = [
-    'relevance',
-    'specificity',
-    'completeness',
-    'pricing',
-    'merchandising',
-  ];
+  const validDimensions: ConvinceDimension[] = ['relevance', 'specificity', 'completeness', 'pricing', 'merchandising'];
   const validRatings: ConvinceRating[] = ['strong', 'moderate', 'weak'];
 
   const dimensions: DimensionScore[] = (parsed.dimensions || [])
     .filter(
-      (d) =>
-        validDimensions.includes(d.dimension as ConvinceDimension) &&
-        validRatings.includes(d.rating as ConvinceRating)
+      d =>
+        validDimensions.includes(d.dimension as ConvinceDimension) && validRatings.includes(d.rating as ConvinceRating)
     )
-    .map((d) => ({
+    .map(d => ({
       dimension: d.dimension as ConvinceDimension,
       rating: d.rating as ConvinceRating,
       observation: d.observation || '',
@@ -192,10 +185,7 @@ export interface FullConvinceOptions extends TestOptions, ConvinceOptions {}
  * Run convince assessment against an agent.
  * Sends sample briefs, evaluates product responses with AI.
  */
-export async function convince(
-  agentUrl: string,
-  options: FullConvinceOptions = {}
-): Promise<ConvinceResult> {
+export async function convince(agentUrl: string, options: FullConvinceOptions = {}): Promise<ConvinceResult> {
   const start = Date.now();
 
   if (!options.anthropic_api_key && !options.gemini_api_key) {
@@ -245,9 +235,7 @@ export async function convince(
   }
 
   // Select briefs to run
-  const briefs = options.brief_ids
-    ? SAMPLE_BRIEFS.filter(b => options.brief_ids!.includes(b.id))
-    : SAMPLE_BRIEFS;
+  const briefs = options.brief_ids ? SAMPLE_BRIEFS.filter(b => options.brief_ids!.includes(b.id)) : SAMPLE_BRIEFS;
 
   const assessments: ScenarioAssessment[] = [];
 
@@ -362,7 +350,8 @@ function detectPatterns(assessments: ScenarioAssessment[]): ConvincePattern[] {
     patterns.push({
       pattern: 'Empty responses to valid briefs',
       frequency: `${emptyResponses} of ${assessments.length} briefs returned 0 products`,
-      impact: 'Buyers will move to another agent immediately if they get no products. This is the most impactful issue to fix.',
+      impact:
+        'Buyers will move to another agent immediately if they get no products. This is the most impactful issue to fix.',
     });
   }
 
@@ -373,7 +362,8 @@ function detectPatterns(assessments: ScenarioAssessment[]): ConvincePattern[] {
     patterns.push({
       pattern: 'Same number of products returned for every brief',
       frequency: `Always ${counts[0]} products across ${counts.length} different briefs`,
-      impact: 'Suggests a static catalog rather than brief-responsive product selection. Buyers expect curated results.',
+      impact:
+        'Suggests a static catalog rather than brief-responsive product selection. Buyers expect curated results.',
     });
   }
 

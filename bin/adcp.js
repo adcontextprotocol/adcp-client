@@ -586,12 +586,11 @@ EXAMPLES:
     process.exit(2);
   }
 
-  const { agentUrl, protocol, authToken: finalAuthToken } = await resolveAgent(
-    opts.positionalArgs[0],
-    opts.authToken,
-    opts.protocolFlag,
-    opts.jsonOutput
-  );
+  const {
+    agentUrl,
+    protocol,
+    authToken: finalAuthToken,
+  } = await resolveAgent(opts.positionalArgs[0], opts.authToken, opts.protocolFlag, opts.jsonOutput);
 
   // Parse --tracks
   const tracksIndex = args.indexOf('--tracks');
@@ -616,9 +615,8 @@ EXAMPLES:
   }
 
   try {
-    const { comply, formatComplianceResults, formatComplianceResultsJSON } = await import(
-      '../dist/lib/testing/compliance/index.js'
-    );
+    const { comply, formatComplianceResults, formatComplianceResultsJSON } =
+      await import('../dist/lib/testing/compliance/index.js');
 
     // Silence logger unless debug
     const { setAgentTesterLogger } = await import('../dist/lib/testing/client.js');
@@ -703,12 +701,11 @@ EXAMPLES:
     process.exit(2);
   }
 
-  const { agentUrl, protocol, authToken: finalAuthToken } = await resolveAgent(
-    opts.positionalArgs[0],
-    opts.authToken,
-    opts.protocolFlag,
-    opts.jsonOutput
-  );
+  const {
+    agentUrl,
+    protocol,
+    authToken: finalAuthToken,
+  } = await resolveAgent(opts.positionalArgs[0], opts.authToken, opts.protocolFlag, opts.jsonOutput);
 
   // Parse LLM keys
   const anthropicKeyIndex = args.indexOf('--anthropic-key');
@@ -716,8 +713,7 @@ EXAMPLES:
   const modelIndex = args.indexOf('--model');
   const briefsIndex = args.indexOf('--briefs');
 
-  const anthropic_api_key =
-    anthropicKeyIndex !== -1 ? args[anthropicKeyIndex + 1] : process.env.ANTHROPIC_API_KEY;
+  const anthropic_api_key = anthropicKeyIndex !== -1 ? args[anthropicKeyIndex + 1] : process.env.ANTHROPIC_API_KEY;
   const gemini_api_key = geminiKeyIndex !== -1 ? args[geminiKeyIndex + 1] : process.env.GEMINI_API_KEY;
   const model = modelIndex !== -1 ? args[modelIndex + 1] : undefined;
   const brief_ids = briefsIndex !== -1 ? args[briefsIndex + 1].split(',') : undefined;
@@ -754,9 +750,8 @@ EXAMPLES:
   }
 
   try {
-    const { convince, formatConvinceResults, formatConvinceResultsJSON } = await import(
-      '../dist/lib/testing/compliance/index.js'
-    );
+    const { convince, formatConvinceResults, formatConvinceResultsJSON } =
+      await import('../dist/lib/testing/compliance/index.js');
 
     // Silence logger unless debug
     const { setAgentTesterLogger } = await import('../dist/lib/testing/client.js');

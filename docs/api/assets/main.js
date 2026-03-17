@@ -289,7 +289,6 @@ window.translations = {
           for (
             var n = 0, r = this.elements.length / 2, i = r - n, s = Math.floor(i / 2), o = this.elements[s * 2];
             i > 1 && (o < e && (n = s), o > e && (r = s), o != e);
-
           )
             ((i = r - n), (s = n + Math.floor(i / 2)), (o = this.elements[s * 2]));
           if (o == e || o > e) return s * 2;
@@ -319,7 +318,6 @@ window.translations = {
           for (
             var n = 0, r = this.elements, i = e.elements, s = r.length, o = i.length, a = 0, c = 0, l = 0, d = 0;
             l < s && d < o;
-
           )
             ((a = r[l]),
               (c = i[d]),

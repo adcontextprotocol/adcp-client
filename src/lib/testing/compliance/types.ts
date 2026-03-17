@@ -109,12 +109,7 @@ export interface SampleBrief {
   expected_channels?: string[];
 }
 
-export type ConvinceDimension =
-  | 'relevance'
-  | 'specificity'
-  | 'completeness'
-  | 'pricing'
-  | 'merchandising';
+export type ConvinceDimension = 'relevance' | 'specificity' | 'completeness' | 'pricing' | 'merchandising';
 
 export type ConvinceRating = 'strong' | 'moderate' | 'weak';
 
