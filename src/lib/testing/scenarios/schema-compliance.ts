@@ -261,13 +261,17 @@ export async function testSchemaCompliance(
         // Validate snapshot field structure
         if ('snapshot' in creative && creative.snapshot) {
           const snapshot = creative.snapshot;
-          if (!(['as_of', 'staleness_seconds', 'impressions', 'last_served'].some(field => field in snapshot))) {
+          if (!['as_of', 'staleness_seconds', 'impressions', 'last_served'].some(field => field in snapshot)) {
             creativesStep.passed = false;
             creativesStep.error = 'Snapshot object present but missing expected fields';
           }
         } else if ('snapshot_unavailable_reason' in creative) {
           const reason = creative.snapshot_unavailable_reason;
-          const validReasons = ['SNAPSHOT_UNSUPPORTED', 'SNAPSHOT_TEMPORARILY_UNAVAILABLE', 'SNAPSHOT_PERMISSION_DENIED'];
+          const validReasons = [
+            'SNAPSHOT_UNSUPPORTED',
+            'SNAPSHOT_TEMPORARILY_UNAVAILABLE',
+            'SNAPSHOT_PERMISSION_DENIED',
+          ];
           if (!validReasons.includes(reason)) {
             creativesStep.passed = false;
             creativesStep.error = `Invalid snapshot_unavailable_reason: ${reason}`;
@@ -282,11 +286,13 @@ export async function testSchemaCompliance(
 
   // Sync creatives schema validation
   if (profile?.tools.includes('sync_creatives')) {
-    const testCreatives = [{
-      platform_id: 'schema-test-' + Date.now(),
-      format_id: formats && formats.length > 0 ? formats[0].format_id : 'test',
-      concept: 'Schema test creative',
-    }];
+    const testCreatives = [
+      {
+        platform_id: 'schema-test-' + Date.now(),
+        format_id: formats && formats.length > 0 ? formats[0].format_id : 'test',
+        concept: 'Schema test creative',
+      },
+    ];
 
     const { result: syncSchemaResult, step: syncSchemaStep } = await runStep<any>(
       'Validate sync_creatives response schema',

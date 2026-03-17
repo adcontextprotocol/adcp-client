@@ -375,7 +375,12 @@ export async function testCreativeLifecycle(
     if ('snapshot' in firstCreative) {
       const snapshot = firstCreative.snapshot;
       if (snapshot && typeof snapshot === 'object') {
-        if ('as_of' in snapshot || 'staleness_seconds' in snapshot || 'impressions' in snapshot || 'last_served' in snapshot) {
+        if (
+          'as_of' in snapshot ||
+          'staleness_seconds' in snapshot ||
+          'impressions' in snapshot ||
+          'last_served' in snapshot
+        ) {
           snapshotFieldsValidated = true;
         }
       }
