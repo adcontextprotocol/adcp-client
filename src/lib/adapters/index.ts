@@ -47,10 +47,10 @@ export {
   GovernanceAdapter,
   type IGovernanceAdapter,
   type GovernanceAdapterConfig,
+  type GovernanceAdapterErrorCode,
   type CommittedCheckRequest,
   GovernanceAdapterErrorCodes,
   isGovernanceAdapterError,
-  defaultGovernanceAdapter,
 } from './governance-adapter';
 
 // Sponsored Intelligence Sessions

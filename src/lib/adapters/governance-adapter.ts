@@ -68,15 +68,21 @@ export const GovernanceAdapterErrorCodes = {
   AGENT_UNREACHABLE: 'governance_agent_unreachable',
 } as const;
 
+export type GovernanceAdapterErrorCode = (typeof GovernanceAdapterErrorCodes)[keyof typeof GovernanceAdapterErrorCodes];
+
 /**
- * Check if a response is a governance adapter error.
+ * Type guard: check if a response is a governance adapter error.
  */
-export function isGovernanceAdapterError(response: any): boolean {
-  return response?.error?.code && Object.values(GovernanceAdapterErrorCodes).includes(response.error.code);
+export function isGovernanceAdapterError(
+  response: unknown
+): response is { error: { code: GovernanceAdapterErrorCode; message?: string } } {
+  if (!response || typeof response !== 'object') return false;
+  const r = response as Record<string, any>;
+  return r.error?.code && Object.values(GovernanceAdapterErrorCodes).includes(r.error.code);
 }
 
 /**
- * Default governance adapter that calls a governance agent via AdCP protocol.
+ * Governance adapter that calls a governance agent via AdCP protocol.
  *
  * Sellers configure this with their governance agent and caller URL,
  * then call checkCommitted() before executing media buys.
@@ -134,10 +140,8 @@ export class GovernanceAdapter implements IGovernanceAdapter {
         plan_id: request.planId,
         buyer_campaign_ref: request.buyerCampaignRef,
         explanation: `Governance agent unreachable: ${(err as Error).message}`,
-      };
+        error_code: GovernanceAdapterErrorCodes.AGENT_UNREACHABLE,
+      } as CheckGovernanceResponse;
     }
   }
 }
-
-/** Default (unconfigured) governance adapter instance */
-export const defaultGovernanceAdapter = new GovernanceAdapter();

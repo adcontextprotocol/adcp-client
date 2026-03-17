@@ -145,7 +145,13 @@ export interface MediaBuyDeliveryNotification {
  * Activity event for logging/observability
  */
 export interface Activity {
-  type: 'protocol_request' | 'protocol_response' | 'status_change' | 'webhook_received';
+  type:
+    | 'protocol_request'
+    | 'protocol_response'
+    | 'status_change'
+    | 'webhook_received'
+    | 'governance_check'
+    | 'governance_outcome';
   operation_id: string;
   agent_id: string;
   context_id?: string;

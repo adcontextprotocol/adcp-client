@@ -1072,8 +1072,21 @@ describe('Governance E2E: Outcome reporting', { skip: skipReason }, () => {
   });
 
   it('should not commit budget for failed outcome', async () => {
+    // Get a fresh check_id for this test
+    const failCheckResult = await client.executeTask('check_governance', {
+      plan_id: planId,
+      buyer_campaign_ref: campaignRef,
+      binding: 'proposed',
+      caller: 'https://test-orchestrator.example.com',
+      tool: 'create_media_buy',
+      payload: { budget: { total: 2000, currency: 'USD' }, channel: 'display', countries: ['US'] },
+    });
+    assert.ok(failCheckResult.success);
+    const failCheckId = failCheckResult.data.check_id;
+
     const outcomeResult = await client.executeTask('report_plan_outcome', {
       plan_id: planId,
+      check_id: failCheckId,
       buyer_campaign_ref: campaignRef,
       outcome: 'failed',
       error: { code: 'seller_error', message: 'Seller rejected the buy' },
@@ -1086,16 +1099,28 @@ describe('Governance E2E: Outcome reporting', { skip: skipReason }, () => {
   });
 
   it('should flag when committed exceeds authorized', async () => {
+    // Get a fresh check_id for the over-commit test
+    const overCommitCheck = await client.executeTask('check_governance', {
+      plan_id: planId,
+      buyer_campaign_ref: campaignRef,
+      binding: 'proposed',
+      caller: 'https://test-orchestrator.example.com',
+      tool: 'create_media_buy',
+      payload: { budget: { total: 9000, currency: 'USD' }, channel: 'display', countries: ['US'] },
+    });
+    assert.ok(overCommitCheck.success);
+
     // Report a massive completed outcome that pushes past budget
     const outcomeResult = await client.executeTask('report_plan_outcome', {
       plan_id: planId,
+      check_id: overCommitCheck.data.check_id,
       buyer_campaign_ref: campaignRef,
       outcome: 'completed',
       seller_response: { committed_budget: 9000 },
     });
 
     assert.ok(outcomeResult.success);
-    // 3000 + 9000 = 12000 > 10000 authorized
+    // Prior committed + 9000 should exceed 10000 authorized
     assert.equal(outcomeResult.data.status, 'findings', 'Expected findings status for over-commit');
     assert.ok(outcomeResult.data.findings?.length > 0, 'Expected budget findings');
   });

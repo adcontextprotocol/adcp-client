@@ -1397,36 +1397,87 @@ export class SingleAgentClient {
    * Sync campaign plans to a governance agent.
    * Plans define authorized parameters: budget, channels, flight dates, markets, policies, delegations.
    *
-   * Note: This calls the governance agent directly (not the sales agent).
-   * The governance agent must be configured in the governance config.
+   * Uses the governance agent from config.governance.campaign.agent by default.
+   * Pass an explicit agent to override.
    */
   async syncPlans(
-    governanceAgent: AgentConfig,
-    params: SyncPlansRequest,
-    inputHandler?: InputHandler,
+    governanceAgentOrParams: AgentConfig | SyncPlansRequest,
+    paramsOrInputHandler?: SyncPlansRequest | InputHandler,
+    inputHandlerOrOptions?: InputHandler | TaskOptions,
     options?: TaskOptions
   ): Promise<TaskResult<SyncPlansResponse>> {
-    return this.executor.executeTask<SyncPlansResponse>(governanceAgent, 'sync_plans', params, inputHandler, options);
+    const { agent, params, inputHandler, taskOptions } = this.resolveGovernanceArgs<SyncPlansRequest>(
+      governanceAgentOrParams,
+      paramsOrInputHandler,
+      inputHandlerOrOptions,
+      options
+    );
+    return this.executor.executeTask<SyncPlansResponse>(agent, 'sync_plans', params, inputHandler, taskOptions);
   }
 
   /**
    * Get governance audit logs for one or more plans.
    * Returns budget state, channel allocation, per-campaign breakdown, and audit trail.
    *
-   * Note: This calls the governance agent directly (not the sales agent).
+   * Uses the governance agent from config.governance.campaign.agent by default.
+   * Pass an explicit agent to override.
    */
   async getPlanAuditLogs(
-    governanceAgent: AgentConfig,
-    params: GetPlanAuditLogsRequest,
+    governanceAgentOrParams: AgentConfig | GetPlanAuditLogsRequest,
+    paramsOrOptions?: GetPlanAuditLogsRequest | TaskOptions,
     options?: TaskOptions
   ): Promise<TaskResult<GetPlanAuditLogsResponse>> {
+    // Determine if first arg is AgentConfig or params
+    const isAgent = this.isAgentConfig(governanceAgentOrParams);
+    const agent = isAgent ? (governanceAgentOrParams as AgentConfig) : this.getGovernanceAgent();
+    const params = isAgent
+      ? (paramsOrOptions as GetPlanAuditLogsRequest)
+      : (governanceAgentOrParams as GetPlanAuditLogsRequest);
+    const taskOptions = isAgent ? options : (paramsOrOptions as TaskOptions | undefined);
+
     return this.executor.executeTask<GetPlanAuditLogsResponse>(
-      governanceAgent,
+      agent,
       'get_plan_audit_logs',
       params,
       undefined,
-      options
+      taskOptions
     );
+  }
+
+  private isAgentConfig(value: any): value is AgentConfig {
+    return value && typeof value === 'object' && 'protocol' in value && 'id' in value;
+  }
+
+  private getGovernanceAgent(): AgentConfig {
+    const agent = this.config.governance?.campaign?.agent;
+    if (!agent) {
+      throw new Error(
+        'No governance agent configured. Either pass an explicit agent or set config.governance.campaign.agent.'
+      );
+    }
+    return agent;
+  }
+
+  private resolveGovernanceArgs<P>(
+    firstArg: AgentConfig | P,
+    secondArg?: P | InputHandler,
+    thirdArg?: InputHandler | TaskOptions,
+    fourthArg?: TaskOptions
+  ): { agent: AgentConfig; params: P; inputHandler?: InputHandler; taskOptions?: TaskOptions } {
+    if (this.isAgentConfig(firstArg)) {
+      return {
+        agent: firstArg,
+        params: secondArg as P,
+        inputHandler: thirdArg as InputHandler | undefined,
+        taskOptions: fourthArg,
+      };
+    }
+    return {
+      agent: this.getGovernanceAgent(),
+      params: firstArg as P,
+      inputHandler: secondArg as InputHandler | undefined,
+      taskOptions: thirdArg as TaskOptions | undefined,
+    };
   }
 
   // ====== PROTOCOL TASKS ======

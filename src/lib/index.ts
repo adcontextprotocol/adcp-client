@@ -79,7 +79,12 @@ export type {
   ConversationConfig,
 } from './core/ConversationTypes';
 
-// ====== GOVERNANCE MIDDLEWARE TYPES ======
+// ====== GOVERNANCE ======
+// Buyer-side: GovernanceConfig + GovernanceMiddleware handle check → execute → report automatically.
+// Seller-side: GovernanceAdapter runs committed checks before executing media buys.
+// Types: GovernanceCheckResult, GovernanceOutcome are attached to TaskResult when governance is active.
+
+// Buyer-side middleware types
 export type {
   GovernanceConfig,
   CampaignGovernanceConfig,
@@ -90,6 +95,7 @@ export type {
   GovernanceEscalation,
 } from './core/GovernanceTypes';
 export { GovernanceMiddleware } from './core/GovernanceMiddleware';
+export type { GovernanceDebugEntry } from './core/GovernanceMiddleware';
 
 // ====== TASK EVENT TYPES ======
 export type {
@@ -597,10 +603,10 @@ export {
   GovernanceAdapter,
   type IGovernanceAdapter,
   type GovernanceAdapterConfig,
+  type GovernanceAdapterErrorCode,
   type CommittedCheckRequest,
   GovernanceAdapterErrorCodes,
   isGovernanceAdapterError,
-  defaultGovernanceAdapter,
 } from './adapters';
 
 // ====== BACKWARD COMPATIBILITY & ENVIRONMENT LOADING ======

@@ -26,18 +26,38 @@ import type {
   GovernanceCheckResult,
   GovernanceOutcome,
   GovernanceFinding,
+  GovernanceCondition,
 } from './GovernanceTypes';
 import { toolRequiresGovernance, parseCheckResponse } from './GovernanceTypes';
 import { unwrapProtocolResponse } from '../utils/response-unwrapper';
 
+/**
+ * Typed debug log entries for governance operations.
+ */
+export type GovernanceDebugEntry =
+  | { type: 'governance_check'; iteration: number; tool: string; plan_id: string }
+  | { type: 'governance_conditions_applied'; iteration: number; conditions: GovernanceCondition[] }
+  | { type: 'governance_conditions_exhausted'; iterations: number; tool: string }
+  | { type: 'governance_outcome_error'; check_id: string; error: string };
+
 /** Path segments that would cause prototype pollution if used as object keys. */
-const FORBIDDEN_PATH_SEGMENTS = new Set(['__proto__', 'constructor', 'prototype']);
+const FORBIDDEN_PATH_SEGMENTS = new Set([
+  '__proto__',
+  'constructor',
+  'prototype',
+  'toString',
+  'valueOf',
+  'hasOwnProperty',
+]);
 
 /**
  * Set a value at a dot-path in an object. Creates intermediate objects as needed.
  * e.g., setAtPath(obj, 'packages.0.budget', 25000)
  */
-function setAtPath(obj: Record<string, any>, path: string, value: unknown): void {
+export function setAtPath(obj: Record<string, any>, path: string, value: unknown): void {
+  if (!path || path.trim() === '') {
+    throw new Error('Empty path is not allowed');
+  }
   const parts = path.split('.');
   for (const part of parts) {
     if (FORBIDDEN_PATH_SEGMENTS.has(part)) {
@@ -97,14 +117,14 @@ export class GovernanceMiddleware {
   async checkProposed(
     tool: string,
     params: Record<string, unknown>,
-    debugLogs: any[] = []
+    debugLogs: GovernanceDebugEntry[] = []
   ): Promise<{ result: GovernanceCheckResult; params: Record<string, unknown> }> {
     const config = this.governanceConfig.campaign;
     if (!config) {
       throw new Error('Campaign governance not configured');
     }
 
-    const maxIterations = config.maxConditionsIterations ?? 3;
+    const maxIterations = config.maxConditionsIterations ?? 0;
     let currentParams = deepClone(params);
     let iteration = 0;
 
@@ -183,6 +203,11 @@ export class GovernanceMiddleware {
     }
 
     // Exhausted iterations — return the last result
+    debugLogs.push({
+      type: 'governance_conditions_exhausted',
+      iterations: maxIterations,
+      tool,
+    });
     return {
       result: {
         checkId: '',
@@ -203,7 +228,7 @@ export class GovernanceMiddleware {
     outcome: OutcomeType,
     sellerResponse?: Record<string, unknown>,
     error?: { code?: string; message: string },
-    debugLogs: any[] = []
+    debugLogs: GovernanceDebugEntry[] = []
   ): Promise<GovernanceOutcome | undefined> {
     const config = this.governanceConfig.campaign;
     if (!config) return undefined;
@@ -267,9 +292,9 @@ export class GovernanceMiddleware {
     }
   }
 
-  private async emitGovernanceActivity(type: string, payload: Record<string, unknown>): Promise<void> {
+  private async emitGovernanceActivity(type: Activity['type'], payload: Record<string, unknown>): Promise<void> {
     await this.onActivity?.({
-      type: type as Activity['type'],
+      type,
       operation_id: '',
       agent_id: this.governanceConfig.campaign?.agent.id ?? '',
       task_type: 'governance',

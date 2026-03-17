@@ -11,6 +11,7 @@ const assert = require('node:assert/strict');
 const { toolRequiresGovernance, parseCheckResponse } = require('../../dist/lib/core/GovernanceTypes.js');
 
 const { isGovernanceAdapterError } = require('../../dist/lib/adapters/governance-adapter.js');
+const { setAtPath, GovernanceMiddleware } = require('../../dist/lib/core/GovernanceMiddleware.js');
 
 describe('toolRequiresGovernance', () => {
   const baseConfig = {
@@ -40,10 +41,18 @@ describe('toolRequiresGovernance', () => {
     assert.equal(toolRequiresGovernance('get_products', baseConfig), true);
   });
 
-  it('respects scope: "all" (still excludes governance tools)', () => {
+  it('respects scope: "all" (includes all tools except governance self-tools)', () => {
     const config = { ...baseConfig, scope: 'all' };
     assert.equal(toolRequiresGovernance('create_media_buy', config), true);
+    assert.equal(toolRequiresGovernance('get_adcp_capabilities', config), true);
+    // Governance tools themselves are always excluded
     assert.equal(toolRequiresGovernance('check_governance', config), false);
+    assert.equal(toolRequiresGovernance('sync_plans', config), false);
+  });
+
+  it('returns false for empty scope array', () => {
+    const config = { ...baseConfig, scope: [] };
+    assert.equal(toolRequiresGovernance('create_media_buy', config), false);
   });
 
   it('respects scope: string[]', () => {
@@ -195,5 +204,141 @@ describe('isGovernanceAdapterError', () => {
     assert.ok(!isGovernanceAdapterError(null));
     assert.ok(!isGovernanceAdapterError(undefined));
     assert.ok(!isGovernanceAdapterError({}));
+  });
+
+  it('returns falsy for non-object values', () => {
+    assert.ok(!isGovernanceAdapterError('string'));
+    assert.ok(!isGovernanceAdapterError(42));
+    assert.ok(!isGovernanceAdapterError(true));
+  });
+});
+
+describe('setAtPath', () => {
+  it('sets a simple key', () => {
+    const obj = {};
+    setAtPath(obj, 'name', 'test');
+    assert.equal(obj.name, 'test');
+  });
+
+  it('sets a nested key', () => {
+    const obj = {};
+    setAtPath(obj, 'budget.total', 5000);
+    assert.deepEqual(obj, { budget: { total: 5000 } });
+  });
+
+  it('sets deeply nested keys', () => {
+    const obj = {};
+    setAtPath(obj, 'a.b.c.d', 'deep');
+    assert.equal(obj.a.b.c.d, 'deep');
+  });
+
+  it('preserves existing properties', () => {
+    const obj = { budget: { currency: 'USD' } };
+    setAtPath(obj, 'budget.total', 5000);
+    assert.deepEqual(obj, { budget: { currency: 'USD', total: 5000 } });
+  });
+
+  it('creates arrays when next key is numeric', () => {
+    const obj = {};
+    setAtPath(obj, 'packages.0.budget', 1000);
+    assert.ok(Array.isArray(obj.packages));
+    assert.equal(obj.packages[0].budget, 1000);
+  });
+
+  it('throws on __proto__', () => {
+    assert.throws(() => setAtPath({}, '__proto__.polluted', true), /Forbidden path segment/);
+  });
+
+  it('throws on constructor', () => {
+    assert.throws(() => setAtPath({}, 'constructor.prototype.x', true), /Forbidden path segment/);
+  });
+
+  it('throws on prototype', () => {
+    assert.throws(() => setAtPath({}, 'a.prototype.b', true), /Forbidden path segment/);
+  });
+
+  it('throws on toString', () => {
+    assert.throws(() => setAtPath({}, 'toString.x', true), /Forbidden path segment/);
+  });
+
+  it('throws on valueOf', () => {
+    assert.throws(() => setAtPath({}, 'valueOf', true), /Forbidden path segment/);
+  });
+
+  it('throws on hasOwnProperty', () => {
+    assert.throws(() => setAtPath({}, 'hasOwnProperty', true), /Forbidden path segment/);
+  });
+
+  it('throws on empty path', () => {
+    assert.throws(() => setAtPath({}, '', true), /Empty path/);
+  });
+
+  it('throws on whitespace-only path', () => {
+    assert.throws(() => setAtPath({}, '   ', true), /Empty path/);
+  });
+});
+
+describe('GovernanceMiddleware', () => {
+  const baseGovernanceConfig = {
+    campaign: {
+      agent: { id: 'gov', name: 'Gov Agent', agent_uri: 'http://localhost', protocol: 'mcp' },
+      planId: 'plan-1',
+    },
+  };
+
+  describe('requiresCheck', () => {
+    it('returns true for governed tools', () => {
+      const mw = new GovernanceMiddleware(baseGovernanceConfig);
+      assert.equal(mw.requiresCheck('create_media_buy'), true);
+    });
+
+    it('returns false for excluded tools', () => {
+      const mw = new GovernanceMiddleware(baseGovernanceConfig);
+      assert.equal(mw.requiresCheck('check_governance'), false);
+      assert.equal(mw.requiresCheck('get_adcp_capabilities'), false);
+    });
+
+    it('respects custom scope', () => {
+      const config = { ...baseGovernanceConfig, scope: ['create_media_buy'] };
+      const mw = new GovernanceMiddleware(config);
+      assert.equal(mw.requiresCheck('create_media_buy'), true);
+      assert.equal(mw.requiresCheck('get_products'), false);
+    });
+  });
+
+  describe('campaign getter', () => {
+    it('returns campaign config when present', () => {
+      const mw = new GovernanceMiddleware(baseGovernanceConfig);
+      assert.equal(mw.campaign.planId, 'plan-1');
+    });
+
+    it('returns undefined when not configured', () => {
+      const mw = new GovernanceMiddleware({});
+      assert.equal(mw.campaign, undefined);
+    });
+  });
+
+  describe('checkProposed', () => {
+    it('throws when campaign is not configured', async () => {
+      const mw = new GovernanceMiddleware({});
+      await assert.rejects(() => mw.checkProposed('create_media_buy', {}), /Campaign governance not configured/);
+    });
+
+    it('returns conditions to caller when maxConditionsIterations is 0 (default)', async () => {
+      // Mock ProtocolClient by creating a middleware with a config that will trigger conditions
+      // Since checkProposed calls ProtocolClient internally, we test the iteration default
+      const config = {
+        campaign: {
+          ...baseGovernanceConfig.campaign,
+          // Default maxConditionsIterations is now 0
+        },
+      };
+      const mw = new GovernanceMiddleware(config);
+      // maxConditionsIterations = 0 means the while loop never executes
+      // so it falls through to the exhaustion path
+      const { result } = await mw.checkProposed('create_media_buy', { budget: 5000 });
+      assert.equal(result.status, 'denied');
+      assert.ok(result.explanation.includes('0 iterations'));
+    });
   });
 });

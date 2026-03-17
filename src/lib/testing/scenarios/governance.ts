@@ -11,6 +11,7 @@
 import type { TestOptions, TestStepResult, AgentProfile, TaskResult } from '../types';
 import { createTestClient, runStep, discoverAgentProfile } from '../client';
 import { GOVERNANCE_TOOLS } from '../../utils/capabilities';
+import { setAtPath } from '../../core/GovernanceMiddleware';
 
 // Property list tools
 const PROPERTY_LIST_TOOLS = [
@@ -1111,9 +1112,13 @@ export async function testCampaignGovernanceDenied(
       2
     );
 
-    if (data.status === 'approved') {
+    if (data.status === 'approved' && data.mode !== 'advisory' && data.mode !== 'audit') {
+      overBudgetStep.passed = false;
+      overBudgetStep.error =
+        'Governance approved a $50,000 buy against a $500 plan in enforce mode — expected denial or conditions';
+    } else if (data.status === 'approved') {
       overBudgetStep.warnings = [
-        'Governance approved a $50,000 buy against a $500 plan — may indicate audit/advisory mode',
+        'Governance approved a $50,000 buy against a $500 plan — advisory/audit mode detected',
       ];
     }
   } else if (overBudgetResult && !overBudgetResult.success) {
@@ -1339,7 +1344,7 @@ export async function testCampaignGovernanceConditions(
 
       for (const condition of conditions) {
         if (condition.required_value !== undefined) {
-          setNestedField(adjustedPayload, condition.field, condition.required_value);
+          setAtPath(adjustedPayload, condition.field, condition.required_value);
         }
       }
 
@@ -1577,21 +1582,6 @@ export async function testCampaignGovernanceDelivery(
   steps.push(driftStep);
 
   return { steps, profile };
-}
-
-/**
- * Set a value at a dot-path in an object (e.g., "budget.total" -> obj.budget.total).
- */
-function setNestedField(obj: any, dotPath: string, value: any): void {
-  const parts = dotPath.split('.');
-  let current = obj;
-  for (let i = 0; i < parts.length - 1; i++) {
-    if (current[parts[i]] === undefined) {
-      current[parts[i]] = {};
-    }
-    current = current[parts[i]];
-  }
-  current[parts[parts.length - 1]] = value;
 }
 
 /**

@@ -23,7 +23,7 @@ export interface CampaignGovernanceConfig {
   buyerCampaignRef?: string;
   /** Caller URL for the check_governance request */
   callerUrl?: string;
-  /** Max conditions loops before returning to caller. Default: 3 */
+  /** Max conditions loops before returning to caller. Default: 0 (return conditions to caller). Set to 3 to auto-apply. */
   maxConditionsIterations?: number;
 }
 
@@ -47,21 +47,19 @@ export interface GovernanceConfig {
   contentStandards?: { agent: AgentConfig };
   /**
    * Which tools require governance checks.
-   * Default: all tools except get_adcp_capabilities.
-   * Provide a list of tool names, or a function that returns true for tools that need checks.
+   * - 'all': every tool including get_adcp_capabilities (governance tools themselves still excluded)
+   * - string[]: only listed tools
+   * - function: custom predicate
+   * - undefined (default): all tools except get_adcp_capabilities and governance tools
    */
   scope?: 'all' | string[] | ((tool: string) => boolean);
 }
 
-/** Tools that are excluded from governance by default */
-const DEFAULT_EXCLUDED_TOOLS = new Set([
-  'get_adcp_capabilities',
-  // Governance tools themselves don't go through governance
-  'sync_plans',
-  'check_governance',
-  'report_plan_outcome',
-  'get_plan_audit_logs',
-]);
+/** Governance tools that are always excluded (infinite recursion otherwise) */
+const GOVERNANCE_SELF_TOOLS = new Set(['sync_plans', 'check_governance', 'report_plan_outcome', 'get_plan_audit_logs']);
+
+/** Tools excluded by default (governance tools + capabilities) */
+const DEFAULT_EXCLUDED_TOOLS = new Set([...GOVERNANCE_SELF_TOOLS, 'get_adcp_capabilities']);
 
 /**
  * Determine whether a tool requires a governance check given the config.
@@ -69,7 +67,10 @@ const DEFAULT_EXCLUDED_TOOLS = new Set([
 export function toolRequiresGovernance(tool: string, config: GovernanceConfig): boolean {
   if (!config.campaign) return false;
 
-  if (config.scope === 'all') return !DEFAULT_EXCLUDED_TOOLS.has(tool);
+  // Governance tools are always excluded to prevent infinite recursion
+  if (GOVERNANCE_SELF_TOOLS.has(tool)) return false;
+
+  if (config.scope === 'all') return true;
 
   if (Array.isArray(config.scope)) return config.scope.includes(tool);
 

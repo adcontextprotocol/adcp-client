@@ -221,60 +221,39 @@ export class TaskExecutor {
         const isBlocking = !govResult.mode || govResult.mode === 'enforce';
 
         if (govResult.status === 'denied' && isBlocking) {
-          return {
-            success: false,
-            status: 'governance-denied',
-            error: govResult.explanation,
-            governance: govResult,
-            metadata: {
-              taskId,
-              taskName,
-              agent: { id: agent.id, name: agent.name, protocol: agent.protocol },
-              responseTimeMs: Date.now() - startTime,
-              timestamp: new Date().toISOString(),
-              clarificationRounds: 0,
-              status: 'governance-denied' as TaskStatus,
-            },
-            debug_logs: debugLogs,
-          } as TaskResult<T>;
+          return this.buildGovernanceResult<T>(
+            'governance-denied',
+            govResult,
+            taskId,
+            taskName,
+            agent,
+            startTime,
+            debugLogs
+          );
         }
 
         if (govResult.status === 'escalated' && isBlocking) {
-          return {
-            success: false,
-            status: 'governance-escalated',
-            error: govResult.explanation,
-            governance: govResult,
-            metadata: {
-              taskId,
-              taskName,
-              agent: { id: agent.id, name: agent.name, protocol: agent.protocol },
-              responseTimeMs: Date.now() - startTime,
-              timestamp: new Date().toISOString(),
-              clarificationRounds: 0,
-              status: 'governance-escalated' as TaskStatus,
-            },
-            debug_logs: debugLogs,
-          } as TaskResult<T>;
+          return this.buildGovernanceResult<T>(
+            'governance-escalated',
+            govResult,
+            taskId,
+            taskName,
+            agent,
+            startTime,
+            debugLogs
+          );
         }
 
         if (govResult.status === 'conditions' && !govResult.conditionsApplied && isBlocking) {
-          return {
-            success: false,
-            status: 'governance-denied',
-            error: govResult.explanation,
-            governance: govResult,
-            metadata: {
-              taskId,
-              taskName,
-              agent: { id: agent.id, name: agent.name, protocol: agent.protocol },
-              responseTimeMs: Date.now() - startTime,
-              timestamp: new Date().toISOString(),
-              clarificationRounds: 0,
-              status: 'governance-denied' as TaskStatus,
-            },
-            debug_logs: debugLogs,
-          } as TaskResult<T>;
+          return this.buildGovernanceResult<T>(
+            'governance-denied',
+            govResult,
+            taskId,
+            taskName,
+            agent,
+            startTime,
+            debugLogs
+          );
         }
 
         // Approved, or non-blocking mode (advisory/audit) allows execution to proceed
@@ -386,6 +365,33 @@ export class TaskExecutor {
   /**
    * Handle agent response based on ADCP status (PR #78)
    */
+  private buildGovernanceResult<T>(
+    status: 'governance-denied' | 'governance-escalated',
+    govResult: GovernanceCheckResult,
+    taskId: string,
+    taskName: string,
+    agent: AgentConfig,
+    startTime: number,
+    debugLogs: any[]
+  ): TaskResult<T> {
+    return {
+      success: false,
+      status,
+      error: govResult.explanation,
+      governance: govResult,
+      metadata: {
+        taskId,
+        taskName,
+        agent: { id: agent.id, name: agent.name, protocol: agent.protocol },
+        responseTimeMs: Date.now() - startTime,
+        timestamp: new Date().toISOString(),
+        clarificationRounds: 0,
+        status,
+      },
+      debug_logs: debugLogs,
+    };
+  }
+
   private async handleAsyncResponse<T>(
     agent: AgentConfig,
     taskId: string,
