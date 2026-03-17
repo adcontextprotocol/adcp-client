@@ -13,6 +13,7 @@ export type TestScenario =
   | 'creative_reference' // Build -> sync -> reference a creative via creative_ids
   | 'pricing_models' // Test different pricing models the agent supports
   | 'creative_flow' // Creative agent: list_formats -> build -> preview
+  | 'creative_lifecycle' // Creative agent: formats -> sync multiple -> list with/without snapshot -> build/preview
   | 'signals_flow' // Signals agent: get_signals -> activate
   // Edge case testing scenarios
   | 'error_handling' // Test agent returns proper error responses

@@ -337,17 +337,26 @@ function crossValidateProtocolsAndTools(capabilities: AdcpCapabilities, tools: s
     }
   }
 
-  // Check for tools that suggest protocols not reported
+  // Check for tools that suggest protocols not reported.
+  // Only consider tools exclusive to a protocol — shared tools (those appearing
+  // in multiple protocol tool lists) don't indicate a specific unreported protocol.
+  const allProtocolTools = Object.values(protocolToolMap).flat();
+  const toolProtocolCount = new Map<string, number>();
+  for (const tool of allProtocolTools) {
+    toolProtocolCount.set(tool, (toolProtocolCount.get(tool) || 0) + 1);
+  }
+
   const unreportedProtocols: string[] = [];
 
   for (const [protocol, expectedTools] of Object.entries(protocolToolMap)) {
     if (!capabilities.protocols.includes(protocol as AdcpProtocol)) {
-      const presentTools = expectedTools.filter(t => tools.includes(t));
-      if (presentTools.length > 0) {
+      // Only flag based on exclusive tools (not shared across protocols)
+      const exclusivePresent = expectedTools.filter(t => tools.includes(t) && toolProtocolCount.get(t) === 1);
+      if (exclusivePresent.length > 0) {
         unreportedProtocols.push(protocol);
         perProtocolDiffs[protocol] = {
           expected: [],
-          found: [...presentTools],
+          found: [...exclusivePresent],
           missing: [],
         };
       }

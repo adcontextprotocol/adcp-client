@@ -50,6 +50,7 @@ import {
   testCreativeInline,
   testCreativeReference,
   testCreativeFlow,
+  testCreativeLifecycle,
   testSignalsFlow,
   testErrorHandling,
   testValidation,
@@ -153,6 +154,12 @@ export async function testAgent(
 
       case 'creative_flow':
         result = await testCreativeFlow(agentUrl, effectiveOptions);
+        steps = result.steps;
+        profile = result.profile;
+        break;
+
+      case 'creative_lifecycle':
+        result = await testCreativeLifecycle(agentUrl, effectiveOptions);
         steps = result.steps;
         profile = result.profile;
         break;
@@ -353,6 +360,7 @@ export {
   testCreativeSync,
   testCreativeInline,
   testCreativeFlow,
+  testCreativeLifecycle,
   testSignalsFlow,
   testErrorHandling,
   testValidation,

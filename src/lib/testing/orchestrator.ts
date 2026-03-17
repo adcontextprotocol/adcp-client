@@ -27,7 +27,7 @@ export const SCENARIO_REQUIREMENTS: Partial<Record<TestScenario, string[]>> = {
   creative_inline: ['get_products', 'create_media_buy'],
   creative_reference: ['get_products', 'create_media_buy', 'build_creative', 'sync_creatives'],
   temporal_validation: ['get_products', 'create_media_buy'],
-  creative_sync: ['get_products', 'create_media_buy', 'sync_creatives'],
+  creative_sync: ['sync_creatives'],
 
   // Requires get_products
   pricing_edge_cases: ['get_products'],
@@ -39,6 +39,7 @@ export const SCENARIO_REQUIREMENTS: Partial<Record<TestScenario, string[]>> = {
 
   // Requires creative agent tools
   creative_flow: ['build_creative'],
+  creative_lifecycle: ['list_creative_formats'],
 
   // Requires signals tools
   signals_flow: ['get_signals'],
@@ -87,6 +88,7 @@ export const DEFAULT_SCENARIOS: readonly TestScenario[] = [
   'behavior_analysis',
   'response_consistency',
   'creative_flow',
+  'creative_lifecycle',
   'signals_flow',
   'governance_property_lists',
   'governance_content_standards',
