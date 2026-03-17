@@ -12,6 +12,7 @@
  * - Validate preview renders
  */
 
+import type { BuildCreativeRequest, PreviewCreativeRequest } from '../../types/tools.generated';
 import type { TestOptions, TestStepResult, AgentProfile, TaskResult } from '../types';
 import { createTestClient, runStep, discoverAgentProfile, discoverCreativeFormats } from '../client';
 
@@ -52,30 +53,35 @@ export async function testCreativeFlow(
   // Build creative for each selected format
   if (profile.tools.includes('build_creative')) {
     for (const format of formatsToTest) {
+      const formatDisplayName = format.name || format.format_id.id;
       const { result, step } = await runStep<TaskResult>(
-        `Build creative: ${format.name || format.format_id}`,
+        `Build creative: ${formatDisplayName}`,
         'build_creative',
         async () =>
-          client.executeTask('build_creative', {
+          client.buildCreative({
             format_id: format.format_id,
             brand_manifest: options.brand_manifest || getDefaultBrandManifest(),
             prompt: `Create a ${format.type || 'display'} ad for an e-commerce brand promoting summer sale`,
-          }) as Promise<TaskResult>
+          } as unknown as BuildCreativeRequest) as Promise<TaskResult>
       );
 
       if (result?.success && result?.data) {
-        const data = result.data as any;
-        step.details = `Built creative for format ${format.format_id}`;
+        const data = result.data as unknown as Record<string, unknown>;
+        const creative = data.creative as Record<string, unknown> | undefined;
+        const creativeId = (data.creative_id as string) || (creative?.creative_id as string);
+        const formatId = data.format_id || creative?.format_id;
+        const hasAssets = !!(data.assets || creative?.assets);
+        step.details = `Built creative for format ${formatDisplayName}`;
         step.response_preview = JSON.stringify(
           {
-            creative_id: data.creative_id || data.creative?.creative_id,
-            format_id: data.format_id || data.creative?.format_id,
-            has_assets: !!(data.assets?.length || data.creative?.assets?.length),
+            creative_id: creativeId,
+            format_id: formatId,
+            has_assets: hasAssets,
           },
           null,
           2
         );
-        step.created_id = data.creative_id || data.creative?.creative_id;
+        step.created_id = creativeId;
       } else if (result && !result.success) {
         step.passed = false;
         step.error = result.error || 'build_creative failed';
@@ -91,13 +97,13 @@ export async function testCreativeFlow(
       'Preview creative: minimal assets',
       'preview_creative',
       async () =>
-        client.executeTask('preview_creative', {
+        client.previewCreative({
           creative: {
-            format_id: formatsToTest[0]?.format_id || 'display_300x250',
+            format_id: formatsToTest[0]?.format_id || { agent_url: 'https://creative.adcontextprotocol.org', id: 'display_300x250' },
             name: 'Minimal Test Creative',
             assets: [],
           },
-        }) as Promise<TaskResult>
+        } as unknown as PreviewCreativeRequest) as Promise<TaskResult>
     );
     steps.push(minimalStep);
 
@@ -105,26 +111,28 @@ export async function testCreativeFlow(
     const sampleFormat = formatsToTest[0];
     if (sampleFormat) {
       const { result, step } = await runStep<TaskResult>(
-        `Preview creative: with assets (${sampleFormat.format_id})`,
+        `Preview creative: with assets (${sampleFormat.format_id.id})`,
         'preview_creative',
         async () =>
-          client.executeTask('preview_creative', {
+          client.previewCreative({
             creative: {
               format_id: sampleFormat.format_id,
               name: 'Full Test Creative',
               assets: buildTestAssets(sampleFormat),
             },
-          }) as Promise<TaskResult>
+          } as unknown as PreviewCreativeRequest) as Promise<TaskResult>
       );
 
       if (result?.success && result?.data) {
-        const data = result.data as any;
-        step.details = `Generated preview with ${data.renders?.length || 0} render(s)`;
+        const data = result.data as unknown as Record<string, unknown>;
+        const renders = data.renders as unknown[] | undefined;
+        const previewUrl = data.preview_url as string | undefined;
+        step.details = `Generated preview with ${renders?.length || 0} render(s)`;
         step.response_preview = JSON.stringify(
           {
-            has_renders: !!(data.renders?.length || data.preview_url),
-            render_count: data.renders?.length || (data.preview_url ? 1 : 0),
-            preview_url: data.preview_url,
+            has_renders: !!(renders?.length || previewUrl),
+            render_count: renders?.length || (previewUrl ? 1 : 0),
+            preview_url: previewUrl,
           },
           null,
           2
@@ -141,13 +149,13 @@ export async function testCreativeFlow(
       'Preview creative: invalid format (error expected)',
       'preview_creative',
       async () =>
-        client.executeTask('preview_creative', {
+        client.previewCreative({
           creative: {
-            format_id: 'INVALID_FORMAT_ID_12345',
+            format_id: { id: 'INVALID_FORMAT_ID_12345' },
             name: 'Error Test Creative',
             assets: [],
           },
-        }) as Promise<TaskResult>
+        } as unknown as PreviewCreativeRequest) as Promise<TaskResult>
     );
 
     // This should fail - if it succeeds with invalid format, that's a bug
@@ -173,7 +181,7 @@ function selectFormatsToTest(
 ): NonNullable<AgentProfile['supported_formats']> {
   // If specific format_ids provided, use those
   if (options.format_ids?.length) {
-    return formats.filter(f => options.format_ids!.includes(f.format_id));
+    return formats.filter(f => options.format_ids!.includes(f.format_id.id));
   }
 
   // If test_all_formats, test up to max_formats_to_test

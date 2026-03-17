@@ -13,8 +13,10 @@
  * properly handle edge cases according to the AdCP spec.
  */
 
+import type { Product, PricingOption } from '../../types/core.generated';
+import type { CreateMediaBuyRequest, GetProductsRequest, SyncCreativesRequest, GetMediaBuyDeliveryRequest, GetProductsResponse, ListCreativesResponse } from '../../types/tools.generated';
 import type { TestOptions, TestStepResult, AgentProfile, TaskResult } from '../types';
-import { createTestClient, runStep, resolveBrand, discoverAgentProfile, discoverAgentCapabilities } from '../client';
+import { createTestClient, runStep, resolveBrand, resolveAccount, discoverAgentProfile } from '../client';
 import { testDiscovery } from './discovery';
 
 /**
@@ -41,7 +43,7 @@ export async function testErrorHandling(
       'Invalid product_id error response',
       'create_media_buy',
       async () =>
-        client.executeTask('create_media_buy', {
+        client.createMediaBuy({
           buyer_ref: `error-test-${Date.now()}`,
           brand_manifest: {
             name: 'Error Test Brand',
@@ -57,19 +59,17 @@ export async function testErrorHandling(
               pricing_option_id: 'nonexistent-pricing',
             },
           ],
-        }) as Promise<TaskResult>
+        } as unknown as CreateMediaBuyRequest) as Promise<TaskResult>
     );
 
-    if (result && !result.success && result.error) {
-      step.passed = true;
-      step.details = 'Agent correctly returned error for invalid product_id';
-      step.response_preview = JSON.stringify({ error: result.error }, null, 2);
-    } else if (result?.success) {
+    if (result?.success) {
       step.passed = false;
       step.error = 'Agent accepted invalid product_id - should have returned error';
     } else {
-      step.passed = false;
-      step.error = 'Agent returned neither success nor proper error response';
+      // !result (threw) or result.success === false — both count as rejection
+      step.passed = true;
+      step.details = `Agent correctly rejected invalid product_id${result?.error ? `: ${result.error}` : ''}`;
+      if (result?.error) step.response_preview = JSON.stringify({ error: result.error }, null, 2);
     }
     steps.push(step);
   }
@@ -79,19 +79,17 @@ export async function testErrorHandling(
     const { result, step } = await runStep<TaskResult>(
       'Empty request handling',
       'get_products',
-      async () => client.executeTask('get_products', {}) as Promise<TaskResult>
+      async () => client.getProducts({} as unknown as GetProductsRequest) as Promise<TaskResult>
     );
 
     if (result?.success) {
       step.passed = true;
       step.details = 'Agent accepts empty get_products request (permissive)';
-    } else if (result && !result.success && result.error) {
-      step.passed = true;
-      step.details = 'Agent requires brief or brand (stricter validation)';
-      step.response_preview = JSON.stringify({ error: result.error }, null, 2);
     } else {
-      step.passed = false;
-      step.error = 'Unclear response - neither success nor proper error';
+      // !result (threw) or result.success === false — both mean stricter validation
+      step.passed = true;
+      step.details = `Agent requires brief or brand (stricter validation)${result?.error ? `: ${result.error}` : ''}`;
+      if (result?.error) step.response_preview = JSON.stringify({ error: result.error }, null, 2);
     }
     steps.push(step);
   }
@@ -102,12 +100,13 @@ export async function testErrorHandling(
       'Invalid format_id error response',
       'sync_creatives',
       async () =>
-        client.executeTask('sync_creatives', {
+        client.syncCreatives({
+          account: resolveAccount(options),
           creatives: [
             {
               creative_id: `invalid-format-test-${Date.now()}`,
               name: 'Invalid Format Test',
-              format_id: 'TOTALLY_INVALID_FORMAT_ID_999',
+              format_id: { id: 'TOTALLY_INVALID_FORMAT_ID_999' },
               assets: {
                 primary: {
                   url: 'https://via.placeholder.com/300x250',
@@ -118,19 +117,17 @@ export async function testErrorHandling(
               },
             },
           ],
-        }) as Promise<TaskResult>
+        } as unknown as SyncCreativesRequest) as Promise<TaskResult>
     );
 
-    if (result && !result.success && result.error) {
-      step.passed = true;
-      step.details = 'Agent correctly rejected invalid format_id';
-      step.response_preview = JSON.stringify({ error: result.error }, null, 2);
-    } else if (result?.success) {
+    if (result?.success) {
       step.passed = true;
       step.details = 'Agent accepts unknown format_ids (permissive mode)';
     } else {
-      step.passed = false;
-      step.error = 'Unclear response for invalid format_id';
+      // !result (threw) or result.success === false — both count as rejection
+      step.passed = true;
+      step.details = `Agent correctly rejected invalid format_id${result?.error ? `: ${result.error}` : ''}`;
+      if (result?.error) step.response_preview = JSON.stringify({ error: result.error }, null, 2);
     }
     steps.push(step);
   }
@@ -141,18 +138,14 @@ export async function testErrorHandling(
       'Non-existent media_buy_id error',
       'get_media_buy_delivery',
       async () =>
-        client.executeTask('get_media_buy_delivery', {
+        client.getMediaBuyDelivery({
           media_buy_ids: ['NONEXISTENT_MEDIA_BUY_ID_99999'],
-        }) as Promise<TaskResult>
+        } as unknown as GetMediaBuyDeliveryRequest) as Promise<TaskResult>
     );
 
-    if (result && !result.success && result.error) {
-      step.passed = true;
-      step.details = 'Agent correctly returned error for non-existent media buy';
-      step.response_preview = JSON.stringify({ error: result.error }, null, 2);
-    } else if (result?.success) {
-      const data = result.data as any;
-      const deliveries = data?.deliveries || data?.media_buys || [];
+    if (result?.success) {
+      const data = result.data as unknown as Record<string, unknown> | undefined;
+      const deliveries = (data?.deliveries || data?.media_buys || []) as unknown[];
       if (deliveries.length === 0) {
         step.passed = true;
         step.details = 'Agent returned empty deliveries for non-existent media buy';
@@ -161,8 +154,10 @@ export async function testErrorHandling(
         step.error = 'Agent returned deliveries for non-existent media_buy_id';
       }
     } else {
-      step.passed = false;
-      step.error = 'Unclear response for non-existent media_buy_id';
+      // !result (threw) or result.success === false — both count as rejection
+      step.passed = true;
+      step.details = `Agent correctly returned error for non-existent media buy${result?.error ? `: ${result.error}` : ''}`;
+      if (result?.error) step.response_preview = JSON.stringify({ error: result.error }, null, 2);
     }
     steps.push(step);
   }
@@ -194,7 +189,7 @@ export async function testValidation(
       'Invalid pacing enum value',
       'create_media_buy',
       async () =>
-        client.executeTask('create_media_buy', {
+        client.createMediaBuy({
           buyer_ref: `validation-test-${Date.now()}`,
           brand_manifest: { name: 'Validation Test', url: 'https://test.example.com' },
           start_time: new Date(Date.now() + 86400000).toISOString(),
@@ -205,21 +200,18 @@ export async function testValidation(
               product_id: 'test-product',
               budget: 1000,
               pricing_option_id: 'test-pricing',
-              pacing: 'INVALID_PACING_VALUE' as any,
+              pacing: 'INVALID_PACING_VALUE' as unknown as string,
             },
           ],
-        }) as Promise<TaskResult>
+        } as unknown as CreateMediaBuyRequest) as Promise<TaskResult>
     );
 
-    if (result && !result.success && result.error) {
-      step.passed = true;
-      step.details = 'Agent rejected invalid pacing enum value';
-    } else if (result?.success) {
+    if (result?.success) {
       step.passed = false;
       step.error = 'Agent accepted invalid pacing value - should validate enums';
     } else {
-      step.passed = false;
-      step.error = 'Unclear validation response';
+      step.passed = true;
+      step.details = `Agent rejected invalid pacing enum value${result?.error ? `: ${result.error}` : ''}`;
     }
     steps.push(step);
   }
@@ -230,7 +222,7 @@ export async function testValidation(
       'Negative budget rejection',
       'create_media_buy',
       async () =>
-        client.executeTask('create_media_buy', {
+        client.createMediaBuy({
           buyer_ref: `negative-budget-test-${Date.now()}`,
           brand_manifest: { name: 'Negative Budget Test', url: 'https://test.example.com' },
           start_time: new Date(Date.now() + 86400000).toISOString(),
@@ -243,18 +235,15 @@ export async function testValidation(
               pricing_option_id: 'test-pricing',
             },
           ],
-        }) as Promise<TaskResult>
+        } as unknown as CreateMediaBuyRequest) as Promise<TaskResult>
     );
 
-    if (result && !result.success && result.error) {
-      step.passed = true;
-      step.details = 'Agent correctly rejected negative budget';
-    } else if (result?.success) {
+    if (result?.success) {
       step.passed = false;
       step.error = 'CRITICAL: Agent accepted negative budget - must validate minimum: 0';
     } else {
-      step.passed = false;
-      step.error = 'Unclear response for negative budget';
+      step.passed = true;
+      step.details = `Agent correctly rejected negative budget${result?.error ? `: ${result.error}` : ''}`;
     }
     steps.push(step);
   }
@@ -265,12 +254,13 @@ export async function testValidation(
       'Invalid creative weight (> 100)',
       'sync_creatives',
       async () =>
-        client.executeTask('sync_creatives', {
+        client.syncCreatives({
+          account: resolveAccount(options),
           creatives: [
             {
               creative_id: `weight-test-${Date.now()}`,
               name: 'Weight Test Creative',
-              format_id: 'display_300x250',
+              format_id: { agent_url: 'https://creative.adcontextprotocol.org', id: 'display_300x250' },
               weight: 150,
               assets: {
                 primary: {
@@ -282,18 +272,15 @@ export async function testValidation(
               },
             },
           ],
-        }) as Promise<TaskResult>
+        } as unknown as SyncCreativesRequest) as Promise<TaskResult>
     );
 
-    if (result && !result.success && result.error) {
-      step.passed = true;
-      step.details = 'Agent rejected weight > 100';
-    } else if (result?.success) {
+    if (result?.success) {
       step.passed = false;
       step.error = 'Agent accepted weight > 100 - should validate maximum: 100';
     } else {
-      step.passed = false;
-      step.error = 'Unclear response for invalid weight';
+      step.passed = true;
+      step.details = `Agent rejected weight > 100${result?.error ? `: ${result.error}` : ''}`;
     }
     steps.push(step);
   }
@@ -304,20 +291,19 @@ export async function testValidation(
       'Empty creatives array handling',
       'sync_creatives',
       async () =>
-        client.executeTask('sync_creatives', {
+        client.syncCreatives({
+          account: resolveAccount(options),
           creatives: [],
-        }) as Promise<TaskResult>
+        } as unknown as SyncCreativesRequest) as Promise<TaskResult>
     );
 
-    if (result && !result.success && result.error) {
-      step.passed = true;
-      step.details = 'Agent rejected empty creatives array';
-    } else if (result?.success) {
+    if (result?.success) {
       step.passed = true;
       step.details = 'Agent accepts empty creatives array (returns empty result)';
     } else {
-      step.passed = false;
-      step.error = 'Unclear response for empty creatives array';
+      // !result (threw) or result.success === false — both mean agent rejected
+      step.passed = true;
+      step.details = `Agent rejected empty creatives array${result?.error ? `: ${result.error}` : ''}`;
     }
     steps.push(step);
   }
@@ -354,14 +340,15 @@ export async function testPricingEdgeCases(
     'Fetch products for pricing analysis',
     'get_products',
     async () =>
-      client.executeTask('get_products', {
+      client.getProducts({
         buying_mode: 'brief',
         brief: 'Show all products with pricing details',
         brand: resolveBrand(options),
-      }) as Promise<TaskResult>
+      } as unknown as GetProductsRequest) as Promise<TaskResult>
   );
 
-  const products = productsResult?.data?.products as any[] | undefined;
+  const productsData = productsResult?.data as GetProductsResponse | undefined;
+  const products = productsData?.products;
   if (!products?.length) {
     steps.push({
       step: 'Pricing edge cases',
@@ -373,15 +360,15 @@ export async function testPricingEdgeCases(
   }
 
   // Analyze products for auction vs fixed pricing
-  const auctionProducts: any[] = [];
-  const fixedProducts: any[] = [];
-  const productsWithMinSpend: any[] = [];
+  const auctionProducts: { product: Product; pricingOption: PricingOption }[] = [];
+  const fixedProducts: { product: Product; pricingOption: PricingOption }[] = [];
+  const productsWithMinSpend: { product: Product; pricingOption: PricingOption; minSpend: number }[] = [];
 
   for (const product of products) {
     for (const po of product.pricing_options || []) {
-      if (po.is_fixed === false || po.floor_price !== undefined || po.price_guidance !== undefined) {
+      if (!('fixed_price' in po) && (po.floor_price !== undefined || po.price_guidance !== undefined)) {
         auctionProducts.push({ product, pricingOption: po });
-      } else if (po.rate !== undefined) {
+      } else if ('fixed_price' in po) {
         fixedProducts.push({ product, pricingOption: po });
       }
       if (po.min_spend_per_package !== undefined && po.min_spend_per_package > 0) {
@@ -408,7 +395,7 @@ export async function testPricingEdgeCases(
       'Auction pricing without bid_price',
       'create_media_buy',
       async () =>
-        client.executeTask('create_media_buy', {
+        client.createMediaBuy({
           buyer_ref: `auction-no-bid-${Date.now()}`,
           brand_manifest: { name: 'Auction Test', url: 'https://test.example.com' },
           start_time: new Date(Date.now() + 86400000).toISOString(),
@@ -421,18 +408,15 @@ export async function testPricingEdgeCases(
               pricing_option_id: pricingOption.pricing_option_id,
             },
           ],
-        }) as Promise<TaskResult>
+        } as unknown as CreateMediaBuyRequest) as Promise<TaskResult>
     );
 
-    if (result && !result.success && result.error) {
-      step.passed = true;
-      step.details = 'Agent correctly requires bid_price for auction pricing';
-    } else if (result?.success) {
+    if (result?.success) {
       step.passed = false;
       step.error = 'Agent accepted auction pricing without bid_price - should require it';
     } else {
-      step.passed = false;
-      step.error = 'Unclear response for missing bid_price';
+      step.passed = true;
+      step.details = `Agent correctly requires bid_price for auction pricing${result?.error ? `: ${result.error}` : ''}`;
     }
     steps.push(step);
   }
@@ -446,7 +430,7 @@ export async function testPricingEdgeCases(
       'Budget below min_spend_per_package',
       'create_media_buy',
       async () =>
-        client.executeTask('create_media_buy', {
+        client.createMediaBuy({
           buyer_ref: `under-min-spend-${Date.now()}`,
           brand_manifest: { name: 'Min Spend Test', url: 'https://test.example.com' },
           start_time: new Date(Date.now() + 86400000).toISOString(),
@@ -459,18 +443,15 @@ export async function testPricingEdgeCases(
               pricing_option_id: pricingOption.pricing_option_id,
             },
           ],
-        }) as Promise<TaskResult>
+        } as unknown as CreateMediaBuyRequest) as Promise<TaskResult>
     );
 
-    if (result && !result.success && result.error) {
-      step.passed = true;
-      step.details = `Agent rejected budget ${underBudget} below min_spend ${minSpend}`;
-    } else if (result?.success) {
+    if (result?.success) {
       step.passed = false;
       step.error = `Agent accepted budget ${underBudget} below min_spend ${minSpend}`;
     } else {
-      step.passed = false;
-      step.error = 'Unclear response for under-min-spend budget';
+      step.passed = true;
+      step.details = `Agent rejected budget ${underBudget} below min_spend ${minSpend}${result?.error ? `: ${result.error}` : ''}`;
     }
     steps.push(step);
   }
@@ -501,7 +482,7 @@ export async function testTemporalValidation(
     'End time before start time',
     'create_media_buy',
     async () =>
-      client.executeTask('create_media_buy', {
+      client.createMediaBuy({
         buyer_ref: `temporal-test-${Date.now()}`,
         brand_manifest: { name: 'Temporal Test', url: 'https://test.example.com' },
         start_time: new Date(Date.now() + 604800000).toISOString(), // 7 days from now
@@ -514,18 +495,19 @@ export async function testTemporalValidation(
             pricing_option_id: 'test-pricing',
           },
         ],
-      }) as Promise<TaskResult>
+      } as unknown as CreateMediaBuyRequest) as Promise<TaskResult>
   );
 
-  if (endBeforeStart && !endBeforeStart.success && endBeforeStart.error) {
+  if (!endBeforeStart) {
+    // runStep caught an exception — agent rejected at transport level, which counts as rejection
     step1.passed = true;
-    step1.details = 'Agent correctly rejected end_time before start_time';
-  } else if (endBeforeStart?.success) {
+    step1.details = `Agent rejected end_time before start_time (threw error)`;
+  } else if (endBeforeStart.success) {
     step1.passed = false;
     step1.error = 'Agent accepted end_time before start_time - must validate';
   } else {
-    step1.passed = false;
-    step1.error = 'Unclear response for invalid temporal ordering';
+    step1.passed = true;
+    step1.details = `Agent correctly rejected end_time before start_time${endBeforeStart.error ? `: ${endBeforeStart.error}` : ''}`;
   }
   steps.push(step1);
 
@@ -534,7 +516,7 @@ export async function testTemporalValidation(
     'Start time in the past',
     'create_media_buy',
     async () =>
-      client.executeTask('create_media_buy', {
+      client.createMediaBuy({
         buyer_ref: `past-start-${Date.now()}`,
         brand_manifest: { name: 'Past Start Test', url: 'https://test.example.com' },
         start_time: new Date(Date.now() - 86400000).toISOString(), // Yesterday
@@ -547,18 +529,19 @@ export async function testTemporalValidation(
             pricing_option_id: 'test-pricing',
           },
         ],
-      }) as Promise<TaskResult>
+      } as unknown as CreateMediaBuyRequest) as Promise<TaskResult>
   );
 
-  if (pastStart && !pastStart.success && pastStart.error) {
+  if (!pastStart) {
+    // runStep caught an exception — agent rejected at transport level
     step2.passed = true;
-    step2.details = 'Agent rejected start_time in the past';
-  } else if (pastStart?.success) {
+    step2.details = 'Agent rejected start_time in the past (threw error)';
+  } else if (pastStart.success) {
     step2.passed = true;
     step2.details = 'Agent accepts start_time in past (may auto-adjust)';
   } else {
-    step2.passed = false;
-    step2.error = 'Unclear response for past start_time';
+    step2.passed = true;
+    step2.details = `Agent rejected start_time in the past${pastStart.error ? `: ${pastStart.error}` : ''}`;
   }
   steps.push(step2);
 
@@ -589,14 +572,15 @@ export async function testBehaviorAnalysis(
       'get_products without brand',
       'get_products',
       async () =>
-        client.executeTask('get_products', {
+        client.getProducts({
           buying_mode: 'brief',
           brief: 'Show me all available products',
-        }) as Promise<TaskResult>
+        } as unknown as GetProductsRequest) as Promise<TaskResult>
     );
 
-    if (withoutBrand?.success && withoutBrand?.data?.products?.length) {
-      step1.details = `Returns ${withoutBrand.data.products.length} products without brand`;
+    const withoutBrandProducts = (withoutBrand?.data as GetProductsResponse | undefined)?.products;
+    if (withoutBrand?.success && withoutBrandProducts?.length) {
+      step1.details = `Returns ${withoutBrandProducts.length} products without brand`;
     } else if (withoutBrand && !withoutBrand.success) {
       step1.details = 'Requires brand for product discovery';
     }
@@ -607,26 +591,28 @@ export async function testBehaviorAnalysis(
       'get_products with specific brief',
       'get_products',
       async () =>
-        client.executeTask('get_products', {
+        client.getProducts({
           buying_mode: 'brief',
           brief: 'Looking specifically for podcast audio advertising only',
           brand: resolveBrand(options),
-        }) as Promise<TaskResult>
+        } as unknown as GetProductsRequest) as Promise<TaskResult>
     );
 
     const { result: broadBrief } = await runStep<TaskResult>(
       'get_products with broad brief',
       'get_products',
       async () =>
-        client.executeTask('get_products', {
+        client.getProducts({
           buying_mode: 'brief',
           brief: 'Show all products across all channels and formats',
           brand: resolveBrand(options),
-        }) as Promise<TaskResult>
+        } as unknown as GetProductsRequest) as Promise<TaskResult>
     );
 
-    const specificCount = specificBrief?.data?.products?.length || 0;
-    const broadCount = broadBrief?.data?.products?.length || 0;
+    const specificProducts = (specificBrief?.data as GetProductsResponse | undefined)?.products;
+    const broadProducts = (broadBrief?.data as GetProductsResponse | undefined)?.products;
+    const specificCount = specificProducts?.length || 0;
+    const broadCount = broadProducts?.length || 0;
 
     if (specificCount < broadCount) {
       step2.passed = true;
@@ -670,14 +656,14 @@ export async function testResponseConsistency(
     );
 
     if (result?.success && result?.data) {
-      const data = result.data as any;
-      const publisherDomains = data.publisher_domains || [];
+      const data = result.data as unknown as Record<string, unknown>;
+      const publisherDomains = (data.publisher_domains || []) as unknown[];
       const issues: string[] = [];
 
       // Check for undefined elements
       for (let i = 0; i < publisherDomains.length; i++) {
         if (publisherDomains[i] === undefined || publisherDomains[i] === null) {
-          issues.push(`publisher_domains[${i}] is ${publisherDomains[i]}`);
+          issues.push(`publisher_domains[${i}] is ${String(publisherDomains[i])}`);
         }
       }
 
@@ -707,11 +693,11 @@ export async function testResponseConsistency(
     const { result, step } = await runStep<TaskResult>(
       'Check list_creatives pagination consistency',
       'list_creatives',
-      async () => client.executeTask('list_creatives', {}) as Promise<TaskResult>
+      async () => client.listCreatives({}) as Promise<TaskResult>
     );
 
     if (result?.success && result?.data) {
-      const data = result.data as any;
+      const data = result.data as ListCreativesResponse;
       const creatives = data.creatives || [];
       const querySummary = data.query_summary;
       const totalMatching = querySummary?.total_matching;

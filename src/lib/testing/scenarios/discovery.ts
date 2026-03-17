@@ -4,6 +4,7 @@
  * Tests product discovery, format listing, and property listing.
  */
 
+import type { ListCreativeFormatsResponse, Format } from '../../types/tools.generated';
 import type { TestOptions, TestStepResult, AgentProfile, TaskResult } from '../types';
 import { createTestClient, runStep, discoverAgentProfile, discoverAgentCapabilities } from '../client';
 
@@ -38,18 +39,19 @@ export async function testDiscovery(
     const { result, step } = await runStep<TaskResult>(
       'List creative formats',
       'list_creative_formats',
-      async () => client.executeTask('list_creative_formats', {}) as Promise<TaskResult>
+      async () => client.listCreativeFormats({}) as Promise<TaskResult>
     );
 
     if (result?.success && result?.data) {
-      const data = result.data as any;
-      const formatCount = data.format_ids?.length || data.formats?.length || 0;
+      const data = result.data as ListCreativeFormatsResponse;
+      const formats: Format[] = data.formats || [];
       const creativeAgents = data.creative_agents || [];
+      const formatCount = formats.length;
       step.details = `Found ${formatCount} format(s), ${creativeAgents.length} creative agent(s)`;
       step.response_preview = JSON.stringify(
         {
-          format_ids: (data.format_ids || data.formats?.map((f: any) => f.format_id))?.slice(0, 5),
-          creative_agents: creativeAgents.map((a: any) => a.agent_url || a.url),
+          format_ids: formats.map((f) => f.format_id).slice(0, 5),
+          creative_agents: creativeAgents.map((a) => a.agent_url),
         },
         null,
         2
@@ -69,7 +71,8 @@ export async function testDiscovery(
       async () => client.executeTask('list_authorized_properties', {}) as Promise<TaskResult>
     );
 
-    const publisherDomains = result?.data?.publisher_domains as string[] | undefined;
+    const data = result?.data as unknown as Record<string, unknown> | undefined;
+    const publisherDomains = data?.publisher_domains as string[] | undefined;
     if (result?.success && publisherDomains) {
       step.details = `Found ${publisherDomains.length} publisher domain(s)`;
       step.response_preview = JSON.stringify(

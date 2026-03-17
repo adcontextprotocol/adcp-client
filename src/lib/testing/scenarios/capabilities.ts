@@ -20,6 +20,7 @@ import {
   type AdcpCapabilities,
   type AdcpProtocol,
 } from '../../utils/capabilities';
+import type { GetAdCPCapabilitiesResponse } from '../../types/tools.generated';
 
 /**
  * Test: Capability Discovery
@@ -53,7 +54,7 @@ export async function testCapabilityDiscovery(
     const { result, step } = await runStep<TaskResult>(
       'Get AdCP capabilities (v3)',
       'get_adcp_capabilities',
-      async () => client.executeTask('get_adcp_capabilities', {}) as Promise<TaskResult>
+      async () => client.getAdcpCapabilities({}) as Promise<TaskResult>
     );
 
     if (result?.success && result?.data) {
@@ -80,7 +81,7 @@ export async function testCapabilityDiscovery(
       steps.push(step);
 
       // Validate response structure
-      const { steps: validationSteps } = validateCapabilitiesResponse(result.data, profile.tools);
+      const { steps: validationSteps } = validateCapabilitiesResponse(result.data as GetAdCPCapabilitiesResponse, profile.tools);
       steps.push(...validationSteps);
     } else if (result && !result.success) {
       step.passed = false;
@@ -164,7 +165,7 @@ export async function testCapabilityDiscovery(
 /**
  * Validate the structure and content of a get_adcp_capabilities response
  */
-function validateCapabilitiesResponse(response: any, tools: string[]): { steps: TestStepResult[] } {
+function validateCapabilitiesResponse(response: GetAdCPCapabilitiesResponse, _tools: string[]): { steps: TestStepResult[] } {
   const steps: TestStepResult[] = [];
 
   // Check for required fields
@@ -183,7 +184,7 @@ function validateCapabilitiesResponse(response: any, tools: string[]): { steps: 
 
   // Check for v3 version
   if (hasAdcp) {
-    const majorVersions = response.adcp.major_versions as number[];
+    const majorVersions = response.adcp.major_versions;
     const hasV3 = majorVersions.includes(3);
 
     steps.push({
@@ -198,20 +199,21 @@ function validateCapabilitiesResponse(response: any, tools: string[]): { steps: 
 
   // Check media_buy features if media_buy protocol is supported
   if (hasProtocols && response.supported_protocols.includes('media_buy')) {
-    const hasMediaBuyFeatures = response.media_buy?.features;
+    const mediaBuy = response.media_buy;
+    const hasMediaBuyFeatures = mediaBuy?.features;
 
     steps.push({
       step: 'Validate media_buy features',
       passed: true, // Features are optional
       duration_ms: 0,
       details: hasMediaBuyFeatures
-        ? `Features: inline_creative=${response.media_buy.features.inline_creative_management}, property_list=${response.media_buy.features.property_list_filtering}, content_standards=${response.media_buy.features.content_standards}`
+        ? `Features: inline_creative=${mediaBuy.features?.inline_creative_management}, property_list=${mediaBuy.features?.property_list_filtering}, content_standards=${mediaBuy.features?.content_standards}`
         : 'No media_buy.features declared (all features assumed false)',
     });
   }
 
   // Check extensions
-  const extensions = response.extensions_supported || [];
+  const extensions = response.extensions_supported ?? [];
   if (extensions.length > 0) {
     steps.push({
       step: 'Check extensions',
@@ -299,8 +301,9 @@ function crossValidateProtocolsAndTools(capabilities: AdcpCapabilities, tools: s
     step: 'Cross-validate protocols and tools',
     passed: issues.length === 0,
     duration_ms: 0,
+    error: issues.length > 0 ? issues.join('; ') : undefined,
     details: allMessages.length === 0 ? 'Reported protocols match available tools' : allMessages.join('; '),
-    warnings: allMessages.length > 0 ? allMessages : undefined,
+    warnings: warnings.length > 0 ? warnings : undefined,
     response_preview: hasDiffs
       ? JSON.stringify(
           {

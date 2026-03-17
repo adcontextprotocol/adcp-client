@@ -5,7 +5,15 @@
 import { ADCPMultiAgentClient } from '../core/ADCPMultiAgentClient';
 import { getFormatAssets, usesDeprecatedAssetsField } from '../utils/format-assets';
 import { brandManifestToBrandReference } from '../types/compat';
-import type { BrandReference } from '../types/tools.generated';
+import type { Product } from '../types/core.generated';
+import type {
+  GetProductsResponse,
+  ListCreativeFormatsResponse,
+  Format,
+  GetSignalsResponse,
+  AccountReference,
+  BrandReference,
+} from '../types/tools.generated';
 import type { TestOptions, TestStepResult, AgentProfile, TaskResult, Logger } from './types';
 
 const DEFAULT_BRAND_REF: BrandReference = { domain: 'test.example.com' };
@@ -29,6 +37,19 @@ export function resolveBrand(options: TestOptions): BrandReference {
     (options.brand_manifest && brandManifestToBrandReference(options.brand_manifest)) ||
     DEFAULT_BRAND_REF
   );
+}
+
+/**
+ * Resolve the account reference to use for a test call.
+ * Uses the brand+operator form of AccountReference.
+ */
+export function resolveAccount(options: TestOptions): AccountReference {
+  const brand = resolveBrand(options);
+  return {
+    brand,
+    operator: brand.domain,
+    sandbox: options.sandbox,
+  };
 }
 
 // Default console-based logger
@@ -198,11 +219,13 @@ export async function discoverAgentCapabilities(
   const { result, step } = await runStep<TaskResult>(
     'Discover products for capability analysis',
     'get_products',
-    async () => client.executeTask('get_products', getProductsParams) as Promise<TaskResult>
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- bypasses strict request typing
+    async () => client.getProducts(getProductsParams as any) as Promise<TaskResult>
   );
 
-  if (result?.success && result?.data?.products) {
-    const products = result.data.products as any[];
+  if (result?.success && result?.data) {
+    const responseData = result.data as GetProductsResponse;
+    const products: Product[] = responseData.products ?? [];
 
     // Extract unique channels
     const channels = new Set<string>();
@@ -224,7 +247,7 @@ export async function discoverAgentCapabilities(
       // Pricing models
       if (product.pricing_options) {
         for (const po of product.pricing_options) {
-          if (po.model) pricingModels.add(po.model);
+          if (po.pricing_model) pricingModels.add(po.pricing_model);
         }
       }
       // Format IDs
@@ -271,34 +294,32 @@ export async function discoverCreativeFormats(
 ): Promise<{ formats: AgentProfile['supported_formats']; step: TestStepResult }> {
   const formats: AgentProfile['supported_formats'] = [];
 
-  if (!profile.tools.includes('list_creative_formats') && !profile.tools.includes('list_formats')) {
+  if (!profile.tools.includes('list_creative_formats')) {
     return {
       formats,
       step: {
         step: 'Discover creative formats',
         passed: false,
         duration_ms: 0,
-        error: 'Agent does not support list_creative_formats or list_formats',
+        error: 'Agent does not support list_creative_formats',
       },
     };
   }
 
-  const toolName = profile.tools.includes('list_creative_formats') ? 'list_creative_formats' : 'list_formats';
-
   const { result, step } = await runStep<TaskResult>(
     'Discover creative formats',
-    toolName,
-    async () => client.executeTask(toolName, {}) as Promise<TaskResult>
+    'list_creative_formats',
+    async () => client.listCreativeFormats({}) as Promise<TaskResult>
   );
 
   if (result?.success && result?.data) {
-    const data = result.data as any;
-    const rawFormats = data.formats || data.format_ids || [];
+    const responseData = result.data as ListCreativeFormatsResponse;
+    const rawFormats: Format[] = responseData.formats ?? [];
     const deprecatedFormats: string[] = [];
 
     for (const format of rawFormats) {
       const formatInfo: NonNullable<AgentProfile['supported_formats']>[0] = {
-        format_id: format.format_id?.id || format.format_id || format.id || 'unknown',
+        format_id: format.format_id,
         name: format.name,
         type: format.type,
         required_assets: [],
@@ -307,7 +328,8 @@ export async function discoverCreativeFormats(
 
       // Check for deprecated assets_required usage
       if (usesDeprecatedAssetsField(format)) {
-        deprecatedFormats.push(formatInfo.format_id);
+        const displayId = typeof formatInfo.format_id === 'object' ? formatInfo.format_id.id : formatInfo.format_id;
+        deprecatedFormats.push(displayId);
       }
 
       // Extract asset requirements from format spec using format-assets utilities
@@ -353,7 +375,7 @@ export async function discoverCreativeFormats(
     }
   } else if (result && !result.success) {
     step.passed = false;
-    step.error = result.error || `${toolName} failed`;
+    step.error = result.error || 'list_creative_formats failed';
   }
 
   return { formats, step };
@@ -385,20 +407,21 @@ export async function discoverSignals(
     'Discover available signals',
     'get_signals',
     async () =>
-      client.executeTask('get_signals', {
+      client.getSignals({
         brief: options.brief || 'Show me all available audience signals and segments',
-      }) as Promise<TaskResult>
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- bypasses strict request typing
+      } as any) as Promise<TaskResult>
   );
 
   if (result?.success && result?.data) {
-    const data = result.data as any;
-    const rawSignals = data.signals || [];
+    const responseData = result.data as GetSignalsResponse;
+    const rawSignals = responseData.signals ?? [];
 
     for (const signal of rawSignals) {
       signals.push({
-        signal_id: signal.signal_id || signal.id,
+        signal_id: signal.signal_agent_segment_id,
         name: signal.name,
-        type: signal.type || signal.signal_type,
+        type: signal.signal_type,
       });
     }
 

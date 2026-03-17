@@ -232,6 +232,69 @@ adcp mcp https://agent.example.com/mcp get_products '{"brief":"test"}' --json > 
 adcp mcp https://agent.example.com/mcp get_products '{"brief":"test"}' --json | jq '.products[0].name'
 ```
 
+## Compliance and Merchandising Assessments
+
+The CLI includes two higher-level evaluation flows on top of the existing scenario runner.
+
+### `adcp comply`
+
+Runs all applicable capability tracks against an agent and reports the full picture instead of stopping at the first failure.
+
+```bash
+# Run all applicable tracks
+adcp comply myagent
+
+# Limit to a subset of tracks
+adcp comply myagent --tracks core,products,media_buy
+
+# Use raw JSON in CI
+adcp comply https://agent.example.com/mcp --auth "$ADCP_AUTH_TOKEN" --json
+```
+
+Available tracks:
+
+- `core`
+- `products`
+- `media_buy`
+- `creative`
+- `reporting`
+- `governance`
+- `signals`
+- `si`
+- `audiences`
+
+Useful flags:
+
+- `--tracks core,products,...`: Restrict the run to specific tracks
+- `--brief TEXT`: Override the default sample discovery brief
+- `--no-dry-run`: Use live mode instead of dry-run mode
+- `--json`: Emit machine-readable output for automation
+
+### `adcp convince`
+
+Runs sample buyer briefs against `get_products` and evaluates the merchandising quality of the responses with an LLM.
+
+```bash
+# Use Anthropic via env var
+ANTHROPIC_API_KEY=sk-ant-... adcp convince myagent
+
+# Run only selected briefs
+adcp convince myagent --anthropic-key sk-ant-... --briefs luxury_auto_ev,ecommerce_holiday
+
+# List the built-in brief library
+adcp convince myagent --list-briefs
+```
+
+Useful flags:
+
+- `--anthropic-key KEY`: Use Anthropic for evaluation
+- `--gemini-key KEY`: Use Gemini for evaluation
+- `--model MODEL`: Override the default evaluator model
+- `--briefs id1,id2`: Restrict evaluation to selected sample briefs
+- `--json`: Emit machine-readable output for automation
+
+`adcp convince` is advisory rather than pass/fail. It is intended to help developers improve response quality, merchandising, and product-fit to realistic briefs.
+
 ## Environment Variables
 
 ### ADCP_AUTH_TOKEN
@@ -244,6 +307,17 @@ adcp mcp https://agent.example.com/mcp get_products '{"brief":"test"}'
 ```
 
 The `--auth` flag overrides this environment variable.
+
+### `ANTHROPIC_API_KEY` / `GEMINI_API_KEY`
+
+Set a default LLM API key for `adcp convince`:
+
+```bash
+export ANTHROPIC_API_KEY="sk-ant-..."
+adcp convince myagent
+```
+
+CLI flags override environment variables when both are present.
 
 ### ADCP_DEBUG
 

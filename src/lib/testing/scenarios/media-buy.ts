@@ -8,26 +8,33 @@
  * - sync_creatives
  */
 
-import type { AccountReference } from '../../types/tools.generated';
+import type {
+  AccountReference,
+  SyncCreativesSuccess,
+  ListCreativesResponse,
+  SyncAudiencesSuccess,
+  ListAccountsResponse,
+} from '../../types/tools.generated';
+import type { Product, PricingOption } from '../../types/core.generated';
 import type { TestOptions, TestStepResult, AgentProfile, TaskResult } from '../types';
-import { createTestClient, runStep, discoverAgentProfile, discoverAgentCapabilities, resolveBrand } from '../client';
+import { createTestClient, runStep, discoverAgentProfile, resolveBrand, resolveAccount } from '../client';
 import { testDiscovery } from './discovery';
 
 /**
  * Find a suitable product for testing based on options
  */
-export function selectProduct(products: any[], options: TestOptions): any | null {
+export function selectProduct(products: Product[], options: TestOptions): Product | null {
   // If channels specified, filter to matching products
   let candidates = products;
 
   if (options.channels?.length) {
-    candidates = products.filter(p => p.channels?.some((ch: string) => options.channels!.includes(ch)));
+    candidates = products.filter(p => p.channels?.some(ch => options.channels!.includes(ch)));
   }
 
   // If pricing models specified, filter further
   if (options.pricing_models?.length) {
     candidates = candidates.filter(p =>
-      p.pricing_options?.some((po: any) => options.pricing_models!.includes(po.model))
+      p.pricing_options?.some((po: PricingOption) => options.pricing_models!.includes(po.pricing_model))
     );
   }
 
@@ -38,11 +45,11 @@ export function selectProduct(products: any[], options: TestOptions): any | null
 /**
  * Select a pricing option from a product
  */
-export function selectPricingOption(product: any, preferredModels?: string[]): any | null {
+export function selectPricingOption(product: Product, preferredModels?: string[]): PricingOption | null {
   const options = product.pricing_options || [];
 
   if (preferredModels?.length) {
-    const preferred = options.find((po: any) => preferredModels.includes(po.model));
+    const preferred = options.find((po: PricingOption) => preferredModels.includes(po.pricing_model));
     if (preferred) return preferred;
   }
 
@@ -53,23 +60,23 @@ export function selectPricingOption(product: any, preferredModels?: string[]): a
  * Build a create_media_buy request
  */
 export function buildCreateMediaBuyRequest(
-  product: any,
-  pricingOption: any,
+  product: Product,
+  pricingOption: PricingOption,
   options: TestOptions,
   extras: {
-    inline_creatives?: any[];
+    inline_creatives?: Record<string, unknown>[];
     creative_ids?: string[];
   } = {}
-): any {
+): Record<string, unknown> {
   const budget = options.budget || 1000;
   const now = new Date();
   const startTime = new Date(now.getTime() + 24 * 60 * 60 * 1000); // Tomorrow
   const endTime = new Date(startTime.getTime() + 7 * 24 * 60 * 60 * 1000); // 7 days later
 
   const isAuction =
-    pricingOption.model === 'auction' || pricingOption.is_fixed === false || pricingOption.floor_price !== undefined;
+    !('fixed_price' in pricingOption) && (pricingOption.floor_price !== undefined || pricingOption.price_guidance !== undefined);
 
-  const packageRequest: any = {
+  const packageRequest: Record<string, unknown> = {
     buyer_ref: `pkg-test-${Date.now()}`,
     product_id: product.product_id,
     budget,
@@ -131,14 +138,16 @@ export async function testCreateMediaBuy(
     'Fetch products for media buy',
     'get_products',
     async () =>
-      client.executeTask('get_products', {
+      client.getProducts({
         buying_mode: 'brief',
         brief: options.brief || 'Looking for display advertising products',
         brand: resolveBrand(options),
-      }) as Promise<TaskResult>
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- intentional: test request bypasses strict typing
+      } as any) as Promise<TaskResult>
   );
 
-  const products = productsResult?.data?.products as any[] | undefined;
+  const productsData = productsResult?.data as Record<string, unknown> | undefined;
+  const products = productsData?.products as Product[] | undefined;
   if (!productsResult?.success || !products?.length) {
     steps.push({
       step: 'Create media buy',
@@ -151,6 +160,16 @@ export async function testCreateMediaBuy(
   }
 
   const product = selectProduct(products, options);
+  if (!product) {
+    steps.push({
+      step: 'Create media buy',
+      task: 'create_media_buy',
+      passed: false,
+      duration_ms: 0,
+      error: 'No suitable product found',
+    });
+    return { steps, profile };
+  }
   const pricingOption = selectPricingOption(product, options.pricing_models);
 
   if (!pricingOption) {
@@ -170,16 +189,18 @@ export async function testCreateMediaBuy(
   const { result: createResult, step: createStep } = await runStep<TaskResult>(
     'Create media buy',
     'create_media_buy',
-    async () => client.executeTask('create_media_buy', createRequest) as Promise<TaskResult>
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- intentional: test request bypasses strict typing
+    async () => client.createMediaBuy(createRequest as any) as Promise<TaskResult>
   );
 
   let mediaBuyId: string | undefined;
 
   if (createResult?.success && createResult?.data) {
-    const mediaBuy = createResult.data as any;
-    mediaBuyId = mediaBuy.media_buy_id || mediaBuy.media_buy?.media_buy_id;
-    const status = mediaBuy.status || mediaBuy.media_buy?.status;
-    const packages = mediaBuy.packages || mediaBuy.media_buy?.packages;
+    const mediaBuy = createResult.data as unknown as Record<string, unknown>;
+    const nested = mediaBuy.media_buy as Record<string, unknown> | undefined;
+    mediaBuyId = (mediaBuy.media_buy_id || nested?.media_buy_id) as string | undefined;
+    const status = (mediaBuy.status || nested?.status) as string | undefined;
+    const packages = (mediaBuy.packages || nested?.packages) as unknown[] | undefined;
     createStep.details = `Created media buy: ${mediaBuyId}, status: ${status}`;
     createStep.created_id = mediaBuyId;
     createStep.response_preview = JSON.stringify(
@@ -187,7 +208,7 @@ export async function testCreateMediaBuy(
         media_buy_id: mediaBuyId,
         status,
         packages_count: packages?.length,
-        pricing_model: pricingOption.model,
+        pricing_model: pricingOption.pricing_model,
         product_name: product.name,
       },
       null,
@@ -227,7 +248,7 @@ export async function testFullSalesFlow(
       'Update media buy (increase budget)',
       'update_media_buy',
       async () =>
-        client.executeTask('update_media_buy', {
+        client.updateMediaBuy({
           media_buy_id: mediaBuyId,
           packages: [
             {
@@ -235,16 +256,18 @@ export async function testFullSalesFlow(
               budget: (options.budget || 1000) * 1.5,
             },
           ],
-        }) as Promise<TaskResult>
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- intentional: test request bypasses strict typing
+        } as any) as Promise<TaskResult>
     );
 
     if (updateResult?.success && updateResult?.data) {
-      const data = updateResult.data as any;
-      const status = data.status || data.media_buy?.status;
+      const data = updateResult.data as unknown as Record<string, unknown>;
+      const nested = data.media_buy as Record<string, unknown> | undefined;
+      const status = (data.status || nested?.status) as string | undefined;
       updateStep.details = `Updated media buy, status: ${status}`;
       updateStep.response_preview = JSON.stringify(
         {
-          media_buy_id: data.media_buy_id || data.media_buy?.media_buy_id,
+          media_buy_id: (data.media_buy_id || nested?.media_buy_id) as string | undefined,
           status,
         },
         null,
@@ -263,17 +286,20 @@ export async function testFullSalesFlow(
       'Get delivery metrics',
       'get_media_buy_delivery',
       async () =>
-        client.executeTask('get_media_buy_delivery', {
+        client.getMediaBuyDelivery({
           media_buy_ids: [mediaBuyId],
-        }) as Promise<TaskResult>
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- intentional: test request bypasses strict typing
+        } as any) as Promise<TaskResult>
     );
 
     if (deliveryResult?.success && deliveryResult?.data) {
-      const delivery = deliveryResult.data as any;
+      const delivery = deliveryResult.data as unknown as Record<string, unknown>;
+      const deliveries = delivery.deliveries as unknown[] | undefined;
+      const mediaBuys = delivery.media_buys as unknown[] | undefined;
       deliveryStep.details = `Retrieved delivery metrics`;
       deliveryStep.response_preview = JSON.stringify(
         {
-          has_deliveries: !!(delivery.deliveries?.length || delivery.media_buys?.length),
+          has_deliveries: !!(deliveries?.length || mediaBuys?.length),
         },
         null,
         2
@@ -315,19 +341,26 @@ export async function testCreativeSync(
   }
 
   // Get format info first
-  let formatId = 'display_300x250'; // Default
+  let formatId: Record<string, unknown> = { agent_url: 'https://creative.adcontextprotocol.org', id: 'display_300x250' };
   if (profile.tools.includes('list_creative_formats')) {
     const { result: formatsResult } = await runStep<TaskResult>(
       'Get formats for creative',
       'list_creative_formats',
-      async () => client.executeTask('list_creative_formats', {}) as Promise<TaskResult>
+      async () => client.listCreativeFormats({}) as Promise<TaskResult>
     );
 
     if (formatsResult?.success && formatsResult?.data) {
-      const data = formatsResult.data as any;
-      const firstFormat = data.format_ids?.[0] || data.formats?.[0];
+      const data = formatsResult.data as unknown as Record<string, unknown>;
+      const formatIds = data.format_ids as unknown[] | undefined;
+      const formats = data.formats as Record<string, unknown>[] | undefined;
+      const firstFormat = formatIds?.[0] || formats?.[0];
       if (firstFormat) {
-        formatId = typeof firstFormat === 'string' ? firstFormat : firstFormat.id || firstFormat.format_id;
+        if (typeof firstFormat === 'string') {
+          formatId = { id: firstFormat };
+        } else {
+          const formatObj = firstFormat as Record<string, unknown>;
+          formatId = (formatObj.format_id as Record<string, unknown>) || formatObj;
+        }
       }
     }
   }
@@ -352,21 +385,23 @@ export async function testCreativeSync(
     'Sync creative to library',
     'sync_creatives',
     async () =>
-      client.executeTask('sync_creatives', {
+      client.syncCreatives({
+        account: resolveAccount(options),
         creatives: [testCreative],
-      }) as Promise<TaskResult>
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- intentional: test request bypasses strict typing
+      } as any) as Promise<TaskResult>
   );
 
   if (syncResult?.success && syncResult?.data) {
-    const data = syncResult.data as any;
+    const data = syncResult.data as unknown as SyncCreativesSuccess;
     const creatives = data.creatives || [];
-    const actions = creatives.map((c: any) => c.action);
+    const actions = creatives.map(c => c.action);
     syncStep.details = `Synced ${creatives.length} creative(s), actions: ${actions.join(', ')}`;
     syncStep.response_preview = JSON.stringify(
       {
         creatives_count: creatives.length,
         actions: actions,
-        creative_ids: creatives.map((c: any) => c.creative_id),
+        creative_ids: creatives.map(c => c.creative_id),
       },
       null,
       2
@@ -382,11 +417,11 @@ export async function testCreativeSync(
     const { result: listResult, step: listStep } = await runStep<TaskResult>(
       'List creatives in library',
       'list_creatives',
-      async () => client.executeTask('list_creatives', {}) as Promise<TaskResult>
+      async () => client.listCreatives({}) as Promise<TaskResult>
     );
 
     if (listResult?.success && listResult?.data) {
-      const data = listResult.data as any;
+      const data = listResult.data as unknown as ListCreativesResponse;
       const creatives = data.creatives || [];
       const querySummary = data.query_summary;
       const totalMatching = querySummary?.total_matching;
@@ -412,7 +447,7 @@ export async function testCreativeSync(
           {
             creatives_count: creatives.length,
             total_matching: totalMatching,
-            statuses: Array.from(new Set(creatives.map((c: any) => c.status))),
+            statuses: Array.from(new Set(creatives.map(c => c.status))),
           },
           null,
           2
@@ -459,14 +494,16 @@ export async function testCreativeInline(
     'Fetch products for inline creative test',
     'get_products',
     async () =>
-      client.executeTask('get_products', {
+      client.getProducts({
         buying_mode: 'brief',
         brief: options.brief || 'Looking for display advertising products',
         brand: resolveBrand(options),
-      }) as Promise<TaskResult>
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- intentional: test request bypasses strict typing
+      } as any) as Promise<TaskResult>
   );
 
-  const products = productsResult?.data?.products as any[] | undefined;
+  const inlineProductsData = productsResult?.data as Record<string, unknown> | undefined;
+  const products = inlineProductsData?.products as Product[] | undefined;
   if (!productsResult?.success || !products?.length) {
     steps.push({
       step: 'Create media buy with inline creatives',
@@ -479,6 +516,16 @@ export async function testCreativeInline(
   }
 
   const product = selectProduct(products, options);
+  if (!product) {
+    steps.push({
+      step: 'Create media buy with inline creatives',
+      task: 'create_media_buy',
+      passed: false,
+      duration_ms: 0,
+      error: 'No suitable product found',
+    });
+    return { steps, profile };
+  }
   const pricingOption = selectPricingOption(product, options.pricing_models);
 
   if (!pricingOption) {
@@ -492,11 +539,11 @@ export async function testCreativeInline(
     return { steps, profile };
   }
 
-  // Get format for inline creative
-  let formatId = 'display_300x250';
+  // Get format for inline creative — preserve full FormatID object
+  let formatId: Record<string, unknown> = { agent_url: 'https://creative.adcontextprotocol.org', id: 'display_300x250' };
   if (product.format_ids?.length) {
     const fid = product.format_ids[0];
-    formatId = typeof fid === 'string' ? fid : fid.id || fid.format_id || formatId;
+    formatId = fid as unknown as Record<string, unknown>;
   }
 
   // Build inline creative
@@ -520,15 +567,21 @@ export async function testCreativeInline(
   const { result: createResult, step: createStep } = await runStep<TaskResult>(
     'Create media buy with inline creative',
     'create_media_buy',
-    async () => client.executeTask('create_media_buy', createRequest) as Promise<TaskResult>
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- intentional: test request bypasses strict typing
+    async () => client.createMediaBuy(createRequest as any) as Promise<TaskResult>
   );
 
   if (createResult?.success && createResult?.data) {
-    const mediaBuy = createResult.data as any;
-    const mediaBuyId = mediaBuy.media_buy_id || mediaBuy.media_buy?.media_buy_id;
-    const status = mediaBuy.status || mediaBuy.media_buy?.status;
-    const packages = mediaBuy.packages || mediaBuy.media_buy?.packages;
-    const hasCreatives = packages?.some((p: any) => p.creatives?.length || p.creative_ids?.length);
+    const mediaBuy = createResult.data as unknown as Record<string, unknown>;
+    const nested = mediaBuy.media_buy as Record<string, unknown> | undefined;
+    const mediaBuyId = (mediaBuy.media_buy_id || nested?.media_buy_id) as string | undefined;
+    const status = (mediaBuy.status || nested?.status) as string | undefined;
+    const packages = (mediaBuy.packages || nested?.packages) as Record<string, unknown>[] | undefined;
+    const hasCreatives = packages?.some(p => {
+      const creatives = p.creatives as unknown[] | undefined;
+      const creativeIds = p.creative_ids as unknown[] | undefined;
+      return creatives?.length || creativeIds?.length;
+    });
 
     createStep.details = `Created media buy with inline creative: ${mediaBuyId}`;
     createStep.created_id = mediaBuyId;
@@ -581,7 +634,8 @@ export async function resolveAccountForAudiences(
       async () => listAccounts({ sandbox: true })
     );
 
-    const sandboxAccounts = sandboxResult?.success ? ((sandboxResult.data as any)?.accounts ?? []) : [];
+    const sandboxData = sandboxResult?.success ? (sandboxResult.data as unknown as ListAccountsResponse | undefined) : undefined;
+    const sandboxAccounts = sandboxData?.accounts ?? [];
     if (sandboxAccounts[0]?.account_id) {
       sandboxStep.details = `Using sandbox account: ${sandboxAccounts[0].account_id}`;
       steps.push(sandboxStep);
@@ -615,7 +669,8 @@ export async function resolveAccountForAudiences(
     );
 
     if (accountsResult?.success && accountsResult?.data) {
-      const accounts = (accountsResult.data as any).accounts ?? [];
+      const accountsData = accountsResult.data as unknown as ListAccountsResponse;
+      const accounts = accountsData.accounts ?? [];
       if (accounts[0]?.account_id) {
         accountsStep.details = `Using account: ${accounts[0].account_id}`;
         steps.push(accountsStep);
@@ -664,7 +719,8 @@ export async function testSyncAudiences(
   const { accountRef, steps: accountSteps } = await resolveAccountForAudiences(
     options,
     profile.tools,
-    async params => client.executeTask('list_accounts', params) as Promise<TaskResult>
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- intentional: test request bypasses strict typing
+    async params => client.listAccounts(params as any) as Promise<TaskResult>
   );
   steps.push(...accountSteps);
 
@@ -685,18 +741,20 @@ export async function testSyncAudiences(
     'Discover existing audiences (discovery-only)',
     'sync_audiences',
     async () =>
-      client.executeTask('sync_audiences', {
+      client.syncAudiences({
         account: accountRef,
-      }) as Promise<TaskResult>
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- intentional: test request bypasses strict typing
+      } as any) as Promise<TaskResult>
   );
 
   if (discoveryResult?.success && discoveryResult?.data) {
-    const audiences = (discoveryResult.data as any).audiences ?? [];
+    const discoveryData = discoveryResult.data as unknown as SyncAudiencesSuccess;
+    const audiences = discoveryData.audiences ?? [];
     discoveryStep.details = `Found ${audiences.length} existing audience(s)`;
     discoveryStep.response_preview = JSON.stringify(
       {
         existing_audiences: audiences.length,
-        audience_ids: audiences.map((a: any) => a.audience_id).slice(0, 5),
+        audience_ids: audiences.map(a => a.audience_id).slice(0, 5),
       },
       null,
       2
@@ -718,7 +776,7 @@ export async function testSyncAudiences(
     'Create test audience',
     'sync_audiences',
     async () =>
-      client.executeTask('sync_audiences', {
+      client.syncAudiences({
         account: accountRef,
         audiences: [
           {
@@ -727,12 +785,14 @@ export async function testSyncAudiences(
             add: [{ hashed_email: TEST_HASHED_EMAIL }, { hashed_phone: TEST_HASHED_PHONE }],
           },
         ],
-      }) as Promise<TaskResult>
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- intentional: test request bypasses strict typing
+      } as any) as Promise<TaskResult>
   );
 
   if (createResult?.success && createResult?.data) {
-    const audiences = (createResult.data as any).audiences ?? [];
-    const testAudience = audiences.find((a: any) => a.audience_id === testAudienceId);
+    const createData = createResult.data as unknown as SyncAudiencesSuccess;
+    const audiences = createData.audiences ?? [];
+    const testAudience = audiences.find(a => a.audience_id === testAudienceId);
     createStep.details = `Created audience "${testAudienceId}", action: ${testAudience?.action}, status: ${testAudience?.status ?? 'n/a'}`;
     createStep.created_id = testAudienceId;
     createStep.response_preview = JSON.stringify(
@@ -760,7 +820,7 @@ export async function testSyncAudiences(
     'Delete test audience',
     'sync_audiences',
     async () =>
-      client.executeTask('sync_audiences', {
+      client.syncAudiences({
         account: accountRef,
         audiences: [
           {
@@ -768,12 +828,14 @@ export async function testSyncAudiences(
             delete: true,
           },
         ],
-      }) as Promise<TaskResult>
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- intentional: test request bypasses strict typing
+      } as any) as Promise<TaskResult>
   );
 
   if (deleteResult?.success && deleteResult?.data) {
-    const audiences = (deleteResult.data as any).audiences ?? [];
-    const deleted = audiences.find((a: any) => a.audience_id === testAudienceId);
+    const deleteData = deleteResult.data as unknown as SyncAudiencesSuccess;
+    const audiences = deleteData.audiences ?? [];
+    const deleted = audiences.find(a => a.audience_id === testAudienceId);
     deleteStep.details = `Deleted audience "${testAudienceId}", action: ${deleted?.action}`;
     deleteStep.response_preview = JSON.stringify(
       {

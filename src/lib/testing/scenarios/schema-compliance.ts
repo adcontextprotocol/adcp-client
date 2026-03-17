@@ -10,6 +10,8 @@
  * - Format assets: assets array with required boolean (not assets_required)
  */
 
+import type { Product } from '../../types/core.generated';
+import type { GetProductsResponse, ListCreativeFormatsResponse, Format } from '../../types/tools.generated';
 import type { TestOptions, TestStepResult, AgentProfile, TaskResult } from '../types';
 import { createTestClient, runStep, discoverAgentProfile } from '../client';
 
@@ -65,7 +67,8 @@ export async function testSchemaCompliance(
     'Get products (schema compliance)',
     'get_products',
     async () =>
-      client.executeTask('get_products', {
+      client.getProducts({
+        buying_mode: 'brief',
         brief: options.brief || 'Schema compliance test — retrieve all available products',
         brand: options.brand,
       }) as Promise<TaskResult>
@@ -79,8 +82,8 @@ export async function testSchemaCompliance(
   }
   steps.push(productsStep);
 
-  const data = productsResult.data as any;
-  const products: any[] = data.products || [];
+  const data = productsResult.data as GetProductsResponse;
+  const products: Product[] = data.products || [];
 
   if (products.length === 0) {
     steps.push({
@@ -134,28 +137,30 @@ export async function testSchemaCompliance(
   let fixedPriceFound = false;
 
   for (const product of products) {
-    for (const pkg of product.packages || []) {
-      for (const option of pkg.pricing_options || []) {
-        const optionId = option.pricing_option_id || '(unknown)';
+    for (const option of product.pricing_options || []) {
+      const optionId = option.pricing_option_id || '(unknown)';
+      // Cast to Record for deprecated-field checks — compliance testing intentionally
+      // probes fields that may not exist on the generated PricingOption union
+      const raw = option as unknown as Record<string, unknown>;
 
-        // Check for deprecated fixed_rate field
-        if ('fixed_rate' in option) {
-          pricingIssues.push(`pricing_option ${optionId} uses deprecated "fixed_rate" — should be "fixed_price"`);
-        }
-        if ('fixed_price' in option) {
-          fixedPriceFound = true;
-          pricingChecked.push(optionId);
-        }
+      // Check for deprecated fixed_rate field
+      if ('fixed_rate' in raw) {
+        pricingIssues.push(`pricing_option ${optionId} uses deprecated "fixed_rate" — should be "fixed_price"`);
+      }
+      if ('fixed_price' in raw) {
+        fixedPriceFound = true;
+        pricingChecked.push(optionId);
+      }
 
-        // Check for floor_price inside price_guidance (deprecated location)
-        if (option.price_guidance && 'floor' in option.price_guidance) {
-          pricingIssues.push(
-            `pricing_option ${optionId} has "floor" inside price_guidance — should be top-level "floor_price"`
-          );
-        }
-        if ('floor_price' in option) {
-          pricingChecked.push(`${optionId} (floor_price)`);
-        }
+      // Check for floor_price inside price_guidance (deprecated location)
+      const pg = raw.price_guidance as Record<string, unknown> | undefined;
+      if (pg && 'floor' in pg) {
+        pricingIssues.push(
+          `pricing_option ${optionId} has "floor" inside price_guidance — should be top-level "floor_price"`
+        );
+      }
+      if ('floor_price' in raw) {
+        pricingChecked.push(`${optionId} (floor_price)`);
       }
     }
   }
@@ -195,28 +200,29 @@ export async function testSchemaCompliance(
     const { result: formatsResult, step: formatsStep } = await runStep<TaskResult>(
       'Get creative formats (check assets structure)',
       'list_creative_formats',
-      async () => client.executeTask('list_creative_formats', {}) as Promise<TaskResult>
+      async () => client.listCreativeFormats({}) as Promise<TaskResult>
     );
 
     if (formatsResult?.success && formatsResult?.data) {
-      const formatsData = formatsResult.data as any;
-      const formats: any[] = formatsData.formats || [];
+      const formatsData = formatsResult.data as ListCreativeFormatsResponse;
+      const formats: Format[] = formatsData.formats || [];
       const assetsIssues: string[] = [];
       let formatsChecked = 0;
 
       for (const format of formats) {
         formatsChecked++;
+        const formatIdStr = typeof format.format_id === 'object' ? format.format_id.id : String(format.format_id);
         // Check for deprecated assets_required field
         if ('assets_required' in format) {
           assetsIssues.push(
-            `format ${format.format_id} uses deprecated "assets_required" — should be "assets" array with "required" boolean`
+            `format ${formatIdStr} uses deprecated "assets_required" — should be "assets" array with "required" boolean`
           );
         }
         // Validate assets array structure
         if (Array.isArray(format.assets)) {
           for (const asset of format.assets) {
             if (!('required' in asset)) {
-              assetsIssues.push(`format ${format.format_id} asset missing "required" boolean field`);
+              assetsIssues.push(`format ${formatIdStr} asset missing "required" boolean field`);
             }
           }
         }

@@ -4,23 +4,20 @@
  * Tests signals agent capabilities including:
  * - get_signals
  * - activate_signal
- * - get_signal_status (if available)
- * - deactivate_signal (if available)
  *
- * Enhanced to:
- * - Discover real signals from the agent before testing
- * - Test multiple signal types
- * - Test activation with various destination configurations
- * - Validate proper error handling for invalid signals
+ * Discovers real signals from the agent, tests multiple signal types,
+ * tests activation with various destination configurations,
+ * and validates proper error handling for invalid signals.
  */
 
 import type { TestOptions, TestStepResult, AgentProfile, TaskResult } from '../types';
+import type { ActivateSignalSuccess } from '../../types/tools.generated';
 import { createTestClient, runStep, discoverAgentProfile, discoverSignals } from '../client';
 
 /**
  * Test: Signals Flow (for signals agents)
  *
- * Flow: get_signals -> activate_signal (with real signal IDs) -> get_signal_status
+ * Flow: get_signals -> activate_signal (with real signal IDs)
  */
 export async function testSignalsFlow(
   agentUrl: string,
@@ -99,29 +96,31 @@ export async function testSignalsFlow(
           `Activate signal: ${signal.name || signal.signal_id} -> ${destination.platform}`,
           'activate_signal',
           async () =>
-            client.executeTask('activate_signal', {
+            client.activateSignal({
               signal_id: signal.signal_id,
               destination,
               // Some agents support activation options
               options: {
                 dry_run: options.dry_run !== false,
               },
-            }) as Promise<TaskResult>
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- bypasses strict request typing
+            } as any) as Promise<TaskResult>
         );
 
         if (result?.success && result?.data) {
-          const data = result.data as any;
-          step.details = `Signal activation ${data.status || 'submitted'}`;
+          const data = result.data as ActivateSignalSuccess;
+          const firstDeployment = data.deployments?.[0];
+          step.details = `Signal activation submitted`;
           step.response_preview = JSON.stringify(
             {
-              status: data.status || data.deployment?.status,
-              activation_id: data.activation_id || data.deployment?.id,
+              deployments_count: data.deployments?.length,
+              first_deployment: firstDeployment,
               destination: destination.platform,
             },
             null,
             2
           );
-          step.created_id = data.activation_id || data.deployment?.id;
+          step.created_id = firstDeployment ? ('platform' in firstDeployment ? firstDeployment.platform : firstDeployment.agent_url) : undefined;
         } else if (result && !result.success) {
           // Check if this is an expected failure (e.g., destination not supported)
           const error = result.error || '';
@@ -142,13 +141,14 @@ export async function testSignalsFlow(
       'Activate signal: invalid ID (error expected)',
       'activate_signal',
       async () =>
-        client.executeTask('activate_signal', {
+        client.activateSignal({
           signal_id: 'INVALID_SIGNAL_ID_DOES_NOT_EXIST_12345',
           destination: {
             platform: 'test-platform',
             account_id: 'test-account',
           },
-        }) as Promise<TaskResult>
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- bypasses strict request typing
+        } as any) as Promise<TaskResult>
     );
 
     // This should fail - if it succeeds with invalid signal, that's a bug
@@ -160,69 +160,6 @@ export async function testSignalsFlow(
       errorStep.details = 'Correctly rejected invalid signal_id';
     }
     steps.push(errorStep);
-  }
-
-  // Test get_signal_status if available
-  if (profile.tools.includes('get_signal_status')) {
-    // Use an activation_id from previous steps if available
-    const activationId = steps.find(s => s.created_id)?.created_id;
-
-    const { result, step } = await runStep<TaskResult>(
-      'Get signal status',
-      'get_signal_status',
-      async () =>
-        client.executeTask('get_signal_status', {
-          activation_id: activationId || 'test-activation-id',
-        }) as Promise<TaskResult>
-    );
-
-    if (result?.success && result?.data) {
-      const data = result.data as any;
-      step.details = `Status: ${data.status}`;
-      step.response_preview = JSON.stringify(
-        {
-          status: data.status,
-          last_updated: data.last_updated || data.updated_at,
-          metrics: data.metrics
-            ? {
-                reach: data.metrics.reach,
-                impressions: data.metrics.impressions,
-              }
-            : undefined,
-        },
-        null,
-        2
-      );
-    } else if (result && !result.success) {
-      step.passed = false;
-      step.error = result.error || 'get_signal_status failed';
-    }
-    steps.push(step);
-  }
-
-  // Test deactivate_signal if available
-  if (profile.tools.includes('deactivate_signal')) {
-    const activationId = steps.find(s => s.created_id)?.created_id;
-
-    if (activationId) {
-      const { result, step } = await runStep<TaskResult>(
-        'Deactivate signal',
-        'deactivate_signal',
-        async () =>
-          client.executeTask('deactivate_signal', {
-            activation_id: activationId,
-          }) as Promise<TaskResult>
-      );
-
-      if (result?.success && result?.data) {
-        const data = result.data as any;
-        step.details = `Deactivation: ${data.status || 'submitted'}`;
-      } else if (result && !result.success) {
-        step.passed = false;
-        step.error = result.error || 'deactivate_signal failed';
-      }
-      steps.push(step);
-    }
   }
 
   return { steps, profile };

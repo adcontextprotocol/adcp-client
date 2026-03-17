@@ -11,6 +11,25 @@
 import type { TestOptions, TestStepResult, AgentProfile, TaskResult } from '../types';
 import { createTestClient, runStep, discoverAgentProfile } from '../client';
 import { GOVERNANCE_TOOLS } from '../../utils/capabilities';
+import type {
+  CreatePropertyListRequest,
+  CreatePropertyListResponse,
+  GetPropertyListRequest,
+  GetPropertyListResponse,
+  UpdatePropertyListRequest,
+  UpdatePropertyListResponse,
+  ListPropertyListsRequest,
+  ListPropertyListsResponse,
+  DeletePropertyListRequest,
+  DeletePropertyListResponse,
+  ListContentStandardsRequest,
+  ListContentStandardsResponse,
+  GetContentStandardsRequest,
+  CalibrateContentRequest,
+  ValidateContentDeliveryRequest,
+  ContentStandards,
+  PropertyList,
+} from '../../types/tools.generated';
 
 // Property list tools
 const PROPERTY_LIST_TOOLS = [
@@ -76,7 +95,7 @@ export async function testGovernancePropertyLists(
       'Create property list',
       'create_property_list',
       async () =>
-        client.executeTask('create_property_list', {
+        client.createPropertyList({
           name: listName,
           description: 'E2E test property list for governance testing',
           base_properties: {
@@ -97,12 +116,12 @@ export async function testGovernancePropertyLists(
             name: 'E2E Test Brand',
             url: 'https://test.example.com',
           },
-        }) as Promise<TaskResult>
+        } as unknown as CreatePropertyListRequest) as Promise<TaskResult>
     );
 
     if (result?.success && result?.data) {
-      const data = result.data as any;
-      createdListId = data.list?.list_id || data.list_id;
+      const data = result.data as CreatePropertyListResponse;
+      createdListId = data.list?.list_id;
       authToken = data.auth_token;
       step.created_id = createdListId;
       step.details = `Created list: ${createdListId}`;
@@ -128,21 +147,22 @@ export async function testGovernancePropertyLists(
       'Get property list',
       'get_property_list',
       async () =>
-        client.executeTask('get_property_list', {
+        client.getPropertyList({
           list_id: createdListId,
           resolve: true,
           max_results: 10,
-        }) as Promise<TaskResult>
+        } as unknown as GetPropertyListRequest) as Promise<TaskResult>
     );
 
     if (result?.success && result?.data) {
-      const data = result.data as any;
-      step.details = `Retrieved list with ${data.total_count || 0} properties`;
+      const data = result.data as GetPropertyListResponse;
+      const dataRecord = result.data as unknown as Record<string, unknown>;
+      step.details = `Retrieved list with ${dataRecord.total_count || 0} properties`;
       step.response_preview = JSON.stringify(
         {
           list_id: data.list?.list_id,
           name: data.list?.name,
-          property_count: data.total_count,
+          property_count: dataRecord.total_count,
           has_identifiers: !!data.identifiers?.length,
         },
         null,
@@ -161,7 +181,7 @@ export async function testGovernancePropertyLists(
       'Update property list',
       'update_property_list',
       async () =>
-        client.executeTask('update_property_list', {
+        client.updatePropertyList({
           list_id: createdListId,
           auth_token: authToken,
           description: 'Updated E2E test property list',
@@ -180,11 +200,11 @@ export async function testGovernancePropertyLists(
               min_score: 0.8,
             },
           },
-        }) as Promise<TaskResult>
+        } as unknown as UpdatePropertyListRequest) as Promise<TaskResult>
     );
 
     if (result?.success && result?.data) {
-      const data = result.data as any;
+      const data = result.data as UpdatePropertyListResponse;
       step.details = 'Property list updated successfully';
       step.response_preview = JSON.stringify(
         {
@@ -207,20 +227,21 @@ export async function testGovernancePropertyLists(
       'List property lists',
       'list_property_lists',
       async () =>
-        client.executeTask('list_property_lists', {
+        client.listPropertyLists({
           max_results: 10,
-        }) as Promise<TaskResult>
+        } as unknown as ListPropertyListsRequest) as Promise<TaskResult>
     );
 
     if (result?.success && result?.data) {
-      const data = result.data as any;
-      const lists = data.lists || [];
+      const data = result.data as ListPropertyListsResponse;
+      const dataRecord = result.data as unknown as Record<string, unknown>;
+      const lists: PropertyList[] = data.lists || [];
       step.details = `Found ${lists.length} property list(s)`;
       step.response_preview = JSON.stringify(
         {
-          total_count: data.total_count,
-          returned_count: data.returned_count || lists.length,
-          lists: lists.slice(0, 3).map((l: any) => ({
+          total_count: dataRecord.total_count,
+          returned_count: dataRecord.returned_count || lists.length,
+          lists: lists.slice(0, 3).map((l: PropertyList) => ({
             list_id: l.list_id,
             name: l.name,
           })),
@@ -241,14 +262,14 @@ export async function testGovernancePropertyLists(
       'Delete property list',
       'delete_property_list',
       async () =>
-        client.executeTask('delete_property_list', {
+        client.deletePropertyList({
           list_id: createdListId,
           auth_token: authToken,
-        }) as Promise<TaskResult>
+        } as unknown as DeletePropertyListRequest) as Promise<TaskResult>
     );
 
     if (result?.success && result?.data) {
-      const data = result.data as any;
+      const data = result.data as DeletePropertyListResponse;
       step.details = data.deleted ? 'Property list deleted' : 'Deletion returned but not confirmed';
       step.response_preview = JSON.stringify(
         {
@@ -270,9 +291,9 @@ export async function testGovernancePropertyLists(
         'Get deleted list (error expected)',
         'get_property_list',
         async () =>
-          client.executeTask('get_property_list', {
+          client.getPropertyList({
             list_id: createdListId,
-          }) as Promise<TaskResult>
+          } as unknown as GetPropertyListRequest) as Promise<TaskResult>
       );
 
       if (errorResult?.success) {
@@ -340,15 +361,15 @@ export async function testGovernanceContentStandards(
       'List content standards',
       'list_content_standards',
       async () =>
-        client.executeTask('list_content_standards', {
+        client.listContentStandards({
           context: 'E2E testing - list available brand safety configurations',
           max_results: 10,
-        }) as Promise<TaskResult>
+        } as unknown as ListContentStandardsRequest) as Promise<TaskResult>
     );
 
     if (result?.success && result?.data) {
-      const data = result.data as any;
-      const standards = data.standards || [];
+      const data = result.data as ListContentStandardsResponse;
+      const standards: ContentStandards[] = 'standards' in data ? data.standards : [];
       if (standards.length > 0) {
         discoveredStandardsId = standards[0].standards_id;
       }
@@ -356,10 +377,10 @@ export async function testGovernanceContentStandards(
       step.response_preview = JSON.stringify(
         {
           standards_count: standards.length,
-          sample_standards: standards.slice(0, 3).map((s: any) => ({
+          sample_standards: standards.slice(0, 3).map((s: ContentStandards) => ({
             standards_id: s.standards_id,
             name: s.name,
-            provider: s.provider,
+            provider: (s as unknown as Record<string, unknown>).provider,
           })),
         },
         null,
@@ -386,19 +407,21 @@ export async function testGovernanceContentStandards(
       'Get content standards',
       'get_content_standards',
       async () =>
-        client.executeTask('get_content_standards', {
+        client.getContentStandards({
           standards_id: standardsIdToTest,
-        }) as Promise<TaskResult>
+        } as unknown as GetContentStandardsRequest) as Promise<TaskResult>
     );
 
     if (result?.success && result?.data) {
-      const data = result.data as any;
-      step.details = `Retrieved standards: ${data.standards?.name || standardsIdToTest}`;
+      const data = result.data as unknown as Record<string, unknown>;
+      // Response may be a ContentStandards directly or wrapped in { standards: ... }
+      const standards = (data.standards as unknown as Record<string, unknown> | undefined) || data;
+      step.details = `Retrieved standards: ${String(standards.name || standardsIdToTest)}`;
       step.response_preview = JSON.stringify(
         {
-          standards_id: data.standards?.standards_id,
-          name: data.standards?.name,
-          features_count: data.standards?.features?.length || 0,
+          standards_id: standards.standards_id,
+          name: standards.name,
+          features_count: Array.isArray(standards.features) ? standards.features.length : 0,
         },
         null,
         2
@@ -416,7 +439,7 @@ export async function testGovernanceContentStandards(
       'Calibrate content',
       'calibrate_content',
       async () =>
-        client.executeTask('calibrate_content', {
+        client.calibrateContent({
           context: 'E2E testing - evaluate sample content for brand safety',
           standards_id: standardsIdToTest,
           artifacts: [
@@ -434,18 +457,18 @@ export async function testGovernanceContentStandards(
             },
           ],
           feedback_type: 'binary',
-        }) as Promise<TaskResult>
+        } as unknown as CalibrateContentRequest) as Promise<TaskResult>
     );
 
     if (result?.success && result?.data) {
-      const data = result.data as any;
-      step.details = `Calibration session: ${data.session_status || 'completed'}`;
+      const data = result.data as unknown as Record<string, unknown>;
+      step.details = `Calibration session: ${String(data.session_status || 'completed')}`;
       step.response_preview = JSON.stringify(
         {
           session_id: data.session_id,
           session_status: data.session_status,
-          pending_artifacts: data.pending_artifacts?.length || 0,
-          evaluated_artifacts: data.evaluated_artifacts?.length || 0,
+          pending_artifacts: Array.isArray(data.pending_artifacts) ? data.pending_artifacts.length : 0,
+          evaluated_artifacts: Array.isArray(data.evaluated_artifacts) ? data.evaluated_artifacts.length : 0,
         },
         null,
         2
@@ -469,7 +492,7 @@ export async function testGovernanceContentStandards(
       'Validate content delivery',
       'validate_content_delivery',
       async () =>
-        client.executeTask('validate_content_delivery', {
+        client.validateContentDelivery({
           context: 'E2E testing - validate delivery records against content standards',
           standards_id: standardsIdToTest,
           records: [
@@ -483,17 +506,18 @@ export async function testGovernanceContentStandards(
               delivered_at: new Date().toISOString(),
             },
           ],
-        }) as Promise<TaskResult>
+        } as unknown as ValidateContentDeliveryRequest) as Promise<TaskResult>
     );
 
     if (result?.success && result?.data) {
-      const data = result.data as any;
-      step.details = `Validated ${data.summary?.total_records || 0} record(s)`;
+      const data = result.data as unknown as Record<string, unknown>;
+      const summary = data.summary as unknown as Record<string, unknown> | undefined;
+      step.details = `Validated ${summary?.total_records || 0} record(s)`;
       step.response_preview = JSON.stringify(
         {
-          total_records: data.summary?.total_records,
-          passed_records: data.summary?.passed_records,
-          failed_records: data.summary?.failed_records,
+          total_records: summary?.total_records,
+          passed_records: summary?.passed_records,
+          failed_records: summary?.failed_records,
         },
         null,
         2
@@ -517,7 +541,7 @@ export async function testGovernanceContentStandards(
       'Get invalid content standards (error expected)',
       'get_content_standards',
       async () =>
-        client.executeTask('get_content_standards', {
+        client.getContentStandards({
           standards_id: 'INVALID_STANDARDS_ID_DOES_NOT_EXIST_12345',
         }) as Promise<TaskResult>
     );
@@ -580,13 +604,16 @@ export async function testPropertyListFilters(
     const { result: capResult, step: capStep } = await runStep<TaskResult>(
       'Discover available features (for feature_requirements filter)',
       'get_adcp_capabilities',
-      async () => client.executeTask('get_adcp_capabilities', {}) as Promise<TaskResult>
+      async () => client.getAdcpCapabilities({}) as Promise<TaskResult>
     );
     if (capResult?.success && capResult?.data) {
-      const rawFeatures = (capResult.data as any)?.media_buy?.features;
+      const capData = capResult.data as unknown as Record<string, unknown>;
+      const mediaBuy = capData.media_buy as unknown as Record<string, unknown> | undefined;
+      const rawFeatures = mediaBuy?.features;
       if (rawFeatures && typeof rawFeatures === 'object') {
         // Use boolean feature keys as feature_ids (agents that support dynamic features will have IDs)
-        const featureIds = Object.keys(rawFeatures).filter(k => rawFeatures[k] === true);
+        const featuresRecord = rawFeatures as Record<string, unknown>;
+        const featureIds = Object.keys(featuresRecord).filter(k => featuresRecord[k] === true);
         if (featureIds.length > 0) {
           featureRequirements = featureIds.map(id => ({
             feature_id: id,
@@ -631,7 +658,7 @@ export async function testPropertyListFilters(
     'Create property list with all filter types',
     'create_property_list',
     async () =>
-      client.executeTask('create_property_list', {
+      client.createPropertyList({
         name: listName,
         description: 'E2E filter round-trip test',
         base_properties: {
@@ -642,12 +669,12 @@ export async function testPropertyListFilters(
           name: 'E2E Test Brand',
           url: 'https://test.example.com',
         },
-      }) as Promise<TaskResult>
+      } as unknown as CreatePropertyListRequest) as Promise<TaskResult>
   );
 
   if (createResult?.success && createResult?.data) {
-    const data = createResult.data as any;
-    createdListId = data.list?.list_id || data.list_id;
+    const data = createResult.data as CreatePropertyListResponse;
+    createdListId = data.list?.list_id;
     authToken = data.auth_token;
     createStep.created_id = createdListId;
     createStep.details = `Created list: ${createdListId} with ${Object.keys(filters).length} filter type(s)`;
@@ -666,31 +693,34 @@ export async function testPropertyListFilters(
     'Get property list (resolve: true, validate filter round-trip)',
     'get_property_list',
     async () =>
-      client.executeTask('get_property_list', {
+      client.getPropertyList({
         list_id: createdListId,
         resolve: true,
         max_results: 5,
-      }) as Promise<TaskResult>
+      } as unknown as GetPropertyListRequest) as Promise<TaskResult>
   );
 
   if (getResult?.success && getResult?.data) {
-    const data = getResult.data as any;
-    const returnedFilters = data.list?.filters;
+    const data = getResult.data as GetPropertyListResponse;
+    const returnedFilters = data.list?.filters as unknown as Record<string, unknown> | undefined;
     const issues: string[] = [];
 
     if (returnedFilters) {
-      if (!returnedFilters.garm_categories?.exclude?.length) {
+      const garmCategories = returnedFilters.garm_categories as unknown as Record<string, unknown> | undefined;
+      if (!Array.isArray(garmCategories?.exclude) || !garmCategories.exclude.length) {
         issues.push('garm_categories.exclude not preserved');
       }
-      if (returnedFilters.mfa_thresholds?.min_score !== 0.75) {
+      const mfaThresholds = returnedFilters.mfa_thresholds as unknown as Record<string, unknown> | undefined;
+      if (mfaThresholds?.min_score !== 0.75) {
         issues.push(
-          `mfa_thresholds.min_score mismatch: got ${returnedFilters.mfa_thresholds?.min_score}, expected 0.75`
+          `mfa_thresholds.min_score mismatch: got ${mfaThresholds?.min_score}, expected 0.75`
         );
       }
       if (!returnedFilters.custom_tags) {
         issues.push('custom_tags filter not preserved');
       }
-      if (featureRequirements && !returnedFilters.feature_requirements?.length) {
+      const featureReqs = returnedFilters.feature_requirements;
+      if (featureRequirements && !(Array.isArray(featureReqs) && featureReqs.length)) {
         issues.push('feature_requirements filter not preserved');
       }
     } else {
@@ -724,10 +754,10 @@ export async function testPropertyListFilters(
       'Delete test property list (cleanup)',
       'delete_property_list',
       async () =>
-        client.executeTask('delete_property_list', {
+        client.deletePropertyList({
           list_id: createdListId,
           auth_token: authToken,
-        }) as Promise<TaskResult>
+        } as unknown as DeletePropertyListRequest) as Promise<TaskResult>
     );
     if (delResult?.success) {
       delStep.details = 'Test list cleaned up';

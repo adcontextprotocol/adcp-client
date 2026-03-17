@@ -11,6 +11,16 @@
 import type { TestOptions, TestStepResult, AgentProfile, TaskResult } from '../types';
 import { createTestClient, runStep, discoverAgentProfile, resolveAuthPrincipal } from '../client';
 import { SPONSORED_INTELLIGENCE_TOOLS } from '../../utils/capabilities';
+import type {
+  SIGetOfferingRequest,
+  SIGetOfferingResponse,
+  SIInitiateSessionRequest,
+  SIInitiateSessionResponse,
+  SISendMessageRequest,
+  SISendMessageResponse,
+  SITerminateSessionRequest,
+  SITerminateSessionResponse,
+} from '../../types/tools.generated';
 
 /**
  * Test: SI Session Lifecycle
@@ -59,18 +69,19 @@ export async function testSISessionLifecycle(
       'Get SI offering',
       'si_get_offering',
       async () =>
-        client.executeTask('si_get_offering', {
+        client.siGetOffering({
           offering_id: offeringId,
           context: options.si_context || 'E2E testing - checking SI offering availability',
           identity: {
             principal: resolveAuthPrincipal(options) || 'e2e-test-principal',
             device_id: 'e2e-test-device',
           },
-        }) as Promise<TaskResult>
+        } as unknown as SIGetOfferingRequest) as Promise<TaskResult>
     );
 
     if (result?.success && result?.data) {
-      const data = result.data as any;
+      const data = result.data as SIGetOfferingResponse;
+      const dataRecord = result.data as unknown as Record<string, unknown>;
       offeringAvailable = data.available === true;
       offeringToken = data.offering_token;
       step.details = offeringAvailable
@@ -80,9 +91,9 @@ export async function testSISessionLifecycle(
         {
           available: data.available,
           offering_token: offeringToken ? '***' : undefined,
-          title: data.title,
-          description: data.description,
-          capabilities: data.capabilities,
+          title: dataRecord.title,
+          description: dataRecord.description,
+          capabilities: dataRecord.capabilities,
           unavailable_reason: data.unavailable_reason,
         },
         null,
@@ -107,7 +118,7 @@ export async function testSISessionLifecycle(
       'Initiate SI session',
       'si_initiate_session',
       async () =>
-        client.executeTask('si_initiate_session', {
+        client.siInitiateSession({
           offering_id: options.si_offering_id || 'e2e-test-offering',
           offering_token: offeringToken,
           identity: {
@@ -122,11 +133,11 @@ export async function testSISessionLifecycle(
               rich_media: true,
             },
           },
-        }) as Promise<TaskResult>
+        } as unknown as SIInitiateSessionRequest) as Promise<TaskResult>
     );
 
     if (result?.success && result?.data) {
-      const data = result.data as any;
+      const data = result.data as SIInitiateSessionResponse;
       sessionId = data.session_id;
       step.created_id = sessionId;
       if (Array.isArray(data.response?.ui_elements) && data.response.ui_elements.length > 0) {
@@ -172,18 +183,18 @@ export async function testSISessionLifecycle(
         `Send message ${i + 1}: "${message.substring(0, 30)}..."`,
         'si_send_message',
         async () =>
-          client.executeTask('si_send_message', {
+          client.siSendMessage({
             session_id: sessionId,
             message,
             metadata: {
               test_iteration: i + 1,
             },
-          }) as Promise<TaskResult>
+          } as unknown as SISendMessageRequest) as Promise<TaskResult>
       );
 
       let sessionEnded = false;
       if (result?.success && result?.data) {
-        const data = result.data as any;
+        const data = result.data as SISendMessageResponse;
         if (Array.isArray(data.response?.ui_elements) && data.response.ui_elements.length > 0) {
           collectedUIElements.push(data.response.ui_elements);
         }
@@ -198,7 +209,8 @@ export async function testSISessionLifecycle(
           null,
           2
         );
-        sessionEnded = data.session_status === 'complete' || data.session_status === 'terminated';
+        const status = data.session_status as string;
+        sessionEnded = status === 'complete' || status === 'terminated';
       } else if (result && !result.success) {
         step.passed = false;
         step.error = result.error || 'si_send_message failed';
@@ -222,17 +234,17 @@ export async function testSISessionLifecycle(
       'Terminate SI session',
       'si_terminate_session',
       async () =>
-        client.executeTask('si_terminate_session', {
+        client.siTerminateSession({
           session_id: sessionId,
           reason: 'user_exit',
           termination_context: {
             summary: 'E2E test session completed successfully',
           },
-        }) as Promise<TaskResult>
+        } as unknown as SITerminateSessionRequest) as Promise<TaskResult>
     );
 
     if (result?.success && result?.data) {
-      const data = result.data as any;
+      const data = result.data as SITerminateSessionResponse;
       step.details = data.terminated ? 'Session terminated' : 'Termination not confirmed';
       step.response_preview = JSON.stringify(
         {
@@ -255,16 +267,17 @@ export async function testSISessionLifecycle(
         'Send message to terminated session (error expected)',
         'si_send_message',
         async () =>
-          client.executeTask('si_send_message', {
+          client.siSendMessage({
             session_id: sessionId,
             message: 'This should fail',
-          }) as Promise<TaskResult>
+          } as unknown as SISendMessageRequest) as Promise<TaskResult>
       );
 
       if (errorResult?.success) {
         // Check if session_status indicates terminated
-        const data = errorResult.data as any;
-        if (data.session_status === 'complete' || data.session_status === 'terminated') {
+        const data = errorResult.data as SISendMessageResponse;
+        const status = data.session_status as string;
+        if (status === 'complete' || status === 'terminated') {
           errorStep.passed = true;
           errorStep.details = 'Session correctly reports terminated status';
         } else {
@@ -412,18 +425,18 @@ export async function testSIHandoff(
       'Get SI offering (handoff)',
       'si_get_offering',
       async () =>
-        client.executeTask('si_get_offering', {
+        client.siGetOffering({
           offering_id: options.si_offering_id || 'e2e-test-offering',
           context: 'E2E testing - preparing for handoff flow',
           identity: {
             principal: resolveAuthPrincipal(options) || 'e2e-test-principal',
             device_id: 'e2e-test-device',
           },
-        }) as Promise<TaskResult>
+        } as unknown as SIGetOfferingRequest) as Promise<TaskResult>
     );
 
     if (result?.success && result?.data) {
-      offeringToken = (result.data as any).offering_token;
+      offeringToken = (result.data as SIGetOfferingResponse).offering_token;
       step.details = 'Offering retrieved for handoff test';
     }
     steps.push(step);
@@ -434,7 +447,7 @@ export async function testSIHandoff(
     'Initiate SI session (handoff)',
     'si_initiate_session',
     async () =>
-      client.executeTask('si_initiate_session', {
+      client.siInitiateSession({
         offering_id: options.si_offering_id || 'e2e-test-offering',
         offering_token: offeringToken,
         identity: {
@@ -446,11 +459,11 @@ export async function testSIHandoff(
         supported_capabilities: {
           modalities: { conversational: true },
         },
-      }) as Promise<TaskResult>
+      } as unknown as SIInitiateSessionRequest) as Promise<TaskResult>
   );
 
   if (initResult?.success && initResult?.data) {
-    sessionId = (initResult.data as any).session_id;
+    sessionId = (initResult.data as SIInitiateSessionResponse).session_id;
     initStep.details = sessionId ? `Session created: ${sessionId}` : 'Session created (no session_id)';
   } else if (initResult && !initResult.success) {
     const error = initResult.error || '';
@@ -474,10 +487,10 @@ export async function testSIHandoff(
       'Send purchase intent message',
       'si_send_message',
       async () =>
-        client.executeTask('si_send_message', {
+        client.siSendMessage({
           session_id: sessionId,
           message: "I'd like to purchase this product. Can you set up a transaction?",
-        }) as Promise<TaskResult>
+        } as unknown as SISendMessageRequest) as Promise<TaskResult>
     );
 
     if (result?.success) {
@@ -494,7 +507,7 @@ export async function testSIHandoff(
     'Terminate SI session (handoff_transaction)',
     'si_terminate_session',
     async () =>
-      client.executeTask('si_terminate_session', {
+      client.siTerminateSession({
         session_id: sessionId,
         reason: 'handoff_transaction',
         termination_context: {
@@ -503,12 +516,12 @@ export async function testSIHandoff(
             intent: 'purchase',
           },
         },
-      }) as Promise<TaskResult>
+      } as unknown as SITerminateSessionRequest) as Promise<TaskResult>
   );
 
-  let termData: any;
+  let termData: SITerminateSessionResponse | undefined;
   if (termResult?.success && termResult?.data) {
-    termData = termResult.data as any;
+    termData = termResult.data as SITerminateSessionResponse;
     termStep.details = termData.terminated
       ? `Terminated with${termData.acp_handoff ? '' : 'out'} ACP handoff`
       : 'Termination not confirmed';
@@ -608,27 +621,28 @@ export async function testSIAvailability(
     'Check SI offering availability',
     'si_get_offering',
     async () =>
-      client.executeTask('si_get_offering', {
+      client.siGetOffering({
         offering_id: offeringId,
         context: options.si_context || 'E2E testing - checking SI availability',
         identity: {
           principal: resolveAuthPrincipal(options) || 'e2e-test-principal',
           device_id: 'e2e-test-device',
         },
-      }) as Promise<TaskResult>
+      } as unknown as SIGetOfferingRequest) as Promise<TaskResult>
   );
 
   if (result?.success && result?.data) {
-    const data = result.data as any;
+    const data = result.data as SIGetOfferingResponse;
+    const dataRecord = result.data as unknown as Record<string, unknown>;
     step.details = data.available
       ? 'SI offering is available'
       : `SI offering unavailable: ${data.unavailable_reason || 'no reason'}`;
     step.response_preview = JSON.stringify(
       {
         available: data.available,
-        title: data.title,
-        description: data.description,
-        capabilities: data.capabilities,
+        title: dataRecord.title,
+        description: dataRecord.description,
+        capabilities: dataRecord.capabilities,
         unavailable_reason: data.unavailable_reason,
       },
       null,
@@ -651,17 +665,17 @@ export async function testSIAvailability(
     'Check invalid offering availability',
     'si_get_offering',
     async () =>
-      client.executeTask('si_get_offering', {
+      client.siGetOffering({
         offering_id: 'INVALID_OFFERING_ID_DOES_NOT_EXIST_12345',
         context: 'E2E testing - checking unavailable offering',
         identity: {
           principal: 'e2e-test-principal',
         },
-      }) as Promise<TaskResult>
+      } as unknown as SIGetOfferingRequest) as Promise<TaskResult>
   );
 
   if (invalidResult?.success && invalidResult?.data) {
-    const data = invalidResult.data as any;
+    const data = invalidResult.data as SIGetOfferingResponse;
     if (data.available === false) {
       invalidStep.passed = true;
       invalidStep.details = 'Correctly reports invalid offering as unavailable';
