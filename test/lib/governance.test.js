@@ -247,7 +247,7 @@ describe('setAtPath', () => {
 
   it('throws on __proto__ and does not pollute Object.prototype', () => {
     assert.throws(() => setAtPath({}, '__proto__.polluted', true), /Invalid path segment/);
-    assert.equal(({}).polluted, undefined, 'Object.prototype should not be polluted');
+    assert.equal({}.polluted, undefined, 'Object.prototype should not be polluted');
   });
 
   it('throws on constructor', () => {
