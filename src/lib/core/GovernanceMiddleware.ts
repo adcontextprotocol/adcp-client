@@ -171,11 +171,13 @@ export class GovernanceMiddleware {
       throw new Error('Campaign governance not configured');
     }
 
-    const maxIterations = config.maxConditionsIterations ?? 0;
+    const maxReChecks = config.maxConditionsIterations ?? 0;
     let currentParams = structuredClone(params);
     let iteration = 0;
 
-    while (iteration < maxIterations) {
+    // Always make the initial governance check. maxConditionsIterations only
+    // controls how many times we re-apply conditions and re-check.
+    do {
       const request: CheckGovernanceRequest = {
         plan_id: config.planId,
         buyer_campaign_ref: config.buyerCampaignRef ?? '',
@@ -233,6 +235,11 @@ export class GovernanceMiddleware {
         return { result: checkResult, params: currentParams };
       }
 
+      // If we've exhausted re-check iterations, return conditions to caller
+      if (iteration >= maxReChecks) {
+        return { result: checkResult, params: currentParams };
+      }
+
       // Apply conditions and re-check
       for (const condition of checkResult.conditions) {
         setAtPath(currentParams, condition.field, condition.requiredValue);
@@ -248,12 +255,12 @@ export class GovernanceMiddleware {
       });
 
       iteration++;
-    }
+    } while (iteration <= maxReChecks);
 
-    // Exhausted iterations — return the last result
+    // Exhausted re-check iterations
     debugLogs.push({
       type: 'governance_conditions_exhausted',
-      iterations: maxIterations,
+      iterations: maxReChecks,
       tool,
     });
     return {
@@ -261,7 +268,7 @@ export class GovernanceMiddleware {
         checkId: '',
         status: 'denied',
         binding: 'proposed',
-        explanation: `Governance conditions could not be resolved after ${maxIterations} iterations`,
+        explanation: `Governance conditions could not be resolved after ${maxReChecks} iterations`,
       },
       params: currentParams,
     };

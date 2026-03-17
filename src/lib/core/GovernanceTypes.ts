@@ -23,7 +23,7 @@ export interface CampaignGovernanceConfig {
   buyerCampaignRef?: string;
   /** Caller URL for the check_governance request */
   callerUrl?: string;
-  /** Max conditions loops before returning to caller. Default: 0 (return conditions to caller). Set to 3 to auto-apply. */
+  /** Max re-check iterations after auto-applying conditions. Default: 0 (return conditions to caller without re-checking). The initial governance check always fires. */
   maxConditionsIterations?: number;
 }
 

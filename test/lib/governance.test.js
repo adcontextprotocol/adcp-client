@@ -289,7 +289,7 @@ describe('setAtPath', () => {
 describe('GovernanceMiddleware', () => {
   const baseGovernanceConfig = {
     campaign: {
-      agent: { id: 'gov', name: 'Gov Agent', agent_uri: 'http://localhost', protocol: 'mcp' },
+      agent: { id: 'gov', name: 'Gov Agent', agent_uri: 'http://127.0.0.1:1', protocol: 'mcp' },
       planId: 'plan-1',
     },
   };
@@ -332,18 +332,8 @@ describe('GovernanceMiddleware', () => {
       await assert.rejects(() => mw.checkProposed('create_media_buy', {}), /Campaign governance not configured/);
     });
 
-    it('produces synthetic denial when maxConditionsIterations is 0 (default)', async () => {
-      const config = {
-        campaign: {
-          ...baseGovernanceConfig.campaign,
-        },
-      };
-      const mw = new GovernanceMiddleware(config);
-      // maxConditionsIterations defaults to 0, so the while loop never executes
-      // and the exhaustion path returns a synthetic denial
-      const { result } = await mw.checkProposed('create_media_buy', { budget: 5000 });
-      assert.equal(result.status, 'denied');
-      assert.ok(result.explanation.includes('0 iterations'));
-    });
+    // Note: checkProposed with a real governance agent is tested in governance-e2e.test.js.
+    // The do...while loop guarantees the initial check always fires regardless of
+    // maxConditionsIterations. Unit testing that path requires a running agent.
   });
 });
