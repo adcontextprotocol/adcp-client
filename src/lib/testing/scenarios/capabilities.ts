@@ -165,7 +165,7 @@ export async function testCapabilityDiscovery(
 /**
  * Validate the structure and content of a get_adcp_capabilities response
  */
-function validateCapabilitiesResponse(response: GetAdCPCapabilitiesResponse, _tools: string[]): { steps: TestStepResult[] } {
+function validateCapabilitiesResponse(response: GetAdCPCapabilitiesResponse, tools: string[]): { steps: TestStepResult[] } {
   const steps: TestStepResult[] = [];
 
   // Check for required fields
@@ -209,6 +209,75 @@ function validateCapabilitiesResponse(response: GetAdCPCapabilitiesResponse, _to
       details: hasMediaBuyFeatures
         ? `Features: inline_creative=${mediaBuy.features?.inline_creative_management}, property_list=${mediaBuy.features?.property_list_filtering}, content_standards=${mediaBuy.features?.content_standards}`
         : 'No media_buy.features declared (all features assumed false)',
+    });
+  }
+
+  if (hasProtocols && response.supported_protocols.includes('creative')) {
+    const creative = response.creative;
+    const hasCreativeCapabilities = !!creative;
+    const creativeWarnings: string[] = [];
+    let creativePassed = hasCreativeCapabilities;
+
+    if (creative?.supports_generation && !tools.includes('build_creative')) {
+      creativePassed = false;
+      creativeWarnings.push('creative.supports_generation=true but build_creative is not advertised');
+    }
+
+    if (creative?.supports_transformation && !tools.includes('build_creative')) {
+      creativePassed = false;
+      creativeWarnings.push('creative.supports_transformation=true but build_creative is not advertised');
+    }
+
+    if (creative?.has_creative_library && !tools.includes('list_creatives')) {
+      creativePassed = false;
+      creativeWarnings.push('creative.has_creative_library=true but list_creatives is not advertised');
+    }
+
+    if (
+      creative?.has_creative_library &&
+      !tools.includes('list_accounts') &&
+      !tools.includes('sync_accounts')
+    ) {
+      creativeWarnings.push(
+        'creative.has_creative_library=true but no account management tool is advertised (expected sync_accounts or list_accounts)'
+      );
+    }
+
+    steps.push({
+      step: 'Validate creative capabilities',
+      passed: creativePassed,
+      duration_ms: 0,
+      details: hasCreativeCapabilities
+        ? `Creative: generation=${creative?.supports_generation ?? false}, transformation=${creative?.supports_transformation ?? false}, compliance=${creative?.supports_compliance ?? false}, library=${creative?.has_creative_library ?? false}`
+        : 'creative is listed in supported_protocols but the creative capability block is missing',
+      warnings: creativeWarnings.length > 0 ? creativeWarnings : undefined,
+    });
+  }
+
+  if (response.account) {
+    const accountWarnings: string[] = [];
+    let accountPassed = true;
+
+    if (response.account.require_operator_auth && !tools.includes('list_accounts')) {
+      accountPassed = false;
+      accountWarnings.push('account.require_operator_auth=true but list_accounts is not advertised');
+    }
+
+    if (
+      response.account.required_for_products &&
+      !tools.includes('list_accounts') &&
+      !tools.includes('sync_accounts')
+    ) {
+      accountPassed = false;
+      accountWarnings.push('account.required_for_products=true but no account management tool is advertised');
+    }
+
+    steps.push({
+      step: 'Validate account capabilities',
+      passed: accountPassed,
+      duration_ms: 0,
+      details: `Account model: require_operator_auth=${response.account.require_operator_auth ?? false}, required_for_products=${response.account.required_for_products ?? false}, sandbox=${response.account.sandbox ?? false}, supported_billing=${(response.account.supported_billing || []).join(', ') || '(none)'}`,
+      warnings: accountWarnings.length > 0 ? accountWarnings : undefined,
     });
   }
 
@@ -271,17 +340,26 @@ function crossValidateProtocolsAndTools(capabilities: AdcpCapabilities, tools: s
     }
   }
 
-  // Check for tools that suggest protocols not reported
+  // Check for tools that suggest protocols not reported.
+  // Only consider tools exclusive to a protocol — shared tools (those appearing
+  // in multiple protocol tool lists) don't indicate a specific unreported protocol.
+  const allProtocolTools = Object.values(protocolToolMap).flat();
+  const toolProtocolCount = new Map<string, number>();
+  for (const tool of allProtocolTools) {
+    toolProtocolCount.set(tool, (toolProtocolCount.get(tool) || 0) + 1);
+  }
+
   const unreportedProtocols: string[] = [];
 
   for (const [protocol, expectedTools] of Object.entries(protocolToolMap)) {
     if (!capabilities.protocols.includes(protocol as AdcpProtocol)) {
-      const presentTools = expectedTools.filter(t => tools.includes(t));
-      if (presentTools.length > 0) {
+      // Only flag based on exclusive tools (not shared across protocols)
+      const exclusivePresent = expectedTools.filter(t => tools.includes(t) && toolProtocolCount.get(t) === 1);
+      if (exclusivePresent.length > 0) {
         unreportedProtocols.push(protocol);
         perProtocolDiffs[protocol] = {
           expected: [],
-          found: [...presentTools],
+          found: [...exclusivePresent],
           missing: [],
         };
       }

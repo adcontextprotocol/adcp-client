@@ -114,7 +114,9 @@ export type TaskStatus =
   | 'failed'
   | 'deferred'
   | 'aborted'
-  | 'submitted';
+  | 'submitted'
+  | 'governance-denied'
+  | 'governance-escalated';
 
 /**
  * Options for task execution
@@ -219,7 +221,14 @@ export interface TaskResult<T = any> {
   /** Whether the task is progressing without errors (true for all intermediate states and successful completion) */
   success: boolean;
   /** Task execution status */
-  status: 'completed' | 'deferred' | 'submitted' | 'input-required' | 'working';
+  status:
+    | 'completed'
+    | 'deferred'
+    | 'submitted'
+    | 'input-required'
+    | 'working'
+    | 'governance-denied'
+    | 'governance-escalated';
   /** Task result data (if successful) */
   data?: T;
   /** Error message (if failed) */
@@ -228,6 +237,12 @@ export interface TaskResult<T = any> {
   deferred?: DeferredContinuation<T>;
   /** Submitted continuation (server needs time for processing) */
   submitted?: SubmittedContinuation<T>;
+  /** Governance check result (present when governance is configured) */
+  governance?: import('./GovernanceTypes').GovernanceCheckResult;
+  /** Governance outcome (present after successful execution with governance) */
+  governanceOutcome?: import('./GovernanceTypes').GovernanceOutcome;
+  /** Error message when governance outcome reporting failed (distinguishes from "not configured") */
+  governanceOutcomeError?: string;
   /** Task execution metadata */
   metadata: {
     taskId: string;

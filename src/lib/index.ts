@@ -79,6 +79,24 @@ export type {
   ConversationConfig,
 } from './core/ConversationTypes';
 
+// ====== GOVERNANCE ======
+// Buyer-side: GovernanceConfig + GovernanceMiddleware handle check → execute → report automatically.
+// Seller-side: GovernanceAdapter runs committed checks before executing media buys.
+// Types: GovernanceCheckResult, GovernanceOutcome are attached to TaskResult when governance is active.
+
+// Buyer-side middleware types
+export type {
+  GovernanceConfig,
+  CampaignGovernanceConfig,
+  GovernanceCheckResult,
+  GovernanceOutcome,
+  GovernanceFinding,
+  GovernanceCondition,
+  GovernanceEscalation,
+} from './core/GovernanceTypes';
+export { GovernanceMiddleware, extractGovernanceContext } from './core/GovernanceMiddleware';
+export type { GovernanceDebugEntry } from './core/GovernanceMiddleware';
+
 // ====== TASK EVENT TYPES ======
 export type {
   BaseTaskEvent,
@@ -221,6 +239,27 @@ export type {
   ValidateContentDeliveryResponse,
   ContentStandards,
   Artifact,
+  // Governance Domain - Campaign Governance
+  SyncPlansRequest,
+  SyncPlansResponse,
+  CheckGovernanceRequest,
+  CheckGovernanceResponse,
+  ReportPlanOutcomeRequest,
+  ReportPlanOutcomeResponse,
+  GetPlanAuditLogsRequest,
+  GetPlanAuditLogsResponse,
+  // Governance Domain - Types & Enums
+  PlannedDelivery,
+  BudgetAuthorityLevel,
+  DelegationAuthority,
+  GovernancePhase,
+  GovernanceMode,
+  EscalationSeverity,
+  PolicyEnforcementLevel,
+  OutcomeType,
+  // Governance Domain - Creative Features
+  GetCreativeFeaturesRequest,
+  GetCreativeFeaturesResponse,
   // Sponsored Intelligence Domain
   SIGetOfferingRequest,
   SIGetOfferingResponse,
@@ -560,6 +599,15 @@ export {
   type SISession,
   SIErrorCodes,
   defaultSISessionManager,
+  // Governance (seller-side committed checks)
+  GovernanceAdapter,
+  defaultGovernanceAdapter,
+  type IGovernanceAdapter,
+  type GovernanceAdapterConfig,
+  type GovernanceAdapterErrorCode,
+  type CommittedCheckRequest,
+  GovernanceAdapterErrorCodes,
+  isGovernanceAdapterError,
 } from './adapters';
 
 // ====== BACKWARD COMPATIBILITY & ENVIRONMENT LOADING ======

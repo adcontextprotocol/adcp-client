@@ -16,6 +16,7 @@ export {
   testFullSalesFlow,
   testCreativeSync,
   testCreativeInline,
+  testCreativeReference,
   testSyncAudiences,
   resolveAccountForAudiences,
   selectProduct,
@@ -24,7 +25,7 @@ export {
 } from './media-buy';
 
 // Creative agent testing
-export { testCreativeFlow } from './creative';
+export { testCreativeFlow, testCreativeLifecycle } from './creative';
 
 // Signals agent testing
 export { testSignalsFlow } from './signals';
@@ -44,7 +45,12 @@ export {
   testGovernancePropertyLists,
   testGovernanceContentStandards,
   testPropertyListFilters,
+  testCampaignGovernance,
+  testCampaignGovernanceDenied,
+  testCampaignGovernanceConditions,
+  testCampaignGovernanceDelivery,
   hasGovernanceTools,
+  hasCampaignGovernanceTools,
 } from './governance';
 
 // v3 SI (Sponsored Intelligence) protocol testing

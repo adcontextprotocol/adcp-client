@@ -29,8 +29,13 @@ describe('SCENARIO_REQUIREMENTS', () => {
     }
   });
 
-  test('does not include creative_reference (unimplemented)', () => {
-    assert.ok(!('creative_reference' in SCENARIO_REQUIREMENTS), 'creative_reference should be omitted');
+  test('creative_reference requires build_creative and sync_creatives', () => {
+    assert.deepStrictEqual(SCENARIO_REQUIREMENTS['creative_reference'], [
+      'get_products',
+      'create_media_buy',
+      'build_creative',
+      'sync_creatives',
+    ]);
   });
 
   test('sync_audiences requires sync_audiences tool', () => {
@@ -83,8 +88,8 @@ describe('DEFAULT_SCENARIOS', () => {
     assert.ok(Array.isArray(DEFAULT_SCENARIOS));
   });
 
-  test('does not include creative_reference', () => {
-    assert.ok(!DEFAULT_SCENARIOS.includes('creative_reference'));
+  test('includes creative_reference now that it is implemented', () => {
+    assert.ok(DEFAULT_SCENARIOS.includes('creative_reference'));
   });
 
   test('includes sync_audiences', () => {
@@ -206,8 +211,7 @@ describe('getApplicableScenarios', () => {
     assert.ok(!applicable.includes('pricing_edge_cases'));
   });
 
-  test('never returns creative_reference', () => {
-    // Even with a full tool set
+  test('returns creative_reference only when all required tools are present', () => {
     const allTools = [
       'get_products',
       'create_media_buy',
@@ -223,10 +227,18 @@ describe('getApplicableScenarios', () => {
       'si_initiate_session',
     ];
     const applicable = getApplicableScenarios(allTools);
-    assert.ok(!applicable.includes('creative_reference'));
+    assert.ok(applicable.includes('creative_reference'));
   });
 
-  test('returns empty array when filter specifies only unimplemented scenarios', () => {
+  test('returns creative_reference when filter specifies it and tools match', () => {
+    const applicable = getApplicableScenarios(
+      ['get_products', 'create_media_buy', 'build_creative', 'sync_creatives'],
+      ['creative_reference']
+    );
+    assert.deepStrictEqual(applicable, ['creative_reference']);
+  });
+
+  test('returns empty array when filter specifies only scenarios without required tools', () => {
     const applicable = getApplicableScenarios(['get_products'], ['creative_reference']);
     assert.strictEqual(applicable.length, 0);
   });

@@ -14,7 +14,7 @@
 
 import type { BuildCreativeRequest, PreviewCreativeRequest } from '../../types/tools.generated';
 import type { TestOptions, TestStepResult, AgentProfile, TaskResult } from '../types';
-import { createTestClient, runStep, discoverAgentProfile, discoverCreativeFormats } from '../client';
+import { createTestClient, runStep, discoverAgentProfile, discoverCreativeFormats, resolveBrand } from '../client';
 
 /**
  * Test: Creative Flow (for creative agents)
@@ -59,29 +59,32 @@ export async function testCreativeFlow(
         'build_creative',
         async () =>
           client.buildCreative({
-            format_id: format.format_id,
-            brand_manifest: options.brand_manifest || getDefaultBrandManifest(),
-            prompt: `Create a ${format.type || 'display'} ad for an e-commerce brand promoting summer sale`,
+            target_format_id: format.format_id,
+            brand: resolveBrand(options),
+            message: `Create a ${format.type || 'display'} ad for an e-commerce brand promoting summer sale`,
+            quality: 'draft',
+            include_preview: true,
           } as unknown as BuildCreativeRequest) as Promise<TaskResult>
       );
 
       if (result?.success && result?.data) {
-        const data = result.data as unknown as Record<string, unknown>;
-        const creative = data.creative as Record<string, unknown> | undefined;
-        const creativeId = (data.creative_id as string) || (creative?.creative_id as string);
-        const formatId = data.format_id || creative?.format_id;
-        const hasAssets = !!(data.assets || creative?.assets);
-        step.details = `Built creative for format ${formatDisplayName}`;
+        const data = result.data as {
+          creative_manifest?: { format_id?: unknown; assets?: Record<string, unknown> };
+          creative_manifests?: Array<{ format_id?: unknown; assets?: Record<string, unknown> }>;
+          preview?: { previews?: unknown[] };
+        };
+        const manifest = data.creative_manifest || data.creative_manifests?.[0];
+        step.details = `Built creative manifest for format ${formatDisplayName}`;
         step.response_preview = JSON.stringify(
           {
-            creative_id: creativeId,
-            format_id: formatId,
-            has_assets: hasAssets,
+            format_id: manifest?.format_id || format.format_id,
+            asset_keys: Object.keys(manifest?.assets || {}),
+            has_preview: !!data.preview,
+            preview_count: data.preview?.previews?.length || 0,
           },
           null,
           2
         );
-        step.created_id = creativeId;
       } else if (result && !result.success) {
         step.passed = false;
         step.error = result.error || 'build_creative failed';
@@ -98,10 +101,11 @@ export async function testCreativeFlow(
       'preview_creative',
       async () =>
         client.previewCreative({
-          creative: {
+          request_type: 'single',
+          creative_manifest: {
             format_id: formatsToTest[0]?.format_id || { agent_url: 'https://creative.adcontextprotocol.org', id: 'display_300x250' },
             name: 'Minimal Test Creative',
-            assets: [],
+            assets: {},
           },
         } as unknown as PreviewCreativeRequest) as Promise<TaskResult>
     );
@@ -115,24 +119,29 @@ export async function testCreativeFlow(
         'preview_creative',
         async () =>
           client.previewCreative({
-            creative: {
+            request_type: 'single',
+            creative_manifest: {
               format_id: sampleFormat.format_id,
               name: 'Full Test Creative',
-              assets: buildTestAssets(sampleFormat),
+              assets: buildTestAssets(sampleFormat) as unknown as Record<string, unknown>,
             },
           } as unknown as PreviewCreativeRequest) as Promise<TaskResult>
       );
 
       if (result?.success && result?.data) {
-        const data = result.data as unknown as Record<string, unknown>;
-        const renders = data.renders as unknown[] | undefined;
-        const previewUrl = data.preview_url as string | undefined;
-        step.details = `Generated preview with ${renders?.length || 0} render(s)`;
+        const data = result.data as {
+          previews?: Array<{ renders?: unknown[] }>;
+          interactive_url?: string;
+        };
+        const previews = data.previews || [];
+        const renderCount = previews.reduce((count, preview) => count + (preview.renders?.length || 0), 0);
+        step.details = `Generated preview with ${previews.length} variant(s)`;
         step.response_preview = JSON.stringify(
           {
-            has_renders: !!(renders?.length || previewUrl),
-            render_count: renders?.length || (previewUrl ? 1 : 0),
-            preview_url: previewUrl,
+            has_renders: renderCount > 0,
+            preview_count: previews.length,
+            render_count: renderCount,
+            interactive_url: data.interactive_url,
           },
           null,
           2
@@ -150,10 +159,11 @@ export async function testCreativeFlow(
       'preview_creative',
       async () =>
         client.previewCreative({
-          creative: {
-            format_id: { id: 'INVALID_FORMAT_ID_12345' },
+          request_type: 'single',
+          creative_manifest: {
+            format_id: { agent_url: 'https://creative.adcontextprotocol.org', id: 'INVALID_FORMAT_ID_12345' },
             name: 'Error Test Creative',
-            assets: [],
+            assets: {},
           },
         } as unknown as PreviewCreativeRequest) as Promise<TaskResult>
     );
@@ -167,6 +177,291 @@ export async function testCreativeFlow(
       errorStep.details = 'Correctly rejected invalid format_id';
     }
     steps.push(errorStep);
+  }
+
+  return { steps, profile };
+}
+
+/**
+ * Test: Creative Lifecycle
+ *
+ * Chains creative protocol operations end-to-end:
+ * 1. list_creative_formats → verify format schema
+ * 2. sync_creatives with multiple creatives → verify per-creative status
+ * 3. list_creatives (no snapshot) → verify basic fields
+ * 4. list_creatives (include_snapshot: true) → verify snapshot or snapshot_unavailable_reason
+ * 5. build_creative or preview_creative on synced creative → adapt to agent capabilities
+ */
+export async function testCreativeLifecycle(
+  agentUrl: string,
+  options: TestOptions
+): Promise<{ steps: TestStepResult[]; profile?: AgentProfile }> {
+  const steps: TestStepResult[] = [];
+  const client = createTestClient(agentUrl, options.protocol || 'mcp', options);
+
+  // Discover agent profile
+  const { profile, step: profileStep } = await discoverAgentProfile(client);
+  steps.push(profileStep);
+
+  if (!profileStep.passed) {
+    return { steps, profile };
+  }
+
+  // Step 1: Discover creative formats
+  const { formats, step: formatStep } = await discoverCreativeFormats(client, profile);
+  steps.push(formatStep);
+
+  if (!formatStep.passed || !formats || formats.length === 0) {
+    return { steps, profile };
+  }
+
+  profile.supported_formats = formats;
+
+  // Validate format schema: each format should have format_id, type, and required_assets
+  const formatSchemaIssues: string[] = [];
+  for (const format of formats) {
+    if (!format.format_id) formatSchemaIssues.push('Missing format_id');
+    if (!format.type) formatSchemaIssues.push(`Format ${format.format_id}: missing type`);
+  }
+
+  steps.push({
+    step: 'Validate format schema',
+    passed: formatSchemaIssues.length === 0,
+    duration_ms: 0,
+    details:
+      formatSchemaIssues.length === 0
+        ? `All ${formats.length} format(s) have required fields`
+        : formatSchemaIssues.join('; '),
+    warnings: formatSchemaIssues.length > 0 ? formatSchemaIssues : undefined,
+  });
+
+  // Step 2: Sync multiple creatives (image + video if formats allow)
+  if (profile.tools.includes('sync_creatives')) {
+    const imageFormat = formats.find(f => f.type === 'display' || f.type === 'image') || formats[0];
+    const videoFormat = formats.find(f => f.type === 'video');
+
+    const creativesToSync = [
+      {
+        creative_id: `lifecycle-img-${Date.now()}`,
+        name: 'Lifecycle Test Image Creative',
+        format_id: imageFormat.format_id,
+        assets: {
+          primary: {
+            url: 'https://via.placeholder.com/300x250.png?text=Lifecycle+Image',
+            width: 300,
+            height: 250,
+            format: 'png',
+          },
+        },
+      },
+    ];
+
+    if (videoFormat) {
+      creativesToSync.push({
+        creative_id: `lifecycle-vid-${Date.now()}`,
+        name: 'Lifecycle Test Video Creative',
+        format_id: videoFormat.format_id,
+        assets: {
+          primary: {
+            url: 'https://storage.googleapis.com/webfundamentals-assets/videos/chrome.mp4',
+            width: 1920,
+            height: 1080,
+            format: 'mp4',
+          },
+        },
+      });
+    }
+
+    const { result: syncResult, step: syncStep } = await runStep<TaskResult>(
+      `Sync ${creativesToSync.length} creative(s) to library`,
+      'sync_creatives',
+      async () =>
+        client.executeTask('sync_creatives', {
+          creatives: creativesToSync,
+        }) as Promise<TaskResult>
+    );
+
+    if (syncResult?.success && syncResult?.data) {
+      const data = syncResult.data as any;
+      const creatives = data.creatives || [];
+      const actions = creatives.map((c: any) => c.action);
+      const failed = creatives.filter((c: any) => c.action === 'failed');
+
+      syncStep.details = `Synced ${creatives.length} creative(s), actions: ${actions.join(', ')}`;
+      syncStep.response_preview = JSON.stringify(
+        {
+          synced_count: creatives.length,
+          actions,
+          creative_ids: creatives.map((c: any) => c.creative_id),
+          failed_count: failed.length,
+          failed_errors: failed.map((c: any) => ({ creative_id: c.creative_id, errors: c.errors })),
+        },
+        null,
+        2
+      );
+    } else if (syncResult && !syncResult.success) {
+      syncStep.passed = false;
+      syncStep.error = syncResult.error || 'sync_creatives returned unsuccessful result';
+    }
+    steps.push(syncStep);
+
+    // Step 3: list_creatives without snapshot
+    if (profile.tools.includes('list_creatives')) {
+      const { result: listResult, step: listStep } = await runStep<TaskResult>(
+        'List creatives (no snapshot)',
+        'list_creatives',
+        async () => client.executeTask('list_creatives', {}) as Promise<TaskResult>
+      );
+
+      if (listResult?.success && listResult?.data) {
+        const data = listResult.data as any;
+        const creatives = data.creatives || [];
+
+        // Validate basic fields on each creative
+        const fieldIssues: string[] = [];
+        for (const creative of creatives.slice(0, 5)) {
+          if (!creative.creative_id) fieldIssues.push('Creative missing creative_id');
+          if (!creative.name) fieldIssues.push(`Creative ${creative.creative_id}: missing name`);
+          if (!creative.format_id) fieldIssues.push(`Creative ${creative.creative_id}: missing format_id`);
+        }
+
+        // Verify snapshot is absent when not requested
+        const hasUnexpectedSnapshot = creatives.some((c: any) => c.snapshot !== undefined);
+
+        if (fieldIssues.length > 0) {
+          listStep.passed = false;
+          listStep.error = `Creative field validation: ${fieldIssues.join('; ')}`;
+        } else {
+          listStep.details = `Found ${creatives.length} creative(s) with valid fields`;
+        }
+
+        listStep.response_preview = JSON.stringify(
+          {
+            creatives_count: creatives.length,
+            statuses: Array.from(new Set(creatives.map((c: any) => c.status))),
+            has_unexpected_snapshot: hasUnexpectedSnapshot,
+            query_summary: data.query_summary,
+          },
+          null,
+          2
+        );
+
+        if (hasUnexpectedSnapshot) {
+          listStep.warnings = ['snapshot field present on creatives without include_snapshot=true'];
+        }
+      } else if (listResult && !listResult.success) {
+        listStep.passed = false;
+        listStep.error = listResult.error || 'list_creatives returned unsuccessful result';
+      }
+      steps.push(listStep);
+
+      // Step 4: list_creatives with include_snapshot: true
+      const { result: snapshotResult, step: snapshotStep } = await runStep<TaskResult>(
+        'List creatives (include_snapshot: true)',
+        'list_creatives',
+        async () => client.executeTask('list_creatives', { include_snapshot: true }) as Promise<TaskResult>
+      );
+
+      if (snapshotResult?.success && snapshotResult?.data) {
+        const data = snapshotResult.data as any;
+        const creatives = data.creatives || [];
+
+        // Each creative should have either snapshot data or snapshot_unavailable_reason
+        const invalidCreatives = creatives.filter((c: any) => {
+          if (c.snapshot) {
+            return !c.snapshot.as_of || c.snapshot.staleness_seconds === undefined;
+          }
+          return !c.snapshot_unavailable_reason;
+        });
+
+        if (invalidCreatives.length > 0) {
+          snapshotStep.passed = false;
+          snapshotStep.error = `${invalidCreatives.length} creative(s) missing both snapshot and snapshot_unavailable_reason`;
+        } else {
+          const withSnapshot = creatives.filter((c: any) => !!c.snapshot).length;
+          const withReason = creatives.filter((c: any) => !!c.snapshot_unavailable_reason).length;
+          snapshotStep.details = `${creatives.length} creative(s): ${withSnapshot} with snapshot, ${withReason} with unavailable_reason`;
+        }
+
+        snapshotStep.response_preview = JSON.stringify(
+          {
+            creatives_count: creatives.length,
+            with_snapshot: creatives.filter((c: any) => !!c.snapshot).length,
+            with_unavailable_reason: creatives.filter((c: any) => !!c.snapshot_unavailable_reason).length,
+            snapshot_reasons: Array.from(
+              new Set(creatives.map((c: any) => c.snapshot_unavailable_reason).filter(Boolean))
+            ),
+          },
+          null,
+          2
+        );
+      } else if (snapshotResult && !snapshotResult.success) {
+        snapshotStep.passed = false;
+        snapshotStep.error = snapshotResult.error || 'list_creatives with snapshot returned unsuccessful result';
+      }
+      steps.push(snapshotStep);
+    }
+  }
+
+  // Step 5: build_creative or preview_creative (adapt to agent capabilities)
+  if (profile.tools.includes('build_creative')) {
+    const targetFormat = formats[0];
+    const { result, step } = await runStep<TaskResult>(
+      `Build creative for lifecycle (${targetFormat.format_id})`,
+      'build_creative',
+      async () =>
+        client.executeTask('build_creative', {
+          target_format_id: targetFormat.format_id,
+          brand: resolveBrand(options),
+          message: `Create a ${targetFormat.type || 'display'} ad for lifecycle testing`,
+          quality: 'draft',
+          include_preview: true,
+        }) as Promise<TaskResult>
+    );
+
+    if (result?.success && result?.data) {
+      const data = result.data as any;
+      const manifest = data.creative_manifest || data.creative_manifests?.[0];
+      step.details = `Built creative manifest for format ${manifest?.format_id || targetFormat.format_id}`;
+      step.response_preview = JSON.stringify(
+        {
+          format_id: manifest?.format_id || targetFormat.format_id,
+          asset_keys: Object.keys(manifest?.assets || {}),
+          has_preview: !!data.preview,
+        },
+        null,
+        2
+      );
+    } else if (result && !result.success) {
+      step.passed = false;
+      step.error = result.error || 'build_creative failed';
+    }
+    steps.push(step);
+  } else if (profile.tools.includes('preview_creative')) {
+    // Tag-serving agents may only support preview, not build
+    const targetFormat = formats[0];
+    const { result, step } = await runStep<TaskResult>(
+      `Preview creative for lifecycle (${targetFormat.format_id})`,
+      'preview_creative',
+      async () =>
+        client.executeTask('preview_creative', {
+          request_type: 'single',
+          creative_manifest: {
+            format_id: targetFormat.format_id,
+            name: 'Lifecycle Test Preview',
+            assets: buildTestAssets(targetFormat),
+          },
+        }) as Promise<TaskResult>
+    );
+
+    if (result?.success && result?.data) {
+      const data = result.data as any;
+      step.details = `Generated preview with ${data.renders?.length || 0} render(s)`;
+    } else if (result && !result.success) {
+      step.passed = false;
+      step.error = result.error || 'preview_creative failed';
+    }
+    steps.push(step);
   }
 
   return { steps, profile };
@@ -260,36 +555,4 @@ function getTestAssetUrl(assetName: string): string {
     default:
       return 'https://via.placeholder.com/300x250.png?text=Test+Asset';
   }
-}
-
-/**
- * Get default brand manifest for testing
- */
-function getDefaultBrandManifest() {
-  return {
-    name: 'E2E Test Brand',
-    url: 'https://test.example.com',
-    tagline: 'Testing the future of advertising',
-    logos: [
-      {
-        url: 'https://via.placeholder.com/200x50.png?text=Logo',
-        orientation: 'horizontal',
-        background: 'light-bg',
-        variant: 'primary',
-        width: 200,
-        height: 50,
-      },
-    ],
-    tone: {
-      voice: 'Professional and trustworthy',
-      attributes: ['innovative', 'reliable', 'customer-focused'],
-      dos: ['Use clear, direct language', 'Emphasize value proposition'],
-      donts: ['Use jargon', 'Make unsubstantiated claims'],
-    },
-    colors: {
-      primary: '#0066CC',
-      secondary: '#FFFFFF',
-      accent: '#FF6600',
-    },
-  };
 }

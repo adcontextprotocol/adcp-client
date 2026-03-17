@@ -64,6 +64,11 @@ import type {
   SISendMessageResponse,
   SITerminateSessionRequest,
   SITerminateSessionResponse,
+  SyncPlansRequest,
+  SyncPlansResponse,
+  GetPlanAuditLogsRequest,
+  GetPlanAuditLogsResponse,
+  OutcomeType,
 } from '../types/tools.generated';
 
 import type {
@@ -206,6 +211,8 @@ export interface SingleAgentClientConfig extends ConversationConfig {
      */
     logSchemaViolations?: boolean;
   };
+  /** Governance configuration for buyer-side campaign governance */
+  governance?: import('./GovernanceTypes').GovernanceConfig;
 }
 
 /**
@@ -248,6 +255,7 @@ export class SingleAgentClient {
       strictSchemaValidation: config.validation?.strictSchemaValidation !== false, // Default: true
       logSchemaViolations: config.validation?.logSchemaViolations !== false, // Default: true
       onActivity: config.onActivity,
+      governance: config.governance,
     });
 
     // Create async handler if handlers are provided
@@ -1416,6 +1424,75 @@ export class SingleAgentClient {
       inputHandler,
       options
     );
+  }
+
+  // ====== GOVERNANCE TASKS ======
+
+  /**
+   * Sync campaign plans to a governance agent.
+   * Plans define authorized parameters: budget, channels, flight dates, markets, policies, delegations.
+   *
+   * Uses the governance agent from config.governance.campaign.agent by default.
+   * Pass an explicit agent via options.agent to override.
+   */
+  async syncPlans(
+    params: SyncPlansRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions & { agent?: AgentConfig }
+  ): Promise<TaskResult<SyncPlansResponse>> {
+    const agent = options?.agent ?? this.getGovernanceAgent();
+    return this.executor.executeTask<SyncPlansResponse>(agent, 'sync_plans', params, inputHandler, options);
+  }
+
+  /**
+   * Get governance audit logs for one or more plans.
+   * Returns budget state, channel allocation, per-campaign breakdown, and audit trail.
+   *
+   * Uses the governance agent from config.governance.campaign.agent by default.
+   * Pass an explicit agent via options.agent to override.
+   */
+  async getPlanAuditLogs(
+    params: GetPlanAuditLogsRequest,
+    options?: TaskOptions & { agent?: AgentConfig }
+  ): Promise<TaskResult<GetPlanAuditLogsResponse>> {
+    const agent = options?.agent ?? this.getGovernanceAgent();
+    return this.executor.executeTask<GetPlanAuditLogsResponse>(
+      agent,
+      'get_plan_audit_logs',
+      params,
+      undefined,
+      options
+    );
+  }
+
+  /**
+   * Report a governance outcome for an async task that has resolved.
+   *
+   * Use this when a task returned status 'submitted' or 'working' and
+   * later resolves via polling or webhooks. The checkId is available
+   * on the original TaskResult at result.governance.checkId.
+   */
+  async reportGovernanceOutcome(
+    checkId: string,
+    outcome: OutcomeType,
+    sellerResponse?: Record<string, unknown>,
+    error?: { code?: string; message: string }
+  ): Promise<import('./GovernanceTypes').GovernanceOutcome | undefined> {
+    const middleware = this.executor.getGovernanceMiddleware();
+    if (!middleware) {
+      throw new Error('No governance middleware configured. Set config.governance.campaign to enable governance.');
+    }
+    return middleware.reportOutcome(checkId, outcome, sellerResponse, error);
+  }
+
+  private getGovernanceAgent(): AgentConfig {
+    const agent = this.config.governance?.campaign?.agent;
+    if (!agent) {
+      throw new Error(
+        'No governance agent configured. Either pass an explicit agent via options.agent or set config.governance.campaign.agent.'
+      );
+    }
+    return agent;
   }
 
   // ====== PROTOCOL TASKS ======

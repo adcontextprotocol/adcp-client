@@ -12,9 +12,10 @@ export type TestScenario =
   | 'full_sales_flow' // Full lifecycle: discovery -> create -> update -> delivery
   | 'creative_sync' // Test sync_creatives flow
   | 'creative_inline' // Test inline creatives in create_media_buy
-  | 'creative_reference' // Test reference creatives (creative_ids)
+  | 'creative_reference' // Build -> sync -> reference a creative via creative_ids
   | 'pricing_models' // Test different pricing models the agent supports
   | 'creative_flow' // Creative agent: list_formats -> build -> preview
+  | 'creative_lifecycle' // Creative agent: formats -> sync multiple -> list with/without snapshot -> build/preview
   | 'signals_flow' // Signals agent: get_signals -> activate
   // Edge case testing scenarios
   | 'error_handling' // Test agent returns proper error responses
@@ -29,6 +30,11 @@ export type TestScenario =
   | 'governance_property_lists' // Property list CRUD operations
   | 'governance_content_standards' // Content standards lifecycle
   | 'property_list_filters' // Property list filter round-trip: GARM, MFA, custom_tags, feature_requirements
+  // v3 Campaign governance scenarios
+  | 'campaign_governance' // Full lifecycle: sync_plans -> check -> execute -> report outcome
+  | 'campaign_governance_denied' // Denied flow: over-budget, unauthorized market
+  | 'campaign_governance_conditions' // Conditions flow: apply conditions -> re-check
+  | 'campaign_governance_delivery' // Delivery monitoring with drift detection
   // v3 SI (Sponsored Intelligence) protocol scenarios
   | 'si_session_lifecycle' // Full SI session: initiate -> messages -> terminate
   | 'si_availability' // Check SI offering availability

@@ -42,6 +42,18 @@ export {
   defaultProposalManager,
 } from './proposal-manager';
 
+// Governance (seller-side committed checks)
+export {
+  GovernanceAdapter,
+  defaultGovernanceAdapter,
+  type IGovernanceAdapter,
+  type GovernanceAdapterConfig,
+  type GovernanceAdapterErrorCode,
+  type CommittedCheckRequest,
+  GovernanceAdapterErrorCodes,
+  isGovernanceAdapterError,
+} from './governance-adapter';
+
 // Sponsored Intelligence Sessions
 export {
   SISessionManager,
