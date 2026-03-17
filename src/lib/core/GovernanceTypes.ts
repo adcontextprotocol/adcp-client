@@ -25,26 +25,21 @@ export interface CampaignGovernanceConfig {
   callerUrl?: string;
   /** Max re-check iterations after auto-applying conditions. Default: 0 (return conditions to caller without re-checking). The initial governance check always fires. */
   maxConditionsIterations?: number;
+  /** Custom context extractor. Overrides the default extraction of budget, countries, channels, flight from tool params. Return undefined to send no context. */
+  extractContext?: (
+    params: Record<string, unknown>
+  ) => import('../types/tools.generated').GovernanceContext | undefined;
 }
 
 /**
- * Multi-domain governance configuration.
+ * Governance configuration.
  *
- * Different governance agents can handle different domains:
- * - campaign: check_governance, sync_plans, report_plan_outcome, get_plan_audit_logs
- * - property: property feature evaluation
- * - creative: creative feature evaluation (get_creative_features)
- * - contentStandards: content delivery validation
+ * Campaign governance handles: check_governance, sync_plans,
+ * report_plan_outcome, get_plan_audit_logs.
  */
 export interface GovernanceConfig {
   /** Campaign governance agent */
   campaign?: CampaignGovernanceConfig;
-  /** Property governance agent — evaluates property features */
-  property?: { agent: AgentConfig };
-  /** Creative governance agent — evaluates creative features */
-  creative?: { agent: AgentConfig };
-  /** Content standards governance agent — validates content delivery */
-  contentStandards?: { agent: AgentConfig };
   /**
    * Which tools require governance checks.
    * - 'all': every tool including get_adcp_capabilities (governance tools themselves still excluded)

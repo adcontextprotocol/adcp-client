@@ -100,7 +100,7 @@ describe('Governance E2E: SDK integration with training agent', { skip: skipReas
     }
 
     // Sync a plan first
-    const syncResult = await client.syncPlans(governanceAgent, {
+    const syncResult = await client.syncPlans({
       plans: [
         {
           plan_id: planId,
@@ -260,7 +260,7 @@ describe('Governance E2E: SDK integration with training agent', { skip: skipReas
   });
 
   it('should get audit logs with budget tracking', async () => {
-    const auditResult = await client.getPlanAuditLogs(governanceAgent, {
+    const auditResult = await client.getPlanAuditLogs({
       plan_ids: [planId],
       include_entries: true,
     });
@@ -302,7 +302,7 @@ describe('Governance E2E: Delivery monitoring', { skip: skipReason }, () => {
     client = createGovernedClient(planId, { campaignRef });
 
     // Sync plan
-    const syncResult = await client.syncPlans(governanceAgent, {
+    const syncResult = await client.syncPlans({
       plans: [
         {
           plan_id: planId,
@@ -425,7 +425,7 @@ describe('Governance E2E: Capabilities discovery', { skip: skipReason }, () => {
     const agent = trainingAgent();
 
     // Sync a plan so governance is active
-    await client.syncPlans(agent, {
+    await client.syncPlans({
       plans: [
         {
           plan_id: planId,
@@ -457,7 +457,7 @@ describe('Governance E2E: Escalation flow', { skip: skipReason }, () => {
     client = createGovernedClient(planId, { campaignRef });
 
     // Sync plan with human_required authority
-    const syncResult = await client.syncPlans(governanceAgent, {
+    const syncResult = await client.syncPlans({
       plans: [
         {
           plan_id: planId,
@@ -541,7 +541,7 @@ describe('Governance E2E: Advisory and audit modes', { skip: skipReason }, () =>
     const client = createGovernedClient(planId, { campaignRef });
 
     // Sync plan in advisory mode with restricted geo
-    await client.syncPlans(governanceAgent, {
+    await client.syncPlans({
       plans: [
         {
           plan_id: planId,
@@ -594,7 +594,7 @@ describe('Governance E2E: Advisory and audit modes', { skip: skipReason }, () =>
     const client = createGovernedClient(planId, { campaignRef });
 
     // Sync plan in audit mode
-    await client.syncPlans(governanceAgent, {
+    await client.syncPlans({
       plans: [
         {
           plan_id: planId,
@@ -647,7 +647,7 @@ describe('Governance E2E: Channel compliance', { skip: skipReason }, () => {
     governanceAgent = trainingAgent();
     client = createGovernedClient(planId, { campaignRef });
 
-    await client.syncPlans(governanceAgent, {
+    await client.syncPlans({
       plans: [
         {
           plan_id: planId,
@@ -725,7 +725,7 @@ describe('Governance E2E: Flight compliance', { skip: skipReason }, () => {
     governanceAgent = trainingAgent();
     client = createGovernedClient(planId, { campaignRef });
 
-    await client.syncPlans(governanceAgent, {
+    await client.syncPlans({
       plans: [
         {
           plan_id: planId,
@@ -810,7 +810,7 @@ describe('Governance E2E: Delegation authority', { skip: skipReason }, () => {
       callerUrl: 'https://unauthorized-orchestrator.example.com',
     });
 
-    await client.syncPlans(governanceAgent, {
+    await client.syncPlans({
       plans: [
         {
           plan_id: planId,
@@ -862,7 +862,7 @@ describe('Governance E2E: Delegation authority', { skip: skipReason }, () => {
     const expiredPlanId = `e2e-expired-deleg-${Date.now()}`;
     const expiredClient = createGovernedClient(expiredPlanId, { campaignRef });
 
-    await expiredClient.syncPlans(governanceAgent, {
+    await expiredClient.syncPlans({
       plans: [
         {
           plan_id: expiredPlanId,
@@ -936,7 +936,7 @@ describe('Governance E2E: Plan sync and update', { skip: skipReason }, () => {
     const client = createGovernedClient(planId);
 
     // First sync
-    const sync1 = await client.syncPlans(agent, {
+    const sync1 = await client.syncPlans({
       plans: [
         {
           plan_id: planId,
@@ -954,7 +954,7 @@ describe('Governance E2E: Plan sync and update', { skip: skipReason }, () => {
     assert.equal(sync1.data.plans[0].version, 1);
 
     // Second sync
-    const sync2 = await client.syncPlans(agent, {
+    const sync2 = await client.syncPlans({
       plans: [
         {
           plan_id: planId,
@@ -977,7 +977,7 @@ describe('Governance E2E: Plan sync and update', { skip: skipReason }, () => {
     const agent = trainingAgent();
     const client = createGovernedClient(planId);
 
-    const syncResult = await client.syncPlans(agent, {
+    const syncResult = await client.syncPlans({
       plans: [
         {
           plan_id: planId,
@@ -1013,7 +1013,7 @@ describe('Governance E2E: Outcome reporting', { skip: skipReason }, () => {
     governanceAgent = trainingAgent();
     client = createGovernedClient(planId, { campaignRef });
 
-    await client.syncPlans(governanceAgent, {
+    await client.syncPlans({
       plans: [
         {
           plan_id: planId,
@@ -1136,7 +1136,7 @@ describe('Governance E2E: Audit log detail', { skip: skipReason }, () => {
     governanceAgent = trainingAgent();
     client = createGovernedClient(planId, { campaignRef });
 
-    await client.syncPlans(governanceAgent, {
+    await client.syncPlans({
       plans: [
         {
           plan_id: planId,
@@ -1180,7 +1180,7 @@ describe('Governance E2E: Audit log detail', { skip: skipReason }, () => {
   });
 
   it('should return drift metrics in audit logs', async () => {
-    const auditResult = await client.getPlanAuditLogs(governanceAgent, {
+    const auditResult = await client.getPlanAuditLogs({
       plan_ids: [planId],
       include_entries: true,
     });
@@ -1193,7 +1193,7 @@ describe('Governance E2E: Audit log detail', { skip: skipReason }, () => {
   });
 
   it('should include both check and outcome entries', async () => {
-    const auditResult = await client.getPlanAuditLogs(governanceAgent, {
+    const auditResult = await client.getPlanAuditLogs({
       plan_ids: [planId],
       include_entries: true,
     });
@@ -1214,7 +1214,7 @@ describe('Governance E2E: Audit log detail', { skip: skipReason }, () => {
   });
 
   it('should track campaign breakdown', async () => {
-    const auditResult = await client.getPlanAuditLogs(governanceAgent, {
+    const auditResult = await client.getPlanAuditLogs({
       plan_ids: [planId],
     });
 
@@ -1237,7 +1237,7 @@ describe('Governance E2E: Multiple findings in single check', { skip: skipReason
     governanceAgent = trainingAgent();
     client = createGovernedClient(planId, { campaignRef });
 
-    await client.syncPlans(governanceAgent, {
+    await client.syncPlans({
       plans: [
         {
           plan_id: planId,
@@ -1294,7 +1294,7 @@ describe('Governance E2E: Approval expiration', { skip: skipReason }, () => {
     const agent = trainingAgent();
     const client = createGovernedClient(planId);
 
-    await client.syncPlans(agent, {
+    await client.syncPlans({
       plans: [
         {
           plan_id: planId,

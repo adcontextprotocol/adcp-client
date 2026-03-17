@@ -45,6 +45,7 @@ export {
 // Governance (seller-side committed checks)
 export {
   GovernanceAdapter,
+  defaultGovernanceAdapter,
   type IGovernanceAdapter,
   type GovernanceAdapterConfig,
   type GovernanceAdapterErrorCode,

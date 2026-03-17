@@ -146,3 +146,10 @@ export class GovernanceAdapter implements IGovernanceAdapter {
     }
   }
 }
+
+/**
+ * Pre-configured governance adapter with no agent.
+ * isSupported() returns false and checkCommitted() returns a denial.
+ * Replace with a configured instance when connecting to a governance agent.
+ */
+export const defaultGovernanceAdapter = new GovernanceAdapter();

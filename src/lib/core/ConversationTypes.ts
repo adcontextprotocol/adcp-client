@@ -241,6 +241,8 @@ export interface TaskResult<T = any> {
   governance?: import('./GovernanceTypes').GovernanceCheckResult;
   /** Governance outcome (present after successful execution with governance) */
   governanceOutcome?: import('./GovernanceTypes').GovernanceOutcome;
+  /** Error message when governance outcome reporting failed (distinguishes from "not configured") */
+  governanceOutcomeError?: string;
   /** Task execution metadata */
   metadata: {
     taskId: string;

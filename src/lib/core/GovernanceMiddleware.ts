@@ -81,9 +81,12 @@ export function setAtPath(obj: Record<string, any>, path: string, value: unknown
 
 /**
  * Extract structured governance context from tool call parameters.
- * Governance agents SHOULD use this instead of parsing the raw payload.
+ *
+ * Extracts budget, countries, channels, flight dates, and seller URL from
+ * common AdCP tool parameter conventions. Override via
+ * CampaignGovernanceConfig.extractContext for custom tool schemas.
  */
-function extractGovernanceContext(
+export function extractGovernanceContext(
   params: Record<string, unknown>,
   config: CampaignGovernanceConfig
 ): GovernanceContext | undefined {
@@ -184,7 +187,9 @@ export class GovernanceMiddleware {
         caller: config.callerUrl ?? '',
         tool,
         payload: currentParams,
-        governance_context: extractGovernanceContext(currentParams, config),
+        governance_context: config.extractContext
+          ? config.extractContext(currentParams)
+          : extractGovernanceContext(currentParams, config),
       };
 
       debugLogs.push({

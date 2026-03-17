@@ -94,7 +94,7 @@ export type {
   GovernanceCondition,
   GovernanceEscalation,
 } from './core/GovernanceTypes';
-export { GovernanceMiddleware } from './core/GovernanceMiddleware';
+export { GovernanceMiddleware, extractGovernanceContext } from './core/GovernanceMiddleware';
 export type { GovernanceDebugEntry } from './core/GovernanceMiddleware';
 
 // ====== TASK EVENT TYPES ======
@@ -601,6 +601,7 @@ export {
   defaultSISessionManager,
   // Governance (seller-side committed checks)
   GovernanceAdapter,
+  defaultGovernanceAdapter,
   type IGovernanceAdapter,
   type GovernanceAdapterConfig,
   type GovernanceAdapterErrorCode,
