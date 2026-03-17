@@ -325,7 +325,10 @@ export class TaskExecutor {
         result.governance = governanceResult;
       }
 
-      // Report governance outcome if we had a governance check
+      // Report governance outcome if we had a governance check.
+      // For async tasks (submitted/working), outcome reporting is deferred —
+      // the caller is responsible for reporting via reportOutcome when the
+      // task eventually resolves through polling or webhooks.
       if (governanceCheckId && this.governanceMiddleware) {
         if (result.status === 'completed') {
           result.governanceOutcome = await this.governanceMiddleware.reportOutcome(
@@ -343,6 +346,9 @@ export class TaskExecutor {
             { message: result.error },
             debugLogs
           );
+        } else if (result.status === 'submitted') {
+          // Attach the check ID so callers can report outcome after async resolution
+          result.governance = { ...(result.governance ?? {}), checkId: governanceCheckId } as GovernanceCheckResult;
         }
       }
 

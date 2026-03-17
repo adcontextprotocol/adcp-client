@@ -39,7 +39,6 @@ import { unwrapProtocolResponse } from '../utils/response-unwrapper';
 export type GovernanceDebugEntry =
   | { type: 'governance_check'; iteration: number; tool: string; plan_id: string }
   | { type: 'governance_conditions_applied'; iteration: number; conditions: GovernanceCondition[] }
-  | { type: 'governance_conditions_exhausted'; iterations: number; tool: string }
   | { type: 'governance_outcome_error'; check_id: string; error: string };
 
 /** Safe pattern for path segments: identifiers or numeric indices */
@@ -257,12 +256,9 @@ export class GovernanceMiddleware {
       iteration++;
     } while (iteration <= maxReChecks);
 
-    // Exhausted re-check iterations
-    debugLogs.push({
-      type: 'governance_conditions_exhausted',
-      iterations: maxReChecks,
-      tool,
-    });
+    // Defensive: the early return at `iteration >= maxReChecks` inside the loop
+    // should always fire before this point. If we somehow reach here, treat it
+    // as an unresolvable condition so we fail closed.
     return {
       result: {
         checkId: '',
