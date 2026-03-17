@@ -1,5 +1,33 @@
 # Changelog
 
+## 4.9.0
+
+### Minor Changes
+
+- 6950b52: Add OpenTelemetry tracing support for observability
+  - Added `@opentelemetry/api` as an optional peer dependency
+  - New `withSpan()` utility wraps async operations in OTel spans
+  - Instrumented `ProtocolClient.callTool()`, `callMCPTool()`, `callA2ATool()`, and `connectMCPWithFallback()`
+  - Trace context headers (`traceparent`) automatically injected into tool call requests (excludes discovery endpoints to avoid leaking trace IDs to untrusted servers)
+  - All tracing is no-op when `@opentelemetry/api` is not installed
+  - Exported utilities: `getTracer`, `isTracingEnabled`, `injectTraceHeaders`, `withSpan`, `addSpanAttributes`, `recordSpanException`
+
+  When consumers use an OTel-compatible observability system (Sentry, Datadog, etc.), spans from this library automatically appear as children of the consuming application's traces.
+
+- 4d9d03c: Fix creative protocol testing issues and add creative_lifecycle scenario
+  - Fix preview_creative test calls to use current schema (request_type: 'single' + creative_manifest)
+  - Remove incorrect media_buy gate on sync_creatives (now dual-domain with creative protocol)
+  - Fix cross-validation false positives from shared tools (list_creative_formats, list_creatives, sync_creatives)
+  - Respect min_spend_per_package when building test media buy requests
+  - Add creative_lifecycle scenario: format validation, bulk sync, snapshot testing, build/preview
+
+- d855c7e: Add governance SDK support: GovernanceMiddleware for buyer-side transaction validation, governance adapter, governance test scenarios, and capabilities discovery for governance protocol detection. TaskExecutor now intercepts tool calls to check governance before execution, auto-applies conditions, and reports outcomes.
+
+  **Schema refresh (breaking):**
+  - Removed `stats.hosted` from `listBrands` response — consumers reading this field will get a compile error
+  - New enum members: `MediaChannel: 'ai_media'`, `TaskType: 'get_brand_identity' | 'get_rights' | 'acquire_rights'`, `AdCPDomain: 'brand'` — may break exhaustive switch/assertNever patterns
+  - `limit`/`offset` parameters in `listPolicies`, `getBrandHistory`, `getPropertyHistory`, `getPolicyHistory` typed as `string` (upstream registry.yaml issue)
+
 ## 4.8.0
 
 ### Minor Changes
