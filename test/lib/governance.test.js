@@ -246,27 +246,28 @@ describe('setAtPath', () => {
   });
 
   it('throws on __proto__', () => {
-    assert.throws(() => setAtPath({}, '__proto__.polluted', true), /Forbidden path segment/);
+    assert.throws(() => setAtPath({}, '__proto__.polluted', true), /Invalid path segment/);
   });
 
   it('throws on constructor', () => {
-    assert.throws(() => setAtPath({}, 'constructor.prototype.x', true), /Forbidden path segment/);
+    assert.throws(() => setAtPath({}, 'constructor.prototype.x', true), /Invalid path segment/);
   });
 
   it('throws on prototype', () => {
-    assert.throws(() => setAtPath({}, 'a.prototype.b', true), /Forbidden path segment/);
+    assert.throws(() => setAtPath({}, 'a.prototype.b', true), /Invalid path segment/);
   });
 
-  it('throws on toString', () => {
-    assert.throws(() => setAtPath({}, 'toString.x', true), /Forbidden path segment/);
+  it('rejects paths with special characters', () => {
+    assert.throws(() => setAtPath({}, 'a[0].b', true), /Invalid path segment/);
+    assert.throws(() => setAtPath({}, 'a..b', true), /Invalid path segment/);
+    assert.throws(() => setAtPath({}, '.a', true), /Invalid path segment/);
+    assert.throws(() => setAtPath({}, 'a.', true), /Invalid path segment/);
   });
 
-  it('throws on valueOf', () => {
-    assert.throws(() => setAtPath({}, 'valueOf', true), /Forbidden path segment/);
-  });
-
-  it('throws on hasOwnProperty', () => {
-    assert.throws(() => setAtPath({}, 'hasOwnProperty', true), /Forbidden path segment/);
+  it('accepts valid identifier segments', () => {
+    const obj = {};
+    setAtPath(obj, '_private.$field', 'ok');
+    assert.equal(obj._private.$field, 'ok');
   });
 
   it('throws on empty path', () => {

@@ -109,7 +109,8 @@ export class GovernanceAdapter implements IGovernanceAdapter {
         plan_id: request.planId,
         buyer_campaign_ref: request.buyerCampaignRef,
         explanation: 'Governance not configured on this server',
-      };
+        error_code: GovernanceAdapterErrorCodes.NOT_SUPPORTED,
+      } as CheckGovernanceResponse;
     }
 
     const checkRequest: CheckGovernanceRequest = {
@@ -128,7 +129,7 @@ export class GovernanceAdapter implements IGovernanceAdapter {
       const response = await ProtocolClient.callTool(
         this.agentConfig.agent,
         'check_governance',
-        checkRequest as unknown as Record<string, unknown>
+        checkRequest as Record<string, any>
       );
 
       return unwrapProtocolResponse(response) as unknown as CheckGovernanceResponse;

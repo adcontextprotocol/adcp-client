@@ -15,7 +15,9 @@ import type { AgentConfig } from '../types';
 import type {
   CheckGovernanceRequest,
   CheckGovernanceResponse,
+  GovernanceContext,
   ReportPlanOutcomeRequest,
+  ReportPlanOutcomeResponse,
   OutcomeType,
 } from '../types/tools.generated';
 import { ProtocolClient } from '../protocols';
@@ -40,19 +42,18 @@ export type GovernanceDebugEntry =
   | { type: 'governance_conditions_exhausted'; iterations: number; tool: string }
   | { type: 'governance_outcome_error'; check_id: string; error: string };
 
-/** Path segments that would cause prototype pollution if used as object keys. */
-const FORBIDDEN_PATH_SEGMENTS = new Set([
-  '__proto__',
-  'constructor',
-  'prototype',
-  'toString',
-  'valueOf',
-  'hasOwnProperty',
-]);
+/** Safe pattern for path segments: identifiers or numeric indices */
+const SAFE_PATH_SEGMENT = /^[a-zA-Z_$][a-zA-Z0-9_$]*$|^\d+$/;
+
+/** Path segments that would cause prototype pollution even though they match the safe pattern. */
+const FORBIDDEN_PATH_SEGMENTS = new Set(['__proto__', 'constructor', 'prototype']);
 
 /**
  * Set a value at a dot-path in an object. Creates intermediate objects as needed.
  * e.g., setAtPath(obj, 'packages.0.budget', 25000)
+ *
+ * Path segments are validated against a safe allowlist pattern and a forbidden
+ * set to prevent prototype pollution from external governance agent responses.
  */
 export function setAtPath(obj: Record<string, any>, path: string, value: unknown): void {
   if (!path || path.trim() === '') {
@@ -61,7 +62,10 @@ export function setAtPath(obj: Record<string, any>, path: string, value: unknown
   const parts = path.split('.');
   for (const part of parts) {
     if (FORBIDDEN_PATH_SEGMENTS.has(part)) {
-      throw new Error(`Forbidden path segment: ${part}`);
+      throw new Error(`Invalid path segment: ${part}`);
+    }
+    if (!SAFE_PATH_SEGMENT.test(part)) {
+      throw new Error(`Invalid path segment: ${part}`);
     }
   }
   let current = obj;
@@ -77,10 +81,53 @@ export function setAtPath(obj: Record<string, any>, path: string, value: unknown
 }
 
 /**
- * Deep clone a plain object (JSON-safe).
+ * Extract structured governance context from tool call parameters.
+ * Governance agents SHOULD use this instead of parsing the raw payload.
  */
-function deepClone<T>(obj: T): T {
-  return JSON.parse(JSON.stringify(obj));
+function extractGovernanceContext(
+  params: Record<string, unknown>,
+  config: CampaignGovernanceConfig
+): GovernanceContext | undefined {
+  const ctx: GovernanceContext = {};
+  let hasField = false;
+
+  // Extract budget from common locations
+  const budget = params.budget as Record<string, unknown> | undefined;
+  if (budget?.total != null && budget?.currency) {
+    ctx.total_budget = { amount: budget.total as number, currency: budget.currency as string };
+    hasField = true;
+  }
+
+  // Extract countries
+  if (Array.isArray(params.countries) && params.countries.length > 0) {
+    ctx.countries = params.countries as string[];
+    hasField = true;
+  }
+
+  // Extract channels
+  const channel = params.channel as string | undefined;
+  if (channel) {
+    ctx.channels = [channel];
+    hasField = true;
+  } else if (Array.isArray(params.channels) && params.channels.length > 0) {
+    ctx.channels = params.channels as string[];
+    hasField = true;
+  }
+
+  // Extract flight dates
+  const flight = params.flight as Record<string, unknown> | undefined;
+  if (flight?.start && flight?.end) {
+    ctx.flight = { start: flight.start as string, end: flight.end as string };
+    hasField = true;
+  }
+
+  // Include seller URL if the agent config has it
+  if (config.callerUrl) {
+    ctx.seller_url = config.callerUrl;
+    hasField = true;
+  }
+
+  return hasField ? ctx : undefined;
 }
 
 export class GovernanceMiddleware {
@@ -125,7 +172,7 @@ export class GovernanceMiddleware {
     }
 
     const maxIterations = config.maxConditionsIterations ?? 0;
-    let currentParams = deepClone(params);
+    let currentParams = structuredClone(params);
     let iteration = 0;
 
     while (iteration < maxIterations) {
@@ -136,6 +183,7 @@ export class GovernanceMiddleware {
         caller: config.callerUrl ?? '',
         tool,
         payload: currentParams,
+        governance_context: extractGovernanceContext(currentParams, config),
       };
 
       debugLogs.push({
@@ -148,7 +196,7 @@ export class GovernanceMiddleware {
       const response = await ProtocolClient.callTool(
         config.agent,
         'check_governance',
-        request as unknown as Record<string, unknown>,
+        request as Record<string, any>,
         debugLogs
       );
 
@@ -241,7 +289,7 @@ export class GovernanceMiddleware {
     };
 
     if (outcome === 'completed' && sellerResponse) {
-      request.seller_response = sellerResponse as any;
+      request.seller_response = sellerResponse as ReportPlanOutcomeRequest['seller_response'];
     }
 
     if (outcome === 'failed' && error) {
@@ -252,34 +300,34 @@ export class GovernanceMiddleware {
       const response = await ProtocolClient.callTool(
         config.agent,
         'report_plan_outcome',
-        request as unknown as Record<string, unknown>,
+        request as Record<string, any>,
         debugLogs
       );
 
-      const responseData = unwrapProtocolResponse(response) as any;
+      const responseData = unwrapProtocolResponse(response) as unknown as ReportPlanOutcomeResponse;
 
       await this.emitGovernanceActivity('governance_outcome', {
         check_id: checkId,
         outcome,
-        response: responseData,
       });
 
       return {
         outcomeId: responseData.outcome_id,
-        status: responseData.status,
+        status: responseData.status as GovernanceOutcome['status'],
         committedBudget: responseData.committed_budget,
-        findings: responseData.findings?.map((f: any) => ({
+        findings: responseData.findings?.map(f => ({
           categoryId: f.category_id,
           severity: f.severity,
           explanation: f.explanation,
           details: f.details,
         })),
-        planSummary: responseData.plan_summary
-          ? {
-              totalCommitted: responseData.plan_summary.total_committed,
-              budgetRemaining: responseData.plan_summary.budget_remaining,
-            }
-          : undefined,
+        planSummary:
+          responseData.plan_summary?.total_committed != null && responseData.plan_summary?.budget_remaining != null
+            ? {
+                totalCommitted: responseData.plan_summary.total_committed,
+                budgetRemaining: responseData.plan_summary.budget_remaining,
+              }
+            : undefined,
       };
     } catch (err) {
       // Outcome reporting failure shouldn't fail the task
@@ -287,6 +335,12 @@ export class GovernanceMiddleware {
         type: 'governance_outcome_error',
         check_id: checkId,
         error: (err as Error).message,
+      });
+      await this.emitGovernanceActivity('governance_outcome', {
+        check_id: checkId,
+        outcome,
+        error: (err as Error).message,
+        warning: 'Outcome reporting failed — governance agent may have stale state',
       });
       return undefined;
     }
