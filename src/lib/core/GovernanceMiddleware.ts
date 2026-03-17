@@ -71,7 +71,7 @@ export function setAtPath(obj: Record<string, any>, path: string, value: unknown
   let current = obj;
   for (let i = 0; i < parts.length - 1; i++) {
     const key = parts[i];
-    if (current[key] === undefined || current[key] === null) {
+    if (current[key] == null || typeof current[key] !== 'object') {
       // Create array if next key is numeric, else object
       current[key] = /^\d+$/.test(parts[i + 1]) ? [] : {};
     }

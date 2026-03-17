@@ -245,8 +245,9 @@ describe('setAtPath', () => {
     assert.equal(obj.packages[0].budget, 1000);
   });
 
-  it('throws on __proto__', () => {
+  it('throws on __proto__ and does not pollute Object.prototype', () => {
     assert.throws(() => setAtPath({}, '__proto__.polluted', true), /Invalid path segment/);
+    assert.equal(({}).polluted, undefined, 'Object.prototype should not be polluted');
   });
 
   it('throws on constructor', () => {
@@ -268,6 +269,12 @@ describe('setAtPath', () => {
     const obj = {};
     setAtPath(obj, '_private.$field', 'ok');
     assert.equal(obj._private.$field, 'ok');
+  });
+
+  it('overwrites scalar intermediate with object', () => {
+    const obj = { budget: 5000 };
+    setAtPath(obj, 'budget.total', 3000);
+    assert.deepEqual(obj.budget, { total: 3000 });
   });
 
   it('throws on empty path', () => {
@@ -325,18 +332,15 @@ describe('GovernanceMiddleware', () => {
       await assert.rejects(() => mw.checkProposed('create_media_buy', {}), /Campaign governance not configured/);
     });
 
-    it('returns conditions to caller when maxConditionsIterations is 0 (default)', async () => {
-      // Mock ProtocolClient by creating a middleware with a config that will trigger conditions
-      // Since checkProposed calls ProtocolClient internally, we test the iteration default
+    it('produces synthetic denial when maxConditionsIterations is 0 (default)', async () => {
       const config = {
         campaign: {
           ...baseGovernanceConfig.campaign,
-          // Default maxConditionsIterations is now 0
         },
       };
       const mw = new GovernanceMiddleware(config);
-      // maxConditionsIterations = 0 means the while loop never executes
-      // so it falls through to the exhaustion path
+      // maxConditionsIterations defaults to 0, so the while loop never executes
+      // and the exhaustion path returns a synthetic denial
       const { result } = await mw.checkProposed('create_media_buy', { budget: 5000 });
       assert.equal(result.status, 'denied');
       assert.ok(result.explanation.includes('0 iterations'));
