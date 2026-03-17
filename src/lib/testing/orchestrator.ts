@@ -14,8 +14,6 @@ import type { TestScenario, TestOptions, TestResult, SuiteResult } from './types
  * ALL listed tools must be present in the agent's tool list.
  * Scenarios with an empty array are always applicable.
  *
- * Scenarios omitted from this map are not orchestrated:
- * - creative_reference: not yet implemented
  */
 export const SCENARIO_REQUIREMENTS: Partial<Record<TestScenario, string[]>> = {
   // Always applicable
@@ -27,6 +25,7 @@ export const SCENARIO_REQUIREMENTS: Partial<Record<TestScenario, string[]>> = {
   create_media_buy: ['get_products', 'create_media_buy'],
   full_sales_flow: ['get_products', 'create_media_buy'],
   creative_inline: ['get_products', 'create_media_buy'],
+  creative_reference: ['get_products', 'create_media_buy', 'build_creative', 'sync_creatives'],
   temporal_validation: ['get_products', 'create_media_buy'],
   creative_sync: ['get_products', 'create_media_buy', 'sync_creatives'],
 
@@ -48,6 +47,12 @@ export const SCENARIO_REQUIREMENTS: Partial<Record<TestScenario, string[]>> = {
   governance_property_lists: ['create_property_list'],
   governance_content_standards: ['list_content_standards'],
   property_list_filters: ['create_property_list', 'get_property_list'],
+
+  // Requires campaign governance tools
+  campaign_governance: ['sync_plans', 'check_governance'],
+  campaign_governance_denied: ['sync_plans', 'check_governance'],
+  campaign_governance_conditions: ['sync_plans', 'check_governance'],
+  campaign_governance_delivery: ['check_governance'],
 
   // Requires SI tools
   si_session_lifecycle: ['si_initiate_session'],
@@ -74,6 +79,7 @@ export const DEFAULT_SCENARIOS: readonly TestScenario[] = [
   'full_sales_flow',
   'creative_sync',
   'creative_inline',
+  'creative_reference',
   'pricing_edge_cases',
   'error_handling',
   'validation',
@@ -85,6 +91,10 @@ export const DEFAULT_SCENARIOS: readonly TestScenario[] = [
   'governance_property_lists',
   'governance_content_standards',
   'property_list_filters',
+  'campaign_governance',
+  'campaign_governance_denied',
+  'campaign_governance_conditions',
+  'campaign_governance_delivery',
   'si_session_lifecycle',
   'si_availability',
   'si_handoff',

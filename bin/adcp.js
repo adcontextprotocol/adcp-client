@@ -56,6 +56,10 @@ const TEST_SCENARIOS = [
   'governance_content_standards',
   'si_session_lifecycle',
   'si_availability',
+  'campaign_governance',
+  'campaign_governance_denied',
+  'campaign_governance_conditions',
+  'campaign_governance_delivery',
 ];
 
 // Built-in test agent aliases (shared between main CLI and test command)
@@ -248,6 +252,10 @@ async function handleTestCommand(args) {
       governance_content_standards: 'Test content standards listing and calibration',
       si_session_lifecycle: 'Test full SI session: initiate → messages → terminate',
       si_availability: 'Quick check for SI offering availability',
+      campaign_governance: 'Full governance lifecycle: sync_plans → check → execute → report',
+      campaign_governance_denied: 'Denied flow: over-budget, unauthorized market',
+      campaign_governance_conditions: 'Conditions flow: apply conditions → re-check',
+      campaign_governance_delivery: 'Delivery monitoring with drift detection',
     };
 
     for (const scenario of TEST_SCENARIOS) {

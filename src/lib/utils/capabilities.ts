@@ -76,6 +76,20 @@ export interface AccountCapabilities {
 }
 
 /**
+ * Creative protocol capabilities declared by the agent.
+ */
+export interface CreativeCapabilities {
+  /** Agent can validate compliance requirements while building creatives */
+  supportsCompliance: boolean;
+  /** Agent exposes a creative library addressable via creative_id */
+  hasCreativeLibrary: boolean;
+  /** Agent can generate creatives from a natural-language brief */
+  supportsGeneration: boolean;
+  /** Agent can adapt an existing creative to a new format */
+  supportsTransformation: boolean;
+}
+
+/**
  * Normalized capabilities response that works for both v2 and v3 servers
  */
 export interface AdcpCapabilities {
@@ -93,6 +107,9 @@ export interface AdcpCapabilities {
 
   /** Account management capabilities */
   account?: AccountCapabilities;
+
+  /** Creative protocol capabilities */
+  creative?: CreativeCapabilities;
 
   /** Supported extension namespaces (e.g., 'scope3', 'garm') */
   extensions: string[];
@@ -158,6 +175,13 @@ export const GOVERNANCE_TOOLS = [
   'calibrate_content',
   'validate_content_delivery',
   'get_media_buy_artifacts',
+  // Campaign governance
+  'sync_plans',
+  'check_governance',
+  'report_plan_outcome',
+  'get_plan_audit_logs',
+  // Creative governance
+  'get_creative_features',
 ] as const;
 
 export const CREATIVE_TOOLS = [
@@ -268,12 +292,23 @@ export function parseCapabilitiesResponse(response: any): AdcpCapabilities {
     };
   }
 
+  let creative: CreativeCapabilities | undefined;
+  if (response.creative) {
+    creative = {
+      supportsCompliance: response.creative.supports_compliance ?? false,
+      hasCreativeLibrary: response.creative.has_creative_library ?? false,
+      supportsGeneration: response.creative.supports_generation ?? false,
+      supportsTransformation: response.creative.supports_transformation ?? false,
+    };
+  }
+
   return {
     version: highestVersion >= 3 ? 'v3' : 'v2',
     majorVersions,
     protocols,
     features,
     account,
+    creative,
     extensions: response.extensions_supported ?? [],
     publisherDomains: response.media_buy?.portfolio?.publisher_domains,
     channels: response.media_buy?.portfolio?.channels,
@@ -392,6 +427,15 @@ export const TASK_FEATURE_MAP: Record<string, FeatureName[]> = {
   calibrate_content: ['governance', 'content_standards'],
   validate_content_delivery: ['governance', 'content_standards'],
   get_media_buy_artifacts: ['governance'],
+
+  // Campaign governance
+  sync_plans: ['governance'],
+  check_governance: ['governance'],
+  report_plan_outcome: ['governance'],
+  get_plan_audit_logs: ['governance'],
+
+  // Creative governance
+  get_creative_features: ['governance'],
 
   // Sponsored intelligence protocol
   si_get_offering: ['sponsored_intelligence'],

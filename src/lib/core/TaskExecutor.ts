@@ -24,6 +24,8 @@ import type {
 import { normalizeHandlerResponse, isDeferResponse, isAbortResponse } from '../handlers/types';
 import { ProtocolResponseParser, ADCP_STATUS, type ADCPStatus } from './ProtocolResponseParser';
 import type { Activity } from './AsyncHandler';
+import { GovernanceMiddleware } from './GovernanceMiddleware';
+import type { GovernanceConfig, GovernanceCheckResult } from './GovernanceTypes';
 /**
  * Custom errors for task execution
  */
@@ -84,6 +86,7 @@ export class TaskExecutor {
   private responseParser: ProtocolResponseParser;
   private activeTasks = new Map<string, TaskState>();
   private conversationStorage?: Map<string, Message[]>;
+  private governanceMiddleware?: GovernanceMiddleware;
 
   constructor(
     private config: {
@@ -111,12 +114,24 @@ export class TaskExecutor {
       logSchemaViolations?: boolean;
       /** Global activity callback for observability */
       onActivity?: (activity: Activity) => void | Promise<void>;
+      /** Governance configuration for buyer-side campaign governance */
+      governance?: GovernanceConfig;
     } = {}
   ) {
     this.responseParser = new ProtocolResponseParser();
     if (config.enableConversationStorage) {
       this.conversationStorage = new Map();
     }
+    if (config.governance) {
+      this.governanceMiddleware = new GovernanceMiddleware(config.governance, config.onActivity);
+    }
+  }
+
+  /**
+   * Access the governance middleware for direct outcome reporting (async tasks).
+   */
+  getGovernanceMiddleware(): GovernanceMiddleware | undefined {
+    return this.governanceMiddleware;
   }
 
   /**
@@ -175,20 +190,16 @@ export class TaskExecutor {
       agent.id
     );
 
-    // Create initial message
-    const initialMessage: Message = {
-      id: randomUUID(),
-      role: 'user',
-      content: { tool: taskName, params },
-      timestamp: new Date().toISOString(),
-      metadata: { toolName: taskName, type: 'request' },
-    };
-
     // Start streaming connection
     const debugLogs: any[] = [];
 
     // Generate webhook URL if template is configured
     const webhookUrl = this.generateWebhookUrl(taskName, taskId);
+
+    // Governance state (scoped outside try so catch can access)
+    let governanceCheckId: string | undefined;
+    let governanceResult: GovernanceCheckResult | undefined;
+    let effectiveParams = params;
 
     try {
       // Emit protocol_request activity
@@ -204,11 +215,74 @@ export class TaskExecutor {
         timestamp: new Date().toISOString(),
       });
 
+      // Run governance check if configured for this tool
+      if (this.governanceMiddleware?.requiresCheck(taskName)) {
+        const { result: govResult, params: adjustedParams } = await this.governanceMiddleware.checkProposed(
+          taskName,
+          params,
+          debugLogs
+        );
+
+        // In advisory/audit modes, attach findings but allow execution to proceed.
+        // In enforce mode (default), block on denial/escalation/unapplied conditions.
+        const isBlocking = !govResult.mode || govResult.mode === 'enforce';
+
+        if (govResult.status === 'denied' && isBlocking) {
+          return this.buildGovernanceResult<T>(
+            'governance-denied',
+            govResult,
+            taskId,
+            taskName,
+            agent,
+            startTime,
+            debugLogs
+          );
+        }
+
+        if (govResult.status === 'escalated' && isBlocking) {
+          return this.buildGovernanceResult<T>(
+            'governance-escalated',
+            govResult,
+            taskId,
+            taskName,
+            agent,
+            startTime,
+            debugLogs
+          );
+        }
+
+        if (govResult.status === 'conditions' && !govResult.conditionsApplied && isBlocking) {
+          return this.buildGovernanceResult<T>(
+            'governance-denied',
+            govResult,
+            taskId,
+            taskName,
+            agent,
+            startTime,
+            debugLogs
+          );
+        }
+
+        // Approved, or non-blocking mode (advisory/audit) allows execution to proceed
+        governanceCheckId = govResult.checkId;
+        governanceResult = govResult;
+        effectiveParams = adjustedParams;
+      }
+
+      // Create initial message (uses effectiveParams which may have governance-applied conditions)
+      const initialMessage: Message = {
+        id: randomUUID(),
+        role: 'user',
+        content: { tool: taskName, params: effectiveParams },
+        timestamp: new Date().toISOString(),
+        metadata: { toolName: taskName, type: 'request' },
+      };
+
       // Send initial request and get streaming response with webhook URL
       const response = await ProtocolClient.callTool(
         agent,
         taskName,
-        params,
+        effectiveParams,
         debugLogs,
         webhookUrl,
         this.config.webhookSecret
@@ -240,11 +314,11 @@ export class TaskExecutor {
       const messages = [initialMessage, responseMessage];
 
       // Handle response based on status
-      return await this.handleAsyncResponse<T>(
+      const result = await this.handleAsyncResponse<T>(
         agent,
         taskId,
         taskName,
-        params,
+        effectiveParams,
         response,
         messages,
         inputHandler,
@@ -252,7 +326,57 @@ export class TaskExecutor {
         debugLogs,
         startTime
       );
+
+      // Attach governance check result to the task result
+      if (governanceResult) {
+        result.governance = governanceResult;
+      }
+
+      // Report governance outcome if we had a governance check.
+      // For async tasks (submitted/working), outcome reporting is deferred —
+      // the caller reports via client.reportGovernanceOutcome() when the
+      // task resolves through polling or webhooks.
+      if (governanceCheckId && this.governanceMiddleware) {
+        if (result.status === 'completed') {
+          result.governanceOutcome = await this.governanceMiddleware.reportOutcome(
+            governanceCheckId,
+            'completed',
+            result.data as Record<string, unknown> | undefined,
+            undefined,
+            debugLogs
+          );
+          if (!result.governanceOutcome) {
+            result.governanceOutcomeError = 'Outcome reporting to governance agent failed';
+          }
+        } else if (result.error) {
+          result.governanceOutcome = await this.governanceMiddleware.reportOutcome(
+            governanceCheckId,
+            'failed',
+            undefined,
+            { message: result.error },
+            debugLogs
+          );
+          if (!result.governanceOutcome) {
+            result.governanceOutcomeError = 'Outcome reporting to governance agent failed';
+          }
+        } else if (result.status === 'submitted' || result.status === 'working') {
+          // Attach the check ID so callers can report outcome after async resolution
+          result.governance = { ...(result.governance ?? {}), checkId: governanceCheckId } as GovernanceCheckResult;
+        }
+      }
+
+      return result;
     } catch (error) {
+      // Report failed outcome on error
+      if (governanceCheckId && this.governanceMiddleware) {
+        await this.governanceMiddleware.reportOutcome(
+          governanceCheckId,
+          'failed',
+          undefined,
+          { message: (error as Error).message },
+          debugLogs
+        );
+      }
       return this.createErrorResult<T>(taskId, agent, error, debugLogs, startTime);
     }
   }
@@ -260,6 +384,34 @@ export class TaskExecutor {
   /**
    * Handle agent response based on ADCP status (PR #78)
    */
+  private buildGovernanceResult<T>(
+    status: 'governance-denied' | 'governance-escalated',
+    govResult: GovernanceCheckResult,
+    taskId: string,
+    taskName: string,
+    agent: AgentConfig,
+    startTime: number,
+    debugLogs: any[]
+  ): TaskResult<T> {
+    return {
+      success: false,
+      status,
+      error: govResult.explanation,
+      governance: govResult,
+      metadata: {
+        taskId,
+        taskName,
+        agent: { id: agent.id, name: agent.name, protocol: agent.protocol },
+        responseTimeMs: Date.now() - startTime,
+        timestamp: new Date().toISOString(),
+        clarificationRounds: 0,
+        status,
+      },
+      conversation: [],
+      debug_logs: debugLogs,
+    };
+  }
+
   private async handleAsyncResponse<T>(
     agent: AgentConfig,
     taskId: string,

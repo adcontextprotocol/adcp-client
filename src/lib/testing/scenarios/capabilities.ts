@@ -210,6 +210,74 @@ function validateCapabilitiesResponse(response: any, tools: string[]): { steps: 
     });
   }
 
+  if (hasProtocols && response.supported_protocols.includes('creative')) {
+    const hasCreativeCapabilities = !!response.creative;
+    const creativeWarnings: string[] = [];
+    let creativePassed = hasCreativeCapabilities;
+
+    if (response.creative?.supports_generation && !tools.includes('build_creative')) {
+      creativePassed = false;
+      creativeWarnings.push('creative.supports_generation=true but build_creative is not advertised');
+    }
+
+    if (response.creative?.supports_transformation && !tools.includes('build_creative')) {
+      creativePassed = false;
+      creativeWarnings.push('creative.supports_transformation=true but build_creative is not advertised');
+    }
+
+    if (response.creative?.has_creative_library && !tools.includes('list_creatives')) {
+      creativePassed = false;
+      creativeWarnings.push('creative.has_creative_library=true but list_creatives is not advertised');
+    }
+
+    if (
+      response.creative?.has_creative_library &&
+      !tools.includes('list_accounts') &&
+      !tools.includes('sync_accounts')
+    ) {
+      creativeWarnings.push(
+        'creative.has_creative_library=true but no account management tool is advertised (expected sync_accounts or list_accounts)'
+      );
+    }
+
+    steps.push({
+      step: 'Validate creative capabilities',
+      passed: creativePassed,
+      duration_ms: 0,
+      details: hasCreativeCapabilities
+        ? `Creative: generation=${response.creative.supports_generation ?? false}, transformation=${response.creative.supports_transformation ?? false}, compliance=${response.creative.supports_compliance ?? false}, library=${response.creative.has_creative_library ?? false}`
+        : 'creative is listed in supported_protocols but the creative capability block is missing',
+      warnings: creativeWarnings.length > 0 ? creativeWarnings : undefined,
+    });
+  }
+
+  if (response.account) {
+    const accountWarnings: string[] = [];
+    let accountPassed = true;
+
+    if (response.account.require_operator_auth && !tools.includes('list_accounts')) {
+      accountPassed = false;
+      accountWarnings.push('account.require_operator_auth=true but list_accounts is not advertised');
+    }
+
+    if (
+      response.account.required_for_products &&
+      !tools.includes('list_accounts') &&
+      !tools.includes('sync_accounts')
+    ) {
+      accountPassed = false;
+      accountWarnings.push('account.required_for_products=true but no account management tool is advertised');
+    }
+
+    steps.push({
+      step: 'Validate account capabilities',
+      passed: accountPassed,
+      duration_ms: 0,
+      details: `Account model: require_operator_auth=${response.account.require_operator_auth ?? false}, required_for_products=${response.account.required_for_products ?? false}, sandbox=${response.account.sandbox ?? false}, supported_billing=${(response.account.supported_billing || []).join(', ') || '(none)'}`,
+      warnings: accountWarnings.length > 0 ? accountWarnings : undefined,
+    });
+  }
+
   // Check extensions
   const extensions = response.extensions_supported || [];
   if (extensions.length > 0) {

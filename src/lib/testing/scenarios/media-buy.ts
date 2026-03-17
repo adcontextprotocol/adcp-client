@@ -100,6 +100,48 @@ export function buildCreateMediaBuyRequest(
   };
 }
 
+function selectFormatId(product: any, fallback = 'display_300x250'): string {
+  if (!product?.format_ids?.length) {
+    return fallback;
+  }
+
+  const format = product.format_ids[0];
+  if (typeof format === 'string') {
+    return format;
+  }
+
+  return format.id || format.format_id || fallback;
+}
+
+function buildStaticInlineCreative(formatId: string) {
+  return {
+    name: `Inline Test Creative ${Date.now()}`,
+    format_id: formatId,
+    assets: {
+      primary: {
+        url: 'https://via.placeholder.com/300x250?text=Inline+Creative',
+        width: 300,
+        height: 250,
+        format: 'png',
+      },
+    },
+  };
+}
+
+function extractCreativeManifest(data: any): any | undefined {
+  return data?.creative_manifest || data?.creative_manifests?.[0];
+}
+
+function buildSyncCreativeFromManifest(manifest: any, fallbackFormatId: string) {
+  const creativeId = manifest?.creative_id || `test-creative-${Date.now()}`;
+  return {
+    creative_id: creativeId,
+    name: manifest?.name || `Generated Creative ${creativeId}`,
+    format_id: manifest?.format_id || fallbackFormatId,
+    assets: manifest?.assets || buildStaticInlineCreative(fallbackFormatId).assets,
+  };
+}
+
 /**
  * Test: Create Media Buy
  * Discovers products, then creates a test media buy
@@ -255,6 +297,57 @@ export async function testFullSalesFlow(
       updateStep.error = updateResult.error || 'update_media_buy returned unsuccessful result';
     }
     steps.push(updateStep);
+  }
+
+  if (profile?.tools.includes('get_media_buys')) {
+    const { result: snapshotResult, step: snapshotStep } = await runStep<TaskResult>(
+      'Get media buy status with delivery snapshots',
+      'get_media_buys',
+      async () =>
+        client.executeTask('get_media_buys', {
+          media_buy_ids: [mediaBuyId],
+          include_snapshot: true,
+        }) as Promise<TaskResult>
+    );
+
+    if (snapshotResult?.success && snapshotResult?.data) {
+      const mediaBuys = (snapshotResult.data as any).media_buys || [];
+      const mediaBuy = mediaBuys.find((item: any) => item.media_buy_id === mediaBuyId) || mediaBuys[0];
+      const packages = mediaBuy?.packages || [];
+      const invalidPackages = packages.filter((pkg: any) => {
+        if (pkg.snapshot) {
+          return !pkg.snapshot.as_of || pkg.snapshot.staleness_seconds === undefined;
+        }
+        return !pkg.snapshot_unavailable_reason;
+      });
+
+      if (!mediaBuy) {
+        snapshotStep.passed = false;
+        snapshotStep.error = 'get_media_buys did not return the created media buy';
+      } else if (invalidPackages.length > 0) {
+        snapshotStep.passed = false;
+        snapshotStep.error =
+          'include_snapshot=true must return either snapshot data or snapshot_unavailable_reason for each package';
+      } else {
+        snapshotStep.details = `Retrieved ${packages.length} package snapshot(s)`;
+        snapshotStep.response_preview = JSON.stringify(
+          {
+            media_buy_id: mediaBuy.media_buy_id,
+            package_count: packages.length,
+            snapshots_returned: packages.filter((pkg: any) => !!pkg.snapshot).length,
+            snapshot_unavailable: packages
+              .filter((pkg: any) => !!pkg.snapshot_unavailable_reason)
+              .map((pkg: any) => ({ package_id: pkg.package_id, reason: pkg.snapshot_unavailable_reason })),
+          },
+          null,
+          2
+        );
+      }
+    } else if (snapshotResult && !snapshotResult.success) {
+      snapshotStep.passed = false;
+      snapshotStep.error = snapshotResult.error || 'get_media_buys returned unsuccessful result';
+    }
+    steps.push(snapshotStep);
   }
 
   // Test get_media_buy_delivery if available
@@ -492,26 +585,45 @@ export async function testCreativeInline(
     return { steps, profile };
   }
 
-  // Get format for inline creative
-  let formatId = 'display_300x250';
-  if (product.format_ids?.length) {
-    const fid = product.format_ids[0];
-    formatId = typeof fid === 'string' ? fid : fid.id || fid.format_id || formatId;
-  }
+  const formatId = selectFormatId(product);
+  let inlineCreative = buildStaticInlineCreative(formatId);
 
-  // Build inline creative
-  const inlineCreative = {
-    name: `Inline Test Creative ${Date.now()}`,
-    format_id: formatId,
-    assets: {
-      primary: {
-        url: 'https://via.placeholder.com/300x250?text=Inline+Creative',
-        width: 300,
-        height: 250,
-        format: 'png',
-      },
-    },
-  };
+  if (profile.tools.includes('build_creative')) {
+    const { result: buildResult, step: buildStep } = await runStep<TaskResult>(
+      `Build creative for inline flow (${formatId})`,
+      'build_creative',
+      async () =>
+        client.executeTask('build_creative', {
+          target_format_id: formatId,
+          brand: resolveBrand(options),
+          message: `Create an ad creative for the ${formatId} format that can be attached to a media buy`,
+          quality: 'draft',
+        }) as Promise<TaskResult>
+    );
+
+    if (buildResult?.success && buildResult?.data) {
+      const manifest = extractCreativeManifest(buildResult.data);
+      if (manifest?.assets) {
+        inlineCreative = buildSyncCreativeFromManifest(manifest, formatId);
+        buildStep.details = `Built creative manifest for ${inlineCreative.format_id}`;
+        buildStep.response_preview = JSON.stringify(
+          {
+            format_id: inlineCreative.format_id,
+            asset_keys: Object.keys(inlineCreative.assets || {}),
+          },
+          null,
+          2
+        );
+      } else {
+        buildStep.passed = false;
+        buildStep.error = 'build_creative succeeded but returned no creative_manifest';
+      }
+    } else if (buildResult && !buildResult.success) {
+      buildStep.passed = false;
+      buildStep.error = buildResult.error || 'build_creative failed';
+    }
+    steps.push(buildStep);
+  }
 
   const createRequest = buildCreateMediaBuyRequest(product, pricingOption, options, {
     inline_creatives: [inlineCreative],
@@ -545,6 +657,172 @@ export async function testCreativeInline(
   } else if (createResult && !createResult.success) {
     createStep.passed = false;
     createStep.error = createResult.error || 'create_media_buy with inline creatives failed';
+  }
+  steps.push(createStep);
+
+  return { steps, profile };
+}
+
+/**
+ * Test: Creative Reference Flow
+ * Builds a creative manifest, syncs it into the seller's library, then references it in create_media_buy.
+ */
+export async function testCreativeReference(
+  agentUrl: string,
+  options: TestOptions
+): Promise<{ steps: TestStepResult[]; profile?: AgentProfile }> {
+  const steps: TestStepResult[] = [];
+  const client = createTestClient(agentUrl, options.protocol || 'mcp', options);
+
+  const { steps: discoverySteps, profile } = await testDiscovery(agentUrl, options);
+  steps.push(...discoverySteps);
+
+  if (!profile?.tools.includes('build_creative') || !profile.tools.includes('sync_creatives')) {
+    steps.push({
+      step: 'Build and reference creative',
+      task: 'build_creative',
+      passed: false,
+      duration_ms: 0,
+      error: 'Agent must support both build_creative and sync_creatives',
+    });
+    return { steps, profile };
+  }
+
+  const { result: productsResult } = await runStep<TaskResult>(
+    'Fetch products for creative reference test',
+    'get_products',
+    async () =>
+      client.executeTask('get_products', {
+        buying_mode: 'brief',
+        brief: options.brief || 'Looking for products that support generated creative attachments',
+        brand: resolveBrand(options),
+      }) as Promise<TaskResult>
+  );
+
+  const products = productsResult?.data?.products as any[] | undefined;
+  if (!productsResult?.success || !products?.length) {
+    steps.push({
+      step: 'Build and reference creative',
+      task: 'create_media_buy',
+      passed: false,
+      duration_ms: 0,
+      error: 'No products available to test creative references',
+    });
+    return { steps, profile };
+  }
+
+  const product = selectProduct(products, options);
+  const pricingOption = selectPricingOption(product, options.pricing_models);
+  const formatId = selectFormatId(product);
+
+  if (!pricingOption) {
+    steps.push({
+      step: 'Build and reference creative',
+      task: 'create_media_buy',
+      passed: false,
+      duration_ms: 0,
+      error: `Product "${product.name}" has no pricing options`,
+    });
+    return { steps, profile };
+  }
+
+  const { result: buildResult, step: buildStep } = await runStep<TaskResult>(
+    `Build creative for reference flow (${formatId})`,
+    'build_creative',
+    async () =>
+      client.executeTask('build_creative', {
+        target_format_id: formatId,
+        brand: resolveBrand(options),
+        message: `Create a reusable ad creative for the ${formatId} format`,
+        quality: 'draft',
+      }) as Promise<TaskResult>
+  );
+
+  if (!buildResult?.success || !buildResult?.data) {
+    buildStep.passed = false;
+    buildStep.error = buildResult?.error || 'build_creative failed';
+    steps.push(buildStep);
+    return { steps, profile };
+  }
+
+  const manifest = extractCreativeManifest(buildResult.data);
+  if (!manifest?.assets) {
+    buildStep.passed = false;
+    buildStep.error = 'build_creative returned no creative_manifest';
+    steps.push(buildStep);
+    return { steps, profile };
+  }
+
+  const syncedCreative = buildSyncCreativeFromManifest(manifest, formatId);
+  buildStep.details = `Built creative manifest for ${syncedCreative.format_id}`;
+  buildStep.response_preview = JSON.stringify(
+    {
+      creative_id: syncedCreative.creative_id,
+      format_id: syncedCreative.format_id,
+      asset_keys: Object.keys(syncedCreative.assets || {}),
+    },
+    null,
+    2
+  );
+  steps.push(buildStep);
+
+  const { result: syncResult, step: syncStep } = await runStep<TaskResult>(
+    'Sync generated creative to library',
+    'sync_creatives',
+    async () =>
+      client.executeTask('sync_creatives', {
+        creatives: [syncedCreative],
+      }) as Promise<TaskResult>
+  );
+
+  if (!syncResult?.success || !syncResult?.data) {
+    syncStep.passed = false;
+    syncStep.error = syncResult?.error || 'sync_creatives failed';
+    steps.push(syncStep);
+    return { steps, profile };
+  }
+
+  syncStep.details = `Synced creative ${syncedCreative.creative_id} to seller library`;
+  syncStep.created_id = syncedCreative.creative_id;
+  syncStep.response_preview = JSON.stringify(
+    {
+      creative_id: syncedCreative.creative_id,
+      synced_count: ((syncResult.data as any).creatives || []).length,
+    },
+    null,
+    2
+  );
+  steps.push(syncStep);
+
+  const createRequest = buildCreateMediaBuyRequest(product, pricingOption, options, {
+    creative_ids: [syncedCreative.creative_id],
+  });
+
+  const { result: createResult, step: createStep } = await runStep<TaskResult>(
+    'Create media buy with referenced creative',
+    'create_media_buy',
+    async () => client.executeTask('create_media_buy', createRequest) as Promise<TaskResult>
+  );
+
+  if (createResult?.success && createResult?.data) {
+    const mediaBuy = createResult.data as any;
+    const mediaBuyId = mediaBuy.media_buy_id || mediaBuy.media_buy?.media_buy_id;
+    const packages = mediaBuy.packages || mediaBuy.media_buy?.packages;
+    const referenced = packages?.some((pkg: any) => pkg.creative_ids?.includes(syncedCreative.creative_id));
+    createStep.details = `Created media buy with referenced creative ${syncedCreative.creative_id}`;
+    createStep.created_id = mediaBuyId;
+    createStep.response_preview = JSON.stringify(
+      {
+        media_buy_id: mediaBuyId,
+        creative_id: syncedCreative.creative_id,
+        referenced,
+      },
+      null,
+      2
+    );
+  } else if (createResult && !createResult.success) {
+    createStep.passed = false;
+    createStep.error = createResult.error || 'create_media_buy with creative_ids failed';
   }
   steps.push(createStep);
 
