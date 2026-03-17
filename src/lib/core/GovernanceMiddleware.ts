@@ -343,23 +343,31 @@ export class GovernanceMiddleware {
         check_id: checkId,
         error: (err as Error).message,
       });
-      await this.emitGovernanceActivity('governance_outcome', {
-        check_id: checkId,
-        outcome,
-        error: (err as Error).message,
-        warning: 'Outcome reporting failed — governance agent may have stale state',
-      });
+      await this.emitGovernanceActivity(
+        'governance_outcome',
+        {
+          check_id: checkId,
+          outcome,
+          error: (err as Error).message,
+          warning: 'Outcome reporting failed — governance agent may have stale state',
+        },
+        'failed'
+      );
       return undefined;
     }
   }
 
-  private async emitGovernanceActivity(type: Activity['type'], payload: Record<string, unknown>): Promise<void> {
+  private async emitGovernanceActivity(
+    type: Activity['type'],
+    payload: Record<string, unknown>,
+    status: string = 'completed'
+  ): Promise<void> {
     await this.onActivity?.({
       type,
       operation_id: '',
       agent_id: this.governanceConfig.campaign?.agent.id ?? '',
       task_type: 'governance',
-      status: 'completed',
+      status,
       payload,
       timestamp: new Date().toISOString(),
     });
