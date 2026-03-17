@@ -25,7 +25,7 @@ export {
 } from './media-buy';
 
 // Creative agent testing
-export { testCreativeFlow } from './creative';
+export { testCreativeFlow, testCreativeLifecycle } from './creative';
 
 // Signals agent testing
 export { testSignalsFlow } from './signals';

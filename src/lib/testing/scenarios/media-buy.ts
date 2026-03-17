@@ -61,7 +61,8 @@ export function buildCreateMediaBuyRequest(
     creative_ids?: string[];
   } = {}
 ): any {
-  const budget = options.budget || 1000;
+  const minSpend = pricingOption.min_spend_per_package || 0;
+  const budget = options.budget || Math.max(1000, minSpend);
   const now = new Date();
   const startTime = new Date(now.getTime() + 24 * 60 * 60 * 1000); // Tomorrow
   const endTime = new Date(startTime.getTime() + 7 * 24 * 60 * 60 * 1000); // 7 days later

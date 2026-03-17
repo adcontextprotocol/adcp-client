@@ -189,6 +189,7 @@ export const CREATIVE_TOOLS = [
   'list_creative_formats',
   'preview_creative',
   'list_creatives',
+  'sync_creatives', // Also in MEDIA_BUY_TOOLS - serves both domains
 ] as const;
 
 export const SPONSORED_INTELLIGENCE_TOOLS = [
@@ -395,8 +396,7 @@ export const TASK_FEATURE_MAP: Record<string, FeatureName[]> = {
   get_media_buy_delivery: ['media_buy'],
   provide_performance_feedback: ['media_buy'],
 
-  // Creative management requires media_buy + inline_creative_management
-  sync_creatives: ['media_buy', 'inline_creative_management'],
+  // sync_creatives intentionally omitted — serves both media-buy and creative domains
   // list_creatives intentionally omitted — serves both media-buy and creative domains
 
   // Audience management
