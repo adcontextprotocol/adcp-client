@@ -1,17 +1,16 @@
 /**
- * AdCP Compliance & Convince Assessment
+ * AdCP Compliance Assessment
  *
- * comply   → "Your agent works"  (deterministic, per-track)
- * convince → "Your agent sells"  (AI-assessed, per-brief)
+ * comply → "Your agent works"  (deterministic, per-track)
  */
 
 export { comply, formatComplianceResults, formatComplianceResultsJSON } from './comply';
 export type { ComplyOptions } from './comply';
 
-export { convince, formatConvinceResults, formatConvinceResultsJSON } from './convince';
-export type { FullConvinceOptions } from './convince';
-
 export { SAMPLE_BRIEFS, getBriefById, getBriefsByVertical } from './briefs';
+
+export { getPlatformProfile, getAllPlatformTypes } from './profiles';
+export type { PlatformProfile } from './profiles';
 
 export type {
   ComplianceTrack,
@@ -23,11 +22,11 @@ export type {
   ObservationCategory,
   ObservationSeverity,
   SampleBrief,
-  ConvinceDimension,
-  ConvinceRating,
-  DimensionScore,
-  ScenarioAssessment,
-  ConvinceResult,
-  ConvincePattern,
-  ConvinceOptions,
+  PlatformType,
+  SalesPlatformType,
+  CreativeAgentType,
+  SponsoredIntelligenceType,
+  AINativePlatformType,
+  CoherenceFinding,
+  PlatformCoherenceResult,
 } from './types';

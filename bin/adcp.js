@@ -461,7 +461,7 @@ async function handleTestCommand(args) {
 }
 
 /**
- * Parse common agent/auth options shared by test, comply, and convince commands.
+ * Parse common agent/auth options shared by test and comply commands.
  */
 function parseAgentOptions(args) {
   const authIndex = args.indexOf('--auth');
@@ -545,6 +545,21 @@ async function resolveAgent(agentArg, authToken, protocolFlag, jsonOutput) {
 }
 
 async function handleComplyCommand(args) {
+  // Handle --list-platform-types before anything else
+  if (args.includes('--list-platform-types')) {
+    const { getAllPlatformTypes, getPlatformProfile } = await import('../dist/lib/testing/compliance/index.js');
+    const types = getAllPlatformTypes();
+    console.log('\nAvailable platform types:\n');
+    for (const type of types) {
+      const profile = getPlatformProfile(type);
+      console.log(`  ${type}`);
+      console.log(`    ${profile.label}`);
+      console.log(`    Expected tracks: ${profile.expected_tracks.join(', ')}`);
+      console.log('');
+    }
+    return;
+  }
+
   if (args.includes('--help') || args.length === 0) {
     console.log(`
 AdCP Comply - Compliance Assessment
@@ -561,20 +576,24 @@ DESCRIPTION:
           signals, si, audiences
 
 OPTIONS:
-  --auth TOKEN        Authentication token (overrides saved tokens)
-  --protocol PROTO    Force protocol: mcp or a2a
-  --tracks TRACKS     Comma-separated tracks to run (default: all applicable)
-  --brief TEXT        Custom brief for product discovery
-  --json              Output raw JSON
-  --debug             Show debug output
-  --no-dry-run        Run in live mode (default: dry run)
+  --auth TOKEN             Authentication token (overrides saved tokens)
+  --protocol PROTO         Force protocol: mcp or a2a
+  --tracks TRACKS          Comma-separated tracks to run (default: all applicable)
+  --platform-type TYPE     Declare platform type for coherence checking
+  --list-platform-types    List all available platform types
+  --brief TEXT             Custom brief for product discovery
+  --json                   Output raw JSON
+  --debug                  Show debug output
+  --no-dry-run             Run in live mode (default: dry run)
 
 EXAMPLES:
   adcp comply test-mcp
   adcp comply myagent                                    # uses saved OAuth tokens automatically
   adcp comply test-mcp --tracks core,products,media_buy
+  adcp comply test-mcp --platform-type social_platform
   adcp comply https://my-agent.com/mcp --auth my-token
   adcp comply test-mcp --json | jq '.summary'
+  adcp comply --list-platform-types
 `);
     return;
   }
@@ -599,11 +618,28 @@ EXAMPLES:
     tracks = args[tracksIndex + 1].split(',');
   }
 
+  // Parse --platform-type
+  const platformTypeIndex = args.indexOf('--platform-type');
+  let platform_type;
+  if (platformTypeIndex !== -1 && platformTypeIndex + 1 < args.length) {
+    platform_type = args[platformTypeIndex + 1];
+    // Validate against known types
+    const { getAllPlatformTypes } = await import('../dist/lib/testing/compliance/index.js');
+    const validTypes = getAllPlatformTypes();
+    if (!validTypes.includes(platform_type)) {
+      console.error(`ERROR: Unknown platform type: ${platform_type}`);
+      console.error(`Valid types: ${validTypes.join(', ')}`);
+      console.error(`Run 'adcp comply --list-platform-types' to see all options.\n`);
+      process.exit(2);
+    }
+  }
+
   const testOptions = {
     protocol,
     dry_run: opts.dryRun,
     brief: opts.brief,
     tracks,
+    platform_type,
     ...(finalAuthToken && { auth: { type: 'bearer', token: finalAuthToken } }),
   };
 
@@ -611,6 +647,7 @@ EXAMPLES:
     console.log(`\n🔍 Running compliance assessment against ${agentUrl}`);
     console.log(`   Protocol: ${protocol.toUpperCase()}`);
     console.log(`   Mode: ${opts.dryRun ? 'Dry Run' : 'Live'}`);
+    if (platform_type) console.log(`   Platform: ${platform_type}`);
     console.log(`   Auth: ${finalAuthToken ? 'configured' : 'none'}\n`);
   }
 
@@ -636,140 +673,6 @@ EXAMPLES:
     process.exit(hasFailures ? 3 : 0);
   } catch (error) {
     console.error(`\n❌ Compliance assessment failed: ${error.message}`);
-    if (opts.debug) console.error(error.stack);
-    process.exit(1);
-  }
-}
-
-async function handleConvinceCommand(args) {
-  if (args.includes('--help') || args.length === 0) {
-    console.log(`
-AdCP Convince - AI-Assessed Merchandising Quality
-
-USAGE:
-  adcp convince <agent> [options]
-
-DESCRIPTION:
-  Runs sample briefs against the agent's get_products endpoint and
-  uses an LLM to evaluate the quality of responses. Tests whether
-  your products would convince a buyer to transact.
-
-  Dimensions assessed: relevance, specificity, completeness, pricing,
-  merchandising
-
-OPTIONS:
-  --auth TOKEN           Authentication token (overrides saved tokens)
-  --protocol PROTO       Force protocol: mcp or a2a
-  --anthropic-key KEY    Anthropic API key (or set ANTHROPIC_API_KEY env var)
-  --gemini-key KEY       Google Gemini API key (or set GEMINI_API_KEY env var)
-  --briefs IDS           Comma-separated brief IDs to run (default: all)
-  --list-briefs          List available sample briefs
-  --brief TEXT           Custom brief for product discovery
-  --model MODEL          LLM model override
-  --json                 Output raw JSON
-  --debug                Show debug output
-  --no-dry-run           Run in live mode (default: dry run)
-
-EXAMPLES:
-  adcp convince myagent --anthropic-key sk-ant-...       # uses saved OAuth tokens automatically
-  adcp convince test-mcp --anthropic-key sk-ant-...
-  adcp convince test-mcp --briefs luxury_auto_ev,dtc_skincare_genZ
-  adcp convince test-mcp --list-briefs
-  ANTHROPIC_API_KEY=sk-ant-... adcp convince test-mcp
-`);
-    return;
-  }
-
-  // Handle --list-briefs
-  if (args.includes('--list-briefs')) {
-    const { SAMPLE_BRIEFS } = await import('../dist/lib/testing/compliance/briefs.js');
-    console.log('\n📋 Available Sample Briefs:\n');
-    for (const brief of SAMPLE_BRIEFS) {
-      console.log(`  ${brief.id}`);
-      console.log(`    ${brief.name} (${brief.vertical})`);
-      console.log(`    Budget: ${brief.budget_context || 'Not specified'}`);
-      console.log(`    ${brief.brief.slice(0, 100)}...`);
-      console.log('');
-    }
-    return;
-  }
-
-  const opts = parseAgentOptions(args);
-
-  if (opts.positionalArgs.length === 0) {
-    console.error('ERROR: convince requires an agent alias or URL\n');
-    process.exit(2);
-  }
-
-  const {
-    agentUrl,
-    protocol,
-    authToken: finalAuthToken,
-  } = await resolveAgent(opts.positionalArgs[0], opts.authToken, opts.protocolFlag, opts.jsonOutput);
-
-  // Parse LLM keys
-  const anthropicKeyIndex = args.indexOf('--anthropic-key');
-  const geminiKeyIndex = args.indexOf('--gemini-key');
-  const modelIndex = args.indexOf('--model');
-  const briefsIndex = args.indexOf('--briefs');
-
-  const anthropic_api_key = anthropicKeyIndex !== -1 ? args[anthropicKeyIndex + 1] : process.env.ANTHROPIC_API_KEY;
-  const gemini_api_key = geminiKeyIndex !== -1 ? args[geminiKeyIndex + 1] : process.env.GEMINI_API_KEY;
-  const model = modelIndex !== -1 ? args[modelIndex + 1] : undefined;
-  const brief_ids = briefsIndex !== -1 ? args[briefsIndex + 1].split(',') : undefined;
-
-  if (!anthropic_api_key && !gemini_api_key) {
-    console.error('ERROR: convince requires an LLM API key\n');
-    console.error('Provide one of:');
-    console.error('  --anthropic-key KEY    or set ANTHROPIC_API_KEY');
-    console.error('  --gemini-key KEY       or set GEMINI_API_KEY\n');
-    process.exit(2);
-  }
-
-  const testOptions = {
-    protocol,
-    dry_run: opts.dryRun,
-    brief: opts.brief,
-    anthropic_api_key,
-    gemini_api_key,
-    model,
-    brief_ids,
-    ...(finalAuthToken && { auth: { type: 'bearer', token: finalAuthToken } }),
-  };
-
-  const evaluator = anthropic_api_key ? 'Anthropic' : 'Gemini';
-  const briefCount = brief_ids ? brief_ids.length : 'all';
-
-  if (!opts.jsonOutput) {
-    console.log(`\n🎯 Running convince assessment against ${agentUrl}`);
-    console.log(`   Protocol: ${protocol.toUpperCase()}`);
-    console.log(`   Evaluator: ${evaluator}`);
-    console.log(`   Briefs: ${briefCount}`);
-    console.log(`   Mode: ${opts.dryRun ? 'Dry Run' : 'Live'}`);
-    console.log(`   Auth: ${finalAuthToken ? 'configured' : 'none'}\n`);
-  }
-
-  try {
-    const { convince, formatConvinceResults, formatConvinceResultsJSON } =
-      await import('../dist/lib/testing/compliance/index.js');
-
-    // Silence logger unless debug
-    const { setAgentTesterLogger } = await import('../dist/lib/testing/client.js');
-    if (!opts.debug) {
-      setAgentTesterLogger({ info: () => {}, error: () => {}, warn: () => {}, debug: () => {} });
-    }
-
-    const result = await convince(agentUrl, testOptions);
-
-    if (opts.jsonOutput) {
-      console.log(formatConvinceResultsJSON(result));
-    } else {
-      console.log(formatConvinceResults(result));
-    }
-
-    process.exit(0);
-  } catch (error) {
-    console.error(`\n❌ Convince assessment failed: ${error.message}`);
     if (opts.debug) console.error(error.stack);
     process.exit(1);
   }
@@ -826,16 +729,13 @@ AGENT TESTING:
                               Default scenario: discovery
   test --list-scenarios       List all available test scenarios
 
-COMPLIANCE & QUALITY:
-  comply <agent> [options]    Run compliance assessment across all capability tracks
-                              Tracks: core, products, media_buy, creative, reporting,
-                              governance, signals, si, audiences
-  comply --help               Full comply usage
-
-  convince <agent> [options]  AI-assessed merchandising quality against sample briefs
-                              Requires: --anthropic-key or --gemini-key (or env vars)
-  convince --list-briefs      List available sample briefs
-  convince --help             Full convince usage
+COMPLIANCE:
+  comply <agent> [options]       Run compliance assessment across all capability tracks
+                                 Tracks: core, products, media_buy, creative, reporting,
+                                 governance, signals, si, audiences
+  comply --platform-type TYPE    Declare platform type for coherence checking
+  comply --list-platform-types   List all available platform types
+  comply --help                  Full comply usage
 
 REGISTRY:
   registry brand <domain>                          Look up a brand
@@ -1198,12 +1098,6 @@ async function main() {
   // Handle comply command
   if (args[0] === 'comply') {
     await handleComplyCommand(args.slice(1));
-    return;
-  }
-
-  // Handle convince command
-  if (args[0] === 'convince') {
-    await handleConvinceCommand(args.slice(1));
     return;
   }
 
