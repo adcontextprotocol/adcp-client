@@ -405,5 +405,41 @@ describe('pricing adapter utilities', () => {
 
       assert.deepStrictEqual(normalized, response);
     });
+
+    test('should convert object products to error response', () => {
+      const response = { products: { id: 'not-an-array' } };
+
+      const normalized = normalizeGetProductsResponse(response);
+
+      assert.ok(Array.isArray(normalized.errors), 'Should have errors array');
+      assert.ok(normalized.errors[0].message.includes('got object'));
+    });
+
+    test('should convert numeric products to error response', () => {
+      const response = { products: 123 };
+
+      const normalized = normalizeGetProductsResponse(response);
+
+      assert.ok(Array.isArray(normalized.errors), 'Should have errors array');
+      assert.ok(normalized.errors[0].message.includes('got number'));
+    });
+
+    test('should convert undefined products to error response', () => {
+      const response = { products: undefined };
+
+      const normalized = normalizeGetProductsResponse(response);
+
+      assert.ok(Array.isArray(normalized.errors), 'Should have errors array');
+      assert.ok(normalized.errors[0].message.includes('got undefined'));
+    });
+
+    test('should normalize empty products array without error', () => {
+      const response = { products: [] };
+
+      const normalized = normalizeGetProductsResponse(response);
+
+      assert.ok(Array.isArray(normalized.products), 'Should still be an array');
+      assert.strictEqual(normalized.products.length, 0);
+    });
   });
 });
