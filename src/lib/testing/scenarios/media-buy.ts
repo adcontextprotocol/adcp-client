@@ -102,6 +102,7 @@ export function buildCreateMediaBuyRequest(
 
   return {
     buyer_ref: `e2e-test-${Date.now()}`,
+    account: resolveAccount(options),
     brand: resolveBrand(options),
     start_time: startTime.toISOString(),
     end_time: endTime.toISOString(),

@@ -1331,6 +1331,90 @@ describe('Request Parameter Normalization', () => {
       assert.deepStrictEqual(result.brand_manifest, { name: 'Acme' });
     });
   });
+
+  describe('account inference from brand (create_media_buy)', () => {
+    test('should infer account from brand when account is missing', () => {
+      resetWarnings();
+      const result = normalizeRequestParams('create_media_buy', {
+        buyer_ref: 'buyer-1',
+        brand: { name: 'Acme', domain: 'acme.com' },
+        packages: [],
+      });
+
+      assert.deepStrictEqual(result.account, {
+        brand: { name: 'Acme', domain: 'acme.com' },
+        operator: 'acme.com',
+      });
+    });
+
+    test('should not overwrite existing account', () => {
+      resetWarnings();
+      const result = normalizeRequestParams('create_media_buy', {
+        buyer_ref: 'buyer-1',
+        account: { account_id: 'acct_existing' },
+        brand: { name: 'Acme', domain: 'acme.com' },
+        packages: [],
+      });
+
+      assert.deepStrictEqual(result.account, { account_id: 'acct_existing' });
+    });
+
+    test('should not infer account when brand is missing', () => {
+      resetWarnings();
+      const result = normalizeRequestParams('create_media_buy', {
+        buyer_ref: 'buyer-1',
+        packages: [],
+      });
+
+      assert.strictEqual(result.account, undefined);
+    });
+
+    test('should not infer account for other task types', () => {
+      resetWarnings();
+      const result = normalizeRequestParams('get_products', {
+        brand: { name: 'Acme', domain: 'acme.com' },
+        buying_mode: 'wholesale',
+      });
+
+      assert.strictEqual(result.account, undefined);
+    });
+
+    test('should not infer account when brand has no domain', () => {
+      resetWarnings();
+      const result = normalizeRequestParams('create_media_buy', {
+        buyer_ref: 'buyer-1',
+        brand: { name: 'Acme' },
+        packages: [],
+      });
+
+      assert.strictEqual(result.account, undefined);
+    });
+
+    test('inferred account should not include sandbox field', () => {
+      resetWarnings();
+      const result = normalizeRequestParams('create_media_buy', {
+        buyer_ref: 'buyer-1',
+        brand: { name: 'Acme', domain: 'acme.com' },
+        packages: [],
+      });
+
+      assert.strictEqual(result.account.sandbox, undefined);
+    });
+
+    test('should infer account from brand derived from brand_manifest', () => {
+      resetWarnings();
+      const result = normalizeRequestParams('create_media_buy', {
+        buyer_ref: 'buyer-1',
+        brand_manifest: 'https://acme.com',
+        packages: [],
+      });
+
+      assert.deepStrictEqual(result.account, {
+        brand: { domain: 'acme.com' },
+        operator: 'acme.com',
+      });
+    });
+  });
 });
 
 describe('Package Parameter Normalization', () => {
