@@ -5,6 +5,64 @@
  */
 
 /**
+ * Discover agent card URL with fallback support
+ *
+ * Tries new standard path first, falls back to legacy path for backward compatibility.
+ *
+ * @param baseUrl Base URL to discover agent card from
+ * @returns Promise resolving to the first successful agent card URL, or null if both fail
+ */
+async function discoverAgentCardUrl(baseUrl: string): Promise<string | null> {
+  // Try new standard path first (/.well-known/agent.json)
+  try {
+    const newUrl = new URL('/.well-known/agent.json', baseUrl);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000); // 5s timeout
+
+    const response = await fetch(newUrl.toString(), {
+      method: 'GET',
+      signal: controller.signal,
+      headers: {
+        Accept: 'application/json, */*',
+      },
+    });
+
+    clearTimeout(timeoutId);
+
+    if (response.ok) {
+      return newUrl.toString();
+    }
+  } catch (error) {
+    // Fetch failed - try legacy path
+  }
+
+  // Fallback to legacy path (/.well-known/agent-card.json)
+  try {
+    const legacyUrl = new URL('/.well-known/agent-card.json', baseUrl);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000); // 5s timeout
+
+    const response = await fetch(legacyUrl.toString(), {
+      method: 'GET',
+      signal: controller.signal,
+      headers: {
+        Accept: 'application/json, */*',
+      },
+    });
+
+    clearTimeout(timeoutId);
+
+    if (response.ok) {
+      return legacyUrl.toString();
+    }
+  } catch (error) {
+    // Both paths failed
+  }
+
+  return null;
+}
+
+/**
  * Detect protocol for a given agent URL
  *
  * Uses a hybrid approach:
@@ -21,13 +79,33 @@ export async function detectProtocol(url: string): Promise<'a2a' | 'mcp'> {
     return 'mcp';
   }
 
-  // Step 2: Try A2A discovery
-  try {
-    const discoveryUrl = new URL('/.well-known/agent-card.json', url);
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 5000); // 5s timeout
+  // Step 2: Try A2A discovery with fallback support
+  const discoveredUrl = await discoverAgentCardUrl(url);
+  if (discoveredUrl) {
+    return 'a2a';
+  }
 
-    const response = await fetch(discoveryUrl.toString(), {
+  // Step 3: Default to MCP
+  return 'mcp';
+}
+
+/**
+ * Discover agent card URL with custom timeout and fallback support
+ *
+ * Tries new standard path first, falls back to legacy path for backward compatibility.
+ *
+ * @param baseUrl Base URL to discover agent card from
+ * @param timeoutMs Timeout in milliseconds (default: 5000)
+ * @returns Promise resolving to the first successful agent card URL, or null if both fail
+ */
+async function discoverAgentCardUrlWithTimeout(baseUrl: string, timeoutMs: number = 5000): Promise<string | null> {
+  // Try new standard path first (/.well-known/agent.json)
+  try {
+    const newUrl = new URL('/.well-known/agent.json', baseUrl);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+    const response = await fetch(newUrl.toString(), {
       method: 'GET',
       signal: controller.signal,
       headers: {
@@ -38,14 +116,36 @@ export async function detectProtocol(url: string): Promise<'a2a' | 'mcp'> {
     clearTimeout(timeoutId);
 
     if (response.ok) {
-      return 'a2a';
+      return newUrl.toString();
     }
   } catch (error) {
-    // Fetch failed - likely not A2A
+    // Fetch failed - try legacy path
   }
 
-  // Step 3: Default to MCP
-  return 'mcp';
+  // Fallback to legacy path (/.well-known/agent-card.json)
+  try {
+    const legacyUrl = new URL('/.well-known/agent-card.json', baseUrl);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+    const response = await fetch(legacyUrl.toString(), {
+      method: 'GET',
+      signal: controller.signal,
+      headers: {
+        Accept: 'application/json, */*',
+      },
+    });
+
+    clearTimeout(timeoutId);
+
+    if (response.ok) {
+      return legacyUrl.toString();
+    }
+  } catch (error) {
+    // Both paths failed
+  }
+
+  return null;
 }
 
 /**
@@ -61,27 +161,10 @@ export async function detectProtocolWithTimeout(url: string, timeoutMs: number =
     return 'mcp';
   }
 
-  // Try A2A discovery with custom timeout
-  try {
-    const discoveryUrl = new URL('/.well-known/agent-card.json', url);
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-
-    const response = await fetch(discoveryUrl.toString(), {
-      method: 'GET',
-      signal: controller.signal,
-      headers: {
-        Accept: 'application/json, */*',
-      },
-    });
-
-    clearTimeout(timeoutId);
-
-    if (response.ok) {
-      return 'a2a';
-    }
-  } catch (error) {
-    // Fetch failed - likely not A2A
+  // Try A2A discovery with fallback support
+  const discoveredUrl = await discoverAgentCardUrlWithTimeout(url, timeoutMs);
+  if (discoveredUrl) {
+    return 'a2a';
   }
 
   // Default to MCP

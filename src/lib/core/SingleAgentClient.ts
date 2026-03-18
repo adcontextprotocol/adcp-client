@@ -332,6 +332,9 @@ export class SingleAgentClient {
   /**
    * Fetch the canonical URL from an A2A agent card
    *
+   * Tries new standard path first (/.well-known/agent.json), falls back to legacy
+   * path (/.well-known/agent-card.json) for backward compatibility.
+   *
    * Special handling for authentication errors (401):
    * - If the agent card fetch returns 401, throw AuthenticationRequiredError
    * - Check for OAuth metadata to provide helpful guidance
@@ -364,13 +367,12 @@ export class SingleAgentClient {
       return response;
     };
 
-    // Construct agent card URL
-    const cardUrl = agentUri.endsWith('/.well-known/agent-card.json')
-      ? agentUri
-      : agentUri.replace(/\/$/, '') + '/.well-known/agent-card.json';
+    // Discover agent card URL with fallback support
+    // Try new standard path first (/.well-known/agent.json), fall back to legacy
+    const discoveredCardUrl = await this.discoverAgentCardUrl(agentUri);
 
     try {
-      const client = await A2AClient.fromCardUrl(cardUrl, { fetchImpl });
+      const client = await A2AClient.fromCardUrl(discoveredCardUrl, { fetchImpl });
       const agentCard = client.agentCardPromise ? await client.agentCardPromise : client.agentCard;
 
       // Use the canonical URL from the agent card, falling back to computed base URL
@@ -378,8 +380,8 @@ export class SingleAgentClient {
         return agentCard.url;
       }
 
-      // Fallback: strip .well-known/agent-card.json if present
-      return this.computeBaseUrl(agentUri);
+      // Fallback: strip card path from discovered URL
+      return this.computeBaseUrl(discoveredCardUrl);
     } catch (error: any) {
       // If we got a 401, throw AuthenticationRequiredError
       if (is401Error(error, got401)) {
@@ -390,6 +392,73 @@ export class SingleAgentClient {
       // Re-throw other errors
       throw error;
     }
+  }
+
+  /**
+   * Discover agent card URL with fallback support
+   *
+   * Tries new standard path first (/.well-known/agent.json), falls back to legacy
+   * path (/.well-known/agent-card.json) for backward compatibility.
+   *
+   * @param baseUrl Base URL to discover agent card from
+   * @returns Promise resolving to the resolved agent card URL
+   */
+  private async discoverAgentCardUrl(baseUrl: string): Promise<string> {
+    // Check if the URL already looks like a card URL (either new or legacy path)
+    if (baseUrl.endsWith('/.well-known/agent.json') || baseUrl.endsWith('/.well-known/agent-card.json')) {
+      // Already a card URL - use as-is
+      return baseUrl;
+    }
+
+    // Try new standard path first (/.well-known/agent.json)
+    try {
+      const newUrl = new URL('/.well-known/agent.json', baseUrl);
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000); // 5s timeout
+
+      const response = await fetch(newUrl.toString(), {
+        method: 'GET',
+        signal: controller.signal,
+        headers: {
+          Accept: 'application/json, */*',
+        },
+      });
+
+      clearTimeout(timeoutId);
+
+      if (response.ok) {
+        return newUrl.toString();
+      }
+    } catch (error) {
+      // Fetch failed - try legacy path
+    }
+
+    // Fallback to legacy path (/.well-known/agent-card.json)
+    try {
+      const legacyUrl = new URL('/.well-known/agent-card.json', baseUrl);
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000); // 5s timeout
+
+      const response = await fetch(legacyUrl.toString(), {
+        method: 'GET',
+        signal: controller.signal,
+        headers: {
+          Accept: 'application/json, */*',
+        },
+      });
+
+      clearTimeout(timeoutId);
+
+      if (response.ok) {
+        return legacyUrl.toString();
+      }
+    } catch (error) {
+      // Both paths failed - fall back to legacy path as default
+    }
+
+    // If both failed or server is down, fall back to legacy path as the default
+    const base = baseUrl.endsWith('/') ? baseUrl : baseUrl + '/';
+    return base + '.well-known/agent-card.json';
   }
 
   /**
@@ -2314,9 +2383,9 @@ export class SingleAgentClient {
           }
         : undefined;
 
-      const cardUrl = this.normalizedAgent.agent_uri.endsWith('/.well-known/agent-card.json')
-        ? this.normalizedAgent.agent_uri
-        : this.normalizedAgent.agent_uri.replace(/\/$/, '') + '/.well-known/agent-card.json';
+      // Discover agent card URL with fallback support
+      // Try new standard path first (/.well-known/agent.json), fall back to legacy
+      const cardUrl = await this.discoverAgentCardUrl(this.normalizedAgent.agent_uri);
 
       const client = await A2AClient.fromCardUrl(cardUrl, fetchImpl ? { fetchImpl } : {});
       const agentCard = client.agentCardPromise ? await client.agentCardPromise : client.agentCard;

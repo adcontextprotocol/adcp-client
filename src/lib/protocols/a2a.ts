@@ -7,6 +7,74 @@ import { AuthenticationRequiredError, is401Error } from '../errors';
 import { discoverOAuthMetadata } from '../auth/oauth/discovery';
 import { withSpan, injectTraceHeaders } from '../observability/tracing';
 
+/**
+ * Resolve agent card URL with fallback support
+ *
+ * Tries new standard path first (/.well-known/agent.json), falls back to legacy
+ * path (/.well-known/agent-card.json) for backward compatibility.
+ *
+ * @param baseUrl Base URL or existing card URL to resolve
+ * @returns Promise resolving to the resolved agent card URL
+ */
+async function resolveAgentCardUrl(baseUrl: string): Promise<string> {
+  // Check if the URL already looks like a card URL (either new or legacy path)
+  if (baseUrl.endsWith('/.well-known/agent.json') || baseUrl.endsWith('/.well-known/agent-card.json')) {
+    // Already a card URL - use as-is
+    return baseUrl;
+  }
+
+  // Try new standard path first (/.well-known/agent.json)
+  try {
+    const newUrl = new URL('/.well-known/agent.json', baseUrl);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000); // 5s timeout
+
+    const response = await fetch(newUrl.toString(), {
+      method: 'GET',
+      signal: controller.signal,
+      headers: {
+        Accept: 'application/json, */*',
+      },
+    });
+
+    clearTimeout(timeoutId);
+
+    if (response.ok) {
+      return newUrl.toString();
+    }
+  } catch (error) {
+    // Fetch failed - try legacy path
+  }
+
+  // Fallback to legacy path (/.well-known/agent-card.json)
+  try {
+    const legacyUrl = new URL('/.well-known/agent-card.json', baseUrl);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000); // 5s timeout
+
+    const response = await fetch(legacyUrl.toString(), {
+      method: 'GET',
+      signal: controller.signal,
+      headers: {
+        Accept: 'application/json, */*',
+      },
+    });
+
+    clearTimeout(timeoutId);
+
+    if (response.ok) {
+      return legacyUrl.toString();
+    }
+  } catch (error) {
+    // Both paths failed - fall back to legacy path as default
+    // This ensures we have a URL even if the server is temporarily unavailable
+  }
+
+  // If both failed or server is down, fall back to legacy path as the default
+  const base = baseUrl.endsWith('/') ? baseUrl : baseUrl + '/';
+  return base + '.well-known/agent-card.json';
+}
+
 if (!A2AClient) {
   throw new Error('A2A SDK client is required. Please install @a2a-js/sdk');
 }
@@ -73,8 +141,10 @@ async function callA2AToolImpl(
 
     // Only inject trace context headers for actual tool requests, not discovery
     // The agent card endpoint is external/untrusted - don't leak trace IDs to it
+    // Support both new (/.well-known/agent.json) and legacy (/.well-known/agent-card.json) paths
     const urlString = typeof url === 'string' ? url : url.toString();
-    const isDiscoveryRequest = urlString.includes('/.well-known/agent-card.json');
+    const isDiscoveryRequest =
+      urlString.includes('/.well-known/agent-card.json') || urlString.includes('/.well-known/agent.json');
     const traceHeaders = isDiscoveryRequest ? {} : injectTraceHeaders();
 
     // Merge: existing < trace < custom < auth (auth always wins)
@@ -116,9 +186,8 @@ async function callA2AToolImpl(
 
   // Create A2A client using the recommended fromCardUrl method
   // Ensure the URL points to the agent card endpoint
-  const cardUrl = agentUrl.endsWith('/.well-known/agent-card.json')
-    ? agentUrl
-    : agentUrl.replace(/\/$/, '') + '/.well-known/agent-card.json';
+  // Try new standard path first (/.well-known/agent.json), fall back to legacy (/.well-known/agent-card.json)
+  const cardUrl = await resolveAgentCardUrl(agentUrl);
 
   debugLogs.push({
     type: 'info',
