@@ -86,6 +86,16 @@ export function normalizeRequestParams(taskType: string, params: any): any {
     }
   }
 
+  // ── account inference (create_media_buy) ──
+  // Derive account from brand when not provided so callers that pre-date
+  // the required account field keep working.
+  if (taskType === 'create_media_buy' && !normalized.account && normalized.brand) {
+    normalized.account = {
+      brand: normalized.brand,
+      operator: normalized.brand.domain,
+    };
+  }
+
   // ── Package normalization (create_media_buy, update_media_buy) ──
   if ((taskType === 'create_media_buy' || taskType === 'update_media_buy') && Array.isArray(normalized.packages)) {
     normalized.packages = normalized.packages.map(normalizePackageParams);
