@@ -97,6 +97,29 @@ export class MCPOAuthProvider implements OAuthClientProvider {
   }
 
   /**
+   * Validate the protected resource URL from server metadata (RFC 9728).
+   *
+   * Servers behind reverse proxies or DNS aliases may advertise a canonical
+   * resource URL (RFC 8707) that differs from the URL the client connected to.
+   * We allow cross-origin resource URLs because agent configs are pre-configured
+   * by the user, not discovered from untrusted sources. The authorization server
+   * remains the final gatekeeper for token audience validation.
+   */
+  async validateResourceURL(serverUrl: string | URL, resource?: string): Promise<URL | undefined> {
+    if (!resource) {
+      return undefined;
+    }
+
+    const resourceURL = new URL(resource);
+
+    if (resourceURL.protocol !== 'https:') {
+      throw new Error(`Server at ${serverUrl} advertised non-HTTPS resource URL: ${resource}`);
+    }
+
+    return resourceURL;
+  }
+
+  /**
    * Generate OAuth state parameter
    */
   async state(): Promise<string> {
