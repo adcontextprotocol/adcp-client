@@ -1379,6 +1379,28 @@ describe('Request Parameter Normalization', () => {
       assert.strictEqual(result.account, undefined);
     });
 
+    test('should not infer account when brand has no domain', () => {
+      resetWarnings();
+      const result = normalizeRequestParams('create_media_buy', {
+        buyer_ref: 'buyer-1',
+        brand: { name: 'Acme' },
+        packages: [],
+      });
+
+      assert.strictEqual(result.account, undefined);
+    });
+
+    test('inferred account should not include sandbox field', () => {
+      resetWarnings();
+      const result = normalizeRequestParams('create_media_buy', {
+        buyer_ref: 'buyer-1',
+        brand: { name: 'Acme', domain: 'acme.com' },
+        packages: [],
+      });
+
+      assert.strictEqual(result.account.sandbox, undefined);
+    });
+
     test('should infer account from brand derived from brand_manifest', () => {
       resetWarnings();
       const result = normalizeRequestParams('create_media_buy', {

@@ -89,7 +89,13 @@ export function normalizeRequestParams(taskType: string, params: any): any {
   // ── account inference (create_media_buy) ──
   // Derive account from brand when not provided so callers that pre-date
   // the required account field keep working.
-  if (taskType === 'create_media_buy' && !normalized.account && normalized.brand) {
+  // sandbox is intentionally omitted: the normalizer cannot infer sandbox
+  // intent from brand alone. Callers that need sandbox must provide account explicitly.
+  if (taskType === 'create_media_buy' && !normalized.account && normalized.brand?.domain) {
+    warnOnce(
+      'account_from_brand',
+      'create_media_buy: account is required. Inferring from brand for backward compatibility.'
+    );
     normalized.account = {
       brand: normalized.brand,
       operator: normalized.brand.domain,
