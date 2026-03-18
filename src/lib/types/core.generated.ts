@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas vlatest
-// Generated at: 2026-03-18T18:54:23.536Z
+// Generated at: 2026-03-18T18:58:59.357Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -2906,7 +2906,7 @@ export interface Episode {
    */
   episode_id: string;
   /**
-   * Parent show reference. Required when the product spans multiple shows (has multiple entries in show_ids on the product).
+   * Parent show reference. Required when the product spans multiple shows. Maps to a show_id declared in one of the publishers' adagents.json files referenced by the product's shows selectors.
    */
   show_id?: string;
   /**
