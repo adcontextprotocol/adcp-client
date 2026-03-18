@@ -1,9 +1,8 @@
 /**
- * Sample Brief Library for Convince Assessment
+ * Sample Brief Library
  *
  * Curated briefs across verticals, objectives, and constraints.
- * Each brief includes evaluation hints that guide the AI assessor
- * on what a strong response looks like.
+ * Available as building blocks for platforms and testing tools.
  */
 
 import type { SampleBrief } from './types';

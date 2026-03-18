@@ -78,23 +78,20 @@ export {
   type Logger,
 } from './agent-tester';
 
-// Compliance & Convince assessment
+// Compliance assessment
 export {
-  // Comply
   comply,
   formatComplianceResults,
   formatComplianceResultsJSON,
-  // Convince
-  convince,
-  formatConvinceResults,
-  formatConvinceResultsJSON,
   // Brief library
   SAMPLE_BRIEFS,
   getBriefById,
   getBriefsByVertical,
+  // Platform profiles
+  getPlatformProfile,
+  getAllPlatformTypes,
   // Types
   type ComplyOptions,
-  type FullConvinceOptions,
   type ComplianceTrack,
   type TrackResult,
   type TrackStatus,
@@ -102,11 +99,12 @@ export {
   type ComplianceSummary,
   type AdvisoryObservation,
   type SampleBrief,
-  type ConvinceDimension,
-  type ConvinceRating,
-  type DimensionScore,
-  type ScenarioAssessment,
-  type ConvinceResult,
-  type ConvincePattern,
-  type ConvinceOptions,
+  type PlatformType,
+  type SalesPlatformType,
+  type CreativeAgentType,
+  type SponsoredIntelligenceType,
+  type AINativePlatformType,
+  type PlatformProfile,
+  type CoherenceFinding,
+  type PlatformCoherenceResult,
 } from './compliance';

@@ -1,8 +1,5 @@
 /**
  * Types for AdCP Agent Compliance Assessment
- *
- * comply  → "Your agent works"  (deterministic, pass/fail)
- * convince → "Your agent sells"  (AI-assessed, advisory)
  */
 
 import type { AgentProfile, TestResult, TestScenario } from '../types';
@@ -27,7 +24,7 @@ export type ComplianceTrack =
   | 'si' // Sponsored intelligence sessions
   | 'audiences'; // CRM audience sync
 
-export type TrackStatus = 'pass' | 'fail' | 'skip' | 'partial';
+export type TrackStatus = 'pass' | 'fail' | 'skip' | 'partial' | 'expected';
 
 export interface TrackResult {
   track: ComplianceTrack;
@@ -53,6 +50,8 @@ export interface ComplianceResult {
   summary: ComplianceSummary;
   /** Advisory observations across all tracks */
   observations: AdvisoryObservation[];
+  /** Platform coherence assessment (only when platform_type provided) */
+  platform_coherence?: PlatformCoherenceResult;
   tested_at: string;
   total_duration_ms: number;
   dry_run: boolean;
@@ -63,12 +62,13 @@ export interface ComplianceSummary {
   tracks_failed: number;
   tracks_skipped: number;
   tracks_partial: number;
+  tracks_expected: number;
   /** One-line status */
   headline: string;
 }
 
 // ============================================================
-// ADVISORY: Observations (used by both comply and convince)
+// ADVISORY: Observations
 // ============================================================
 
 export type ObservationCategory =
@@ -79,7 +79,8 @@ export type ObservationCategory =
   | 'merchandising'
   | 'pricing'
   | 'relevance'
-  | 'auth';
+  | 'auth'
+  | 'coherence';
 
 export type ObservationSeverity = 'info' | 'suggestion' | 'warning' | 'error';
 
@@ -93,7 +94,75 @@ export interface AdvisoryObservation {
 }
 
 // ============================================================
-// CONVINCE: AI-Assessed Merchandising Quality
+// PLATFORM TYPES: Agent Declaration Taxonomy
+// ============================================================
+
+/**
+ * Sales platform types — agents that sell advertising inventory.
+ * All sales agents support the core media buy tools; the platform type
+ * determines what coherence checks apply to inputs, outputs, and features.
+ */
+export type SalesPlatformType =
+  | 'display_ad_server'
+  | 'video_ad_server'
+  | 'social_platform'
+  | 'pmax_platform'
+  | 'dsp'
+  | 'retail_media'
+  | 'search_platform'
+  | 'audio_platform';
+
+/**
+ * Creative agent types — differ in statefulness and tool surface.
+ */
+export type CreativeAgentType = 'creative_transformer' | 'creative_library' | 'creative_ad_server';
+
+/**
+ * Sponsored intelligence agent types — AI chat/conversational monetization.
+ */
+export type SponsoredIntelligenceType = 'si_platform';
+
+/**
+ * AI-native platform types — platforms with AI at the core.
+ */
+export type AINativePlatformType = 'ai_ad_network' | 'ai_platform' | 'generative_dsp';
+
+export type PlatformType = SalesPlatformType | CreativeAgentType | SponsoredIntelligenceType | AINativePlatformType;
+
+/**
+ * A coherence finding: something expected by the platform type
+ * that is missing or inconsistent in the agent's actual capabilities.
+ */
+export interface CoherenceFinding {
+  /** What was expected based on the platform type */
+  expected: string;
+  /** What was actually found (or not found) */
+  actual: string;
+  /** Actionable guidance for the developer */
+  guidance: string;
+  severity: 'error' | 'warning' | 'suggestion';
+}
+
+/**
+ * Platform-type-aware section of the compliance result.
+ * Only present when platform_type was provided in options.
+ */
+export interface PlatformCoherenceResult {
+  platform_type: PlatformType;
+  /** Human-readable label for the platform type */
+  label: string;
+  /** Tracks that this platform type expects the agent to support */
+  expected_tracks: ComplianceTrack[];
+  /** Tracks that are expected but the agent doesn't support */
+  missing_tracks: ComplianceTrack[];
+  /** Specific coherence findings */
+  findings: CoherenceFinding[];
+  /** Overall coherence: does the agent match what it claims to be? */
+  coherent: boolean;
+}
+
+// ============================================================
+// Sample Briefs (for use by platforms and testing tools)
 // ============================================================
 
 export interface SampleBrief {
@@ -101,68 +170,10 @@ export interface SampleBrief {
   name: string;
   vertical: string;
   brief: string;
-  /** What a strong response looks like — guides AI evaluation */
+  /** What a strong response looks like */
   evaluation_hints: string;
-  /** Budget context for the AI evaluator */
+  /** Budget context for evaluation */
   budget_context?: string;
   /** Expected channels */
   expected_channels?: string[];
-}
-
-export type ConvinceDimension = 'relevance' | 'specificity' | 'completeness' | 'pricing' | 'merchandising';
-
-export type ConvinceRating = 'strong' | 'moderate' | 'weak';
-
-export interface DimensionScore {
-  dimension: ConvinceDimension;
-  rating: ConvinceRating;
-  observation: string;
-  evidence?: Record<string, unknown>;
-}
-
-export interface ScenarioAssessment {
-  brief: SampleBrief;
-  /** Raw products returned by the agent */
-  products_returned: number;
-  /** Per-dimension AI evaluation */
-  dimensions: DimensionScore[];
-  /** LLM-generated narrative summary */
-  summary: string;
-  /** Top 3 actionable improvements */
-  top_actions: string[];
-  /** Raw agent response for reference */
-  raw_response?: unknown;
-}
-
-export interface ConvinceResult {
-  agent_url: string;
-  agent_profile: AgentProfile;
-  /** Per-brief assessments */
-  assessments: ScenarioAssessment[];
-  /** Aggregated patterns across all briefs */
-  patterns: ConvincePattern[];
-  /** Overall narrative */
-  overall_summary: string;
-  tested_at: string;
-  total_duration_ms: number;
-  /** Which LLM provider was used */
-  evaluator: string;
-  dry_run: boolean;
-}
-
-export interface ConvincePattern {
-  pattern: string;
-  frequency: string;
-  impact: string;
-}
-
-export interface ConvinceOptions {
-  /** Anthropic API key */
-  anthropic_api_key?: string;
-  /** Google Gemini API key */
-  gemini_api_key?: string;
-  /** Which briefs to run (default: all) */
-  brief_ids?: string[];
-  /** Model to use (default: auto-select based on available key) */
-  model?: string;
 }

@@ -1,5 +1,5 @@
 /**
- * Unit tests for the comply/convince compliance assessment module
+ * Unit tests for the compliance assessment module
  */
 
 const { describe, test } = require('node:test');
@@ -10,13 +10,13 @@ const {
   comply,
   formatComplianceResults,
   formatComplianceResultsJSON,
-  // Convince
-  formatConvinceResults,
-  formatConvinceResultsJSON,
   // Brief library
   SAMPLE_BRIEFS,
   getBriefById,
   getBriefsByVertical,
+  // Platform profiles
+  getPlatformProfile,
+  getAllPlatformTypes,
 } = require('../../dist/lib/testing/compliance/index.js');
 
 // ============================================================
@@ -85,6 +85,162 @@ describe('getBriefsByVertical', () => {
 });
 
 // ============================================================
+// Platform Profiles
+// ============================================================
+
+describe('getAllPlatformTypes', () => {
+  test('returns all platform types', () => {
+    const types = getAllPlatformTypes();
+    assert.ok(types.length >= 15, `Expected at least 15 types, got ${types.length}`);
+  });
+
+  test('includes all sales platform types', () => {
+    const types = getAllPlatformTypes();
+    const salesTypes = [
+      'display_ad_server',
+      'video_ad_server',
+      'social_platform',
+      'pmax_platform',
+      'dsp',
+      'retail_media',
+      'search_platform',
+      'audio_platform',
+    ];
+    for (const st of salesTypes) {
+      assert.ok(types.includes(st), `Missing sales type: ${st}`);
+    }
+  });
+
+  test('includes all creative agent types', () => {
+    const types = getAllPlatformTypes();
+    const creativeTypes = ['creative_transformer', 'creative_library', 'creative_ad_server'];
+    for (const ct of creativeTypes) {
+      assert.ok(types.includes(ct), `Missing creative type: ${ct}`);
+    }
+  });
+
+  test('includes SI and AI-native types', () => {
+    const types = getAllPlatformTypes();
+    assert.ok(types.includes('si_platform'), 'Missing si_platform');
+    assert.ok(types.includes('ai_ad_network'), 'Missing ai_ad_network');
+    assert.ok(types.includes('ai_platform'), 'Missing ai_platform');
+    assert.ok(types.includes('generative_dsp'), 'Missing generative_dsp');
+  });
+});
+
+describe('getPlatformProfile', () => {
+  test('returns profile for each type', () => {
+    const types = getAllPlatformTypes();
+    for (const type of types) {
+      const profile = getPlatformProfile(type);
+      assert.ok(profile, `No profile for ${type}`);
+      assert.strictEqual(profile.type, type);
+      assert.ok(profile.label, `${type} missing label`);
+      assert.ok(profile.expected_tracks.length > 0, `${type} has no expected tracks`);
+      assert.ok(profile.expected_tracks.includes('core'), `${type} expected_tracks should include core`);
+      assert.ok(profile.expected_tools.length > 0, `${type} has no expected tools`);
+      assert.ok(typeof profile.checkCoherence === 'function', `${type} missing checkCoherence`);
+    }
+  });
+});
+
+describe('getPlatformProfile — error handling', () => {
+  test('throws for unknown platform type', () => {
+    assert.throws(() => getPlatformProfile('not_a_real_type'), /Unknown platform type: not_a_real_type/);
+  });
+
+  test('throws for prototype pollution attempt', () => {
+    assert.throws(() => getPlatformProfile('__proto__'), /Unknown platform type: __proto__/);
+  });
+});
+
+describe('checkCoherence', () => {
+  test('returns empty findings for matching social_platform agent', () => {
+    const profile = getPlatformProfile('social_platform');
+    const agent = {
+      name: 'Social Agent',
+      tools: ['get_products', 'create_media_buy', 'list_creative_formats', 'sync_audiences', 'sync_creatives'],
+    };
+    const findings = profile.checkCoherence(agent);
+    // Should only have the channel suggestion (which is always present for platforms with expected_channels)
+    const nonSuggestions = findings.filter(f => f.severity !== 'suggestion');
+    assert.strictEqual(
+      nonSuggestions.length,
+      0,
+      `Unexpected non-suggestion findings: ${JSON.stringify(nonSuggestions)}`
+    );
+  });
+
+  test('returns findings for social_platform agent missing sync_audiences', () => {
+    const profile = getPlatformProfile('social_platform');
+    const agent = {
+      name: 'Incomplete Social Agent',
+      tools: ['get_products', 'create_media_buy'],
+    };
+    const findings = profile.checkCoherence(agent);
+    const audienceFinding = findings.find(f => f.expected.includes('sync_audiences'));
+    assert.ok(audienceFinding, 'Should flag missing sync_audiences');
+    assert.strictEqual(audienceFinding.severity, 'warning');
+  });
+
+  test('returns findings for creative_transformer missing build_creative', () => {
+    const profile = getPlatformProfile('creative_transformer');
+    const agent = {
+      name: 'Incomplete Transformer',
+      tools: ['preview_creative', 'list_creative_formats'],
+    };
+    const findings = profile.checkCoherence(agent);
+    const buildFinding = findings.find(f => f.expected.includes('build_creative'));
+    assert.ok(buildFinding, 'Should flag missing build_creative');
+  });
+
+  test('creative_transformer warns about stateful tools', () => {
+    const profile = getPlatformProfile('creative_transformer');
+    const agent = {
+      name: 'Confused Transformer',
+      tools: ['build_creative', 'preview_creative', 'list_creative_formats', 'sync_creatives', 'list_creatives'],
+    };
+    const findings = profile.checkCoherence(agent);
+    const statefulFinding = findings.find(f => f.expected.includes('Stateless'));
+    assert.ok(statefulFinding, 'Should flag stateful tools on a transformer');
+    assert.strictEqual(statefulFinding.severity, 'suggestion');
+  });
+
+  test('creative_library warns about build_creative', () => {
+    const profile = getPlatformProfile('creative_library');
+    const agent = {
+      name: 'Library With Build',
+      tools: ['preview_creative', 'list_creative_formats', 'build_creative'],
+    };
+    const findings = profile.checkCoherence(agent);
+    const buildFinding = findings.find(f => f.expected.includes('no creative generation'));
+    assert.ok(buildFinding, 'Should flag build_creative on a library');
+  });
+
+  test('ai_ad_network flags missing SI tools', () => {
+    const profile = getPlatformProfile('ai_ad_network');
+    const agent = {
+      name: 'AI Network Without SI',
+      tools: ['get_products', 'create_media_buy'],
+    };
+    const findings = profile.checkCoherence(agent);
+    const siFinding = findings.find(f => f.expected.includes('si_initiate_session'));
+    assert.ok(siFinding, 'Should flag missing SI tools');
+  });
+
+  test('generative_dsp flags missing build_creative', () => {
+    const profile = getPlatformProfile('generative_dsp');
+    const agent = {
+      name: 'DSP Without Gen',
+      tools: ['get_products', 'create_media_buy', 'get_media_buy_delivery'],
+    };
+    const findings = profile.checkCoherence(agent);
+    const genFinding = findings.find(f => f.expected.includes('build_creative'));
+    assert.ok(genFinding, 'Should flag missing build_creative on generative DSP');
+  });
+});
+
+// ============================================================
 // Compliance Result Formatting
 // ============================================================
 
@@ -144,6 +300,7 @@ describe('formatComplianceResults', () => {
       tracks_failed: 1,
       tracks_skipped: 1,
       tracks_partial: 0,
+      tracks_expected: 0,
       headline: '1 passing, 1 failing',
     },
     observations: [{ category: 'completeness', severity: 'warning', message: 'Missing fields' }],
@@ -179,6 +336,50 @@ describe('formatComplianceResults', () => {
     const output = formatComplianceResults(mockResult);
     assert.ok(output.includes('1 passing, 1 failing'), 'Should show headline');
   });
+
+  test('shows expected tracks with platform coherence', () => {
+    const resultWithPlatform = {
+      ...mockResult,
+      tracks: [
+        ...mockResult.tracks,
+        {
+          track: 'audiences',
+          status: 'expected',
+          label: 'Audience Management',
+          scenarios: [],
+          skipped_scenarios: ['sync_audiences'],
+          observations: [],
+          duration_ms: 0,
+        },
+      ],
+      platform_coherence: {
+        platform_type: 'social_platform',
+        label: 'Social Platform',
+        expected_tracks: ['core', 'products', 'media_buy', 'creative', 'reporting', 'audiences'],
+        missing_tracks: ['audiences'],
+        findings: [
+          {
+            expected: 'Agent has sync_audiences',
+            actual: 'sync_audiences not found in tool list',
+            guidance: 'Social platforms need sync_audiences.',
+            severity: 'warning',
+          },
+        ],
+        coherent: false,
+      },
+    };
+    const output = formatComplianceResults(resultWithPlatform);
+    assert.ok(output.includes('expected for Social Platform'), 'Should show expected status');
+    assert.ok(output.includes('Platform Coherence'), 'Should show coherence section');
+    assert.ok(output.includes('sync_audiences'), 'Should show missing tool');
+    assert.ok(output.includes('Platform:'), 'Should show platform in header');
+  });
+
+  test('no platform coherence section without platform_type', () => {
+    const output = formatComplianceResults(mockResult);
+    assert.ok(!output.includes('Platform Coherence'), 'Should not show coherence without platform_type');
+    assert.ok(!output.includes('Platform:'), 'Should not show platform in header');
+  });
 });
 
 describe('formatComplianceResultsJSON', () => {
@@ -190,76 +391,6 @@ describe('formatComplianceResultsJSON', () => {
       observations: [],
     };
     const json = formatComplianceResultsJSON(mockResult);
-    const parsed = JSON.parse(json);
-    assert.strictEqual(parsed.agent_url, 'https://example.com');
-  });
-});
-
-// ============================================================
-// Convince Result Formatting
-// ============================================================
-
-describe('formatConvinceResults', () => {
-  const mockResult = {
-    agent_url: 'https://example.com/mcp',
-    agent_profile: { name: 'Test Agent', tools: ['get_products'] },
-    assessments: [
-      {
-        brief: { id: 'test', name: 'Test Brief', vertical: 'General', budget_context: '$10K' },
-        products_returned: 3,
-        dimensions: [
-          { dimension: 'relevance', rating: 'strong', observation: 'Good match' },
-          { dimension: 'pricing', rating: 'weak', observation: 'No CPC options' },
-        ],
-        summary: 'Mixed results',
-        top_actions: ['Add CPC pricing', 'Improve descriptions'],
-      },
-    ],
-    patterns: [{ pattern: 'pricing is consistently weak', frequency: 'Weak in 1 of 1', impact: 'Price matters' }],
-    overall_summary: 'Needs pricing work',
-    tested_at: new Date().toISOString(),
-    total_duration_ms: 5000,
-    evaluator: 'anthropic',
-    dry_run: true,
-  };
-
-  test('includes brief names', () => {
-    const output = formatConvinceResults(mockResult);
-    assert.ok(output.includes('Test Brief'), 'Should include brief name');
-  });
-
-  test('shows dimension ratings with colored indicators', () => {
-    const output = formatConvinceResults(mockResult);
-    assert.ok(output.includes('relevance'), 'Should show relevance dimension');
-    assert.ok(output.includes('pricing'), 'Should show pricing dimension');
-  });
-
-  test('shows action items', () => {
-    const output = formatConvinceResults(mockResult);
-    assert.ok(output.includes('Add CPC pricing'), 'Should show actions');
-  });
-
-  test('shows cross-brief patterns', () => {
-    const output = formatConvinceResults(mockResult);
-    assert.ok(output.includes('Cross-Brief Patterns'), 'Should show patterns section');
-    assert.ok(output.includes('pricing is consistently weak'), 'Should show pattern');
-  });
-
-  test('shows evaluator info', () => {
-    const output = formatConvinceResults(mockResult);
-    assert.ok(output.includes('anthropic'), 'Should show evaluator');
-  });
-});
-
-describe('formatConvinceResultsJSON', () => {
-  test('returns valid JSON', () => {
-    const mockResult = {
-      agent_url: 'https://example.com',
-      assessments: [],
-      patterns: [],
-      overall_summary: 'test',
-    };
-    const json = formatConvinceResultsJSON(mockResult);
     const parsed = JSON.parse(json);
     assert.strictEqual(parsed.agent_url, 'https://example.com');
   });

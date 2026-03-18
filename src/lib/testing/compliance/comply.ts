@@ -16,7 +16,11 @@ import type {
   ComplianceResult,
   ComplianceSummary,
   AdvisoryObservation,
+  PlatformType,
+  PlatformCoherenceResult,
 } from './types';
+import { getPlatformProfile } from './profiles';
+import type { PlatformProfile } from './profiles';
 
 /**
  * Maps each track to its constituent scenarios and a human-readable label.
@@ -253,6 +257,8 @@ function collectObservations(
 export interface ComplyOptions extends TestOptions {
   /** Only run specific tracks (default: all applicable) */
   tracks?: ComplianceTrack[];
+  /** Declare the platform type for coherence checking */
+  platform_type?: PlatformType;
 }
 
 /**
@@ -261,7 +267,8 @@ export interface ComplyOptions extends TestOptions {
  */
 export async function comply(agentUrl: string, options: ComplyOptions = {}): Promise<ComplianceResult> {
   const start = Date.now();
-  const { tracks: trackFilter, ...testOptions } = options;
+  const { tracks: trackFilter, platform_type, ...testOptions } = options;
+  const platformProfile = platform_type ? getPlatformProfile(platform_type) : undefined;
 
   const effectiveOptions: TestOptions = {
     ...testOptions,
@@ -331,6 +338,7 @@ export async function comply(agentUrl: string, options: ComplyOptions = {}): Pro
         tracks_failed: 0,
         tracks_skipped: 0,
         tracks_partial: 0,
+        tracks_expected: 0,
         headline,
       },
       observations,
@@ -349,9 +357,10 @@ export async function comply(agentUrl: string, options: ComplyOptions = {}): Pro
     if (!def) continue;
 
     if (!isTrackApplicable(track, profile.tools)) {
+      const isExpected = track !== 'core' && (platformProfile?.expected_tracks.includes(track) ?? false);
       trackResults.push({
         track,
-        status: 'skip',
+        status: isExpected ? 'expected' : 'skip',
         label: def.label,
         scenarios: [],
         skipped_scenarios: def.scenarios,
@@ -432,6 +441,36 @@ export async function comply(agentUrl: string, options: ComplyOptions = {}): Pro
     });
   }
 
+  // Build platform coherence result if platform type was declared
+  let platformCoherence: PlatformCoherenceResult | undefined;
+  if (platformProfile) {
+    const findings = platformProfile.checkCoherence(profile);
+    const missingTracks = platformProfile.expected_tracks.filter(
+      t => !isTrackApplicable(t, profile.tools) && t !== 'core'
+    );
+
+    // Add coherence findings as observations
+    for (const finding of findings) {
+      allObservations.push({
+        category: 'coherence',
+        severity: finding.severity,
+        message: `${finding.expected} — ${finding.actual}. ${finding.guidance}`,
+        evidence: { platform_type: platformProfile.type },
+      });
+    }
+
+    platformCoherence = {
+      platform_type: platformProfile.type,
+      label: platformProfile.label,
+      expected_tracks: platformProfile.expected_tracks,
+      missing_tracks: missingTracks,
+      findings,
+      coherent:
+        findings.filter(f => f.severity === 'error' || f.severity === 'warning').length === 0 &&
+        missingTracks.length === 0,
+    };
+  }
+
   const summary = buildSummary(trackResults);
 
   return {
@@ -440,6 +479,7 @@ export async function comply(agentUrl: string, options: ComplyOptions = {}): Pro
     tracks: trackResults,
     summary,
     observations: allObservations,
+    platform_coherence: platformCoherence,
     tested_at: new Date().toISOString(),
     total_duration_ms: Date.now() - start,
     dry_run: effectiveOptions.dry_run !== false,
@@ -451,6 +491,7 @@ function buildSummary(tracks: TrackResult[]): ComplianceSummary {
   const failed = tracks.filter(t => t.status === 'fail').length;
   const skipped = tracks.filter(t => t.status === 'skip').length;
   const partial = tracks.filter(t => t.status === 'partial').length;
+  const expected = tracks.filter(t => t.status === 'expected').length;
 
   const attempted = passed + failed + partial;
   let headline: string;
@@ -469,7 +510,18 @@ function buildSummary(tracks: TrackResult[]): ComplianceSummary {
     headline = parts.join(', ');
   }
 
-  return { tracks_passed: passed, tracks_failed: failed, tracks_skipped: skipped, tracks_partial: partial, headline };
+  if (expected > 0) {
+    headline += `, ${expected} expected`;
+  }
+
+  return {
+    tracks_passed: passed,
+    tracks_failed: failed,
+    tracks_skipped: skipped,
+    tracks_partial: partial,
+    tracks_expected: expected,
+    headline,
+  };
 }
 
 /**
@@ -486,6 +538,9 @@ export function formatComplianceResults(result: ComplianceResult): string {
   output += `Name:     ${result.agent_profile.name}\n`;
   output += `Tools:    ${result.agent_profile.tools.length}\n`;
   output += `Mode:     ${result.dry_run ? 'Dry Run' : 'Live'}\n`;
+  if (result.platform_coherence) {
+    output += `Platform: ${result.platform_coherence.label}\n`;
+  }
   output += `Duration: ${(result.total_duration_ms / 1000).toFixed(1)}s\n\n`;
 
   // Summary line
@@ -497,12 +552,23 @@ export function formatComplianceResults(result: ComplianceResult): string {
 
   for (const track of result.tracks) {
     const icon =
-      track.status === 'pass' ? '✅' : track.status === 'fail' ? '❌' : track.status === 'partial' ? '⚠️' : '⏭️';
+      track.status === 'pass'
+        ? '✅'
+        : track.status === 'fail'
+          ? '❌'
+          : track.status === 'partial'
+            ? '⚠️'
+            : track.status === 'expected'
+              ? '🔲'
+              : '⏭️';
     const scenarioCount = track.scenarios.length;
     const passedCount = track.scenarios.filter(s => s.overall_passed).length;
 
     if (track.status === 'skip') {
       output += `${icon}  ${track.label}  (not applicable)\n`;
+    } else if (track.status === 'expected') {
+      const label = result.platform_coherence?.label ?? 'declared platform type';
+      output += `${icon}  ${track.label}  (expected for ${label})\n`;
     } else {
       output += `${icon}  ${track.label}  ${passedCount}/${scenarioCount} scenarios pass`;
       output += `  (${(track.duration_ms / 1000).toFixed(1)}s)\n`;
@@ -525,13 +591,36 @@ export function formatComplianceResults(result: ComplianceResult): string {
     }
   }
 
-  // Advisory observations
-  if (result.observations.length > 0) {
+  // Platform coherence
+  if (result.platform_coherence) {
+    const pc = result.platform_coherence;
+    output += `\nPlatform Coherence (${pc.label})\n`;
+    output += `${'─'.repeat(50)}\n`;
+
+    if (pc.coherent) {
+      output += `✅  Agent is coherent with ${pc.label} expectations\n`;
+    } else {
+      if (pc.missing_tracks.length > 0) {
+        output += `Expected tracks: ${pc.expected_tracks.join(', ')}\n`;
+        output += `Missing tracks:  ${pc.missing_tracks.join(', ')}\n\n`;
+      }
+      for (const finding of pc.findings) {
+        const icon = finding.severity === 'error' ? '❌' : finding.severity === 'warning' ? '⚠️' : '💡';
+        output += `${icon}  ${finding.expected}\n`;
+        output += `    ${finding.actual}\n`;
+        output += `    → ${finding.guidance}\n`;
+      }
+    }
+  }
+
+  // Advisory observations (excluding coherence — shown above)
+  const nonCoherenceObs = result.observations.filter(o => o.category !== 'coherence');
+  if (nonCoherenceObs.length > 0) {
     output += `\nAdvisory Observations\n`;
     output += `${'─'.repeat(50)}\n`;
 
     const byCategory = new Map<string, AdvisoryObservation[]>();
-    for (const obs of result.observations) {
+    for (const obs of nonCoherenceObs) {
       const cat = obs.category;
       if (!byCategory.has(cat)) byCategory.set(cat, []);
       byCategory.get(cat)!.push(obs);
