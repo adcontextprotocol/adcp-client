@@ -354,8 +354,8 @@ describe('Creative Assignment Adapter', () => {
       assert.strictEqual(result.artifact_webhook, undefined);
       assert.strictEqual(result.brand, undefined);
       assert.strictEqual(result.buyer_ref, 'buyer-1');
-      // brand converted to v2 brand_manifest URL (bare domain)
-      assert.strictEqual(result.brand_manifest, 'https://example.com');
+      // brand converted to v2 brand_manifest object
+      assert.deepStrictEqual(result.brand_manifest, { name: 'example.com', url: 'https://example.com' });
     });
 
     test('should throw when proposal_id is present and no packages (v3-only feature, no fallback)', () => {
@@ -400,8 +400,8 @@ describe('Creative Assignment Adapter', () => {
         packages: [],
       });
 
-      // brand_id is v3-only metadata; v2 brand_manifest URL uses just the domain
-      assert.strictEqual(result.brand_manifest, 'https://acme.com');
+      // brand_id is v3-only metadata; v2 brand_manifest uses just the domain
+      assert.deepStrictEqual(result.brand_manifest, { name: 'acme.com', url: 'https://acme.com' });
       assert.strictEqual(result.brand, undefined);
     });
 
@@ -453,7 +453,7 @@ describe('Creative Assignment Adapter', () => {
       });
     });
 
-    test('should convert brand.domain to brand_manifest URL', () => {
+    test('should convert brand.domain to brand_manifest object', () => {
       const v3Request = {
         buying_mode: 'wholesale',
         brand: { domain: 'acme.com' },
@@ -462,7 +462,7 @@ describe('Creative Assignment Adapter', () => {
       const result = adaptGetProductsRequestForV2(v3Request);
 
       assert.strictEqual(result.brand, undefined);
-      assert.strictEqual(result.brand_manifest, 'https://acme.com');
+      assert.deepStrictEqual(result.brand_manifest, { name: 'acme.com', url: 'https://acme.com' });
     });
   });
 

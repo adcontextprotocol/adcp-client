@@ -97,16 +97,17 @@ export function adaptCreateMediaBuyRequestForV2(request: any): any {
     );
   }
 
-  // v2 brand_manifest is a URL string. Prefer the caller's original manifest
-  // (which may have been re-injected after validation), falling back to
-  // deriving a URL from brand.domain.
-  const callerUrl =
-    typeof inputManifest === 'string'
+  // v2 brand_manifest is an object { name, url }. Prefer the caller's original
+  // manifest (which may have been re-injected after validation), falling back to
+  // deriving from brand.domain.
+  const brand_manifest: { name: string; url: string } | undefined =
+    typeof inputManifest === 'object' && inputManifest?.url
       ? inputManifest
-      : typeof inputManifest === 'object' && inputManifest?.url
-        ? inputManifest.url
-        : undefined;
-  const brand_manifest = callerUrl || (brand?.domain ? `https://${brand.domain}` : undefined);
+      : typeof inputManifest === 'string'
+        ? { name: inputManifest, url: inputManifest }
+        : brand?.domain
+          ? { name: brand.domain, url: `https://${brand.domain}` }
+          : undefined;
 
   return {
     ...rest,

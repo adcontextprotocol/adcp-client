@@ -253,10 +253,13 @@ export function normalizeProductPricing(product: any): any {
 export function adaptGetProductsRequestForV2(request: any): any {
   const adapted: any = { ...request };
 
-  // Convert v3 brand (BrandReference) → v2 brand_manifest (bare domain URL).
-  // v2 servers resolve brand info from the base domain URL.
+  // Convert v3 brand (BrandReference) → v2 brand_manifest object.
+  // v2 servers expect brand_manifest as { name, url }.
   if (adapted.brand?.domain) {
-    adapted.brand_manifest = `https://${adapted.brand.domain}`;
+    adapted.brand_manifest = {
+      name: adapted.brand.domain,
+      url: `https://${adapted.brand.domain}`,
+    };
     delete adapted.brand;
   }
 
