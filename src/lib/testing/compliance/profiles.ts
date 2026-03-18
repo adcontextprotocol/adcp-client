@@ -76,7 +76,12 @@ export const PLATFORM_PROFILES: Record<PlatformType, PlatformProfile> = {
     checkCoherence(profile) {
       const findings = salesBaseCheck(profile);
       for (const tool of missingTools(profile, ['list_creative_formats'])) {
-        findings.push(toolFinding(tool, 'Display ad servers need list_creative_formats so buyers know what tag/image formats you accept.'));
+        findings.push(
+          toolFinding(
+            tool,
+            'Display ad servers need list_creative_formats so buyers know what tag/image formats you accept.'
+          )
+        );
       }
       for (const tool of missingTools(profile, ['sync_creatives'])) {
         findings.push(toolFinding(tool, 'Buyers deliver HTML tags and image assets via sync_creatives.'));
@@ -95,7 +100,9 @@ export const PLATFORM_PROFILES: Record<PlatformType, PlatformProfile> = {
     checkCoherence(profile) {
       const findings = salesBaseCheck(profile);
       for (const tool of missingTools(profile, ['list_creative_formats'])) {
-        findings.push(toolFinding(tool, 'Video ad servers need list_creative_formats to declare VAST/video format support.'));
+        findings.push(
+          toolFinding(tool, 'Video ad servers need list_creative_formats to declare VAST/video format support.')
+        );
       }
       for (const tool of missingTools(profile, ['sync_creatives'])) {
         findings.push(toolFinding(tool, 'Buyers deliver VAST tags and video assets via sync_creatives.'));
@@ -114,10 +121,17 @@ export const PLATFORM_PROFILES: Record<PlatformType, PlatformProfile> = {
     checkCoherence(profile) {
       const findings = salesBaseCheck(profile);
       for (const tool of missingTools(profile, ['sync_audiences'])) {
-        findings.push(toolFinding(tool, 'Social platforms need sync_audiences — audience targeting is core to social advertising.'));
+        findings.push(
+          toolFinding(tool, 'Social platforms need sync_audiences — audience targeting is core to social advertising.')
+        );
       }
       for (const tool of missingTools(profile, ['list_creative_formats'])) {
-        findings.push(toolFinding(tool, 'Social platforms need list_creative_formats to declare native ad formats (carousel, story, feed).'));
+        findings.push(
+          toolFinding(
+            tool,
+            'Social platforms need list_creative_formats to declare native ad formats (carousel, story, feed).'
+          )
+        );
       }
       findings.push(channelSuggestion(['social']));
       return findings;
@@ -129,16 +143,30 @@ export const PLATFORM_PROFILES: Record<PlatformType, PlatformProfile> = {
     label: 'Performance Max Platform',
     expected_tracks: ['core', 'products', 'media_buy', 'creative', 'reporting', 'audiences', 'signals'],
     expected_tools: [
-      'get_products', 'create_media_buy', 'list_creative_formats',
-      'build_creative', 'sync_audiences', 'get_signals',
+      'get_products',
+      'create_media_buy',
+      'list_creative_formats',
+      'build_creative',
+      'sync_audiences',
+      'get_signals',
     ],
     checkCoherence(profile) {
       const findings = salesBaseCheck(profile);
       for (const tool of missingTools(profile, ['build_creative'])) {
-        findings.push(toolFinding(tool, 'pMax platforms generate creative from brand assets — build_creative is the generative entry point.'));
+        findings.push(
+          toolFinding(
+            tool,
+            'pMax platforms generate creative from brand assets — build_creative is the generative entry point.'
+          )
+        );
       }
       for (const tool of missingTools(profile, ['sync_audiences'])) {
-        findings.push(toolFinding(tool, 'pMax platforms optimize across audience segments — sync_audiences enables first-party data.'));
+        findings.push(
+          toolFinding(
+            tool,
+            'pMax platforms optimize across audience segments — sync_audiences enables first-party data.'
+          )
+        );
       }
       for (const tool of missingTools(profile, ['get_signals'])) {
         findings.push(toolFinding(tool, 'pMax platforms use signals for cross-channel optimization.'));
@@ -155,11 +183,11 @@ export const PLATFORM_PROFILES: Record<PlatformType, PlatformProfile> = {
     checkCoherence(profile) {
       const findings = salesBaseCheck(profile);
       for (const tool of missingTools(profile, ['get_media_buy_delivery'])) {
-        findings.push(toolFinding(tool, 'DSPs need get_media_buy_delivery for programmatic reporting and pacing data.'));
+        findings.push(
+          toolFinding(tool, 'DSPs need get_media_buy_delivery for programmatic reporting and pacing data.')
+        );
       }
-      const hasGovernance = profile.tools.some(t =>
-        ['create_property_list', 'list_content_standards'].includes(t)
-      );
+      const hasGovernance = profile.tools.some(t => ['create_property_list', 'list_content_standards'].includes(t));
       if (!hasGovernance) {
         findings.push({
           expected: 'Governance tools for brand safety controls',
@@ -184,7 +212,12 @@ export const PLATFORM_PROFILES: Record<PlatformType, PlatformProfile> = {
         findings.push(toolFinding(tool, 'Retail media networks need sync_audiences for shopper audience segments.'));
       }
       for (const tool of missingTools(profile, ['list_creative_formats'])) {
-        findings.push(toolFinding(tool, 'Retail media networks need list_creative_formats to declare sponsored product and display formats.'));
+        findings.push(
+          toolFinding(
+            tool,
+            'Retail media networks need list_creative_formats to declare sponsored product and display formats.'
+          )
+        );
       }
       findings.push(channelSuggestion(['retail_media']));
       return findings;
@@ -203,7 +236,8 @@ export const PLATFORM_PROFILES: Record<PlatformType, PlatformProfile> = {
       findings.push({
         expected: 'Products support keyword targeting via targeting_overlay',
         actual: 'Cannot verify without running create_media_buy',
-        guidance: 'Search platforms should accept keyword_targets in the targeting overlay with broad/phrase/exact match types.',
+        guidance:
+          'Search platforms should accept keyword_targets in the targeting overlay with broad/phrase/exact match types.',
         severity: 'suggestion',
       });
       return findings;
@@ -219,7 +253,9 @@ export const PLATFORM_PROFILES: Record<PlatformType, PlatformProfile> = {
     checkCoherence(profile) {
       const findings = salesBaseCheck(profile);
       for (const tool of missingTools(profile, ['list_creative_formats'])) {
-        findings.push(toolFinding(tool, 'Audio platforms need list_creative_formats to declare audio/DAAST format support.'));
+        findings.push(
+          toolFinding(tool, 'Audio platforms need list_creative_formats to declare audio/DAAST format support.')
+        );
       }
       findings.push(channelSuggestion(['podcast', 'streaming_audio']));
       return findings;
@@ -236,13 +272,20 @@ export const PLATFORM_PROFILES: Record<PlatformType, PlatformProfile> = {
     checkCoherence(profile) {
       const findings: CoherenceFinding[] = [];
       for (const tool of missingTools(profile, ['build_creative'])) {
-        findings.push(toolFinding(tool, 'Creative transformers need build_creative — it is the core tool for accepting assets and returning transformed creative.'));
+        findings.push(
+          toolFinding(
+            tool,
+            'Creative transformers need build_creative — it is the core tool for accepting assets and returning transformed creative.'
+          )
+        );
       }
       for (const tool of missingTools(profile, ['preview_creative'])) {
         findings.push(toolFinding(tool, 'preview_creative lets buyers verify transformed output before going live.'));
       }
       for (const tool of missingTools(profile, ['list_creative_formats'])) {
-        findings.push(toolFinding(tool, 'list_creative_formats declares what input/output format transformations you support.'));
+        findings.push(
+          toolFinding(tool, 'list_creative_formats declares what input/output format transformations you support.')
+        );
       }
       // Warn if stateful tools present — suggests this is actually a creative_ad_server
       const statefulTools = ['sync_creatives', 'list_creatives'].filter(t => profile.tools.includes(t));
@@ -250,7 +293,8 @@ export const PLATFORM_PROFILES: Record<PlatformType, PlatformProfile> = {
         findings.push({
           expected: 'Stateless transformer (no creative library)',
           actual: `Agent has stateful tools: ${statefulTools.join(', ')}`,
-          guidance: 'If your agent manages a creative library, consider using creative_ad_server as your platform type.',
+          guidance:
+            'If your agent manages a creative library, consider using creative_ad_server as your platform type.',
           severity: 'suggestion',
         });
       }
@@ -266,7 +310,12 @@ export const PLATFORM_PROFILES: Record<PlatformType, PlatformProfile> = {
     checkCoherence(profile) {
       const findings: CoherenceFinding[] = [];
       for (const tool of missingTools(profile, ['list_creative_formats'])) {
-        findings.push(toolFinding(tool, 'Creative libraries need list_creative_formats — it is how buyers discover your available formats.'));
+        findings.push(
+          toolFinding(
+            tool,
+            'Creative libraries need list_creative_formats — it is how buyers discover your available formats.'
+          )
+        );
       }
       for (const tool of missingTools(profile, ['preview_creative'])) {
         findings.push(toolFinding(tool, 'preview_creative lets buyers see how formats render.'));
@@ -275,7 +324,8 @@ export const PLATFORM_PROFILES: Record<PlatformType, PlatformProfile> = {
         findings.push({
           expected: 'Format library (no creative generation)',
           actual: 'Agent has build_creative',
-          guidance: 'If your agent generates creative, consider using creative_transformer or creative_ad_server as your platform type.',
+          guidance:
+            'If your agent generates creative, consider using creative_transformer or creative_ad_server as your platform type.',
           severity: 'suggestion',
         });
       }
@@ -290,7 +340,13 @@ export const PLATFORM_PROFILES: Record<PlatformType, PlatformProfile> = {
     expected_tools: ['build_creative', 'list_creatives', 'sync_creatives', 'preview_creative', 'list_creative_formats'],
     checkCoherence(profile) {
       const findings: CoherenceFinding[] = [];
-      const allExpected = ['build_creative', 'list_creatives', 'sync_creatives', 'preview_creative', 'list_creative_formats'];
+      const allExpected = [
+        'build_creative',
+        'list_creatives',
+        'sync_creatives',
+        'preview_creative',
+        'list_creative_formats',
+      ];
       for (const tool of missingTools(profile, allExpected)) {
         const descriptions: Record<string, string> = {
           build_creative: 'build_creative handles creative generation and assembly.',
@@ -331,18 +387,25 @@ export const PLATFORM_PROFILES: Record<PlatformType, PlatformProfile> = {
     label: 'AI Ad Network',
     expected_tracks: ['core', 'products', 'media_buy', 'si', 'reporting', 'governance'],
     expected_tools: [
-      'get_products', 'create_media_buy',
-      'si_get_offering', 'si_initiate_session', 'si_send_message', 'si_terminate_session',
+      'get_products',
+      'create_media_buy',
+      'si_get_offering',
+      'si_initiate_session',
+      'si_send_message',
+      'si_terminate_session',
     ],
     checkCoherence(profile) {
       const findings = salesBaseCheck(profile);
       const siTools = ['si_get_offering', 'si_initiate_session', 'si_send_message', 'si_terminate_session'];
       for (const tool of missingTools(profile, siTools)) {
-        findings.push(toolFinding(tool, 'AI ad networks aggregate AI-powered inventory — SI tools enable conversational ad surfaces.'));
+        findings.push(
+          toolFinding(
+            tool,
+            'AI ad networks aggregate AI-powered inventory — SI tools enable conversational ad surfaces.'
+          )
+        );
       }
-      const hasGovernance = profile.tools.some(t =>
-        ['create_property_list', 'list_content_standards'].includes(t)
-      );
+      const hasGovernance = profile.tools.some(t => ['create_property_list', 'list_content_standards'].includes(t));
       if (!hasGovernance) {
         findings.push({
           expected: 'Governance tools for cross-property brand safety',
@@ -360,14 +423,23 @@ export const PLATFORM_PROFILES: Record<PlatformType, PlatformProfile> = {
     label: 'AI Platform',
     expected_tracks: ['core', 'products', 'media_buy', 'si', 'reporting'],
     expected_tools: [
-      'get_products', 'create_media_buy',
-      'si_get_offering', 'si_initiate_session', 'si_send_message', 'si_terminate_session',
+      'get_products',
+      'create_media_buy',
+      'si_get_offering',
+      'si_initiate_session',
+      'si_send_message',
+      'si_terminate_session',
     ],
     checkCoherence(profile) {
       const findings = salesBaseCheck(profile);
       const siTools = ['si_get_offering', 'si_initiate_session', 'si_send_message', 'si_terminate_session'];
       for (const tool of missingTools(profile, siTools)) {
-        findings.push(toolFinding(tool, 'AI platforms monetize via sponsored conversations — SI tools are the conversational ad surface.'));
+        findings.push(
+          toolFinding(
+            tool,
+            'AI platforms monetize via sponsored conversations — SI tools are the conversational ad surface.'
+          )
+        );
       }
       return findings;
     },
@@ -377,20 +449,29 @@ export const PLATFORM_PROFILES: Record<PlatformType, PlatformProfile> = {
     type: 'generative_dsp',
     label: 'Generative DSP',
     expected_tracks: ['core', 'products', 'media_buy', 'creative', 'reporting', 'audiences', 'governance'],
-    expected_tools: [
-      'get_products', 'create_media_buy', 'build_creative',
-      'sync_audiences', 'get_media_buy_delivery',
-    ],
+    expected_tools: ['get_products', 'create_media_buy', 'build_creative', 'sync_audiences', 'get_media_buy_delivery'],
     checkCoherence(profile) {
       const findings = salesBaseCheck(profile);
       for (const tool of missingTools(profile, ['build_creative'])) {
-        findings.push(toolFinding(tool, 'Generative DSPs create creative on the fly — build_creative is the generative entry point.'));
+        findings.push(
+          toolFinding(
+            tool,
+            'Generative DSPs create creative on the fly — build_creative is the generative entry point.'
+          )
+        );
       }
       for (const tool of missingTools(profile, ['sync_audiences'])) {
-        findings.push(toolFinding(tool, 'Generative DSPs optimize across audience segments — sync_audiences enables first-party data.'));
+        findings.push(
+          toolFinding(
+            tool,
+            'Generative DSPs optimize across audience segments — sync_audiences enables first-party data.'
+          )
+        );
       }
       for (const tool of missingTools(profile, ['get_media_buy_delivery'])) {
-        findings.push(toolFinding(tool, 'DSPs need get_media_buy_delivery for programmatic reporting and pacing data.'));
+        findings.push(
+          toolFinding(tool, 'DSPs need get_media_buy_delivery for programmatic reporting and pacing data.')
+        );
       }
       return findings;
     },

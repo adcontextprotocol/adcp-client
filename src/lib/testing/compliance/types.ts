@@ -115,10 +115,7 @@ export type SalesPlatformType =
 /**
  * Creative agent types — differ in statefulness and tool surface.
  */
-export type CreativeAgentType =
-  | 'creative_transformer'
-  | 'creative_library'
-  | 'creative_ad_server';
+export type CreativeAgentType = 'creative_transformer' | 'creative_library' | 'creative_ad_server';
 
 /**
  * Sponsored intelligence agent types — AI chat/conversational monetization.
@@ -128,10 +125,7 @@ export type SponsoredIntelligenceType = 'si_platform';
 /**
  * AI-native platform types — platforms with AI at the core.
  */
-export type AINativePlatformType =
-  | 'ai_ad_network'
-  | 'ai_platform'
-  | 'generative_dsp';
+export type AINativePlatformType = 'ai_ad_network' | 'ai_platform' | 'generative_dsp';
 
 export type PlatformType = SalesPlatformType | CreativeAgentType | SponsoredIntelligenceType | AINativePlatformType;
 

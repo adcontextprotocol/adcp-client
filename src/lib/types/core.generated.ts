@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas vlatest
-// Generated at: 2026-03-17T20:18:14.554Z
+// Generated at: 2026-03-18T18:54:23.536Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -2256,11 +2256,15 @@ export interface Product {
     manifest: {};
   };
   /**
-   * References to shows in the response's top-level shows array. When present, the product covers inventory associated with these shows. A product can span multiple shows (e.g., a podcast network bundle).
+   * Shows available in this product. Each entry references shows declared in an adagents.json by domain and show ID. Buyers resolve full show objects from the referenced adagents.json.
    */
-  show_ids?: string[];
+  shows?: ShowSelector[];
   /**
-   * Specific episodes included in this product. Each episode references its parent show via show_id when the product spans multiple shows. When absent with show_ids present, the product covers the shows broadly (run-of-show).
+   * Whether buyers can target a subset of this product's shows. When false (default), the product is a bundle — buyers get all listed shows. When true, buyers can select specific shows in the media buy.
+   */
+  show_targeting_allowed?: boolean;
+  /**
+   * Specific episodes included in this product. Each episode references its parent show via show_id when the product spans multiple shows. When absent with shows present, the product covers the shows broadly (run-of-show).
    */
   episodes?: Episode[];
   /**
@@ -2881,6 +2885,19 @@ export interface CreativePolicy {
   provenance_required?: boolean;
 }
 /**
+ * References shows declared in an adagents.json. Buyers resolve full show objects by fetching the adagents.json at the given domain and matching show_ids against its shows array.
+ */
+export interface ShowSelector {
+  /**
+   * Domain where the adagents.json declaring these shows is hosted (e.g., 'mrbeast.com'). The shows array in that file contains the authoritative show definitions.
+   */
+  publisher_domain: string;
+  /**
+   * Show IDs from the adagents.json shows array. Each ID must match a show_id declared in that file.
+   */
+  show_ids: string[];
+}
+/**
  * A specific installment of a show. Episodes inherit show-level fields they don't override: content_rating defaults to the show's baseline, guest_talent is additive to the show's recurring talent, and topics add context beyond the show's genre.
  */
 export interface Episode {
@@ -3136,47 +3153,6 @@ export type AdCPAsyncResponseData =
   | SyncCatalogsAsyncInputRequired
   | SyncCatalogsAsyncSubmitted;
 /**
- * How frequently the show releases new episodes
- */
-export type ShowCadence = 'daily' | 'weekly' | 'seasonal' | 'event' | 'irregular';
-/**
- * Lifecycle status of the show
- */
-export type ShowStatus = 'active' | 'hiatus' | 'ended' | 'upcoming';
-/**
- * Production quality tier. Seller-declared. Maps to OpenRTB content.prodq (professional=1, prosumer=2, ugc=3).
- */
-export type ProductionQuality = 'professional' | 'prosumer' | 'ugc';
-/**
- * Type of distribution identifier
- */
-export type DistributionIdentifierType =
-  | 'apple_podcast_id'
-  | 'spotify_show_id'
-  | 'rss_url'
-  | 'podcast_guid'
-  | 'amazon_music_id'
-  | 'iheart_id'
-  | 'podcast_index_id'
-  | 'youtube_channel_id'
-  | 'youtube_playlist_id'
-  | 'amazon_title_id'
-  | 'roku_channel_id'
-  | 'pluto_channel_id'
-  | 'tubi_id'
-  | 'peacock_id'
-  | 'tiktok_id'
-  | 'twitch_channel'
-  | 'imdb_id'
-  | 'gracenote_id'
-  | 'eidr_id'
-  | 'domain'
-  | 'substack_id';
-/**
- * How the shows are related
- */
-export type ShowRelationship = 'spinoff' | 'companion' | 'sequel' | 'prequel' | 'crossover';
-/**
  * Response for completed or failed create_media_buy
  */
 export type CreateMediaBuyResponse = CreateMediaBuySuccess | CreateMediaBuyError;
@@ -3412,10 +3388,6 @@ export interface GetProductsResponse {
    */
   products: Product[];
   /**
-   * Shows referenced by products in this response. Only includes shows referenced by the returned products. Under pagination, each page includes all show objects needed for that page's products.
-   */
-  shows?: Show[];
-  /**
    * Optional array of proposed media plans with budget allocations across products. Publishers include proposals when they can provide strategic guidance based on the brief. Proposals are actionable - buyers can refine them via follow-up get_products calls within the same session, or execute them directly via create_media_buy.
    */
   proposals?: Proposal[];
@@ -3476,81 +3448,6 @@ export interface GetProductsResponse {
   sandbox?: boolean;
   context?: ContextObject;
   ext?: ExtensionObject;
-}
-/**
- * A persistent content program that produces episodes over time. Shows are reusable objects that products reference by show_id. The show_id is seller-scoped — use distribution identifiers for cross-seller matching.
- */
-export interface Show {
-  /**
-   * Seller-assigned identifier for this show. Unique within a single get_products response but not globally unique across sellers. Use distribution identifiers for cross-seller matching.
-   */
-  show_id: string;
-  /**
-   * Human-readable show name
-   */
-  name: string;
-  /**
-   * What the show is about
-   */
-  description?: string;
-  /**
-   * Genre tags. When genre_taxonomy is present, values are taxonomy IDs (e.g., IAB Content Taxonomy 3.0 codes). Otherwise free-form.
-   */
-  genre?: string[];
-  /**
-   * Taxonomy system for genre values (e.g., 'iab_content_3.0'). When present, genre values should be valid taxonomy IDs. Recommended for machine-readable brand safety evaluation.
-   */
-  genre_taxonomy?: string;
-  /**
-   * Primary language (BCP 47 tag, e.g., 'en', 'es-MX')
-   */
-  language?: string;
-  content_rating?: ContentRating;
-  cadence?: ShowCadence;
-  /**
-   * Current or most recent season identifier (e.g., '3', '2026', 'spring_2026'). A lightweight label — not a full season object.
-   */
-  season?: string;
-  status?: ShowStatus;
-  production_quality?: ProductionQuality;
-  /**
-   * Hosts, recurring cast, creators associated with the show. Each talent entry may include a brand_url linking to their brand.json identity.
-   */
-  talent?: Talent[];
-  /**
-   * Where this show is distributed. Each entry maps the show to a publisher platform with platform-specific identifiers. Shows SHOULD include at least one platform-independent identifier (imdb_id, gracenote_id, eidr_id) when available.
-   */
-  distribution?: ShowDistribution[];
-  /**
-   * Relationships to other shows (spin-offs, companion shows, etc.). Each entry references another show by show_id within the same response.
-   */
-  related_shows?: {
-    /**
-     * The related show's show_id within this seller's response
-     */
-    show_id: string;
-    relationship: ShowRelationship;
-  }[];
-  ext?: ExtensionObject;
-}
-/**
- * A show's presence on a specific publisher platform, identified by platform-specific identifiers. Enables cross-seller matching when the same show is sold by different agents.
- */
-export interface ShowDistribution {
-  /**
-   * Domain of the publisher platform where the show is distributed (e.g., 'youtube.com', 'spotify.com')
-   */
-  publisher_domain: string;
-  /**
-   * Platform-specific identifiers for the show on this publisher
-   */
-  identifiers: {
-    type: DistributionIdentifierType;
-    /**
-     * The identifier value
-     */
-    value: string;
-  }[];
 }
 /**
  * A proposed media plan with budget allocations across products. Represents the publisher's strategic recommendation for how to structure a campaign based on the brief. Proposals are actionable - buyers can execute them directly via create_media_buy by providing the proposal_id.

@@ -96,7 +96,16 @@ describe('getAllPlatformTypes', () => {
 
   test('includes all sales platform types', () => {
     const types = getAllPlatformTypes();
-    const salesTypes = ['display_ad_server', 'video_ad_server', 'social_platform', 'pmax_platform', 'dsp', 'retail_media', 'search_platform', 'audio_platform'];
+    const salesTypes = [
+      'display_ad_server',
+      'video_ad_server',
+      'social_platform',
+      'pmax_platform',
+      'dsp',
+      'retail_media',
+      'search_platform',
+      'audio_platform',
+    ];
     for (const st of salesTypes) {
       assert.ok(types.includes(st), `Missing sales type: ${st}`);
     }
@@ -137,17 +146,11 @@ describe('getPlatformProfile', () => {
 
 describe('getPlatformProfile — error handling', () => {
   test('throws for unknown platform type', () => {
-    assert.throws(
-      () => getPlatformProfile('not_a_real_type'),
-      /Unknown platform type: not_a_real_type/
-    );
+    assert.throws(() => getPlatformProfile('not_a_real_type'), /Unknown platform type: not_a_real_type/);
   });
 
   test('throws for prototype pollution attempt', () => {
-    assert.throws(
-      () => getPlatformProfile('__proto__'),
-      /Unknown platform type: __proto__/
-    );
+    assert.throws(() => getPlatformProfile('__proto__'), /Unknown platform type: __proto__/);
   });
 });
 
@@ -161,7 +164,11 @@ describe('checkCoherence', () => {
     const findings = profile.checkCoherence(agent);
     // Should only have the channel suggestion (which is always present for platforms with expected_channels)
     const nonSuggestions = findings.filter(f => f.severity !== 'suggestion');
-    assert.strictEqual(nonSuggestions.length, 0, `Unexpected non-suggestion findings: ${JSON.stringify(nonSuggestions)}`);
+    assert.strictEqual(
+      nonSuggestions.length,
+      0,
+      `Unexpected non-suggestion findings: ${JSON.stringify(nonSuggestions)}`
+    );
   });
 
   test('returns findings for social_platform agent missing sync_audiences', () => {

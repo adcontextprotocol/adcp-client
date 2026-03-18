@@ -465,7 +465,9 @@ export async function comply(agentUrl: string, options: ComplyOptions = {}): Pro
       expected_tracks: platformProfile.expected_tracks,
       missing_tracks: missingTracks,
       findings,
-      coherent: findings.filter(f => f.severity === 'error' || f.severity === 'warning').length === 0 && missingTracks.length === 0,
+      coherent:
+        findings.filter(f => f.severity === 'error' || f.severity === 'warning').length === 0 &&
+        missingTracks.length === 0,
     };
   }
 
