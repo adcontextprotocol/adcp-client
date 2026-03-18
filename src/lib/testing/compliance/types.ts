@@ -170,7 +170,7 @@ export interface SampleBrief {
   name: string;
   vertical: string;
   brief: string;
-  /** What a strong response looks like — guides evaluation */
+  /** What a strong response looks like */
   evaluation_hints: string;
   /** Budget context for evaluation */
   budget_context?: string;

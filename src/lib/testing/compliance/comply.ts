@@ -357,7 +357,7 @@ export async function comply(agentUrl: string, options: ComplyOptions = {}): Pro
     if (!def) continue;
 
     if (!isTrackApplicable(track, profile.tools)) {
-      const isExpected = platformProfile?.expected_tracks.includes(track) ?? false;
+      const isExpected = track !== 'core' && (platformProfile?.expected_tracks.includes(track) ?? false);
       trackResults.push({
         track,
         status: isExpected ? 'expected' : 'skip',
@@ -597,7 +597,7 @@ export function formatComplianceResults(result: ComplianceResult): string {
     output += `\nPlatform Coherence (${pc.label})\n`;
     output += `${'─'.repeat(50)}\n`;
 
-    if (pc.coherent && pc.missing_tracks.length === 0) {
+    if (pc.coherent) {
       output += `✅  Agent is coherent with ${pc.label} expectations\n`;
     } else {
       if (pc.missing_tracks.length > 0) {
