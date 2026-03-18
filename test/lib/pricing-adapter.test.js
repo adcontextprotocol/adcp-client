@@ -377,5 +377,33 @@ describe('pricing adapter utilities', () => {
       assert.strictEqual(normalized.total, 1);
       assert.strictEqual(normalized.property_list_applied, true);
     });
+
+    test('should convert non-array products to error response', () => {
+      const response = { products: 'not an array' };
+
+      const normalized = normalizeGetProductsResponse(response);
+
+      assert.ok(Array.isArray(normalized.errors), 'Should have errors array');
+      assert.strictEqual(normalized.errors[0].code, 'invalid_response');
+      assert.ok(normalized.errors[0].message.includes('Expected products to be an array'));
+      assert.strictEqual(normalized.products, undefined, 'Should not have products field');
+    });
+
+    test('should convert null products to error response', () => {
+      const response = { products: null };
+
+      const normalized = normalizeGetProductsResponse(response);
+
+      assert.ok(Array.isArray(normalized.errors), 'Should have errors array');
+      assert.strictEqual(normalized.errors[0].code, 'invalid_response');
+    });
+
+    test('should pass through error response without products key', () => {
+      const response = { errors: [{ code: 'agent_error', message: 'Something failed' }] };
+
+      const normalized = normalizeGetProductsResponse(response);
+
+      assert.deepStrictEqual(normalized, response);
+    });
   });
 });
