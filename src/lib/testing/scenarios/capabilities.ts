@@ -226,17 +226,23 @@ function validateCapabilitiesResponse(
 
     if (creative?.supports_generation && !tools.includes('build_creative')) {
       // Tag-serving agents like Flashtalking don't have build_creative - they use pre-existing creative tags
-      creativeWarnings.push('creative.supports_generation=true but build_creative is not advertised (OK for tag-serving agents)');
+      creativeWarnings.push(
+        'creative.supports_generation=true but build_creative is not advertised (OK for tag-serving agents)'
+      );
     }
 
     if (creative?.supports_transformation && !tools.includes('build_creative')) {
       // Tag-serving agents like Flashtalking don't have build_creative - they use pre-existing creative tags
-      creativeWarnings.push('creative.supports_transformation=true but build_creative is not advertised (OK for tag-serving agents)');
+      creativeWarnings.push(
+        'creative.supports_transformation=true but build_creative is not advertised (OK for tag-serving agents)'
+      );
     }
 
     if (creative?.has_creative_library && !tools.includes('list_creatives')) {
       // list_creatives might not be present if the agent uses alternative creative listing mechanisms
-      creativeWarnings.push('creative.has_creative_library=true but list_creatives is not advertised (OK if using alternative creative listing)');
+      creativeWarnings.push(
+        'creative.has_creative_library=true but list_creatives is not advertised (OK if using alternative creative listing)'
+      );
     }
 
     if (creative?.has_creative_library && !tools.includes('list_accounts') && !tools.includes('sync_accounts')) {
