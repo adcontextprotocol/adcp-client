@@ -192,6 +192,12 @@ export const CREATIVE_TOOLS = [
   'sync_creatives', // Also in MEDIA_BUY_TOOLS - serves both domains
 ] as const;
 
+// Note: The following tools appear in both MEDIA_BUY_TOOLS and CREATIVE_TOOLS:
+// - list_creative_formats: Creative format definitions are relevant to both domains
+// - list_creatives: Creative listings are relevant to both domains
+// - sync_creatives: Sync operations are relevant to both domains
+// These shared tools should NOT trigger "unreported protocol" warnings.
+
 export const SPONSORED_INTELLIGENCE_TOOLS = [
   'si_get_offering',
   'si_initiate_session',
