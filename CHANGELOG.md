@@ -1,5 +1,23 @@
 # Changelog
 
+## 4.11.0
+
+### Minor Changes
+
+- 40bd0b7: Add platform-type-aware compliance testing. Users can declare what they're building (e.g., `--platform-type social_platform`) and comply will validate coherence, show expected-but-missing tracks, and provide actionable build guidance. Remove convince assessment from SDK.
+
+### Patch Changes
+
+- ccdee67: Fix test harness `create_media_buy` scenarios failing with `account: Invalid input`
+
+  The `buildCreateMediaBuyRequest` helper was not including the required `account` field,
+  causing client-side Zod validation to reject the request before it reached the agent.
+  - Add `account: resolveAccount(options)` to `buildCreateMediaBuyRequest`
+  - Add backwards-compatible `account` inference in `normalizeRequestParams` so callers
+    that pre-date the required `account` field keep working (derived from `brand`)
+
+- c8604f4: Fix OAuth protected resource validation for servers behind reverse proxies or DNS aliases. The MCP SDK's default same-origin check rejected servers that advertise a canonical resource URL different from the connection URL. The client now accepts cross-origin resource URLs while enforcing HTTPS.
+
 ## 4.10.0
 
 ### Minor Changes
