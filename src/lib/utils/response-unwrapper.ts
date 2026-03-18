@@ -140,10 +140,10 @@ export function unwrapProtocolResponse(
     }
   }
 
-  // Skip schema validation for AdCP error responses — they have their own
-  // structure ({ errors: [...] }) and don't include tool-specific fields
-  // like `products`.
-  if (isAdcpError(unwrapped)) {
+  // Skip schema validation for error responses — they don't include
+  // tool-specific fields like `products`. Handles both AdCP-standard
+  // { errors: [...] } and legacy singular { error: "..." } patterns.
+  if (isAdcpError(unwrapped) || (unwrapped?.error && typeof unwrapped.error === 'string')) {
     return unwrapped;
   }
 
