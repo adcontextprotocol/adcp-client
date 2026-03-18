@@ -241,7 +241,7 @@ export function normalizeProductPricing(product: any): any {
  * Adapt a get_products request for a v2 server.
  *
  * Converts v3 fields to their v2 equivalents:
- * - brand (BrandReference) → brand_manifest (base domain URL string)
+ * - brand (BrandReference) → brand_manifest ({ name, url } object)
  * - catalog → promoted_offerings (type='offering') or promoted_offerings.product_selectors (type='product')
  * - channels in filters → v2 channel names
  *

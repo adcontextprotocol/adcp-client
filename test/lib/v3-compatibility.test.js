@@ -419,6 +419,16 @@ describe('Creative Assignment Adapter', () => {
       assert.deepStrictEqual(result.brand, { brand_id: 'br_999' });
       assert.strictEqual(result.brand_manifest, undefined);
     });
+
+    test('should wrap a string brand_manifest into an object', () => {
+      const result = adaptCreateMediaBuyRequestForV2({
+        buyer_ref: 'buyer-1',
+        brand_manifest: 'https://example.com',
+        packages: [],
+      });
+
+      assert.deepStrictEqual(result.brand_manifest, { name: 'https://example.com', url: 'https://example.com' });
+    });
   });
 
   describe('adaptGetProductsRequestForV2', () => {
