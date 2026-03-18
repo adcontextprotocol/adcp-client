@@ -523,6 +523,68 @@ describe('MCPOAuthProvider', () => {
     assert.strictEqual(provider.hasRefreshToken(), true);
   });
 
+  test('validateResourceURL returns server resource when present', async () => {
+    const provider = new MCPOAuthProvider({
+      agent,
+      flowHandler: mockFlowHandler,
+      clientMetadata: {
+        ...DEFAULT_CLIENT_METADATA,
+        redirect_uris: ['http://localhost:8766/callback'],
+      },
+    });
+
+    // Server advertises a different domain (e.g., canonical domain behind proxy)
+    const result = await provider.validateResourceURL(
+      'https://test-agent.example.org/mcp',
+      'https://canonical.example.com/mcp'
+    );
+    assert.ok(result instanceof URL);
+    assert.strictEqual(result.toString(), 'https://canonical.example.com/mcp');
+  });
+
+  test('validateResourceURL returns undefined when no resource', async () => {
+    const provider = new MCPOAuthProvider({
+      agent,
+      flowHandler: mockFlowHandler,
+      clientMetadata: {
+        ...DEFAULT_CLIENT_METADATA,
+        redirect_uris: ['http://localhost:8766/callback'],
+      },
+    });
+
+    const result = await provider.validateResourceURL('https://example.com/mcp');
+    assert.strictEqual(result, undefined);
+  });
+
+  test('validateResourceURL rejects non-HTTPS resource URLs', async () => {
+    const provider = new MCPOAuthProvider({
+      agent,
+      flowHandler: mockFlowHandler,
+      clientMetadata: {
+        ...DEFAULT_CLIENT_METADATA,
+        redirect_uris: ['http://localhost:8766/callback'],
+      },
+    });
+
+    await assert.rejects(
+      () => provider.validateResourceURL('https://example.com/mcp', 'http://insecure.example.com/mcp'),
+      { message: /non-HTTPS resource URL/ }
+    );
+  });
+
+  test('validateResourceURL rejects invalid URL strings', async () => {
+    const provider = new MCPOAuthProvider({
+      agent,
+      flowHandler: mockFlowHandler,
+      clientMetadata: {
+        ...DEFAULT_CLIENT_METADATA,
+        redirect_uris: ['http://localhost:8766/callback'],
+      },
+    });
+
+    await assert.rejects(() => provider.validateResourceURL('https://example.com/mcp', 'not-a-url'));
+  });
+
   test('calls storage when provided', async () => {
     let savedAgent = null;
     const mockStorage = {
