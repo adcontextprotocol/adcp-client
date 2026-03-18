@@ -186,7 +186,7 @@ export interface SingleAgentClientConfig extends ConversationConfig {
   /**
    * Validate that the seller supports required features before each task call.
    * When true, tasks like syncAudiences will fail fast with FeatureUnsupportedError
-   * if the seller hasn't declared audience_management support.
+   * if the seller hasn't declared audience_targeting support.
    *
    * @default true
    */
