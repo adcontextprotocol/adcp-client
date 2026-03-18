@@ -210,261 +210,252 @@ export async function testCreativeLifecycle(
     return { steps, profile };
   }
 
-  // Step 1: Discover creative formats
-  const { formats, step: formatStep } = await discoverCreativeFormats(client, profile);
-  steps.push(formatStep);
-
-  if (!formatStep.passed || !formats || formats.length === 0) {
+  // Check if agent has list_creative_formats tool
+  if (!profile.tools.includes('list_creative_formats')) {
+    steps.push({
+      step: 'Check for list_creative_formats',
+      passed: false,
+      error: 'Agent does not support list_creative_formats',
+      duration_ms: 0,
+    });
     return { steps, profile };
   }
 
-  profile.supported_formats = formats;
+  // Step 1: List creative formats
+  const { result: formatList, step: formatStep } = await runStep<any>(
+    'List creative formats',
+    'list_creative_formats',
+    async () => client.executeTask('list_creative_formats', {})
+  );
 
-  // Validate format schema: each format should have format_id, type, and required_assets
-  const formatSchemaIssues: string[] = [];
-  for (const format of formats) {
-    if (!format.format_id) formatSchemaIssues.push('Missing format_id');
-    if (!format.type) formatSchemaIssues.push(`Format ${format.format_id}: missing type`);
+  if (!formatStep.passed || !formatList?.formats) {
+    formatStep.passed = false;
+    formatStep.error = 'Failed to list creative formats';
+    steps.push(formatStep);
+    return { steps, profile };
   }
 
-  steps.push({
-    step: 'Validate format schema',
-    passed: formatSchemaIssues.length === 0,
-    duration_ms: 0,
-    details:
-      formatSchemaIssues.length === 0
-        ? `All ${formats.length} format(s) have required fields`
-        : formatSchemaIssues.join('; '),
-    warnings: formatSchemaIssues.length > 0 ? formatSchemaIssues : undefined,
-  });
+  const formats = formatList.formats;
+  if (!Array.isArray(formats) || formats.length === 0) {
+    formatStep.passed = false;
+    formatStep.error = 'No formats returned';
+    steps.push(formatStep);
+    return { steps, profile };
+  }
 
-  // Step 2: Sync multiple creatives (image + video if formats allow)
-  if (profile.tools.includes('sync_creatives')) {
-    const imageFormat = formats.find(f => f.type === 'display' || f.type === 'image') || formats[0];
-    const videoFormat = formats.find(f => f.type === 'video');
+  const firstFormat = formats[0];
+  if (!firstFormat.format_id || !firstFormat.type) {
+    formatStep.passed = false;
+    formatStep.error = 'Format missing format_id or type field';
+    steps.push(formatStep);
+    return { steps, profile };
+  }
 
-    const creativesToSync = [
-      {
-        creative_id: `lifecycle-img-${Date.now()}`,
-        name: 'Lifecycle Test Image Creative',
-        format_id: imageFormat.format_id,
-        assets: {
-          primary: {
-            url: 'https://via.placeholder.com/300x250.png?text=Lifecycle+Image',
-            width: 300,
-            height: 250,
-            format: 'png',
-          },
-        },
-      },
-    ];
+  formatStep.passed = true;
+  formatStep.details = `Found ${formats.length} formats, first: ${firstFormat.format_id}`;
+  steps.push(formatStep);
 
-    if (videoFormat) {
-      creativesToSync.push({
-        creative_id: `lifecycle-vid-${Date.now()}`,
-        name: 'Lifecycle Test Video Creative',
-        format_id: videoFormat.format_id,
-        assets: {
-          primary: {
-            url: 'https://storage.googleapis.com/webfundamentals-assets/videos/chrome.mp4',
-            width: 1920,
-            height: 1080,
-            format: 'mp4',
-          },
-        },
-      });
-    }
+  // Step 2: Sync multiple creatives
+  if (!profile.tools.includes('sync_creatives')) {
+    steps.push({
+      step: 'Check for sync_creatives',
+      passed: false,
+      error: 'Agent does not support sync_creatives',
+      duration_ms: 0,
+    });
+    return { steps, profile };
+  }
 
-    const { result: syncResult, step: syncStep } = await runStep<TaskResult>(
-      `Sync ${creativesToSync.length} creative(s) to library`,
-      'sync_creatives',
-      async () =>
-        client.executeTask('sync_creatives', {
-          creatives: creativesToSync,
-        }) as Promise<TaskResult>
-    );
+  const testCreatives = [
+    {
+      platform_id: 'test-image-' + Date.now(),
+      format_id: formats[0].format_id,
+      concept: 'Test image creative',
+    },
+    {
+      platform_id: 'test-video-' + Date.now(),
+      format_id: formats[0].format_id,
+      concept: 'Test video creative',
+    },
+  ];
 
-    if (syncResult?.success && syncResult?.data) {
-      const data = syncResult.data as any;
-      const creatives = data.creatives || [];
-      const actions = creatives.map((c: any) => c.action);
-      const failed = creatives.filter((c: any) => c.action === 'failed');
+  const { result: syncResult, step: syncStep } = await runStep<any>(
+    'Sync creatives (2 items)',
+    'sync_creatives',
+    async () => client.executeTask('sync_creatives', { creatives: testCreatives })
+  );
 
-      syncStep.details = `Synced ${creatives.length} creative(s), actions: ${actions.join(', ')}`;
-      syncStep.response_preview = JSON.stringify(
-        {
-          synced_count: creatives.length,
-          actions,
-          creative_ids: creatives.map((c: any) => c.creative_id),
-          failed_count: failed.length,
-          failed_errors: failed.map((c: any) => ({ creative_id: c.creative_id, errors: c.errors })),
-        },
-        null,
-        2
-      );
-    } else if (syncResult && !syncResult.success) {
-      syncStep.passed = false;
-      syncStep.error = syncResult.error || 'sync_creatives returned unsuccessful result';
-    }
+  if (!syncStep.passed || !syncResult?.creatives) {
+    syncStep.passed = false;
+    syncStep.error = 'Failed to sync creatives';
     steps.push(syncStep);
+    return { steps, profile };
+  }
 
-    // Step 3: list_creatives without snapshot
-    if (profile.tools.includes('list_creatives')) {
-      const { result: listResult, step: listStep } = await runStep<TaskResult>(
-        'List creatives (no snapshot)',
-        'list_creatives',
-        async () => client.executeTask('list_creatives', {}) as Promise<TaskResult>
-      );
+  if (!Array.isArray(syncResult.creatives)) {
+    syncStep.passed = false;
+    syncStep.error = 'sync_creatives response missing creatives array';
+    steps.push(syncStep);
+    return { steps, profile };
+  }
 
-      if (listResult?.success && listResult?.data) {
-        const data = listResult.data as any;
-        const creatives = data.creatives || [];
+  syncStep.passed = true;
+  syncStep.details = `Synced ${syncResult.creatives.length} creatives`;
+  steps.push(syncStep);
 
-        // Validate basic fields on each creative
-        const fieldIssues: string[] = [];
-        for (const creative of creatives.slice(0, 5)) {
-          if (!creative.creative_id) fieldIssues.push('Creative missing creative_id');
-          if (!creative.name) fieldIssues.push(`Creative ${creative.creative_id}: missing name`);
-          if (!creative.format_id) fieldIssues.push(`Creative ${creative.creative_id}: missing format_id`);
-        }
+  // Step 3: List creatives without snapshot
+  if (!profile.tools.includes('list_creatives')) {
+    steps.push({
+      step: 'Check for list_creatives',
+      passed: false,
+      error: 'Agent does not support list_creatives',
+      duration_ms: 0,
+    });
+    return { steps, profile };
+  }
 
-        // Verify snapshot is absent when not requested
-        const hasUnexpectedSnapshot = creatives.some((c: any) => c.snapshot !== undefined);
+  const { result: listResult, step: listStep } = await runStep<any>(
+    'List creatives (no snapshot)',
+    'list_creatives',
+    async () => client.executeTask('list_creatives', { include_snapshot: false })
+  );
 
-        if (fieldIssues.length > 0) {
-          listStep.passed = false;
-          listStep.error = `Creative field validation: ${fieldIssues.join('; ')}`;
-        } else {
-          listStep.details = `Found ${creatives.length} creative(s) with valid fields`;
-        }
+  if (!listStep.passed || !listResult?.creatives) {
+    listStep.passed = false;
+    listStep.error = 'Failed to list creatives';
+    steps.push(listStep);
+    return { steps, profile };
+  }
 
-        listStep.response_preview = JSON.stringify(
-          {
-            creatives_count: creatives.length,
-            statuses: Array.from(new Set(creatives.map((c: any) => c.status))),
-            has_unexpected_snapshot: hasUnexpectedSnapshot,
-            query_summary: data.query_summary,
-          },
-          null,
-          2
-        );
+  if (!Array.isArray(listResult.creatives)) {
+    listStep.passed = false;
+    listStep.error = 'list_creatives response missing creatives array';
+    steps.push(listStep);
+    return { steps, profile };
+  }
 
-        if (hasUnexpectedSnapshot) {
-          listStep.warnings = ['snapshot field present on creatives without include_snapshot=true'];
-        }
-      } else if (listResult && !listResult.success) {
-        listStep.passed = false;
-        listStep.error = listResult.error || 'list_creatives returned unsuccessful result';
-      }
+  if (listResult.creatives.length > 0) {
+    const firstCreative = listResult.creatives[0];
+    if (!firstCreative.creative_id) {
+      listStep.passed = false;
+      listStep.error = 'Creative missing creative_id field';
       steps.push(listStep);
-
-      // Step 4: list_creatives with include_snapshot: true
-      const { result: snapshotResult, step: snapshotStep } = await runStep<TaskResult>(
-        'List creatives (include_snapshot: true)',
-        'list_creatives',
-        async () => client.executeTask('list_creatives', { include_snapshot: true }) as Promise<TaskResult>
-      );
-
-      if (snapshotResult?.success && snapshotResult?.data) {
-        const data = snapshotResult.data as any;
-        const creatives = data.creatives || [];
-
-        // Each creative should have either snapshot data or snapshot_unavailable_reason
-        const invalidCreatives = creatives.filter((c: any) => {
-          if (c.snapshot) {
-            return !c.snapshot.as_of || c.snapshot.staleness_seconds === undefined;
-          }
-          return !c.snapshot_unavailable_reason;
-        });
-
-        if (invalidCreatives.length > 0) {
-          snapshotStep.passed = false;
-          snapshotStep.error = `${invalidCreatives.length} creative(s) missing both snapshot and snapshot_unavailable_reason`;
-        } else {
-          const withSnapshot = creatives.filter((c: any) => !!c.snapshot).length;
-          const withReason = creatives.filter((c: any) => !!c.snapshot_unavailable_reason).length;
-          snapshotStep.details = `${creatives.length} creative(s): ${withSnapshot} with snapshot, ${withReason} with unavailable_reason`;
-        }
-
-        snapshotStep.response_preview = JSON.stringify(
-          {
-            creatives_count: creatives.length,
-            with_snapshot: creatives.filter((c: any) => !!c.snapshot).length,
-            with_unavailable_reason: creatives.filter((c: any) => !!c.snapshot_unavailable_reason).length,
-            snapshot_reasons: Array.from(
-              new Set(creatives.map((c: any) => c.snapshot_unavailable_reason).filter(Boolean))
-            ),
-          },
-          null,
-          2
-        );
-      } else if (snapshotResult && !snapshotResult.success) {
-        snapshotStep.passed = false;
-        snapshotStep.error = snapshotResult.error || 'list_creatives with snapshot returned unsuccessful result';
-      }
-      steps.push(snapshotStep);
+      return { steps, profile };
+    }
+    if ('snapshot' in firstCreative) {
+      listStep.passed = false;
+      listStep.error = 'Snapshot field present when include_snapshot: false';
+      steps.push(listStep);
+      return { steps, profile };
     }
   }
 
-  // Step 5: build_creative or preview_creative (adapt to agent capabilities)
-  if (profile.tools.includes('build_creative')) {
-    const targetFormat = formats[0];
-    const { result, step } = await runStep<TaskResult>(
-      `Build creative for lifecycle (${targetFormat.format_id})`,
-      'build_creative',
-      async () =>
-        client.executeTask('build_creative', {
-          target_format_id: targetFormat.format_id,
-          brand: resolveBrand(options),
-          message: `Create a ${targetFormat.type || 'display'} ad for lifecycle testing`,
-          quality: 'draft',
-          include_preview: true,
-        }) as Promise<TaskResult>
-    );
+  listStep.passed = true;
+  listStep.details = `Listed ${listResult.creatives.length} creatives (no snapshot)`;
+  steps.push(listStep);
 
-    if (result?.success && result?.data) {
-      const data = result.data as any;
-      const manifest = data.creative_manifest || data.creative_manifests?.[0];
-      step.details = `Built creative manifest for format ${manifest?.format_id || targetFormat.format_id}`;
-      step.response_preview = JSON.stringify(
-        {
-          format_id: manifest?.format_id || targetFormat.format_id,
-          asset_keys: Object.keys(manifest?.assets || {}),
-          has_preview: !!data.preview,
-        },
-        null,
-        2
+  // Step 4: List creatives with snapshot
+  const { result: listSnapshotResult, step: listSnapshotStep } = await runStep<any>(
+    'List creatives (with snapshot)',
+    'list_creatives',
+    async () => client.executeTask('list_creatives', { include_snapshot: true })
+  );
+
+  if (!listSnapshotStep.passed || !listSnapshotResult?.creatives) {
+    listSnapshotStep.passed = false;
+    listSnapshotStep.error = 'Failed to list creatives with snapshot';
+    steps.push(listSnapshotStep);
+    return { steps, profile };
+  }
+
+  let snapshotFieldsValidated = false;
+  if (listSnapshotResult.creatives.length > 0) {
+    const firstCreative = listSnapshotResult.creatives[0];
+
+    if ('snapshot' in firstCreative) {
+      const snapshot = firstCreative.snapshot;
+      if (snapshot && typeof snapshot === 'object') {
+        if (
+          'as_of' in snapshot ||
+          'staleness_seconds' in snapshot ||
+          'impressions' in snapshot ||
+          'last_served' in snapshot
+        ) {
+          snapshotFieldsValidated = true;
+        }
+      }
+    } else if ('snapshot_unavailable_reason' in firstCreative) {
+      const reason = firstCreative.snapshot_unavailable_reason;
+      if (['SNAPSHOT_UNSUPPORTED', 'SNAPSHOT_TEMPORARILY_UNAVAILABLE', 'SNAPSHOT_PERMISSION_DENIED'].includes(reason)) {
+        snapshotFieldsValidated = true;
+      }
+    }
+  }
+
+  listSnapshotStep.passed = snapshotFieldsValidated || listSnapshotResult.creatives.length === 0;
+  listSnapshotStep.details = snapshotFieldsValidated
+    ? 'Snapshot field or unavailable_reason validated'
+    : 'No creatives to validate snapshot field';
+  steps.push(listSnapshotStep);
+
+  // Step 5: Build creative (generative or tag-serving mode)
+  if (!profile.tools.includes('build_creative')) {
+    steps.push({
+      step: 'Check for build_creative',
+      passed: false,
+      error: 'Agent does not support build_creative',
+      duration_ms: 0,
+    });
+    return { steps, profile };
+  }
+
+  const buildParams: any = {
+    format_id: formats[0].format_id,
+    brand_manifest: { name: 'Test Brand', description: 'Test brand for creative generation' },
+    prompt: 'Create a professional ad creative',
+  };
+
+  const { result: buildResult, step: buildStep } = await runStep<any>(
+    'Build creative (generative mode)',
+    'build_creative',
+    async () => client.executeTask('build_creative', buildParams)
+  );
+
+  if (buildStep.passed && buildResult) {
+    if (buildResult.creative) {
+      buildStep.passed = true;
+      buildStep.details = 'Generative build_creative succeeded';
+      steps.push(buildStep);
+    } else {
+      buildStep.passed = false;
+      buildStep.error = 'build_creative response missing creative field';
+      steps.push(buildStep);
+    }
+  } else {
+    if (syncResult?.creatives && syncResult.creatives.length > 0) {
+      const syncedCreativeId = syncResult.creatives[0].creative_id || syncResult.creatives[0].platform_id;
+
+      const tagParams: any = { creative_id: syncedCreativeId };
+      const { result: tagResult, step: tagStep } = await runStep<any>(
+        'Build creative (tag-serving mode)',
+        'build_creative',
+        async () => client.executeTask('build_creative', tagParams)
       );
-    } else if (result && !result.success) {
-      step.passed = false;
-      step.error = result.error || 'build_creative failed';
-    }
-    steps.push(step);
-  } else if (profile.tools.includes('preview_creative')) {
-    // Tag-serving agents may only support preview, not build
-    const targetFormat = formats[0];
-    const { result, step } = await runStep<TaskResult>(
-      `Preview creative for lifecycle (${targetFormat.format_id})`,
-      'preview_creative',
-      async () =>
-        client.executeTask('preview_creative', {
-          request_type: 'single',
-          creative_manifest: {
-            format_id: targetFormat.format_id,
-            name: 'Lifecycle Test Preview',
-            assets: buildTestAssets(targetFormat),
-          },
-        }) as Promise<TaskResult>
-    );
 
-    if (result?.success && result?.data) {
-      const data = result.data as any;
-      step.details = `Generated preview with ${data.renders?.length || 0} render(s)`;
-    } else if (result && !result.success) {
-      step.passed = false;
-      step.error = result.error || 'preview_creative failed';
+      if (tagStep.passed && tagResult?.creative) {
+        tagStep.passed = true;
+        tagStep.details = 'Tag-serving build_creative succeeded';
+        steps.push(tagStep);
+      } else {
+        tagStep.passed = false;
+        tagStep.error = 'Both generative and tag-serving modes failed';
+        steps.push(tagStep);
+      }
+    } else {
+      buildStep.passed = false;
+      buildStep.error = 'Cannot test tag-serving mode without synced creative';
+      steps.push(buildStep);
     }
-    steps.push(step);
   }
 
   return { steps, profile };

@@ -196,6 +196,7 @@ export async function testSchemaCompliance(
   });
 
   // --- Format assets structure (optional: list_creative_formats) ---
+  let formats: Format[] = [];
   if (profile.tools.includes('list_creative_formats')) {
     const { result: formatsResult, step: formatsStep } = await runStep<TaskResult>(
       'Get creative formats (check assets structure)',
@@ -205,7 +206,7 @@ export async function testSchemaCompliance(
 
     if (formatsResult?.success && formatsResult?.data) {
       const formatsData = formatsResult.data as ListCreativeFormatsResponse;
-      const formats: Format[] = formatsData.formats || [];
+      formats = formatsData.formats || [];
       const assetsIssues: string[] = [];
       let formatsChecked = 0;
 
@@ -236,6 +237,85 @@ export async function testSchemaCompliance(
       formatsStep.error = assetsIssues.length > 0 ? assetsIssues.join('; ') : undefined;
     }
     steps.push(formatsStep);
+  }
+
+  // Creative response schema validation
+  if (profile?.tools.includes('list_creatives')) {
+    const { result: creativesResult, step: creativesStep } = await runStep<any>(
+      'Validate creative response schema',
+      'list_creatives',
+      async () => client.executeTask('list_creatives', { include_snapshot: true })
+    );
+
+    if (creativesStep.passed && creativesResult?.creatives?.length > 0) {
+      const creative = creativesResult.creatives[0];
+
+      // Validate required fields
+      if (!creative.creative_id) {
+        creativesStep.passed = false;
+        creativesStep.error = 'Creative missing required creative_id field';
+      } else if (!creative.format_id) {
+        creativesStep.passed = false;
+        creativesStep.error = 'Creative missing required format_id field';
+      } else {
+        // Validate snapshot field structure
+        if ('snapshot' in creative && creative.snapshot) {
+          const snapshot = creative.snapshot;
+          if (!['as_of', 'staleness_seconds', 'impressions', 'last_served'].some(field => field in snapshot)) {
+            creativesStep.passed = false;
+            creativesStep.error = 'Snapshot object present but missing expected fields';
+          }
+        } else if ('snapshot_unavailable_reason' in creative) {
+          const reason = creative.snapshot_unavailable_reason;
+          const validReasons = [
+            'SNAPSHOT_UNSUPPORTED',
+            'SNAPSHOT_TEMPORARILY_UNAVAILABLE',
+            'SNAPSHOT_PERMISSION_DENIED',
+          ];
+          if (!validReasons.includes(reason)) {
+            creativesStep.passed = false;
+            creativesStep.error = `Invalid snapshot_unavailable_reason: ${reason}`;
+          }
+        }
+        creativesStep.details = 'Creative response schema validated';
+      }
+    }
+
+    steps.push(creativesStep);
+  }
+
+  // Sync creatives schema validation
+  if (profile?.tools.includes('sync_creatives')) {
+    const testCreatives = [
+      {
+        platform_id: 'schema-test-' + Date.now(),
+        format_id: formats && formats.length > 0 ? formats[0].format_id : 'test',
+        concept: 'Schema test creative',
+      },
+    ];
+
+    const { result: syncSchemaResult, step: syncSchemaStep } = await runStep<any>(
+      'Validate sync_creatives response schema',
+      'sync_creatives',
+      async () => client.executeTask('sync_creatives', { creatives: testCreatives })
+    );
+
+    if (syncSchemaStep.passed && syncSchemaResult?.creatives?.length > 0) {
+      const syncedCreative = syncSchemaResult.creatives[0];
+
+      // Validate action status enum
+      if (syncedCreative.action && !['created', 'updated', 'failed'].includes(syncedCreative.action)) {
+        syncSchemaStep.passed = false;
+        syncSchemaStep.error = `Invalid action value: ${syncedCreative.action}`;
+      } else if (syncedCreative.action === 'failed' && !syncedCreative.error) {
+        syncSchemaStep.passed = false;
+        syncSchemaStep.error = 'Failed sync must include error field';
+      } else {
+        syncSchemaStep.details = 'Sync creative response schema validated';
+      }
+    }
+
+    steps.push(syncSchemaStep);
   }
 
   return { steps, profile };
