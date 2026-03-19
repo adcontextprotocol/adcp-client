@@ -363,13 +363,15 @@ export type {
   // Pagination
   PaginationRequest,
   PaginationResponse,
-  // Commonly-needed nested types (see #365)
+  // Nested domain types used as fields within request/response objects
   PackageUpdate,
+  Package,
   Destination,
   SignalFilters,
   PricingOption,
   PriceGuidance,
   Episode,
+  ShowSelector,
 } from './types/tools.generated';
 
 // ====== ERROR CODES ======

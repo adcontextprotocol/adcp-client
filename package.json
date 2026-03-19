@@ -17,6 +17,8 @@
       "types": "./dist/lib/advanced.d.ts"
     },
     "./types": {
+      "import": "./dist/lib/types/index.js",
+      "require": "./dist/lib/types/index.js",
       "types": "./dist/lib/types/index.d.ts"
     },
     "./testing": {
