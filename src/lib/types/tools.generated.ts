@@ -1989,7 +1989,7 @@ export interface Error {
    */
   suggestion?: string;
   /**
-   * Seconds to wait before retrying the operation
+   * Seconds to wait before retrying the operation. Sellers MUST return values between 1 and 3600. Clients MUST clamp values outside this range.
    */
   retry_after?: number;
   /**

@@ -32,10 +32,18 @@
   },
   "typesVersions": {
     "*": {
-      "advanced": ["dist/lib/advanced.d.ts"],
-      "types": ["dist/lib/types/index.d.ts"],
-      "testing": ["dist/lib/testing/index.d.ts"],
-      "auth": ["dist/lib/auth/index.d.ts"]
+      "advanced": [
+        "dist/lib/advanced.d.ts"
+      ],
+      "types": [
+        "dist/lib/types/index.d.ts"
+      ],
+      "testing": [
+        "dist/lib/testing/index.d.ts"
+      ],
+      "auth": [
+        "dist/lib/auth/index.d.ts"
+      ]
     }
   },
   "bin": {

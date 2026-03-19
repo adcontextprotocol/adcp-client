@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas vlatest
-// Generated at: 2026-03-18T18:58:59.357Z
+// Generated at: 2026-03-19T22:32:42.840Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -3565,7 +3565,7 @@ export interface Error {
    */
   suggestion?: string;
   /**
-   * Seconds to wait before retrying the operation
+   * Seconds to wait before retrying the operation. Sellers MUST return values between 1 and 3600. Clients MUST clamp values outside this range.
    */
   retry_after?: number;
   /**
