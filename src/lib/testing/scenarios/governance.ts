@@ -372,7 +372,7 @@ export async function testGovernanceContentStandards(
       const data = result.data as ListContentStandardsResponse;
       const standards: ContentStandards[] = 'standards' in data ? data.standards : [];
       if (standards.length > 0) {
-        discoveredStandardsId = standards[0].standards_id;
+        discoveredStandardsId = standards[0]!.standards_id;
       }
       step.details = `Found ${standards.length} content standard(s)`;
       step.response_preview = JSON.stringify(

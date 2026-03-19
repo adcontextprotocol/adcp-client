@@ -74,7 +74,7 @@ export class AgentCollection {
       if (result.status === 'fulfilled') {
         return result.value;
       }
-      const client = clients[index];
+      const client = clients[index]!;
       return {
         success: false,
         status: 'completed' as const,

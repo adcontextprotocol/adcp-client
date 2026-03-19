@@ -208,9 +208,9 @@ export async function batchPreviewProducts(
       // Handle both single request (previews) and batch request (results) response formats
       const responseData = response.data;
       if (responseData && 'previews' in responseData && responseData.previews && responseData.previews.length > 0) {
-        const preview = responseData.previews[0];
+        const preview = responseData.previews[0]!;
         if (preview.renders && preview.renders.length > 0) {
-          const render = preview.renders[0] as any;
+          const render = preview.renders[0]! as any;
           const previewUrl = render.preview_url as string;
           const previewId = preview.preview_id;
 
@@ -365,9 +365,9 @@ export async function batchPreviewFormats(
       // Handle both single request (previews) and batch request (results) response formats
       const responseData = response.data;
       if (responseData && 'previews' in responseData && responseData.previews && responseData.previews.length > 0) {
-        const preview = responseData.previews[0];
+        const preview = responseData.previews[0]!;
         if (preview.renders && preview.renders.length > 0) {
-          const render = preview.renders[0] as any;
+          const render = preview.renders[0]! as any;
           const previewUrl = render.preview_url as string;
           const previewId = preview.preview_id;
 
