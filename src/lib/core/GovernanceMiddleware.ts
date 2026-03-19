@@ -69,14 +69,15 @@ export function setAtPath(obj: Record<string, any>, path: string, value: unknown
   }
   let current = obj;
   for (let i = 0; i < parts.length - 1; i++) {
-    const key = parts[i];
+    const key = parts[i]!;
+    const nextKey = parts[i + 1]!;
     if (current[key] == null || typeof current[key] !== 'object') {
       // Create array if next key is numeric, else object
-      current[key] = /^\d+$/.test(parts[i + 1]) ? [] : {};
+      current[key] = /^\d+$/.test(nextKey) ? [] : {};
     }
     current = current[key];
   }
-  current[parts[parts.length - 1]] = value;
+  current[parts[parts.length - 1]!] = value;
 }
 
 /**

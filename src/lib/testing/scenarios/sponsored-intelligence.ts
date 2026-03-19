@@ -178,7 +178,7 @@ export async function testSISessionLifecycle(
     ];
 
     for (let i = 0; i < Math.min(testMessages.length, 3); i++) {
-      const message = testMessages[i];
+      const message = testMessages[i]!;
       const { result, step } = await runStep<TaskResult>(
         `Send message ${i + 1}: "${message.substring(0, 30)}..."`,
         'si_send_message',

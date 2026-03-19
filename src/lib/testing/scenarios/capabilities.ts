@@ -370,7 +370,7 @@ function crossValidateProtocolsAndTools(capabilities: AdcpCapabilities, tools: s
 
   if (unreportedProtocols.length > 0) {
     issues.push(
-      `Tools suggest unreported protocols: ${unreportedProtocols.map(p => `${p} (has: [${perProtocolDiffs[p].found.join(', ')}])`).join('; ')}`
+      `Tools suggest unreported protocols: ${unreportedProtocols.map(p => `${p} (has: [${perProtocolDiffs[p]!.found.join(', ')}])`).join('; ')}`
     );
   }
 

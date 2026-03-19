@@ -397,7 +397,7 @@ export async function testPricingEdgeCases(
 
   // Test 1: Auction pricing without bid_price (should fail)
   if (auctionProducts.length > 0) {
-    const { product, pricingOption } = auctionProducts[0];
+    const { product, pricingOption } = auctionProducts[0]!;
     const { result, step } = await runStep<TaskResult>(
       'Auction pricing without bid_price',
       'create_media_buy',
@@ -430,7 +430,7 @@ export async function testPricingEdgeCases(
 
   // Test 2: Budget below min_spend_per_package
   if (productsWithMinSpend.length > 0) {
-    const { product, pricingOption, minSpend } = productsWithMinSpend[0];
+    const { product, pricingOption, minSpend } = productsWithMinSpend[0]!;
     const underBudget = minSpend * 0.5;
 
     const { result, step } = await runStep<TaskResult>(
