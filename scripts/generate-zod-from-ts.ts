@@ -98,6 +98,178 @@ function postProcessTuplesToArrays(content: string): string {
 }
 
 /**
+ * Post-process generated Zod schemas to remove z.undefined() from unions.
+ *
+ * ts-to-zod generates z.undefined() in unions for TypeScript types like
+ * `Record<string, boolean | undefined>` → `z.union([z.boolean(), z.undefined()])`.
+ * z.undefined() has no JSON Schema representation, so toJSONSchema() throws.
+ *
+ * For two-member unions like `z.union([X, z.undefined()])`, unwrap to just `X`.
+ * For multi-member unions, remove the z.undefined() member.
+ *
+ * This is safe because:
+ * - In record values: absent keys already return undefined
+ * - In .nullish() fields: undefined is already accepted
+ * - z.unknown() already accepts undefined at runtime
+ *
+ * Uses balanced-bracket scanning to handle nested schemas like
+ * z.union([z.object({...}).passthrough(), z.undefined()]).
+ */
+function postProcessUndefinedUnions(content: string): string {
+  const MARKER = 'z.union([';
+  let result = '';
+  let i = 0;
+
+  while (i < content.length) {
+    if (content.startsWith(MARKER, i)) {
+      // Scan forward to find the matching ])
+      const start = i;
+      i += MARKER.length;
+      let depth = 1; // tracking [ ] balance
+      let body = '';
+      while (i < content.length && depth > 0) {
+        const ch = content[i]!;
+        if (ch === '[') depth++;
+        else if (ch === ']') {
+          depth--;
+          if (depth === 0) {
+            // Check for closing ]) — the ] we just found plus )
+            if (content[i + 1] === ')') {
+              // body contains the union members
+              // Recursively process the body so nested unions get cleaned first
+              const processedBody = postProcessUndefinedUnions(body);
+              // ts-to-zod always places z.undefined() as the last union member.
+              // If that ever changes, this endsWith check will need to scan all members.
+              if (processedBody.endsWith(', z.undefined()')) {
+                const inner = processedBody.slice(0, -', z.undefined()'.length);
+                // Check if there's only one remaining member (no top-level comma)
+                // by scanning for commas at depth 0
+                let commaCount = 0;
+                let d = 0;
+                for (const c of inner) {
+                  if (c === '(' || c === '[' || c === '{') d++;
+                  else if (c === ')' || c === ']' || c === '}') d--;
+                  else if (c === ',' && d === 0) commaCount++;
+                }
+                if (commaCount === 0) {
+                  // Two-member union: unwrap to just the first member
+                  result += inner;
+                } else {
+                  // Multi-member union: keep union without z.undefined()
+                  result += MARKER + inner + '])';
+                }
+                i += 2; // skip ])
+                break;
+              }
+            }
+            // Not our pattern — emit with recursively processed body
+            result += MARKER + postProcessUndefinedUnions(body) + ']';
+            i++; // skip ]
+            break;
+          }
+        }
+        body += ch;
+        i++;
+      }
+    } else {
+      result += content[i];
+      i++;
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Post-process generated Zod schemas to strip .and(z.record(...)) intersections
+ * from object schemas that already have .passthrough().
+ *
+ * ts-to-zod generates these for TypeScript types with index signatures like
+ * `{ field: string } & { [k: string]: unknown }`. Since .passthrough() already
+ * preserves unknown keys, the .and(z.record(...)) is redundant and creates
+ * ZodIntersection types that lose .shape access (needed by MCP SDK for tool registration).
+ *
+ * Also handles z.record(...).and(z.object({...})) patterns (record-first intersections)
+ * by extracting just the z.object() portion.
+ */
+function postProcessRecordIntersections(content: string): string {
+  // Pass 1: Strip .and(z.record(...)) unconditionally.
+  // In ts-to-zod output, .and(z.record(...)) only ever follows z.object() schemas.
+  // .passthrough() (added later) preserves unknown keys, making the record redundant.
+  let result = '';
+  let i = 0;
+  const AND_RECORD = '.and(z.record(';
+
+  while (i < content.length) {
+    if (content.startsWith(AND_RECORD, i)) {
+      i += AND_RECORD.length;
+      let depth = 2; // .and( and z.record(
+      while (i < content.length && depth > 0) {
+        const ch = content[i]!;
+        if (ch === '(') depth++;
+        else if (ch === ')') depth--;
+        i++;
+      }
+    } else {
+      result += content[i];
+      i++;
+    }
+  }
+
+  // Pass 2: Replace z.record(...).and(z.object({...})) with just z.object({...})
+  // These are record-first intersections from TypeScript index signatures with typed fields.
+  // .passthrough() (added later) preserves unknown keys, making the record redundant.
+  const RECORD_AND = 'z.record(';
+  let result2 = '';
+  i = 0;
+
+  while (i < result.length) {
+    if (result.startsWith(RECORD_AND, i)) {
+      // Check if this z.record(...) is followed by .and(
+      const recordStart = i;
+      i += RECORD_AND.length;
+      let depth = 1;
+      while (i < result.length && depth > 0) {
+        const ch = result[i]!;
+        if (ch === '(') depth++;
+        else if (ch === ')') depth--;
+        i++;
+      }
+      // i is now past z.record(...), check for .and(
+      if (result.startsWith('.and(', i)) {
+        // Skip z.record(...).and( and emit just the inner content
+        i += '.and('.length;
+        // Scan for balanced ) to find the end of .and(...)
+        depth = 1;
+        let inner = '';
+        while (i < result.length && depth > 0) {
+          const ch = result[i]!;
+          if (ch === '(') depth++;
+          else if (ch === ')') {
+            depth--;
+            if (depth === 0) {
+              i++;
+              break;
+            }
+          }
+          inner += ch;
+          i++;
+        }
+        result2 += inner;
+      } else {
+        // Not followed by .and( — keep as-is
+        result2 += result.slice(recordStart, i);
+      }
+    } else {
+      result2 += result[i];
+      i++;
+    }
+  }
+
+  return result2;
+}
+
+/**
  * Post-process generated Zod schemas to add .passthrough() to all z.object() calls,
  * including deeply nested inline objects.
  *
@@ -246,6 +418,17 @@ async function generateZodSchemas() {
     // ts-to-zod converts @minItems 1 to z.tuple([]).rest() which requires at least one element,
     // but agents in the wild return empty arrays. This relaxes validation for interoperability.
     zodSchemas = postProcessTuplesToArrays(zodSchemas);
+
+    // Post-process: Replace z.union([z.unknown(), z.undefined()]) with z.unknown().
+    // ts-to-zod generates the union for Record<string, unknown> types, but z.undefined()
+    // has no JSON Schema representation, breaking MCP SDK's toJSONSchema() conversion.
+    zodSchemas = postProcessUndefinedUnions(zodSchemas);
+
+    // Post-process: Strip .and(z.record(z.string(), z.unknown())) from object schemas.
+    // These intersections come from TypeScript index signatures and are redundant with
+    // .passthrough(). They also create ZodIntersection types that lose .shape access.
+    // Must run after postProcessUndefinedUnions (which normalizes the record value type).
+    zodSchemas = postProcessRecordIntersections(zodSchemas);
 
     // Post-process: Add .passthrough() to all z.object() schemas so unknown keys are preserved.
     // Agents may return extra/platform-specific fields not in the schema. Without passthrough,
