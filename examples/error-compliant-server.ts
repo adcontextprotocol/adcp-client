@@ -16,6 +16,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { createServer } from 'http';
 
 // Server-side helpers: typed response builders + error helper
+// In your own project, import from '@adcp/client' instead of '../dist/...'
 import {
   adcpError,
   capabilitiesResponse,
@@ -233,9 +234,9 @@ const PORT = parseInt(process.env.PORT || '3456');
 const httpServer = createServer(async (req, res) => {
   const url = req.url || '';
   if (url === '/mcp' || url === '/mcp/') {
+    const agentServer = createAgentServer();
+    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     try {
-      const agentServer = createAgentServer();
-      const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
       await agentServer.connect(transport);
       await transport.handleRequest(req, res);
     } catch (err) {
@@ -244,6 +245,8 @@ const httpServer = createServer(async (req, res) => {
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Internal server error' }));
       }
+    } finally {
+      await agentServer.close();
     }
   } else {
     res.writeHead(404);

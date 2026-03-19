@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-03-19T18:10:30.960Z
+// Generated at: 2026-03-19T22:39:58.922Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -1023,14 +1023,14 @@ export const SignalIDSchema = z.union([z.object({
         id: z.string()
     }).passthrough()]);
 
-export const MediaBuyFeaturesSchema = z.object({
+export const MediaBuyFeaturesSchema = z.record(z.string(), z.union([z.boolean()])).and(z.object({
     inline_creative_management: z.boolean().nullish(),
     property_list_filtering: z.boolean().nullish(),
     content_standards: z.boolean().nullish(),
     conversion_tracking: z.boolean().nullish(),
     audience_targeting: z.boolean().nullish(),
     catalog_management: z.boolean().nullish()
-}).passthrough();
+}).passthrough());
 
 export const SignalTargetingSchema = z.union([z.object({
         signal_id: SignalIDSchema,
@@ -1111,7 +1111,7 @@ export const EpisodeSchema = z.object({
 
 export const ForecastPointSchema = z.object({
     budget: z.number(),
-    metrics: z.object({
+    metrics: z.record(z.string(), z.union([ForecastRangeSchema])).and(z.object({
         audience_size: ForecastRangeSchema.nullish(),
         reach: ForecastRangeSchema.nullish(),
         frequency: ForecastRangeSchema.nullish(),
@@ -1125,7 +1125,7 @@ export const ForecastPointSchema = z.object({
         follows: ForecastRangeSchema.nullish(),
         saves: ForecastRangeSchema.nullish(),
         profile_visits: ForecastRangeSchema.nullish()
-    }).passthrough()
+    }).passthrough())
 }).passthrough();
 
 export const DeliveryForecastSchema = z.object({
@@ -3008,9 +3008,9 @@ export const GetAdCPCapabilitiesResponseSchema = z.object({
     }).passthrough().nullish(),
     signals: z.object({
         data_provider_domains: z.array(z.string()).nullish(),
-        features: z.object({
+        features: z.record(z.string(), z.union([z.boolean()])).and(z.object({
             catalog_signals: z.boolean().nullish()
-        }).passthrough().nullish()
+        }).passthrough()).nullish()
     }).passthrough().nullish(),
     governance: z.object({
         property_features: z.array(z.object({

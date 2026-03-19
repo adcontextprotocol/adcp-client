@@ -99,7 +99,7 @@ export function deliveryResponse(
   summary?: string,
 ): McpToolResponse {
   return {
-    content: [{ type: 'text', text: summary ?? `Delivery data for ${data.media_buy_deliveries.length} media buys` }],
+    content: [{ type: 'text', text: summary ?? `Delivery data for ${data.media_buy_deliveries.length} media buy${data.media_buy_deliveries.length === 1 ? '' : 's'}` }],
     structuredContent: toStructuredContent(data),
   };
 }

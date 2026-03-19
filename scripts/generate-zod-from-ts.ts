@@ -241,20 +241,44 @@ function unwrapRecordIntersections(content: string): string {
 
       // Scan balanced parens to find end of z.record(...)
       let depth = 1;
+      const recordBodyStart = i;
       while (i < content.length && depth > 0) {
+        if (content[i] === '"' || content[i] === "'") {
+          const quote = content[i]; i++;
+          while (i < content.length && content[i] !== quote) {
+            if (content[i] === '\\') i++;
+            i++;
+          }
+          if (i < content.length) i++; // closing quote
+          continue;
+        }
         if (content[i] === '(') depth++;
         else if (content[i] === ')') depth--;
         i++;
       }
+      const recordBody = content.substring(recordBodyStart, i - 1);
+
+      // Only unwrap z.record(z.string(), z.unknown()) — the additionalProperties pattern.
+      // Keep other z.record() types (e.g. z.record(z.string(), z.number())) as-is.
+      const isRedundantRecord = recordBody.trim() === 'z.string(), z.unknown()';
 
       // Check if followed by .and(
-      if (content.startsWith('.and(', i)) {
+      if (isRedundantRecord && content.startsWith('.and(', i)) {
         i += '.and('.length;
 
         // Scan balanced parens to extract .and() content
         depth = 1;
         let andContent = '';
         while (i < content.length && depth > 0) {
+          if (content[i] === '"' || content[i] === "'") {
+            const quote = content[i]; andContent += content[i]; i++;
+            while (i < content.length && content[i] !== quote) {
+              if (content[i] === '\\') { andContent += content[i]; i++; }
+              andContent += content[i]; i++;
+            }
+            if (i < content.length) { andContent += content[i]; i++; }
+            continue;
+          }
           if (content[i] === '(') depth++;
           else if (content[i] === ')') {
             depth--;
@@ -307,6 +331,15 @@ function stripNeverUnionIntersections(content: string): string {
       let depth = 1;
       let andContent = '';
       while (i < content.length && depth > 0) {
+        if (content[i] === '"' || content[i] === "'") {
+          const quote = content[i]; andContent += content[i]; i++;
+          while (i < content.length && content[i] !== quote) {
+            if (content[i] === '\\') { andContent += content[i]; i++; }
+            andContent += content[i]; i++;
+          }
+          if (i < content.length) { andContent += content[i]; i++; }
+          continue;
+        }
         if (content[i] === '(') depth++;
         else if (content[i] === ')') {
           depth--;

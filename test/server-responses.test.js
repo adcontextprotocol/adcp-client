@@ -57,7 +57,7 @@ describe('deliveryResponse', () => {
       ],
     };
     const result = deliveryResponse(data);
-    assert.strictEqual(result.content[0].text, 'Delivery data for 1 media buys');
+    assert.strictEqual(result.content[0].text, 'Delivery data for 1 media buy');
     assert.strictEqual(result.structuredContent.media_buy_deliveries.length, 1);
   });
 
