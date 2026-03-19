@@ -363,6 +363,13 @@ export type {
   // Pagination
   PaginationRequest,
   PaginationResponse,
+  // Commonly-needed nested types (see #365)
+  PackageUpdate,
+  Destination,
+  SignalFilters,
+  PricingOption,
+  PriceGuidance,
+  Episode,
 } from './types/tools.generated';
 
 // ====== ERROR CODES ======
