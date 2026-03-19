@@ -26,7 +26,7 @@ function makeCapabilities(overrides = {}) {
       propertyListFiltering: false,
       contentStandards: false,
       conversionTracking: true,
-      audienceManagement: false,
+      audienceTargeting: false,
     },
     extensions: ['scope3'],
     _synthetic: false,
@@ -197,8 +197,8 @@ describe('TASK_FEATURE_MAP', () => {
     }
   });
 
-  test('maps sync_audiences to audience_management', () => {
-    assert.ok(TASK_FEATURE_MAP.sync_audiences.includes('audience_management'));
+  test('maps sync_audiences to audience_targeting', () => {
+    assert.ok(TASK_FEATURE_MAP.sync_audiences.includes('audience_targeting'));
     assert.ok(TASK_FEATURE_MAP.sync_audiences.includes('media_buy'));
   });
 
