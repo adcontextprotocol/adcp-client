@@ -86,6 +86,7 @@ import type { InputHandler, TaskOptions, TaskResult, ConversationConfig, TaskInf
 import type { Activity, AsyncHandlerConfig, WebhookMetadata } from './AsyncHandler';
 import { AsyncHandler } from './AsyncHandler';
 import { unwrapProtocolResponse } from '../utils/response-unwrapper';
+import { isWellKnownAgentCardUrl as isWellKnownCardUrl, buildCardUrls, stripAgentCardPath } from '../utils/a2a-discovery';
 import * as crypto from 'crypto';
 
 // v3.0 compatibility utilities
@@ -364,13 +365,23 @@ export class SingleAgentClient {
       return response;
     };
 
-    // Construct agent card URL
-    const cardUrl = agentUri.endsWith('/.well-known/agent-card.json')
-      ? agentUri
-      : agentUri.replace(/\/$/, '') + '/.well-known/agent-card.json';
+    const cardUrls = buildCardUrls(agentUri);
 
     try {
-      const client = await A2AClient.fromCardUrl(cardUrl, { fetchImpl });
+      let client: InstanceType<typeof A2AClient> | undefined;
+      let lastError: Error = new Error(`A2A agent card not found at ${cardUrls.join(', ')}`);
+      for (const cardUrl of cardUrls) {
+        try {
+          client = await A2AClient.fromCardUrl(cardUrl, { fetchImpl });
+          break;
+        } catch (err: unknown) {
+          lastError = err as Error;
+          if (got401) break;
+        }
+      }
+      if (!client) {
+        throw lastError;
+      }
       const agentCard = client.agentCardPromise ? await client.agentCardPromise : client.agentCard;
 
       // Use the canonical URL from the agent card, falling back to computed base URL
@@ -378,7 +389,6 @@ export class SingleAgentClient {
         return agentCard.url;
       }
 
-      // Fallback: strip .well-known/agent-card.json if present
       return this.computeBaseUrl(agentUri);
     } catch (error: any) {
       // If we got a 401, throw AuthenticationRequiredError
@@ -395,17 +405,12 @@ export class SingleAgentClient {
   /**
    * Compute base URL by stripping protocol-specific suffixes
    *
+   * - Strips /.well-known/agent.json or /.well-known/agent-card.json for A2A discovery URLs
    * - Strips /mcp or /mcp/ suffix for MCP endpoints
-   * - Strips /.well-known/agent-card.json for A2A discovery URLs
    * - Strips trailing slash for consistency
    */
   private computeBaseUrl(url: string): string {
-    let baseUrl = url;
-
-    // Strip /.well-known/agent-card.json
-    if (baseUrl.match(/\/\.well-known\/agent-card\.json$/i)) {
-      baseUrl = baseUrl.replace(/\/\.well-known\/agent-card\.json$/i, '');
-    }
+    let baseUrl = stripAgentCardPath(url);
 
     // Strip /mcp or /mcp/
     if (baseUrl.match(/\/mcp\/?$/i)) {
@@ -418,16 +423,8 @@ export class SingleAgentClient {
     return baseUrl;
   }
 
-  /**
-   * Check if URL is a .well-known/agent-card.json URL
-   *
-   * These URLs are A2A agent card discovery URLs and should use A2A protocol.
-   * Only matches when .well-known is at the root path (not in a subdirectory).
-   */
   private isWellKnownAgentCardUrl(url: string): boolean {
-    // Match: https://example.com/.well-known/agent-card.json
-    // Don't match: https://example.com/api/.well-known/agent-card.json
-    return /^https?:\/\/[^/]+\/\.well-known\/agent-card\.json$/i.test(url);
+    return isWellKnownCardUrl(url);
   }
 
   /**
@@ -534,7 +531,7 @@ export class SingleAgentClient {
   /**
    * Normalize agent config
    *
-   * - If URL is a .well-known/agent-card.json URL, switch to A2A protocol
+   * - If URL is a well-known agent card URL, switch to A2A protocol
    *   (these are A2A discovery URLs, not MCP endpoints)
    * - A2A agents are marked for canonical URL resolution (from agent card)
    * - MCP agents are marked for endpoint discovery
@@ -2003,7 +2000,7 @@ export class SingleAgentClient {
    *
    * The canonical URL is:
    * - For A2A: The 'url' field from the agent card (if resolved), or base URL with
-   *   /.well-known/agent-card.json stripped
+   *   the well-known agent card path stripped
    * - For MCP: The discovered endpoint with /mcp stripped
    *
    * @returns The canonical base URL (synchronous, may not be fully resolved)
@@ -2049,7 +2046,7 @@ export class SingleAgentClient {
    * Compares agents by their canonical base URLs. Two agents are considered
    * the same if they have the same canonical URL, regardless of:
    * - Protocol (MCP vs A2A)
-   * - URL format (with/without /mcp, with/without /.well-known/agent-card.json)
+   * - URL format (with/without /mcp, with/without well-known agent card path)
    * - Trailing slashes
    *
    * @param other - Another agent configuration or SingleAgentClient to compare
@@ -2314,11 +2311,21 @@ export class SingleAgentClient {
           }
         : undefined;
 
-      const cardUrl = this.normalizedAgent.agent_uri.endsWith('/.well-known/agent-card.json')
-        ? this.normalizedAgent.agent_uri
-        : this.normalizedAgent.agent_uri.replace(/\/$/, '') + '/.well-known/agent-card.json';
+      const cardUrls = buildCardUrls(this.normalizedAgent.agent_uri);
 
-      const client = await A2AClient.fromCardUrl(cardUrl, fetchImpl ? { fetchImpl } : {});
+      let client: InstanceType<typeof A2AClient> | undefined;
+      let lastCardError: Error = new Error(`A2A agent card not found at ${cardUrls.join(', ')}`);
+      for (const cardUrl of cardUrls) {
+        try {
+          client = await A2AClient.fromCardUrl(cardUrl, fetchImpl ? { fetchImpl } : {});
+          break;
+        } catch (err: unknown) {
+          lastCardError = err as Error;
+        }
+      }
+      if (!client) {
+        throw lastCardError;
+      }
       const agentCard = client.agentCardPromise ? await client.agentCardPromise : client.agentCard;
 
       const tools = agentCard?.skills
