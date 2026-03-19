@@ -394,4 +394,70 @@ describe('Zod Schema Validation', () => {
       'Unknown fields inside nested inline objects should be preserved'
     );
   });
+
+  test('all schemas convert to JSON Schema without errors', async () => {
+    if (!schemas) {
+      schemas = await import('../../dist/lib/types/schemas.generated.js');
+    }
+
+    const { toJSONSchema } = await import('zod/v4');
+
+    const failures = [];
+    for (const [name, value] of Object.entries(schemas)) {
+      if (!name.endsWith('Schema')) continue;
+      if (!value || typeof value.safeParse !== 'function') continue;
+
+      try {
+        toJSONSchema(value);
+      } catch (err) {
+        failures.push({ name, error: err.message });
+      }
+    }
+
+    assert.strictEqual(
+      failures.length,
+      0,
+      `${failures.length} schemas failed JSON Schema conversion:\n` +
+        failures.map(f => `  ${f.name}: ${f.error}`).join('\n')
+    );
+  });
+
+  test('schemas with record types have .shape access (not ZodIntersection)', async () => {
+    if (!schemas) {
+      schemas = await import('../../dist/lib/types/schemas.generated.js');
+    }
+
+    // These schemas previously lost .shape due to .and(z.record(...)) intersections
+    const schemasToCheck = [
+      'UpdateMediaBuyRequestSchema',
+      'PackageUpdateSchema',
+      'ProvidePerformanceFeedbackRequestSchema',
+      'MediaBuyFeaturesSchema',
+    ];
+
+    for (const name of schemasToCheck) {
+      const schema = schemas[name];
+      assert.ok(schema, `${name} should exist in generated schemas`);
+
+      assert.ok(
+        schema.shape !== undefined,
+        `${name} should have .shape (got ${schema.constructor?.name || typeof schema})`
+      );
+    }
+  });
+
+  test('record schemas preserve value types after undefined removal', async () => {
+    if (!schemas) {
+      schemas = await import('../../dist/lib/types/schemas.generated.js');
+    }
+
+    // GeographicBreakdownSupportSchema.metro was z.record(z.string(), z.union([z.boolean(), z.undefined()]))
+    // Should now be z.record(z.string(), z.boolean()), not z.record(z.string(), z.unknown())
+    const geo = schemas.GeographicBreakdownSupportSchema;
+    const result = geo.safeParse({ metro: { NYC: 'not-a-boolean' } });
+    assert.ok(!result.success, 'metro record should reject non-boolean values');
+
+    const valid = geo.safeParse({ metro: { NYC: true } });
+    assert.ok(valid.success, 'metro record should accept boolean values');
+  });
 });
