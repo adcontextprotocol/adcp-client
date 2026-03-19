@@ -1,6 +1,8 @@
 // Per-agent client wrapper with conversation context preservation
 
 import type { AgentConfig } from '../types';
+import type { MCPWebhookPayload } from '../types/core.generated';
+import type { Task as A2ATask, TaskStatusUpdateEvent } from '@a2a-js/sdk';
 import { SingleAgentClient, type SingleAgentClientConfig } from './SingleAgentClient';
 import type { InputHandler, TaskOptions, TaskResult, TaskInfo, Message } from './ConversationTypes';
 import type { AdcpCapabilities } from '../utils/capabilities';
@@ -138,7 +140,7 @@ export class AgentClient {
    * @returns Whether webhook was handled successfully
    */
   async handleWebhook(
-    payload: any,
+    payload: MCPWebhookPayload | A2ATask | TaskStatusUpdateEvent,
     taskType: string,
     operationId: string,
     signature?: string,
@@ -171,7 +173,7 @@ export class AgentClient {
    * @param timestamp - X-ADCP-Timestamp header value (Unix timestamp)
    * @returns true if signature is valid
    */
-  verifyWebhookSignature(rawBodyOrPayload: string | any, signature: string, timestamp: string | number): boolean {
+  verifyWebhookSignature(rawBodyOrPayload: string | unknown, signature: string, timestamp: string | number): boolean {
     return this.client.verifyWebhookSignature(rawBodyOrPayload, signature, timestamp);
   }
 
@@ -949,24 +951,24 @@ export class AgentClient {
    */
   async executeTask<K extends AdcpTaskName>(
     taskName: K,
-    params: any,
+    params: Record<string, unknown>,
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<TaskResponseTypeMap[K]>>;
 
   /**
-   * Execute any task by name with custom response type
+   * Execute a task by name with custom response type
    */
-  async executeTask<T = any>(
+  async executeTask<T = unknown>(
     taskName: string,
-    params: any,
+    params: Record<string, unknown>,
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<T>>;
 
-  async executeTask<T = any>(
+  async executeTask<T = unknown>(
     taskName: string,
-    params: any,
+    params: Record<string, unknown>,
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<T>> {

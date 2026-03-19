@@ -5,7 +5,7 @@ export { callA2ATool } from './a2a';
 
 import { callMCPTool } from './mcp';
 import { callA2ATool } from './a2a';
-import type { AgentConfig } from '../types';
+import type { AgentConfig, DebugLogEntry } from '../types';
 import type { PushNotificationConfig } from '../types/tools.generated';
 import { getAuthToken } from '../auth';
 import { validateAgentUrl } from '../validation';
@@ -32,12 +32,12 @@ export class ProtocolClient {
   static async callTool(
     agent: AgentConfig,
     toolName: string,
-    args: Record<string, any>,
-    debugLogs: any[] = [],
+    args: Record<string, unknown>,
+    debugLogs: DebugLogEntry[] = [],
     webhookUrl?: string,
     webhookSecret?: string,
     webhookToken?: string
-  ): Promise<any> {
+  ): Promise<unknown> {
     return withSpan(
       `adcp.${agent.protocol}.call_tool`,
       {
@@ -94,11 +94,11 @@ export class ProtocolClient {
  * Simple factory functions for protocol-specific clients
  */
 export const createMCPClient = (agentUrl: string, authToken?: string, headers?: Record<string, string>) => ({
-  callTool: (toolName: string, args: Record<string, any>, debugLogs?: any[]) =>
+  callTool: (toolName: string, args: Record<string, unknown>, debugLogs?: DebugLogEntry[]) =>
     callMCPTool(agentUrl, toolName, args, authToken, debugLogs, headers),
 });
 
 export const createA2AClient = (agentUrl: string, authToken?: string, headers?: Record<string, string>) => ({
-  callTool: (toolName: string, parameters: Record<string, any>, debugLogs?: any[]) =>
+  callTool: (toolName: string, parameters: Record<string, unknown>, debugLogs?: DebugLogEntry[]) =>
     callA2ATool(agentUrl, toolName, parameters, authToken, debugLogs, undefined, headers),
 });
