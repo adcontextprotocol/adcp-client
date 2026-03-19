@@ -616,7 +616,7 @@ describe('v3 partial-schema field stripping', () => {
       features: {
         inlineCreativeManagement: false,
         conversionTracking: false,
-        audienceManagement: false,
+        audienceTargeting: false,
         propertyListFiltering: false,
         contentStandards: false,
       },
@@ -679,7 +679,7 @@ describe('v3 partial-schema field stripping', () => {
       features: {
         inlineCreativeManagement: false,
         conversionTracking: false,
-        audienceManagement: false,
+        audienceTargeting: false,
         propertyListFiltering: false,
         contentStandards: false,
       },

@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-03-19T22:39:58.922Z
+// Generated at: 2026-03-19T22:53:14.204Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -608,8 +608,8 @@ export const ForecastRangeSchema = z.object({
 export const GeographicBreakdownSupportSchema = z.object({
     country: z.boolean().nullish(),
     region: z.boolean().nullish(),
-    metro: z.record(z.string(), z.union([z.boolean()])).nullish(),
-    postal_area: z.record(z.string(), z.union([z.boolean()])).nullish()
+    metro: z.record(z.string(), z.boolean()).nullish(),
+    postal_area: z.record(z.string(), z.boolean()).nullish()
 }).passthrough();
 
 export const ContentRatingSchema = z.object({
@@ -905,7 +905,7 @@ export const SyncCreativesSuccessSchema = z.object({
         preview_url: z.string().nullish(),
         expires_at: z.string().nullish(),
         assigned_to: z.array(z.string()).nullish(),
-        assignment_errors: z.record(z.string(), z.union([z.string()])).nullish()
+        assignment_errors: z.record(z.string(), z.string()).nullish()
     }).passthrough()),
     sandbox: z.boolean().nullish(),
     context: ContextObjectSchema.nullish(),
@@ -1023,7 +1023,7 @@ export const SignalIDSchema = z.union([z.object({
         id: z.string()
     }).passthrough()]);
 
-export const MediaBuyFeaturesSchema = z.record(z.string(), z.union([z.boolean()])).and(z.object({
+export const MediaBuyFeaturesSchema = z.record(z.string(), z.boolean()).and(z.object({
     inline_creative_management: z.boolean().nullish(),
     property_list_filtering: z.boolean().nullish(),
     content_standards: z.boolean().nullish(),
@@ -1111,7 +1111,7 @@ export const EpisodeSchema = z.object({
 
 export const ForecastPointSchema = z.object({
     budget: z.number(),
-    metrics: z.record(z.string(), z.union([ForecastRangeSchema])).and(z.object({
+    metrics: z.record(z.string(), ForecastRangeSchema).and(z.object({
         audience_size: ForecastRangeSchema.nullish(),
         reach: ForecastRangeSchema.nullish(),
         frequency: ForecastRangeSchema.nullish(),
@@ -1340,7 +1340,7 @@ export const CreativeAssetSchema = z.object({
     assets: z.record(z.string(), z.union([ImageAssetSchema, VideoAssetSchema, AudioAssetSchema, VASTAssetSchema, TextAssetSchema, URLAssetSchema, HTMLAssetSchema, JavaScriptAssetSchema, WebhookAssetSchema, CSSAssetSchema, DAASTAssetSchema, MarkdownAssetSchema, BriefAssetSchema, CatalogAssetSchema])),
     inputs: z.array(z.object({
         name: z.string(),
-        macros: z.record(z.string(), z.union([z.string()])).nullish(),
+        macros: z.record(z.string(), z.string()).nullish(),
         context_description: z.string().nullish()
     }).passthrough()).nullish(),
     tags: z.array(z.string()).nullish(),
@@ -1736,7 +1736,7 @@ export const BuildCreativeSuccessSchema = z.object({
             renders: z.array(PreviewRenderSchema),
             input: z.object({
                 name: z.string(),
-                macros: z.record(z.string(), z.union([z.string()])).nullish(),
+                macros: z.record(z.string(), z.string()).nullish(),
                 context_description: z.string().nullish()
             }).passthrough()
         }).passthrough()),
@@ -1759,7 +1759,7 @@ export const BuildCreativeMultiSuccessSchema = z.object({
             renders: z.array(PreviewRenderSchema),
             input: z.object({
                 name: z.string(),
-                macros: z.record(z.string(), z.union([z.string()])).nullish(),
+                macros: z.record(z.string(), z.string()).nullish(),
                 context_description: z.string().nullish()
             }).passthrough()
         }).passthrough()),
@@ -1777,7 +1777,7 @@ export const PreviewCreativeRequestSchema = z.union([z.object({
         creative_manifest: CreativeManifestSchema,
         inputs: z.array(z.object({
             name: z.string(),
-            macros: z.record(z.string(), z.union([z.string()])).nullish(),
+            macros: z.record(z.string(), z.string()).nullish(),
             context_description: z.string().nullish()
         }).passthrough()).nullish(),
         template_id: z.string().nullish(),
@@ -1793,7 +1793,7 @@ export const PreviewCreativeRequestSchema = z.union([z.object({
             creative_manifest: CreativeManifestSchema,
             inputs: z.array(z.object({
                 name: z.string(),
-                macros: z.record(z.string(), z.union([z.string()])).nullish(),
+                macros: z.record(z.string(), z.string()).nullish(),
                 context_description: z.string().nullish()
             }).passthrough()).nullish(),
             template_id: z.string().nullish(),
@@ -1821,7 +1821,7 @@ export const PreviewCreativeSingleResponseSchema = z.object({
         renders: z.array(PreviewRenderSchema),
         input: z.object({
             name: z.string(),
-            macros: z.record(z.string(), z.union([z.string()])).nullish(),
+            macros: z.record(z.string(), z.string()).nullish(),
             context_description: z.string().nullish()
         }).passthrough()
     }).passthrough()),
@@ -2126,7 +2126,7 @@ export const GetPropertyListResponseSchema = z.object({
     pagination: PaginationResponseSchema.nullish(),
     resolved_at: z.string().nullish(),
     cache_valid_until: z.string().nullish(),
-    coverage_gaps: z.record(z.string(), z.union([z.array(IdentifierSchema)])).nullish(),
+    coverage_gaps: z.record(z.string(), z.array(IdentifierSchema)).nullish(),
     ext: ExtensionObjectSchema.nullish()
 }).passthrough();
 
@@ -2492,10 +2492,10 @@ export const SyncPlansRequestSchema = z.object({
         channels: z.object({
             required: z.array(MediaChannelSchema).nullish(),
             allowed: z.array(MediaChannelSchema).nullish(),
-            mix_targets: z.record(z.string(), z.union([z.object({
+            mix_targets: z.record(z.string(), z.object({
                     min_pct: z.number().nullish(),
                     max_pct: z.number().nullish()
-                }).passthrough()])).nullish()
+                }).passthrough()).nullish()
         }).passthrough().nullish(),
         flight: z.object({
             start: z.string(),
@@ -2621,10 +2621,10 @@ export const GetPlanAuditLogsResponseSchema = z.object({
             remaining: z.number().nullish(),
             utilization_pct: z.number().nullish()
         }).passthrough(),
-        channel_allocation: z.record(z.string(), z.union([z.object({
+        channel_allocation: z.record(z.string(), z.object({
                 committed: z.number().nullish(),
                 pct: z.number().nullish()
-            }).passthrough()])).nullish(),
+            }).passthrough()).nullish(),
         campaigns: z.array(z.object({
             buyer_campaign_ref: z.string(),
             status: z.union([z.literal("active"), z.literal("suspended"), z.literal("completed")]),
@@ -2860,7 +2860,7 @@ export const SISendMessageRequestSchema = z.object({
 export const A2UIComponentSchema = z.object({
     id: z.string(),
     parentId: z.string().nullish(),
-    component: z.record(z.string(), z.union([z.object({}).passthrough()]))
+    component: z.record(z.string(), z.object({}).passthrough())
 }).passthrough();
 
 export const SITerminateSessionRequestSchema = z.object({
@@ -3008,7 +3008,7 @@ export const GetAdCPCapabilitiesResponseSchema = z.object({
     }).passthrough().nullish(),
     signals: z.object({
         data_provider_domains: z.array(z.string()).nullish(),
-        features: z.record(z.string(), z.union([z.boolean()])).and(z.object({
+        features: z.record(z.string(), z.boolean()).and(z.object({
             catalog_signals: z.boolean().nullish()
         }).passthrough()).nullish()
     }).passthrough().nullish(),
@@ -3626,12 +3626,12 @@ export const BuildCreativeRequestSchema = z.object({
     include_preview: z.boolean().nullish(),
     preview_inputs: z.array(z.object({
         name: z.string(),
-        macros: z.record(z.string(), z.union([z.string()])).nullish(),
+        macros: z.record(z.string(), z.string()).nullish(),
         context_description: z.string().nullish()
     }).passthrough()).nullish(),
     preview_quality: CreativeQualitySchema.nullish(),
     preview_output_format: PreviewOutputFormatSchema.nullish(),
-    macro_values: z.record(z.string(), z.union([z.string()])).nullish(),
+    macro_values: z.record(z.string(), z.string()).nullish(),
     context: ContextObjectSchema.nullish(),
     ext: ExtensionObjectSchema.nullish()
 }).passthrough();
@@ -3729,7 +3729,7 @@ export const ListCreativesResponseSchema = z.object({
         snapshot_unavailable_reason: z.union([z.literal("SNAPSHOT_UNSUPPORTED"), z.literal("SNAPSHOT_TEMPORARILY_UNAVAILABLE"), z.literal("SNAPSHOT_PERMISSION_DENIED")]).nullish(),
         items: z.array(CreativeItemSchema).nullish()
     }).passthrough()),
-    format_summary: z.record(z.string(), z.union([z.number()])).nullish(),
+    format_summary: z.record(z.string(), z.number()).nullish(),
     status_summary: z.object({
         processing: z.number().nullish(),
         approved: z.number().nullish(),
@@ -3837,8 +3837,8 @@ export const CheckGovernanceRequestSchema = z.object({
         cumulative_spend: z.number().nullish(),
         impressions: z.number().nullish(),
         cumulative_impressions: z.number().nullish(),
-        geo_distribution: z.record(z.string(), z.union([z.number()])).nullish(),
-        channel_distribution: z.record(z.string(), z.union([z.number()])).nullish(),
+        geo_distribution: z.record(z.string(), z.number()).nullish(),
+        channel_distribution: z.record(z.string(), z.number()).nullish(),
         pacing: z.union([z.literal("ahead"), z.literal("on_track"), z.literal("behind")]).nullish()
     }).passthrough().nullish(),
     modification_summary: z.string().nullish()

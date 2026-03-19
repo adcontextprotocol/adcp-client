@@ -29,7 +29,7 @@ export interface MediaBuyFeatures {
   /** Agent supports conversion event tracking (sync_event_sources, log_event) */
   conversionTracking?: boolean;
   /** Agent supports first-party CRM audience management (sync_audiences) */
-  audienceManagement?: boolean;
+  audienceTargeting?: boolean;
 }
 
 /**
@@ -250,8 +250,8 @@ export function buildSyntheticCapabilities(tools: ToolInfo[]): AdcpCapabilities 
     contentStandards: false,
     // Conversion tracking if event tracking tools are available
     conversionTracking: EVENT_TRACKING_TOOLS.some(t => toolNames.has(t)),
-    // Audience management if sync_audiences is available
-    audienceManagement: toolNames.has('sync_audiences'),
+    // Audience targeting if sync_audiences is available
+    audienceTargeting: toolNames.has('sync_audiences'),
   };
 
   return {
@@ -278,7 +278,7 @@ export function parseCapabilitiesResponse(response: any): AdcpCapabilities {
     propertyListFiltering: response.media_buy?.features?.property_list_filtering ?? false,
     contentStandards: response.media_buy?.features?.content_standards ?? false,
     conversionTracking: response.media_buy?.features?.conversion_tracking ?? false,
-    audienceManagement: response.media_buy?.features?.audience_management ?? false,
+    audienceTargeting: response.media_buy?.features?.audience_targeting ?? false,
   };
 
   let account: AccountCapabilities | undefined;
@@ -400,7 +400,7 @@ export const TASK_FEATURE_MAP: Record<string, FeatureName[]> = {
   // list_creatives intentionally omitted — serves both media-buy and creative domains
 
   // Audience management
-  sync_audiences: ['media_buy', 'audience_management'],
+  sync_audiences: ['media_buy', 'audience_targeting'],
 
   // Event tracking / conversion
   sync_event_sources: ['media_buy', 'conversion_tracking'],
@@ -452,8 +452,8 @@ const FEATURE_KEY_MAP: Record<string, keyof MediaBuyFeatures> = {
   property_list_filtering: 'propertyListFiltering',
   content_standards: 'contentStandards',
   conversion_tracking: 'conversionTracking',
-  audience_targeting: 'audienceManagement',
-  audience_management: 'audienceManagement',
+  audience_targeting: 'audienceTargeting',
+  audience_management: 'audienceTargeting', // legacy alias
 };
 
 /**

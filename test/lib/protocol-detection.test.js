@@ -70,14 +70,15 @@ test('Protocol Discovery Accept Headers', async t => {
     assert.ok(!a2aDiscoveryAccept.includes('text/event-stream'), 'A2A does not use SSE');
   });
 
-  await t.test('A2A discovery endpoint follows RFC 8615', async () => {
-    // PR #89 fixed the discovery endpoint path
-    const correctPath = '/.well-known/agent-card.json';
+  await t.test('A2A discovery supports both well-known paths', async () => {
+    // agent.json is the current A2A spec path; agent-card.json is legacy
+    const currentPath = '/.well-known/agent.json';
+    const legacyPath = '/.well-known/agent-card.json';
     const incorrectPath = '/.well-known/a2a-server';
 
-    // Verify we're using the correct path
-    assert.strictEqual(correctPath, '/.well-known/agent-card.json');
-    assert.notStrictEqual(correctPath, incorrectPath, 'Should not use old incorrect path');
+    assert.strictEqual(currentPath, '/.well-known/agent.json');
+    assert.strictEqual(legacyPath, '/.well-known/agent-card.json');
+    assert.notStrictEqual(currentPath, incorrectPath, 'Should not use old incorrect path');
   });
 
   await t.test('MCP uses SSE-compatible Accept header', async () => {

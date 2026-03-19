@@ -150,6 +150,15 @@ export type { ExtractedAdcpError } from './error-extraction';
 // Re-export protocol detection utilities
 export { detectProtocol, detectProtocolWithTimeout } from './protocol-detection';
 
+// Re-export A2A discovery utilities
+export {
+  A2A_CARD_PATHS,
+  isAgentCardPath,
+  isWellKnownAgentCardUrl,
+  buildCardUrls,
+  stripAgentCardPath,
+} from './a2a-discovery';
+
 // Re-export format asset utilities
 export {
   getFormatAssets,

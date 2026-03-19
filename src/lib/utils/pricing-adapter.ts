@@ -345,8 +345,21 @@ export function normalizeProductChannels(product: any): any {
  * Normalize all products in a get_products response to v3
  */
 export function normalizeGetProductsResponse(response: any): any {
-  if (!response?.products || !Array.isArray(response.products)) {
+  // If there's no products field at all, this may be an error response — pass through
+  if (!('products' in (response ?? {}))) {
     return response;
+  }
+
+  // If products exists but isn't an array, the response is malformed
+  if (!Array.isArray(response.products)) {
+    return {
+      errors: [
+        {
+          code: 'invalid_response',
+          message: `Expected products to be an array, got ${typeof response.products}`,
+        },
+      ],
+    };
   }
 
   return {

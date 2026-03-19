@@ -14,6 +14,13 @@ import { extractAdcpErrorFromMcp, resolveRecovery } from '../../utils/error-extr
 import type { ExtractedAdcpError } from '../../utils/error-extraction';
 import { isStandardErrorCode } from '../../types/error-codes';
 
+/** Raw MCP CallToolResult shape */
+interface RawMcpResponse {
+  isError?: boolean;
+  content?: Array<{ type: string; text?: string }>;
+  structuredContent?: Record<string, unknown>;
+}
+
 /** Provocation definition: what to send and what error to expect */
 interface ErrorProvocation {
   name: string;
@@ -120,7 +127,7 @@ export async function testErrorCodes(
       const rawResponse = await callMCPToolRaw(
         agentUrl, provocation.tool, provocation.args,
         authToken, [], headers
-      );
+      ) as RawMcpResponse | undefined;
 
       const extracted = extractAdcpErrorFromMcp(rawResponse);
 
@@ -232,7 +239,7 @@ export async function testErrorStructure(
 
   const start = Date.now();
   // Use first provocation to get an error response
-  const provocation = createProvocations()[0];
+  const provocation = createProvocations()[0]!;
 
   try {
     const rawResponse = await callMCPToolRaw(
@@ -335,16 +342,17 @@ export async function testErrorTransport(
   if (options.dry_run !== false) headers['X-Dry-Run'] = 'true';
 
   const start = Date.now();
-  const provocation = createProvocations()[0];
+  const provocation = createProvocations()[0]!;
 
   try {
     const rawResponse = await callMCPToolRaw(
       agentUrl, provocation.tool, provocation.args,
       authToken, [], headers
-    );
+    ) as RawMcpResponse | undefined;
 
     const hasIsError = rawResponse?.isError === true;
-    const hasStructuredContent = !!rawResponse?.structuredContent?.adcp_error;
+    const structured = rawResponse?.structuredContent as Record<string, unknown> | undefined;
+    const hasStructuredContent = !!(structured?.adcp_error);
 
     // Check JSON text fallback
     let hasTextJson = false;
@@ -362,12 +370,12 @@ export async function testErrorTransport(
     // Check consistency between layers
     let consistent = true;
     if (hasStructuredContent && hasTextJson) {
-      const structured = rawResponse.structuredContent.adcp_error;
-      for (const item of rawResponse.content) {
-        if (item?.type === 'text') {
+      const adcpError = (structured?.adcp_error ?? {}) as Record<string, unknown>;
+      for (const item of rawResponse?.content ?? []) {
+        if (item?.type === 'text' && item.text) {
           try {
             const parsed = JSON.parse(item.text);
-            if (parsed?.adcp_error?.code !== structured.code) {
+            if (parsed?.adcp_error?.code !== adcpError.code) {
               consistent = false;
             }
           } catch { /* skip */ }

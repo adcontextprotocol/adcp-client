@@ -240,7 +240,7 @@ export async function testCreativeLifecycle(
 
   // Step 2: Sync multiple creatives (image + video if formats allow)
   if (profile.tools.includes('sync_creatives')) {
-    const imageFormat = formats.find(f => f.type === 'display' || f.type === 'image') || formats[0];
+    const imageFormat = formats.find(f => f.type === 'display' || f.type === 'image') ?? formats[0]!;
     const videoFormat = formats.find(f => f.type === 'video');
 
     const creativesToSync = [
@@ -408,7 +408,7 @@ export async function testCreativeLifecycle(
 
   // Step 5: build_creative or preview_creative (adapt to agent capabilities)
   if (profile.tools.includes('build_creative')) {
-    const targetFormat = formats[0];
+    const targetFormat = formats[0]!;
     const { result, step } = await runStep<TaskResult>(
       `Build creative for lifecycle (${targetFormat.format_id})`,
       'build_creative',
@@ -442,7 +442,7 @@ export async function testCreativeLifecycle(
     steps.push(step);
   } else if (profile.tools.includes('preview_creative')) {
     // Tag-serving agents may only support preview, not build
-    const targetFormat = formats[0];
+    const targetFormat = formats[0]!;
     const { result, step } = await runStep<TaskResult>(
       `Preview creative for lifecycle (${targetFormat.format_id})`,
       'preview_creative',

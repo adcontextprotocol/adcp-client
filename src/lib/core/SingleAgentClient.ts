@@ -86,6 +86,11 @@ import type { InputHandler, TaskOptions, TaskResult, ConversationConfig, TaskInf
 import type { Activity, AsyncHandlerConfig, WebhookMetadata } from './AsyncHandler';
 import { AsyncHandler } from './AsyncHandler';
 import { unwrapProtocolResponse } from '../utils/response-unwrapper';
+import {
+  isWellKnownAgentCardUrl as isWellKnownCardUrl,
+  buildCardUrls,
+  stripAgentCardPath,
+} from '../utils/a2a-discovery';
 import * as crypto from 'crypto';
 
 // v3.0 compatibility utilities
@@ -135,6 +140,12 @@ export class UnsupportedFeatureError extends Error {
     this.name = 'UnsupportedFeatureError';
   }
 }
+
+/** AgentConfig with internal flags for lazy discovery */
+type InternalAgentConfig = AgentConfig & {
+  _needsDiscovery?: boolean;
+  _needsCanonicalUrl?: boolean;
+};
 
 type NormalizedWebhookPayload = {
   operation_id: string;
@@ -186,7 +197,7 @@ export interface SingleAgentClientConfig extends ConversationConfig {
   /**
    * Validate that the seller supports required features before each task call.
    * When true, tasks like syncAudiences will fail fast with FeatureUnsupportedError
-   * if the seller hasn't declared audience_management support.
+   * if the seller hasn't declared audience_targeting support.
    *
    * @default true
    */
@@ -232,7 +243,7 @@ export interface SingleAgentClientConfig extends ConversationConfig {
 export class SingleAgentClient {
   private executor: TaskExecutor;
   private asyncHandler?: AsyncHandler;
-  private normalizedAgent: AgentConfig;
+  private normalizedAgent: InternalAgentConfig;
   private discoveredEndpoint?: string; // Cache discovered MCP endpoint
   private canonicalBaseUrl?: string; // Cache canonical base URL (from agent card or stripped /mcp)
   private cachedCapabilities?: AdcpCapabilities; // Cache detected server capabilities
@@ -272,7 +283,7 @@ export class SingleAgentClient {
    * Also computes the canonical base URL by stripping /mcp suffix.
    */
   private async ensureEndpointDiscovered(): Promise<AgentConfig> {
-    const needsDiscovery = (this.normalizedAgent as any)._needsDiscovery;
+    const needsDiscovery = this.normalizedAgent._needsDiscovery;
 
     if (!needsDiscovery) {
       return this.normalizedAgent;
@@ -305,7 +316,7 @@ export class SingleAgentClient {
    * Returns the agent config with the canonical URL.
    */
   private async ensureCanonicalUrlResolved(): Promise<AgentConfig> {
-    const needsCanonicalUrl = (this.normalizedAgent as any)._needsCanonicalUrl;
+    const needsCanonicalUrl = this.normalizedAgent._needsCanonicalUrl;
 
     if (!needsCanonicalUrl) {
       return this.normalizedAgent;
@@ -364,13 +375,23 @@ export class SingleAgentClient {
       return response;
     };
 
-    // Construct agent card URL
-    const cardUrl = agentUri.endsWith('/.well-known/agent-card.json')
-      ? agentUri
-      : agentUri.replace(/\/$/, '') + '/.well-known/agent-card.json';
+    const cardUrls = buildCardUrls(agentUri);
 
     try {
-      const client = await A2AClient.fromCardUrl(cardUrl, { fetchImpl });
+      let client: InstanceType<typeof A2AClient> | undefined;
+      let lastError: Error = new Error(`A2A agent card not found at ${cardUrls.join(', ')}`);
+      for (const cardUrl of cardUrls) {
+        try {
+          client = await A2AClient.fromCardUrl(cardUrl, { fetchImpl });
+          break;
+        } catch (err: unknown) {
+          lastError = err as Error;
+          if (got401) break;
+        }
+      }
+      if (!client) {
+        throw lastError;
+      }
       const agentCard = client.agentCardPromise ? await client.agentCardPromise : client.agentCard;
 
       // Use the canonical URL from the agent card, falling back to computed base URL
@@ -378,9 +399,8 @@ export class SingleAgentClient {
         return agentCard.url;
       }
 
-      // Fallback: strip .well-known/agent-card.json if present
       return this.computeBaseUrl(agentUri);
-    } catch (error: any) {
+    } catch (error: unknown) {
       // If we got a 401, throw AuthenticationRequiredError
       if (is401Error(error, got401)) {
         const oauthMetadata = await discoverOAuthMetadata(agentUri);
@@ -395,17 +415,12 @@ export class SingleAgentClient {
   /**
    * Compute base URL by stripping protocol-specific suffixes
    *
+   * - Strips /.well-known/agent.json or /.well-known/agent-card.json for A2A discovery URLs
    * - Strips /mcp or /mcp/ suffix for MCP endpoints
-   * - Strips /.well-known/agent-card.json for A2A discovery URLs
    * - Strips trailing slash for consistency
    */
   private computeBaseUrl(url: string): string {
-    let baseUrl = url;
-
-    // Strip /.well-known/agent-card.json
-    if (baseUrl.match(/\/\.well-known\/agent-card\.json$/i)) {
-      baseUrl = baseUrl.replace(/\/\.well-known\/agent-card\.json$/i, '');
-    }
+    let baseUrl = stripAgentCardPath(url);
 
     // Strip /mcp or /mcp/
     if (baseUrl.match(/\/mcp\/?$/i)) {
@@ -418,16 +433,8 @@ export class SingleAgentClient {
     return baseUrl;
   }
 
-  /**
-   * Check if URL is a .well-known/agent-card.json URL
-   *
-   * These URLs are A2A agent card discovery URLs and should use A2A protocol.
-   * Only matches when .well-known is at the root path (not in a subdirectory).
-   */
   private isWellKnownAgentCardUrl(url: string): boolean {
-    // Match: https://example.com/.well-known/agent-card.json
-    // Don't match: https://example.com/api/.well-known/agent-card.json
-    return /^https?:\/\/[^/]+\/\.well-known\/agent-card\.json$/i.test(url);
+    return isWellKnownCardUrl(url);
   }
 
   /**
@@ -446,13 +453,8 @@ export class SingleAgentClient {
    * Note: This is async and called lazily on first agent interaction
    */
   private async discoverMCPEndpoint(providedUri: string): Promise<string> {
-    const { connectMCPWithFallback, isEndpointKnown } = await import('../protocols/mcp');
+    const { connectMCPWithFallback } = await import('../protocols/mcp');
     const { discoverOAuthMetadata } = await import('../auth/oauth/discovery');
-
-    // Check if this endpoint was already discovered by a previous client instance
-    if (isEndpointKnown(providedUri)) {
-      return providedUri;
-    }
 
     const authToken = this.agent.auth_token;
     const agentHeaders = this.agent.headers;
@@ -461,7 +463,7 @@ export class SingleAgentClient {
     type EndpointTestResult = {
       success: boolean;
       status?: number;
-      error?: Error;
+      error?: unknown;
     };
 
     const testEndpoint = async (url: string): Promise<EndpointTestResult> => {
@@ -469,8 +471,15 @@ export class SingleAgentClient {
         const client = await connectMCPWithFallback(new URL(url), authHeaders);
         await client.close();
         return { success: true };
-      } catch (error: any) {
-        const status = is401Error(error) ? 401 : error?.status || error?.response?.status || error?.cause?.status;
+      } catch (error: unknown) {
+        if (is401Error(error)) {
+          return { success: false, status: 401, error };
+        }
+        const errObj = error as Record<string, unknown>;
+        const status =
+          (errObj?.status as number | undefined) ||
+          ((errObj?.response as Record<string, unknown>)?.status as number | undefined) ||
+          ((errObj?.cause as Record<string, unknown>)?.status as number | undefined);
         return { success: false, status, error };
       }
     };
@@ -539,12 +548,12 @@ export class SingleAgentClient {
   /**
    * Normalize agent config
    *
-   * - If URL is a .well-known/agent-card.json URL, switch to A2A protocol
+   * - If URL is a well-known agent card URL, switch to A2A protocol
    *   (these are A2A discovery URLs, not MCP endpoints)
    * - A2A agents are marked for canonical URL resolution (from agent card)
    * - MCP agents are marked for endpoint discovery
    */
-  private normalizeAgentConfig(agent: AgentConfig): AgentConfig {
+  private normalizeAgentConfig(agent: AgentConfig): InternalAgentConfig {
     // If URL is a well-known agent card URL, use A2A protocol regardless of what was specified
     // Mark for canonical URL resolution - we'll fetch the agent card and use its url field
     if (this.isWellKnownAgentCardUrl(agent.agent_uri)) {
@@ -552,7 +561,7 @@ export class SingleAgentClient {
         ...agent,
         protocol: 'a2a',
         _needsCanonicalUrl: true,
-      } as any;
+      };
     }
 
     if (agent.protocol === 'a2a') {
@@ -560,7 +569,7 @@ export class SingleAgentClient {
       return {
         ...agent,
         _needsCanonicalUrl: true,
-      } as any;
+      };
     }
 
     if (agent.protocol !== 'mcp') {
@@ -571,7 +580,7 @@ export class SingleAgentClient {
     return {
       ...agent,
       _needsDiscovery: true,
-    } as any;
+    };
   }
 
   /**
@@ -825,7 +834,15 @@ export class SingleAgentClient {
    * ```
    */
   createWebhookHandler() {
-    return async (req: any, res: any) => {
+    return async (
+      req: { headers: Record<string, string | undefined>; body: unknown; params?: Record<string, string> },
+      res: {
+        status: (code: number) => { json: (body: unknown) => void };
+        json?: unknown;
+        writeHead: (code: number, headers: Record<string, string>) => void;
+        end: (body: string) => void;
+      }
+    ) => {
       try {
         // Extract headers (case-insensitive)
         const signature = req.headers['x-adcp-signature'] || req.headers['X-ADCP-Signature'];
@@ -849,15 +866,16 @@ export class SingleAgentClient {
           res.writeHead(202, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ status: 'accepted', received: handled }));
         }
-      } catch (error: any) {
+      } catch (error: unknown) {
         // Return error
-        const statusCode = error.message.includes('signature') || error.message.includes('timestamp') ? 401 : 500;
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        const statusCode = errorMessage.includes('signature') || errorMessage.includes('timestamp') ? 401 : 500;
 
         if (res.json) {
-          res.status(statusCode).json({ error: error.message });
+          res.status(statusCode).json({ error: errorMessage });
         } else {
           res.writeHead(statusCode, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: error.message }));
+          res.end(JSON.stringify({ error: errorMessage }));
         }
       }
     };
@@ -883,7 +901,7 @@ export class SingleAgentClient {
    * @param timestamp - X-ADCP-Timestamp header value (Unix timestamp)
    * @returns true if signature is valid
    */
-  verifyWebhookSignature(rawBodyOrPayload: string | any, signature: string, timestamp: string | number): boolean {
+  verifyWebhookSignature(rawBodyOrPayload: string | unknown, signature: string, timestamp: string | number): boolean {
     if (!this.config.webhookSecret) {
       return false;
     }
@@ -1952,7 +1970,7 @@ export class SingleAgentClient {
   getAgent(): AgentConfig {
     // If we have resolved the canonical URL, return config with it
     if (this.canonicalBaseUrl) {
-      const { _needsDiscovery, _needsCanonicalUrl, ...cleanAgent } = this.normalizedAgent as any;
+      const { _needsDiscovery, _needsCanonicalUrl, ...cleanAgent } = this.normalizedAgent;
       return {
         ...cleanAgent,
         agent_uri: this.canonicalBaseUrl,
@@ -1960,7 +1978,7 @@ export class SingleAgentClient {
     }
 
     // Return normalized agent without internal flags
-    const { _needsDiscovery, _needsCanonicalUrl, ...cleanAgent } = this.normalizedAgent as any;
+    const { _needsDiscovery, _needsCanonicalUrl, ...cleanAgent } = this.normalizedAgent;
     return { ...cleanAgent };
   }
 
@@ -2008,7 +2026,7 @@ export class SingleAgentClient {
    *
    * The canonical URL is:
    * - For A2A: The 'url' field from the agent card (if resolved), or base URL with
-   *   /.well-known/agent-card.json stripped
+   *   the well-known agent card path stripped
    * - For MCP: The discovered endpoint with /mcp stripped
    *
    * @returns The canonical base URL (synchronous, may not be fully resolved)
@@ -2054,7 +2072,7 @@ export class SingleAgentClient {
    * Compares agents by their canonical base URLs. Two agents are considered
    * the same if they have the same canonical URL, regardless of:
    * - Protocol (MCP vs A2A)
-   * - URL format (with/without /mcp, with/without /.well-known/agent-card.json)
+   * - URL format (with/without /mcp, with/without well-known agent card path)
    * - Trailing slashes
    *
    * @param other - Another agent configuration or SingleAgentClient to compare
@@ -2100,7 +2118,7 @@ export class SingleAgentClient {
    * Get active tasks for this agent
    */
   getActiveTasks() {
-    return this.executor.getActiveTasks().filter((task: any) => task.agent.id === this.agent.id);
+    return this.executor.getActiveTasks().filter(task => task.agent.id === this.agent.id);
   }
 
   // ====== TASK MANAGEMENT & NOTIFICATIONS ======
@@ -2224,7 +2242,7 @@ export class SingleAgentClient {
     tools: Array<{
       name: string;
       description?: string;
-      inputSchema?: any;
+      inputSchema?: Record<string, unknown>;
       parameters?: string[];
     }>;
   }> {
@@ -2232,25 +2250,61 @@ export class SingleAgentClient {
       // Discover endpoint if needed
       const agent = await this.ensureEndpointDiscovered();
 
-      const { getOrCreateMCPClient, evictMCPClient } = await import('../protocols/mcp');
+      // Use MCP SDK to list tools
+      const { Client: MCPClient } = await import('@modelcontextprotocol/sdk/client/index.js');
+      const { StreamableHTTPClientTransport } = await import('@modelcontextprotocol/sdk/client/streamableHttp.js');
+
+      const mcpClient = new MCPClient({
+        name: 'AdCP-Client',
+        version: '1.0.0',
+      });
 
       const authToken = this.normalizedAgent.auth_token;
-      const agentHeaders = this.normalizedAgent.headers;
-      const authHeaders = {
-        ...agentHeaders,
-        ...(authToken ? { Authorization: `Bearer ${authToken}`, 'x-adcp-auth': authToken } : {}),
-      };
+      const customFetch = authToken
+        ? async (input: string | URL | Request, init?: RequestInit) => {
+            // IMPORTANT: Must preserve SDK's default headers (especially Accept header)
+            // Convert existing headers to plain object for merging
+            let existingHeaders: Record<string, string> = {};
+            if (init?.headers) {
+              if (init.headers instanceof Headers) {
+                // Headers object - use forEach to extract all headers
+                init.headers.forEach((value: string, key: string) => {
+                  existingHeaders[key] = value;
+                });
+              } else if (Array.isArray(init.headers)) {
+                // Array of [key, value] tuples
+                for (const [key, value] of init.headers) {
+                  existingHeaders[key] = value;
+                }
+              } else {
+                // Plain object - copy all properties
+                for (const key in init.headers) {
+                  if (Object.prototype.hasOwnProperty.call(init.headers, key)) {
+                    existingHeaders[key] = init.headers[key] as string;
+                  }
+                }
+              }
+            }
 
-      let mcpClient = await getOrCreateMCPClient(agent.agent_uri, authHeaders);
-      let toolsList;
-      try {
-        toolsList = await mcpClient.listTools();
-      } catch {
-        // Cached connection may be stale — evict and retry
-        evictMCPClient(agent.agent_uri);
-        mcpClient = await getOrCreateMCPClient(agent.agent_uri, authHeaders);
-        toolsList = await mcpClient.listTools();
-      }
+            // Merge auth headers with existing headers
+            // Keep existing headers (including Accept) and only add/override with auth headers
+            const headers = {
+              ...existingHeaders,
+              Authorization: `Bearer ${authToken}`,
+              'x-adcp-auth': authToken,
+            };
+            return fetch(input, { ...init, headers });
+          }
+        : undefined;
+
+      const transport = new StreamableHTTPClientTransport(
+        new URL(agent.agent_uri),
+        customFetch ? { fetch: customFetch } : {}
+      );
+
+      await mcpClient.connect(transport);
+      const toolsList = await mcpClient.listTools();
+      await mcpClient.close();
 
       const tools = toolsList.tools.map(tool => ({
         name: tool.name,
@@ -2273,9 +2327,9 @@ export class SingleAgentClient {
 
       const authToken = this.normalizedAgent.auth_token;
       const fetchImpl = authToken
-        ? async (url: any, options?: any) => {
+        ? async (url: string | URL | Request, options?: RequestInit) => {
             const headers = {
-              ...options?.headers,
+              ...(options?.headers as Record<string, string>),
               Authorization: `Bearer ${authToken}`,
               'x-adcp-auth': authToken,
             };
@@ -2283,20 +2337,37 @@ export class SingleAgentClient {
           }
         : undefined;
 
-      const cardUrl = this.normalizedAgent.agent_uri.endsWith('/.well-known/agent-card.json')
-        ? this.normalizedAgent.agent_uri
-        : this.normalizedAgent.agent_uri.replace(/\/$/, '') + '/.well-known/agent-card.json';
+      const cardUrls = buildCardUrls(this.normalizedAgent.agent_uri);
 
-      const client = await A2AClient.fromCardUrl(cardUrl, fetchImpl ? { fetchImpl } : {});
+      let client: InstanceType<typeof A2AClient> | undefined;
+      let lastCardError: Error = new Error(`A2A agent card not found at ${cardUrls.join(', ')}`);
+      for (const cardUrl of cardUrls) {
+        try {
+          client = await A2AClient.fromCardUrl(cardUrl, fetchImpl ? { fetchImpl } : {});
+          break;
+        } catch (err: unknown) {
+          lastCardError = err as Error;
+        }
+      }
+      if (!client) {
+        throw lastCardError;
+      }
       const agentCard = client.agentCardPromise ? await client.agentCardPromise : client.agentCard;
 
       const tools = agentCard?.skills
-        ? agentCard.skills.map((skill: any) => ({
-            name: skill.name,
-            description: skill.description,
-            inputSchema: skill.inputSchema,
-            parameters: skill.inputFormats || [],
-          }))
+        ? agentCard.skills.map(
+            (skill: {
+              name: string;
+              description?: string;
+              inputSchema?: Record<string, unknown>;
+              inputFormats?: string[];
+            }) => ({
+              name: skill.name,
+              description: skill.description,
+              inputSchema: skill.inputSchema,
+              parameters: skill.inputFormats || [],
+            })
+          )
         : [];
 
       return {
@@ -2350,7 +2421,7 @@ export class SingleAgentClient {
     this.cachedToolSchemas = new Map(
       agentInfo.tools
         .filter(t => t.inputSchema?.properties)
-        .map(t => [t.name, t.inputSchema.properties as Record<string, unknown>])
+        .map(t => [t.name, t.inputSchema!.properties as Record<string, unknown>])
     );
 
     // Check if agent supports get_adcp_capabilities (v3)

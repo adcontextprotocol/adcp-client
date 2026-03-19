@@ -8,7 +8,7 @@ export abstract class ADCPError extends Error {
 
   constructor(
     message: string,
-    public details?: any
+    public details?: unknown
   ) {
     super(message);
     this.name = this.constructor.name;
@@ -123,7 +123,7 @@ export class ValidationError extends ADCPError {
 
   constructor(
     public readonly field: string,
-    public readonly value: any,
+    public readonly value: unknown,
     public readonly constraint: string
   ) {
     super(`Validation failed for field '${field}': ${constraint}`);
@@ -282,14 +282,17 @@ export function is401Error(error: unknown, got401Flag = false): boolean {
 
   // Check for status property (common in HTTP errors)
   const errorObj = error as Record<string, unknown>;
-  const status = (errorObj?.status as number) || (errorObj?.response as Record<string, unknown>)?.status || (errorObj?.cause as Record<string, unknown>)?.status;
+  const status =
+    (errorObj as { status?: number })?.status ||
+    (errorObj as { response?: { status?: number } })?.response?.status ||
+    (errorObj as { cause?: { status?: number } })?.cause?.status;
   if (status === 401) {
     return true;
   }
 
   // Fall back to string matching in error message
   // This is fragile but necessary since different SDKs format errors differently
-  const message = typeof errorObj?.message === 'string' ? errorObj.message : '';
+  const message = (errorObj as { message?: string })?.message || '';
   return message.includes('401') || message.includes('Unauthorized');
 }
 
@@ -313,7 +316,7 @@ export function isErrorOfType<T extends ADCPError>(error: unknown, ErrorClass: n
 export function extractErrorInfo(error: unknown): {
   message: string;
   code?: string;
-  details?: any;
+  details?: unknown;
   stack?: string;
 } {
   if (isADCPError(error)) {

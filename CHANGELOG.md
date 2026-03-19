@@ -1,5 +1,35 @@
 # Changelog
 
+## 4.12.0
+
+### Minor Changes
+
+- c9d32f1: Support both /.well-known/agent.json (current A2A spec) and /.well-known/agent-card.json (legacy) for agent card discovery
+
+### Patch Changes
+
+- 9bc632c: Fix `audienceManagement` capability flag never being detected. The Zod schema and wire format define the feature flag as `audience_targeting`, but `parseCapabilitiesResponse` was reading `audience_management`. Renamed the internal `MediaBuyFeatures` property to match schema naming and updated `TASK_FEATURE_MAP` so `sync_audiences` correctly requires the flag.
+- 9bc632c: Fix `get_products` responses with non-array `products` field crashing downstream consumers. Added Zod schema validation for `get_products` responses in the response unwrapper and updated `normalizeGetProductsResponse` to convert malformed responses to AdCP error responses instead of silently passing through.
+- 9fce3ec: Replace `any` types with `unknown` and concrete types at protocol boundaries, error classes, logger, and internal client casts
+
+## 4.11.0
+
+### Minor Changes
+
+- 40bd0b7: Add platform-type-aware compliance testing. Users can declare what they're building (e.g., `--platform-type social_platform`) and comply will validate coherence, show expected-but-missing tracks, and provide actionable build guidance. Remove convince assessment from SDK.
+
+### Patch Changes
+
+- ccdee67: Fix test harness `create_media_buy` scenarios failing with `account: Invalid input`
+
+  The `buildCreateMediaBuyRequest` helper was not including the required `account` field,
+  causing client-side Zod validation to reject the request before it reached the agent.
+  - Add `account: resolveAccount(options)` to `buildCreateMediaBuyRequest`
+  - Add backwards-compatible `account` inference in `normalizeRequestParams` so callers
+    that pre-date the required `account` field keep working (derived from `brand`)
+
+- c8604f4: Fix OAuth protected resource validation for servers behind reverse proxies or DNS aliases. The MCP SDK's default same-origin check rejected servers that advertise a canonical resource URL different from the connection URL. The client now accepts cross-origin resource URLs while enforcing HTTPS.
+
 ## 4.10.0
 
 ### Minor Changes

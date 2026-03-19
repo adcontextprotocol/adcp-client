@@ -416,13 +416,14 @@ export { validateAgentUrl, validateAdCPResponse, getExpectedSchema, handleAdCPRe
 
 // ====== PROTOCOL CLIENTS ======
 // Low-level protocol clients for MCP and A2A (primarily for testing)
-export { ProtocolClient, callMCPTool, callA2ATool, createMCPClient, createA2AClient, closeMCPConnections } from './protocols';
+export { ProtocolClient, callMCPTool, callA2ATool, createMCPClient, createA2AClient } from './protocols';
 
 // ====== RESPONSE UTILITIES ======
 // Public utilities for working with AdCP responses
 export { getStandardFormats, unwrapProtocolResponse, isAdcpError, isAdcpSuccess } from './utils';
 export { REQUEST_TIMEOUT, MAX_CONCURRENT, STANDARD_FORMATS } from './utils';
 export { detectProtocol, detectProtocolWithTimeout } from './utils';
+export { A2A_CARD_PATHS, isAgentCardPath, isWellKnownAgentCardUrl, buildCardUrls, stripAgentCardPath } from './utils';
 
 // ====== PRICING UTILITIES ======
 // Pricing adapter for v2/v3 compatibility and CPA detection

@@ -8,7 +8,6 @@
 import { testAgent as runAgentTest } from '../agent-tester';
 import { createTestClient, discoverAgentProfile } from '../client';
 import { getApplicableScenarios } from '../orchestrator';
-import { closeMCPConnections } from '../../protocols/mcp';
 import type { TestScenario, TestOptions, TestResult, AgentProfile } from '../types';
 import type {
   ComplianceTrack,
@@ -250,7 +249,7 @@ function collectObservations(
         if (step.details) {
           const levelMatch = step.details.match(/L(\d)/);
           if (levelMatch) {
-            const level = parseInt(levelMatch[1], 10);
+            const level = parseInt(levelMatch[1]!, 10);
             if (level < 3) {
               observations.push({
                 category: 'error_compliance',
@@ -298,11 +297,7 @@ export interface ComplyOptions extends TestOptions {
  * Assesses all applicable tracks independently — never stops at first failure.
  */
 export async function comply(agentUrl: string, options: ComplyOptions = {}): Promise<ComplianceResult> {
-  try {
-    return await complyImpl(agentUrl, options);
-  } finally {
-    await closeMCPConnections();
-  }
+  return complyImpl(agentUrl, options);
 }
 
 async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<ComplianceResult> {

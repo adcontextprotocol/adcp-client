@@ -260,20 +260,26 @@ export interface TestRequest {
   tool_name?: string;
 }
 
+/** Structured debug log entry emitted during protocol and governance interactions */
+export interface DebugLogEntry {
+  type: string;
+  [key: string]: unknown;
+}
+
 export interface TestResult {
   agent_id: string;
   agent_name: string;
   success: boolean;
   response_time_ms: number;
-  data?: any;
+  data?: unknown;
   error?: string;
   timestamp: string;
-  debug_logs?: any[];
-  validation?: any;
+  debug_logs?: DebugLogEntry[];
+  validation?: Record<string, unknown>;
 }
 
 // API Response Types
-export interface ApiResponse<T = any> {
+export interface ApiResponse<T = unknown> {
   success: boolean;
   data?: T;
   error?: string;
