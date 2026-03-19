@@ -541,11 +541,11 @@ describe('Response Unwrapper', () => {
                         product_id: 'prod-1',
                         name: 'Test Product',
                         description: 'A test product',
-                        publisher_properties: [{ property_url: 'https://example.com' }],
+                        publisher_properties: [{ publisher_domain: 'example.com', selection_type: 'all' }],
                         format_ids: [{ agent_url: 'https://agent.example.com', id: 'banner-300x250' }],
-                        delivery_type: 'impression',
+                        delivery_type: 'guaranteed',
                         pricing_options: [
-                          { pricing_option_id: 'cpm-1', model: 'cpm', fixed_price: 5.0, currency: 'USD' },
+                          { pricing_option_id: 'cpm-1', pricing_model: 'cpm', currency: 'USD', fixed_price: 5.0 },
                         ],
                         delivery_measurement: { provider: 'Internal' },
                       },
@@ -563,6 +563,31 @@ describe('Response Unwrapper', () => {
       assert.ok(result.products, 'Should return validated products');
       assert.strictEqual(result.products.length, 1);
       assert.strictEqual(result.products[0].product_id, 'prod-1');
+    });
+
+    test('should reject get_products response with non-array products', () => {
+      const mcpResponse = {
+        structuredContent: {
+          products: 'not an array',
+        },
+      };
+
+      assert.throws(
+        () => unwrapProtocolResponse(mcpResponse, 'get_products', 'mcp'),
+        /Response validation failed for get_products/
+      );
+    });
+
+    test('should pass through get_products error response without schema validation', () => {
+      const mcpResponse = {
+        structuredContent: {
+          errors: [{ code: 'agent_error', message: 'Something went wrong' }],
+        },
+      };
+
+      const result = unwrapProtocolResponse(mcpResponse, 'get_products', 'mcp');
+      assert.ok(Array.isArray(result.errors), 'Should have errors array');
+      assert.strictEqual(result.errors[0].code, 'agent_error');
     });
 
     test('should fail Zod validation for missing required create_media_buy fields', () => {
