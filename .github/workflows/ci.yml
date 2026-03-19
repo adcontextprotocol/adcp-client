@@ -146,24 +146,32 @@ jobs:
   changeset-check:
     name: Changeset Check
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request' && github.head_ref != 'changeset-release/main'
+    if: github.event_name == 'pull_request'
 
     steps:
+    - name: Skip for release PRs
+      if: github.head_ref == 'changeset-release/main'
+      run: echo "Release PR — changeset not required"
+
     - name: Checkout code
+      if: github.head_ref != 'changeset-release/main'
       uses: actions/checkout@v4
       with:
         fetch-depth: 0
 
     - name: Setup Node.js
+      if: github.head_ref != 'changeset-release/main'
       uses: actions/setup-node@v4
       with:
         node-version: '20.x'
         cache: 'npm'
 
     - name: Install dependencies
+      if: github.head_ref != 'changeset-release/main'
       run: npm ci
 
     - name: Check for changeset
+      if: github.head_ref != 'changeset-release/main'
       run: npx changeset status --since=origin/${{ github.base_ref }}
 
   publish-dry-run:
