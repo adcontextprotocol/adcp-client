@@ -4,48 +4,21 @@
  * Auto-detects whether an agent endpoint uses MCP or A2A protocol
  */
 
+import { A2A_CARD_PATHS } from './a2a-discovery';
+
 /**
  * Detect protocol for a given agent URL
  *
  * Uses a hybrid approach:
  * 1. Check URL patterns (fast heuristic)
- * 2. Try A2A discovery endpoint (authoritative)
+ * 2. Try A2A discovery endpoints (authoritative)
  * 3. Default to MCP if A2A discovery fails
  *
  * @param url Agent URL to check
  * @returns Promise resolving to 'a2a' or 'mcp'
  */
 export async function detectProtocol(url: string): Promise<'a2a' | 'mcp'> {
-  // Step 1: Quick heuristic check
-  if (url.endsWith('/mcp/') || url.endsWith('/mcp')) {
-    return 'mcp';
-  }
-
-  // Step 2: Try A2A discovery
-  try {
-    const discoveryUrl = new URL('/.well-known/agent-card.json', url);
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 5000); // 5s timeout
-
-    const response = await fetch(discoveryUrl.toString(), {
-      method: 'GET',
-      signal: controller.signal,
-      headers: {
-        Accept: 'application/json, */*',
-      },
-    });
-
-    clearTimeout(timeoutId);
-
-    if (response.ok) {
-      return 'a2a';
-    }
-  } catch (error) {
-    // Fetch failed - likely not A2A
-  }
-
-  // Step 3: Default to MCP
-  return 'mcp';
+  return detectA2AOrMcp(url, 5000);
 }
 
 /**
@@ -56,34 +29,37 @@ export async function detectProtocol(url: string): Promise<'a2a' | 'mcp'> {
  * @returns Promise resolving to 'a2a' or 'mcp'
  */
 export async function detectProtocolWithTimeout(url: string, timeoutMs: number = 5000): Promise<'a2a' | 'mcp'> {
-  // Quick heuristic check
+  return detectA2AOrMcp(url, timeoutMs);
+}
+
+async function detectA2AOrMcp(url: string, timeoutMs: number): Promise<'a2a' | 'mcp'> {
   if (url.endsWith('/mcp/') || url.endsWith('/mcp')) {
     return 'mcp';
   }
 
-  // Try A2A discovery with custom timeout
-  try {
-    const discoveryUrl = new URL('/.well-known/agent-card.json', url);
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  for (const path of A2A_CARD_PATHS) {
+    try {
+      const discoveryUrl = new URL(path, url);
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
-    const response = await fetch(discoveryUrl.toString(), {
-      method: 'GET',
-      signal: controller.signal,
-      headers: {
-        Accept: 'application/json, */*',
-      },
-    });
+      const response = await fetch(discoveryUrl.toString(), {
+        method: 'GET',
+        signal: controller.signal,
+        headers: {
+          Accept: 'application/json, */*',
+        },
+      });
 
-    clearTimeout(timeoutId);
+      clearTimeout(timeoutId);
 
-    if (response.ok) {
-      return 'a2a';
+      if (response.ok) {
+        return 'a2a';
+      }
+    } catch (error) {
+      // Fetch failed - try next path
     }
-  } catch (error) {
-    // Fetch failed - likely not A2A
   }
 
-  // Default to MCP
   return 'mcp';
 }

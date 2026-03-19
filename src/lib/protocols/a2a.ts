@@ -6,6 +6,7 @@ import type { PushNotificationConfig } from '../types/tools.generated';
 import { AuthenticationRequiredError, is401Error } from '../errors';
 import { discoverOAuthMetadata } from '../auth/oauth/discovery';
 import { withSpan, injectTraceHeaders } from '../observability/tracing';
+import { isAgentCardPath, buildCardUrls } from '../utils/a2a-discovery';
 
 if (!A2AClient) {
   throw new Error('A2A SDK client is required. Please install @a2a-js/sdk');
@@ -74,7 +75,7 @@ async function callA2AToolImpl(
     // Only inject trace context headers for actual tool requests, not discovery
     // The agent card endpoint is external/untrusted - don't leak trace IDs to it
     const urlString = typeof url === 'string' ? url : url.toString();
-    const isDiscoveryRequest = urlString.includes('/.well-known/agent-card.json');
+    const isDiscoveryRequest = isAgentCardPath(urlString);
     const traceHeaders = isDiscoveryRequest ? {} : injectTraceHeaders();
 
     // Merge: existing < trace < custom < auth (auth always wins)
@@ -114,22 +115,33 @@ async function callA2AToolImpl(
     return response;
   };
 
-  // Create A2A client using the recommended fromCardUrl method
-  // Ensure the URL points to the agent card endpoint
-  const cardUrl = agentUrl.endsWith('/.well-known/agent-card.json')
-    ? agentUrl
-    : agentUrl.replace(/\/$/, '') + '/.well-known/agent-card.json';
+  // Try both well-known paths: agent.json (current spec) and agent-card.json (legacy)
+  const cardUrls = buildCardUrls(agentUrl);
 
   debugLogs.push({
     type: 'info',
-    message: `A2A: Creating client for ${cardUrl}`,
+    message: `A2A: Discovering agent card at ${cardUrls.join(', ')}`,
     timestamp: new Date().toISOString(),
   });
 
   try {
-    const a2aClient = await A2AClient.fromCardUrl(cardUrl, {
-      fetchImpl,
-    });
+    let a2aClient: InstanceType<typeof A2AClient> | undefined;
+    let lastError: Error = new Error(`A2A agent card not found at ${cardUrls.join(', ')}`);
+    for (const cardUrl of cardUrls) {
+      try {
+        a2aClient = await A2AClient.fromCardUrl(cardUrl, {
+          fetchImpl,
+        });
+        break;
+      } catch (err: unknown) {
+        lastError = err as Error;
+        // Don't fall through to legacy path on auth errors
+        if (got401) break;
+      }
+    }
+    if (!a2aClient) {
+      throw lastError;
+    }
 
     // Build request payload following A2A JSON-RPC spec
     // Per A2A SDK: pushNotificationConfig goes in params.configuration (camelCase)
