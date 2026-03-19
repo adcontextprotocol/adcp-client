@@ -407,13 +407,7 @@ export { ProtocolClient, callMCPTool, callA2ATool, createMCPClient, createA2ACli
 export { getStandardFormats, unwrapProtocolResponse, isAdcpError, isAdcpSuccess } from './utils';
 export { REQUEST_TIMEOUT, MAX_CONCURRENT, STANDARD_FORMATS } from './utils';
 export { detectProtocol, detectProtocolWithTimeout } from './utils';
-export {
-  A2A_CARD_PATHS,
-  isAgentCardPath,
-  isWellKnownAgentCardUrl,
-  buildCardUrls,
-  stripAgentCardPath,
-} from './utils';
+export { A2A_CARD_PATHS, isAgentCardPath, isWellKnownAgentCardUrl, buildCardUrls, stripAgentCardPath } from './utils';
 
 // ====== PRICING UTILITIES ======
 // Pricing adapter for v2/v3 compatibility and CPA detection

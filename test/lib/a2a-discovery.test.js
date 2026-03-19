@@ -85,23 +85,14 @@ test('buildCardUrls', async t => {
 
 test('stripAgentCardPath', async t => {
   await t.test('strips /.well-known/agent.json', () => {
-    assert.strictEqual(
-      stripAgentCardPath('https://example.com/.well-known/agent.json'),
-      'https://example.com'
-    );
+    assert.strictEqual(stripAgentCardPath('https://example.com/.well-known/agent.json'), 'https://example.com');
   });
 
   await t.test('strips /.well-known/agent-card.json', () => {
-    assert.strictEqual(
-      stripAgentCardPath('https://example.com/.well-known/agent-card.json'),
-      'https://example.com'
-    );
+    assert.strictEqual(stripAgentCardPath('https://example.com/.well-known/agent-card.json'), 'https://example.com');
   });
 
   await t.test('returns non-card URLs unchanged', () => {
-    assert.strictEqual(
-      stripAgentCardPath('https://example.com/mcp'),
-      'https://example.com/mcp'
-    );
+    assert.strictEqual(stripAgentCardPath('https://example.com/mcp'), 'https://example.com/mcp');
   });
 });

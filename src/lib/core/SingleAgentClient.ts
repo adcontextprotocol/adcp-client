@@ -86,7 +86,11 @@ import type { InputHandler, TaskOptions, TaskResult, ConversationConfig, TaskInf
 import type { Activity, AsyncHandlerConfig, WebhookMetadata } from './AsyncHandler';
 import { AsyncHandler } from './AsyncHandler';
 import { unwrapProtocolResponse } from '../utils/response-unwrapper';
-import { isWellKnownAgentCardUrl as isWellKnownCardUrl, buildCardUrls, stripAgentCardPath } from '../utils/a2a-discovery';
+import {
+  isWellKnownAgentCardUrl as isWellKnownCardUrl,
+  buildCardUrls,
+  stripAgentCardPath,
+} from '../utils/a2a-discovery';
 import * as crypto from 'crypto';
 
 // v3.0 compatibility utilities
