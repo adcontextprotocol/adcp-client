@@ -105,6 +105,67 @@ describe('extractAdcpErrorFromMcp', () => {
     assert.strictEqual(extractAdcpErrorFromMcp(response), null);
   });
 
+  it('does not match CONFLICT in plain text (too ambiguous)', () => {
+    const response = {
+      isError: true,
+      content: [{ type: 'text', text: 'There was a conflict with the existing resource' }],
+    };
+
+    assert.strictEqual(extractAdcpErrorFromMcp(response), null);
+  });
+
+  it('skips non-JSON content items and finds JSON in later items', () => {
+    const response = {
+      isError: true,
+      content: [
+        { type: 'text', text: 'plain error message' },
+        { type: 'text', text: JSON.stringify({ adcp_error: { code: 'RATE_LIMITED', message: 'slow down' } }) },
+      ],
+    };
+
+    const result = extractAdcpErrorFromMcp(response);
+    assert.ok(result);
+    assert.strictEqual(result.code, 'RATE_LIMITED');
+    assert.strictEqual(result.source, 'text_json');
+  });
+
+  it('falls through when JSON has no adcp_error key', () => {
+    const response = {
+      isError: true,
+      content: [{ type: 'text', text: JSON.stringify({ error: 'something' }) }],
+    };
+
+    assert.strictEqual(extractAdcpErrorFromMcp(response), null);
+  });
+
+  it('falls through when adcp_error.code is not a string', () => {
+    const response = {
+      isError: true,
+      content: [{ type: 'text', text: JSON.stringify({ adcp_error: { code: 42 } }) }],
+    };
+
+    assert.strictEqual(extractAdcpErrorFromMcp(response), null);
+  });
+
+  it('preserves retry_after: 0 from structuredContent', () => {
+    const response = {
+      isError: true,
+      structuredContent: {
+        adcp_error: {
+          code: 'RATE_LIMITED',
+          message: 'Rate limited',
+          recovery: 'transient',
+          retry_after: 0,
+        },
+      },
+      content: [{ type: 'text', text: 'error' }],
+    };
+
+    const result = extractAdcpErrorFromMcp(response);
+    assert.ok(result);
+    assert.strictEqual(result.retry_after, 0);
+  });
+
   it('prefers structuredContent over text fallback', () => {
     const response = {
       isError: true,
@@ -155,6 +216,24 @@ describe('extractAdcpErrorFromTransport', () => {
     assert.strictEqual(result.compliance_level, 1);
   });
 
+  it('extracts from plain JSON-RPC error object (not Error instance)', () => {
+    const error = {
+      code: -32029,
+      message: 'Rate limit exceeded',
+    };
+
+    const result = extractAdcpErrorFromTransport(error);
+    assert.ok(result);
+    assert.strictEqual(result.code, 'RATE_LIMITED');
+    assert.strictEqual(result.compliance_level, 1);
+  });
+
+  it('handles String(error) fallback for non-Error, non-object input', () => {
+    const result = extractAdcpErrorFromTransport('RATE_LIMITED: slow down');
+    assert.ok(result);
+    assert.strictEqual(result.code, 'RATE_LIMITED');
+  });
+
   it('returns null for unrecognized errors', () => {
     const error = new Error('Connection refused');
     assert.strictEqual(extractAdcpErrorFromTransport(error), null);
@@ -174,6 +253,10 @@ describe('resolveRecovery', () => {
 
   it('returns terminal for unknown codes', () => {
     assert.strictEqual(resolveRecovery({ code: 'X_CUSTOM_ERROR' }), 'terminal');
+  });
+
+  it('ignores invalid recovery strings and falls back to code table', () => {
+    assert.strictEqual(resolveRecovery({ code: 'RATE_LIMITED', recovery: 'bogus' }), 'transient');
   });
 });
 

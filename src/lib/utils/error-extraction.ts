@@ -152,7 +152,7 @@ function buildExtracted(
     source,
     compliance_level,
   };
-  if (obj.recovery) result.recovery = obj.recovery;
+  if (obj.recovery === 'transient' || obj.recovery === 'correctable' || obj.recovery === 'terminal') result.recovery = obj.recovery;
   if (obj.field != null) result.field = obj.field;
   if (obj.suggestion != null) result.suggestion = obj.suggestion;
   if (obj.retry_after != null) result.retry_after = obj.retry_after;

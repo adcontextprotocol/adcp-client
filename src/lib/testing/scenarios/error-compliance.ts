@@ -375,11 +375,11 @@ export async function testErrorTransport(
       }
     }
 
-    // Determine compliance level
+    // Determine compliance level — each layer requires the layers below it
     let level = 0;
     if (hasIsError) level = 1;
-    if (hasTextJson) level = 2;
-    if (hasStructuredContent) level = 3;
+    if (hasIsError && hasTextJson) level = 2;
+    if (hasIsError && hasTextJson && hasStructuredContent) level = 3;
 
     const details: string[] = [];
     details.push(`isError: ${hasIsError}`);
