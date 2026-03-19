@@ -154,6 +154,187 @@ function postProcessForPassthrough(content: string): string {
   return result;
 }
 
+/**
+ * Post-process generated Zod schemas to remove z.undefined() from unions.
+ *
+ * ts-to-zod generates unions like z.union([z.unknown(), z.undefined()]) for TypeScript's
+ * Record<string, unknown>, and z.union([z.boolean(), z.undefined()]) for Record<string,
+ * boolean | undefined>. z.undefined() cannot be represented in JSON Schema, causing
+ * Zod v4's toJSONSchema() to throw "Undefined cannot be represented in JSON Schema".
+ * This breaks MCP SDK tool registration (tools/list fails).
+ *
+ * The fix:
+ * - z.union([z.unknown(), z.undefined()]) → z.unknown()
+ * - z.union([z.SomeType(), z.undefined()]) → z.SomeType()  (the parent's .nullish()
+ *   already handles optionality, and records inherently allow missing keys)
+ */
+function postProcessUndefinedUnions(content: string): string {
+  // First: z.union([z.unknown(), z.undefined()]) → z.unknown()
+  let result = content.replace(
+    /z\.union\(\[z\.unknown\(\), z\.undefined\(\)\]\)/g,
+    'z.unknown()'
+  );
+  // Then: remove z.undefined() as a union member anywhere it appears.
+  // Handles both simple cases like z.union([z.boolean(), z.undefined()])
+  // and complex nested cases like z.union([z.object({...}).passthrough(), z.undefined()])
+  // by removing the ", z.undefined()" tail from inside unions.
+  result = result.replace(/, z\.undefined\(\)/g, '');
+  return result;
+}
+
+/**
+ * Post-process generated Zod schemas to resolve intersection types that lack .shape.
+ *
+ * The MCP SDK requires z.object().shape for tool input registration via server.tool().
+ * ts-to-zod produces .and() intersections from TypeScript's & operator, which breaks
+ * .shape access. Three patterns need fixing:
+ *
+ * 1. z.object({...}).passthrough().and(z.record(z.string(), z.unknown()))
+ *    Redundant: .passthrough() already preserves unknown keys.
+ *    Fix: Strip the .and(z.record(...)) suffix.
+ *
+ * 2. z.record(z.string(), ...).and(z.object({...}).passthrough())
+ *    The z.object() has all typed fields; z.record() just allows extras.
+ *    Fix: Replace entire expression with the z.object() content.
+ *
+ * 3. z.object({...}).passthrough().and(z.union([...z.never()...]))
+ *    Discriminated union constraints (conditional field validation).
+ *    Fix: Strip the .and(z.union(...)) suffix. The base object already
+ *    has all fields; the union only adds conditional validation using z.never().
+ */
+function postProcessIntersections(content: string): string {
+  let result = content;
+
+  // Pass 1: Strip `.and(z.record(z.string(), z.unknown()))` — redundant with .passthrough()
+  result = result.replace(/\.and\(z\.record\(z\.string\(\), z\.unknown\(\)\)\)/g, '');
+
+  // Pass 2: Replace `z.record(...).and(CONTENT)` with CONTENT
+  // Transforms z.record(z.string(), z.unknown()).and(z.object({...}).passthrough())
+  // into just z.object({...}).passthrough()
+  result = unwrapRecordIntersections(result);
+
+  // Pass 3: Strip `.and(z.union([...]))` where content contains z.never()
+  // These are discriminated union constraints that only add conditional validation
+  result = stripNeverUnionIntersections(result);
+
+  return result;
+}
+
+/**
+ * Replace `z.record(...).and(CONTENT)` with just CONTENT.
+ *
+ * TypeScript types like `{ [k: string]: unknown } & { typed_fields }` produce
+ * z.record().and(z.object()) in Zod. Since z.object().passthrough() already
+ * preserves unknown keys, the z.record() wrapper is redundant.
+ *
+ * Uses balanced-parenthesis scanning to handle nested schemas correctly.
+ */
+function unwrapRecordIntersections(content: string): string {
+  const MARKER = 'z.record(';
+  let result = '';
+  let i = 0;
+
+  while (i < content.length) {
+    if (content.startsWith(MARKER, i)) {
+      const recordStart = i;
+      i += MARKER.length;
+
+      // Scan balanced parens to find end of z.record(...)
+      let depth = 1;
+      while (i < content.length && depth > 0) {
+        if (content[i] === '(') depth++;
+        else if (content[i] === ')') depth--;
+        i++;
+      }
+
+      // Check if followed by .and(
+      if (content.startsWith('.and(', i)) {
+        i += '.and('.length;
+
+        // Scan balanced parens to extract .and() content
+        depth = 1;
+        let andContent = '';
+        while (i < content.length && depth > 0) {
+          if (content[i] === '(') depth++;
+          else if (content[i] === ')') {
+            depth--;
+            if (depth === 0) {
+              i++; // skip closing )
+              break;
+            }
+          }
+          andContent += content[i];
+          i++;
+        }
+
+        // Replace z.record(...).and(CONTENT) with just CONTENT
+        result += andContent;
+      } else {
+        // z.record(...) not followed by .and( — keep as-is
+        result += content.substring(recordStart, i);
+      }
+    } else {
+      result += content[i];
+      i++;
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Strip `.and(z.union([...]))` where the union body contains z.never().
+ *
+ * TypeScript discriminated unions like:
+ *   { base_fields } & ({ buying_mode: 'brief'; refine?: never } | ...)
+ * produce .and(z.union([z.object({ buying_mode: ..., refine: z.never() })])) in Zod.
+ *
+ * These constraints are useful for runtime validation but break .shape access.
+ * The base z.object() already contains all fields with correct types; the union
+ * only adds conditional field presence rules better communicated in tool descriptions.
+ */
+function stripNeverUnionIntersections(content: string): string {
+  const MARKER = '.and(z.union([';
+  let result = '';
+  let i = 0;
+
+  while (i < content.length) {
+    if (content.startsWith(MARKER, i)) {
+      const andStart = i;
+      i += '.and('.length; // position at z.union([
+
+      // Scan balanced parens to find end of .and(...)
+      let depth = 1;
+      let andContent = '';
+      while (i < content.length && depth > 0) {
+        if (content[i] === '(') depth++;
+        else if (content[i] === ')') {
+          depth--;
+          if (depth === 0) {
+            i++; // skip closing )
+            break;
+          }
+        }
+        andContent += content[i];
+        i++;
+      }
+
+      // Only strip if the union contains z.never() (discriminated constraints)
+      if (andContent.includes('z.never()')) {
+        // Strip entire .and(z.union([...]))
+      } else {
+        // Keep it — not a discriminated union constraint
+        result += content.substring(andStart, i);
+      }
+    } else {
+      result += content[i];
+      i++;
+    }
+  }
+
+  return result;
+}
+
 // Write file only if content differs (excluding timestamp)
 function writeFileIfChanged(filePath: string, newContent: string): boolean {
   const contentWithoutTimestamp = (content: string) => {
@@ -251,6 +432,19 @@ async function generateZodSchemas() {
     // Agents may return extra/platform-specific fields not in the schema. Without passthrough,
     // Zod strips those fields, causing data loss for consumers who need them.
     zodSchemas = postProcessForPassthrough(zodSchemas);
+
+    // Post-process: Replace z.union([z.unknown(), z.undefined()]) with z.unknown().
+    // ts-to-zod generates this union for TypeScript's Record<string, unknown>, but
+    // z.undefined() cannot be converted to JSON Schema (it has no representation).
+    // z.unknown() already accepts undefined at runtime, so this is semantically identical.
+    // Without this fix, 73+ schemas fail MCP SDK's tools/list JSON Schema conversion.
+    zodSchemas = postProcessUndefinedUnions(zodSchemas);
+
+    // Post-process: Resolve .and() intersections so all schemas have .shape.
+    // ts-to-zod produces z.record().and(z.object()) and z.object().and(z.union())
+    // from TypeScript intersection types. These break MCP SDK's server.tool()
+    // which requires schema.shape for JSON Schema generation.
+    zodSchemas = postProcessIntersections(zodSchemas);
 
     // Create header with metadata
     const header = `// Generated Zod v4 schemas from TypeScript types

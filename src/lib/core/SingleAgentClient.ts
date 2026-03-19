@@ -446,8 +446,13 @@ export class SingleAgentClient {
    * Note: This is async and called lazily on first agent interaction
    */
   private async discoverMCPEndpoint(providedUri: string): Promise<string> {
-    const { connectMCPWithFallback } = await import('../protocols/mcp');
+    const { connectMCPWithFallback, isEndpointKnown } = await import('../protocols/mcp');
     const { discoverOAuthMetadata } = await import('../auth/oauth/discovery');
+
+    // Check if this endpoint was already discovered by a previous client instance
+    if (isEndpointKnown(providedUri)) {
+      return providedUri;
+    }
 
     const authToken = this.agent.auth_token;
     const agentHeaders = this.agent.headers;
@@ -2227,61 +2232,25 @@ export class SingleAgentClient {
       // Discover endpoint if needed
       const agent = await this.ensureEndpointDiscovered();
 
-      // Use MCP SDK to list tools
-      const { Client: MCPClient } = await import('@modelcontextprotocol/sdk/client/index.js');
-      const { StreamableHTTPClientTransport } = await import('@modelcontextprotocol/sdk/client/streamableHttp.js');
-
-      const mcpClient = new MCPClient({
-        name: 'AdCP-Client',
-        version: '1.0.0',
-      });
+      const { getOrCreateMCPClient, evictMCPClient } = await import('../protocols/mcp');
 
       const authToken = this.normalizedAgent.auth_token;
-      const customFetch = authToken
-        ? async (input: any, init?: any) => {
-            // IMPORTANT: Must preserve SDK's default headers (especially Accept header)
-            // Convert existing headers to plain object for merging
-            let existingHeaders: Record<string, string> = {};
-            if (init?.headers) {
-              if (init.headers instanceof Headers) {
-                // Headers object - use forEach to extract all headers
-                init.headers.forEach((value: string, key: string) => {
-                  existingHeaders[key] = value;
-                });
-              } else if (Array.isArray(init.headers)) {
-                // Array of [key, value] tuples
-                for (const [key, value] of init.headers) {
-                  existingHeaders[key] = value;
-                }
-              } else {
-                // Plain object - copy all properties
-                for (const key in init.headers) {
-                  if (Object.prototype.hasOwnProperty.call(init.headers, key)) {
-                    existingHeaders[key] = init.headers[key] as string;
-                  }
-                }
-              }
-            }
+      const agentHeaders = this.normalizedAgent.headers;
+      const authHeaders = {
+        ...agentHeaders,
+        ...(authToken ? { Authorization: `Bearer ${authToken}`, 'x-adcp-auth': authToken } : {}),
+      };
 
-            // Merge auth headers with existing headers
-            // Keep existing headers (including Accept) and only add/override with auth headers
-            const headers = {
-              ...existingHeaders,
-              Authorization: `Bearer ${authToken}`,
-              'x-adcp-auth': authToken,
-            };
-            return fetch(input, { ...init, headers });
-          }
-        : undefined;
-
-      const transport = new StreamableHTTPClientTransport(
-        new URL(agent.agent_uri),
-        customFetch ? { fetch: customFetch } : {}
-      );
-
-      await mcpClient.connect(transport);
-      const toolsList = await mcpClient.listTools();
-      await mcpClient.close();
+      let mcpClient = await getOrCreateMCPClient(agent.agent_uri, authHeaders);
+      let toolsList;
+      try {
+        toolsList = await mcpClient.listTools();
+      } catch {
+        // Cached connection may be stale — evict and retry
+        evictMCPClient(agent.agent_uri);
+        mcpClient = await getOrCreateMCPClient(agent.agent_uri, authHeaders);
+        toolsList = await mcpClient.listTools();
+      }
 
       const tools = toolsList.tools.map(tool => ({
         name: tool.name,

@@ -27,6 +27,12 @@ export const ADCP_STATUS = {
 
 export type ADCPStatus = (typeof ADCP_STATUS)[keyof typeof ADCP_STATUS];
 
+type AnyRecord = Record<string, unknown>;
+
+function asRecord(value: unknown): AnyRecord | undefined {
+  return (typeof value === 'object' && value !== null) ? value as AnyRecord : undefined;
+}
+
 /**
  * Simple parser that follows ADCP spec exactly
  */
@@ -34,81 +40,95 @@ export class ProtocolResponseParser {
   /**
    * Check if response indicates input is needed per ADCP spec
    */
-  isInputRequest(response: any): boolean {
+  isInputRequest(response: unknown): boolean {
+    const r = asRecord(response);
+    if (!r) return false;
+
     // ADCP spec: check A2A JSON-RPC wrapped status first
-    if (response?.result?.status?.state === ADCP_STATUS.INPUT_REQUIRED) {
+    const result = asRecord(r.result);
+    const status = asRecord(result?.status);
+    if (status?.state === ADCP_STATUS.INPUT_REQUIRED) {
       return true;
     }
 
     // ADCP spec: check top-level status field
-    if (response?.status === ADCP_STATUS.INPUT_REQUIRED) {
+    if (r.status === ADCP_STATUS.INPUT_REQUIRED) {
       return true;
     }
 
     // Legacy fallback for backward compatibility
     return (
-      response?.type === 'input_request' ||
-      response?.question !== undefined ||
-      response?.input_required === true ||
-      response?.needs_clarification === true
+      r.type === 'input_request' ||
+      r.question !== undefined ||
+      r.input_required === true ||
+      r.needs_clarification === true
     );
   }
 
   /**
    * Parse input request from response
    */
-  parseInputRequest(response: any): InputRequest {
-    const question = response.message || response.question || response.prompt || 'Please provide input';
-    const field = response.field || response.parameter;
-    const suggestions = response.options || response.choices || response.suggestions;
+  parseInputRequest(response: unknown): InputRequest {
+    const r = asRecord(response) ?? {};
+    const question = (r.message || r.question || r.prompt || 'Please provide input') as string;
+    const field = (r.field || r.parameter) as string | undefined;
+    const suggestions = (r.options || r.choices || r.suggestions) as string[] | undefined;
 
     return {
       question,
       field,
-      expectedType: this.parseExpectedType(response.expected_type || response.type),
+      expectedType: this.parseExpectedType(r.expected_type || r.type),
       suggestions,
-      required: response.required !== false,
-      validation: response.validation,
-      context: response.context || response.description,
+      required: r.required !== false,
+      validation: r.validation as Record<string, unknown> | undefined,
+      context: (r.context || r.description) as string | undefined,
     };
   }
 
   /**
    * Get ADCP status from response
    */
-  getStatus(response: any): ADCPStatus | null {
+  getStatus(response: unknown): ADCPStatus | null {
+    const r = asRecord(response);
+    if (!r) return null;
+
+    const statusValues = Object.values(ADCP_STATUS) as string[];
+
     // Check A2A JSON-RPC wrapped status (result.status.state)
-    if (response?.result?.status?.state && Object.values(ADCP_STATUS).includes(response.result.status.state)) {
-      return response.result.status.state as ADCPStatus;
+    const result = asRecord(r.result);
+    const resultStatus = asRecord(result?.status);
+    if (resultStatus?.state && statusValues.includes(resultStatus.state as string)) {
+      return resultStatus.state as ADCPStatus;
     }
 
     // Check top-level status first (A2A and direct responses)
-    if (response?.status && Object.values(ADCP_STATUS).includes(response.status)) {
-      return response.status as ADCPStatus;
+    if (r.status && statusValues.includes(r.status as string)) {
+      return r.status as ADCPStatus;
     }
 
     // Check MCP structuredContent.status
-    if (response?.structuredContent?.status && Object.values(ADCP_STATUS).includes(response.structuredContent.status)) {
-      return response.structuredContent.status as ADCPStatus;
+    const structured = asRecord(r.structuredContent);
+    if (structured?.status && statusValues.includes(structured.status as string)) {
+      return structured.status as ADCPStatus;
     }
 
     // Check for MCP error responses
-    if (response?.isError === true) {
+    if (r.isError === true) {
       return ADCP_STATUS.FAILED;
     }
 
     // If response has structuredContent or content, assume it's completed
-    if (response?.structuredContent || (response?.content && !response?.isError)) {
+    if (r.structuredContent || (r.content && !r.isError)) {
       return ADCP_STATUS.COMPLETED;
     }
 
     return null;
   }
 
-  private parseExpectedType(rawType: any): 'string' | 'number' | 'boolean' | 'object' | 'array' | undefined {
+  private parseExpectedType(rawType: unknown): 'string' | 'number' | 'boolean' | 'object' | 'array' | undefined {
     if (typeof rawType === 'string') {
-      const allowedTypes = ['string', 'number', 'boolean', 'object', 'array'];
-      return allowedTypes.includes(rawType) ? (rawType as any) : undefined;
+      const allowedTypes: string[] = ['string', 'number', 'boolean', 'object', 'array'];
+      return allowedTypes.includes(rawType) ? rawType as 'string' | 'number' | 'boolean' | 'object' | 'array' : undefined;
     }
     return undefined;
   }

@@ -15,6 +15,65 @@ import { withSpan, injectTraceHeaders } from '../observability/tracing';
 // Re-export for convenience
 export { UnauthorizedError };
 
+// Connection cache: reuse MCP connections across tool calls to the same agent
+const connectionCache = new Map<string, MCPClient>();
+
+// Endpoint cache: remember which URLs have been successfully connected to,
+// so discovery across multiple SingleAgentClient instances doesn't re-probe
+const endpointCache = new Set<string>();
+
+/**
+ * Check if a URL has previously connected successfully.
+ */
+export function isEndpointKnown(url: string): boolean {
+  return endpointCache.has(url);
+}
+
+/**
+ * Close all cached MCP connections and clear endpoint cache.
+ * Call this when done with a batch of operations (e.g., after comply finishes)
+ * or before process exit.
+ */
+export async function closeMCPConnections(): Promise<void> {
+  for (const [, client] of connectionCache) {
+    try {
+      await client.close();
+    } catch {
+      // ignore close errors during cleanup
+    }
+  }
+  connectionCache.clear();
+  endpointCache.clear();
+}
+
+/**
+ * Get or create a cached MCP connection for the given URL.
+ * Callers must NOT close the returned client — it's shared.
+ * If the cached connection is stale, evicts and reconnects.
+ */
+export async function getOrCreateMCPClient(
+  url: string,
+  authHeaders: Record<string, string>
+): Promise<MCPClient> {
+  const cached = connectionCache.get(url);
+  if (cached) return cached;
+
+  const client = await connectMCPWithFallback(new URL(url), authHeaders);
+  connectionCache.set(url, client);
+  return client;
+}
+
+/**
+ * Evict a cached connection (e.g., after a stale connection error).
+ */
+export function evictMCPClient(url: string): void {
+  const client = connectionCache.get(url);
+  if (client) {
+    connectionCache.delete(url);
+    client.close().catch(() => {});
+  }
+}
+
 /**
  * Options for MCP tool calls with OAuth support
  */
@@ -81,6 +140,34 @@ async function connectMCPWithFallbackImpl(
   debugLogs: any[] = [],
   label = 'connection'
 ): Promise<MCPClient> {
+  // Wrap connection attempt with rate limit retry
+  for (let attempt = 0; attempt <= RATE_LIMIT_MAX_RETRIES; attempt++) {
+    try {
+      return await connectMCPOnce(url, authHeaders, debugLogs, label);
+    } catch (error: any) {
+      if (isRateLimitThrown(error) && attempt < RATE_LIMIT_MAX_RETRIES) {
+        const retryAfter = getRetryAfterFromError(error);
+        const delayMs = calcRateLimitDelay(attempt, retryAfter);
+        debugLogs.push({
+          type: 'info',
+          message: `MCP: Rate limited during ${label} connect, retrying in ${delayMs}ms${retryAfter ? ` (server: ${retryAfter}s)` : ''} (attempt ${attempt + 1}/${RATE_LIMIT_MAX_RETRIES})`,
+          timestamp: new Date().toISOString(),
+        });
+        await rateLimitDelay(attempt, retryAfter);
+        continue;
+      }
+      throw error;
+    }
+  }
+  throw new Error(`MCP connection for ${label} failed after ${RATE_LIMIT_MAX_RETRIES} rate limit retries`);
+}
+
+async function connectMCPOnce(
+  url: URL,
+  authHeaders: Record<string, string>,
+  debugLogs: any[] = [],
+  label = 'connection'
+): Promise<MCPClient> {
   const transportOptions = { requestInit: { headers: authHeaders } };
 
   try {
@@ -96,6 +183,7 @@ async function connectMCPWithFallbackImpl(
       message: `MCP: Connected via StreamableHTTP for ${label}`,
       timestamp: new Date().toISOString(),
     });
+    endpointCache.add(url.toString());
     return client;
   } catch (error: any) {
     const errorMessage = error instanceof Error ? error.message : String(error);
@@ -105,6 +193,11 @@ async function connectMCPWithFallbackImpl(
       timestamp: new Date().toISOString(),
       error,
     });
+
+    // Rate limit — let the outer retry loop handle it
+    if (isRateLimitThrown(error)) {
+      throw error;
+    }
 
     // Stale session — retry StreamableHTTP with a fresh connection
     if (error instanceof StreamableHTTPError && error.code === 404) {
@@ -120,11 +213,18 @@ async function connectMCPWithFallbackImpl(
         message: `MCP: Connected via StreamableHTTP (retry) for ${label}`,
         timestamp: new Date().toISOString(),
       });
+      endpointCache.add(url.toString());
       return client;
     }
 
     // Auth failure — transport type won't change the outcome
     if (is401Error(error)) {
+      throw error;
+    }
+
+    // If we've previously connected to this endpoint via StreamableHTTP,
+    // don't fall back to SSE — it's a transient error, not a transport mismatch
+    if (endpointCache.has(url.toString())) {
       throw error;
     }
 
@@ -165,6 +265,21 @@ export async function callMCPTool(
   );
 }
 
+/**
+ * Call an MCP tool and return the raw response without throwing on isError.
+ * Used by error compliance scenarios that need to inspect the error response structure.
+ */
+export async function callMCPToolRaw(
+  agentUrl: string,
+  toolName: string,
+  args: any,
+  authToken?: string,
+  debugLogs: any[] = [],
+  customHeaders?: Record<string, string>
+): Promise<any> {
+  return callMCPToolRawImpl(agentUrl, toolName, args, authToken, debugLogs, customHeaders);
+}
+
 async function callMCPToolImpl(
   agentUrl: string,
   toolName: string,
@@ -173,8 +288,8 @@ async function callMCPToolImpl(
   debugLogs: any[] = [],
   customHeaders?: Record<string, string>
 ): Promise<any> {
-  let mcpClient: MCPClient | undefined = undefined;
   const baseUrl = new URL(agentUrl);
+  const cacheKey = agentUrl;
 
   // Inject trace context headers for distributed tracing
   const traceHeaders = injectTraceHeaders();
@@ -196,25 +311,160 @@ async function callMCPToolImpl(
     customHeaderKeys: customHeaders ? Object.keys(customHeaders) : [],
   });
 
-  mcpClient = await connectMCPWithFallback(baseUrl, authHeaders, debugLogs, toolName);
+  // Reuse cached connection or create a new one
+  let mcpClient = connectionCache.get(cacheKey);
+  if (!mcpClient) {
+    mcpClient = await connectMCPWithFallback(baseUrl, authHeaders, debugLogs, toolName);
+    connectionCache.set(cacheKey, mcpClient);
+  }
 
-  try {
-    // Call the tool using official MCP client
+  debugLogs.push({
+    type: 'info',
+    message: `MCP: Calling tool ${toolName} with args: ${JSON.stringify(args)}`,
+    timestamp: new Date().toISOString(),
+  });
+
+  if (authToken) {
     debugLogs.push({
       type: 'info',
-      message: `MCP: Calling tool ${toolName} with args: ${JSON.stringify(args)}`,
+      message: `MCP: Transport configured with x-adcp-auth header for ${toolName}`,
+      timestamp: new Date().toISOString(),
+    });
+  }
+
+  try {
+    return await callToolOnClient(mcpClient, toolName, args, debugLogs);
+  } catch (error) {
+    // Connection may be stale — evict, reconnect, and retry once
+    connectionCache.delete(cacheKey);
+    try { await mcpClient.close(); } catch { /* ignore */ }
+
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    debugLogs.push({
+      type: 'info',
+      message: `MCP: Retrying ${toolName} with fresh connection after error: ${errorMessage}`,
       timestamp: new Date().toISOString(),
     });
 
-    // For debugging: log the transport headers being used
-    if (authToken) {
+    // Auth errors won't be fixed by reconnecting
+    if (errorMessage.toLowerCase().includes('auth') || errorMessage.toLowerCase().includes('unauthorized')) {
       debugLogs.push({
-        type: 'info',
-        message: `MCP: Transport configured with x-adcp-auth header for ${toolName}`,
+        type: 'warning',
+        message: `MCP: Authentication issue detected for ${toolName} - headers may not be reaching server`,
         timestamp: new Date().toISOString(),
       });
+      throw error;
     }
 
+    mcpClient = await connectMCPWithFallback(baseUrl, authHeaders, debugLogs, toolName);
+    connectionCache.set(cacheKey, mcpClient);
+    return await callToolOnClient(mcpClient, toolName, args, debugLogs);
+  }
+}
+
+/**
+ * Raw variant of callMCPToolImpl — returns the MCP response as-is,
+ * including isError responses, without throwing or retrying rate limits.
+ */
+async function callMCPToolRawImpl(
+  agentUrl: string,
+  toolName: string,
+  args: any,
+  authToken?: string,
+  debugLogs: any[] = [],
+  customHeaders?: Record<string, string>
+): Promise<any> {
+  const baseUrl = new URL(agentUrl);
+  const cacheKey = agentUrl;
+  const traceHeaders = injectTraceHeaders();
+  const authHeaders = {
+    ...customHeaders,
+    ...traceHeaders,
+    ...(authToken ? createMCPAuthHeaders(authToken) : {}),
+  };
+
+  let mcpClient = connectionCache.get(cacheKey);
+  if (!mcpClient) {
+    mcpClient = await connectMCPWithFallback(baseUrl, authHeaders, debugLogs, toolName);
+    connectionCache.set(cacheKey, mcpClient);
+  }
+
+  try {
+    return await mcpClient.callTool({ name: toolName, arguments: args });
+  } catch (error) {
+    // Connection may be stale — evict, reconnect, retry once
+    connectionCache.delete(cacheKey);
+    try { await mcpClient.close(); } catch { /* ignore */ }
+
+    mcpClient = await connectMCPWithFallback(baseUrl, authHeaders, debugLogs, toolName);
+    connectionCache.set(cacheKey, mcpClient);
+    return await mcpClient.callTool({ name: toolName, arguments: args });
+  }
+}
+
+/** Maximum number of retries for rate-limited requests */
+const RATE_LIMIT_MAX_RETRIES = 3;
+
+/** Base delay in ms for exponential backoff (doubles each retry: 2s, 4s, 8s) */
+const RATE_LIMIT_BASE_DELAY_MS = 2000;
+
+import {
+  extractAdcpErrorFromMcp,
+  extractAdcpErrorFromTransport,
+} from '../utils/error-extraction';
+
+/** Check if an MCP tool response is a rate limit error */
+function isRateLimitResponse(response: any): boolean {
+  const error = extractAdcpErrorFromMcp(response);
+  return error?.code === 'RATE_LIMITED';
+}
+
+/** Get retry_after from a rate-limited response (seconds), or null if not specified */
+function getRetryAfter(response: any): number | null {
+  const error = extractAdcpErrorFromMcp(response);
+  if (error?.code === 'RATE_LIMITED' && typeof error.retry_after === 'number') {
+    return error.retry_after;
+  }
+  return null;
+}
+
+/** Check if a thrown error is a rate limit error (transport-level) */
+function isRateLimitThrown(error: any): boolean {
+  const extracted = extractAdcpErrorFromTransport(error);
+  return extracted?.code === 'RATE_LIMITED';
+}
+
+/** Get retry_after from a transport-level rate limit error (seconds) */
+function getRetryAfterFromError(error: any): number | null {
+  const extracted = extractAdcpErrorFromTransport(error);
+  if (extracted?.code === 'RATE_LIMITED' && typeof extracted.retry_after === 'number') {
+    return extracted.retry_after;
+  }
+  return null;
+}
+
+/** Calculate delay for a rate limit retry: use retry_after if available, else exponential backoff */
+function calcRateLimitDelay(attempt: number, retryAfterSeconds: number | null): number {
+  if (retryAfterSeconds != null && retryAfterSeconds > 0) {
+    return retryAfterSeconds * 1000;
+  }
+  return RATE_LIMIT_BASE_DELAY_MS * Math.pow(2, attempt);
+}
+
+/** Sleep for the calculated rate limit delay */
+function rateLimitDelay(attempt: number, retryAfterSeconds: number | null = null): Promise<void> {
+  const delayMs = calcRateLimitDelay(attempt, retryAfterSeconds);
+  return new Promise(resolve => setTimeout(resolve, delayMs));
+}
+
+/** Execute a tool call on an MCP client, retrying with backoff on rate limits. */
+async function callToolOnClient(
+  mcpClient: MCPClient,
+  toolName: string,
+  args: any,
+  debugLogs: any[]
+): Promise<any> {
+  for (let attempt = 0; attempt <= RATE_LIMIT_MAX_RETRIES; attempt++) {
     const response = await mcpClient.callTool({
       name: toolName,
       arguments: args,
@@ -227,8 +477,19 @@ async function callMCPToolImpl(
       response: response,
     });
 
-    // If MCP returns an error response, throw an error with the extracted message
-    // This ensures the error is properly caught and handled by the executor
+    // Rate limit: respect retry_after if provided, else exponential backoff
+    if (isRateLimitResponse(response) && attempt < RATE_LIMIT_MAX_RETRIES) {
+      const retryAfter = getRetryAfter(response);
+      const delayMs = calcRateLimitDelay(attempt, retryAfter);
+      debugLogs.push({
+        type: 'info',
+        message: `MCP: Rate limited on ${toolName}, retrying in ${delayMs}ms${retryAfter ? ` (server: ${retryAfter}s)` : ''} (attempt ${attempt + 1}/${RATE_LIMIT_MAX_RETRIES})`,
+        timestamp: new Date().toISOString(),
+      });
+      await rateLimitDelay(attempt, retryAfter);
+      continue;
+    }
+
     if (response?.isError && response?.content && Array.isArray(response.content)) {
       const errorText = response.content
         .filter((item: any) => item.type === 'text' && item.text)
@@ -239,45 +500,10 @@ async function callMCPToolImpl(
     }
 
     return response;
-  } catch (error) {
-    // Capture tool call errors (including timeouts)
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    debugLogs.push({
-      type: 'error',
-      message: `MCP: Tool ${toolName} call failed: ${errorMessage}`,
-      timestamp: new Date().toISOString(),
-      error: error,
-    });
-
-    // If this is an auth error, log additional debugging info
-    if (errorMessage.toLowerCase().includes('auth') || errorMessage.toLowerCase().includes('unauthorized')) {
-      debugLogs.push({
-        type: 'warning',
-        message: `MCP: Authentication issue detected for ${toolName} - headers may not be reaching server`,
-        timestamp: new Date().toISOString(),
-      });
-    }
-
-    throw error; // Re-throw to maintain error handling
-  } finally {
-    // Always close the client properly
-    if (mcpClient) {
-      try {
-        await mcpClient.close();
-        debugLogs.push({
-          type: 'info',
-          message: `MCP: Client connection closed for ${toolName}`,
-          timestamp: new Date().toISOString(),
-        });
-      } catch (closeError) {
-        debugLogs.push({
-          type: 'warning',
-          message: `MCP: Error closing client for ${toolName}: ${closeError}`,
-          timestamp: new Date().toISOString(),
-        });
-      }
-    }
   }
+
+  // Shouldn't reach here, but just in case
+  throw new Error(`MCP tool '${toolName}' failed after ${RATE_LIMIT_MAX_RETRIES} rate limit retries`);
 }
 
 /**

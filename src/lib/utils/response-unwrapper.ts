@@ -182,6 +182,48 @@ function isA2AResponse(response: any): boolean {
 function unwrapMCPResponse(response: any): AdCPResponse {
   // MCP error response
   if (response.isError === true) {
+    // Check for structured AdCP error (L3)
+    const adcpError = response.structuredContent?.adcp_error;
+    if (adcpError && typeof adcpError.code === 'string') {
+      const error: Record<string, unknown> = {
+        code: adcpError.code,
+        message: adcpError.message || 'Unknown error',
+      };
+      if (adcpError.recovery) error.recovery = adcpError.recovery;
+      if (adcpError.field != null) error.field = adcpError.field;
+      if (adcpError.suggestion != null) error.suggestion = adcpError.suggestion;
+      if (adcpError.retry_after != null) error.retry_after = adcpError.retry_after;
+      if (adcpError.details != null) error.details = adcpError.details;
+      return { errors: [error] } as any;
+    }
+
+    // Check for JSON text fallback (L2)
+    if (Array.isArray(response.content)) {
+      for (const item of response.content) {
+        if (item?.type === 'text' && item.text) {
+          try {
+            const parsed = JSON.parse(item.text);
+            if (parsed?.adcp_error && typeof parsed.adcp_error.code === 'string') {
+              const ae = parsed.adcp_error;
+              const error: Record<string, unknown> = {
+                code: ae.code,
+                message: ae.message || 'Unknown error',
+              };
+              if (ae.recovery) error.recovery = ae.recovery;
+              if (ae.field != null) error.field = ae.field;
+              if (ae.suggestion != null) error.suggestion = ae.suggestion;
+              if (ae.retry_after != null) error.retry_after = ae.retry_after;
+              if (ae.details != null) error.details = ae.details;
+              return { errors: [error] } as any;
+            }
+          } catch {
+            // not JSON, continue to raw text fallback
+          }
+        }
+      }
+    }
+
+    // Raw text fallback (L1)
     const errorContent = Array.isArray(response.content)
       ? response.content.find((c: any) => c.type === 'text')?.text
       : response.content?.text || 'Unknown error';

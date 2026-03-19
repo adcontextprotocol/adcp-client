@@ -44,7 +44,11 @@ export type TestScenario =
   // Schema compliance
   | 'schema_compliance' // Validate v3 channel enum, pricing field names, format assets structure
   // Audience management
-  | 'sync_audiences'; // Test CRM audience sync flow
+  | 'sync_audiences' // Test CRM audience sync flow
+  // Error compliance (transport error mapping spec)
+  | 'error_codes' // Validate standard AdCP error codes in responses
+  | 'error_structure' // Validate error JSON structure against error.json schema
+  | 'error_transport'; // Validate transport binding (structuredContent, text fallback)
 
 export interface TestOptions {
   // Protocol to use for testing (default: 'mcp')

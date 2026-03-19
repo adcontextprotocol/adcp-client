@@ -281,15 +281,15 @@ export function is401Error(error: unknown, got401Flag = false): boolean {
   }
 
   // Check for status property (common in HTTP errors)
-  const errorObj = error as any;
-  const status = errorObj?.status || errorObj?.response?.status || errorObj?.cause?.status;
+  const errorObj = error as Record<string, unknown>;
+  const status = (errorObj?.status as number) || (errorObj?.response as Record<string, unknown>)?.status || (errorObj?.cause as Record<string, unknown>)?.status;
   if (status === 401) {
     return true;
   }
 
   // Fall back to string matching in error message
   // This is fragile but necessary since different SDKs format errors differently
-  const message = errorObj?.message || '';
+  const message = typeof errorObj?.message === 'string' ? errorObj.message : '';
   return message.includes('401') || message.includes('Unauthorized');
 }
 

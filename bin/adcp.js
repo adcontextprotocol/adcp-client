@@ -228,8 +228,8 @@ async function displayAgentInfo(agentConfig, jsonOutput) {
  * Handle the 'test' subcommand for running agent test scenarios
  */
 async function handleTestCommand(args) {
-  // Handle --list-scenarios
-  if (args.includes('--list-scenarios') || args.length === 0) {
+  // Handle --list-scenarios and --help
+  if (args.includes('--list-scenarios') || args.includes('--help') || args.includes('-h') || args.length === 0) {
     console.log('\n📋 Available Test Scenarios:\n');
     const descriptions = {
       health_check: 'Basic connectivity check - verify agent responds',
@@ -448,9 +448,19 @@ async function handleTestCommand(args) {
       console.log(formatTestResults(result));
     }
 
+    // Clean up cached connections before exit
+    const { closeMCPConnections } = await import('../dist/lib/protocols/mcp.js');
+    await closeMCPConnections();
+
     // Exit with appropriate code
     process.exit(result.overall_passed ? 0 : 3);
   } catch (error) {
+    // Clean up cached connections before exit
+    try {
+      const { closeMCPConnections } = await import('../dist/lib/protocols/mcp.js');
+      await closeMCPConnections();
+    } catch { /* ignore */ }
+
     console.error(`\n❌ Test execution failed: ${error.message}`);
     if (debug) {
       console.error('\nStack trace:');
@@ -573,7 +583,7 @@ DESCRIPTION:
   the full picture.
 
   Tracks: core, products, media_buy, creative, reporting, governance,
-          signals, si, audiences
+          signals, si, audiences, error_handling
 
 OPTIONS:
   --auth TOKEN             Authentication token (overrides saved tokens)
@@ -680,184 +690,69 @@ EXAMPLES:
 
 function printUsage() {
   console.log(`
-AdCP CLI Tool - Direct Agent Communication
+AdCP CLI Tool
 
 USAGE:
-  npx @adcp/client <agent-alias|url> [tool-name] [payload] [options]
+  adcp <agent> [tool] [payload] [options]
+  adcp <command> [args]
 
-ARGUMENTS:
-  agent-alias|url   Saved agent alias (e.g., 'test-mcp') or full URL to agent endpoint
-  tool-name         Name of the tool to call (optional - omit to list available tools)
-  payload           JSON payload for the tool (default: {})
-                    - Can be inline JSON: '{"brief":"text"}'
-                    - Can be file path: @payload.json
-                    - Can be stdin: -
+COMMANDS:
+  test <agent> [scenario]     Run test scenarios against an agent
+  comply <agent> [options]    Run compliance assessment
+  registry <command>          Brand/property registry lookups
 
-OPTIONS:
-  --protocol PROTO  Force protocol: 'mcp' or 'a2a' (default: auto-detect)
-  --auth TOKEN      Authentication token for the agent
-  --oauth           Use OAuth for authentication (MCP only, opens browser)
-  --clear-oauth     Clear saved OAuth tokens for an agent
-  --wait            Wait for async/webhook responses (requires ngrok or --local)
-  --local           Use local webhook without ngrok (for local agents only)
-  --timeout MS      Webhook timeout in milliseconds (default: 300000 = 5min)
-  --help, -h        Show this help message
-  --json            Output raw JSON response (default: pretty print)
-  --debug           Show debug information
+  Run 'adcp <command> --help' for details on each command.
 
-BUILT-IN TEST AGENTS:
-  test-mcp                    AdCP public test agent (MCP, with auth)
-  test-a2a                    AdCP public test agent (A2A, with auth)
-  test-no-auth                AdCP public test agent (MCP, no auth - demonstrates errors)
-  test-a2a-no-auth            AdCP public test agent (A2A, no auth - demonstrates errors)
-  creative                    Official AdCP creative agent (MCP only)
+QUICK START:
+  adcp test-mcp                                    List tools on the test agent
+  adcp test-mcp get_products '{"brief":"coffee"}'  Call a tool
+  adcp comply test-mcp --platform-type dsp         Run compliance check
+  adcp test test-mcp full_sales_flow               Run test scenario
 
 AGENT MANAGEMENT:
-  --save-auth <alias> [url] [protocol] [--auth token | --no-auth | --oauth]
-                              Save agent configuration with an alias name
-                              --auth TOKEN: Save with static auth token
-                              --no-auth: Save without authentication
-                              --oauth: Authenticate via OAuth and save tokens (MCP only)
-  --list-agents               List all saved agents
-  --remove-agent <alias>      Remove saved agent configuration
-  --show-config               Show config file location
+  --save-auth <alias> [url]   Save agent with alias (supports --auth, --no-auth, --oauth)
+  --list-agents               List saved agents
+  --remove-agent <alias>      Remove saved agent
+  --show-config               Show config location
 
-AGENT TESTING:
-  test <agent> [scenario]     Run test scenarios against an agent
-                              Scenarios: discovery, health_check, create_media_buy,
-                              full_sales_flow, error_handling, validation, and more
-                              Default scenario: discovery
-  test --list-scenarios       List all available test scenarios
+OPTIONS:
+  --protocol PROTO  Force protocol: mcp or a2a (default: auto-detect)
+  --auth TOKEN      Authentication token
+  --oauth           OAuth authentication (MCP only, opens browser)
+  --clear-oauth     Clear saved OAuth tokens
+  --wait            Wait for async/webhook responses
+  --json            Raw JSON output
+  --debug           Debug output
+  --help, -h        Show help
 
-COMPLIANCE:
-  comply <agent> [options]       Run compliance assessment across all capability tracks
-                                 Tracks: core, products, media_buy, creative, reporting,
-                                 governance, signals, si, audiences
-  comply --platform-type TYPE    Declare platform type for coherence checking
-  comply --list-platform-types   List all available platform types
-  comply --help                  Full comply usage
+BUILT-IN AGENTS:
+  test-mcp          AdCP public test agent (MCP)
+  test-a2a          AdCP public test agent (A2A)
+  test-no-auth      Test agent without auth (MCP)
+  test-a2a-no-auth  Test agent without auth (A2A)
+  creative          AdCP creative agent (MCP)
 
-REGISTRY:
-  registry brand <domain>                          Look up a brand
-  registry brands <d1> <d2> ...                    Bulk brand lookup
-  registry brand-json <domain>                     Get raw brand.json data
-  registry enrich-brand <domain>                   Enrich brand via Brandfetch
-  registry property <domain>                       Look up a property
-  registry properties <d1> <d2> ...                Bulk property lookup
-  registry save-brand <domain> <name> [manifest]   Save a brand (auth required)
-  registry save-property <domain> <agent-url>      Save a property (auth required)
-  registry list-brands [--search term]             List/search brands
-  registry list-properties [--search term]         List/search properties
-  registry search <query>                          Search brands, publishers, properties
-  registry agents [--type sales] [--health]        List registered agents
-  registry publishers                              List publishers
-  registry stats                                   Registry statistics
-  registry validate <domain>                       Validate adagents.json
-  registry validate-publisher <domain>             Validate publisher config
-  registry lookup <domain>                         Look up authorized agents
-  registry discover <agent-url>                    Probe live agent endpoint
-  registry check-auth <url> <type> <value>         Check property authorization
-  registry --help                                  Show full registry help
-
-EXAMPLES:
-  # Use built-in test agent (zero config!)
-  npx @adcp/client test-mcp
-  npx @adcp/client test-mcp get_products '{"brief":"coffee brands"}'
-  npx @adcp/client creative list_creative_formats
-
-  # Use built-in test agent with A2A protocol
-  npx @adcp/client test-a2a get_products '{"brief":"travel packages"}'
-
-  # Compare authenticated vs unauthenticated (demonstrates auth errors)
-  npx @adcp/client test-no-auth get_products '{"brief":"test"}'
-
-  # Non-interactive: save with auth token
-  adcp --save-auth myagent https://test-agent.adcontextprotocol.org --auth your_token
-
-  # Non-interactive: save without auth
-  adcp --save-auth myagent https://test-agent.adcontextprotocol.org --no-auth
-
-  # Save with OAuth (opens browser, saves tokens)
-  adcp --save-auth myagent https://oauth-server.com/mcp --oauth
-
-  # Interactive setup (prompts for URL, protocol, and auth)
-  adcp --save-auth myagent
-
-  # Use saved agent alias (auto-detect protocol)
-  adcp myagent
-  adcp myagent get_products '{"brief":"travel"}'
-
-  # List saved agents
-  adcp --list-agents
-
-  # Auto-detect protocol with URL
-  adcp https://test-agent.adcontextprotocol.org get_products '{"brief":"coffee"}'
-
-  # Force specific protocol
-  adcp https://agent.example.com get_products '{"brief":"coffee"}' --protocol mcp
-  adcp myagent list_authorized_properties --protocol a2a
-
-  # Override saved auth token
-  adcp myagent get_products '{"brief":"..."}' --auth different-token
-
-  # OAuth authentication (opens browser for login)
-  adcp https://oauth-agent.example.com/mcp --oauth
-  adcp myagent get_products '{"brief":"..."}' --oauth    # Saves tokens to alias
-
-  # Auto-detect OAuth (automatically starts OAuth if server requires it)
-  adcp https://oauth-server.com/mcp get_products '{"brief":"..."}'  # Auto-detects!
-
-  # Clear OAuth tokens and re-authenticate
-  adcp myagent --clear-oauth
-  adcp myagent --oauth
-
-  # Wait for async response (requires ngrok)
-  adcp myagent create_media_buy @payload.json --wait
-
-  # From file or stdin
-  adcp myagent create_media_buy @payload.json
-  echo '{"brief":"travel"}' | adcp myagent get_products -
-
-  # JSON output for scripting
-  adcp myagent get_products '{"brief":"travel"}' --json | jq '.products[0]'
-
-  # Run agent tests
-  adcp test test-mcp                      # Test built-in test agent with discovery scenario
-  adcp test test-mcp discovery            # Explicit discovery scenario
-  adcp test test-mcp full_sales_flow      # Full media buy lifecycle test
-  adcp test https://my-agent.com discovery --auth $TOKEN
-  adcp test myagent error_handling --json # JSON output for CI
-  adcp test --list-scenarios              # Show all available scenarios
-
-  # Registry lookups
-  adcp registry brand nike.com
-  adcp registry brands nike.com adidas.com coca-cola.com --json
-  adcp registry property nytimes.com --auth sk_your_api_key
-  adcp registry properties nytimes.com wsj.com
-
-ENVIRONMENT VARIABLES:
-  ADCP_AUTH_TOKEN          Default authentication token (overridden by --auth)
-  ADCP_REGISTRY_API_KEY    API key for registry lookups
-  ADCP_DEBUG               Enable debug mode (set to 'true')
-
-CONFIG FILE:
-  Agents are saved to ~/.adcp/config.json
-
-EXIT CODES:
-  0   Success
-  1   General error
-  2   Invalid arguments
-  3   Agent error
+Full documentation: https://github.com/adcontextprotocol/adcp-client/blob/main/docs/CLI.md
 `);
 }
 
 async function main() {
   const args = process.argv.slice(2);
 
-  // Handle registry command (before global --help so registry --help works)
+  // Handle subcommands before global --help so their own --help works
   if (args[0] === 'registry') {
     const code = await handleRegistryCommand(args.slice(1));
     process.exit(code);
+  }
+
+  if (args[0] === 'test') {
+    await handleTestCommand(args.slice(1));
+    return;
+  }
+
+  if (args[0] === 'comply') {
+    await handleComplyCommand(args.slice(1));
+    return;
   }
 
   // Handle help
@@ -1087,18 +982,6 @@ async function main() {
     console.log(`\n✅ Cleared OAuth tokens for '${alias}'`);
     console.log('Use --oauth to re-authenticate.\n');
     process.exit(0);
-  }
-
-  // Handle test command (handleTestCommand calls process.exit internally)
-  if (args[0] === 'test') {
-    await handleTestCommand(args.slice(1));
-    return; // handleTestCommand exits, but return for clarity
-  }
-
-  // Handle comply command
-  if (args[0] === 'comply') {
-    await handleComplyCommand(args.slice(1));
-    return;
   }
 
   // Parse arguments
@@ -1840,6 +1723,14 @@ async function main() {
     process.exit(1);
   }
 }
+
+// Clean up cached MCP connections before exit to avoid hanging
+process.on('beforeExit', async () => {
+  try {
+    const { closeMCPConnections } = require('../dist/lib/protocols/mcp.js');
+    await closeMCPConnections();
+  } catch { /* ignore */ }
+});
 
 main().catch(error => {
   console.error('FATAL ERROR:', error.message);

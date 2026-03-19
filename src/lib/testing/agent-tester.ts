@@ -72,6 +72,9 @@ import {
   testCapabilityDiscovery,
   testSyncAudiences,
   testSchemaCompliance,
+  testErrorCodes,
+  testErrorStructure,
+  testErrorTransport,
 } from './scenarios';
 
 // Import types
@@ -287,6 +290,24 @@ export async function testAgent(
         profile = result.profile;
         break;
 
+      case 'error_codes':
+        result = await testErrorCodes(agentUrl, effectiveOptions);
+        steps = result.steps;
+        profile = result.profile;
+        break;
+
+      case 'error_structure':
+        result = await testErrorStructure(agentUrl, effectiveOptions);
+        steps = result.steps;
+        profile = result.profile;
+        break;
+
+      case 'error_transport':
+        result = await testErrorTransport(agentUrl, effectiveOptions);
+        steps = result.steps;
+        profile = result.profile;
+        break;
+
       default:
         steps = [
           {
@@ -382,6 +403,9 @@ export {
   testSyncAudiences,
   resolveAccountForAudiences,
   testSchemaCompliance,
+  testErrorCodes,
+  testErrorStructure,
+  testErrorTransport,
   // v3 helpers
   hasGovernanceTools,
   hasCampaignGovernanceTools,

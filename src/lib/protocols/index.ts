@@ -1,5 +1,5 @@
 // Unified Protocol Interface for AdCP
-export { callMCPTool, callMCPToolWithOAuth, connectMCP, UnauthorizedError } from './mcp';
+export { callMCPTool, callMCPToolRaw, callMCPToolWithOAuth, connectMCP, closeMCPConnections, isEndpointKnown, UnauthorizedError } from './mcp';
 export type { MCPCallOptions, MCPConnectionResult } from './mcp';
 export { callA2ATool } from './a2a';
 

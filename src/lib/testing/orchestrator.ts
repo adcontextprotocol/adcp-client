@@ -65,6 +65,11 @@ export const SCENARIO_REQUIREMENTS: Partial<Record<TestScenario, string[]>> = {
 
   // Schema compliance (requires product discovery)
   schema_compliance: ['get_products'],
+
+  // Error compliance (requires create_media_buy to provoke errors)
+  error_codes: ['create_media_buy'],
+  error_structure: ['create_media_buy'],
+  error_transport: ['create_media_buy'],
 };
 
 /**
@@ -102,6 +107,9 @@ export const DEFAULT_SCENARIOS: readonly TestScenario[] = [
   'si_handoff',
   'schema_compliance',
   'sync_audiences',
+  'error_codes',
+  'error_structure',
+  'error_transport',
 ] as const;
 
 /**
