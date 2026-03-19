@@ -105,10 +105,12 @@ export class ProtocolResponseParser {
     return null;
   }
 
-  private parseExpectedType(rawType: any): 'string' | 'number' | 'boolean' | 'object' | 'array' | undefined {
+  private parseExpectedType(rawType: unknown): 'string' | 'number' | 'boolean' | 'object' | 'array' | undefined {
     if (typeof rawType === 'string') {
-      const allowedTypes = ['string', 'number', 'boolean', 'object', 'array'];
-      return allowedTypes.includes(rawType) ? (rawType as any) : undefined;
+      const allowedTypes: string[] = ['string', 'number', 'boolean', 'object', 'array'];
+      return allowedTypes.includes(rawType)
+        ? (rawType as 'string' | 'number' | 'boolean' | 'object' | 'array')
+        : undefined;
     }
     return undefined;
   }

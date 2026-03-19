@@ -3,6 +3,7 @@ const clientModule = require('@a2a-js/sdk/client');
 const A2AClient = clientModule.A2AClient;
 
 import type { PushNotificationConfig } from '../types/tools.generated';
+import type { DebugLogEntry } from '../types/adcp';
 import { AuthenticationRequiredError, is401Error } from '../errors';
 import { discoverOAuthMetadata } from '../auth/oauth/discovery';
 import { withSpan, injectTraceHeaders } from '../observability/tracing';
@@ -15,12 +16,12 @@ if (!A2AClient) {
 export async function callA2ATool(
   agentUrl: string,
   toolName: string,
-  parameters: Record<string, any>,
+  parameters: Record<string, unknown>,
   authToken?: string,
-  debugLogs: any[] = [],
+  debugLogs: DebugLogEntry[] = [],
   pushNotificationConfig?: PushNotificationConfig,
   customHeaders?: Record<string, string>
-): Promise<any> {
+): Promise<unknown> {
   return withSpan(
     'adcp.a2a.call_tool',
     {
@@ -44,12 +45,12 @@ export async function callA2ATool(
 async function callA2AToolImpl(
   agentUrl: string,
   toolName: string,
-  parameters: Record<string, any>,
+  parameters: Record<string, unknown>,
   authToken?: string,
-  debugLogs: any[] = [],
+  debugLogs: DebugLogEntry[] = [],
   pushNotificationConfig?: PushNotificationConfig,
   customHeaders?: Record<string, string>
-): Promise<any> {
+): Promise<unknown> {
   // Track 401 errors for better error messaging
   let got401 = false;
 
@@ -146,7 +147,15 @@ async function callA2AToolImpl(
     // Build request payload following A2A JSON-RPC spec
     // Per A2A SDK: pushNotificationConfig goes in params.configuration (camelCase)
     // Schema: https://adcontextprotocol.org/schemas/v1/core/push-notification-config.json
-    const requestPayload: any = {
+    const requestPayload: {
+      message: {
+        messageId: string;
+        role: string;
+        kind: string;
+        parts: Array<{ kind: string; data: { skill: string; parameters: Record<string, unknown> } }>;
+      };
+      configuration?: { pushNotificationConfig: PushNotificationConfig };
+    } = {
       message: {
         messageId: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
         role: 'user',
@@ -209,7 +218,7 @@ async function callA2AToolImpl(
     }
 
     return messageResponse;
-  } catch (error: any) {
+  } catch (error: unknown) {
     // If we got a 401, throw AuthenticationRequiredError with OAuth metadata
     if (is401Error(error, got401)) {
       debugLogs.push({

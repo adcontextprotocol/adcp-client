@@ -10,6 +10,7 @@ import { UnauthorizedError } from '@modelcontextprotocol/sdk/client/auth.js';
 import type { OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js';
 import { createMCPAuthHeaders } from '../auth';
 import { is401Error } from '../errors';
+import type { DebugLogEntry } from '../types/adcp';
 import { withSpan, injectTraceHeaders } from '../observability/tracing';
 
 // Re-export for convenience
@@ -24,13 +25,13 @@ export interface MCPCallOptions {
   /** Tool name to call */
   toolName: string;
   /** Tool arguments */
-  args: any;
+  args: Record<string, unknown>;
   /** Static auth token (legacy) */
   authToken?: string;
   /** OAuth provider for dynamic auth */
   authProvider?: OAuthClientProvider;
   /** Debug logs array */
-  debugLogs?: any[];
+  debugLogs?: DebugLogEntry[];
   /** Additional headers to send with every request (auth headers take precedence) */
   customHeaders?: Record<string, string>;
 }
@@ -60,7 +61,7 @@ export interface MCPConnectionResult {
 export async function connectMCPWithFallback(
   url: URL,
   authHeaders: Record<string, string>,
-  debugLogs: any[] = [],
+  debugLogs: DebugLogEntry[] = [],
   label = 'connection'
 ): Promise<MCPClient> {
   return withSpan(
@@ -78,7 +79,7 @@ export async function connectMCPWithFallback(
 async function connectMCPWithFallbackImpl(
   url: URL,
   authHeaders: Record<string, string>,
-  debugLogs: any[] = [],
+  debugLogs: DebugLogEntry[] = [],
   label = 'connection'
 ): Promise<MCPClient> {
   const transportOptions = { requestInit: { headers: authHeaders } };
@@ -97,7 +98,7 @@ async function connectMCPWithFallbackImpl(
       timestamp: new Date().toISOString(),
     });
     return client;
-  } catch (error: any) {
+  } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     debugLogs.push({
       type: 'error',
@@ -148,11 +149,11 @@ async function connectMCPWithFallbackImpl(
 export async function callMCPTool(
   agentUrl: string,
   toolName: string,
-  args: any,
+  args: Record<string, unknown>,
   authToken?: string,
-  debugLogs: any[] = [],
+  debugLogs: DebugLogEntry[] = [],
   customHeaders?: Record<string, string>
-): Promise<any> {
+): Promise<unknown> {
   return withSpan(
     'adcp.mcp.call_tool',
     {
@@ -168,11 +169,11 @@ export async function callMCPTool(
 async function callMCPToolImpl(
   agentUrl: string,
   toolName: string,
-  args: any,
+  args: Record<string, unknown>,
   authToken?: string,
-  debugLogs: any[] = [],
+  debugLogs: DebugLogEntry[] = [],
   customHeaders?: Record<string, string>
-): Promise<any> {
+): Promise<unknown> {
   let mcpClient: MCPClient | undefined = undefined;
   const baseUrl = new URL(agentUrl);
 
@@ -231,8 +232,8 @@ async function callMCPToolImpl(
     // This ensures the error is properly caught and handled by the executor
     if (response?.isError && response?.content && Array.isArray(response.content)) {
       const errorText = response.content
-        .filter((item: any) => item.type === 'text' && item.text)
-        .map((item: any) => item.text)
+        .filter((item: { type: string; text?: string }) => item.type === 'text' && item.text)
+        .map((item: { type: string; text?: string }) => item.text)
         .join('\n');
 
       throw new Error(errorText || `MCP tool '${toolName}' execution failed (no error details provided)`);
@@ -318,7 +319,7 @@ export async function connectMCP(options: {
   agentUrl: string;
   authToken?: string;
   authProvider?: OAuthClientProvider;
-  debugLogs?: any[];
+  debugLogs?: DebugLogEntry[];
   customHeaders?: Record<string, string>;
 }): Promise<MCPConnectionResult> {
   const { agentUrl, authToken, authProvider, debugLogs = [], customHeaders } = options;
@@ -394,7 +395,7 @@ export async function connectMCP(options: {
  * @returns Tool response
  * @throws UnauthorizedError if OAuth is required (with transport attached)
  */
-export async function callMCPToolWithOAuth(options: MCPCallOptions): Promise<any> {
+export async function callMCPToolWithOAuth(options: MCPCallOptions): Promise<unknown> {
   const { agentUrl, toolName, args, authToken, authProvider, debugLogs = [], customHeaders } = options;
 
   // If no OAuth provider, use the legacy function
@@ -434,8 +435,8 @@ export async function callMCPToolWithOAuth(options: MCPCallOptions): Promise<any
 
     if (response?.isError && response?.content && Array.isArray(response.content)) {
       const errorText = response.content
-        .filter((item: any) => item.type === 'text' && item.text)
-        .map((item: any) => item.text)
+        .filter((item: { type: string; text?: string }) => item.type === 'text' && item.text)
+        .map((item: { type: string; text?: string }) => item.text)
         .join('\n');
       throw new Error(errorText || `MCP tool '${toolName}' execution failed`);
     }

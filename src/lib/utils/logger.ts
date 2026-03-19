@@ -13,10 +13,10 @@ export interface LoggerConfig {
   enabled?: boolean;
   /** Custom log handler (default: console) */
   handler?: {
-    debug: (message: string, meta?: any) => void;
-    info: (message: string, meta?: any) => void;
-    warn: (message: string, meta?: any) => void;
-    error: (message: string, meta?: any) => void;
+    debug: (message: string, meta?: unknown) => void;
+    info: (message: string, meta?: unknown) => void;
+    warn: (message: string, meta?: unknown) => void;
+    error: (message: string, meta?: unknown) => void;
   };
 }
 
@@ -51,7 +51,7 @@ class Logger {
   /**
    * Log debug message (development/troubleshooting)
    */
-  debug(message: string, meta?: any): void {
+  debug(message: string, meta?: unknown): void {
     if (this.shouldLog('debug')) {
       this.config.handler.debug(message, meta);
     }
@@ -60,7 +60,7 @@ class Logger {
   /**
    * Log info message (general information)
    */
-  info(message: string, meta?: any): void {
+  info(message: string, meta?: unknown): void {
     if (this.shouldLog('info')) {
       this.config.handler.info(message, meta);
     }
@@ -69,7 +69,7 @@ class Logger {
   /**
    * Log warning message (non-critical issues)
    */
-  warn(message: string, meta?: any): void {
+  warn(message: string, meta?: unknown): void {
     if (this.shouldLog('warn')) {
       this.config.handler.warn(message, meta);
     }
@@ -78,7 +78,7 @@ class Logger {
   /**
    * Log error message (critical issues)
    */
-  error(message: string, meta?: any): void {
+  error(message: string, meta?: unknown): void {
     if (this.shouldLog('error')) {
       this.config.handler.error(message, meta);
     }

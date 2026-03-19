@@ -141,6 +141,12 @@ export class UnsupportedFeatureError extends Error {
   }
 }
 
+/** AgentConfig with internal flags for lazy discovery */
+type InternalAgentConfig = AgentConfig & {
+  _needsDiscovery?: boolean;
+  _needsCanonicalUrl?: boolean;
+};
+
 type NormalizedWebhookPayload = {
   operation_id: string;
   task_id: string;
@@ -237,7 +243,7 @@ export interface SingleAgentClientConfig extends ConversationConfig {
 export class SingleAgentClient {
   private executor: TaskExecutor;
   private asyncHandler?: AsyncHandler;
-  private normalizedAgent: AgentConfig;
+  private normalizedAgent: InternalAgentConfig;
   private discoveredEndpoint?: string; // Cache discovered MCP endpoint
   private canonicalBaseUrl?: string; // Cache canonical base URL (from agent card or stripped /mcp)
   private cachedCapabilities?: AdcpCapabilities; // Cache detected server capabilities
@@ -277,7 +283,7 @@ export class SingleAgentClient {
    * Also computes the canonical base URL by stripping /mcp suffix.
    */
   private async ensureEndpointDiscovered(): Promise<AgentConfig> {
-    const needsDiscovery = (this.normalizedAgent as any)._needsDiscovery;
+    const needsDiscovery = this.normalizedAgent._needsDiscovery;
 
     if (!needsDiscovery) {
       return this.normalizedAgent;
@@ -310,7 +316,7 @@ export class SingleAgentClient {
    * Returns the agent config with the canonical URL.
    */
   private async ensureCanonicalUrlResolved(): Promise<AgentConfig> {
-    const needsCanonicalUrl = (this.normalizedAgent as any)._needsCanonicalUrl;
+    const needsCanonicalUrl = this.normalizedAgent._needsCanonicalUrl;
 
     if (!needsCanonicalUrl) {
       return this.normalizedAgent;
@@ -394,7 +400,7 @@ export class SingleAgentClient {
       }
 
       return this.computeBaseUrl(agentUri);
-    } catch (error: any) {
+    } catch (error: unknown) {
       // If we got a 401, throw AuthenticationRequiredError
       if (is401Error(error, got401)) {
         const oauthMetadata = await discoverOAuthMetadata(agentUri);
@@ -457,7 +463,7 @@ export class SingleAgentClient {
     type EndpointTestResult = {
       success: boolean;
       status?: number;
-      error?: Error;
+      error?: unknown;
     };
 
     const testEndpoint = async (url: string): Promise<EndpointTestResult> => {
@@ -465,8 +471,15 @@ export class SingleAgentClient {
         const client = await connectMCPWithFallback(new URL(url), authHeaders);
         await client.close();
         return { success: true };
-      } catch (error: any) {
-        const status = is401Error(error) ? 401 : error?.status || error?.response?.status || error?.cause?.status;
+      } catch (error: unknown) {
+        if (is401Error(error)) {
+          return { success: false, status: 401, error };
+        }
+        const errObj = error as Record<string, unknown>;
+        const status =
+          (errObj?.status as number | undefined) ||
+          ((errObj?.response as Record<string, unknown>)?.status as number | undefined) ||
+          ((errObj?.cause as Record<string, unknown>)?.status as number | undefined);
         return { success: false, status, error };
       }
     };
@@ -540,7 +553,7 @@ export class SingleAgentClient {
    * - A2A agents are marked for canonical URL resolution (from agent card)
    * - MCP agents are marked for endpoint discovery
    */
-  private normalizeAgentConfig(agent: AgentConfig): AgentConfig {
+  private normalizeAgentConfig(agent: AgentConfig): InternalAgentConfig {
     // If URL is a well-known agent card URL, use A2A protocol regardless of what was specified
     // Mark for canonical URL resolution - we'll fetch the agent card and use its url field
     if (this.isWellKnownAgentCardUrl(agent.agent_uri)) {
@@ -548,7 +561,7 @@ export class SingleAgentClient {
         ...agent,
         protocol: 'a2a',
         _needsCanonicalUrl: true,
-      } as any;
+      };
     }
 
     if (agent.protocol === 'a2a') {
@@ -556,7 +569,7 @@ export class SingleAgentClient {
       return {
         ...agent,
         _needsCanonicalUrl: true,
-      } as any;
+      };
     }
 
     if (agent.protocol !== 'mcp') {
@@ -567,7 +580,7 @@ export class SingleAgentClient {
     return {
       ...agent,
       _needsDiscovery: true,
-    } as any;
+    };
   }
 
   /**
@@ -821,7 +834,15 @@ export class SingleAgentClient {
    * ```
    */
   createWebhookHandler() {
-    return async (req: any, res: any) => {
+    return async (
+      req: { headers: Record<string, string | undefined>; body: unknown; params?: Record<string, string> },
+      res: {
+        status: (code: number) => { json: (body: unknown) => void };
+        json?: unknown;
+        writeHead: (code: number, headers: Record<string, string>) => void;
+        end: (body: string) => void;
+      }
+    ) => {
       try {
         // Extract headers (case-insensitive)
         const signature = req.headers['x-adcp-signature'] || req.headers['X-ADCP-Signature'];
@@ -845,15 +866,16 @@ export class SingleAgentClient {
           res.writeHead(202, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ status: 'accepted', received: handled }));
         }
-      } catch (error: any) {
+      } catch (error: unknown) {
         // Return error
-        const statusCode = error.message.includes('signature') || error.message.includes('timestamp') ? 401 : 500;
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        const statusCode = errorMessage.includes('signature') || errorMessage.includes('timestamp') ? 401 : 500;
 
         if (res.json) {
-          res.status(statusCode).json({ error: error.message });
+          res.status(statusCode).json({ error: errorMessage });
         } else {
           res.writeHead(statusCode, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: error.message }));
+          res.end(JSON.stringify({ error: errorMessage }));
         }
       }
     };
@@ -879,7 +901,7 @@ export class SingleAgentClient {
    * @param timestamp - X-ADCP-Timestamp header value (Unix timestamp)
    * @returns true if signature is valid
    */
-  verifyWebhookSignature(rawBodyOrPayload: string | any, signature: string, timestamp: string | number): boolean {
+  verifyWebhookSignature(rawBodyOrPayload: string | unknown, signature: string, timestamp: string | number): boolean {
     if (!this.config.webhookSecret) {
       return false;
     }
@@ -1948,7 +1970,7 @@ export class SingleAgentClient {
   getAgent(): AgentConfig {
     // If we have resolved the canonical URL, return config with it
     if (this.canonicalBaseUrl) {
-      const { _needsDiscovery, _needsCanonicalUrl, ...cleanAgent } = this.normalizedAgent as any;
+      const { _needsDiscovery, _needsCanonicalUrl, ...cleanAgent } = this.normalizedAgent;
       return {
         ...cleanAgent,
         agent_uri: this.canonicalBaseUrl,
@@ -1956,7 +1978,7 @@ export class SingleAgentClient {
     }
 
     // Return normalized agent without internal flags
-    const { _needsDiscovery, _needsCanonicalUrl, ...cleanAgent } = this.normalizedAgent as any;
+    const { _needsDiscovery, _needsCanonicalUrl, ...cleanAgent } = this.normalizedAgent;
     return { ...cleanAgent };
   }
 
@@ -2096,7 +2118,7 @@ export class SingleAgentClient {
    * Get active tasks for this agent
    */
   getActiveTasks() {
-    return this.executor.getActiveTasks().filter((task: any) => task.agent.id === this.agent.id);
+    return this.executor.getActiveTasks().filter(task => task.agent.id === this.agent.id);
   }
 
   // ====== TASK MANAGEMENT & NOTIFICATIONS ======
@@ -2220,7 +2242,7 @@ export class SingleAgentClient {
     tools: Array<{
       name: string;
       description?: string;
-      inputSchema?: any;
+      inputSchema?: Record<string, unknown>;
       parameters?: string[];
     }>;
   }> {
@@ -2239,7 +2261,7 @@ export class SingleAgentClient {
 
       const authToken = this.normalizedAgent.auth_token;
       const customFetch = authToken
-        ? async (input: any, init?: any) => {
+        ? async (input: string | URL | Request, init?: RequestInit) => {
             // IMPORTANT: Must preserve SDK's default headers (especially Accept header)
             // Convert existing headers to plain object for merging
             let existingHeaders: Record<string, string> = {};
@@ -2305,9 +2327,9 @@ export class SingleAgentClient {
 
       const authToken = this.normalizedAgent.auth_token;
       const fetchImpl = authToken
-        ? async (url: any, options?: any) => {
+        ? async (url: string | URL | Request, options?: RequestInit) => {
             const headers = {
-              ...options?.headers,
+              ...(options?.headers as Record<string, string>),
               Authorization: `Bearer ${authToken}`,
               'x-adcp-auth': authToken,
             };
@@ -2333,12 +2355,19 @@ export class SingleAgentClient {
       const agentCard = client.agentCardPromise ? await client.agentCardPromise : client.agentCard;
 
       const tools = agentCard?.skills
-        ? agentCard.skills.map((skill: any) => ({
-            name: skill.name,
-            description: skill.description,
-            inputSchema: skill.inputSchema,
-            parameters: skill.inputFormats || [],
-          }))
+        ? agentCard.skills.map(
+            (skill: {
+              name: string;
+              description?: string;
+              inputSchema?: Record<string, unknown>;
+              inputFormats?: string[];
+            }) => ({
+              name: skill.name,
+              description: skill.description,
+              inputSchema: skill.inputSchema,
+              parameters: skill.inputFormats || [],
+            })
+          )
         : [];
 
       return {
@@ -2392,7 +2421,7 @@ export class SingleAgentClient {
     this.cachedToolSchemas = new Map(
       agentInfo.tools
         .filter(t => t.inputSchema?.properties)
-        .map(t => [t.name, t.inputSchema.properties as Record<string, unknown>])
+        .map(t => [t.name, t.inputSchema!.properties as Record<string, unknown>])
     );
 
     // Check if agent supports get_adcp_capabilities (v3)
