@@ -836,7 +836,12 @@ export class SingleAgentClient {
   createWebhookHandler() {
     return async (
       req: { headers: Record<string, string | undefined>; body: unknown; params?: Record<string, string> },
-      res: { status: (code: number) => { json: (body: unknown) => void }; json?: unknown; writeHead: (code: number, headers: Record<string, string>) => void; end: (body: string) => void }
+      res: {
+        status: (code: number) => { json: (body: unknown) => void };
+        json?: unknown;
+        writeHead: (code: number, headers: Record<string, string>) => void;
+        end: (body: string) => void;
+      }
     ) => {
       try {
         // Extract headers (case-insensitive)
@@ -2350,12 +2355,19 @@ export class SingleAgentClient {
       const agentCard = client.agentCardPromise ? await client.agentCardPromise : client.agentCard;
 
       const tools = agentCard?.skills
-        ? agentCard.skills.map((skill: { name: string; description?: string; inputSchema?: Record<string, unknown>; inputFormats?: string[] }) => ({
-            name: skill.name,
-            description: skill.description,
-            inputSchema: skill.inputSchema,
-            parameters: skill.inputFormats || [],
-          }))
+        ? agentCard.skills.map(
+            (skill: {
+              name: string;
+              description?: string;
+              inputSchema?: Record<string, unknown>;
+              inputFormats?: string[];
+            }) => ({
+              name: skill.name,
+              description: skill.description,
+              inputSchema: skill.inputSchema,
+              parameters: skill.inputFormats || [],
+            })
+          )
         : [];
 
       return {

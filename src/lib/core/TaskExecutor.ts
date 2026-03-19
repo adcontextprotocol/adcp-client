@@ -887,7 +887,7 @@ export class TaskExecutor {
    */
   async listTasks(agent: AgentConfig): Promise<TaskInfo[]> {
     try {
-      const response = await ProtocolClient.callTool(agent, 'tasks/list', {}) as Record<string, unknown>;
+      const response = (await ProtocolClient.callTool(agent, 'tasks/list', {})) as Record<string, unknown>;
       return (response.tasks as TaskInfo[]) || [];
     } catch (error) {
       console.warn('Failed to list tasks:', error);
@@ -896,7 +896,7 @@ export class TaskExecutor {
   }
 
   async getTaskStatus(agent: AgentConfig, taskId: string): Promise<TaskInfo> {
-    const response = await ProtocolClient.callTool(agent, 'tasks/get', { taskId }) as Record<string, unknown>;
+    const response = (await ProtocolClient.callTool(agent, 'tasks/get', { taskId })) as Record<string, unknown>;
     return (response.task as TaskInfo) || (response as unknown as TaskInfo);
   }
 
@@ -1093,7 +1093,7 @@ export class TaskExecutor {
     const agent = this.findAgentById(agentId);
     if (agent) {
       try {
-        const response = await ProtocolClient.callTool(agent, 'tasks/list', {}) as Record<string, unknown>;
+        const response = (await ProtocolClient.callTool(agent, 'tasks/list', {})) as Record<string, unknown>;
         return (response.tasks as TaskInfo[]) || [];
       } catch (error) {
         console.warn('Failed to get remote task list:', error);
