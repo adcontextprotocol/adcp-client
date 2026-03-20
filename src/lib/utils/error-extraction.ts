@@ -36,12 +36,14 @@ export interface ExtractedAdcpError {
  *
  * Returns null if no AdCP error is detected.
  */
-export function extractAdcpErrorFromMcp(response: any): ExtractedAdcpError | null {
+export function extractAdcpErrorFromMcp(
+  response: { isError?: boolean; content?: Array<{ type: string; text?: string }>; structuredContent?: Record<string, unknown> } | null | undefined,
+): ExtractedAdcpError | null {
   if (!response) return null;
 
   // Path 1: structuredContent.adcp_error (L3) — only check error responses
   if (response.isError) {
-    const structured = response.structuredContent?.adcp_error;
+    const structured = response.structuredContent?.adcp_error as Record<string, unknown> | undefined;
     if (structured && typeof structured.code === 'string') {
       return buildExtracted(structured, 'structuredContent', 3);
     }
@@ -91,14 +93,16 @@ export function extractAdcpErrorFromMcp(response: any): ExtractedAdcpError | nul
  * Checks error.data.adcp_error for structured transport-level errors
  * (e.g., -32029 rate limit from infrastructure).
  */
-export function extractAdcpErrorFromTransport(error: any): ExtractedAdcpError | null {
-  const adcpError = error?.data?.adcp_error;
-  if (adcpError && typeof adcpError.code === 'string') {
-    return buildExtracted(adcpError, 'structuredContent', 3);
+export function extractAdcpErrorFromTransport(error: unknown): ExtractedAdcpError | null {
+  const errorObj = error as Record<string, unknown> | null | undefined;
+  const data = errorObj?.data as Record<string, unknown> | undefined;
+  const adcpErr = data?.adcp_error as Record<string, unknown> | undefined;
+  if (adcpErr && typeof adcpErr.code === 'string') {
+    return buildExtracted(adcpErr, 'structuredContent', 3);
   }
 
   // Fall back to message pattern matching
-  const message = error instanceof Error ? error.message : error?.message || String(error);
+  const message = error instanceof Error ? error.message : (errorObj?.message as string) || String(error);
   if (typeof message === 'string') {
     const matchedCode = matchStandardCode(message);
     if (matchedCode) {

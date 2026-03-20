@@ -21,12 +21,22 @@ export interface AdcpErrorOptions {
   details?: Record<string, unknown>;
 }
 
+export interface AdcpErrorPayload {
+  code: string;
+  message: string;
+  recovery: ErrorRecovery;
+  field?: string;
+  suggestion?: string;
+  retry_after?: number;
+  details?: Record<string, unknown>;
+}
+
 export interface AdcpErrorResponse {
   [key: string]: unknown;
   content: Array<{ type: 'text'; text: string }>;
   isError: true;
   structuredContent: {
-    adcp_error: Record<string, unknown>;
+    adcp_error: AdcpErrorPayload;
   };
 }
 
@@ -60,16 +70,15 @@ export function adcpError(code: StandardErrorCode | (string & {}), options: Adcp
     options.recovery ??
     (isStandardErrorCode(code) ? STANDARD_ERROR_CODES[code as StandardErrorCode].recovery : 'terminal');
 
-  const adcp_error: Record<string, unknown> = {
+  const adcp_error: AdcpErrorPayload = {
     code,
     message: options.message,
     recovery,
+    ...(options.field != null && { field: options.field }),
+    ...(options.suggestion != null && { suggestion: options.suggestion }),
+    ...(options.retry_after != null && { retry_after: options.retry_after }),
+    ...(options.details != null && { details: options.details }),
   };
-
-  if (options.field != null) adcp_error.field = options.field;
-  if (options.suggestion != null) adcp_error.suggestion = options.suggestion;
-  if (options.retry_after != null) adcp_error.retry_after = options.retry_after;
-  if (options.details != null) adcp_error.details = options.details;
 
   return {
     content: [{ type: 'text', text: JSON.stringify({ adcp_error }) }],

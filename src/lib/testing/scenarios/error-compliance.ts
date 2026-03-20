@@ -139,7 +139,7 @@ export async function testErrorCodes(
         headers
       )) as RawMcpResponse | undefined;
 
-      const extracted = extractAdcpErrorFromMcp(rawResponse);
+      const extracted = extractAdcpErrorFromMcp(rawResponse as RawMcpResponse);
 
       if (!rawResponse?.isError && !extracted) {
         // Agent accepted a bad request — that's a failure regardless of error structure
@@ -260,7 +260,7 @@ export async function testErrorStructure(
   try {
     const rawResponse = await callMCPToolRaw(agentUrl, provocation.tool, provocation.args, authToken, [], headers);
 
-    const extracted = extractAdcpErrorFromMcp(rawResponse);
+    const extracted = extractAdcpErrorFromMcp(rawResponse as RawMcpResponse);
     if (!extracted) {
       steps.push({
         step: 'Error structure validation',

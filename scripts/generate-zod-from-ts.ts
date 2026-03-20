@@ -265,12 +265,6 @@ function postProcessForPassthrough(content: string): string {
 }
 
 /**
- * Post-process generated Zod schemas to remove z.undefined() from unions.
- *
-// unwrapRecordIntersections and stripNeverUnionIntersections are called
-// from postProcessRecordIntersections above.
-
-/**
  * Replace `z.record(...).and(CONTENT)` with just CONTENT.
  *
  * TypeScript types like `{ [k: string]: unknown } & { typed_fields }` produce
