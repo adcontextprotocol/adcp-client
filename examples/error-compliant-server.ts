@@ -32,6 +32,14 @@ import {
   GetMediaBuyDeliveryRequestSchema,
 } from '../dist/lib/types/schemas.generated.js';
 
+// CreateMediaBuyRequestSchema requires account/brand per spec, but a lenient
+// version lets intentionally-incomplete requests reach the handler so it can
+// return proper AdCP structured errors instead of generic MCP validation errors.
+const LenientCreateMediaBuyInput = CreateMediaBuyRequestSchema.extend({
+  account: CreateMediaBuyRequestSchema.shape.account.optional(),
+  brand: CreateMediaBuyRequestSchema.shape.brand.optional(),
+});
+
 // Generated types for type-safe data
 import type { Product } from '../dist/lib/types/core.generated.js';
 import type { GetAdCPCapabilitiesResponse } from '../dist/lib/types/tools.generated.js';
@@ -147,7 +155,7 @@ function createAgentServer(): McpServer {
   // --- create_media_buy ---
   server.tool(
     'create_media_buy',
-    CreateMediaBuyRequestSchema.shape,
+    LenientCreateMediaBuyInput.shape,
     async ({ buyer_ref, start_time, end_time, packages }) => {
       const limited = checkRateLimit();
       if (limited) return limited;
@@ -162,7 +170,7 @@ function createAgentServer(): McpServer {
 
       if (packages) {
         for (let i = 0; i < packages.length; i++) {
-          const pkg = packages[i];
+          const pkg = packages[i]!;
 
           if (pkg.budget < 0) {
             return adcpError('INVALID_REQUEST', {
