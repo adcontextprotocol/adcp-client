@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-03-19T22:53:14.204Z
+// Generated at: 2026-03-20T03:52:09.833Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -1004,11 +1004,6 @@ export const AccountReferenceSchema = z.union([z.object({
         sandbox: z.boolean().nullish()
     }).passthrough()]);
 
-export const PaginationRequestSchema = z.object({
-    max_results: z.number().nullish(),
-    cursor: z.string().nullish()
-}).passthrough();
-
 export const FormatCategorySchema = z.union([z.literal("audio"), z.literal("video"), z.literal("display"), z.literal("native"), z.literal("dooh"), z.literal("rich_media"), z.literal("universal")]);
 
 export const GeographicTargetingLevelSchema = z.union([z.literal("country"), z.literal("region"), z.literal("metro"), z.literal("postal_area")]);
@@ -1022,6 +1017,11 @@ export const SignalIDSchema = z.union([z.object({
         agent_url: z.string(),
         id: z.string()
     }).passthrough()]);
+
+export const PaginationRequestSchema = z.object({
+    max_results: z.number().nullish(),
+    cursor: z.string().nullish()
+}).passthrough();
 
 export const MediaBuyFeaturesSchema = z.record(z.string(), z.boolean()).and(z.object({
     inline_creative_management: z.boolean().nullish(),
@@ -1714,6 +1714,10 @@ export const SyncCatalogsRequestSchema = z.object({
 
 export const SyncCatalogsResponseSchema = z.union([SyncCatalogsSuccessSchema, SyncCatalogsErrorSchema]);
 
+export const CreativeQualitySchema = z.union([z.literal("draft"), z.literal("production")]);
+
+export const PreviewOutputFormatSchema = z.union([z.literal("url"), z.literal("html")]);
+
 export const CreativeManifestSchema = z.object({
     format_id: FormatIDSchema,
     assets: z.record(z.string(), z.union([ImageAssetSchema, VideoAssetSchema, AudioAssetSchema, VASTAssetSchema, TextAssetSchema, URLAssetSchema, HTMLAssetSchema, JavaScriptAssetSchema, WebhookAssetSchema, CSSAssetSchema, DAASTAssetSchema, MarkdownAssetSchema, BriefAssetSchema, CatalogAssetSchema])),
@@ -1721,10 +1725,6 @@ export const CreativeManifestSchema = z.object({
     provenance: ProvenanceSchema.nullish(),
     ext: ExtensionObjectSchema.nullish()
 }).passthrough();
-
-export const CreativeQualitySchema = z.union([z.literal("draft"), z.literal("production")]);
-
-export const PreviewOutputFormatSchema = z.union([z.literal("url"), z.literal("html")]);
 
 export const BuildCreativeSuccessSchema = z.object({
     creative_manifest: CreativeManifestSchema,
