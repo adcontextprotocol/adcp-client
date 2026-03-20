@@ -37,7 +37,14 @@ export interface ExtractedAdcpError {
  * Returns null if no AdCP error is detected.
  */
 export function extractAdcpErrorFromMcp(
-  response: { isError?: boolean; content?: Array<{ type: string; text?: string }>; structuredContent?: Record<string, unknown> } | null | undefined,
+  response:
+    | {
+        isError?: boolean;
+        content?: Array<{ type: string; text?: string }>;
+        structuredContent?: Record<string, unknown>;
+      }
+    | null
+    | undefined
 ): ExtractedAdcpError | null {
   if (!response) return null;
 
