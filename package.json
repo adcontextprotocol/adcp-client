@@ -17,6 +17,8 @@
       "types": "./dist/lib/advanced.d.ts"
     },
     "./types": {
+      "import": "./dist/lib/types/index.js",
+      "require": "./dist/lib/types/index.js",
       "types": "./dist/lib/types/index.d.ts"
     },
     "./testing": {
@@ -28,6 +30,22 @@
       "import": "./dist/lib/auth/index.js",
       "require": "./dist/lib/auth/index.js",
       "types": "./dist/lib/auth/index.d.ts"
+    }
+  },
+  "typesVersions": {
+    "*": {
+      "advanced": [
+        "dist/lib/advanced.d.ts"
+      ],
+      "types": [
+        "dist/lib/types/index.d.ts"
+      ],
+      "testing": [
+        "dist/lib/testing/index.d.ts"
+      ],
+      "auth": [
+        "dist/lib/auth/index.d.ts"
+      ]
     }
   },
   "bin": {
