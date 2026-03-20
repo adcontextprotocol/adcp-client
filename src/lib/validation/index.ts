@@ -151,7 +151,7 @@ export async function handleAdCPResponse(
   }
 
   // Parse response body
-  let responseData: any;
+  let responseData: unknown;
   try {
     const textResponse = await response.text();
     if (!textResponse.trim()) {
@@ -174,8 +174,9 @@ export async function handleAdCPResponse(
   }
 
   // Check for JSON-RPC error response
-  if (responseData?.error || (responseData?.jsonrpc && responseData?.id !== undefined && !responseData?.result)) {
-    const errorObj = responseData.error;
+  const parsed = responseData as Record<string, unknown>;
+  if (parsed?.error || (parsed?.jsonrpc && parsed?.id !== undefined && !parsed?.result)) {
+    const errorObj = parsed.error as Record<string, unknown> | undefined;
     return {
       success: false,
       error: `Agent returned JSON-RPC error: ${errorObj?.message || JSON.stringify(errorObj)}`,

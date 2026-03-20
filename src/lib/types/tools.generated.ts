@@ -3,142 +3,6 @@
 
 // get_products parameters
 /**
- * Request parameters for discovering or refining advertising products. buying_mode declares the buyer's intent: 'brief' for curated discovery, 'wholesale' for raw catalog access, or 'refine' to iterate on known products and proposals.
- */
-export type GetProductsRequest = {
-  /**
-   * Declares buyer intent for this request. 'brief': publisher curates product recommendations from the provided brief. 'wholesale': buyer requests raw inventory to apply their own audiences — brief must not be provided, and proposals are omitted. 'refine': iterate on products and proposals from a previous get_products response using the refine array of change requests. v3 clients MUST include buying_mode. Sellers receiving requests from pre-v3 clients without buying_mode SHOULD default to 'brief'.
-   */
-  buying_mode: 'brief' | 'wholesale' | 'refine';
-  /**
-   * Natural language description of campaign requirements. Required when buying_mode is 'brief'. Must not be provided when buying_mode is 'wholesale' or 'refine'.
-   */
-  brief?: string;
-  /**
-   * Array of change requests for iterating on products and proposals from a previous get_products response. Each entry declares a scope (request, product, or proposal) and what the buyer is asking for. Only valid when buying_mode is 'refine'. The seller responds to each entry via refinement_applied in the response, matched by position.
-   */
-  refine?: (
-    | {
-        /**
-         * Change scoped to the overall request — direction for the selection as a whole.
-         */
-        scope: 'request';
-        /**
-         * What the buyer is asking for at the request level (e.g., 'more video options and less display', 'suggest how to combine these products').
-         */
-        ask: string;
-      }
-    | {
-        /**
-         * Change scoped to a specific product.
-         */
-        scope: 'product';
-        /**
-         * Product ID from a previous get_products response.
-         */
-        id: string;
-        /**
-         * 'include': return this product with updated pricing and data. 'omit': exclude this product from the response. 'more_like_this': find additional products similar to this one (the original is also returned).
-         */
-        action: 'include' | 'omit' | 'more_like_this';
-        /**
-         * What the buyer is asking for on this product. For 'include': specific changes to request (e.g., 'add 16:9 format'). For 'more_like_this': what 'similar' means (e.g., 'same audience but video format'). Ignored when action is 'omit'.
-         */
-        ask?: string;
-      }
-    | {
-        /**
-         * Change scoped to a specific proposal.
-         */
-        scope: 'proposal';
-        /**
-         * Proposal ID from a previous get_products response.
-         */
-        id: string;
-        /**
-         * 'include': return this proposal with updated allocations and pricing. 'omit': exclude this proposal from the response.
-         */
-        action: 'include' | 'omit';
-        /**
-         * What the buyer is asking for on this proposal (e.g., 'shift more budget toward video', 'reduce total by 10%'). Ignored when action is 'omit'.
-         */
-        ask?: string;
-      }
-  )[];
-  brand?: BrandReference;
-  catalog?: Catalog;
-  account?: AccountReference;
-  /**
-   * Buyer's campaign reference label. Groups related discovery and buy operations under a single campaign for CRM and ad server correlation (e.g., 'NovaDrink_Meals_Q2').
-   */
-  buyer_campaign_ref?: string;
-  /**
-   * Delivery types the buyer prefers, in priority order. Unlike filters.delivery_type which excludes non-matching products, this signals preference for curation — the publisher may still include other delivery types when they match the brief well.
-   */
-  preferred_delivery_types?: DeliveryType[];
-  filters?: ProductFilters;
-  property_list?: PropertyListReference;
-  /**
-   * Specific product fields to include in the response. When omitted, all fields are returned. Use for lightweight discovery calls where only a subset of product data is needed (e.g., just IDs and pricing for comparison). Required fields (product_id, name) are always included regardless of selection.
-   */
-  fields?: (
-    | 'product_id'
-    | 'name'
-    | 'description'
-    | 'publisher_properties'
-    | 'channels'
-    | 'format_ids'
-    | 'placements'
-    | 'delivery_type'
-    | 'exclusivity'
-    | 'pricing_options'
-    | 'forecast'
-    | 'outcome_measurement'
-    | 'delivery_measurement'
-    | 'reporting_capabilities'
-    | 'creative_policy'
-    | 'catalog_types'
-    | 'metric_optimization'
-    | 'conversion_tracking'
-    | 'data_provider_signals'
-    | 'max_optimization_goals'
-    | 'catalog_match'
-    | 'shows'
-    | 'show_targeting_allowed'
-    | 'episodes'
-    | 'brief_relevance'
-    | 'expires_at'
-    | 'product_card'
-    | 'product_card_detailed'
-    | 'enforced_policies'
-  )[];
-  /**
-   * Maximum time the buyer will commit to this request. The seller returns the best results achievable within this budget and does not start processes (human approvals, expensive external queries) that cannot complete in time. When omitted, the seller decides timing.
-   */
-  time_budget?: Duration;
-  pagination?: PaginationRequest;
-  context?: ContextObject;
-  /**
-   * Registry policy IDs that the buyer requires to be enforced for products in this response. Sellers filter products to only those that comply with or already enforce the requested policies.
-   */
-  required_policies?: string[];
-  ext?: ExtensionObject;
-} & (
-  | {
-      buying_mode: 'brief';
-      refine?: never;
-    }
-  | {
-      buying_mode: 'wholesale';
-      brief?: never;
-      refine?: never;
-    }
-  | {
-      buying_mode: 'refine';
-      brief?: never;
-    }
-);
-/**
  * Brand identifier within the house portfolio. Optional for single-brand domains.
  */
 export type BrandID = string;
@@ -353,6 +217,128 @@ export type SignalID =
        */
       id: string;
     };
+/**
+ * Request parameters for discovering or refining advertising products. buying_mode declares the buyer's intent: 'brief' for curated discovery, 'wholesale' for raw catalog access, or 'refine' to iterate on known products and proposals.
+ */
+export interface GetProductsRequest {
+  /**
+   * Declares buyer intent for this request. 'brief': publisher curates product recommendations from the provided brief. 'wholesale': buyer requests raw inventory to apply their own audiences — brief must not be provided, and proposals are omitted. 'refine': iterate on products and proposals from a previous get_products response using the refine array of change requests. v3 clients MUST include buying_mode. Sellers receiving requests from pre-v3 clients without buying_mode SHOULD default to 'brief'.
+   */
+  buying_mode: 'brief' | 'wholesale' | 'refine';
+  /**
+   * Natural language description of campaign requirements. Required when buying_mode is 'brief'. Must not be provided when buying_mode is 'wholesale' or 'refine'.
+   */
+  brief?: string;
+  /**
+   * Array of change requests for iterating on products and proposals from a previous get_products response. Each entry declares a scope (request, product, or proposal) and what the buyer is asking for. Only valid when buying_mode is 'refine'. The seller responds to each entry via refinement_applied in the response, matched by position.
+   */
+  refine?: (
+    | {
+        /**
+         * Change scoped to the overall request — direction for the selection as a whole.
+         */
+        scope: 'request';
+        /**
+         * What the buyer is asking for at the request level (e.g., 'more video options and less display', 'suggest how to combine these products').
+         */
+        ask: string;
+      }
+    | {
+        /**
+         * Change scoped to a specific product.
+         */
+        scope: 'product';
+        /**
+         * Product ID from a previous get_products response.
+         */
+        id: string;
+        /**
+         * 'include': return this product with updated pricing and data. 'omit': exclude this product from the response. 'more_like_this': find additional products similar to this one (the original is also returned).
+         */
+        action: 'include' | 'omit' | 'more_like_this';
+        /**
+         * What the buyer is asking for on this product. For 'include': specific changes to request (e.g., 'add 16:9 format'). For 'more_like_this': what 'similar' means (e.g., 'same audience but video format'). Ignored when action is 'omit'.
+         */
+        ask?: string;
+      }
+    | {
+        /**
+         * Change scoped to a specific proposal.
+         */
+        scope: 'proposal';
+        /**
+         * Proposal ID from a previous get_products response.
+         */
+        id: string;
+        /**
+         * 'include': return this proposal with updated allocations and pricing. 'omit': exclude this proposal from the response.
+         */
+        action: 'include' | 'omit';
+        /**
+         * What the buyer is asking for on this proposal (e.g., 'shift more budget toward video', 'reduce total by 10%'). Ignored when action is 'omit'.
+         */
+        ask?: string;
+      }
+  )[];
+  brand?: BrandReference;
+  catalog?: Catalog;
+  account?: AccountReference;
+  /**
+   * Buyer's campaign reference label. Groups related discovery and buy operations under a single campaign for CRM and ad server correlation (e.g., 'NovaDrink_Meals_Q2').
+   */
+  buyer_campaign_ref?: string;
+  /**
+   * Delivery types the buyer prefers, in priority order. Unlike filters.delivery_type which excludes non-matching products, this signals preference for curation — the publisher may still include other delivery types when they match the brief well.
+   */
+  preferred_delivery_types?: DeliveryType[];
+  filters?: ProductFilters;
+  property_list?: PropertyListReference;
+  /**
+   * Specific product fields to include in the response. When omitted, all fields are returned. Use for lightweight discovery calls where only a subset of product data is needed (e.g., just IDs and pricing for comparison). Required fields (product_id, name) are always included regardless of selection.
+   */
+  fields?: (
+    | 'product_id'
+    | 'name'
+    | 'description'
+    | 'publisher_properties'
+    | 'channels'
+    | 'format_ids'
+    | 'placements'
+    | 'delivery_type'
+    | 'exclusivity'
+    | 'pricing_options'
+    | 'forecast'
+    | 'outcome_measurement'
+    | 'delivery_measurement'
+    | 'reporting_capabilities'
+    | 'creative_policy'
+    | 'catalog_types'
+    | 'metric_optimization'
+    | 'conversion_tracking'
+    | 'data_provider_signals'
+    | 'max_optimization_goals'
+    | 'catalog_match'
+    | 'shows'
+    | 'show_targeting_allowed'
+    | 'episodes'
+    | 'brief_relevance'
+    | 'expires_at'
+    | 'product_card'
+    | 'product_card_detailed'
+    | 'enforced_policies'
+  )[];
+  /**
+   * Maximum time the buyer will commit to this request. The seller returns the best results achievable within this budget and does not start processes (human approvals, expensive external queries) that cannot complete in time. When omitted, the seller decides timing.
+   */
+  time_budget?: Duration;
+  pagination?: PaginationRequest;
+  context?: ContextObject;
+  /**
+   * Registry policy IDs that the buyer requires to be enforced for products in this response. Sellers filter products to only those that comply with or already enforce the requested policies.
+   */
+  required_policies?: string[];
+  ext?: ExtensionObject;
+}
 /**
  * Brand reference for product discovery context. Resolved to full brand identity at execution time.
  */
@@ -838,9 +824,34 @@ export type EpisodeStatus = 'scheduled' | 'tentative' | 'live' | 'postponed' | '
  */
 export type ContentRatingSystem = 'tv_parental' | 'mpaa' | 'podcast' | 'esrb' | 'bbfc' | 'fsk' | 'acb' | 'custom';
 /**
+ * Category of the event
+ */
+export type SpecialCategory =
+  | 'awards'
+  | 'championship'
+  | 'concert'
+  | 'conference'
+  | 'election'
+  | 'festival'
+  | 'gala'
+  | 'holiday'
+  | 'premiere'
+  | 'product_launch'
+  | 'reunion'
+  | 'tribute';
+/**
  * Role of this person on the show or episode
  */
-export type TalentRole = 'host' | 'guest' | 'creator' | 'cast' | 'narrator' | 'producer' | 'correspondent';
+export type TalentRole =
+  | 'host'
+  | 'guest'
+  | 'creator'
+  | 'cast'
+  | 'narrator'
+  | 'producer'
+  | 'correspondent'
+  | 'commentator'
+  | 'analyst';
 /**
  * What kind of derivative content this is
  */
@@ -1786,6 +1797,7 @@ export interface Episode {
    * Content topics for this episode. Uses the same taxonomy as the show's genre_taxonomy when present. Enables episode-level brand safety evaluation beyond content_rating.
    */
   topics?: string[];
+  special?: Special;
   /**
    * Episode-specific guests and talent. Additive to the show's recurring talent.
    */
@@ -1812,6 +1824,24 @@ export interface ContentRating {
    * Rating value within the system (e.g., 'TV-PG', 'R', 'explicit')
    */
   rating: string;
+}
+/**
+ * Episode-specific event context. When present, this episode is anchored to a real-world event. Overrides the show-level special when present.
+ */
+export interface Special {
+  /**
+   * Name of the event (e.g., 'Olympics 2028', 'Super Bowl LXI')
+   */
+  name: string;
+  category?: SpecialCategory;
+  /**
+   * When the event starts (ISO 8601)
+   */
+  starts?: string;
+  /**
+   * When the event ends (ISO 8601). Omit for single-day events.
+   */
+  ends?: string;
 }
 /**
  * A person associated with a show or episode, with an optional link to their brand.json identity
@@ -6129,9 +6159,37 @@ export interface SyncCatalogsError {
 
 // build_creative parameters
 /**
+ * Types of rights usage that can be licensed through the brand protocol. Aligned with DDEX UseType direction for interoperability with music and media rights systems.
+ */
+export type RightUse =
+  | 'likeness'
+  | 'voice'
+  | 'name'
+  | 'endorsement'
+  | 'motion_capture'
+  | 'signature'
+  | 'catchphrase'
+  | 'sync'
+  | 'background_music'
+  | 'editorial'
+  | 'commercial';
+/**
+ * Type of rights (talent, music, etc.). Helps identify constraints when a creative combines multiple rights types.
+ */
+export type RightType = 'talent' | 'character' | 'brand_ip' | 'music' | 'stock_media';
+/**
+ * Quality tier for generation. 'draft' produces fast, lower-fidelity output for iteration and review. 'production' produces full-quality output for final delivery. If omitted, the creative agent uses its own default. For non-generative transforms (e.g., format resizing), creative agents MAY ignore this field.
+ */
+export type CreativeQuality = 'draft' | 'production';
+/**
+ * Output format for preview renders when include_preview is true. 'url' returns preview_url (iframe-embeddable URL), 'html' returns preview_html (raw HTML). Ignored when include_preview is false or omitted.
+ */
+export type PreviewOutputFormat = 'url' | 'html';
+
+/**
  * Request to transform, generate, or retrieve a creative manifest. Supports three modes: (1) generation from a brief or seed assets, (2) transformation of an existing manifest, (3) retrieval from a creative library by creative_id. Produces target manifest(s) in the specified format(s). Provide either target_format_id for a single format or target_format_ids for multiple formats.
  */
-export type BuildCreativeRequest = {
+export interface BuildCreativeRequest {
   /**
    * Natural language instructions for the transformation or generation. For pure generation, this is the creative brief. For transformation, this provides guidance on how to adapt the creative. For refinement, this describes the desired changes.
    */
@@ -6197,42 +6255,7 @@ export type BuildCreativeRequest = {
   };
   context?: ContextObject;
   ext?: ExtensionObject;
-} & (
-  | {
-      target_format_ids?: never;
-    }
-  | {
-      target_format_id?: never;
-    }
-);
-/**
- * Types of rights usage that can be licensed through the brand protocol. Aligned with DDEX UseType direction for interoperability with music and media rights systems.
- */
-export type RightUse =
-  | 'likeness'
-  | 'voice'
-  | 'name'
-  | 'endorsement'
-  | 'motion_capture'
-  | 'signature'
-  | 'catchphrase'
-  | 'sync'
-  | 'background_music'
-  | 'editorial'
-  | 'commercial';
-/**
- * Type of rights (talent, music, etc.). Helps identify constraints when a creative combines multiple rights types.
- */
-export type RightType = 'talent' | 'character' | 'brand_ip' | 'music' | 'stock_media';
-/**
- * Quality tier for generation. 'draft' produces fast, lower-fidelity output for iteration and review. 'production' produces full-quality output for final delivery. If omitted, the creative agent uses its own default. For non-generative transforms (e.g., format resizing), creative agents MAY ignore this field.
- */
-export type CreativeQuality = 'draft' | 'production';
-/**
- * Output format for preview renders when include_preview is true. 'url' returns preview_url (iframe-embeddable URL), 'html' returns preview_html (raw HTML). Ignored when include_preview is false or omitted.
- */
-export type PreviewOutputFormat = 'url' | 'html';
-
+}
 /**
  * Creative manifest to transform or generate from. For pure generation, this should include the target format_id and any required input assets. For transformation (e.g., resizing, reformatting), this is the complete creative to adapt. When creative_id is provided, the agent resolves the creative from its library and this field is ignored.
  */

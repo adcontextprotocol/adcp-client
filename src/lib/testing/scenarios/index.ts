@@ -61,3 +61,6 @@ export { testCapabilityDiscovery, likelySupportsV3 } from './capabilities';
 
 // Schema compliance testing
 export { testSchemaCompliance } from './schema-compliance';
+
+// Error compliance testing (transport error mapping spec)
+export { testErrorCodes, testErrorStructure, testErrorTransport } from './error-compliance';

@@ -64,6 +64,10 @@ const TRACK_DEFINITIONS: Record<ComplianceTrack, { label: string; scenarios: Tes
     label: 'Audience Management',
     scenarios: ['sync_audiences'],
   },
+  error_handling: {
+    label: 'Error Compliance',
+    scenarios: ['error_codes', 'error_structure', 'error_transport'],
+  },
 };
 
 /**
@@ -80,6 +84,7 @@ const TRACK_RELEVANCE: Record<ComplianceTrack, string[]> = {
   signals: ['get_signals'],
   si: ['si_initiate_session'],
   audiences: ['sync_audiences'],
+  error_handling: ['create_media_buy'],
 };
 
 const TRACK_ORDER: ComplianceTrack[] = [
@@ -92,6 +97,7 @@ const TRACK_ORDER: ComplianceTrack[] = [
   'signals',
   'si',
   'audiences',
+  'error_handling',
 ];
 
 function isTrackApplicable(track: ComplianceTrack, tools: string[]): boolean {
@@ -236,6 +242,31 @@ function collectObservations(
     }
   }
 
+  // Error handling track observations
+  if (track === 'error_handling') {
+    for (const result of results) {
+      for (const step of result.steps ?? []) {
+        if (step.details) {
+          const levelMatch = step.details.match(/L(\d)/);
+          if (levelMatch) {
+            const level = parseInt(levelMatch[1]!, 10);
+            if (level < 3) {
+              observations.push({
+                category: 'error_compliance',
+                severity: level < 2 ? 'warning' : 'suggestion',
+                track,
+                message:
+                  `Error compliance at L${level}. L3 (structuredContent.adcp_error) is recommended. ` +
+                  `Use adcpError() from @adcp/client for automatic L3 compliance.`,
+                evidence: { compliance_level: level, step: step.step },
+              });
+            }
+          }
+        }
+      }
+    }
+  }
+
   // Check for slow responses
   for (const result of results) {
     for (const step of result.steps ?? []) {
@@ -266,6 +297,10 @@ export interface ComplyOptions extends TestOptions {
  * Assesses all applicable tracks independently — never stops at first failure.
  */
 export async function comply(agentUrl: string, options: ComplyOptions = {}): Promise<ComplianceResult> {
+  return complyImpl(agentUrl, options);
+}
+
+async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<ComplianceResult> {
   const start = Date.now();
   const { tracks: trackFilter, platform_type, ...testOptions } = options;
   const platformProfile = platform_type ? getPlatformProfile(platform_type) : undefined;

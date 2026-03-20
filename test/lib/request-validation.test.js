@@ -209,24 +209,17 @@ describe('SingleAgentClient Request Validation', () => {
   // Tests below verify that requests with extra fields are ALLOWED (not rejected)
 
   describe('get_products validation', () => {
-    test('should strip extra fields in get_products requests (ZodIntersection strips unknown)', async () => {
+    test('should reject extra fields in get_products requests', async () => {
       const client = new AdCPClient([mockAgent]);
       const agent = client.agent(mockAgent.id);
 
-      // GetProductsRequestSchema is a ZodIntersection (object.and(union)), not a plain
-      // ZodObject, so .strict() is not applied. Unknown top-level fields are silently
-      // stripped rather than rejected.
-      await assert.doesNotReject(async () => {
-        try {
-          await agent.getProducts({
-            extra_field: 'silently stripped',
-          });
-        } catch (err) {
-          if (err.message.includes('Request validation failed')) {
-            throw err;
-          }
-        }
-      });
+      // GetProductsRequestSchema is a ZodObject, so .strict() rejects unknown fields.
+      // This catches typos and invalid parameters early.
+      await assert.rejects(async () => {
+        await agent.getProducts({
+          extra_field: 'should be rejected',
+        });
+      }, /Request validation failed.*extra_field/);
     });
 
     test('should infer buying_mode "brief" when brief is provided but buying_mode is missing', async () => {

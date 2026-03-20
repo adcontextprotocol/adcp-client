@@ -554,6 +554,19 @@ npx @adcp/client --remove-agent test
 npx @adcp/client --show-config
 ```
 
+### Testing & Compliance
+
+```bash
+# Run test scenarios against an agent
+npx @adcp/client test test-mcp full_sales_flow
+npx @adcp/client test test-mcp --list-scenarios
+
+# Run compliance assessment
+npx @adcp/client comply test-mcp
+npx @adcp/client comply test-mcp --platform-type social_platform
+npx @adcp/client comply --list-platform-types
+```
+
 **Protocol Auto-Detection**: The CLI automatically detects whether an endpoint uses MCP or A2A by checking URL patterns and discovery endpoints. Override with `--protocol mcp` or `--protocol a2a` if needed.
 
 **Config File**: Agent configurations are saved to `~/.adcp/config.json` with secure file permissions (0600).

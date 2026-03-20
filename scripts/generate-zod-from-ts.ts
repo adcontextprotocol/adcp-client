@@ -193,80 +193,18 @@ function postProcessUndefinedUnions(content: string): string {
  * by extracting just the z.object() portion.
  */
 function postProcessRecordIntersections(content: string): string {
-  // Pass 1: Strip .and(z.record(...)) unconditionally.
-  // In ts-to-zod output, .and(z.record(...)) only ever follows z.object() schemas.
-  // .passthrough() (added later) preserves unknown keys, making the record redundant.
-  let result = '';
-  let i = 0;
-  const AND_RECORD = '.and(z.record(';
+  let result = content;
 
-  while (i < content.length) {
-    if (content.startsWith(AND_RECORD, i)) {
-      i += AND_RECORD.length;
-      let depth = 2; // .and( and z.record(
-      while (i < content.length && depth > 0) {
-        const ch = content[i]!;
-        if (ch === '(') depth++;
-        else if (ch === ')') depth--;
-        i++;
-      }
-    } else {
-      result += content[i];
-      i++;
-    }
-  }
+  // Pass 1: Strip `.and(z.record(z.string(), z.unknown()))` — redundant with .passthrough()
+  result = result.replace(/\.and\(z\.record\(z\.string\(\), z\.unknown\(\)\)\)/g, '');
 
-  // Pass 2: Replace z.record(...).and(z.object({...})) with just z.object({...})
-  // These are record-first intersections from TypeScript index signatures with typed fields.
-  // .passthrough() (added later) preserves unknown keys, making the record redundant.
-  const RECORD_AND = 'z.record(';
-  let result2 = '';
-  i = 0;
+  // Pass 2: Replace `z.record(...).and(CONTENT)` with CONTENT (only for redundant records)
+  result = unwrapRecordIntersections(result);
 
-  while (i < result.length) {
-    if (result.startsWith(RECORD_AND, i)) {
-      // Check if this z.record(...) is followed by .and(
-      const recordStart = i;
-      i += RECORD_AND.length;
-      let depth = 1;
-      while (i < result.length && depth > 0) {
-        const ch = result[i]!;
-        if (ch === '(') depth++;
-        else if (ch === ')') depth--;
-        i++;
-      }
-      // i is now past z.record(...), check for .and(
-      if (result.startsWith('.and(', i)) {
-        // Skip z.record(...).and( and emit just the inner content
-        i += '.and('.length;
-        // Scan for balanced ) to find the end of .and(...)
-        depth = 1;
-        let inner = '';
-        while (i < result.length && depth > 0) {
-          const ch = result[i]!;
-          if (ch === '(') depth++;
-          else if (ch === ')') {
-            depth--;
-            if (depth === 0) {
-              i++;
-              break;
-            }
-          }
-          inner += ch;
-          i++;
-        }
-        result2 += inner;
-      } else {
-        // Not followed by .and( — keep as-is
-        result2 += result.slice(recordStart, i);
-      }
-    } else {
-      result2 += result[i];
-      i++;
-    }
-  }
+  // Pass 3: Strip `.and(z.union([...]))` where content contains z.never()
+  result = stripNeverUnionIntersections(result);
 
-  return result2;
+  return result;
 }
 
 /**
@@ -316,6 +254,173 @@ function postProcessForPassthrough(content: string): string {
         }
         body += ch;
         i++;
+      }
+    } else {
+      result += content[i];
+      i++;
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Replace `z.record(...).and(CONTENT)` with just CONTENT.
+ *
+ * TypeScript types like `{ [k: string]: unknown } & { typed_fields }` produce
+ * z.record().and(z.object()) in Zod. Since z.object().passthrough() already
+ * preserves unknown keys, the z.record() wrapper is redundant.
+ *
+ * Uses balanced-parenthesis scanning to handle nested schemas correctly.
+ */
+function unwrapRecordIntersections(content: string): string {
+  const MARKER = 'z.record(';
+  let result = '';
+  let i = 0;
+
+  while (i < content.length) {
+    if (content.startsWith(MARKER, i)) {
+      const recordStart = i;
+      i += MARKER.length;
+
+      // Scan balanced parens to find end of z.record(...)
+      let depth = 1;
+      const recordBodyStart = i;
+      while (i < content.length && depth > 0) {
+        if (content[i] === '"' || content[i] === "'") {
+          const quote = content[i];
+          i++;
+          while (i < content.length && content[i] !== quote) {
+            if (content[i] === '\\') i++;
+            i++;
+          }
+          if (i < content.length) i++; // closing quote
+          continue;
+        }
+        if (content[i] === '(') depth++;
+        else if (content[i] === ')') depth--;
+        i++;
+      }
+      const recordBody = content.substring(recordBodyStart, i - 1);
+
+      // Only unwrap z.record(z.string(), z.unknown()) — the additionalProperties pattern.
+      // Keep other z.record() types (e.g. z.record(z.string(), z.number())) as-is.
+      const isRedundantRecord = recordBody.trim() === 'z.string(), z.unknown()';
+
+      // Check if followed by .and(
+      if (isRedundantRecord && content.startsWith('.and(', i)) {
+        i += '.and('.length;
+
+        // Scan balanced parens to extract .and() content
+        depth = 1;
+        let andContent = '';
+        while (i < content.length && depth > 0) {
+          if (content[i] === '"' || content[i] === "'") {
+            const quote = content[i];
+            andContent += content[i];
+            i++;
+            while (i < content.length && content[i] !== quote) {
+              if (content[i] === '\\') {
+                andContent += content[i];
+                i++;
+              }
+              andContent += content[i];
+              i++;
+            }
+            if (i < content.length) {
+              andContent += content[i];
+              i++;
+            }
+            continue;
+          }
+          if (content[i] === '(') depth++;
+          else if (content[i] === ')') {
+            depth--;
+            if (depth === 0) {
+              i++; // skip closing )
+              break;
+            }
+          }
+          andContent += content[i];
+          i++;
+        }
+
+        // Replace z.record(...).and(CONTENT) with just CONTENT
+        result += andContent;
+      } else {
+        // z.record(...) not followed by .and( — keep as-is
+        result += content.substring(recordStart, i);
+      }
+    } else {
+      result += content[i];
+      i++;
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Strip `.and(z.union([...]))` where the union body contains z.never().
+ *
+ * TypeScript discriminated unions like:
+ *   { base_fields } & ({ buying_mode: 'brief'; refine?: never } | ...)
+ * produce .and(z.union([z.object({ buying_mode: ..., refine: z.never() })])) in Zod.
+ *
+ * These constraints are useful for runtime validation but break .shape access.
+ * The base z.object() already contains all fields with correct types; the union
+ * only adds conditional field presence rules better communicated in tool descriptions.
+ */
+function stripNeverUnionIntersections(content: string): string {
+  const MARKER = '.and(z.union([';
+  let result = '';
+  let i = 0;
+
+  while (i < content.length) {
+    if (content.startsWith(MARKER, i)) {
+      const andStart = i;
+      i += '.and('.length; // position at z.union([
+
+      // Scan balanced parens to find end of .and(...)
+      let depth = 1;
+      let andContent = '';
+      while (i < content.length && depth > 0) {
+        if (content[i] === '"' || content[i] === "'") {
+          const quote = content[i];
+          andContent += content[i];
+          i++;
+          while (i < content.length && content[i] !== quote) {
+            if (content[i] === '\\') {
+              andContent += content[i];
+              i++;
+            }
+            andContent += content[i];
+            i++;
+          }
+          if (i < content.length) {
+            andContent += content[i];
+            i++;
+          }
+          continue;
+        }
+        if (content[i] === '(') depth++;
+        else if (content[i] === ')') {
+          depth--;
+          if (depth === 0) {
+            i++; // skip closing )
+            break;
+          }
+        }
+        andContent += content[i];
+        i++;
+      }
+
+      // Only strip if the union contains z.never() (discriminated constraints)
+      if (andContent.includes('z.never()')) {
+        // Strip entire .and(z.union([...]))
+      } else {
+        // Keep it — not a discriminated union constraint
+        result += content.substring(andStart, i);
       }
     } else {
       result += content[i];
@@ -434,6 +539,13 @@ async function generateZodSchemas() {
     // Agents may return extra/platform-specific fields not in the schema. Without passthrough,
     // Zod strips those fields, causing data loss for consumers who need them.
     zodSchemas = postProcessForPassthrough(zodSchemas);
+
+    // Post-process: Replace z.union([z.unknown(), z.undefined()]) with z.unknown().
+    // ts-to-zod generates this union for TypeScript's Record<string, unknown>, but
+    // z.undefined() cannot be converted to JSON Schema (it has no representation).
+    // z.unknown() already accepts undefined at runtime, so this is semantically identical.
+    // Without this fix, 73+ schemas fail MCP SDK's tools/list JSON Schema conversion.
+    zodSchemas = postProcessUndefinedUnions(zodSchemas);
 
     // Create header with metadata
     const header = `// Generated Zod v4 schemas from TypeScript types

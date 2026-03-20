@@ -22,7 +22,8 @@ export type ComplianceTrack =
   | 'governance' // Property lists, content standards
   | 'signals' // Signal discovery, activation
   | 'si' // Sponsored intelligence sessions
-  | 'audiences'; // CRM audience sync
+  | 'audiences' // CRM audience sync
+  | 'error_handling'; // Error response structure and transport compliance
 
 export type TrackStatus = 'pass' | 'fail' | 'skip' | 'partial' | 'expected';
 
@@ -80,7 +81,8 @@ export type ObservationCategory =
   | 'pricing'
   | 'relevance'
   | 'auth'
-  | 'coherence';
+  | 'coherence'
+  | 'error_compliance';
 
 export type ObservationSeverity = 'info' | 'suggestion' | 'warning' | 'error';
 

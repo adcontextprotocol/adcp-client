@@ -606,6 +606,26 @@ export async function testCreativeInline(
     return { steps, profile };
   }
 
+  // Check if agent declares inline creative support via capabilities
+  if (profile.tools.includes('get_adcp_capabilities')) {
+    try {
+      const capResult = (await client.getAdcpCapabilities({})) as TaskResult | undefined;
+      const capData = capResult?.data as Record<string, any> | undefined;
+      if (capData?.media_buy?.features?.inline_creative_management === false) {
+        steps.push({
+          step: 'Create media buy with inline creative',
+          task: 'create_media_buy',
+          passed: true,
+          duration_ms: 0,
+          details: 'Skipped: agent declares inline_creative_management: false',
+        });
+        return { steps, profile };
+      }
+    } catch {
+      // If capabilities check fails, proceed with the test
+    }
+  }
+
   // Get products
   const { result: productsResult } = await runStep<TaskResult>(
     'Fetch products for inline creative test',

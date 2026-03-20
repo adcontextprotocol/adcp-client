@@ -166,6 +166,21 @@ export async function callMCPTool(
   );
 }
 
+/**
+ * Call an MCP tool and return the raw CallToolResult (with isError, content, structuredContent).
+ * Unlike callMCPTool, this does NOT throw on isError responses — needed for error compliance testing.
+ */
+export async function callMCPToolRaw(
+  agentUrl: string,
+  toolName: string,
+  args: Record<string, unknown>,
+  authToken?: string,
+  debugLogs: DebugLogEntry[] = [],
+  customHeaders?: Record<string, string>
+): Promise<unknown> {
+  return callMCPToolRawImpl(agentUrl, toolName, args, authToken, debugLogs, customHeaders);
+}
+
 async function callMCPToolImpl(
   agentUrl: string,
   toolName: string,
@@ -276,6 +291,46 @@ async function callMCPToolImpl(
           message: `MCP: Error closing client for ${toolName}: ${closeError}`,
           timestamp: new Date().toISOString(),
         });
+      }
+    }
+  }
+}
+
+/**
+ * Raw MCP tool call — returns the CallToolResult without throwing on isError.
+ */
+async function callMCPToolRawImpl(
+  agentUrl: string,
+  toolName: string,
+  args: Record<string, unknown>,
+  authToken?: string,
+  debugLogs: DebugLogEntry[] = [],
+  customHeaders?: Record<string, string>
+): Promise<unknown> {
+  let mcpClient: MCPClient | undefined = undefined;
+  const baseUrl = new URL(agentUrl);
+
+  const traceHeaders = injectTraceHeaders();
+  const authHeaders = {
+    ...customHeaders,
+    ...traceHeaders,
+    ...(authToken ? createMCPAuthHeaders(authToken) : {}),
+  };
+
+  mcpClient = await connectMCPWithFallback(baseUrl, authHeaders, debugLogs, toolName);
+
+  try {
+    const response = await mcpClient.callTool({
+      name: toolName,
+      arguments: args,
+    });
+    return response;
+  } finally {
+    if (mcpClient) {
+      try {
+        await mcpClient.close();
+      } catch {
+        /* ignore */
       }
     }
   }
