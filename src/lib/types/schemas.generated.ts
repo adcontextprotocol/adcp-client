@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-03-20T03:52:09.833Z
+// Generated at: 2026-03-20T22:32:43.953Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -459,7 +459,9 @@ export const EpisodeStatusSchema = z.union([z.literal("scheduled"), z.literal("t
 
 export const ContentRatingSystemSchema = z.union([z.literal("tv_parental"), z.literal("mpaa"), z.literal("podcast"), z.literal("esrb"), z.literal("bbfc"), z.literal("fsk"), z.literal("acb"), z.literal("custom")]);
 
-export const TalentRoleSchema = z.union([z.literal("host"), z.literal("guest"), z.literal("creator"), z.literal("cast"), z.literal("narrator"), z.literal("producer"), z.literal("correspondent")]);
+export const SpecialCategorySchema = z.union([z.literal("awards"), z.literal("championship"), z.literal("concert"), z.literal("conference"), z.literal("election"), z.literal("festival"), z.literal("gala"), z.literal("holiday"), z.literal("premiere"), z.literal("product_launch"), z.literal("reunion"), z.literal("tribute")]);
+
+export const TalentRoleSchema = z.union([z.literal("host"), z.literal("guest"), z.literal("creator"), z.literal("cast"), z.literal("narrator"), z.literal("producer"), z.literal("correspondent"), z.literal("commentator"), z.literal("analyst")]);
 
 export const DerivativeTypeSchema = z.union([z.literal("clip"), z.literal("highlight"), z.literal("recap"), z.literal("trailer"), z.literal("bonus")]);
 
@@ -615,6 +617,13 @@ export const GeographicBreakdownSupportSchema = z.object({
 export const ContentRatingSchema = z.object({
     system: ContentRatingSystemSchema,
     rating: z.string()
+}).passthrough();
+
+export const SpecialSchema = z.object({
+    name: z.string(),
+    category: SpecialCategorySchema.nullish(),
+    starts: z.string().nullish(),
+    ends: z.string().nullish()
 }).passthrough();
 
 export const TalentSchema = z.object({
@@ -1100,6 +1109,7 @@ export const EpisodeSchema = z.object({
     valid_until: z.string().nullish(),
     content_rating: ContentRatingSchema.nullish(),
     topics: z.array(z.string()).nullish(),
+    special: SpecialSchema.nullish(),
     guest_talent: z.array(TalentSchema).nullish(),
     ad_inventory: AdInventoryConfigurationSchema.nullish(),
     derivative_of: z.object({

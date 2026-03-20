@@ -824,9 +824,34 @@ export type EpisodeStatus = 'scheduled' | 'tentative' | 'live' | 'postponed' | '
  */
 export type ContentRatingSystem = 'tv_parental' | 'mpaa' | 'podcast' | 'esrb' | 'bbfc' | 'fsk' | 'acb' | 'custom';
 /**
+ * Category of the event
+ */
+export type SpecialCategory =
+  | 'awards'
+  | 'championship'
+  | 'concert'
+  | 'conference'
+  | 'election'
+  | 'festival'
+  | 'gala'
+  | 'holiday'
+  | 'premiere'
+  | 'product_launch'
+  | 'reunion'
+  | 'tribute';
+/**
  * Role of this person on the show or episode
  */
-export type TalentRole = 'host' | 'guest' | 'creator' | 'cast' | 'narrator' | 'producer' | 'correspondent';
+export type TalentRole =
+  | 'host'
+  | 'guest'
+  | 'creator'
+  | 'cast'
+  | 'narrator'
+  | 'producer'
+  | 'correspondent'
+  | 'commentator'
+  | 'analyst';
 /**
  * What kind of derivative content this is
  */
@@ -1772,6 +1797,7 @@ export interface Episode {
    * Content topics for this episode. Uses the same taxonomy as the show's genre_taxonomy when present. Enables episode-level brand safety evaluation beyond content_rating.
    */
   topics?: string[];
+  special?: Special;
   /**
    * Episode-specific guests and talent. Additive to the show's recurring talent.
    */
@@ -1798,6 +1824,24 @@ export interface ContentRating {
    * Rating value within the system (e.g., 'TV-PG', 'R', 'explicit')
    */
   rating: string;
+}
+/**
+ * Episode-specific event context. When present, this episode is anchored to a real-world event. Overrides the show-level special when present.
+ */
+export interface Special {
+  /**
+   * Name of the event (e.g., 'Olympics 2028', 'Super Bowl LXI')
+   */
+  name: string;
+  category?: SpecialCategory;
+  /**
+   * When the event starts (ISO 8601)
+   */
+  starts?: string;
+  /**
+   * When the event ends (ISO 8601). Omit for single-day events.
+   */
+  ends?: string;
 }
 /**
  * A person associated with a show or episode, with an optional link to their brand.json identity
