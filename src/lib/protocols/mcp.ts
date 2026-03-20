@@ -327,7 +327,11 @@ async function callMCPToolRawImpl(
     return response;
   } finally {
     if (mcpClient) {
-      try { await mcpClient.close(); } catch { /* ignore */ }
+      try {
+        await mcpClient.close();
+      } catch {
+        /* ignore */
+      }
     }
   }
 }

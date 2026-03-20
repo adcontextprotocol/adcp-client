@@ -52,9 +52,7 @@ describe('deliveryResponse', () => {
   it('returns delivery count in default summary', () => {
     const data = {
       reporting_period: { start: '2026-01-01', end: '2026-01-02' },
-      media_buy_deliveries: [
-        { media_buy_id: 'mb_1', status: 'active', totals: {}, by_package: [] },
-      ],
+      media_buy_deliveries: [{ media_buy_id: 'mb_1', status: 'active', totals: {}, by_package: [] }],
     };
     const result = deliveryResponse(data);
     assert.strictEqual(result.content[0].text, 'Delivery data for 1 media buy');

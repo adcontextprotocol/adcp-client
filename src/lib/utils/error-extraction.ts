@@ -98,7 +98,7 @@ export function extractAdcpErrorFromTransport(error: any): ExtractedAdcpError | 
   }
 
   // Fall back to message pattern matching
-  const message = error instanceof Error ? error.message : (error?.message || String(error));
+  const message = error instanceof Error ? error.message : error?.message || String(error);
   if (typeof message === 'string') {
     const matchedCode = matchStandardCode(message);
     if (matchedCode) {
@@ -133,9 +133,12 @@ export function resolveRecovery(error: { code: string; recovery?: string }): Err
  */
 export function getExpectedAction(recovery: ErrorRecovery): 'retry' | 'fix_request' | 'escalate' {
   switch (recovery) {
-    case 'transient': return 'retry';
-    case 'correctable': return 'fix_request';
-    case 'terminal': return 'escalate';
+    case 'transient':
+      return 'retry';
+    case 'correctable':
+      return 'fix_request';
+    case 'terminal':
+      return 'escalate';
   }
 }
 
@@ -144,7 +147,7 @@ export function getExpectedAction(recovery: ErrorRecovery): 'retry' | 'fix_reque
 function buildExtracted(
   obj: any,
   source: ExtractedAdcpError['source'],
-  compliance_level: ExtractedAdcpError['compliance_level'],
+  compliance_level: ExtractedAdcpError['compliance_level']
 ): ExtractedAdcpError {
   const result: ExtractedAdcpError = {
     code: obj.code,
@@ -152,7 +155,8 @@ function buildExtracted(
     source,
     compliance_level,
   };
-  if (obj.recovery === 'transient' || obj.recovery === 'correctable' || obj.recovery === 'terminal') result.recovery = obj.recovery;
+  if (obj.recovery === 'transient' || obj.recovery === 'correctable' || obj.recovery === 'terminal')
+    result.recovery = obj.recovery;
   if (obj.field != null) result.field = obj.field;
   if (obj.suggestion != null) result.suggestion = obj.suggestion;
   if (obj.retry_after != null) result.retry_after = obj.retry_after;

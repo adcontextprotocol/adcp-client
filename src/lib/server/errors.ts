@@ -56,10 +56,9 @@ export interface AdcpErrorResponse {
  * ```
  */
 export function adcpError(code: StandardErrorCode | (string & {}), options: AdcpErrorOptions): AdcpErrorResponse {
-  const recovery: ErrorRecovery = options.recovery
-    ?? (isStandardErrorCode(code)
-      ? STANDARD_ERROR_CODES[code as StandardErrorCode].recovery
-      : 'terminal');
+  const recovery: ErrorRecovery =
+    options.recovery ??
+    (isStandardErrorCode(code) ? STANDARD_ERROR_CODES[code as StandardErrorCode].recovery : 'terminal');
 
   const adcp_error: Record<string, unknown> = {
     code,

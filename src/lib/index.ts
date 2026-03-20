@@ -373,18 +373,17 @@ export type { StandardErrorCode, ErrorRecovery } from './types/error-codes';
 
 // ====== SERVER-SIDE HELPERS ======
 // Helpers for building AdCP-compliant MCP servers
-export {
-  adcpError,
-  capabilitiesResponse,
-  productsResponse,
-  mediaBuyResponse,
-  deliveryResponse,
-} from './server';
+export { adcpError, capabilitiesResponse, productsResponse, mediaBuyResponse, deliveryResponse } from './server';
 export type { AdcpErrorOptions, AdcpErrorResponse, McpToolResponse } from './server';
 
 // ====== ERROR EXTRACTION ======
 // Extract structured AdCP errors from transport responses
-export { extractAdcpErrorFromMcp, extractAdcpErrorFromTransport, resolveRecovery, getExpectedAction } from './utils/error-extraction';
+export {
+  extractAdcpErrorFromMcp,
+  extractAdcpErrorFromTransport,
+  resolveRecovery,
+  getExpectedAction,
+} from './utils/error-extraction';
 export type { ExtractedAdcpError } from './utils/error-extraction';
 
 // ====== BACKWARDS COMPATIBILITY ======

@@ -55,10 +55,7 @@ function toStructuredContent(data: object): Record<string, unknown> {
  * `supported_protocols` lists AdCP domain protocols (media_buy, signals, governance, etc.),
  * NOT transport protocols (mcp, a2a).
  */
-export function capabilitiesResponse(
-  data: GetAdCPCapabilitiesResponse,
-  summary?: string,
-): McpToolResponse {
+export function capabilitiesResponse(data: GetAdCPCapabilitiesResponse, summary?: string): McpToolResponse {
   return {
     content: [{ type: 'text', text: summary ?? 'Agent capabilities retrieved' }],
     structuredContent: toStructuredContent(data),
@@ -68,10 +65,7 @@ export function capabilitiesResponse(
 /**
  * Build a get_products response.
  */
-export function productsResponse(
-  data: GetProductsResponse,
-  summary?: string,
-): McpToolResponse {
+export function productsResponse(data: GetProductsResponse, summary?: string): McpToolResponse {
   return {
     content: [{ type: 'text', text: summary ?? `Found ${data.products.length} products` }],
     structuredContent: toStructuredContent(data),
@@ -81,10 +75,7 @@ export function productsResponse(
 /**
  * Build a successful create_media_buy response.
  */
-export function mediaBuyResponse(
-  data: CreateMediaBuySuccess,
-  summary?: string,
-): McpToolResponse {
+export function mediaBuyResponse(data: CreateMediaBuySuccess, summary?: string): McpToolResponse {
   return {
     content: [{ type: 'text', text: summary ?? `Media buy ${data.media_buy_id} created` }],
     structuredContent: toStructuredContent(data),
@@ -94,12 +85,16 @@ export function mediaBuyResponse(
 /**
  * Build a get_media_buy_delivery response.
  */
-export function deliveryResponse(
-  data: GetMediaBuyDeliveryResponse,
-  summary?: string,
-): McpToolResponse {
+export function deliveryResponse(data: GetMediaBuyDeliveryResponse, summary?: string): McpToolResponse {
   return {
-    content: [{ type: 'text', text: summary ?? `Delivery data for ${data.media_buy_deliveries.length} media buy${data.media_buy_deliveries.length === 1 ? '' : 's'}` }],
+    content: [
+      {
+        type: 'text',
+        text:
+          summary ??
+          `Delivery data for ${data.media_buy_deliveries.length} media buy${data.media_buy_deliveries.length === 1 ? '' : 's'}`,
+      },
+    ],
     structuredContent: toStructuredContent(data),
   };
 }

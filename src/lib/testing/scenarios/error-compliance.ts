@@ -45,12 +45,14 @@ function createProvocations(): ErrorProvocation[] {
         buyer_ref: `error-compliance-${now}`,
         start_time: new Date(now + 86400000).toISOString(),
         end_time: new Date(now + 604800000).toISOString(),
-        packages: [{
-          buyer_ref: 'pkg-error-test',
-          product_id: 'NONEXISTENT_PRODUCT_ID_12345',
-          budget: 1000,
-          pricing_option_id: 'nonexistent-pricing',
-        }],
+        packages: [
+          {
+            buyer_ref: 'pkg-error-test',
+            product_id: 'NONEXISTENT_PRODUCT_ID_12345',
+            budget: 1000,
+            pricing_option_id: 'nonexistent-pricing',
+          },
+        ],
       },
       expectedCodes: ['PRODUCT_NOT_FOUND', 'INVALID_REQUEST'],
       expectedRecovery: 'correctable',
@@ -63,12 +65,14 @@ function createProvocations(): ErrorProvocation[] {
         buyer_ref: `error-compliance-neg-${now}`,
         start_time: new Date(now + 86400000).toISOString(),
         end_time: new Date(now + 604800000).toISOString(),
-        packages: [{
-          buyer_ref: 'pkg-neg-budget',
-          product_id: 'test-product',
-          budget: -500,
-          pricing_option_id: 'test-pricing',
-        }],
+        packages: [
+          {
+            buyer_ref: 'pkg-neg-budget',
+            product_id: 'test-product',
+            budget: -500,
+            pricing_option_id: 'test-pricing',
+          },
+        ],
       },
       expectedCodes: ['INVALID_REQUEST', 'BUDGET_TOO_LOW'],
       expectedRecovery: 'correctable',
@@ -81,12 +85,14 @@ function createProvocations(): ErrorProvocation[] {
         buyer_ref: `error-compliance-temporal-${now}`,
         start_time: new Date(now + 604800000).toISOString(),
         end_time: new Date(now + 86400000).toISOString(),
-        packages: [{
-          buyer_ref: 'pkg-temporal',
-          product_id: 'test-product',
-          budget: 1000,
-          pricing_option_id: 'test-pricing',
-        }],
+        packages: [
+          {
+            buyer_ref: 'pkg-temporal',
+            product_id: 'test-product',
+            budget: 1000,
+            pricing_option_id: 'test-pricing',
+          },
+        ],
       },
       expectedCodes: ['INVALID_REQUEST'],
       expectedRecovery: 'correctable',
@@ -124,10 +130,14 @@ export async function testErrorCodes(
     totalChecked++;
 
     try {
-      const rawResponse = await callMCPToolRaw(
-        agentUrl, provocation.tool, provocation.args,
-        authToken, [], headers
-      ) as RawMcpResponse | undefined;
+      const rawResponse = (await callMCPToolRaw(
+        agentUrl,
+        provocation.tool,
+        provocation.args,
+        authToken,
+        [],
+        headers
+      )) as RawMcpResponse | undefined;
 
       const extracted = extractAdcpErrorFromMcp(rawResponse);
 
@@ -176,15 +186,21 @@ export async function testErrorCodes(
           `recovery=${recovery}`,
           extracted.field ? `field=${extracted.field}` : null,
           extracted.suggestion ? 'has suggestion' : null,
-        ].filter(Boolean).join(', '),
+        ]
+          .filter(Boolean)
+          .join(', '),
         error: errors.length > 0 ? errors.join('; ') : undefined,
-        response_preview: JSON.stringify({
-          code: extracted.code,
-          recovery: extracted.recovery,
-          field: extracted.field,
-          compliance_level: extracted.compliance_level,
-          source: extracted.source,
-        }, null, 2),
+        response_preview: JSON.stringify(
+          {
+            code: extracted.code,
+            recovery: extracted.recovery,
+            field: extracted.field,
+            compliance_level: extracted.compliance_level,
+            source: extracted.source,
+          },
+          null,
+          2
+        ),
       });
     } catch (error) {
       steps.push({
@@ -242,10 +258,7 @@ export async function testErrorStructure(
   const provocation = createProvocations()[0]!;
 
   try {
-    const rawResponse = await callMCPToolRaw(
-      agentUrl, provocation.tool, provocation.args,
-      authToken, [], headers
-    );
+    const rawResponse = await callMCPToolRaw(agentUrl, provocation.tool, provocation.args, authToken, [], headers);
 
     const extracted = extractAdcpErrorFromMcp(rawResponse);
     if (!extracted) {
@@ -270,12 +283,13 @@ export async function testErrorStructure(
     }
 
     // Optional field types
-    if (extracted.recovery !== undefined &&
-        !['transient', 'correctable', 'terminal'].includes(extracted.recovery)) {
+    if (extracted.recovery !== undefined && !['transient', 'correctable', 'terminal'].includes(extracted.recovery)) {
       issues.push(`recovery must be transient|correctable|terminal, got '${extracted.recovery}'`);
     }
-    if (extracted.retry_after !== undefined &&
-        (typeof extracted.retry_after !== 'number' || extracted.retry_after < 0)) {
+    if (
+      extracted.retry_after !== undefined &&
+      (typeof extracted.retry_after !== 'number' || extracted.retry_after < 0)
+    ) {
       issues.push('retry_after must be a non-negative number');
     }
     if (extracted.field !== undefined && typeof extracted.field !== 'string') {
@@ -295,9 +309,10 @@ export async function testErrorStructure(
       task: provocation.tool,
       passed: issues.length === 0,
       duration_ms: Date.now() - start,
-      details: issues.length === 0
-        ? `Valid error structure: code=${extracted.code}, L${extracted.compliance_level}`
-        : undefined,
+      details:
+        issues.length === 0
+          ? `Valid error structure: code=${extracted.code}, L${extracted.compliance_level}`
+          : undefined,
       error: issues.length > 0 ? issues.join('; ') : undefined,
     });
   } catch (error) {
@@ -345,14 +360,13 @@ export async function testErrorTransport(
   const provocation = createProvocations()[0]!;
 
   try {
-    const rawResponse = await callMCPToolRaw(
-      agentUrl, provocation.tool, provocation.args,
-      authToken, [], headers
-    ) as RawMcpResponse | undefined;
+    const rawResponse = (await callMCPToolRaw(agentUrl, provocation.tool, provocation.args, authToken, [], headers)) as
+      | RawMcpResponse
+      | undefined;
 
     const hasIsError = rawResponse?.isError === true;
     const structured = rawResponse?.structuredContent as Record<string, unknown> | undefined;
-    const hasStructuredContent = !!(structured?.adcp_error);
+    const hasStructuredContent = !!structured?.adcp_error;
 
     // Check JSON text fallback
     let hasTextJson = false;
@@ -362,7 +376,9 @@ export async function testErrorTransport(
           try {
             const parsed = JSON.parse(item.text);
             if (parsed?.adcp_error) hasTextJson = true;
-          } catch { /* not JSON */ }
+          } catch {
+            /* not JSON */
+          }
         }
       }
     }
@@ -378,7 +394,9 @@ export async function testErrorTransport(
             if (parsed?.adcp_error?.code !== adcpError.code) {
               consistent = false;
             }
-          } catch { /* skip */ }
+          } catch {
+            /* skip */
+          }
         }
       }
     }
@@ -405,16 +423,21 @@ export async function testErrorTransport(
       passed: level >= 2,
       duration_ms: Date.now() - start,
       details: details.join(', '),
-      error: level < 2
-        ? 'Error response missing JSON text fallback. Use adcpError() from @adcp/client for L3 compliance.'
-        : undefined,
-      response_preview: JSON.stringify({
-        isError: hasIsError,
-        hasStructuredContent,
-        hasTextJson,
-        consistent,
-        compliance_level: level,
-      }, null, 2),
+      error:
+        level < 2
+          ? 'Error response missing JSON text fallback. Use adcpError() from @adcp/client for L3 compliance.'
+          : undefined,
+      response_preview: JSON.stringify(
+        {
+          isError: hasIsError,
+          hasStructuredContent,
+          hasTextJson,
+          consistent,
+          compliance_level: level,
+        },
+        null,
+        2
+      ),
     });
   } catch (error) {
     steps.push({

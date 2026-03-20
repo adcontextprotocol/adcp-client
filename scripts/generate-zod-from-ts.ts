@@ -294,7 +294,8 @@ function unwrapRecordIntersections(content: string): string {
       const recordBodyStart = i;
       while (i < content.length && depth > 0) {
         if (content[i] === '"' || content[i] === "'") {
-          const quote = content[i]; i++;
+          const quote = content[i];
+          i++;
           while (i < content.length && content[i] !== quote) {
             if (content[i] === '\\') i++;
             i++;
@@ -321,12 +322,21 @@ function unwrapRecordIntersections(content: string): string {
         let andContent = '';
         while (i < content.length && depth > 0) {
           if (content[i] === '"' || content[i] === "'") {
-            const quote = content[i]; andContent += content[i]; i++;
+            const quote = content[i];
+            andContent += content[i];
+            i++;
             while (i < content.length && content[i] !== quote) {
-              if (content[i] === '\\') { andContent += content[i]; i++; }
-              andContent += content[i]; i++;
+              if (content[i] === '\\') {
+                andContent += content[i];
+                i++;
+              }
+              andContent += content[i];
+              i++;
             }
-            if (i < content.length) { andContent += content[i]; i++; }
+            if (i < content.length) {
+              andContent += content[i];
+              i++;
+            }
             continue;
           }
           if (content[i] === '(') depth++;
@@ -382,12 +392,21 @@ function stripNeverUnionIntersections(content: string): string {
       let andContent = '';
       while (i < content.length && depth > 0) {
         if (content[i] === '"' || content[i] === "'") {
-          const quote = content[i]; andContent += content[i]; i++;
+          const quote = content[i];
+          andContent += content[i];
+          i++;
           while (i < content.length && content[i] !== quote) {
-            if (content[i] === '\\') { andContent += content[i]; i++; }
-            andContent += content[i]; i++;
+            if (content[i] === '\\') {
+              andContent += content[i];
+              i++;
+            }
+            andContent += content[i];
+            i++;
           }
-          if (i < content.length) { andContent += content[i]; i++; }
+          if (i < content.length) {
+            andContent += content[i];
+            i++;
+          }
           continue;
         }
         if (content[i] === '(') depth++;

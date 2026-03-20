@@ -459,7 +459,9 @@ async function handleTestCommand(args) {
     try {
       const { closeMCPConnections } = await import('../dist/lib/protocols/mcp.js');
       await closeMCPConnections();
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
 
     console.error(`\n❌ Test execution failed: ${error.message}`);
     if (debug) {
@@ -1729,7 +1731,9 @@ process.on('beforeExit', async () => {
   try {
     const { closeMCPConnections } = require('../dist/lib/protocols/mcp.js');
     await closeMCPConnections();
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
 });
 
 main().catch(error => {

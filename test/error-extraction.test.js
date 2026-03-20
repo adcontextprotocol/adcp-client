@@ -35,17 +35,19 @@ describe('extractAdcpErrorFromMcp', () => {
   it('extracts from JSON text content (L2)', () => {
     const response = {
       isError: true,
-      content: [{
-        type: 'text',
-        text: JSON.stringify({
-          adcp_error: {
-            code: 'PRODUCT_NOT_FOUND',
-            message: 'Not found',
-            recovery: 'correctable',
-            field: 'product_id',
-          },
-        }),
-      }],
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify({
+            adcp_error: {
+              code: 'PRODUCT_NOT_FOUND',
+              message: 'Not found',
+              recovery: 'correctable',
+              field: 'product_id',
+            },
+          }),
+        },
+      ],
     };
 
     const result = extractAdcpErrorFromMcp(response);
@@ -169,10 +171,12 @@ describe('extractAdcpErrorFromMcp', () => {
   it('prefers structuredContent over text fallback', () => {
     const response = {
       isError: true,
-      content: [{
-        type: 'text',
-        text: JSON.stringify({ adcp_error: { code: 'INVALID_REQUEST', message: 'text version' } }),
-      }],
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify({ adcp_error: { code: 'INVALID_REQUEST', message: 'text version' } }),
+        },
+      ],
       structuredContent: {
         adcp_error: { code: 'PRODUCT_NOT_FOUND', message: 'structured version' },
       },

@@ -609,7 +609,7 @@ export async function testCreativeInline(
   // Check if agent declares inline creative support via capabilities
   if (profile.tools.includes('get_adcp_capabilities')) {
     try {
-      const capResult = await client.getAdcpCapabilities({}) as TaskResult | undefined;
+      const capResult = (await client.getAdcpCapabilities({})) as TaskResult | undefined;
       const capData = capResult?.data as Record<string, any> | undefined;
       if (capData?.media_buy?.features?.inline_creative_management === false) {
         steps.push({
