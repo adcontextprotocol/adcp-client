@@ -32,10 +32,16 @@ type CallToolResponse = {
  * Uses LRU eviction: cache hits delete-and-re-insert the entry so that
  * Map iteration order reflects most-recent access.
  *
+ * The cache key includes only URL + auth token hash. Custom headers and trace
+ * headers are set at connection-creation time and fixed for the connection's
+ * lifetime — callers with different custom headers will share a connection
+ * created with the first caller's headers.
+ *
  * Note: This is a process-global singleton. Not suitable for multi-tenant
  * server use where different tenants share a process.
  */
 const connectionCache = new Map<string, MCPClient>();
+const pendingConnections = new Map<string, Promise<MCPClient>>();
 const MAX_CACHED_CONNECTIONS = 20;
 
 function connectionCacheKey(agentUrl: string, authToken?: string): string {
@@ -62,6 +68,7 @@ function evictLeastRecentlyUsed(): void {
   if (!lruKey) return;
   const oldClient = connectionCache.get(lruKey);
   connectionCache.delete(lruKey);
+  // Fire-and-forget: eviction is on the hot path; close is best-effort
   oldClient?.close().catch(() => {});
 }
 
@@ -82,9 +89,41 @@ export async function closeMCPConnections(): Promise<void> {
 }
 
 /**
+ * Get or create a cached connection for the given cache key.
+ * Concurrent callers for the same key share a single in-flight connection
+ * attempt via the pendingConnections map, preventing duplicate connections.
+ */
+async function getOrCreateConnection(
+  cacheKey: string,
+  baseUrl: URL,
+  authHeaders: Record<string, string>,
+  debugLogs: DebugLogEntry[],
+  label: string
+): Promise<MCPClient> {
+  const cached = getCachedConnection(cacheKey);
+  if (cached) return cached;
+
+  const pending = pendingConnections.get(cacheKey);
+  if (pending) return pending;
+
+  const promise = connectMCPWithFallback(baseUrl, authHeaders, debugLogs, label)
+    .then((client) => {
+      connectionCache.set(cacheKey, client);
+      evictLeastRecentlyUsed();
+      return client;
+    })
+    .finally(() => {
+      pendingConnections.delete(cacheKey);
+    });
+
+  pendingConnections.set(cacheKey, promise);
+  return promise;
+}
+
+/**
  * Get or create a cached MCP connection, then call `fn` with it.
  * On transport errors, evicts the stale connection and retries once.
- * Auth errors (401) evict the connection and throw immediately.
+ * Auth errors (401) evict and close the connection, then throw immediately.
  */
 async function withCachedConnection<T>(
   agentUrl: string,
@@ -97,19 +136,32 @@ async function withCachedConnection<T>(
   const cacheKey = connectionCacheKey(agentUrl, authToken);
   const baseUrl = new URL(agentUrl);
 
-  let mcpClient = getCachedConnection(cacheKey);
-  if (!mcpClient) {
-    mcpClient = await connectMCPWithFallback(baseUrl, authHeaders, debugLogs, label);
-    connectionCache.set(cacheKey, mcpClient);
-    evictLeastRecentlyUsed();
-  }
+  const mcpClient = await getOrCreateConnection(cacheKey, baseUrl, authHeaders, debugLogs, label);
 
   try {
     return await fn(mcpClient);
   } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    debugLogs.push({
+      type: 'error',
+      message: `MCP: ${label} call failed: ${errorMessage}`,
+      timestamp: new Date().toISOString(),
+      error,
+    });
+
     // Auth errors won't be fixed by reconnecting — fail fast
     if (is401Error(error)) {
       connectionCache.delete(cacheKey);
+      try {
+        await mcpClient.close();
+      } catch {
+        /* ignore */
+      }
+      debugLogs.push({
+        type: 'warning',
+        message: `MCP: Authentication issue detected for ${label} - headers may not be reaching server`,
+        timestamp: new Date().toISOString(),
+      });
       throw error;
     }
 
@@ -121,11 +173,17 @@ async function withCachedConnection<T>(
       /* ignore */
     }
 
-    mcpClient = await connectMCPWithFallback(baseUrl, authHeaders, debugLogs, `${label} (retry)`);
-    connectionCache.set(cacheKey, mcpClient);
-    evictLeastRecentlyUsed();
+    const retryClient = await getOrCreateConnection(cacheKey, baseUrl, authHeaders, debugLogs, `${label} (retry)`);
 
-    return fn(mcpClient);
+    try {
+      return await fn(retryClient);
+    } catch (retryError) {
+      // Attach original error for diagnostics
+      if (retryError instanceof Error && error instanceof Error) {
+        retryError.cause = error;
+      }
+      throw retryError;
+    }
   }
 }
 
