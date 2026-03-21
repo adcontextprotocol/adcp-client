@@ -17,7 +17,7 @@ import type {
 } from '../../types/tools.generated';
 import type { Product, PricingOption, FormatID } from '../../types/core.generated';
 import type { TestOptions, TestStepResult, AgentProfile, TaskResult } from '../types';
-import { createTestClient, runStep, discoverAgentProfile, resolveBrand, resolveAccount } from '../client';
+import { createTestClient, runStep, discoverAgentProfile, resolveBrand, resolveAccount, validateResponseSchema } from '../client';
 import { testDiscovery } from './discovery';
 
 /**
@@ -261,6 +261,7 @@ export async function testCreateMediaBuy(
   let mediaBuyId: string | undefined;
 
   if (createResult?.success && createResult?.data) {
+    steps.push(validateResponseSchema('create_media_buy', createResult.data));
     const mediaBuy = createResult.data as unknown as Record<string, unknown>;
     const nested = mediaBuy.media_buy as Record<string, unknown> | undefined;
     mediaBuyId = (mediaBuy.media_buy_id || nested?.media_buy_id) as string | undefined;
@@ -357,6 +358,7 @@ export async function testFullSalesFlow(
     );
 
     if (snapshotResult?.success && snapshotResult?.data) {
+      steps.push(validateResponseSchema('get_media_buys', snapshotResult.data));
       const mediaBuys = snapshotResult.data.media_buys || [];
       const mediaBuy = mediaBuys.find((item: any) => item.media_buy_id === mediaBuyId) || mediaBuys[0];
       const packages = mediaBuy?.packages || [];
@@ -730,6 +732,7 @@ export async function testCreativeInline(
   );
 
   if (createResult?.success && createResult?.data) {
+    steps.push(validateResponseSchema('create_media_buy', createResult.data));
     const mediaBuy = createResult.data as unknown as Record<string, unknown>;
     const nested = mediaBuy.media_buy as Record<string, unknown> | undefined;
     const mediaBuyId = (mediaBuy.media_buy_id || nested?.media_buy_id) as string | undefined;
@@ -915,6 +918,7 @@ export async function testCreativeReference(
   );
 
   if (createResult?.success && createResult?.data) {
+    steps.push(validateResponseSchema('create_media_buy', createResult.data));
     const mediaBuy = createResult.data;
     const mediaBuyId = mediaBuy.media_buy_id || mediaBuy.media_buy?.media_buy_id;
     const packages = mediaBuy.packages || mediaBuy.media_buy?.packages;

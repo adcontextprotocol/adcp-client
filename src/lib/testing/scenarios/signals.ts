@@ -12,7 +12,7 @@
 
 import type { TestOptions, TestStepResult, AgentProfile, TaskResult } from '../types';
 import type { ActivateSignalSuccess, Destination } from '../../types/tools.generated';
-import { createTestClient, runStep, discoverAgentProfile, discoverSignals } from '../client';
+import { createTestClient, runStep, discoverAgentProfile, discoverSignals, validateResponseSchema } from '../client';
 
 /**
  * Test: Signals Flow (for signals agents)
@@ -35,8 +35,9 @@ export async function testSignalsFlow(
   }
 
   // Discover available signals
-  const { signals: discoveredSignals, step: signalsStep } = await discoverSignals(client, profile, options);
+  const { signals: discoveredSignals, step: signalsStep, schemaStep } = await discoverSignals(client, profile, options);
   steps.push(signalsStep);
+  if (schemaStep) steps.push(schemaStep);
 
   // Use mutable array to collect signals
   const allSignals: NonNullable<AgentProfile['supported_signals']> = discoveredSignals || [];
@@ -103,6 +104,7 @@ export async function testSignalsFlow(
         );
 
         if (result?.success && result?.data) {
+          steps.push(validateResponseSchema('activate_signal', result.data));
           const data = result.data as ActivateSignalSuccess;
           const firstDeployment = data.deployments?.[0];
           step.details = `Signal activation submitted`;

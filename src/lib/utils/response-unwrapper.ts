@@ -15,7 +15,6 @@ const ERROR_CODES = {
   INVALID_RESPONSE: 'invalid_response',
   UNKNOWN: 'unknown',
 } as const;
-import * as schemas from '../types/schemas.generated';
 import type {
   GetProductsResponse,
   ListCreativeFormatsResponse,
@@ -23,6 +22,7 @@ import type {
   SyncCreativesResponse,
   ListCreativesResponse,
   UpdateMediaBuyResponse,
+  GetMediaBuysResponse,
   GetMediaBuyDeliveryResponse,
   ProvidePerformanceFeedbackResponse,
   BuildCreativeResponse,
@@ -30,6 +30,7 @@ import type {
   GetSignalsResponse,
   ActivateSignalResponse,
 } from '../types/tools.generated';
+import { TOOL_RESPONSE_SCHEMAS } from './response-schemas';
 
 /**
  * Union type of all possible AdCP responses
@@ -42,68 +43,13 @@ export type AdCPResponse =
   | SyncCreativesResponse
   | ListCreativesResponse
   | UpdateMediaBuyResponse
+  | GetMediaBuysResponse
   | GetMediaBuyDeliveryResponse
   | ProvidePerformanceFeedbackResponse
   | BuildCreativeResponse
   | PreviewCreativeResponse
   | GetSignalsResponse
   | ActivateSignalResponse;
-
-/**
- * Map of AdCP tool names to their Zod response schemas
- *
- * TYPE SAFETY TRADE-OFF ANALYSIS:
- *
- * Current approach: All schemas cast to `z.ZodSchema<AdCPResponse>` (union type)
- *
- * Why we keep this approach:
- * 1. Simplicity - Single map type is easy to maintain and extend
- * 2. Runtime validation - Zod schemas provide full validation regardless of type
- * 3. Return type accuracy - unwrapProtocolResponse returns `AdCPResponse` union anyway
- * 4. Minimal type loss - The specific schema validates correctly at runtime
- *
- * Alternative considered (function overloads):
- * ```typescript
- * function unwrapProtocolResponse(response: any, toolName: 'get_products'): GetProductsResponse;
- * function unwrapProtocolResponse(response: any, toolName: 'create_media_buy'): CreateMediaBuyResponse;
- * // ... 13 overloads total
- * ```
- *
- * Why we don't use overloads:
- * 1. High maintenance burden - 13+ overload signatures to maintain
- * 2. Fragile - Easy to forget updating overloads when adding tools
- * 3. Limited benefit - Caller still needs type guards to narrow union
- * 4. Optional toolName - toolName parameter is optional, overloads don't help
- *
- * Alternative considered (mapped types):
- * ```typescript
- * type ToolSchemaMap = {
- *   [K in keyof typeof TOOL_RESPONSE_SCHEMAS]: z.ZodSchema<Extract<AdCPResponse, { ... }>>
- * }
- * ```
- *
- * Why we don't use mapped types:
- * 1. Complexity - Requires discriminated union detection logic
- * 2. Fragile - AdCP responses don't all have discriminator fields
- * 3. Minimal benefit - Still returns union type, needs type guards at call site
- *
- * Conclusion: Current approach provides best balance of simplicity, maintainability,
- * and runtime safety. TypeScript types are validated by Zod at runtime anyway.
- */
-const TOOL_RESPONSE_SCHEMAS: Partial<Record<string, z.ZodType>> = {
-  get_products: schemas.GetProductsResponseSchema,
-  list_creative_formats: schemas.ListCreativeFormatsResponseSchema,
-  create_media_buy: schemas.CreateMediaBuyResponseSchema,
-  update_media_buy: schemas.UpdateMediaBuyResponseSchema,
-  sync_creatives: schemas.SyncCreativesResponseSchema,
-  list_creatives: schemas.ListCreativesResponseSchema,
-  get_media_buy_delivery: schemas.GetMediaBuyDeliveryResponseSchema,
-  provide_performance_feedback: schemas.ProvidePerformanceFeedbackResponseSchema,
-  build_creative: schemas.BuildCreativeResponseSchema,
-  preview_creative: schemas.PreviewCreativeResponseSchema,
-  get_signals: schemas.GetSignalsResponseSchema,
-  activate_signal: schemas.ActivateSignalResponseSchema,
-};
 
 /**
  * Extract raw AdCP response from protocol wrapper
