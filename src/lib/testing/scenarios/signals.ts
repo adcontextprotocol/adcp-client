@@ -97,12 +97,8 @@ export async function testSignalsFlow(
           'activate_signal',
           async () =>
             client.activateSignal({
-              signal_id: signal.signal_id,
-              destination,
-              // Some agents support activation options
-              options: {
-                dry_run: options.dry_run !== false,
-              },
+              signal_agent_segment_id: signal.signal_id,
+              destinations: [destination],
               // eslint-disable-next-line @typescript-eslint/no-explicit-any -- bypasses strict request typing
             } as any) as Promise<TaskResult>
         );
@@ -146,11 +142,13 @@ export async function testSignalsFlow(
       'activate_signal',
       async () =>
         client.activateSignal({
-          signal_id: 'INVALID_SIGNAL_ID_DOES_NOT_EXIST_12345',
-          destination: {
-            platform: 'test-platform',
-            account_id: 'test-account',
-          },
+          signal_agent_segment_id: 'INVALID_SIGNAL_ID_DOES_NOT_EXIST_12345',
+          destinations: [
+            {
+              platform: 'test-platform',
+              account_id: 'test-account',
+            },
+          ],
           // eslint-disable-next-line @typescript-eslint/no-explicit-any -- bypasses strict request typing
         } as any) as Promise<TaskResult>
     );

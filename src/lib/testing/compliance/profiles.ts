@@ -489,8 +489,11 @@ export function getPlatformProfile(type: PlatformType): PlatformProfile {
 }
 
 /**
- * Get all available platform types.
+ * Get all available platform types with their labels.
  */
-export function getAllPlatformTypes(): PlatformType[] {
-  return Object.keys(PLATFORM_PROFILES) as PlatformType[];
+export function getAllPlatformTypes(): Array<{ id: PlatformType; label: string }> {
+  return (Object.keys(PLATFORM_PROFILES) as PlatformType[]).map((type) => ({
+    id: type,
+    label: PLATFORM_PROFILES[type].label,
+  }));
 }

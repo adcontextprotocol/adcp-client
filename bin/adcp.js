@@ -562,10 +562,10 @@ async function handleComplyCommand(args) {
     const { getAllPlatformTypes, getPlatformProfile } = await import('../dist/lib/testing/compliance/index.js');
     const types = getAllPlatformTypes();
     console.log('\nAvailable platform types:\n');
-    for (const type of types) {
-      const profile = getPlatformProfile(type);
-      console.log(`  ${type}`);
-      console.log(`    ${profile.label}`);
+    for (const { id, label } of types) {
+      const profile = getPlatformProfile(id);
+      console.log(`  ${id}`);
+      console.log(`    ${label}`);
       console.log(`    Expected tracks: ${profile.expected_tracks.join(', ')}`);
       console.log('');
     }
@@ -638,9 +638,10 @@ EXAMPLES:
     // Validate against known types
     const { getAllPlatformTypes } = await import('../dist/lib/testing/compliance/index.js');
     const validTypes = getAllPlatformTypes();
-    if (!validTypes.includes(platform_type)) {
+    const validTypeIds = validTypes.map(t => t.id);
+    if (!validTypeIds.includes(platform_type)) {
       console.error(`ERROR: Unknown platform type: ${platform_type}`);
-      console.error(`Valid types: ${validTypes.join(', ')}`);
+      console.error(`Valid types: ${validTypeIds.join(', ')}`);
       console.error(`Run 'adcp comply --list-platform-types' to see all options.\n`);
       process.exit(2);
     }

@@ -1165,6 +1165,65 @@ describe('Request Parameter Normalization', () => {
     });
   });
 
+  describe('signal_id → signal_agent_segment_id (activate_signal)', () => {
+    test('should rename signal_id to signal_agent_segment_id', () => {
+      resetWarnings();
+      const result = normalizeRequestParams('activate_signal', {
+        signal_id: 'seg_123',
+        destinations: [{ platform: 'dv360', account_id: 'acct' }],
+      });
+      assert.strictEqual(result.signal_agent_segment_id, 'seg_123');
+      assert.strictEqual(result.signal_id, undefined);
+    });
+
+    test('should not overwrite existing signal_agent_segment_id', () => {
+      resetWarnings();
+      const result = normalizeRequestParams('activate_signal', {
+        signal_id: 'old_id',
+        signal_agent_segment_id: 'new_id',
+        destinations: [{ platform: 'dv360', account_id: 'acct' }],
+      });
+      assert.strictEqual(result.signal_agent_segment_id, 'new_id');
+      assert.strictEqual(result.signal_id, undefined);
+    });
+  });
+
+  describe('destination (singular) → destinations (array) (activate_signal)', () => {
+    test('should wrap singular destination in array', () => {
+      resetWarnings();
+      const dest = { platform: 'meta', account_id: 'acct' };
+      const result = normalizeRequestParams('activate_signal', {
+        signal_agent_segment_id: 'seg_1',
+        destination: dest,
+      });
+      assert.deepStrictEqual(result.destinations, [dest]);
+      assert.strictEqual(result.destination, undefined);
+    });
+
+    test('should not overwrite existing destinations array', () => {
+      resetWarnings();
+      const result = normalizeRequestParams('activate_signal', {
+        signal_agent_segment_id: 'seg_1',
+        destination: { platform: 'old' },
+        destinations: [{ platform: 'new' }],
+      });
+      assert.deepStrictEqual(result.destinations, [{ platform: 'new' }]);
+      assert.strictEqual(result.destination, undefined);
+    });
+  });
+
+  describe('options removal (activate_signal)', () => {
+    test('should strip options field', () => {
+      resetWarnings();
+      const result = normalizeRequestParams('activate_signal', {
+        signal_agent_segment_id: 'seg_1',
+        destinations: [{ platform: 'dv360' }],
+        options: { dry_run: true },
+      });
+      assert.strictEqual(result.options, undefined);
+    });
+  });
+
   describe('deliver_to → destinations (get_signals)', () => {
     test('should rename deliver_to to destinations for get_signals', () => {
       resetWarnings();
