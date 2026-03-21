@@ -21,6 +21,7 @@ import type {
 } from './types';
 import { getPlatformProfile } from './profiles';
 import type { PlatformProfile } from './profiles';
+import { closeMCPConnections } from '../../protocols/mcp';
 
 /**
  * Maps each track to its constituent scenarios and a human-readable label.
@@ -297,7 +298,11 @@ export interface ComplyOptions extends TestOptions {
  * Assesses all applicable tracks independently — never stops at first failure.
  */
 export async function comply(agentUrl: string, options: ComplyOptions = {}): Promise<ComplianceResult> {
-  return complyImpl(agentUrl, options);
+  try {
+    return await complyImpl(agentUrl, options);
+  } finally {
+    await closeMCPConnections();
+  }
 }
 
 async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<ComplianceResult> {

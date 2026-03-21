@@ -8,6 +8,7 @@ import {
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { UnauthorizedError } from '@modelcontextprotocol/sdk/client/auth.js';
 import type { OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js';
+import { createHash } from 'node:crypto';
 import { createMCPAuthHeaders } from '../auth';
 import { is401Error } from '../errors';
 import type { DebugLogEntry } from '../types/adcp';
@@ -15,6 +16,176 @@ import { withSpan, injectTraceHeaders } from '../observability/tracing';
 
 // Re-export for convenience
 export { UnauthorizedError };
+
+/** Response shape returned by MCPClient.callTool(). */
+type CallToolResponse = {
+  isError?: boolean;
+  content?: Array<{ type: string; text?: string }>;
+  [key: string]: unknown;
+};
+
+/**
+ * Module-level connection cache keyed by agent URL + auth token hash.
+ * Reuses MCP connections across tool calls to avoid TCP connection exhaustion
+ * during comply/test runs that make dozens of sequential calls.
+ *
+ * Uses LRU eviction: cache hits delete-and-re-insert the entry so that
+ * Map iteration order reflects most-recent access.
+ *
+ * The cache key includes only URL + auth token hash. Custom headers and trace
+ * headers are set at connection-creation time and fixed for the connection's
+ * lifetime — callers with different custom headers will share a connection
+ * created with the first caller's headers.
+ *
+ * Note: This is a process-global singleton. Not suitable for multi-tenant
+ * server use where different tenants share a process.
+ */
+const connectionCache = new Map<string, MCPClient>();
+const pendingConnections = new Map<string, Promise<MCPClient>>();
+const MAX_CACHED_CONNECTIONS = 20;
+
+function connectionCacheKey(agentUrl: string, authToken?: string): string {
+  if (!authToken) return agentUrl;
+  const tokenHash = createHash('sha256').update(authToken).digest('hex').slice(0, 16);
+  return `${agentUrl}::${tokenHash}`;
+}
+
+/** Get a cached connection, refreshing its LRU position. */
+function getCachedConnection(key: string): MCPClient | undefined {
+  const client = connectionCache.get(key);
+  if (client) {
+    // Delete and re-insert so this key moves to the end (most-recently-used)
+    connectionCache.delete(key);
+    connectionCache.set(key, client);
+  }
+  return client;
+}
+
+function evictLeastRecentlyUsed(): void {
+  if (connectionCache.size <= MAX_CACHED_CONNECTIONS) return;
+  // Map iteration order is insertion-order; first key = least-recently-used
+  const lruKey = connectionCache.keys().next().value;
+  if (!lruKey) return;
+  const oldClient = connectionCache.get(lruKey);
+  connectionCache.delete(lruKey);
+  // Fire-and-forget: eviction is on the hot path; close is best-effort
+  oldClient?.close().catch(() => {});
+}
+
+/**
+ * Close all cached MCP connections.
+ * Call this at the end of comply/test runs or before process exit.
+ */
+export async function closeMCPConnections(): Promise<void> {
+  const entries = [...connectionCache.entries()];
+  connectionCache.clear();
+  for (const [, client] of entries) {
+    try {
+      await client.close();
+    } catch {
+      /* ignore close errors */
+    }
+  }
+}
+
+/**
+ * Get or create a cached connection for the given cache key.
+ * Concurrent callers for the same key share a single in-flight connection
+ * attempt via the pendingConnections map, preventing duplicate connections.
+ */
+async function getOrCreateConnection(
+  cacheKey: string,
+  baseUrl: URL,
+  authHeaders: Record<string, string>,
+  debugLogs: DebugLogEntry[],
+  label: string
+): Promise<MCPClient> {
+  const cached = getCachedConnection(cacheKey);
+  if (cached) return cached;
+
+  const pending = pendingConnections.get(cacheKey);
+  if (pending) return pending;
+
+  const promise = connectMCPWithFallback(baseUrl, authHeaders, debugLogs, label)
+    .then(client => {
+      connectionCache.set(cacheKey, client);
+      evictLeastRecentlyUsed();
+      return client;
+    })
+    .finally(() => {
+      pendingConnections.delete(cacheKey);
+    });
+
+  pendingConnections.set(cacheKey, promise);
+  return promise;
+}
+
+/**
+ * Get or create a cached MCP connection, then call `fn` with it.
+ * On transport errors, evicts the stale connection and retries once.
+ * Auth errors (401) evict and close the connection, then throw immediately.
+ */
+async function withCachedConnection<T>(
+  agentUrl: string,
+  authToken: string | undefined,
+  authHeaders: Record<string, string>,
+  debugLogs: DebugLogEntry[],
+  label: string,
+  fn: (client: MCPClient) => Promise<T>
+): Promise<T> {
+  const cacheKey = connectionCacheKey(agentUrl, authToken);
+  const baseUrl = new URL(agentUrl);
+
+  const mcpClient = await getOrCreateConnection(cacheKey, baseUrl, authHeaders, debugLogs, label);
+
+  try {
+    return await fn(mcpClient);
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    debugLogs.push({
+      type: 'error',
+      message: `MCP: ${label} call failed: ${errorMessage}`,
+      timestamp: new Date().toISOString(),
+      error,
+    });
+
+    // Auth errors won't be fixed by reconnecting — fail fast
+    if (is401Error(error)) {
+      connectionCache.delete(cacheKey);
+      try {
+        await mcpClient.close();
+      } catch {
+        /* ignore */
+      }
+      debugLogs.push({
+        type: 'warning',
+        message: `MCP: Authentication issue detected for ${label} - headers may not be reaching server`,
+        timestamp: new Date().toISOString(),
+      });
+      throw error;
+    }
+
+    // Evict stale connection and retry once with a fresh connection
+    connectionCache.delete(cacheKey);
+    try {
+      await mcpClient.close();
+    } catch {
+      /* ignore */
+    }
+
+    const retryClient = await getOrCreateConnection(cacheKey, baseUrl, authHeaders, debugLogs, `${label} (retry)`);
+
+    try {
+      return await fn(retryClient);
+    } catch (retryError) {
+      // Attach original error for diagnostics
+      if (retryError instanceof Error && error instanceof Error) {
+        retryError.cause = error;
+      }
+      throw retryError;
+    }
+  }
+}
 
 /**
  * Options for MCP tool calls with OAuth support
@@ -83,15 +254,18 @@ async function connectMCPWithFallbackImpl(
   label = 'connection'
 ): Promise<MCPClient> {
   const transportOptions = { requestInit: { headers: authHeaders } };
+  let failedClient: MCPClient | undefined;
 
   try {
     const client = new MCPClient({ name: 'AdCP-Client', version: '1.0.0' });
+    failedClient = client;
     debugLogs.push({
       type: 'info',
       message: `MCP: Attempting StreamableHTTP ${label} to ${url}`,
       timestamp: new Date().toISOString(),
     });
     await client.connect(new StreamableHTTPClientTransport(url, transportOptions));
+    failedClient = undefined;
     debugLogs.push({
       type: 'success',
       message: `MCP: Connected via StreamableHTTP for ${label}`,
@@ -99,6 +273,15 @@ async function connectMCPWithFallbackImpl(
     });
     return client;
   } catch (error: unknown) {
+    // Close the failed client to avoid resource leaks
+    if (failedClient) {
+      try {
+        await failedClient.close();
+      } catch {
+        /* ignore */
+      }
+    }
+
     const errorMessage = error instanceof Error ? error.message : String(error);
     debugLogs.push({
       type: 'error',
@@ -189,9 +372,6 @@ async function callMCPToolImpl(
   debugLogs: DebugLogEntry[] = [],
   customHeaders?: Record<string, string>
 ): Promise<unknown> {
-  let mcpClient: MCPClient | undefined = undefined;
-  const baseUrl = new URL(agentUrl);
-
   // Inject trace context headers for distributed tracing
   const traceHeaders = injectTraceHeaders();
 
@@ -212,88 +392,47 @@ async function callMCPToolImpl(
     customHeaderKeys: customHeaders ? Object.keys(customHeaders) : [],
   });
 
-  mcpClient = await connectMCPWithFallback(baseUrl, authHeaders, debugLogs, toolName);
+  debugLogs.push({
+    type: 'info',
+    message: `MCP: Calling tool ${toolName} with args: ${JSON.stringify(args)}`,
+    timestamp: new Date().toISOString(),
+  });
 
-  try {
-    // Call the tool using official MCP client
+  if (authToken) {
     debugLogs.push({
       type: 'info',
-      message: `MCP: Calling tool ${toolName} with args: ${JSON.stringify(args)}`,
+      message: `MCP: Transport configured with x-adcp-auth header for ${toolName}`,
       timestamp: new Date().toISOString(),
     });
-
-    // For debugging: log the transport headers being used
-    if (authToken) {
-      debugLogs.push({
-        type: 'info',
-        message: `MCP: Transport configured with x-adcp-auth header for ${toolName}`,
-        timestamp: new Date().toISOString(),
-      });
-    }
-
-    const response = await mcpClient.callTool({
-      name: toolName,
-      arguments: args,
-    });
-
-    debugLogs.push({
-      type: response?.isError ? 'error' : 'success',
-      message: `MCP: Tool ${toolName} response received (${response?.isError ? 'error' : 'success'})`,
-      timestamp: new Date().toISOString(),
-      response: response,
-    });
-
-    // If MCP returns an error response, throw an error with the extracted message
-    // This ensures the error is properly caught and handled by the executor
-    if (response?.isError && response?.content && Array.isArray(response.content)) {
-      const errorText = response.content
-        .filter((item: { type: string; text?: string }) => item.type === 'text' && item.text)
-        .map((item: { type: string; text?: string }) => item.text)
-        .join('\n');
-
-      throw new Error(errorText || `MCP tool '${toolName}' execution failed (no error details provided)`);
-    }
-
-    return response;
-  } catch (error) {
-    // Capture tool call errors (including timeouts)
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    debugLogs.push({
-      type: 'error',
-      message: `MCP: Tool ${toolName} call failed: ${errorMessage}`,
-      timestamp: new Date().toISOString(),
-      error: error,
-    });
-
-    // If this is an auth error, log additional debugging info
-    if (errorMessage.toLowerCase().includes('auth') || errorMessage.toLowerCase().includes('unauthorized')) {
-      debugLogs.push({
-        type: 'warning',
-        message: `MCP: Authentication issue detected for ${toolName} - headers may not be reaching server`,
-        timestamp: new Date().toISOString(),
-      });
-    }
-
-    throw error; // Re-throw to maintain error handling
-  } finally {
-    // Always close the client properly
-    if (mcpClient) {
-      try {
-        await mcpClient.close();
-        debugLogs.push({
-          type: 'info',
-          message: `MCP: Client connection closed for ${toolName}`,
-          timestamp: new Date().toISOString(),
-        });
-      } catch (closeError) {
-        debugLogs.push({
-          type: 'warning',
-          message: `MCP: Error closing client for ${toolName}: ${closeError}`,
-          timestamp: new Date().toISOString(),
-        });
-      }
-    }
   }
+
+  const response = await withCachedConnection(
+    agentUrl,
+    authToken,
+    authHeaders,
+    debugLogs,
+    toolName,
+    client => client.callTool({ name: toolName, arguments: args }) as Promise<CallToolResponse>
+  );
+
+  debugLogs.push({
+    type: response?.isError ? 'error' : 'success',
+    message: `MCP: Tool ${toolName} response received (${response?.isError ? 'error' : 'success'})`,
+    timestamp: new Date().toISOString(),
+    response: response,
+  });
+
+  // If MCP returns an error response, throw an error with the extracted message
+  if (response?.isError && response?.content && Array.isArray(response.content)) {
+    const errorText = response.content
+      .filter(item => item.type === 'text' && item.text)
+      .map(item => item.text)
+      .join('\n');
+
+    throw new Error(errorText || `MCP tool '${toolName}' execution failed (no error details provided)`);
+  }
+
+  return response;
 }
 
 /**
@@ -307,9 +446,6 @@ async function callMCPToolRawImpl(
   debugLogs: DebugLogEntry[] = [],
   customHeaders?: Record<string, string>
 ): Promise<unknown> {
-  let mcpClient: MCPClient | undefined = undefined;
-  const baseUrl = new URL(agentUrl);
-
   const traceHeaders = injectTraceHeaders();
   const authHeaders = {
     ...customHeaders,
@@ -317,23 +453,9 @@ async function callMCPToolRawImpl(
     ...(authToken ? createMCPAuthHeaders(authToken) : {}),
   };
 
-  mcpClient = await connectMCPWithFallback(baseUrl, authHeaders, debugLogs, toolName);
-
-  try {
-    const response = await mcpClient.callTool({
-      name: toolName,
-      arguments: args,
-    });
-    return response;
-  } finally {
-    if (mcpClient) {
-      try {
-        await mcpClient.close();
-      } catch {
-        /* ignore */
-      }
-    }
-  }
+  return withCachedConnection(agentUrl, authToken, authHeaders, debugLogs, toolName, client =>
+    client.callTool({ name: toolName, arguments: args })
+  );
 }
 
 /**
@@ -441,10 +563,12 @@ export async function connectMCP(options: {
 }
 
 /**
- * Call an MCP tool with OAuth support
+ * Call an MCP tool with OAuth support.
  *
- * This is an enhanced version of callMCPTool that supports OAuth.
- * For simple cases with static tokens, use the original callMCPTool.
+ * Note: OAuth connections are NOT cached (each call creates a fresh connection)
+ * because OAuth token refresh requires transport-level coordination that is
+ * incompatible with connection pooling. This is acceptable because OAuth flows
+ * are interactive and infrequent.
  *
  * @param options Call options
  * @returns Tool response
