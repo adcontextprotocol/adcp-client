@@ -1165,6 +1165,96 @@ describe('Request Parameter Normalization', () => {
     });
   });
 
+  describe('signal_id → signal_agent_segment_id (activate_signal)', () => {
+    test('should rename signal_id to signal_agent_segment_id', () => {
+      resetWarnings();
+      const result = normalizeRequestParams('activate_signal', {
+        signal_id: 'seg_123',
+        destinations: [{ platform: 'dv360', account_id: 'acct' }],
+      });
+      assert.strictEqual(result.signal_agent_segment_id, 'seg_123');
+      assert.strictEqual(result.signal_id, undefined);
+    });
+
+    test('should not overwrite existing signal_agent_segment_id', () => {
+      resetWarnings();
+      const result = normalizeRequestParams('activate_signal', {
+        signal_id: 'old_id',
+        signal_agent_segment_id: 'new_id',
+        destinations: [{ platform: 'dv360', account_id: 'acct' }],
+      });
+      assert.strictEqual(result.signal_agent_segment_id, 'new_id');
+      assert.strictEqual(result.signal_id, undefined);
+    });
+  });
+
+  describe('destination (singular) → destinations (array) (activate_signal)', () => {
+    test('should wrap singular destination in array', () => {
+      resetWarnings();
+      const dest = { platform: 'meta', account_id: 'acct' };
+      const result = normalizeRequestParams('activate_signal', {
+        signal_agent_segment_id: 'seg_1',
+        destination: dest,
+      });
+      assert.deepStrictEqual(result.destinations, [dest]);
+      assert.strictEqual(result.destination, undefined);
+    });
+
+    test('should not overwrite existing destinations array', () => {
+      resetWarnings();
+      const result = normalizeRequestParams('activate_signal', {
+        signal_agent_segment_id: 'seg_1',
+        destination: { platform: 'old' },
+        destinations: [{ platform: 'new' }],
+      });
+      assert.deepStrictEqual(result.destinations, [{ platform: 'new' }]);
+      assert.strictEqual(result.destination, undefined);
+    });
+  });
+
+  describe('options removal (activate_signal)', () => {
+    test('should strip options field', () => {
+      resetWarnings();
+      const result = normalizeRequestParams('activate_signal', {
+        signal_agent_segment_id: 'seg_1',
+        destinations: [{ platform: 'dv360' }],
+        options: { dry_run: true },
+      });
+      assert.strictEqual(result.options, undefined);
+    });
+  });
+
+  describe('activate_signal normalizer scoping', () => {
+    test('should not rename signal_id for other tools', () => {
+      resetWarnings();
+      const result = normalizeRequestParams('get_signals', { signal_id: 'seg_1' });
+      assert.strictEqual(result.signal_id, 'seg_1');
+      assert.strictEqual(result.signal_agent_segment_id, undefined);
+    });
+
+    test('should not strip options for other tools', () => {
+      resetWarnings();
+      const result = normalizeRequestParams('get_products', { options: { limit: 10 } });
+      assert.deepStrictEqual(result.options, { limit: 10 });
+    });
+  });
+
+  describe('activate_signal combined normalization', () => {
+    test('should normalize all deprecated fields together', () => {
+      resetWarnings();
+      const result = normalizeRequestParams('activate_signal', {
+        signal_id: 'seg_1',
+        deployments: [{ agent_url: 'https://old.com' }],
+        options: { dry_run: true },
+      });
+      assert.strictEqual(result.signal_agent_segment_id, 'seg_1');
+      assert.deepStrictEqual(result.destinations, [{ agent_url: 'https://old.com' }]);
+      assert.strictEqual(result.signal_id, undefined);
+      assert.strictEqual(result.deployments, undefined);
+      assert.strictEqual(result.options, undefined);
+    });
+  });
+
   describe('deliver_to → destinations (get_signals)', () => {
     test('should rename deliver_to to destinations for get_signals', () => {
       resetWarnings();

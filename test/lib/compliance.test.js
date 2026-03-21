@@ -17,6 +17,7 @@ const {
   // Platform profiles
   getPlatformProfile,
   getAllPlatformTypes,
+  getPlatformTypesWithLabels,
 } = require('../../dist/lib/testing/compliance/index.js');
 
 // ============================================================
@@ -125,6 +126,19 @@ describe('getAllPlatformTypes', () => {
     assert.ok(types.includes('ai_ad_network'), 'Missing ai_ad_network');
     assert.ok(types.includes('ai_platform'), 'Missing ai_platform');
     assert.ok(types.includes('generative_dsp'), 'Missing generative_dsp');
+  });
+});
+
+describe('getPlatformTypesWithLabels', () => {
+  test('returns objects with id and label for all platform types', () => {
+    const entries = getPlatformTypesWithLabels();
+    const allTypes = getAllPlatformTypes();
+    assert.strictEqual(entries.length, allTypes.length);
+    for (const entry of entries) {
+      assert.ok(entry.id, 'Entry missing id');
+      assert.ok(entry.label, `Entry missing label for ${entry.id}`);
+      assert.ok(allTypes.includes(entry.id), `Unknown type: ${entry.id}`);
+    }
   });
 });
 

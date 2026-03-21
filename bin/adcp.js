@@ -559,13 +559,13 @@ async function resolveAgent(agentArg, authToken, protocolFlag, jsonOutput) {
 async function handleComplyCommand(args) {
   // Handle --list-platform-types before anything else
   if (args.includes('--list-platform-types')) {
-    const { getAllPlatformTypes, getPlatformProfile } = await import('../dist/lib/testing/compliance/index.js');
-    const types = getAllPlatformTypes();
+    const { getPlatformTypesWithLabels, getPlatformProfile } = await import('../dist/lib/testing/compliance/index.js');
+    const types = getPlatformTypesWithLabels();
     console.log('\nAvailable platform types:\n');
-    for (const type of types) {
-      const profile = getPlatformProfile(type);
-      console.log(`  ${type}`);
-      console.log(`    ${profile.label}`);
+    for (const { id, label } of types) {
+      const profile = getPlatformProfile(id);
+      console.log(`  ${id}`);
+      console.log(`    ${label}`);
       console.log(`    Expected tracks: ${profile.expected_tracks.join(', ')}`);
       console.log('');
     }

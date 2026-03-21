@@ -107,13 +107,30 @@ export function normalizeRequestParams(taskType: string, params: any): any {
     normalized.packages = normalized.packages.map(normalizePackageParams);
   }
 
-  // ── activate_signal: deployments → destinations ──
+  // ── activate_signal: field normalization ──
   if (taskType === 'activate_signal') {
     if (normalized.deployments && !normalized.destinations) {
       warnOnce('deployments', 'deployments is deprecated. Use destinations instead.');
       normalized.destinations = normalized.deployments;
     }
     delete normalized.deployments;
+
+    if (normalized.signal_id && !normalized.signal_agent_segment_id) {
+      warnOnce('signal_id', 'signal_id is deprecated. Use signal_agent_segment_id instead.');
+      normalized.signal_agent_segment_id = normalized.signal_id;
+    }
+    delete normalized.signal_id;
+
+    if (normalized.destination && !normalized.destinations) {
+      warnOnce('destination', 'destination (singular) is deprecated. Use destinations (array) instead.');
+      normalized.destinations = [normalized.destination];
+    }
+    delete normalized.destination;
+
+    if (normalized.options) {
+      warnOnce('activate_signal.options', 'activate_signal: options is not part of the AdCP spec and will be removed.');
+    }
+    delete normalized.options;
   }
 
   // ── get_signals: deliver_to → destinations ──

@@ -9,7 +9,7 @@ export type { ComplyOptions } from './comply';
 
 export { SAMPLE_BRIEFS, getBriefById, getBriefsByVertical } from './briefs';
 
-export { getPlatformProfile, getAllPlatformTypes } from './profiles';
+export { getPlatformProfile, getAllPlatformTypes, getPlatformTypesWithLabels } from './profiles';
 export type { PlatformProfile } from './profiles';
 
 export type {

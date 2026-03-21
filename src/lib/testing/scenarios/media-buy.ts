@@ -142,8 +142,10 @@ function selectFormatId(product: Product, fallback: FormatID = getDefaultFormatI
 }
 
 function buildStaticInlineCreative(formatId: FormatID) {
+  const ts = Date.now();
   return {
-    name: `Inline Test Creative ${Date.now()}`,
+    creative_id: `test-inline-${ts}`,
+    name: `Inline Test Creative ${ts}`,
     format_id: formatId,
     assets: {
       primary: {
