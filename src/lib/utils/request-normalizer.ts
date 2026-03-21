@@ -153,7 +153,7 @@ export function normalizeRequestParams(taskType: string, params: any): any {
     for (const removed of ['feedback', 'product_ids', 'proposal_id'] as const) {
       if (removed in normalized) {
         warnOnce(`get_products.${removed}`, `GetProductsRequest.${removed} has been removed in v3.`);
-        delete (normalized as any)[removed];
+        delete (normalized as Record<string, unknown>)[removed];
       }
     }
 

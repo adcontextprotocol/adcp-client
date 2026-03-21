@@ -210,18 +210,26 @@ export async function batchPreviewProducts(
       if (responseData && 'previews' in responseData && responseData.previews && responseData.previews.length > 0) {
         const preview = responseData.previews[0]!;
         if (preview.renders && preview.renders.length > 0) {
-          const render = preview.renders[0]! as any;
-          const previewUrl = render.preview_url as string;
+          const render = preview.renders[0]!;
+          const previewUrl =
+            render.output_format === 'url' || render.output_format === 'both' ? render.preview_url : undefined;
           const previewId = preview.preview_id;
 
-          // Cache the result
-          setCachedPreview(req.cacheKey, previewUrl, previewId);
+          if (previewUrl) {
+            // Cache the result
+            setCachedPreview(req.cacheKey, previewUrl, previewId);
 
-          results.push({
-            item: req.product,
-            previewUrl,
-            previewId,
-          });
+            results.push({
+              item: req.product,
+              previewUrl,
+              previewId,
+            });
+          } else {
+            results.push({
+              item: req.product,
+              error: 'Preview render has no URL',
+            });
+          }
         } else {
           results.push({
             item: req.product,
@@ -367,18 +375,26 @@ export async function batchPreviewFormats(
       if (responseData && 'previews' in responseData && responseData.previews && responseData.previews.length > 0) {
         const preview = responseData.previews[0]!;
         if (preview.renders && preview.renders.length > 0) {
-          const render = preview.renders[0]! as any;
-          const previewUrl = render.preview_url as string;
+          const render = preview.renders[0]!;
+          const previewUrl =
+            render.output_format === 'url' || render.output_format === 'both' ? render.preview_url : undefined;
           const previewId = preview.preview_id;
 
-          // Cache the result
-          setCachedPreview(req.cacheKey, previewUrl, previewId);
+          if (previewUrl) {
+            // Cache the result
+            setCachedPreview(req.cacheKey, previewUrl, previewId);
 
-          results.push({
-            item: req.format,
-            previewUrl,
-            previewId,
-          });
+            results.push({
+              item: req.format,
+              previewUrl,
+              previewId,
+            });
+          } else {
+            results.push({
+              item: req.format,
+              error: 'Preview render has no URL',
+            });
+          }
         } else {
           results.push({
             item: req.format,

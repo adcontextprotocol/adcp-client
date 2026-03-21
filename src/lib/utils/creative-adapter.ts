@@ -58,7 +58,10 @@ export interface PackageResponseV2 {
  * Strips v3-only package fields (optimization_goals, catalogs).
  */
 export function adaptPackageRequestForV2(pkg: PackageRequestV3): PackageRequestV2 {
-  const { optimization_goals, catalogs, ...rest } = pkg as any;
+  const { optimization_goals, catalogs, ...rest } = pkg as PackageRequestV3 & {
+    optimization_goals?: unknown;
+    catalogs?: unknown;
+  };
 
   if (!rest.creative_assignments) {
     return rest as PackageRequestV2;

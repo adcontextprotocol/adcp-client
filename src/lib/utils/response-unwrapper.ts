@@ -90,19 +90,19 @@ export type AdCPResponse =
  * Conclusion: Current approach provides best balance of simplicity, maintainability,
  * and runtime safety. TypeScript types are validated by Zod at runtime anyway.
  */
-const TOOL_RESPONSE_SCHEMAS: Partial<Record<string, z.ZodSchema<AdCPResponse>>> = {
-  get_products: schemas.GetProductsResponseSchema as z.ZodSchema<AdCPResponse>,
-  list_creative_formats: schemas.ListCreativeFormatsResponseSchema as z.ZodSchema<AdCPResponse>,
-  create_media_buy: schemas.CreateMediaBuyResponseSchema as z.ZodSchema<AdCPResponse>,
-  update_media_buy: schemas.UpdateMediaBuyResponseSchema as z.ZodSchema<AdCPResponse>,
-  sync_creatives: schemas.SyncCreativesResponseSchema as any, // Manually defined discriminated union
-  list_creatives: schemas.ListCreativesResponseSchema as z.ZodSchema<AdCPResponse>,
-  get_media_buy_delivery: schemas.GetMediaBuyDeliveryResponseSchema as z.ZodSchema<AdCPResponse>,
-  provide_performance_feedback: schemas.ProvidePerformanceFeedbackResponseSchema as z.ZodSchema<AdCPResponse>,
-  build_creative: schemas.BuildCreativeResponseSchema as z.ZodSchema<AdCPResponse>,
-  preview_creative: schemas.PreviewCreativeResponseSchema as any, // Manually defined discriminated union
-  get_signals: schemas.GetSignalsResponseSchema as z.ZodSchema<AdCPResponse>,
-  activate_signal: schemas.ActivateSignalResponseSchema as z.ZodSchema<AdCPResponse>,
+const TOOL_RESPONSE_SCHEMAS: Partial<Record<string, z.ZodType>> = {
+  get_products: schemas.GetProductsResponseSchema,
+  list_creative_formats: schemas.ListCreativeFormatsResponseSchema,
+  create_media_buy: schemas.CreateMediaBuyResponseSchema,
+  update_media_buy: schemas.UpdateMediaBuyResponseSchema,
+  sync_creatives: schemas.SyncCreativesResponseSchema,
+  list_creatives: schemas.ListCreativesResponseSchema,
+  get_media_buy_delivery: schemas.GetMediaBuyDeliveryResponseSchema,
+  provide_performance_feedback: schemas.ProvidePerformanceFeedbackResponseSchema,
+  build_creative: schemas.BuildCreativeResponseSchema,
+  preview_creative: schemas.PreviewCreativeResponseSchema,
+  get_signals: schemas.GetSignalsResponseSchema,
+  activate_signal: schemas.ActivateSignalResponseSchema,
 };
 
 /**
@@ -160,12 +160,12 @@ export function unwrapProtocolResponse(
         throw new Error(`Response validation failed for ${toolName}: ${result.error.message}`);
       }
 
-      return result.data;
+      return result.data as AdCPResponse;
     }
   }
 
   // Return unwrapped response (no validation)
-  return unwrapped;
+  return unwrapped as AdCPResponse;
 }
 
 /**
@@ -200,7 +200,7 @@ function unwrapMCPResponse(response: any): AdCPResponse {
       if (adcpError.suggestion != null) error.suggestion = adcpError.suggestion;
       if (adcpError.retry_after != null) error.retry_after = adcpError.retry_after;
       if (adcpError.details != null) error.details = adcpError.details;
-      return { errors: [error] } as any;
+      return { errors: [error] } as unknown as AdCPResponse;
     }
 
     // Check for JSON text fallback (L2)
@@ -220,7 +220,7 @@ function unwrapMCPResponse(response: any): AdCPResponse {
               if (ae.suggestion != null) error.suggestion = ae.suggestion;
               if (ae.retry_after != null) error.retry_after = ae.retry_after;
               if (ae.details != null) error.details = ae.details;
-              return { errors: [error] } as any;
+              return { errors: [error] } as unknown as AdCPResponse;
             }
           } catch {
             // not JSON, continue to raw text fallback
