@@ -11,7 +11,7 @@
  */
 
 import type { TestOptions, TestStepResult, AgentProfile, TaskResult } from '../types';
-import type { ActivateSignalSuccess } from '../../types/tools.generated';
+import type { ActivateSignalSuccess, Destination } from '../../types/tools.generated';
 import { createTestClient, runStep, discoverAgentProfile, discoverSignals } from '../client';
 
 /**
@@ -93,14 +93,13 @@ export async function testSignalsFlow(
       for (const destination of destinations.slice(0, 2)) {
         // Test max 2 destinations per signal
         const { result, step } = await runStep<TaskResult>(
-          `Activate signal: ${signal.name || signal.signal_id} -> ${destination.platform}`,
+          `Activate signal: ${signal.name || signal.signal_id} -> ${'platform' in destination ? destination.platform : destination.agent_url}`,
           'activate_signal',
           async () =>
             client.activateSignal({
               signal_agent_segment_id: signal.signal_id,
               destinations: [destination],
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any -- bypasses strict request typing
-            } as any) as Promise<TaskResult>
+            })
         );
 
         if (result?.success && result?.data) {
@@ -111,7 +110,7 @@ export async function testSignalsFlow(
             {
               deployments_count: data.deployments?.length,
               first_deployment: firstDeployment,
-              destination: destination.platform,
+              destination: 'platform' in destination ? destination.platform : destination.agent_url,
             },
             null,
             2
@@ -145,12 +144,12 @@ export async function testSignalsFlow(
           signal_agent_segment_id: 'INVALID_SIGNAL_ID_DOES_NOT_EXIST_12345',
           destinations: [
             {
+              type: 'platform',
               platform: 'test-platform',
-              account_id: 'test-account',
+              account: 'test-account',
             },
           ],
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any -- bypasses strict request typing
-        } as any) as Promise<TaskResult>
+        })
     );
 
     // This should fail - if it succeeds with invalid signal, that's a bug
@@ -196,29 +195,27 @@ function selectSignalsToTest(
 /**
  * Get test destination configurations for signal activation
  */
-function getTestDestinations(): Array<{
-  platform: string;
-  account_id: string;
-  [key: string]: string;
-}> {
+function getTestDestinations(): Destination[] {
   return [
     {
+      type: 'platform',
       platform: 'dv360',
-      account_id: 'test-dv360-account',
+      account: 'test-dv360-account',
     },
     {
+      type: 'platform',
       platform: 'trade-desk',
-      account_id: 'test-ttd-account',
+      account: 'test-ttd-account',
     },
     {
+      type: 'platform',
       platform: 'meta',
-      account_id: 'test-meta-account',
-      ad_account_id: 'act_12345',
+      account: 'test-meta-account',
     },
     {
+      type: 'platform',
       platform: 'google-ads',
-      account_id: 'test-google-account',
-      customer_id: '123-456-7890',
+      account: 'test-google-account',
     },
   ];
 }
