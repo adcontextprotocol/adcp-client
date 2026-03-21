@@ -1224,6 +1224,37 @@ describe('Request Parameter Normalization', () => {
     });
   });
 
+  describe('activate_signal normalizer scoping', () => {
+    test('should not rename signal_id for other tools', () => {
+      resetWarnings();
+      const result = normalizeRequestParams('get_signals', { signal_id: 'seg_1' });
+      assert.strictEqual(result.signal_id, 'seg_1');
+      assert.strictEqual(result.signal_agent_segment_id, undefined);
+    });
+
+    test('should not strip options for other tools', () => {
+      resetWarnings();
+      const result = normalizeRequestParams('get_products', { options: { limit: 10 } });
+      assert.deepStrictEqual(result.options, { limit: 10 });
+    });
+  });
+
+  describe('activate_signal combined normalization', () => {
+    test('should normalize all deprecated fields together', () => {
+      resetWarnings();
+      const result = normalizeRequestParams('activate_signal', {
+        signal_id: 'seg_1',
+        deployments: [{ agent_url: 'https://old.com' }],
+        options: { dry_run: true },
+      });
+      assert.strictEqual(result.signal_agent_segment_id, 'seg_1');
+      assert.deepStrictEqual(result.destinations, [{ agent_url: 'https://old.com' }]);
+      assert.strictEqual(result.signal_id, undefined);
+      assert.strictEqual(result.deployments, undefined);
+      assert.strictEqual(result.options, undefined);
+    });
+  });
+
   describe('deliver_to → destinations (get_signals)', () => {
     test('should rename deliver_to to destinations for get_signals', () => {
       resetWarnings();

@@ -90,6 +90,7 @@ export {
   // Platform profiles
   getPlatformProfile,
   getAllPlatformTypes,
+  getPlatformTypesWithLabels,
   // Types
   type ComplyOptions,
   type ComplianceTrack,

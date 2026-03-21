@@ -17,6 +17,7 @@ const {
   // Platform profiles
   getPlatformProfile,
   getAllPlatformTypes,
+  getPlatformTypesWithLabels,
 } = require('../../dist/lib/testing/compliance/index.js');
 
 // ============================================================
@@ -89,18 +90,13 @@ describe('getBriefsByVertical', () => {
 // ============================================================
 
 describe('getAllPlatformTypes', () => {
-  test('returns all platform types with id and label', () => {
+  test('returns all platform types', () => {
     const types = getAllPlatformTypes();
     assert.ok(types.length >= 15, `Expected at least 15 types, got ${types.length}`);
-    for (const entry of types) {
-      assert.ok(entry.id, `Entry missing id`);
-      assert.ok(entry.label, `Entry missing label for ${entry.id}`);
-    }
   });
 
   test('includes all sales platform types', () => {
     const types = getAllPlatformTypes();
-    const typeIds = types.map(t => t.id);
     const salesTypes = [
       'display_ad_server',
       'video_ad_server',
@@ -112,41 +108,52 @@ describe('getAllPlatformTypes', () => {
       'audio_platform',
     ];
     for (const st of salesTypes) {
-      assert.ok(typeIds.includes(st), `Missing sales type: ${st}`);
+      assert.ok(types.includes(st), `Missing sales type: ${st}`);
     }
   });
 
   test('includes all creative agent types', () => {
     const types = getAllPlatformTypes();
-    const typeIds = types.map(t => t.id);
     const creativeTypes = ['creative_transformer', 'creative_library', 'creative_ad_server'];
     for (const ct of creativeTypes) {
-      assert.ok(typeIds.includes(ct), `Missing creative type: ${ct}`);
+      assert.ok(types.includes(ct), `Missing creative type: ${ct}`);
     }
   });
 
   test('includes SI and AI-native types', () => {
     const types = getAllPlatformTypes();
-    const typeIds = types.map(t => t.id);
-    assert.ok(typeIds.includes('si_platform'), 'Missing si_platform');
-    assert.ok(typeIds.includes('ai_ad_network'), 'Missing ai_ad_network');
-    assert.ok(typeIds.includes('ai_platform'), 'Missing ai_platform');
-    assert.ok(typeIds.includes('generative_dsp'), 'Missing generative_dsp');
+    assert.ok(types.includes('si_platform'), 'Missing si_platform');
+    assert.ok(types.includes('ai_ad_network'), 'Missing ai_ad_network');
+    assert.ok(types.includes('ai_platform'), 'Missing ai_platform');
+    assert.ok(types.includes('generative_dsp'), 'Missing generative_dsp');
+  });
+});
+
+describe('getPlatformTypesWithLabels', () => {
+  test('returns objects with id and label for all platform types', () => {
+    const entries = getPlatformTypesWithLabels();
+    const allTypes = getAllPlatformTypes();
+    assert.strictEqual(entries.length, allTypes.length);
+    for (const entry of entries) {
+      assert.ok(entry.id, 'Entry missing id');
+      assert.ok(entry.label, `Entry missing label for ${entry.id}`);
+      assert.ok(allTypes.includes(entry.id), `Unknown type: ${entry.id}`);
+    }
   });
 });
 
 describe('getPlatformProfile', () => {
   test('returns profile for each type', () => {
     const types = getAllPlatformTypes();
-    for (const { id } of types) {
-      const profile = getPlatformProfile(id);
-      assert.ok(profile, `No profile for ${id}`);
-      assert.strictEqual(profile.type, id);
-      assert.ok(profile.label, `${id} missing label`);
-      assert.ok(profile.expected_tracks.length > 0, `${id} has no expected tracks`);
-      assert.ok(profile.expected_tracks.includes('core'), `${id} expected_tracks should include core`);
-      assert.ok(profile.expected_tools.length > 0, `${id} has no expected tools`);
-      assert.ok(typeof profile.checkCoherence === 'function', `${id} missing checkCoherence`);
+    for (const type of types) {
+      const profile = getPlatformProfile(type);
+      assert.ok(profile, `No profile for ${type}`);
+      assert.strictEqual(profile.type, type);
+      assert.ok(profile.label, `${type} missing label`);
+      assert.ok(profile.expected_tracks.length > 0, `${type} has no expected tracks`);
+      assert.ok(profile.expected_tracks.includes('core'), `${type} expected_tracks should include core`);
+      assert.ok(profile.expected_tools.length > 0, `${type} has no expected tools`);
+      assert.ok(typeof profile.checkCoherence === 'function', `${type} missing checkCoherence`);
     }
   });
 });

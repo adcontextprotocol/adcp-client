@@ -127,6 +127,9 @@ export function normalizeRequestParams(taskType: string, params: any): any {
     }
     delete normalized.destination;
 
+    if (normalized.options) {
+      warnOnce('activate_signal.options', 'activate_signal: options is not part of the AdCP spec and will be removed.');
+    }
     delete normalized.options;
   }
 

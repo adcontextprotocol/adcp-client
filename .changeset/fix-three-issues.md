@@ -2,4 +2,4 @@
 "@adcp/client": minor
 ---
 
-fix: getAllPlatformTypes returns objects with id/label, buildStaticInlineCreative includes creative_id, activateSignal uses spec field names
+Add getPlatformTypesWithLabels() for platform type discovery with labels. Fix buildStaticInlineCreative missing required creative_id. Fix activateSignal to use spec field names (signal_agent_segment_id, destinations) with backward-compat normalizer shims.

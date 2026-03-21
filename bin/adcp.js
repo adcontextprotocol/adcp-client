@@ -559,8 +559,8 @@ async function resolveAgent(agentArg, authToken, protocolFlag, jsonOutput) {
 async function handleComplyCommand(args) {
   // Handle --list-platform-types before anything else
   if (args.includes('--list-platform-types')) {
-    const { getAllPlatformTypes, getPlatformProfile } = await import('../dist/lib/testing/compliance/index.js');
-    const types = getAllPlatformTypes();
+    const { getPlatformTypesWithLabels, getPlatformProfile } = await import('../dist/lib/testing/compliance/index.js');
+    const types = getPlatformTypesWithLabels();
     console.log('\nAvailable platform types:\n');
     for (const { id, label } of types) {
       const profile = getPlatformProfile(id);
@@ -638,10 +638,9 @@ EXAMPLES:
     // Validate against known types
     const { getAllPlatformTypes } = await import('../dist/lib/testing/compliance/index.js');
     const validTypes = getAllPlatformTypes();
-    const validTypeIds = validTypes.map(t => t.id);
-    if (!validTypeIds.includes(platform_type)) {
+    if (!validTypes.includes(platform_type)) {
       console.error(`ERROR: Unknown platform type: ${platform_type}`);
-      console.error(`Valid types: ${validTypeIds.join(', ')}`);
+      console.error(`Valid types: ${validTypes.join(', ')}`);
       console.error(`Run 'adcp comply --list-platform-types' to see all options.\n`);
       process.exit(2);
     }
