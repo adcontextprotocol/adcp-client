@@ -1,5 +1,28 @@
 # Changelog
 
+## 4.13.0
+
+### Minor Changes
+
+- fc34114: Add getPlatformTypesWithLabels() for platform type discovery with labels. Fix buildStaticInlineCreative missing required creative_id. Fix activateSignal to use spec field names (signal_agent_segment_id, destinations) with backward-compat normalizer shims.
+- 8e30a66: Re-export commonly needed nested types (PackageUpdate, Package, Destination, SignalFilters, PricingOption, PriceGuidance, Episode, ShowSelector) from main entry point. Add typesVersions to package.json so subpath imports work under moduleResolution: node. Fix ./types subpath to include runtime entries for Zod schema imports.
+- 8205a86: Fix schema .shape compatibility and add server-side helpers
+  - Fix 9 broken Zod request schemas that had .and() intersections breaking MCP SDK server.tool() registration
+  - Add typed response builders (capabilitiesResponse, productsResponse, mediaBuyResponse, deliveryResponse)
+  - Add adcpError() helper for L3-compliant structured error responses
+  - Add error extraction utilities for client-side error classification
+  - Add error compliance test scenario for comply
+
+### Patch Changes
+
+- daac3ca: Fix generated Zod schemas breaking MCP SDK JSON Schema conversion
+
+  Remove `z.undefined()` from generated union types (e.g., `z.union([z.boolean(), z.undefined()])` → `z.boolean()`) since `z.undefined()` has no JSON Schema representation and causes `toJSONSchema()` to throw. Also strip redundant `.and(z.record(...))` intersections that create `ZodIntersection` types losing `.shape` access needed by MCP SDK for tool registration.
+
+- 2e87c5a: Fix MCP connection exhaustion during comply/test runs by reusing cached connections instead of creating a new TCP connection per tool call. Adds auth-aware cache keying, LRU eviction, and transport-error-only retry logic.
+- fc5b158: Remove as-any casts from core library code for improved type safety
+- 0d2a781: Enable `noUncheckedIndexedAccess` in TypeScript config for safer array/record access
+
 ## 4.12.0
 
 ### Minor Changes
