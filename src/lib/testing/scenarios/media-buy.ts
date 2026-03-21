@@ -17,7 +17,14 @@ import type {
 } from '../../types/tools.generated';
 import type { Product, PricingOption, FormatID } from '../../types/core.generated';
 import type { TestOptions, TestStepResult, AgentProfile, TaskResult } from '../types';
-import { createTestClient, runStep, discoverAgentProfile, resolveBrand, resolveAccount, validateResponseSchema } from '../client';
+import {
+  createTestClient,
+  runStep,
+  discoverAgentProfile,
+  resolveBrand,
+  resolveAccount,
+  validateResponseSchema,
+} from '../client';
 import { testDiscovery } from './discovery';
 
 /**
