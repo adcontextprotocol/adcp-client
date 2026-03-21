@@ -107,7 +107,7 @@ async function getOrCreateConnection(
   if (pending) return pending;
 
   const promise = connectMCPWithFallback(baseUrl, authHeaders, debugLogs, label)
-    .then((client) => {
+    .then(client => {
       connectionCache.set(cacheKey, client);
       evictLeastRecentlyUsed();
       return client;
@@ -412,7 +412,7 @@ async function callMCPToolImpl(
     authHeaders,
     debugLogs,
     toolName,
-    (client) => client.callTool({ name: toolName, arguments: args }) as Promise<CallToolResponse>
+    client => client.callTool({ name: toolName, arguments: args }) as Promise<CallToolResponse>
   );
 
   debugLogs.push({
@@ -425,8 +425,8 @@ async function callMCPToolImpl(
   // If MCP returns an error response, throw an error with the extracted message
   if (response?.isError && response?.content && Array.isArray(response.content)) {
     const errorText = response.content
-      .filter((item) => item.type === 'text' && item.text)
-      .map((item) => item.text)
+      .filter(item => item.type === 'text' && item.text)
+      .map(item => item.text)
       .join('\n');
 
     throw new Error(errorText || `MCP tool '${toolName}' execution failed (no error details provided)`);
@@ -453,7 +453,7 @@ async function callMCPToolRawImpl(
     ...(authToken ? createMCPAuthHeaders(authToken) : {}),
   };
 
-  return withCachedConnection(agentUrl, authToken, authHeaders, debugLogs, toolName, (client) =>
+  return withCachedConnection(agentUrl, authToken, authHeaders, debugLogs, toolName, client =>
     client.callTool({ name: toolName, arguments: args })
   );
 }
