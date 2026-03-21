@@ -211,7 +211,10 @@ export async function batchPreviewProducts(
         const preview = responseData.previews[0]!;
         if (preview.renders && preview.renders.length > 0) {
           const render = preview.renders[0]!;
-          const previewUrl = render.output_format === 'url' ? render.preview_url : undefined;
+          const previewUrl =
+            render.output_format === 'url' || render.output_format === 'both'
+              ? render.preview_url
+              : undefined;
           const previewId = preview.preview_id;
 
           if (previewUrl) {
@@ -375,7 +378,10 @@ export async function batchPreviewFormats(
         const preview = responseData.previews[0]!;
         if (preview.renders && preview.renders.length > 0) {
           const render = preview.renders[0]!;
-          const previewUrl = render.output_format === 'url' ? render.preview_url : undefined;
+          const previewUrl =
+            render.output_format === 'url' || render.output_format === 'both'
+              ? render.preview_url
+              : undefined;
           const previewId = preview.preview_id;
 
           if (previewUrl) {

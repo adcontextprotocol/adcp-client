@@ -355,7 +355,7 @@ export async function testFullSalesFlow(
     );
 
     if (snapshotResult?.success && snapshotResult?.data) {
-      const mediaBuys = (snapshotResult.data).media_buys || [];
+      const mediaBuys = snapshotResult.data.media_buys || [];
       const mediaBuy = mediaBuys.find((item: any) => item.media_buy_id === mediaBuyId) || mediaBuys[0];
       const packages = mediaBuy?.packages || [];
       const invalidPackages = packages.filter((pkg: any) => {
@@ -895,7 +895,7 @@ export async function testCreativeReference(
   syncStep.response_preview = JSON.stringify(
     {
       creative_id: syncedCreative.creative_id,
-      synced_count: ((syncResult.data).creatives || []).length,
+      synced_count: (syncResult.data.creatives || []).length,
     },
     null,
     2
