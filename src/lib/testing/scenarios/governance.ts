@@ -867,7 +867,7 @@ export async function testCampaignGovernance(
     );
 
     if (result?.success && result?.data) {
-      const data = result.data as any;
+      const data = result.data;
       const plans = data.plans || [];
       const synced = plans.find((p: any) => p.plan_id === testPlanId);
       if (synced?.status === 'active') {
@@ -923,7 +923,7 @@ export async function testCampaignGovernance(
     );
 
     if (result?.success && result?.data) {
-      const data = result.data as any;
+      const data = result.data;
       checkId = data.check_id;
       const status = data.status;
 
@@ -1003,7 +1003,7 @@ export async function testCampaignGovernance(
     );
 
     if (result?.success && result?.data) {
-      const data = result.data as any;
+      const data = result.data;
       step.details = 'Audit logs retrieved';
       step.response_preview = JSON.stringify(
         {
@@ -1123,7 +1123,7 @@ export async function testCampaignGovernanceDenied(
   );
 
   if (overBudgetResult?.success && overBudgetResult?.data) {
-    const data = overBudgetResult.data as any;
+    const data = overBudgetResult.data;
     overBudgetStep.details = `Over-budget check: status=${data.status}, explanation: ${data.explanation}`;
     overBudgetStep.response_preview = JSON.stringify(
       {
@@ -1180,7 +1180,7 @@ export async function testCampaignGovernanceDenied(
   );
 
   if (geoResult?.success && geoResult?.data) {
-    const data = geoResult.data as any;
+    const data = geoResult.data;
     geoStep.details = `Unauthorized market check: status=${data.status}`;
     geoStep.response_preview = JSON.stringify(
       {
@@ -1332,7 +1332,7 @@ export async function testCampaignGovernanceConditions(
   );
 
   if (checkResult?.success && checkResult?.data) {
-    const data = checkResult.data as any;
+    const data = checkResult.data;
     checkStep.details = `Initial check: status=${data.status}`;
     checkStep.response_preview = JSON.stringify(
       {
@@ -1392,7 +1392,7 @@ export async function testCampaignGovernanceConditions(
       );
 
       if (recheckResult?.success && recheckResult?.data) {
-        const recheckData = recheckResult.data as any;
+        const recheckData = recheckResult.data;
         recheckStep.details = `Re-check after conditions: status=${recheckData.status}`;
         recheckStep.response_preview = JSON.stringify(
           {
@@ -1527,7 +1527,7 @@ export async function testCampaignGovernanceDelivery(
   );
 
   if (deliveryResult?.success && deliveryResult?.data) {
-    const data = deliveryResult.data as any;
+    const data = deliveryResult.data;
     deliveryStep.details = `Delivery check: status=${data.status}, next_check=${data.next_check || 'not specified'}`;
     deliveryStep.response_preview = JSON.stringify(
       {
@@ -1584,7 +1584,7 @@ export async function testCampaignGovernanceDelivery(
   );
 
   if (driftResult?.success && driftResult?.data) {
-    const data = driftResult.data as any;
+    const data = driftResult.data;
     driftStep.details = `Overspend drift check: status=${data.status}`;
     driftStep.response_preview = JSON.stringify(
       {

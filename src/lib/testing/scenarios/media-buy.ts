@@ -355,7 +355,7 @@ export async function testFullSalesFlow(
     );
 
     if (snapshotResult?.success && snapshotResult?.data) {
-      const mediaBuys = (snapshotResult.data as any).media_buys || [];
+      const mediaBuys = (snapshotResult.data).media_buys || [];
       const mediaBuy = mediaBuys.find((item: any) => item.media_buy_id === mediaBuyId) || mediaBuys[0];
       const packages = mediaBuy?.packages || [];
       const invalidPackages = packages.filter((pkg: any) => {
@@ -895,7 +895,7 @@ export async function testCreativeReference(
   syncStep.response_preview = JSON.stringify(
     {
       creative_id: syncedCreative.creative_id,
-      synced_count: ((syncResult.data as any).creatives || []).length,
+      synced_count: ((syncResult.data).creatives || []).length,
     },
     null,
     2
@@ -913,7 +913,7 @@ export async function testCreativeReference(
   );
 
   if (createResult?.success && createResult?.data) {
-    const mediaBuy = createResult.data as any;
+    const mediaBuy = createResult.data;
     const mediaBuyId = mediaBuy.media_buy_id || mediaBuy.media_buy?.media_buy_id;
     const packages = mediaBuy.packages || mediaBuy.media_buy?.packages;
     const referenced = packages?.some((pkg: any) => pkg.creative_ids?.includes(syncedCreative.creative_id));

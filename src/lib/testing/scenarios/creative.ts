@@ -285,7 +285,7 @@ export async function testCreativeLifecycle(
     );
 
     if (syncResult?.success && syncResult?.data) {
-      const data = syncResult.data as any;
+      const data = syncResult.data;
       const creatives = data.creatives || [];
       const actions = creatives.map((c: any) => c.action);
       const failed = creatives.filter((c: any) => c.action === 'failed');
@@ -317,7 +317,7 @@ export async function testCreativeLifecycle(
       );
 
       if (listResult?.success && listResult?.data) {
-        const data = listResult.data as any;
+        const data = listResult.data;
         const creatives = data.creatives || [];
 
         // Validate basic fields on each creative
@@ -366,7 +366,7 @@ export async function testCreativeLifecycle(
       );
 
       if (snapshotResult?.success && snapshotResult?.data) {
-        const data = snapshotResult.data as any;
+        const data = snapshotResult.data;
         const creatives = data.creatives || [];
 
         // Each creative should have either snapshot data or snapshot_unavailable_reason
@@ -423,7 +423,7 @@ export async function testCreativeLifecycle(
     );
 
     if (result?.success && result?.data) {
-      const data = result.data as any;
+      const data = result.data;
       const manifest = data.creative_manifest || data.creative_manifests?.[0];
       step.details = `Built creative manifest for format ${manifest?.format_id || targetFormat.format_id}`;
       step.response_preview = JSON.stringify(
@@ -458,7 +458,7 @@ export async function testCreativeLifecycle(
     );
 
     if (result?.success && result?.data) {
-      const data = result.data as any;
+      const data = result.data;
       step.details = `Generated preview with ${data.renders?.length || 0} render(s)`;
     } else if (result && !result.success) {
       step.passed = false;

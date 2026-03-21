@@ -127,7 +127,19 @@ export interface AdcpCapabilities {
   _synthetic: boolean;
 
   /** Raw response from get_adcp_capabilities (only for v3) */
-  _raw?: unknown;
+  _raw?: Record<string, unknown>;
+}
+
+/**
+ * Safely traverse nested keys in a Record<string, unknown>.
+ */
+function getRawNested(obj: Record<string, unknown> | undefined, ...keys: string[]): unknown {
+  let current: unknown = obj;
+  for (const key of keys) {
+    if (current == null || typeof current !== 'object') return undefined;
+    current = (current as Record<string, unknown>)[key];
+  }
+  return current;
 }
 
 /**
@@ -476,10 +488,9 @@ export function resolveFeature(capabilities: AdcpCapabilities, feature: FeatureN
   // Targeting check (e.g., 'targeting.geo_countries')
   if (feature.startsWith('targeting.')) {
     const targetingKey = feature.slice(10);
-    const raw = capabilities._raw as any;
-    const targeting = raw?.media_buy?.execution?.targeting;
-    if (!targeting) return false;
-    return !!targeting[targetingKey];
+    const targeting = getRawNested(capabilities._raw, 'media_buy', 'execution', 'targeting');
+    if (!targeting || typeof targeting !== 'object') return false;
+    return !!(targeting as Record<string, unknown>)[targetingKey];
   }
 
   // Media buy features (e.g., 'audience_targeting', 'conversion_tracking')
@@ -489,10 +500,9 @@ export function resolveFeature(capabilities: AdcpCapabilities, feature: FeatureN
   }
 
   // Check raw media_buy.features for features not in the normalized map
-  const raw = capabilities._raw as any;
-  const rawFeatures = raw?.media_buy?.features;
-  if (rawFeatures && feature in rawFeatures) {
-    return !!rawFeatures[feature];
+  const rawFeatures = getRawNested(capabilities._raw, 'media_buy', 'features');
+  if (rawFeatures && typeof rawFeatures === 'object' && feature in rawFeatures) {
+    return !!(rawFeatures as Record<string, unknown>)[feature];
   }
 
   // Unknown feature — absent means unsupported
@@ -523,8 +533,7 @@ export function listDeclaredFeatures(capabilities: AdcpCapabilities): string[] {
   }
 
   // Targeting (from raw response)
-  const raw = capabilities._raw as any;
-  const targeting = raw?.media_buy?.execution?.targeting;
+  const targeting = getRawNested(capabilities._raw, 'media_buy', 'execution', 'targeting');
   if (targeting && typeof targeting === 'object') {
     for (const [key, value] of Object.entries(targeting)) {
       if (value === true || (typeof value === 'object' && value !== null)) {

@@ -208,7 +208,7 @@ export interface SuiteResult {
 // Generic task result from executeTask
 export interface TaskResult {
   success: boolean;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- holds different response types per tool
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- response shape varies by tool; typed per-access in scenarios
   data?: any;
   error?: string;
 }
