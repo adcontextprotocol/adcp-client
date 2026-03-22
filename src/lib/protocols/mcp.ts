@@ -124,6 +124,9 @@ async function getOrCreateConnection(
  * Get or create a cached MCP connection, then call `fn` with it.
  * On transport errors, evicts the stale connection and retries once.
  * Auth errors (401) evict and close the connection, then throw immediately.
+ *
+ * @internal Used by mcp-tasks.ts for protocol-level task operations.
+ * Not part of the public API — do not import from outside the protocols directory.
  */
 export async function withCachedConnection<T>(
   agentUrl: string,

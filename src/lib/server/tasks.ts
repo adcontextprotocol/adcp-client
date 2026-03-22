@@ -118,6 +118,11 @@ export function registerAdcpTaskTool(
  * Sets up the server with a `taskStore` (defaults to `InMemoryTaskStore`) and
  * declares tasks capability. Publishers can then use `registerAdcpTaskTool()`
  * or `server.experimental.tasks.registerToolTask()` directly.
+ *
+ * This uses the higher-level `McpServer` API. Publishers with complex dispatch
+ * patterns (e.g., custom request routing) can use the lower-level `Server` class
+ * directly by passing `taskStore` in `ServerOptions` and using `setRequestHandler`
+ * for task lifecycle methods. See the MCP SDK docs for that approach.
  */
 export function createTaskCapableServer(
   name: string,
