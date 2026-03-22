@@ -63,6 +63,11 @@ export const SCENARIO_REQUIREMENTS: Partial<Record<TestScenario, string[]>> = {
   // Requires audience management tools
   sync_audiences: ['sync_audiences'],
 
+  // State machine compliance
+  media_buy_lifecycle: ['get_products', 'create_media_buy', 'update_media_buy'],
+  terminal_state_enforcement: ['get_products', 'create_media_buy', 'update_media_buy'],
+  package_lifecycle: ['get_products', 'create_media_buy', 'update_media_buy'],
+
   // Schema compliance (requires product discovery)
   schema_compliance: ['get_products'],
 
@@ -107,6 +112,9 @@ export const DEFAULT_SCENARIOS: readonly TestScenario[] = [
   'si_handoff',
   'schema_compliance',
   'sync_audiences',
+  'media_buy_lifecycle',
+  'terminal_state_enforcement',
+  'package_lifecycle',
   'error_codes',
   'error_structure',
   'error_transport',

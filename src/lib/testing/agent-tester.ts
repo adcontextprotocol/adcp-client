@@ -75,6 +75,10 @@ import {
   testErrorCodes,
   testErrorStructure,
   testErrorTransport,
+  // State machine compliance
+  testMediaBuyLifecycle,
+  testTerminalStateEnforcement,
+  testPackageLifecycle,
 } from './scenarios';
 
 // Import types
@@ -308,6 +312,25 @@ export async function testAgent(
         profile = result.profile;
         break;
 
+      // State machine compliance
+      case 'media_buy_lifecycle':
+        result = await testMediaBuyLifecycle(agentUrl, effectiveOptions);
+        steps = result.steps;
+        profile = result.profile;
+        break;
+
+      case 'terminal_state_enforcement':
+        result = await testTerminalStateEnforcement(agentUrl, effectiveOptions);
+        steps = result.steps;
+        profile = result.profile;
+        break;
+
+      case 'package_lifecycle':
+        result = await testPackageLifecycle(agentUrl, effectiveOptions);
+        steps = result.steps;
+        profile = result.profile;
+        break;
+
       default:
         steps = [
           {
@@ -406,6 +429,10 @@ export {
   testErrorCodes,
   testErrorStructure,
   testErrorTransport,
+  // State machine compliance
+  testMediaBuyLifecycle,
+  testTerminalStateEnforcement,
+  testPackageLifecycle,
   // v3 helpers
   hasGovernanceTools,
   hasCampaignGovernanceTools,

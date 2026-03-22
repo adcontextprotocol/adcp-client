@@ -45,6 +45,10 @@ export type TestScenario =
   | 'schema_compliance' // Validate v3 channel enum, pricing field names, format assets structure
   // Audience management
   | 'sync_audiences' // Test CRM audience sync flow
+  // State machine compliance
+  | 'media_buy_lifecycle' // Pause -> resume -> cancel state transitions
+  | 'terminal_state_enforcement' // Verify agents reject updates to terminal-state media buys
+  | 'package_lifecycle' // Package-level pause/resume independent of media buy status
   // Error compliance (transport error mapping spec)
   | 'error_codes' // Validate standard AdCP error codes in responses
   | 'error_structure' // Validate error JSON structure against error.json schema
