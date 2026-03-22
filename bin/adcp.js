@@ -350,30 +350,32 @@ async function handleTestCommand(args) {
     const savedAgent = getAgent(agentArg);
     agentUrl = savedAgent.url;
     protocol = protocol || savedAgent.protocol;
-    finalAuthToken = finalAuthToken || savedAgent.auth_token;
-    // Load OAuth tokens if available and --oauth flag is set
-    if (useOAuth && savedAgent.oauth_tokens) {
+    finalAuthToken = finalAuthToken || getEffectiveAuthToken(savedAgent);
+    if (savedAgent.oauth_tokens) {
       if (hasValidOAuthTokens(savedAgent)) {
         oauthTokens = savedAgent.oauth_tokens;
-        // Use OAuth access token as bearer token for testing
-        if (!finalAuthToken && oauthTokens.access_token) {
-          finalAuthToken = oauthTokens.access_token;
-        }
       } else {
-        // Tokens expired
-        if (jsonOutput) {
-          console.log(
-            JSON.stringify({
-              success: false,
-              error: 'OAuth tokens expired',
-              message: `Run: adcp ${agentArg} --oauth to refresh`,
-            })
+        if (debug) {
+          console.error(
+            `DEBUG: OAuth tokens expired for '${agentArg}', using ${finalAuthToken ? 'static token' : 'no auth'}`
           );
-        } else {
-          console.error(`⚠️  OAuth tokens for '${agentArg}' are expired.`);
-          console.error(`Run: adcp ${agentArg} --oauth to refresh.\n`);
         }
-        process.exit(2);
+        if (useOAuth) {
+          // Only error on expired tokens if --oauth flag was explicitly passed
+          if (jsonOutput) {
+            console.log(
+              JSON.stringify({
+                success: false,
+                error: 'OAuth tokens expired',
+                message: `Run: adcp ${agentArg} --oauth to refresh`,
+              })
+            );
+          } else {
+            console.error(`⚠️  OAuth tokens for '${agentArg}' are expired.`);
+            console.error(`Run: adcp ${agentArg} --oauth to refresh.\n`);
+          }
+          process.exit(2);
+        }
       }
     }
   } else if (agentArg.startsWith('http://') || agentArg.startsWith('https://')) {
@@ -530,7 +532,6 @@ async function resolveAgent(agentArg, authToken, protocolFlag, jsonOutput) {
     const savedAgent = getAgent(agentArg);
     agentUrl = savedAgent.url;
     protocol = protocol || savedAgent.protocol;
-    // Use getEffectiveAuthToken: prefers valid OAuth tokens, falls back to static token
     finalAuthToken = finalAuthToken || getEffectiveAuthToken(savedAgent);
   } else if (agentArg.startsWith('http://') || agentArg.startsWith('https://')) {
     agentUrl = agentArg;
@@ -1071,9 +1072,8 @@ async function main() {
     toolName = positionalArgs[1];
     payloadArg = positionalArgs[2] || '{}';
 
-    // Use saved auth token if not overridden
-    if (!authToken && savedAgent.auth_token) {
-      authToken = savedAgent.auth_token;
+    if (!authToken) {
+      authToken = getEffectiveAuthToken(savedAgent);
     }
 
     if (debug) {
