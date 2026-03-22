@@ -417,4 +417,3 @@ export async function cancelMCPTask(
     });
   });
 }
-

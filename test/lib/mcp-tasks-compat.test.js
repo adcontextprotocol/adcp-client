@@ -319,8 +319,11 @@ describe('MCP Tasks backward compatibility: real servers', () => {
   });
 
   test('legacy server: registerAdcpTaskTool + createTaskCapableServer work together', () => {
-    const { createTaskCapableServer, registerAdcpTaskTool, taskToolResponse } =
-      require('../../dist/lib/server/tasks.js');
+    const {
+      createTaskCapableServer,
+      registerAdcpTaskTool,
+      taskToolResponse,
+    } = require('../../dist/lib/server/tasks.js');
     const z = require('zod');
 
     const server = createTaskCapableServer('Test Publisher', '1.0.0');
