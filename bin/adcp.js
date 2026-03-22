@@ -354,21 +354,26 @@ async function handleTestCommand(args) {
     if (savedAgent.oauth_tokens) {
       if (hasValidOAuthTokens(savedAgent)) {
         oauthTokens = savedAgent.oauth_tokens;
-      } else if (useOAuth) {
-        // Only error on expired tokens if --oauth flag was explicitly passed
-        if (jsonOutput) {
-          console.log(
-            JSON.stringify({
-              success: false,
-              error: 'OAuth tokens expired',
-              message: `Run: adcp ${agentArg} --oauth to refresh`,
-            })
-          );
-        } else {
-          console.error(`⚠️  OAuth tokens for '${agentArg}' are expired.`);
-          console.error(`Run: adcp ${agentArg} --oauth to refresh.\n`);
+      } else {
+        if (debug) {
+          console.error(`DEBUG: OAuth tokens expired for '${agentArg}', using ${finalAuthToken ? 'static token' : 'no auth'}`);
         }
-        process.exit(2);
+        if (useOAuth) {
+          // Only error on expired tokens if --oauth flag was explicitly passed
+          if (jsonOutput) {
+            console.log(
+              JSON.stringify({
+                success: false,
+                error: 'OAuth tokens expired',
+                message: `Run: adcp ${agentArg} --oauth to refresh`,
+              })
+            );
+          } else {
+            console.error(`⚠️  OAuth tokens for '${agentArg}' are expired.`);
+            console.error(`Run: adcp ${agentArg} --oauth to refresh.\n`);
+          }
+          process.exit(2);
+        }
       }
     }
   } else if (agentArg.startsWith('http://') || agentArg.startsWith('https://')) {
