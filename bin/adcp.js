@@ -356,7 +356,9 @@ async function handleTestCommand(args) {
         oauthTokens = savedAgent.oauth_tokens;
       } else {
         if (debug) {
-          console.error(`DEBUG: OAuth tokens expired for '${agentArg}', using ${finalAuthToken ? 'static token' : 'no auth'}`);
+          console.error(
+            `DEBUG: OAuth tokens expired for '${agentArg}', using ${finalAuthToken ? 'static token' : 'no auth'}`
+          );
         }
         if (useOAuth) {
           // Only error on expired tokens if --oauth flag was explicitly passed
