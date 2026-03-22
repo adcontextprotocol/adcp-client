@@ -1594,11 +1594,7 @@ export async function testPackageLifecycle(
         verifyStep.details = `Media buy status is '${status}' — expected 'active' or 'pending_activation'`;
         verifyStep.warnings = [`Package-level pause/resume changed media buy status to '${status}'`];
       }
-      verifyStep.response_preview = JSON.stringify(
-        { media_buy_id: mediaBuy?.media_buy_id, status },
-        null,
-        2
-      );
+      verifyStep.response_preview = JSON.stringify({ media_buy_id: mediaBuy?.media_buy_id, status }, null, 2);
     } else if (verifyResult && !verifyResult.success) {
       verifyStep.passed = false;
       verifyStep.error = verifyResult.error || 'get_media_buys verification failed';

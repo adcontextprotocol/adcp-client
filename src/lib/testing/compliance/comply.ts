@@ -263,9 +263,7 @@ function collectObservations(
     // Check if lifecycle scenarios revealed missing pause/resume support
     const lifecycleResult = results.find(r => r.scenario === 'media_buy_lifecycle');
     if (lifecycleResult && !lifecycleResult.overall_passed) {
-      const pauseFailed = (lifecycleResult.steps ?? []).find(
-        s => s.step === 'Pause media buy' && !s.passed
-      );
+      const pauseFailed = (lifecycleResult.steps ?? []).find(s => s.step === 'Pause media buy' && !s.passed);
       if (pauseFailed) {
         observations.push({
           category: 'completeness',

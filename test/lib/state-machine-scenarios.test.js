@@ -173,10 +173,7 @@ describe('terminal_state_enforcement scenario logic', () => {
     const fs = require('node:fs');
     const path = require('node:path');
     const src = fs.readFileSync(path.join(__dirname, '../../dist/lib/testing/scenarios/media-buy.js'), 'utf8');
-    assert.ok(
-      src.includes('Update canceled media buy (expect rejection)'),
-      'should have step that expects rejection'
-    );
+    assert.ok(src.includes('Update canceled media buy (expect rejection)'), 'should have step that expects rejection');
     assert.ok(src.includes('INVALID_STATE'), 'should check for INVALID_STATE error code');
   });
 
@@ -290,10 +287,7 @@ describe('media_buy_lifecycle: status validation logic', () => {
     const path = require('node:path');
     const src = fs.readFileSync(path.join(__dirname, '../../dist/lib/testing/scenarios/media-buy.js'), 'utf8');
 
-    assert.ok(
-      src.includes("Expected status 'paused'"),
-      'should warn when pause returns wrong status'
-    );
+    assert.ok(src.includes("Expected status 'paused'"), 'should warn when pause returns wrong status');
   });
 
   test('warns when resume returns unexpected status', () => {
@@ -312,10 +306,7 @@ describe('media_buy_lifecycle: status validation logic', () => {
     const path = require('node:path');
     const src = fs.readFileSync(path.join(__dirname, '../../dist/lib/testing/scenarios/media-buy.js'), 'utf8');
 
-    assert.ok(
-      src.includes("Expected status 'canceled'"),
-      'should warn when cancel returns wrong status'
-    );
+    assert.ok(src.includes("Expected status 'canceled'"), 'should warn when cancel returns wrong status');
   });
 });
 
@@ -341,10 +332,7 @@ describe('comply observations for state machine scenarios', () => {
     const fs = require('node:fs');
     const path = require('node:path');
     const src = fs.readFileSync(path.join(__dirname, '../../dist/lib/testing/compliance/comply.js'), 'utf8');
-    assert.ok(
-      src.includes('valid_actions'),
-      'comply should observe valid_actions presence'
-    );
+    assert.ok(src.includes('valid_actions'), 'comply should observe valid_actions presence');
     assert.ok(
       src.includes('eliminates the need for buyers to internalize the state machine'),
       'comply should explain why valid_actions matters'
@@ -355,9 +343,6 @@ describe('comply observations for state machine scenarios', () => {
     const fs = require('node:fs');
     const path = require('node:path');
     const src = fs.readFileSync(path.join(__dirname, '../../dist/lib/testing/compliance/comply.js'), 'utf8');
-    assert.ok(
-      src.includes('does not support pause/resume'),
-      'comply should observe missing pause/resume support'
-    );
+    assert.ok(src.includes('does not support pause/resume'), 'comply should observe missing pause/resume support');
   });
 });
