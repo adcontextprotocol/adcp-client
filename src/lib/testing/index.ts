@@ -55,6 +55,10 @@ export {
   testSyncAudiences,
   resolveAccountForAudiences,
   testSchemaCompliance,
+  // State machine compliance
+  testMediaBuyLifecycle,
+  testTerminalStateEnforcement,
+  testPackageLifecycle,
   // v3 helpers
   hasGovernanceTools,
   hasSITools,

@@ -1190,3 +1190,421 @@ export async function testSyncAudiences(
 
   return { steps, profile };
 }
+
+// ---------------------------------------------------------------------------
+// State Machine Compliance Scenarios
+// ---------------------------------------------------------------------------
+
+/**
+ * Extract media buy status from a response, handling nested shapes.
+ */
+function extractStatus(data: Record<string, unknown>): string | undefined {
+  const nested = data.media_buy as Record<string, unknown> | undefined;
+  return (data.status ?? nested?.status) as string | undefined;
+}
+
+/**
+ * Test: Media Buy Lifecycle
+ * Exercises the full state machine: create -> pause -> resume -> get status -> cancel
+ */
+export async function testMediaBuyLifecycle(
+  agentUrl: string,
+  options: TestOptions
+): Promise<{ steps: TestStepResult[]; profile?: AgentProfile }> {
+  const steps: TestStepResult[] = [];
+  const client = createTestClient(agentUrl, options.protocol || 'mcp', options);
+
+  // Create a media buy to work with
+  const { steps: createSteps, profile, mediaBuyId } = await testCreateMediaBuy(agentUrl, options);
+  steps.push(...createSteps);
+
+  if (!mediaBuyId || !profile?.tools.includes('update_media_buy')) {
+    return { steps, profile };
+  }
+
+  // Step 1: Pause the media buy
+  const { result: pauseResult, step: pauseStep } = await runStep<TaskResult>(
+    'Pause media buy',
+    'update_media_buy',
+    async () =>
+      client.updateMediaBuy({
+        media_buy_id: mediaBuyId,
+        paused: true,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- intentional: test request bypasses strict typing
+      } as any) as Promise<TaskResult>
+  );
+
+  if (pauseResult?.success && pauseResult?.data) {
+    const data = pauseResult.data as unknown as Record<string, unknown>;
+    const status = extractStatus(data);
+    pauseStep.details = `Paused media buy, status: ${status}`;
+    pauseStep.response_preview = JSON.stringify({ media_buy_id: mediaBuyId, status }, null, 2);
+    if (status && status !== 'paused') {
+      pauseStep.warnings = [`Expected status 'paused', got '${status}'`];
+    }
+  } else if (pauseResult && !pauseResult.success) {
+    pauseStep.passed = false;
+    pauseStep.error = pauseResult.error || 'Pause operation failed';
+  }
+  steps.push(pauseStep);
+
+  // Step 2: Resume the media buy
+  const { result: resumeResult, step: resumeStep } = await runStep<TaskResult>(
+    'Resume media buy',
+    'update_media_buy',
+    async () =>
+      client.updateMediaBuy({
+        media_buy_id: mediaBuyId,
+        paused: false,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- intentional: test request bypasses strict typing
+      } as any) as Promise<TaskResult>
+  );
+
+  if (resumeResult?.success && resumeResult?.data) {
+    const data = resumeResult.data as unknown as Record<string, unknown>;
+    const status = extractStatus(data);
+    resumeStep.details = `Resumed media buy, status: ${status}`;
+    resumeStep.response_preview = JSON.stringify({ media_buy_id: mediaBuyId, status }, null, 2);
+    if (status && status !== 'active' && status !== 'pending_activation') {
+      resumeStep.warnings = [`Expected status 'active' or 'pending_activation', got '${status}'`];
+    }
+  } else if (resumeResult && !resumeResult.success) {
+    resumeStep.passed = false;
+    resumeStep.error = resumeResult.error || 'Resume operation failed';
+  }
+  steps.push(resumeStep);
+
+  // Step 3: Get status and check valid_actions (if get_media_buys available)
+  if (profile.tools.includes('get_media_buys')) {
+    const { result: statusResult, step: statusStep } = await runStep<TaskResult>(
+      'Get media buy status and valid_actions',
+      'get_media_buys',
+      async () =>
+        client.executeTask('get_media_buys', {
+          media_buy_ids: [mediaBuyId],
+        }) as Promise<TaskResult>
+    );
+
+    if (statusResult?.success && statusResult?.data) {
+      const mediaBuys = (statusResult.data.media_buys || []) as Array<Record<string, unknown>>;
+      const mediaBuy =
+        mediaBuys.find((item: Record<string, unknown>) => item.media_buy_id === mediaBuyId) || mediaBuys[0];
+
+      if (!mediaBuy) {
+        statusStep.passed = false;
+        statusStep.error = 'get_media_buys did not return the created media buy';
+      } else {
+        const validActions = mediaBuy.valid_actions as string[] | undefined;
+        statusStep.details = `Status: ${mediaBuy.status}, valid_actions: ${validActions ? validActions.join(', ') : 'not provided'}`;
+        statusStep.response_preview = JSON.stringify(
+          {
+            media_buy_id: mediaBuy.media_buy_id,
+            status: mediaBuy.status,
+            valid_actions: validActions,
+          },
+          null,
+          2
+        );
+      }
+    } else if (statusResult && !statusResult.success) {
+      statusStep.passed = false;
+      statusStep.error = statusResult.error || 'get_media_buys failed';
+    }
+    steps.push(statusStep);
+  }
+
+  // Step 4: Cancel the media buy
+  const { result: cancelResult, step: cancelStep } = await runStep<TaskResult>(
+    'Cancel media buy',
+    'update_media_buy',
+    async () =>
+      client.updateMediaBuy({
+        media_buy_id: mediaBuyId,
+        canceled: true,
+        cancellation_reason: 'AdCP compliance test — lifecycle scenario',
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- intentional: test request bypasses strict typing
+      } as any) as Promise<TaskResult>
+  );
+
+  if (cancelResult?.success && cancelResult?.data) {
+    const data = cancelResult.data as unknown as Record<string, unknown>;
+    const status = extractStatus(data);
+    cancelStep.details = `Canceled media buy, status: ${status}`;
+    cancelStep.response_preview = JSON.stringify({ media_buy_id: mediaBuyId, status }, null, 2);
+    if (status && status !== 'canceled') {
+      cancelStep.warnings = [`Expected status 'canceled', got '${status}'`];
+    }
+  } else if (cancelResult && !cancelResult.success) {
+    // NOT_CANCELLABLE is a valid response — agent may not support cancellation
+    const error = cancelResult.error || '';
+    if (error.includes('NOT_CANCELLABLE') || error.includes('not_cancellable')) {
+      cancelStep.passed = true;
+      cancelStep.details = 'Agent does not support cancellation (NOT_CANCELLABLE)';
+    } else {
+      cancelStep.passed = false;
+      cancelStep.error = cancelResult.error || 'Cancel operation failed';
+    }
+  }
+  steps.push(cancelStep);
+
+  return { steps, profile };
+}
+
+/**
+ * Test: Terminal State Enforcement
+ * Verifies agents reject updates to media buys in terminal states.
+ */
+export async function testTerminalStateEnforcement(
+  agentUrl: string,
+  options: TestOptions
+): Promise<{ steps: TestStepResult[]; profile?: AgentProfile }> {
+  const steps: TestStepResult[] = [];
+  const client = createTestClient(agentUrl, options.protocol || 'mcp', options);
+
+  // Create and cancel a media buy
+  const { steps: createSteps, profile, mediaBuyId } = await testCreateMediaBuy(agentUrl, options);
+  steps.push(...createSteps);
+
+  if (!mediaBuyId || !profile?.tools.includes('update_media_buy')) {
+    return { steps, profile };
+  }
+
+  // Cancel the media buy to put it in a terminal state
+  const { result: cancelResult, step: cancelStep } = await runStep<TaskResult>(
+    'Cancel media buy (setup)',
+    'update_media_buy',
+    async () =>
+      client.updateMediaBuy({
+        media_buy_id: mediaBuyId,
+        canceled: true,
+        cancellation_reason: 'AdCP compliance test — terminal state enforcement',
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- intentional: test request bypasses strict typing
+      } as any) as Promise<TaskResult>
+  );
+
+  if (cancelResult?.success && cancelResult?.data) {
+    const data = cancelResult.data as unknown as Record<string, unknown>;
+    cancelStep.details = `Canceled media buy, status: ${extractStatus(data)}`;
+  } else if (cancelResult && !cancelResult.success) {
+    const error = cancelResult.error || '';
+    if (error.includes('NOT_CANCELLABLE') || error.includes('not_cancellable')) {
+      // Agent doesn't support cancellation — can't test terminal state enforcement
+      cancelStep.passed = true;
+      cancelStep.details = 'Agent does not support cancellation — skipping terminal state tests';
+      steps.push(cancelStep);
+      return { steps, profile };
+    }
+    cancelStep.passed = false;
+    cancelStep.error = cancelResult.error || 'Cancel setup failed';
+  }
+  steps.push(cancelStep);
+
+  // Try to pause the canceled media buy — should be rejected
+  const { result: pauseResult, step: pauseStep } = await runStep<TaskResult>(
+    'Update canceled media buy (expect rejection)',
+    'update_media_buy',
+    async () =>
+      client.updateMediaBuy({
+        media_buy_id: mediaBuyId,
+        paused: true,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- intentional: test request bypasses strict typing
+      } as any) as Promise<TaskResult>
+  );
+
+  if (pauseResult?.success) {
+    pauseStep.passed = false;
+    pauseStep.error = 'Agent accepted update to canceled media buy — should reject with INVALID_STATE';
+  } else if (pauseResult) {
+    // Agent returned { success: false } — correct behavior
+    pauseStep.passed = true;
+    const error = pauseResult.error || '';
+    const hasExpectedCode = error.includes('INVALID_STATE') || error.includes('invalid_state');
+    pauseStep.details = hasExpectedCode
+      ? 'Correctly rejected with INVALID_STATE'
+      : `Correctly rejected update to canceled media buy: ${error}`;
+    if (!hasExpectedCode && error) {
+      pauseStep.warnings = ['Agent rejected the update but did not use INVALID_STATE error code'];
+    }
+  }
+  // else: pauseResult is undefined (exception thrown) — runStep already set passed=false and error
+  steps.push(pauseStep);
+
+  // Try to cancel again — should also be rejected (or idempotent)
+  const { result: reCancelResult, step: reCancelStep } = await runStep<TaskResult>(
+    'Cancel already-canceled media buy (expect rejection)',
+    'update_media_buy',
+    async () =>
+      client.updateMediaBuy({
+        media_buy_id: mediaBuyId,
+        canceled: true,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- intentional: test request bypasses strict typing
+      } as any) as Promise<TaskResult>
+  );
+
+  if (reCancelResult?.success) {
+    // Idempotent cancellation is acceptable
+    reCancelStep.passed = true;
+    reCancelStep.details = 'Agent accepted re-cancellation (idempotent) — acceptable behavior';
+  } else if (reCancelResult) {
+    reCancelStep.passed = true;
+    const error = reCancelResult.error || '';
+    reCancelStep.details = `Correctly rejected re-cancellation: ${error}`;
+  }
+  steps.push(reCancelStep);
+
+  return { steps, profile };
+}
+
+/**
+ * Test: Package Lifecycle
+ * Tests package-level pause/resume independent of media buy status.
+ */
+export async function testPackageLifecycle(
+  agentUrl: string,
+  options: TestOptions
+): Promise<{ steps: TestStepResult[]; profile?: AgentProfile }> {
+  const steps: TestStepResult[] = [];
+  const client = createTestClient(agentUrl, options.protocol || 'mcp', options);
+
+  // Create a media buy
+  const { steps: createSteps, profile, mediaBuyId } = await testCreateMediaBuy(agentUrl, options);
+  steps.push(...createSteps);
+
+  if (!mediaBuyId || !profile?.tools.includes('update_media_buy')) {
+    return { steps, profile };
+  }
+
+  // Find a package ID — try get_media_buys first, fall back to convention
+  let packageId = 'pkg-0';
+
+  if (profile.tools.includes('get_media_buys')) {
+    const { result: fetchResult, step: fetchStep } = await runStep<TaskResult>(
+      'Fetch package IDs',
+      'get_media_buys',
+      async () =>
+        client.executeTask('get_media_buys', {
+          media_buy_ids: [mediaBuyId],
+        }) as Promise<TaskResult>
+    );
+
+    if (fetchResult?.success && fetchResult?.data) {
+      const mediaBuys = (fetchResult.data.media_buys || []) as Array<Record<string, unknown>>;
+      const mediaBuy =
+        mediaBuys.find((item: Record<string, unknown>) => item.media_buy_id === mediaBuyId) || mediaBuys[0];
+      const packages = (mediaBuy?.packages || []) as Array<Record<string, unknown>>;
+      if (packages[0]?.package_id) {
+        packageId = packages[0].package_id as string;
+        fetchStep.details = `Found package ${packageId}`;
+      } else {
+        fetchStep.details = `No packages found, falling back to '${packageId}'`;
+      }
+    } else if (fetchResult && !fetchResult.success) {
+      fetchStep.passed = false;
+      fetchStep.error = fetchResult.error || 'get_media_buys failed during package ID discovery';
+    }
+    steps.push(fetchStep);
+  }
+
+  // Step 1: Pause a package
+  const { result: pauseResult, step: pauseStep } = await runStep<TaskResult>(
+    'Pause package',
+    'update_media_buy',
+    async () =>
+      client.updateMediaBuy({
+        media_buy_id: mediaBuyId,
+        packages: [{ package_id: packageId, paused: true }],
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- intentional: test request bypasses strict typing
+      } as any) as Promise<TaskResult>
+  );
+
+  if (pauseResult?.success && pauseResult?.data) {
+    const data = pauseResult.data as unknown as Record<string, unknown>;
+    const affectedPackages = (data.affected_packages || []) as Array<Record<string, unknown>>;
+    const pkg = affectedPackages.find(p => p.package_id === packageId) || affectedPackages[0];
+    pauseStep.details = `Paused package ${packageId}, paused: ${pkg?.paused}`;
+    pauseStep.response_preview = JSON.stringify(
+      {
+        media_buy_id: mediaBuyId,
+        media_buy_status: extractStatus(data),
+        package_id: pkg?.package_id,
+        package_paused: pkg?.paused,
+      },
+      null,
+      2
+    );
+  } else if (pauseResult && !pauseResult.success) {
+    pauseStep.passed = false;
+    pauseStep.error = pauseResult.error || 'Package pause failed';
+  }
+  steps.push(pauseStep);
+
+  // Step 2: Resume the package
+  const { result: resumeResult, step: resumeStep } = await runStep<TaskResult>(
+    'Resume package',
+    'update_media_buy',
+    async () =>
+      client.updateMediaBuy({
+        media_buy_id: mediaBuyId,
+        packages: [{ package_id: packageId, paused: false }],
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- intentional: test request bypasses strict typing
+      } as any) as Promise<TaskResult>
+  );
+
+  if (resumeResult?.success && resumeResult?.data) {
+    const data = resumeResult.data as unknown as Record<string, unknown>;
+    const affectedPackages = (data.affected_packages || []) as Array<Record<string, unknown>>;
+    const pkg = affectedPackages.find(p => p.package_id === packageId) || affectedPackages[0];
+    resumeStep.details = `Resumed package ${packageId}, paused: ${pkg?.paused}`;
+    resumeStep.response_preview = JSON.stringify(
+      {
+        media_buy_id: mediaBuyId,
+        media_buy_status: extractStatus(data),
+        package_id: pkg?.package_id,
+        package_paused: pkg?.paused,
+      },
+      null,
+      2
+    );
+  } else if (resumeResult && !resumeResult.success) {
+    resumeStep.passed = false;
+    resumeStep.error = resumeResult.error || 'Package resume failed';
+  }
+  steps.push(resumeStep);
+
+  // Step 3: Verify media buy is still active
+  if (profile.tools.includes('get_media_buys')) {
+    const { result: verifyResult, step: verifyStep } = await runStep<TaskResult>(
+      'Verify media buy still active after package operations',
+      'get_media_buys',
+      async () =>
+        client.executeTask('get_media_buys', {
+          media_buy_ids: [mediaBuyId],
+        }) as Promise<TaskResult>
+    );
+
+    if (verifyResult?.success && verifyResult?.data) {
+      const mediaBuys = (verifyResult.data.media_buys || []) as Array<Record<string, unknown>>;
+      const mediaBuy =
+        mediaBuys.find((item: Record<string, unknown>) => item.media_buy_id === mediaBuyId) || mediaBuys[0];
+      const status = mediaBuy?.status as string | undefined;
+
+      if (status === 'active' || status === 'pending_activation') {
+        verifyStep.details = `Media buy still ${status} after package-level operations`;
+      } else {
+        verifyStep.details = `Media buy status is '${status}' — expected 'active' or 'pending_activation'`;
+        verifyStep.warnings = [`Package-level pause/resume changed media buy status to '${status}'`];
+      }
+      verifyStep.response_preview = JSON.stringify(
+        { media_buy_id: mediaBuy?.media_buy_id, status },
+        null,
+        2
+      );
+    } else if (verifyResult && !verifyResult.success) {
+      verifyStep.passed = false;
+      verifyStep.error = verifyResult.error || 'get_media_buys verification failed';
+    }
+    steps.push(verifyStep);
+  }
+
+  return { steps, profile };
+}

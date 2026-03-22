@@ -37,7 +37,15 @@ const TRACK_DEFINITIONS: Record<ComplianceTrack, { label: string; scenarios: Tes
   },
   media_buy: {
     label: 'Media Buy Lifecycle',
-    scenarios: ['create_media_buy', 'full_sales_flow', 'creative_inline', 'temporal_validation'],
+    scenarios: [
+      'create_media_buy',
+      'full_sales_flow',
+      'creative_inline',
+      'temporal_validation',
+      'media_buy_lifecycle',
+      'terminal_state_enforcement',
+      'package_lifecycle',
+    ],
   },
   creative: {
     label: 'Creative Management',
@@ -78,7 +86,7 @@ const TRACK_DEFINITIONS: Record<ComplianceTrack, { label: string; scenarios: Tes
 const TRACK_RELEVANCE: Record<ComplianceTrack, string[]> = {
   core: [], // always applicable
   products: ['get_products'],
-  media_buy: ['create_media_buy'],
+  media_buy: ['create_media_buy', 'update_media_buy', 'get_media_buys'],
   creative: ['sync_creatives', 'build_creative', 'list_creative_formats'],
   reporting: ['get_media_buy_delivery'],
   governance: ['create_property_list', 'list_content_standards'],
@@ -223,6 +231,49 @@ function collectObservations(
             // response_preview isn't always JSON
           }
         }
+      }
+    }
+  }
+
+  // Media buy track observations
+  if (track === 'media_buy') {
+    // Check for valid_actions support
+    for (const result of results) {
+      for (const step of result.steps ?? []) {
+        if (step.task === 'get_media_buys' && step.response_preview) {
+          try {
+            const preview = JSON.parse(step.response_preview) as { valid_actions?: unknown };
+            if (preview.valid_actions === undefined || preview.valid_actions === null) {
+              observations.push({
+                category: 'best_practice',
+                severity: 'suggestion',
+                track,
+                message:
+                  'Agent does not return valid_actions in get_media_buys response. ' +
+                  'valid_actions eliminates the need for buyers to internalize the state machine.',
+              });
+            }
+          } catch {
+            // not always JSON
+          }
+        }
+      }
+    }
+
+    // Check if lifecycle scenarios revealed missing pause/resume support
+    const lifecycleResult = results.find(r => r.scenario === 'media_buy_lifecycle');
+    if (lifecycleResult && !lifecycleResult.overall_passed) {
+      const pauseFailed = (lifecycleResult.steps ?? []).find(
+        s => s.step === 'Pause media buy' && !s.passed
+      );
+      if (pauseFailed) {
+        observations.push({
+          category: 'completeness',
+          severity: 'warning',
+          track,
+          message: 'Agent does not support pause/resume operations on media buys.',
+          evidence: { error: pauseFailed.error },
+        });
       }
     }
   }
