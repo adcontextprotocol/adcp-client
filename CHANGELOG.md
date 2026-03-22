@@ -1,5 +1,16 @@
 # Changelog
 
+## 4.14.0
+
+### Minor Changes
+
+- 9338bb4: Add state machine compliance scenarios to comply framework: media_buy_lifecycle (pause/resume/cancel transitions), terminal_state_enforcement (reject updates to canceled buys), and package_lifecycle (package-level pause/resume independent of media buy status). Includes valid_actions and pause/resume observations.
+
+### Patch Changes
+
+- a7f4585: Fix CLI to use saved OAuth tokens automatically instead of requiring --auth flag on every request
+- 2fff9d6: Fix comply() response validation: validate required fields and enum values against Zod schemas (#371, #372), fix signals_flow sending brief instead of signal_spec (#373)
+
 ## 4.13.0
 
 ### Minor Changes
