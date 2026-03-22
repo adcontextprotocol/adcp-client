@@ -15,6 +15,7 @@ import type {
   BrandReference,
 } from '../types/tools.generated';
 import type { TestOptions, TestStepResult, AgentProfile, TaskResult, Logger } from './types';
+import { TOOL_RESPONSE_SCHEMAS } from '../utils/response-schemas';
 
 const DEFAULT_BRAND_REF: BrandReference = { domain: 'test.example.com' };
 
@@ -388,7 +389,7 @@ export async function discoverSignals(
   client: TestClient,
   profile: AgentProfile,
   options: TestOptions
-): Promise<{ signals: AgentProfile['supported_signals']; step: TestStepResult }> {
+): Promise<{ signals: AgentProfile['supported_signals']; step: TestStepResult; schemaStep?: TestStepResult }> {
   const signals: AgentProfile['supported_signals'] = [];
 
   if (!profile.tools.includes('get_signals')) {
@@ -408,12 +409,14 @@ export async function discoverSignals(
     'get_signals',
     async () =>
       client.getSignals({
-        brief: options.brief || 'Show me all available audience signals and segments',
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- bypasses strict request typing
-      } as any) as Promise<TaskResult>
+        signal_spec: options.brief || 'Show me all available audience signals and segments',
+      }) as Promise<TaskResult>
   );
 
+  let schemaStep: TestStepResult | undefined;
+
   if (result?.success && result?.data) {
+    schemaStep = validateResponseSchema('get_signals', result.data);
     const responseData = result.data as GetSignalsResponse;
     const rawSignals = responseData.signals ?? [];
 
@@ -444,5 +447,45 @@ export async function discoverSignals(
     step.error = result.error || 'get_signals failed';
   }
 
-  return { signals, step };
+  return { signals, step, schemaStep };
+}
+
+/**
+ * Validate response data against the AdCP Zod schema for a tool.
+ * Returns a TestStepResult indicating pass/fail with details on schema violations.
+ */
+export function validateResponseSchema(toolName: string, data: unknown): TestStepResult {
+  const schema = TOOL_RESPONSE_SCHEMAS[toolName];
+  if (!schema) {
+    return {
+      step: `Schema validation: ${toolName}`,
+      passed: true,
+      duration_ms: 0,
+      details: `No response schema available for ${toolName}`,
+      warnings: [`No Zod schema registered for "${toolName}" — validation skipped`],
+    };
+  }
+
+  const result = schema.safeParse(data);
+  if (result.success) {
+    return {
+      step: `Schema validation: ${toolName}`,
+      passed: true,
+      duration_ms: 0,
+      details: `Response matches ${toolName} schema`,
+    };
+  }
+
+  const violations = result.error.issues.map(i => {
+    const path = i.path.length > 0 ? i.path.join('.') : '(root)';
+    return { path, message: i.message, code: i.code };
+  });
+
+  return {
+    step: `Schema validation: ${toolName}`,
+    passed: false,
+    duration_ms: 0,
+    error: `Response schema violations: ${violations.map(v => `${v.path}: ${v.message}`).join('; ')}`,
+    response_preview: JSON.stringify({ violations }, null, 2),
+  };
 }

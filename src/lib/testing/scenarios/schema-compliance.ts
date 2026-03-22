@@ -13,7 +13,7 @@
 import type { Product } from '../../types/core.generated';
 import type { GetProductsResponse, ListCreativeFormatsResponse, Format } from '../../types/tools.generated';
 import type { TestOptions, TestStepResult, AgentProfile, TaskResult } from '../types';
-import { createTestClient, runStep, discoverAgentProfile } from '../client';
+import { createTestClient, runStep, discoverAgentProfile, validateResponseSchema } from '../client';
 
 // v3 channel taxonomy — 19 channels
 const V3_CHANNELS = new Set([
@@ -84,6 +84,9 @@ export async function testSchemaCompliance(
 
   const data = productsResult.data as GetProductsResponse;
   const products: Product[] = data.products || [];
+
+  // --- Zod schema validation (catches missing required fields + invalid enum values) ---
+  steps.push(validateResponseSchema('get_products', data));
 
   if (products.length === 0) {
     steps.push({
@@ -204,6 +207,7 @@ export async function testSchemaCompliance(
     );
 
     if (formatsResult?.success && formatsResult?.data) {
+      steps.push(validateResponseSchema('list_creative_formats', formatsResult.data));
       const formatsData = formatsResult.data as ListCreativeFormatsResponse;
       const formats: Format[] = formatsData.formats || [];
       const assetsIssues: string[] = [];
