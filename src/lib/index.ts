@@ -385,6 +385,27 @@ export type { StandardErrorCode, ErrorRecovery } from './types/error-codes';
 export { adcpError, capabilitiesResponse, productsResponse, mediaBuyResponse, deliveryResponse } from './server';
 export type { AdcpErrorOptions, AdcpErrorResponse, McpToolResponse } from './server';
 
+// MCP Tasks server-side helpers
+export {
+  taskToolResponse,
+  registerAdcpTaskTool,
+  createTaskCapableServer,
+  InMemoryTaskStore,
+  isTerminal,
+} from './server';
+export type {
+  AdcpTaskToolConfig,
+  TaskStore,
+  TaskMessageQueue,
+  CreateTaskOptions,
+  ToolTaskHandler,
+  CreateTaskRequestHandlerExtra,
+  TaskRequestHandlerExtra,
+  CreateTaskResult,
+  GetTaskResult,
+  Task,
+} from './server';
+
 // ====== ERROR EXTRACTION ======
 // Extract structured AdCP errors from transport responses
 export {

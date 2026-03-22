@@ -125,7 +125,7 @@ async function getOrCreateConnection(
  * On transport errors, evicts the stale connection and retries once.
  * Auth errors (401) evict and close the connection, then throw immediately.
  */
-async function withCachedConnection<T>(
+export async function withCachedConnection<T>(
   agentUrl: string,
   authToken: string | undefined,
   authHeaders: Record<string, string>,
