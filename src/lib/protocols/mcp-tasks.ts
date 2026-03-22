@@ -14,7 +14,6 @@ import type { DebugLogEntry } from '../types/adcp';
 import type { TaskInfo } from '../core/ConversationTypes';
 import { withCachedConnection } from './mcp';
 import { createMCPAuthHeaders } from '../auth';
-import { is401Error } from '../errors';
 import { withSpan, injectTraceHeaders } from '../observability/tracing';
 
 /** Response shape returned by MCPClient.callTool(). */
@@ -117,6 +116,15 @@ function redactArgsForLog(args: Record<string, unknown>): Record<string, unknown
     ...args,
     push_notification_config: { ...(args.push_notification_config as object), authentication: '***' },
   };
+}
+
+/**
+ * Validate taskId before passing to protocol methods.
+ */
+function validateTaskId(taskId: string): void {
+  if (!taskId || typeof taskId !== 'string' || taskId.length > 256) {
+    throw new Error(`Invalid taskId: expected non-empty string (max 256 chars)`);
+  }
 }
 
 /**
@@ -320,6 +328,7 @@ export async function getMCPTaskStatus(
   debugLogs: DebugLogEntry[] = [],
   toolName?: string
 ): Promise<TaskInfo> {
+  validateTaskId(taskId);
   const authHeaders = buildAuthHeaders(authToken);
 
   return withCachedConnection(agentUrl, authToken, authHeaders, debugLogs, `tasks/get:${taskId}`, async client => {
@@ -352,6 +361,7 @@ export async function getMCPTaskResult(
   authToken?: string,
   debugLogs: DebugLogEntry[] = []
 ): Promise<unknown> {
+  validateTaskId(taskId);
   const authHeaders = buildAuthHeaders(authToken);
 
   return withCachedConnection(agentUrl, authToken, authHeaders, debugLogs, `tasks/result:${taskId}`, async client => {
@@ -395,6 +405,7 @@ export async function cancelMCPTask(
   authToken?: string,
   debugLogs: DebugLogEntry[] = []
 ): Promise<void> {
+  validateTaskId(taskId);
   const authHeaders = buildAuthHeaders(authToken);
 
   await withCachedConnection(agentUrl, authToken, authHeaders, debugLogs, `tasks/cancel:${taskId}`, async client => {
