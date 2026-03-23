@@ -504,12 +504,8 @@ describe('Zod Schema Validation', () => {
     }
 
     const constraints = {
-      include: [
-        { type: 'description', description: 'Adults 25-54 interested in home improvement' },
-      ],
-      exclude: [
-        { type: 'description', description: 'Children under 13' },
-      ],
+      include: [{ type: 'description', description: 'Adults 25-54 interested in home improvement' }],
+      exclude: [{ type: 'description', description: 'Children under 13' }],
     };
 
     const result = schemas.AudienceConstraintsSchema.safeParse(constraints);
@@ -524,9 +520,14 @@ describe('Zod Schema Validation', () => {
     }
 
     const validValues = [
-      'racial_ethnic_origin', 'political_opinions', 'religious_beliefs',
-      'trade_union_membership', 'health_data', 'sex_life_sexual_orientation',
-      'genetic_data', 'biometric_data',
+      'racial_ethnic_origin',
+      'political_opinions',
+      'religious_beliefs',
+      'trade_union_membership',
+      'health_data',
+      'sex_life_sexual_orientation',
+      'genetic_data',
+      'biometric_data',
     ];
 
     for (const value of validValues) {
@@ -572,27 +573,25 @@ describe('Zod Schema Validation', () => {
     }
 
     const planWithAudience = {
-      plans: [{
-        plan_id: 'plan-tylenol-q4',
-        brand: { domain: 'tylenol.com' },
-        objectives: 'Drive awareness of children\'s Tylenol',
-        budget: { total: 500000, currency: 'USD', authority_level: 'agent_full' },
-        flight: { start: '2026-04-01T00:00:00Z', end: '2026-06-30T00:00:00Z' },
-        countries: ['US'],
-        policy_categories: ['children_directed', 'pharmaceutical_advertising'],
-        audience: {
-          include: [
-            { type: 'description', description: 'Parents of children aged 2-12' },
-          ],
-          exclude: [
-            { type: 'description', description: 'Children under 13' },
-          ],
+      plans: [
+        {
+          plan_id: 'plan-tylenol-q4',
+          brand: { domain: 'tylenol.com' },
+          objectives: "Drive awareness of children's Tylenol",
+          budget: { total: 500000, currency: 'USD', authority_level: 'agent_full' },
+          flight: { start: '2026-04-01T00:00:00Z', end: '2026-06-30T00:00:00Z' },
+          countries: ['US'],
+          policy_categories: ['children_directed', 'pharmaceutical_advertising'],
+          audience: {
+            include: [{ type: 'description', description: 'Parents of children aged 2-12' }],
+            exclude: [{ type: 'description', description: 'Children under 13' }],
+          },
+          restricted_attributes: ['health_data'],
+          restricted_attributes_custom: ['parental_status'],
+          min_audience_size: 1000,
+          policy_ids: ['us_coppa_data_collection'],
         },
-        restricted_attributes: ['health_data'],
-        restricted_attributes_custom: ['parental_status'],
-        min_audience_size: 1000,
-        policy_ids: ['us_coppa_data_collection'],
-      }],
+      ],
     };
 
     const result = schemas.SyncPlansRequestSchema.safeParse(planWithAudience);
@@ -605,14 +604,16 @@ describe('Zod Schema Validation', () => {
     }
 
     const plan = {
-      plans: [{
-        plan_id: 'plan-1',
-        brand: { domain: 'example.com' },
-        objectives: 'Test',
-        budget: { total: 1000, currency: 'USD', authority_level: 'agent_full' },
-        flight: { start: '2026-04-01T00:00:00Z', end: '2026-06-30T00:00:00Z' },
-        restricted_attributes: ['invalid_attribute'],
-      }],
+      plans: [
+        {
+          plan_id: 'plan-1',
+          brand: { domain: 'example.com' },
+          objectives: 'Test',
+          budget: { total: 1000, currency: 'USD', authority_level: 'agent_full' },
+          flight: { start: '2026-04-01T00:00:00Z', end: '2026-06-30T00:00:00Z' },
+          restricted_attributes: ['invalid_attribute'],
+        },
+      ],
     };
 
     const result = schemas.SyncPlansRequestSchema.safeParse(plan);
@@ -653,7 +654,10 @@ describe('Zod Schema Validation', () => {
     };
 
     const result = schemas.CheckGovernanceRequestSchema.safeParse(request);
-    assert.ok(result.success, `Delivery metrics with audience_distribution should validate: ${JSON.stringify(result.error?.issues)}`);
+    assert.ok(
+      result.success,
+      `Delivery metrics with audience_distribution should validate: ${JSON.stringify(result.error?.issues)}`
+    );
   });
 
   test('SyncAudiencesSuccessSchema validates response with match breakdown', async () => {
@@ -662,23 +666,28 @@ describe('Zod Schema Validation', () => {
     }
 
     const response = {
-      audiences: [{
-        audience_id: 'existing_customers',
-        action: 'updated',
-        status: 'ready',
-        uploaded_count: 5000,
-        matched_count: 18750,
-        effective_match_rate: 0.75,
-        match_breakdown: [
-          { id_type: 'hashed_email', submitted: 25000, matched: 17500, match_rate: 0.70 },
-          { id_type: 'hashed_phone', submitted: 15000, matched: 12000, match_rate: 0.80 },
-          { id_type: 'rampid', submitted: 8000, matched: 7200, match_rate: 0.90 },
-        ],
-      }],
+      audiences: [
+        {
+          audience_id: 'existing_customers',
+          action: 'updated',
+          status: 'ready',
+          uploaded_count: 5000,
+          matched_count: 18750,
+          effective_match_rate: 0.75,
+          match_breakdown: [
+            { id_type: 'hashed_email', submitted: 25000, matched: 17500, match_rate: 0.7 },
+            { id_type: 'hashed_phone', submitted: 15000, matched: 12000, match_rate: 0.8 },
+            { id_type: 'rampid', submitted: 8000, matched: 7200, match_rate: 0.9 },
+          ],
+        },
+      ],
     };
 
     const result = schemas.SyncAudiencesSuccessSchema.safeParse(response);
-    assert.ok(result.success, `Sync audiences with match breakdown should validate: ${JSON.stringify(result.error?.issues)}`);
+    assert.ok(
+      result.success,
+      `Sync audiences with match breakdown should validate: ${JSON.stringify(result.error?.issues)}`
+    );
   });
 
   test('GetSignalsResponseSchema validates signals with governance metadata', async () => {
@@ -687,22 +696,27 @@ describe('Zod Schema Validation', () => {
     }
 
     const response = {
-      signals: [{
-        signal_agent_segment_id: 'seg-001',
-        name: 'Chronic Condition Households',
-        description: 'Households with modeled indicators of chronic health conditions',
-        signal_type: 'marketplace',
-        data_provider: 'Health Data Co',
-        coverage_percentage: 8.2,
-        deployments: [{ type: 'platform', platform: 'dv360', is_live: false }],
-        pricing_options: [{ pricing_option_id: 'spo1', model: 'cpm', cpm: 3.5, currency: 'USD' }],
-        restricted_attributes: ['health_data'],
-        policy_categories: ['pharmaceutical_advertising', 'health_wellness'],
-      }],
+      signals: [
+        {
+          signal_agent_segment_id: 'seg-001',
+          name: 'Chronic Condition Households',
+          description: 'Households with modeled indicators of chronic health conditions',
+          signal_type: 'marketplace',
+          data_provider: 'Health Data Co',
+          coverage_percentage: 8.2,
+          deployments: [{ type: 'platform', platform: 'dv360', is_live: false }],
+          pricing_options: [{ pricing_option_id: 'spo1', model: 'cpm', cpm: 3.5, currency: 'USD' }],
+          restricted_attributes: ['health_data'],
+          policy_categories: ['pharmaceutical_advertising', 'health_wellness'],
+        },
+      ],
     };
 
     const result = schemas.GetSignalsResponseSchema.safeParse(response);
-    assert.ok(result.success, `Signal with governance metadata should validate: ${JSON.stringify(result.error?.issues)}`);
+    assert.ok(
+      result.success,
+      `Signal with governance metadata should validate: ${JSON.stringify(result.error?.issues)}`
+    );
   });
 
   test('record schemas preserve value types after undefined removal', async () => {

@@ -270,15 +270,17 @@ describe('validateResponseSchema', () => {
 
     it('passes for response with effective_match_rate and match_breakdown', () => {
       const result = validateResponseSchema('sync_audiences', {
-        audiences: [{
-          ...validAudienceResult,
-          effective_match_rate: 0.75,
-          match_breakdown: [
-            { id_type: 'hashed_email', submitted: 25000, matched: 17500, match_rate: 0.70 },
-            { id_type: 'hashed_phone', submitted: 15000, matched: 12000, match_rate: 0.80 },
-            { id_type: 'rampid', submitted: 8000, matched: 7200, match_rate: 0.90 },
-          ],
-        }],
+        audiences: [
+          {
+            ...validAudienceResult,
+            effective_match_rate: 0.75,
+            match_breakdown: [
+              { id_type: 'hashed_email', submitted: 25000, matched: 17500, match_rate: 0.7 },
+              { id_type: 'hashed_phone', submitted: 15000, matched: 12000, match_rate: 0.8 },
+              { id_type: 'rampid', submitted: 8000, matched: 7200, match_rate: 0.9 },
+            ],
+          },
+        ],
       });
       assert.strictEqual(result.passed, true, `Expected pass, got: ${result.error || ''}`);
     });
@@ -292,11 +294,13 @@ describe('validateResponseSchema', () => {
 
     it('passes for audience with failed action', () => {
       const result = validateResponseSchema('sync_audiences', {
-        audiences: [{
-          audience_id: 'bad_audience',
-          action: 'failed',
-          errors: [{ code: 'invalid_format', message: 'Bad hash' }],
-        }],
+        audiences: [
+          {
+            audience_id: 'bad_audience',
+            action: 'failed',
+            errors: [{ code: 'invalid_format', message: 'Bad hash' }],
+          },
+        ],
       });
       assert.strictEqual(result.passed, true, `Expected pass, got: ${result.error || ''}`);
     });
@@ -306,11 +310,13 @@ describe('validateResponseSchema', () => {
   describe('get_signals — governance metadata on signal definitions', () => {
     it('passes for signal with restricted_attributes and policy_categories', () => {
       const result = validateResponseSchema('get_signals', {
-        signals: [{
-          ...validSignal,
-          restricted_attributes: ['health_data'],
-          policy_categories: ['pharmaceutical_advertising'],
-        }],
+        signals: [
+          {
+            ...validSignal,
+            restricted_attributes: ['health_data'],
+            policy_categories: ['pharmaceutical_advertising'],
+          },
+        ],
       });
       assert.strictEqual(result.passed, true, `Expected pass, got: ${result.error || ''}`);
     });
