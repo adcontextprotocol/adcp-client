@@ -3045,10 +3045,6 @@ export interface CreateMediaBuyRequest {
  */
 export interface PackageRequest {
   /**
-   * Buyer's reference identifier for this package. Sellers SHOULD deduplicate requests with the same buyer_ref within a media buy, returning the existing package rather than creating a duplicate.
-   */
-  buyer_ref: string;
-  /**
    * Product ID for this package
    */
   product_id: string;
@@ -3104,6 +3100,7 @@ export interface PackageRequest {
    * @maxItems 100
    */
   creatives?: CreativeAsset[];
+  context?: ContextObject;
   ext?: ExtensionObject;
 }
 /**
@@ -4027,11 +4024,20 @@ export interface ReportingWebhook {
   requested_metrics?: AvailableMetric[];
 }
 
+
 // create_media_buy response
 /**
  * Response payload for create_media_buy task. Returns either complete success data OR error information, never both. This enforces atomic operation semantics - the media buy is either fully created or not created at all.
  */
 export type CreateMediaBuyResponse = CreateMediaBuySuccess | CreateMediaBuyError;
+/**
+ * Initial media buy status. Either 'active' (immediate activation) or 'pending_activation' (awaiting platform setup).
+ */
+export type MediaBuyStatus = 'pending_activation' | 'active' | 'paused' | 'completed' | 'rejected' | 'canceled';
+/**
+ * Which party initiated the package cancellation.
+ */
+export type CanceledBy = 'buyer' | 'seller';
 /**
  * Selects an audience by signal reference or natural language description. Uses 'type' as the primary discriminator (signal vs description). Signal selectors additionally use 'value_type' to determine the targeting expression format (matching signal-targeting.json variants).
  */
@@ -4108,10 +4114,32 @@ export interface CreateMediaBuySuccess {
    */
   media_buy_id: string;
   account?: Account;
+  status?: MediaBuyStatus;
+  /**
+   * ISO 8601 timestamp when this media buy was confirmed by the seller. A successful create_media_buy response constitutes order confirmation.
+   */
+  confirmed_at?: string;
   /**
    * ISO 8601 timestamp for creative upload deadline
    */
   creative_deadline?: string;
+  /**
+   * Initial revision number for this media buy. Use in subsequent update_media_buy requests for optimistic concurrency.
+   */
+  revision?: number;
+  /**
+   * Actions the buyer can perform on this media buy after creation. Saves a round-trip to get_media_buys.
+   */
+  valid_actions?: (
+    | 'pause'
+    | 'resume'
+    | 'cancel'
+    | 'update_budget'
+    | 'update_dates'
+    | 'update_packages'
+    | 'add_packages'
+    | 'sync_creatives'
+  )[];
   /**
    * Array of created packages with complete state information
    */
@@ -4284,6 +4312,28 @@ export interface Package {
    * Whether this package is paused by the buyer. Paused packages do not deliver impressions. Defaults to false.
    */
   paused?: boolean;
+  /**
+   * Whether this package has been canceled. Canceled packages stop delivery and cannot be reactivated. Defaults to false.
+   */
+  canceled?: boolean;
+  /**
+   * Cancellation metadata. Present only when canceled is true.
+   */
+  cancellation?: {
+    /**
+     * ISO 8601 timestamp when this package was canceled.
+     */
+    canceled_at: string;
+    canceled_by: CanceledBy;
+    /**
+     * Reason the package was canceled.
+     */
+    reason?: string;
+  };
+  /**
+   * ISO 8601 timestamp for creative upload or change deadline for this package. After this deadline, creative changes are rejected. When absent, the media buy's creative_deadline applies.
+   */
+  creative_deadline?: string;
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -4353,17 +4403,59 @@ export interface CreateMediaBuyError {
 
 // update_media_buy parameters
 /**
- * Package update configuration for update_media_buy. Identifies package by package_id or buyer_ref and specifies fields to modify. Fields not present are left unchanged. Note: product_id, format_ids, and pricing_option_id cannot be changed after creation.
+ * Request parameters for updating campaign and package settings
  */
-export type PackageUpdate = {
+export interface UpdateMediaBuyRequest {
   /**
-   * Publisher's ID of package to update
+   * Seller's ID of the media buy to update
    */
-  package_id?: string;
+  media_buy_id: string;
   /**
-   * Buyer's reference for the package to update
+   * Expected current revision for optimistic concurrency. When provided, sellers MUST reject the update with CONFLICT if the media buy's current revision does not match. Obtain from get_media_buys or the most recent update response.
    */
-  buyer_ref?: string;
+  revision?: number;
+  /**
+   * Pause/resume the entire media buy (true = paused, false = active)
+   */
+  paused?: boolean;
+  /**
+   * Cancel the entire media buy. Cancellation is irreversible — canceled media buys cannot be reactivated. Sellers MAY reject with NOT_CANCELLABLE if the media buy cannot be canceled in its current state.
+   */
+  canceled?: true;
+  /**
+   * Reason for cancellation. Sellers SHOULD store this and return it in subsequent get_media_buys responses.
+   */
+  cancellation_reason?: string;
+  start_time?: StartTiming;
+  /**
+   * New end date/time in ISO 8601 format
+   */
+  end_time?: string;
+  /**
+   * Package-specific updates for existing packages
+   */
+  packages?: PackageUpdate[];
+  /**
+   * New packages to add to this media buy. Uses the same schema as create_media_buy packages. Sellers that support mid-flight package additions advertise add_packages in valid_actions. Sellers that do not support this MUST reject with UNSUPPORTED_FEATURE.
+   */
+  new_packages?: PackageRequest[];
+  reporting_webhook?: ReportingWebhook;
+  push_notification_config?: PushNotificationConfig;
+  /**
+   * Client-generated idempotency key for safe retries. If an update fails without a response, resending with the same idempotency_key guarantees the update is applied at most once. MUST be unique per (seller, request) pair to prevent cross-seller correlation. Use a fresh UUID v4 for each request.
+   */
+  idempotency_key?: string;
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Package update configuration for update_media_buy. Identifies package by package_id and specifies fields to modify. Fields not present are left unchanged. Note: product_id, format_ids, and pricing_option_id cannot be changed after creation.
+ */
+export interface PackageUpdate {
+  /**
+   * Seller's ID of package to update
+   */
+  package_id: string;
   /**
    * Updated budget allocation for this package in the currency specified by the pricing option
    */
@@ -4389,6 +4481,14 @@ export type PackageUpdate = {
    * Pause/resume specific package (true = paused, false = active)
    */
   paused?: boolean;
+  /**
+   * Cancel this specific package. Cancellation is irreversible — canceled packages stop delivery and cannot be reactivated. Sellers MAY reject with NOT_CANCELLABLE.
+   */
+  canceled?: true;
+  /**
+   * Reason for canceling this package.
+   */
+  cancellation_reason?: string;
   /**
    * Replace the catalogs this package promotes. Uses replacement semantics — the provided array replaces the current list. Omit to leave catalogs unchanged.
    */
@@ -4464,42 +4564,9 @@ export type PackageUpdate = {
    * @maxItems 100
    */
   creatives?: CreativeAsset[];
-  ext?: ExtensionObject;
-} & {
-  [k: string]: unknown | undefined;
-};
-/**
- * Request parameters for updating campaign and package settings
- */
-export interface UpdateMediaBuyRequest {
-  /**
-   * Seller's ID of the media buy to update
-   */
-  media_buy_id: string;
-  /**
-   * Pause/resume the entire media buy (true = paused, false = active)
-   */
-  paused?: boolean;
-  start_time?: StartTiming;
-  /**
-   * New end date/time in ISO 8601 format
-   */
-  end_time?: string;
-  /**
-   * Package-specific updates
-   */
-  packages?: PackageUpdate[];
-  reporting_webhook?: ReportingWebhook;
-  push_notification_config?: PushNotificationConfig;
-  /**
-   * Client-generated idempotency key for safe retries. If an update fails without a response, resending with the same idempotency_key guarantees the update is applied at most once. MUST be unique per (seller, request) pair to prevent cross-seller correlation. Use a fresh UUID v4 for each request.
-   */
-  idempotency_key?: string;
   context?: ContextObject;
   ext?: ExtensionObject;
 }
-
-// update_media_buy response
 /**
  * Response payload for update_media_buy task. Returns either complete success data OR error information, never both. This enforces atomic operation semantics - updates are either fully applied or not applied at all.
  */
@@ -4512,6 +4579,11 @@ export interface UpdateMediaBuySuccess {
    * Seller's identifier for the media buy
    */
   media_buy_id: string;
+  status?: MediaBuyStatus;
+  /**
+   * Revision number after this update. Use this value in subsequent update_media_buy requests for optimistic concurrency.
+   */
+  revision?: number;
   /**
    * ISO 8601 timestamp when changes take effect (null if pending approval)
    */
@@ -4520,6 +4592,19 @@ export interface UpdateMediaBuySuccess {
    * Array of packages that were modified with complete state information
    */
   affected_packages?: Package[];
+  /**
+   * Actions the buyer can perform after this update. Saves a round-trip to get_media_buys.
+   */
+  valid_actions?: (
+    | 'pause'
+    | 'resume'
+    | 'cancel'
+    | 'update_budget'
+    | 'update_dates'
+    | 'update_packages'
+    | 'add_packages'
+    | 'sync_creatives'
+  )[];
   /**
    * When true, this response contains simulated data from sandbox mode.
    */
@@ -4541,11 +4626,6 @@ export interface UpdateMediaBuyError {
 
 // get_media_buys parameters
 /**
- * Status of a media buy.
- */
-export type MediaBuyStatus = 'pending_activation' | 'active' | 'paused' | 'completed' | 'rejected' | 'canceled';
-
-/**
  * Request parameters for retrieving media buy status, creative approval state, and optional delivery snapshots
  */
 export interface GetMediaBuysRequest {
@@ -4562,6 +4642,10 @@ export interface GetMediaBuysRequest {
    * When true, include a near-real-time delivery snapshot for each package. Snapshots reflect the latest available entity-level stats from the platform (e.g., updated every ~15 minutes on GAM, ~1 hour on batch-only platforms). The staleness_seconds field on each snapshot indicates data freshness. If a snapshot cannot be returned, package.snapshot_unavailable_reason explains why. Defaults to false.
    */
   include_snapshot?: boolean;
+  /**
+   * When present, include the last N revision history entries for each media buy (returns min(N, available entries)). Each entry contains revision number, timestamp, actor, and a summary of what changed. Omit or set to 0 to exclude history (default). Recommended: 5-10 for monitoring, 50+ for audit.
+   */
+  include_history?: number;
   pagination?: PaginationRequest;
   context?: ContextObject;
   ext?: ExtensionObject;
@@ -4608,6 +4692,28 @@ export interface GetMediaBuysResponse {
      */
     creative_deadline?: string;
     /**
+     * ISO 8601 timestamp when the seller confirmed this media buy. A successful create_media_buy response constitutes order confirmation.
+     */
+    confirmed_at?: string;
+    /**
+     * Cancellation metadata. Present only when status is 'canceled'.
+     */
+    cancellation?: {
+      /**
+       * ISO 8601 timestamp when this media buy was canceled.
+       */
+      canceled_at: string;
+      canceled_by: CanceledBy;
+      /**
+       * Reason the media buy was canceled.
+       */
+      reason?: string;
+    };
+    /**
+     * Current revision number. Pass this in update_media_buy for optimistic concurrency.
+     */
+    revision?: number;
+    /**
      * Creation timestamp
      */
     created_at?: string;
@@ -4615,6 +4721,49 @@ export interface GetMediaBuysResponse {
      * Last update timestamp
      */
     updated_at?: string;
+    /**
+     * Actions the buyer can perform on this media buy in its current state. Eliminates the need for agents to internalize the state machine — the seller declares what is permitted right now.
+     */
+    valid_actions?: (
+      | 'pause'
+      | 'resume'
+      | 'cancel'
+      | 'update_budget'
+      | 'update_dates'
+      | 'update_packages'
+      | 'add_packages'
+      | 'sync_creatives'
+    )[];
+    /**
+     * Revision history entries, most recent first. Only present when include_history > 0 in the request. Each entry represents a state change or update to the media buy. Entries are append-only: sellers MUST NOT modify or delete previously emitted history entries. Callers MAY cache entries by revision number. Returns min(N, available entries) when include_history exceeds the total.
+     */
+    history?: {
+      /**
+       * Revision number after this change was applied.
+       */
+      revision: number;
+      /**
+       * When this change occurred.
+       */
+      timestamp: string;
+      /**
+       * Identity of who made the change — derived from authentication context, not caller-provided. Format is seller-defined (e.g., agent URL, user email, API key label).
+       */
+      actor?: string;
+      /**
+       * What happened. Standard actions: created, activated, paused, resumed, canceled, rejected, completed, updated_budget, updated_dates, updated_packages, package_canceled, package_paused, package_resumed. Sellers MAY use additional platform-specific actions (e.g., creative_approved, targeting_updated) — use ext on the history entry for structured metadata about custom actions.
+       */
+      action: string;
+      /**
+       * Human-readable summary of the change (e.g., 'Budget increased from $5,000 to $7,500 on pkg_abc').
+       */
+      summary?: string;
+      /**
+       * Package affected, when the change targeted a specific package.
+       */
+      package_id?: string;
+      ext?: ExtensionObject;
+    }[];
     /**
      * Packages within this media buy, augmented with creative approval status and optional delivery snapshots
      */
@@ -4673,6 +4822,28 @@ export interface PackageStatus {
    * Whether this package is currently paused by the buyer
    */
   paused?: boolean;
+  /**
+   * Whether this package has been canceled. Canceled packages stop delivery and cannot be reactivated.
+   */
+  canceled?: boolean;
+  /**
+   * Cancellation metadata. Present only when canceled is true.
+   */
+  cancellation?: {
+    /**
+     * ISO 8601 timestamp when this package was canceled.
+     */
+    canceled_at: string;
+    canceled_by: CanceledBy;
+    /**
+     * Reason the package was canceled.
+     */
+    reason?: string;
+  };
+  /**
+   * ISO 8601 timestamp for creative upload or change deadline for this package. After this deadline, creative changes are rejected. When absent, the media buy's creative_deadline applies.
+   */
+  creative_deadline?: string;
   /**
    * Approval status for each creative assigned to this package. Absent when no creatives have been assigned.
    */

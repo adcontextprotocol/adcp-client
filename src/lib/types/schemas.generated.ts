@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-03-23T03:04:14.221Z
+// Generated at: 2026-03-23T09:31:58.341Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -15,6 +15,8 @@ export const BrandIDSchema = z.string();
 export const AuthenticationSchemeSchema = z.union([z.literal("Bearer"), z.literal("HMAC-SHA256")]);
 
 export const MediaBuyStatusSchema = z.union([z.literal("pending_activation"), z.literal("active"), z.literal("paused"), z.literal("completed"), z.literal("rejected"), z.literal("canceled")]);
+
+export const CanceledBySchema = z.union([z.literal("buyer"), z.literal("seller")]);
 
 export const PacingSchema = z.union([z.literal("even"), z.literal("asap"), z.literal("front_loaded")]);
 
@@ -1360,6 +1362,13 @@ export const PackageSchema = z.object({
     start_time: z.string().nullish(),
     end_time: z.string().nullish(),
     paused: z.boolean().nullish(),
+    canceled: z.boolean().nullish(),
+    cancellation: z.object({
+        canceled_at: z.string(),
+        canceled_by: CanceledBySchema,
+        reason: z.string().nullish()
+    }).passthrough().nullish(),
+    creative_deadline: z.string().nullish(),
     context: ContextObjectSchema.nullish(),
     ext: ExtensionObjectSchema.nullish()
 }).passthrough();
@@ -1398,45 +1407,13 @@ export const CreativeAssetSchema = z.object({
     provenance: ProvenanceSchema.nullish()
 }).passthrough();
 
-export const PackageUpdateSchema = z.object({
-    package_id: z.string().nullish(),
-    buyer_ref: z.string().nullish(),
-    budget: z.number().nullish(),
-    pacing: PacingSchema.nullish(),
-    bid_price: z.number().nullish(),
-    impressions: z.number().nullish(),
-    start_time: z.string().nullish(),
-    end_time: z.string().nullish(),
-    paused: z.boolean().nullish(),
-    catalogs: z.array(CatalogSchema).nullish(),
-    optimization_goals: z.array(OptimizationGoalSchema).nullish(),
-    targeting_overlay: TargetingOverlaySchema.nullish(),
-    keyword_targets_add: z.array(z.object({
-        keyword: z.string(),
-        match_type: z.union([z.literal("broad"), z.literal("phrase"), z.literal("exact")]),
-        bid_price: z.number().nullish()
-    }).passthrough()).nullish(),
-    keyword_targets_remove: z.array(z.object({
-        keyword: z.string(),
-        match_type: z.union([z.literal("broad"), z.literal("phrase"), z.literal("exact")])
-    }).passthrough()).nullish(),
-    negative_keywords_add: z.array(z.object({
-        keyword: z.string(),
-        match_type: z.union([z.literal("broad"), z.literal("phrase"), z.literal("exact")])
-    }).passthrough()).nullish(),
-    negative_keywords_remove: z.array(z.object({
-        keyword: z.string(),
-        match_type: z.union([z.literal("broad"), z.literal("phrase"), z.literal("exact")])
-    }).passthrough()).nullish(),
-    creative_assignments: z.array(CreativeAssignmentSchema).nullish(),
-    creatives: z.array(CreativeAssetSchema).nullish(),
-    ext: ExtensionObjectSchema.nullish()
-}).passthrough();
-
 export const UpdateMediaBuySuccessSchema = z.object({
     media_buy_id: z.string(),
+    status: MediaBuyStatusSchema.nullish(),
+    revision: z.number().nullish(),
     implementation_date: z.string().nullish().nullable(),
     affected_packages: z.array(PackageSchema).nullish(),
+    valid_actions: z.array(z.union([z.literal("pause"), z.literal("resume"), z.literal("cancel"), z.literal("update_budget"), z.literal("update_dates"), z.literal("update_packages"), z.literal("add_packages"), z.literal("sync_creatives")])).nullish(),
     sandbox: z.boolean().nullish(),
     context: ContextObjectSchema.nullish(),
     ext: ExtensionObjectSchema.nullish()
@@ -1447,6 +1424,7 @@ export const GetMediaBuysRequestSchema = z.object({
     media_buy_ids: z.array(z.string()).nullish(),
     status_filter: z.union([MediaBuyStatusSchema, z.array(MediaBuyStatusSchema)]).nullish(),
     include_snapshot: z.boolean().nullish(),
+    include_history: z.number().nullish(),
     pagination: PaginationRequestSchema.nullish(),
     context: ContextObjectSchema.nullish(),
     ext: ExtensionObjectSchema.nullish()
@@ -1464,6 +1442,13 @@ export const PackageStatusSchema = z.object({
     start_time: z.string().nullish(),
     end_time: z.string().nullish(),
     paused: z.boolean().nullish(),
+    canceled: z.boolean().nullish(),
+    cancellation: z.object({
+        canceled_at: z.string(),
+        canceled_by: CanceledBySchema,
+        reason: z.string().nullish()
+    }).passthrough().nullish(),
+    creative_deadline: z.string().nullish(),
     creative_approvals: z.array(z.object({
         creative_id: z.string(),
         approval_status: CreativeApprovalStatusSchema.nullish(),
@@ -3275,9 +3260,16 @@ export const MediaBuySchema = z.object({
     account: AccountSchema.nullish(),
     status: MediaBuyStatusSchema,
     rejection_reason: z.string().nullish(),
+    confirmed_at: z.string().nullish(),
+    cancellation: z.object({
+        canceled_at: z.string(),
+        canceled_by: CanceledBySchema,
+        reason: z.string().nullish()
+    }).passthrough().nullish(),
     total_budget: z.number(),
     packages: z.array(PackageSchema),
     creative_deadline: z.string().nullish(),
+    revision: z.number().nullish(),
     created_at: z.string().nullish(),
     updated_at: z.string().nullish(),
     ext: ExtensionObjectSchema.nullish()
@@ -3358,7 +3350,11 @@ export const BuildCreativeResponseSchema = z.union([BuildCreativeSuccessSchema, 
 export const CreateMediaBuySuccessSchema = z.object({
     media_buy_id: z.string(),
     account: AccountSchema.nullish(),
+    status: MediaBuyStatusSchema.nullish(),
+    confirmed_at: z.string().nullish(),
     creative_deadline: z.string().nullish(),
+    revision: z.number().nullish(),
+    valid_actions: z.array(z.union([z.literal("pause"), z.literal("resume"), z.literal("cancel"), z.literal("update_budget"), z.literal("update_dates"), z.literal("update_packages"), z.literal("add_packages"), z.literal("sync_creatives")])).nullish(),
     packages: z.array(PackageSchema),
     planned_delivery: PlannedDeliverySchema.nullish(),
     sandbox: z.boolean().nullish(),
@@ -3442,7 +3438,6 @@ export const BaseIndividualAssetSchema = z.object({
 }).passthrough();
 
 export const PackageRequestSchema = z.object({
-    buyer_ref: z.string(),
     product_id: z.string(),
     format_ids: z.array(FormatIDSchema).nullish(),
     budget: z.number(),
@@ -3458,20 +3453,45 @@ export const PackageRequestSchema = z.object({
     targeting_overlay: TargetingOverlaySchema.nullish(),
     creative_assignments: z.array(CreativeAssignmentSchema).nullish(),
     creatives: z.array(CreativeAssetSchema).nullish(),
+    context: ContextObjectSchema.nullish(),
     ext: ExtensionObjectSchema.nullish()
 }).passthrough();
 
 export const CreateMediaBuyResponseSchema = z.union([CreateMediaBuySuccessSchema, CreateMediaBuyErrorSchema]);
 
-export const UpdateMediaBuyRequestSchema = z.object({
-    media_buy_id: z.string(),
-    paused: z.boolean().nullish(),
-    start_time: StartTimingSchema.nullish(),
+export const PackageUpdateSchema = z.object({
+    package_id: z.string(),
+    budget: z.number().nullish(),
+    pacing: PacingSchema.nullish(),
+    bid_price: z.number().nullish(),
+    impressions: z.number().nullish(),
+    start_time: z.string().nullish(),
     end_time: z.string().nullish(),
-    packages: z.array(PackageUpdateSchema).nullish(),
-    reporting_webhook: ReportingWebhookSchema.nullish(),
-    push_notification_config: PushNotificationConfigSchema.nullish(),
-    idempotency_key: z.string().nullish(),
+    paused: z.boolean().nullish(),
+    canceled: z.literal(true).nullish(),
+    cancellation_reason: z.string().nullish(),
+    catalogs: z.array(CatalogSchema).nullish(),
+    optimization_goals: z.array(OptimizationGoalSchema).nullish(),
+    targeting_overlay: TargetingOverlaySchema.nullish(),
+    keyword_targets_add: z.array(z.object({
+        keyword: z.string(),
+        match_type: z.union([z.literal("broad"), z.literal("phrase"), z.literal("exact")]),
+        bid_price: z.number().nullish()
+    }).passthrough()).nullish(),
+    keyword_targets_remove: z.array(z.object({
+        keyword: z.string(),
+        match_type: z.union([z.literal("broad"), z.literal("phrase"), z.literal("exact")])
+    }).passthrough()).nullish(),
+    negative_keywords_add: z.array(z.object({
+        keyword: z.string(),
+        match_type: z.union([z.literal("broad"), z.literal("phrase"), z.literal("exact")])
+    }).passthrough()).nullish(),
+    negative_keywords_remove: z.array(z.object({
+        keyword: z.string(),
+        match_type: z.union([z.literal("broad"), z.literal("phrase"), z.literal("exact")])
+    }).passthrough()).nullish(),
+    creative_assignments: z.array(CreativeAssignmentSchema).nullish(),
+    creatives: z.array(CreativeAssetSchema).nullish(),
     context: ContextObjectSchema.nullish(),
     ext: ExtensionObjectSchema.nullish()
 }).passthrough();
@@ -3486,8 +3506,25 @@ export const GetMediaBuysResponseSchema = z.object({
         start_time: z.string().nullish(),
         end_time: z.string().nullish(),
         creative_deadline: z.string().nullish(),
+        confirmed_at: z.string().nullish(),
+        cancellation: z.object({
+            canceled_at: z.string(),
+            canceled_by: CanceledBySchema,
+            reason: z.string().nullish()
+        }).passthrough().nullish(),
+        revision: z.number().nullish(),
         created_at: z.string().nullish(),
         updated_at: z.string().nullish(),
+        valid_actions: z.array(z.union([z.literal("pause"), z.literal("resume"), z.literal("cancel"), z.literal("update_budget"), z.literal("update_dates"), z.literal("update_packages"), z.literal("add_packages"), z.literal("sync_creatives")])).nullish(),
+        history: z.array(z.object({
+            revision: z.number(),
+            timestamp: z.string(),
+            actor: z.string().nullish(),
+            action: z.string(),
+            summary: z.string().nullish(),
+            package_id: z.string().nullish(),
+            ext: ExtensionObjectSchema.nullish()
+        }).passthrough()).nullish(),
         packages: z.array(PackageStatusSchema),
         ext: ExtensionObjectSchema.nullish()
     }).passthrough()),
@@ -4064,6 +4101,23 @@ export const CreateMediaBuyRequestSchema = z.object({
         batch_frequency: z.union([z.literal("hourly"), z.literal("daily")]).nullish(),
         sampling_rate: z.number().nullish()
     }).passthrough().nullish(),
+    context: ContextObjectSchema.nullish(),
+    ext: ExtensionObjectSchema.nullish()
+}).passthrough();
+
+export const UpdateMediaBuyRequestSchema = z.object({
+    media_buy_id: z.string(),
+    revision: z.number().nullish(),
+    paused: z.boolean().nullish(),
+    canceled: z.literal(true).nullish(),
+    cancellation_reason: z.string().nullish(),
+    start_time: StartTimingSchema.nullish(),
+    end_time: z.string().nullish(),
+    packages: z.array(PackageUpdateSchema).nullish(),
+    new_packages: z.array(PackageRequestSchema).nullish(),
+    reporting_webhook: ReportingWebhookSchema.nullish(),
+    push_notification_config: PushNotificationConfigSchema.nullish(),
+    idempotency_key: z.string().nullish(),
     context: ContextObjectSchema.nullish(),
     ext: ExtensionObjectSchema.nullish()
 }).passthrough();

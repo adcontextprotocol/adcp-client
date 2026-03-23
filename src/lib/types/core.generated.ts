@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas vlatest
-// Generated at: 2026-03-23T03:04:12.540Z
+// Generated at: 2026-03-23T09:31:56.266Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -14,6 +14,10 @@ export type AuthenticationScheme = 'Bearer' | 'HMAC-SHA256';
  * Status of a media buy.
  */
 export type MediaBuyStatus = 'pending_activation' | 'active' | 'paused' | 'completed' | 'rejected' | 'canceled';
+/**
+ * Which party initiated the cancellation. 'buyer' when canceled via update_media_buy; 'seller' when the seller cancels (e.g., policy violation, inventory withdrawal).
+ */
+export type CanceledBy = 'buyer' | 'seller';
 /**
  * Budget pacing strategy
  */
@@ -305,6 +309,24 @@ export interface MediaBuy {
    */
   rejection_reason?: string;
   /**
+   * ISO 8601 timestamp when the seller confirmed this media buy. A successful create_media_buy response constitutes order confirmation.
+   */
+  confirmed_at?: string;
+  /**
+   * Cancellation metadata. Present only when status is 'canceled'.
+   */
+  cancellation?: {
+    /**
+     * ISO 8601 timestamp when this media buy was canceled.
+     */
+    canceled_at: string;
+    canceled_by: CanceledBy;
+    /**
+     * Reason provided when the media buy was canceled.
+     */
+    reason?: string;
+  };
+  /**
    * Total budget amount
    */
   total_budget: number;
@@ -316,6 +338,10 @@ export interface MediaBuy {
    * ISO 8601 timestamp for creative upload deadline
    */
   creative_deadline?: string;
+  /**
+   * Monotonically increasing revision number. Incremented on every state change or update. Callers MAY include this in update_media_buy requests for optimistic concurrency — sellers MUST reject with CONFLICT if the provided revision does not match the current value.
+   */
+  revision?: number;
   /**
    * Creation timestamp
    */
@@ -500,6 +526,28 @@ export interface Package {
    * Whether this package is paused by the buyer. Paused packages do not deliver impressions. Defaults to false.
    */
   paused?: boolean;
+  /**
+   * Whether this package has been canceled. Canceled packages stop delivery and cannot be reactivated. Defaults to false.
+   */
+  canceled?: boolean;
+  /**
+   * Cancellation metadata. Present only when canceled is true.
+   */
+  cancellation?: {
+    /**
+     * ISO 8601 timestamp when this package was canceled.
+     */
+    canceled_at: string;
+    canceled_by: CanceledBy;
+    /**
+     * Reason the package was canceled.
+     */
+    reason?: string;
+  };
+  /**
+   * ISO 8601 timestamp for creative upload or change deadline for this package. After this deadline, creative changes are rejected. When absent, the media buy's creative_deadline applies.
+   */
+  creative_deadline?: string;
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -3832,10 +3880,32 @@ export interface CreateMediaBuySuccess {
    */
   media_buy_id: string;
   account?: Account;
+  status?: MediaBuyStatus;
+  /**
+   * ISO 8601 timestamp when this media buy was confirmed by the seller. A successful create_media_buy response constitutes order confirmation.
+   */
+  confirmed_at?: string;
   /**
    * ISO 8601 timestamp for creative upload deadline
    */
   creative_deadline?: string;
+  /**
+   * Initial revision number for this media buy. Use in subsequent update_media_buy requests for optimistic concurrency.
+   */
+  revision?: number;
+  /**
+   * Actions the buyer can perform on this media buy after creation. Saves a round-trip to get_media_buys.
+   */
+  valid_actions?: (
+    | 'pause'
+    | 'resume'
+    | 'cancel'
+    | 'update_budget'
+    | 'update_dates'
+    | 'update_packages'
+    | 'add_packages'
+    | 'sync_creatives'
+  )[];
   /**
    * Array of created packages with complete state information
    */
@@ -3964,6 +4034,11 @@ export interface UpdateMediaBuySuccess {
    * Seller's identifier for the media buy
    */
   media_buy_id: string;
+  status?: MediaBuyStatus;
+  /**
+   * Revision number after this update. Use this value in subsequent update_media_buy requests for optimistic concurrency.
+   */
+  revision?: number;
   /**
    * ISO 8601 timestamp when changes take effect (null if pending approval)
    */
@@ -3972,6 +4047,19 @@ export interface UpdateMediaBuySuccess {
    * Array of packages that were modified with complete state information
    */
   affected_packages?: Package[];
+  /**
+   * Actions the buyer can perform after this update. Saves a round-trip to get_media_buys.
+   */
+  valid_actions?: (
+    | 'pause'
+    | 'resume'
+    | 'cancel'
+    | 'update_budget'
+    | 'update_dates'
+    | 'update_packages'
+    | 'add_packages'
+    | 'sync_creatives'
+  )[];
   /**
    * When true, this response contains simulated data from sandbox mode.
    */
