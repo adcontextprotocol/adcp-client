@@ -4,6 +4,9 @@
 import { randomUUID } from 'crypto';
 import type { AgentConfig } from '../types';
 import { ProtocolClient } from '../protocols';
+import { getMCPTaskStatus, listMCPTasks } from '../protocols/mcp-tasks';
+import { getAuthToken } from '../auth';
+import { is401Error } from '../errors';
 import type { Storage } from '../storage/interfaces';
 import { responseValidator } from './ResponseValidator';
 import { unwrapProtocolResponse, isAdcpError } from '../utils/response-unwrapper';
@@ -893,12 +896,29 @@ export class TaskExecutor {
   }
 
   /**
+   * List tasks for an agent, preferring MCP Tasks protocol when available.
+   */
+  private async listTasksForAgent(agent: AgentConfig): Promise<TaskInfo[]> {
+    // Try MCP Tasks protocol method first
+    if (agent.protocol === 'mcp') {
+      const authToken = getAuthToken(agent);
+      try {
+        return await listMCPTasks(agent.agent_uri, authToken);
+      } catch (err) {
+        if (is401Error(err)) throw err;
+        // Fall through to tool call if protocol method is not supported
+      }
+    }
+    const response = (await ProtocolClient.callTool(agent, 'tasks/list', {})) as Record<string, unknown>;
+    return (response.tasks as TaskInfo[]) || [];
+  }
+
+  /**
    * Task tracking methods (PR #78)
    */
   async listTasks(agent: AgentConfig): Promise<TaskInfo[]> {
     try {
-      const response = (await ProtocolClient.callTool(agent, 'tasks/list', {})) as Record<string, unknown>;
-      return (response.tasks as TaskInfo[]) || [];
+      return await this.listTasksForAgent(agent);
     } catch (error) {
       console.warn('Failed to list tasks:', error);
       return [];
@@ -906,6 +926,16 @@ export class TaskExecutor {
   }
 
   async getTaskStatus(agent: AgentConfig, taskId: string): Promise<TaskInfo> {
+    // Use MCP Tasks protocol method when available
+    if (agent.protocol === 'mcp') {
+      const authToken = getAuthToken(agent);
+      try {
+        return await getMCPTaskStatus(agent.agent_uri, taskId, authToken);
+      } catch (err) {
+        if (is401Error(err)) throw err;
+        // Fall through to tool call if protocol method is not supported
+      }
+    }
     const response = (await ProtocolClient.callTool(agent, 'tasks/get', { taskId })) as Record<string, unknown>;
     return (response.task as TaskInfo) || (response as unknown as TaskInfo);
   }
@@ -1103,8 +1133,7 @@ export class TaskExecutor {
     const agent = this.findAgentById(agentId);
     if (agent) {
       try {
-        const response = (await ProtocolClient.callTool(agent, 'tasks/list', {})) as Record<string, unknown>;
-        return (response.tasks as TaskInfo[]) || [];
+        return await this.listTasksForAgent(agent);
       } catch (error) {
         console.warn('Failed to get remote task list:', error);
       }

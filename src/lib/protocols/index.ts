@@ -2,8 +2,17 @@
 export { callMCPTool, callMCPToolWithOAuth, connectMCP, closeMCPConnections, UnauthorizedError } from './mcp';
 export type { MCPCallOptions, MCPConnectionResult } from './mcp';
 export { callA2ATool } from './a2a';
+export {
+  callMCPToolWithTasks,
+  getMCPTaskStatus,
+  getMCPTaskResult,
+  listMCPTasks,
+  cancelMCPTask,
+  mapMCPTaskStatus,
+  serverSupportsTasks,
+} from './mcp-tasks';
 
-import { callMCPTool } from './mcp';
+import { callMCPToolWithTasks } from './mcp-tasks';
 import { callA2ATool } from './a2a';
 import type { AgentConfig, DebugLogEntry } from '../types';
 import type { PushNotificationConfig } from '../types/tools.generated';
@@ -70,7 +79,9 @@ export class ProtocolClient {
           const argsWithWebhook = pushNotificationConfig
             ? { ...args, push_notification_config: pushNotificationConfig }
             : args;
-          return callMCPTool(agent.agent_uri, toolName, argsWithWebhook, authToken, debugLogs, agent.headers);
+          // Use callMCPToolWithTasks which auto-detects server tasks capability
+          // and falls back to standard callTool when tasks are not supported
+          return callMCPToolWithTasks(agent.agent_uri, toolName, argsWithWebhook, authToken, debugLogs, agent.headers);
         } else if (agent.protocol === 'a2a') {
           // For A2A, pass pushNotificationConfig separately (not in skill parameters)
           return callA2ATool(
@@ -95,7 +106,7 @@ export class ProtocolClient {
  */
 export const createMCPClient = (agentUrl: string, authToken?: string, headers?: Record<string, string>) => ({
   callTool: (toolName: string, args: Record<string, unknown>, debugLogs?: DebugLogEntry[]) =>
-    callMCPTool(agentUrl, toolName, args, authToken, debugLogs, headers),
+    callMCPToolWithTasks(agentUrl, toolName, args, authToken, debugLogs, headers),
 });
 
 export const createA2AClient = (agentUrl: string, authToken?: string, headers?: Record<string, string>) => ({
