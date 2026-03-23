@@ -856,12 +856,8 @@ export async function testCampaignGovernance(
               },
               policy_categories: ['age_restricted'],
               audience: {
-                include: [
-                  { type: 'description', description: 'Adults 25-54 interested in home improvement' },
-                ],
-                exclude: [
-                  { type: 'description', description: 'Children under 13' },
-                ],
+                include: [{ type: 'description', description: 'Adults 25-54 interested in home improvement' }],
+                exclude: [{ type: 'description', description: 'Children under 13' }],
               },
               restricted_attributes: ['health_data'],
               min_audience_size: 1000,
@@ -1386,7 +1382,7 @@ export async function testCampaignGovernanceConditions(
         async () =>
           client.executeTask('check_governance', {
             plan_id: testPlanId,
-  
+
             binding: 'proposed',
             caller: callerUrl,
             tool: 'create_media_buy',

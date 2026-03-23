@@ -24,9 +24,7 @@ export interface CampaignGovernanceConfig {
   /** Max re-check iterations after auto-applying conditions. Default: 0 (return conditions to caller without re-checking). The initial governance check always fires. */
   maxConditionsIterations?: number;
   /** Custom context extractor. Overrides the default extraction of budget, countries, channels, flight from tool params. Return undefined to send no context. */
-  extractContext?: (
-    params: Record<string, unknown>
-  ) => import('./GovernanceMiddleware').GovernanceContext | undefined;
+  extractContext?: (params: Record<string, unknown>) => import('./GovernanceMiddleware').GovernanceContext | undefined;
 }
 
 /**
