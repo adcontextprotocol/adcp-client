@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas vlatest
-// Generated at: 2026-03-20T22:32:42.474Z
+// Generated at: 2026-03-23T01:15:04.690Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -295,17 +295,9 @@ export type OptimizationGoal =
  */
 export interface MediaBuy {
   /**
-   * Publisher's unique identifier for the media buy
+   * Seller's unique identifier for the media buy
    */
   media_buy_id: string;
-  /**
-   * Buyer's reference identifier for this media buy. Sellers SHOULD deduplicate requests with the same buyer_ref and account, returning the existing media buy rather than creating a duplicate.
-   */
-  buyer_ref?: string;
-  /**
-   * Buyer's campaign reference label. Groups related operations under a single campaign for CRM and ad server correlation.
-   */
-  buyer_campaign_ref?: string;
   account?: Account;
   status: MediaBuyStatus;
   /**
@@ -451,13 +443,9 @@ export interface ExtensionObject {}
  */
 export interface Package {
   /**
-   * Publisher's unique identifier for the package
+   * Seller's unique identifier for the package
    */
   package_id: string;
-  /**
-   * Buyer's reference identifier for this package. Sellers SHOULD deduplicate requests with the same buyer_ref within a media buy, returning the existing package rather than creating a duplicate.
-   */
-  buyer_ref?: string;
   /**
    * ID of the product this package is based on
    */
@@ -512,6 +500,7 @@ export interface Package {
    * Whether this package is paused by the buyer. Paused packages do not deliver impressions. Defaults to false.
    */
   paused?: boolean;
+  context?: ContextObject;
   ext?: ExtensionObject;
 }
 /**
@@ -879,6 +868,10 @@ export interface CreativeAssignment {
    */
   placement_ids?: string[];
 }
+/**
+ * Opaque correlation data that is echoed unchanged in responses. Used for internal tracking, UI session IDs, trace IDs, and other caller-specific identifiers that don't affect protocol behavior. Context data is never parsed by AdCP agents - it's simply preserved and returned.
+ */
+export interface ContextObject {}
 
 // CREATIVE-ASSET SCHEMA
 /**
@@ -3201,6 +3194,105 @@ export type AdCPAsyncResponseData =
  */
 export type CreateMediaBuyResponse = CreateMediaBuySuccess | CreateMediaBuyError;
 /**
+ * Selects an audience by signal reference or natural language description. Uses 'type' as the primary discriminator (signal vs description). Signal selectors additionally use 'value_type' to determine the targeting expression format (matching signal-targeting.json variants).
+ */
+export type AudienceSelector =
+  | {
+      /**
+       * Discriminator for signal-based selectors
+       */
+      type: 'signal';
+      signal_id: SignalID;
+      /**
+       * Discriminator for binary signals
+       */
+      value_type: 'binary';
+      /**
+       * Whether to include (true) or exclude (false) users matching this signal
+       */
+      value: boolean;
+    }
+  | {
+      /**
+       * Discriminator for signal-based selectors
+       */
+      type: 'signal';
+      signal_id: SignalID;
+      /**
+       * Discriminator for categorical signals
+       */
+      value_type: 'categorical';
+      /**
+       * Values to target. Users with any of these values will be included.
+       */
+      values: string[];
+    }
+  | {
+      /**
+       * Discriminator for signal-based selectors
+       */
+      type: 'signal';
+      signal_id: SignalID;
+      /**
+       * Discriminator for numeric signals
+       */
+      value_type: 'numeric';
+      /**
+       * Minimum value (inclusive). Omit for no minimum. Must be <= max_value when both are provided.
+       */
+      min_value?: number;
+      /**
+       * Maximum value (inclusive). Omit for no maximum. Must be >= min_value when both are provided.
+       */
+      max_value?: number;
+    }
+  | {
+      /**
+       * Discriminator for description-based selectors
+       */
+      type: 'description';
+      /**
+       * Natural language description of the audience (e.g., 'likely EV buyers', 'high net worth individuals', 'vulnerable communities')
+       */
+      description: string;
+      /**
+       * Optional grouping hint for the governance agent (e.g., 'demographic', 'behavioral', 'contextual', 'financial')
+       */
+      category?: string;
+    };
+/**
+ * The signal to target
+ */
+export type SignalID =
+  | {
+      /**
+       * Discriminator indicating this signal is from a data provider's published catalog
+       */
+      source: 'catalog';
+      /**
+       * Domain of the data provider that owns this signal (e.g., 'polk.com', 'experian.com'). The signal definition is published at this domain's /.well-known/adagents.json
+       */
+      data_provider_domain: string;
+      /**
+       * Signal identifier within the data provider's catalog (e.g., 'likely_tesla_buyers', 'income_100k_plus')
+       */
+      id: string;
+    }
+  | {
+      /**
+       * Discriminator indicating this signal is native to the agent (not from a data provider catalog)
+       */
+      source: 'agent';
+      /**
+       * URL of the signals agent that provides this signal (e.g., 'https://liveramp.com/.well-known/adcp/signals')
+       */
+      agent_url: string;
+      /**
+       * Signal identifier within the agent's signal set (e.g., 'custom_auto_intenders')
+       */
+      id: string;
+    };
+/**
  * Response for completed or failed update_media_buy
  */
 export type UpdateMediaBuyResponse = UpdateMediaBuySuccess | UpdateMediaBuyError;
@@ -3639,10 +3731,6 @@ export interface PaginationResponse {
   total_count?: number;
 }
 /**
- * Opaque correlation data that is echoed unchanged in responses. Used for internal tracking, UI session IDs, trace IDs, and other caller-specific identifiers that don't affect protocol behavior. Context data is never parsed by AdCP agents - it's simply preserved and returned.
- */
-export interface ContextObject {}
-/**
  * Progress data for working get_products
  */
 export interface GetProductsAsyncWorking {
@@ -3700,17 +3788,9 @@ export interface GetProductsAsyncSubmitted {
  */
 export interface CreateMediaBuySuccess {
   /**
-   * Publisher's unique identifier for the created media buy
+   * Seller's unique identifier for the created media buy
    */
   media_buy_id: string;
-  /**
-   * Buyer's reference identifier for this media buy
-   */
-  buyer_ref: string;
-  /**
-   * Buyer's campaign reference label, echoed from the request
-   */
-  buyer_campaign_ref?: string;
   account?: Account;
   /**
    * ISO 8601 timestamp for creative upload deadline
@@ -3762,6 +3842,10 @@ export interface PlannedDelivery {
    * Human-readable summary of the audience the seller will target.
    */
   audience_summary?: string;
+  /**
+   * Structured audience targeting the seller will activate. Each entry is either a signal reference or a descriptive criterion. When present, governance agents MUST use this for bias/fairness validation and SHOULD ignore audience_summary for validation purposes. The audience_summary field is a human-readable rendering of this array, not an independent declaration.
+   */
+  audience_targeting?: AudienceSelector[];
   /**
    * Total budget the seller will deliver against.
    */
@@ -3837,13 +3921,9 @@ export interface CreateMediaBuyAsyncSubmitted {
  */
 export interface UpdateMediaBuySuccess {
   /**
-   * Publisher's identifier for the media buy
+   * Seller's identifier for the media buy
    */
   media_buy_id: string;
-  /**
-   * Buyer's reference identifier for the media buy
-   */
-  buyer_ref: string;
   /**
    * ISO 8601 timestamp when changes take effect (null if pending approval)
    */

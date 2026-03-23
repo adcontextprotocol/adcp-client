@@ -15,7 +15,6 @@ import type { AgentConfig } from '../types';
 import type {
   CheckGovernanceRequest,
   CheckGovernanceResponse,
-  GovernanceContext,
   ReportPlanOutcomeRequest,
   ReportPlanOutcomeResponse,
   OutcomeType,
@@ -78,6 +77,20 @@ export function setAtPath(obj: Record<string, any>, path: string, value: unknown
     current = current[key];
   }
   current[parts[parts.length - 1]!] = value;
+}
+
+/**
+ * Structured governance context extracted from tool parameters.
+ * Matches the governance-context.json schema shape.
+ */
+export interface GovernanceContext {
+  total_budget?: { amount: number; currency: string };
+  countries?: string[];
+  channels?: string[];
+  flight?: { start: string; end: string };
+  seller_url?: string;
+  audience_targeting?: unknown[];
+  [key: string]: unknown;
 }
 
 /**
@@ -183,14 +196,10 @@ export class GovernanceMiddleware {
     do {
       const request: CheckGovernanceRequest = {
         plan_id: config.planId,
-        buyer_campaign_ref: config.buyerCampaignRef ?? '',
         binding: 'proposed',
         caller: config.callerUrl ?? '',
         tool,
         payload: currentParams,
-        governance_context: config.extractContext
-          ? config.extractContext(currentParams)
-          : extractGovernanceContext(currentParams, config),
       };
 
       debugLogs.push({
@@ -283,6 +292,7 @@ export class GovernanceMiddleware {
   async reportOutcome(
     checkId: string,
     outcome: OutcomeType,
+    governanceContext: string,
     sellerResponse?: Record<string, unknown>,
     error?: { code?: string; message: string },
     debugLogs: GovernanceDebugEntry[] = []
@@ -293,7 +303,7 @@ export class GovernanceMiddleware {
     const request: ReportPlanOutcomeRequest = {
       plan_id: config.planId,
       check_id: checkId,
-      buyer_campaign_ref: config.buyerCampaignRef ?? '',
+      governance_context: governanceContext,
       outcome,
     };
 

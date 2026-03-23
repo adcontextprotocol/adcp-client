@@ -34,8 +34,6 @@ export interface GovernanceAdapterConfig {
 export interface CommittedCheckRequest {
   /** Campaign governance plan ID */
   planId: string;
-  /** Buyer's campaign reference */
-  buyerCampaignRef: string;
   /** The seller's media buy ID */
   mediaBuyId: string;
   /** What the seller will actually deliver */
@@ -107,7 +105,6 @@ export class GovernanceAdapter implements IGovernanceAdapter {
         status: 'denied',
         binding: 'committed',
         plan_id: request.planId,
-        buyer_campaign_ref: request.buyerCampaignRef,
         explanation: 'Governance not configured on this server',
         error_code: GovernanceAdapterErrorCodes.NOT_SUPPORTED,
       } as CheckGovernanceResponse;
@@ -115,7 +112,6 @@ export class GovernanceAdapter implements IGovernanceAdapter {
 
     const checkRequest: CheckGovernanceRequest = {
       plan_id: request.planId,
-      buyer_campaign_ref: request.buyerCampaignRef,
       binding: 'committed',
       caller: this.agentConfig.callerUrl,
       media_buy_id: request.mediaBuyId,
@@ -139,7 +135,6 @@ export class GovernanceAdapter implements IGovernanceAdapter {
         status: 'denied',
         binding: 'committed',
         plan_id: request.planId,
-        buyer_campaign_ref: request.buyerCampaignRef,
         explanation: `Governance agent unreachable: ${(err as Error).message}`,
         error_code: GovernanceAdapterErrorCodes.AGENT_UNREACHABLE,
       } as CheckGovernanceResponse;

@@ -825,7 +825,6 @@ export async function testCampaignGovernance(
   profile.supports_governance = true;
 
   const testPlanId = `test-plan-${Date.now()}`;
-  const testCampaignRef = `test-campaign-${Date.now()}`;
   const callerUrl = 'https://test-orchestrator.example.com';
   const flightStart = new Date();
   const flightEnd = new Date(flightStart.getTime() + 30 * 24 * 60 * 60 * 1000); // 30 days
@@ -855,6 +854,17 @@ export async function testCampaignGovernance(
               channels: {
                 allowed: ['display', 'video'],
               },
+              policy_categories: ['age_restricted'],
+              audience: {
+                include: [
+                  { type: 'description', description: 'Adults 25-54 interested in home improvement' },
+                ],
+                exclude: [
+                  { type: 'description', description: 'Children under 13' },
+                ],
+              },
+              restricted_attributes: ['health_data'],
+              min_audience_size: 1000,
               delegations: [
                 {
                   agent_url: callerUrl,
@@ -879,6 +889,8 @@ export async function testCampaignGovernance(
             version: synced.version,
             categories: synced.categories?.map((c: any) => c.category_id),
             resolved_policies: synced.resolved_policies?.length || 0,
+            policy_categories_sent: ['age_restricted'],
+            restricted_attributes_sent: ['health_data'],
           },
           null,
           2
@@ -898,6 +910,7 @@ export async function testCampaignGovernance(
 
   // Step 2: check_governance (proposed, expecting approved)
   let checkId: string | undefined;
+  let governanceCtx: string | undefined;
   if (profile.tools.includes('check_governance')) {
     const { result, step } = await runStep<TaskResult>(
       'Check governance (proposed buy)',
@@ -905,12 +918,10 @@ export async function testCampaignGovernance(
       async () =>
         client.executeTask('check_governance', {
           plan_id: testPlanId,
-          buyer_campaign_ref: testCampaignRef,
           binding: 'proposed',
           caller: callerUrl,
           tool: 'create_media_buy',
           payload: {
-            buyer_ref: `e2e-test-${Date.now()}`,
             channel: 'display',
             budget: { total: 1000, currency: 'USD' },
             flight: {
@@ -925,6 +936,7 @@ export async function testCampaignGovernance(
     if (result?.success && result?.data) {
       const data = result.data;
       checkId = data.check_id;
+      governanceCtx = data.governance_context;
       const status = data.status;
 
       step.details = `Governance check: status=${status}, binding=${data.binding}, mode=${data.mode || 'unknown'}`;
@@ -937,6 +949,7 @@ export async function testCampaignGovernance(
           explanation: data.explanation,
           findings_count: data.findings?.length || 0,
           expires_at: data.expires_at,
+          governance_context: data.governance_context ? '(present)' : '(absent)',
         },
         null,
         2
@@ -963,11 +976,10 @@ export async function testCampaignGovernance(
         client.executeTask('report_plan_outcome', {
           plan_id: testPlanId,
           check_id: checkId,
-          buyer_campaign_ref: testCampaignRef,
+          ...(governanceCtx ? { governance_context: governanceCtx } : {}),
           outcome: 'completed',
           seller_response: {
             media_buy_id: `test-mb-${Date.now()}`,
-            buyer_ref: `e2e-test-${Date.now()}`,
             packages: [
               {
                 package_id: 'test-pkg-1',
@@ -997,7 +1009,6 @@ export async function testCampaignGovernance(
       async () =>
         client.executeTask('get_plan_audit_logs', {
           plan_ids: [testPlanId],
-          buyer_campaign_ref: testCampaignRef,
           include_entries: true,
         }) as Promise<TaskResult>
     );
@@ -1058,7 +1069,6 @@ export async function testCampaignGovernanceDenied(
   profile.supports_governance = true;
 
   const testPlanId = `test-denied-plan-${Date.now()}`;
-  const testCampaignRef = `test-denied-campaign-${Date.now()}`;
   const callerUrl = 'https://test-orchestrator.example.com';
   const flightStart = new Date();
   const flightEnd = new Date(flightStart.getTime() + 7 * 24 * 60 * 60 * 1000);
@@ -1105,12 +1115,10 @@ export async function testCampaignGovernanceDenied(
     async () =>
       client.executeTask('check_governance', {
         plan_id: testPlanId,
-        buyer_campaign_ref: testCampaignRef,
         binding: 'proposed',
         caller: callerUrl,
         tool: 'create_media_buy',
         payload: {
-          buyer_ref: `e2e-overbudget-${Date.now()}`,
           channel: 'display',
           budget: { total: 50000, currency: 'USD' },
           flight: {
@@ -1162,12 +1170,10 @@ export async function testCampaignGovernanceDenied(
     async () =>
       client.executeTask('check_governance', {
         plan_id: testPlanId,
-        buyer_campaign_ref: testCampaignRef,
         binding: 'proposed',
         caller: callerUrl,
         tool: 'create_media_buy',
         payload: {
-          buyer_ref: `e2e-badgeo-${Date.now()}`,
           channel: 'display',
           budget: { total: 100, currency: 'USD' },
           flight: {
@@ -1207,7 +1213,8 @@ export async function testCampaignGovernanceDenied(
   steps.push(geoStep);
 
   // Report failed outcome
-  if (profile.tools.includes('report_plan_outcome') && overBudgetResult?.data?.check_id) {
+  const deniedGovCtx = overBudgetResult?.data?.governance_context as string | undefined;
+  if (profile.tools.includes('report_plan_outcome') && overBudgetResult?.data?.check_id && deniedGovCtx) {
     const { step: outcomeStep } = await runStep<TaskResult>(
       'Report failed outcome for denied check',
       'report_plan_outcome',
@@ -1215,7 +1222,7 @@ export async function testCampaignGovernanceDenied(
         client.executeTask('report_plan_outcome', {
           plan_id: testPlanId,
           check_id: overBudgetResult.data.check_id,
-          buyer_campaign_ref: testCampaignRef,
+          governance_context: deniedGovCtx,
           outcome: 'failed',
           error: {
             code: 'governance_denied',
@@ -1262,7 +1269,6 @@ export async function testCampaignGovernanceConditions(
   profile.supports_governance = true;
 
   const testPlanId = `test-conditions-plan-${Date.now()}`;
-  const testCampaignRef = `test-conditions-campaign-${Date.now()}`;
   const callerUrl = 'https://test-orchestrator.example.com';
   const flightStart = new Date();
   const flightEnd = new Date(flightStart.getTime() + 14 * 24 * 60 * 60 * 1000);
@@ -1314,12 +1320,10 @@ export async function testCampaignGovernanceConditions(
     async () =>
       client.executeTask('check_governance', {
         plan_id: testPlanId,
-        buyer_campaign_ref: testCampaignRef,
         binding: 'proposed',
         caller: callerUrl,
         tool: 'create_media_buy',
         payload: {
-          buyer_ref: `e2e-conditions-${Date.now()}`,
           channel: 'display',
           budget: { total: 4000, currency: 'USD' },
           flight: {
@@ -1360,7 +1364,6 @@ export async function testCampaignGovernanceConditions(
 
       // Build adjusted payload by applying conditions
       const adjustedPayload: any = {
-        buyer_ref: `e2e-conditions-adjusted-${Date.now()}`,
         channel: 'display',
         budget: { total: 4000, currency: 'USD' },
         flight: {
@@ -1383,7 +1386,7 @@ export async function testCampaignGovernanceConditions(
         async () =>
           client.executeTask('check_governance', {
             plan_id: testPlanId,
-            buyer_campaign_ref: testCampaignRef,
+  
             binding: 'proposed',
             caller: callerUrl,
             tool: 'create_media_buy',
@@ -1451,7 +1454,6 @@ export async function testCampaignGovernanceDelivery(
   profile.supports_governance = true;
 
   const testPlanId = `test-delivery-plan-${Date.now()}`;
-  const testCampaignRef = `test-delivery-campaign-${Date.now()}`;
   const callerUrl = 'https://test-seller.example.com';
   const flightStart = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
   const flightEnd = new Date(Date.now() + 23 * 24 * 60 * 60 * 1000);
@@ -1499,7 +1501,7 @@ export async function testCampaignGovernanceDelivery(
     async () =>
       client.executeTask('check_governance', {
         plan_id: testPlanId,
-        buyer_campaign_ref: testCampaignRef,
+
         binding: 'committed',
         caller: callerUrl,
         media_buy_id: `test-mb-${Date.now()}`,
@@ -1522,6 +1524,23 @@ export async function testCampaignGovernanceDelivery(
           geo_distribution: { US: 100 },
           channel_distribution: { display: 100 },
           pacing: 'on_track',
+          audience_distribution: {
+            baseline: 'platform',
+            indices: {
+              'age:18-24': 0.9,
+              'age:25-34': 1.2,
+              'age:35-44': 1.1,
+              'gender:female': 1.05,
+              'gender:male': 0.95,
+            },
+            cumulative_indices: {
+              'age:18-24': 0.92,
+              'age:25-34': 1.18,
+              'age:35-44': 1.08,
+              'gender:female': 1.03,
+              'gender:male': 0.97,
+            },
+          },
         },
       }) as Promise<TaskResult>
   );
@@ -1558,7 +1577,7 @@ export async function testCampaignGovernanceDelivery(
     async () =>
       client.executeTask('check_governance', {
         plan_id: testPlanId,
-        buyer_campaign_ref: testCampaignRef,
+
         binding: 'committed',
         caller: callerUrl,
         media_buy_id: `test-mb-${Date.now()}`,
@@ -1579,6 +1598,23 @@ export async function testCampaignGovernanceDelivery(
           impressions: 5000,
           cumulative_impressions: 90000,
           pacing: 'ahead',
+          audience_distribution: {
+            baseline: 'platform',
+            indices: {
+              'age:18-24': 0.3,
+              'age:25-34': 2.1,
+              'age:55-64': 0.2,
+              'gender:female': 0.4,
+              'gender:male': 1.6,
+            },
+            cumulative_indices: {
+              'age:18-24': 0.4,
+              'age:25-34': 1.9,
+              'age:55-64': 0.3,
+              'gender:female': 0.5,
+              'gender:male': 1.5,
+            },
+          },
         },
       }) as Promise<TaskResult>
   );
