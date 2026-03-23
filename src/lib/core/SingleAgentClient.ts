@@ -1017,11 +1017,7 @@ export class SingleAgentClient {
       const declaredFields = new Set(Object.keys(toolSchema));
       // Protocol envelope fields are always preserved — they live at the
       // protocol layer, not in individual tool schemas.
-      const envelopeFields = new Set([
-        'governance_context',
-        'push_notification_config',
-        'context_id',
-      ]);
+      const envelopeFields = new Set(['governance_context', 'push_notification_config', 'context_id']);
       const filtered: Record<string, unknown> = {};
       const stripped: string[] = [];
 

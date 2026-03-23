@@ -840,7 +840,7 @@ export type SpecialCategory =
   | 'reunion'
   | 'tribute';
 /**
- * Role of this person on the show or episode
+ * Role of this person on the collection or installment
  */
 export type TalentRole =
   | 'host'
@@ -1881,12 +1881,12 @@ export interface Special {
   ends?: string;
 }
 /**
- * A person associated with a show or episode, with an optional link to their brand.json identity
+ * A person associated with a collection or installment, with an optional link to their brand.json identity
  */
 export interface Talent {
   role: TalentRole;
   /**
-   * Person's name as credited on the show
+   * Person's name as credited on the collection
    */
   name: string;
   /**
@@ -1899,7 +1899,7 @@ export interface Talent {
  */
 export interface AdInventoryConfiguration {
   /**
-   * Number of planned ad breaks in the episode
+   * Number of planned ad breaks in the installment
    */
   expected_breaks: number;
   /**
@@ -3080,10 +3080,6 @@ export interface CreateMediaBuyRequest {
  */
 export interface PackageRequest {
   /**
-   * Buyer's reference identifier for this package. Sellers SHOULD deduplicate requests with the same buyer_ref within a media buy, returning the existing package rather than creating a duplicate.
-   */
-  buyer_ref: string;
-  /**
    * Product ID for this package
    */
   product_id: string;
@@ -3139,6 +3135,7 @@ export interface PackageRequest {
    * @maxItems 100
    */
   creatives?: CreativeAsset[];
+  context?: ContextObject;
   ext?: ExtensionObject;
 }
 /**
@@ -4061,6 +4058,7 @@ export interface ReportingWebhook {
    */
   requested_metrics?: AvailableMetric[];
 }
+
 
 // create_media_buy response
 /**
@@ -13189,17 +13187,59 @@ export interface CreateMediaBuyError {
 
 // update_media_buy parameters
 /**
- * Package update configuration for update_media_buy. Identifies package by package_id or buyer_ref and specifies fields to modify. Fields not present are left unchanged. Note: product_id, format_ids, and pricing_option_id cannot be changed after creation.
+ * Request parameters for updating campaign and package settings
  */
-export type PackageUpdate = {
+export interface UpdateMediaBuyRequest {
   /**
-   * Publisher's ID of package to update
+   * Seller's ID of the media buy to update
    */
-  package_id?: string;
+  media_buy_id: string;
   /**
-   * Buyer's reference for the package to update
+   * Expected current revision for optimistic concurrency. When provided, sellers MUST reject the update with CONFLICT if the media buy's current revision does not match. Obtain from get_media_buys or the most recent update response.
    */
-  buyer_ref?: string;
+  revision?: number;
+  /**
+   * Pause/resume the entire media buy (true = paused, false = active)
+   */
+  paused?: boolean;
+  /**
+   * Cancel the entire media buy. Cancellation is irreversible — canceled media buys cannot be reactivated. Sellers MAY reject with NOT_CANCELLABLE if the media buy cannot be canceled in its current state.
+   */
+  canceled?: true;
+  /**
+   * Reason for cancellation. Sellers SHOULD store this and return it in subsequent get_media_buys responses.
+   */
+  cancellation_reason?: string;
+  start_time?: StartTiming;
+  /**
+   * New end date/time in ISO 8601 format
+   */
+  end_time?: string;
+  /**
+   * Package-specific updates for existing packages
+   */
+  packages?: PackageUpdate[];
+  /**
+   * New packages to add to this media buy. Uses the same schema as create_media_buy packages. Sellers that support mid-flight package additions advertise add_packages in valid_actions. Sellers that do not support this MUST reject with UNSUPPORTED_FEATURE.
+   */
+  new_packages?: PackageRequest[];
+  reporting_webhook?: ReportingWebhook;
+  push_notification_config?: PushNotificationConfig;
+  /**
+   * Client-generated idempotency key for safe retries. If an update fails without a response, resending with the same idempotency_key guarantees the update is applied at most once. MUST be unique per (seller, request) pair to prevent cross-seller correlation. Use a fresh UUID v4 for each request.
+   */
+  idempotency_key?: string;
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Package update configuration for update_media_buy. Identifies package by package_id and specifies fields to modify. Fields not present are left unchanged. Note: product_id, format_ids, and pricing_option_id cannot be changed after creation.
+ */
+export interface PackageUpdate {
+  /**
+   * Seller's ID of package to update
+   */
+  package_id: string;
   /**
    * Updated budget allocation for this package in the currency specified by the pricing option
    */
@@ -13225,6 +13265,14 @@ export type PackageUpdate = {
    * Pause/resume specific package (true = paused, false = active)
    */
   paused?: boolean;
+  /**
+   * Cancel this specific package. Cancellation is irreversible — canceled packages stop delivery and cannot be reactivated. Sellers MAY reject with NOT_CANCELLABLE.
+   */
+  canceled?: true;
+  /**
+   * Reason for canceling this package.
+   */
+  cancellation_reason?: string;
   /**
    * Replace the catalogs this package promotes. Uses replacement semantics — the provided array replaces the current list. Omit to leave catalogs unchanged.
    */
@@ -13300,53 +13348,6 @@ export type PackageUpdate = {
    * @maxItems 100
    */
   creatives?: CreativeAsset[];
-  ext?: ExtensionObject;
-} & {
-  [k: string]: unknown | undefined;
-};
-/**
- * Request parameters for updating campaign and package settings
- */
-export interface UpdateMediaBuyRequest {
-  /**
-   * Seller's ID of the media buy to update
-   */
-  media_buy_id: string;
-  /**
-   * Expected current revision for optimistic concurrency. When provided, sellers MUST reject the update with CONFLICT if the media buy's current revision does not match. Obtain from get_media_buys or the most recent update response.
-   */
-  revision?: number;
-  /**
-   * Pause/resume the entire media buy (true = paused, false = active)
-   */
-  paused?: boolean;
-  /**
-   * Cancel the entire media buy. Cancellation is irreversible — canceled media buys cannot be reactivated. Sellers MAY reject with NOT_CANCELLABLE if the media buy cannot be canceled in its current state.
-   */
-  canceled?: true;
-  /**
-   * Reason for cancellation. Sellers SHOULD store this and return it in subsequent get_media_buys responses.
-   */
-  cancellation_reason?: string;
-  start_time?: StartTiming;
-  /**
-   * New end date/time in ISO 8601 format
-   */
-  end_time?: string;
-  /**
-   * Package-specific updates for existing packages
-   */
-  packages?: PackageUpdate[];
-  /**
-   * New packages to add to this media buy. Uses the same schema as create_media_buy packages. Sellers that support mid-flight package additions advertise add_packages in valid_actions. Sellers that do not support this MUST reject with UNSUPPORTED_FEATURE.
-   */
-  new_packages?: PackageRequest[];
-  reporting_webhook?: ReportingWebhook;
-  push_notification_config?: PushNotificationConfig;
-  /**
-   * Client-generated idempotency key for safe retries. If an update fails without a response, resending with the same idempotency_key guarantees the update is applied at most once. MUST be unique per (seller, request) pair to prevent cross-seller correlation. Use a fresh UUID v4 for each request.
-   */
-  idempotency_key?: string;
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -17722,9 +17723,9 @@ export interface Artifact {
      */
     apple_podcast_id?: string;
     /**
-     * Spotify show ID
+     * Spotify collection ID
      */
-    spotify_show_id?: string;
+    spotify_collection_id?: string;
     /**
      * Podcast GUID (from RSS feed)
      */

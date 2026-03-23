@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas vlatest
-// Generated at: 2026-03-23T11:46:29.211Z
+// Generated at: 2026-03-23T12:17:27.383Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -10875,7 +10875,7 @@ export type SpecialCategory =
   | 'reunion'
   | 'tribute';
 /**
- * Role of this person on the show or episode
+ * Role of this person on the collection or installment
  */
 export type TalentRole =
   | 'host'
@@ -11842,12 +11842,12 @@ export interface Special {
   ends?: string;
 }
 /**
- * A person associated with a show or episode, with an optional link to their brand.json identity
+ * A person associated with a collection or installment, with an optional link to their brand.json identity
  */
 export interface Talent {
   role: TalentRole;
   /**
-   * Person's name as credited on the show
+   * Person's name as credited on the collection
    */
   name: string;
   /**
@@ -11860,7 +11860,7 @@ export interface Talent {
  */
 export interface AdInventoryConfiguration {
   /**
-   * Number of planned ad breaks in the episode
+   * Number of planned ad breaks in the installment
    */
   expected_breaks: number;
   /**

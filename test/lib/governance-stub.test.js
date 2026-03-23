@@ -116,18 +116,20 @@ describe('GovernanceAgentStub', () => {
     stub.clearCallLog();
 
     await callMCPTool(stubUrl, 'sync_plans', {
-      plans: [{
-        plan_id: 'plan-sync-test',
-        brand: { domain: 'test.example.com' },
-        objectives: 'Increase brand awareness in US market',
-        budget: { total: 10000, currency: 'USD', authority_level: 'agent_full' },
-        channels: { required: ['display'] },
-        flight: {
-          start: '2026-04-01T00:00:00Z',
-          end: '2026-06-30T23:59:59Z',
+      plans: [
+        {
+          plan_id: 'plan-sync-test',
+          brand: { domain: 'test.example.com' },
+          objectives: 'Increase brand awareness in US market',
+          budget: { total: 10000, currency: 'USD', authority_level: 'agent_full' },
+          channels: { required: ['display'] },
+          flight: {
+            start: '2026-04-01T00:00:00Z',
+            end: '2026-06-30T23:59:59Z',
+          },
+          countries: ['US'],
         },
-        countries: ['US'],
-      }],
+      ],
     });
 
     const calls = stub.getCallsForTool('sync_plans');

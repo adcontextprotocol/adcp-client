@@ -956,7 +956,10 @@ export async function testCampaignGovernance(
         if (typeof governanceContext !== 'string') {
           step.warnings = [...(step.warnings || []), 'governance_context is not a string'];
         } else if (governanceContext.length > 4096) {
-          step.warnings = [...(step.warnings || []), `governance_context exceeds 4096 chars (${governanceContext.length})`];
+          step.warnings = [
+            ...(step.warnings || []),
+            `governance_context exceeds 4096 chars (${governanceContext.length})`,
+          ];
         }
       }
     } else if (result && !result.success) {
@@ -1746,16 +1749,20 @@ export async function testSellerGovernanceContext(
       'register_governance',
       async () =>
         client.executeTask('register_governance', {
-          accounts: [{
-            account,
-            governance_agents: [{
-              url: stubUrl,
-              authentication: {
-                schemes: ['Bearer'],
-                credentials: stub!.authToken,
-              },
-            }],
-          }],
+          accounts: [
+            {
+              account,
+              governance_agents: [
+                {
+                  url: stubUrl,
+                  authentication: {
+                    schemes: ['Bearer'],
+                    credentials: stub!.authToken,
+                  },
+                },
+              ],
+            },
+          ],
         }) as Promise<TaskResult>
     );
     steps.push(registerStep);
@@ -1859,9 +1866,7 @@ export async function testSellerGovernanceContext(
       await new Promise(r => setTimeout(r, pollInterval));
     }
 
-    const committedCalls = stub.getCallsForTool('check_governance').filter(
-      c => c.params.binding === 'committed'
-    );
+    const committedCalls = stub.getCallsForTool('check_governance').filter(c => c.params.binding === 'committed');
 
     const { step: callbackStep } = await runStep<void>(
       'Verify seller called check_governance(committed) on governance agent',
@@ -1870,18 +1875,16 @@ export async function testSellerGovernanceContext(
         if (committedCalls.length === 0) {
           throw new Error(
             'Seller did not call check_governance(committed) on the registered governance agent. ' +
-            'Sellers MUST call check_governance with binding="committed" before executing a media buy.'
+              'Sellers MUST call check_governance with binding="committed" before executing a media buy.'
           );
         }
 
-        const callWithContext = committedCalls.find(
-          c => c.params.governance_context === governanceContext
-        );
+        const callWithContext = committedCalls.find(c => c.params.governance_context === governanceContext);
 
         if (!callWithContext) {
           throw new Error(
             `Seller called check_governance(committed) but with wrong governance_context. ` +
-            `Expected "${governanceContext}", got: ${committedCalls.map(c => JSON.stringify(c.params.governance_context)).join(', ')}`
+              `Expected "${governanceContext}", got: ${committedCalls.map(c => JSON.stringify(c.params.governance_context)).join(', ')}`
           );
         }
       }
@@ -1905,8 +1908,9 @@ export async function testSellerGovernanceContext(
 
   if (getResult?.success && getResult?.data) {
     const buys = (getResult.data.media_buys as Array<Record<string, unknown>>) || [];
-    const buy = buys.find((b: Record<string, unknown>) => b.media_buy_id === mediaBuyId)
-      || (buys.length === 1 ? buys[0] : undefined);
+    const buy =
+      buys.find((b: Record<string, unknown>) => b.media_buy_id === mediaBuyId) ||
+      (buys.length === 1 ? buys[0] : undefined);
 
     if (buy) {
       const returnedGC = buy.governance_context as string | undefined;
@@ -1931,8 +1935,11 @@ export async function testSellerGovernanceContext(
         2
       );
     } else if (buys.length === 0) {
-      getStep.details = 'get_media_buys returned 0 buys — agent may be stateless (test agent). Cannot verify governance_context persistence.';
-      getStep.warnings = ['governance_context persistence could not be verified — agent does not persist media buys across requests'];
+      getStep.details =
+        'get_media_buys returned 0 buys — agent may be stateless (test agent). Cannot verify governance_context persistence.';
+      getStep.warnings = [
+        'governance_context persistence could not be verified — agent does not persist media buys across requests',
+      ];
     } else {
       getStep.passed = false;
       getStep.error = `Media buy ${mediaBuyId} not found among ${buys.length} returned buys`;
@@ -1958,7 +1965,7 @@ async function resolveTestAccount(
 ): Promise<Record<string, unknown>> {
   if (profile.tools.includes('list_accounts')) {
     try {
-      const result = await client.executeTask('list_accounts', {}) as TaskResult;
+      const result = (await client.executeTask('list_accounts', {})) as TaskResult;
       const accounts = result?.data?.accounts as Array<Record<string, unknown>> | undefined;
       if (accounts?.length && accounts[0]) {
         return { account_id: accounts[0].account_id };
@@ -1970,14 +1977,16 @@ async function resolveTestAccount(
 
   if (profile.tools.includes('sync_accounts')) {
     try {
-      const result = await client.executeTask('sync_accounts', {
-        accounts: [{
-          brand: options.brand || { domain: 'test.example.com' },
-          operator: 'comply-test',
-          billing: 'operator',
-          sandbox: true,
-        }],
-      }) as TaskResult;
+      const result = (await client.executeTask('sync_accounts', {
+        accounts: [
+          {
+            brand: options.brand || { domain: 'test.example.com' },
+            operator: 'comply-test',
+            billing: 'operator',
+            sandbox: true,
+          },
+        ],
+      })) as TaskResult;
       const accounts = result?.data?.accounts as Array<Record<string, unknown>> | undefined;
       if (accounts?.length && accounts[0] && accounts[0].account_id) {
         return { account_id: accounts[0].account_id };
@@ -1992,7 +2001,9 @@ async function resolveTestAccount(
 
 async function stopStub(stub: GovernanceAgentStub | null): Promise<void> {
   if (stub) {
-    try { await stub.stop(); } catch {}
+    try {
+      await stub.stop();
+    } catch {}
   }
 }
 

@@ -48,20 +48,38 @@ function generateSelfSignedCert(): { key: string; cert: string } {
   const certPath = join(tmpdir(), `stub-cert-${id}.pem`);
 
   try {
-    execFileSync('openssl', [
-      'req', '-x509', '-newkey', 'rsa:2048',
-      '-keyout', keyPath, '-out', certPath,
-      '-days', '1', '-nodes',
-      '-subj', '/CN=localhost',
-      '-addext', 'subjectAltName=IP:127.0.0.1',
-    ], { stdio: 'ignore' });
+    execFileSync(
+      'openssl',
+      [
+        'req',
+        '-x509',
+        '-newkey',
+        'rsa:2048',
+        '-keyout',
+        keyPath,
+        '-out',
+        certPath,
+        '-days',
+        '1',
+        '-nodes',
+        '-subj',
+        '/CN=localhost',
+        '-addext',
+        'subjectAltName=IP:127.0.0.1',
+      ],
+      { stdio: 'ignore' }
+    );
 
     const key = readFileSync(keyPath, 'utf8');
     const cert = readFileSync(certPath, 'utf8');
     return { key, cert };
   } finally {
-    try { unlinkSync(keyPath); } catch {}
-    try { unlinkSync(certPath); } catch {}
+    try {
+      unlinkSync(keyPath);
+    } catch {}
+    try {
+      unlinkSync(certPath);
+    } catch {}
   }
 }
 
@@ -154,7 +172,7 @@ export class GovernanceAgentStub {
    * Stop the stub server.
    */
   async stop(): Promise<void> {
-    return new Promise((resolve) => {
+    return new Promise(resolve => {
       if (this.httpServer) {
         this.httpServer.close(() => resolve());
       } else {
@@ -181,9 +199,7 @@ export class GovernanceAgentStub {
    * Check if any call included the expected governance_context.
    */
   hasGovernanceContext(expectedContext: string): boolean {
-    return this.callLog.some(
-      c => (c.params as Record<string, unknown>).governance_context === expectedContext
-    );
+    return this.callLog.some(c => (c.params as Record<string, unknown>).governance_context === expectedContext);
   }
 
   /**
@@ -215,13 +231,15 @@ export class GovernanceAgentStub {
     server.tool('get_adcp_capabilities', {}, async () => {
       this.recordCall('get_adcp_capabilities', {});
       return {
-        content: [{
-          type: 'text' as const,
-          text: JSON.stringify({
-            adcp: { major_versions: [3] },
-            supported_protocols: ['governance'],
-          }),
-        }],
+        content: [
+          {
+            type: 'text' as const,
+            text: JSON.stringify({
+              adcp: { major_versions: [3] },
+              supported_protocols: ['governance'],
+            }),
+          },
+        ],
       };
     });
 
@@ -230,20 +248,19 @@ export class GovernanceAgentStub {
       this.recordCall('sync_plans', args);
       const plans = (args.plans as Array<Record<string, unknown>>) || [];
       return {
-        content: [{
-          type: 'text' as const,
-          text: JSON.stringify({
-            plans: plans.map((p: Record<string, unknown>) => ({
-              plan_id: p.plan_id,
-              status: 'active',
-              version: 1,
-              categories: [
-                { category_id: 'budget_authority' },
-                { category_id: 'geo_compliance' },
-              ],
-            })),
-          }),
-        }],
+        content: [
+          {
+            type: 'text' as const,
+            text: JSON.stringify({
+              plans: plans.map((p: Record<string, unknown>) => ({
+                plan_id: p.plan_id,
+                status: 'active',
+                version: 1,
+                categories: [{ category_id: 'budget_authority' }, { category_id: 'geo_compliance' }],
+              })),
+            }),
+          },
+        ],
       };
     });
 
@@ -257,18 +274,20 @@ export class GovernanceAgentStub {
       const gc = this.generateContext(planId);
 
       return {
-        content: [{
-          type: 'text' as const,
-          text: JSON.stringify({
-            check_id: checkId,
-            status: 'approved',
-            binding,
-            plan_id: planId,
-            explanation: 'Stub governance agent: approved for testing.',
-            governance_context: gc,
-            expires_at: new Date(Date.now() + 3600_000).toISOString(),
-          }),
-        }],
+        content: [
+          {
+            type: 'text' as const,
+            text: JSON.stringify({
+              check_id: checkId,
+              status: 'approved',
+              binding,
+              plan_id: planId,
+              explanation: 'Stub governance agent: approved for testing.',
+              governance_context: gc,
+              expires_at: new Date(Date.now() + 3600_000).toISOString(),
+            }),
+          },
+        ],
       };
     });
 
@@ -277,13 +296,15 @@ export class GovernanceAgentStub {
       this.recordCall('report_plan_outcome', args);
 
       return {
-        content: [{
-          type: 'text' as const,
-          text: JSON.stringify({
-            outcome_id: `out_stub_${randomUUID().slice(0, 8)}`,
-            status: 'accepted',
-          }),
-        }],
+        content: [
+          {
+            type: 'text' as const,
+            text: JSON.stringify({
+              outcome_id: `out_stub_${randomUUID().slice(0, 8)}`,
+              status: 'accepted',
+            }),
+          },
+        ],
       };
     });
 
@@ -293,16 +314,18 @@ export class GovernanceAgentStub {
 
       const planIds = (args.plan_ids as string[]) || [];
       return {
-        content: [{
-          type: 'text' as const,
-          text: JSON.stringify({
-            plans: planIds.map(id => ({
-              plan_id: id,
-              budget: { total_committed: 0, budget_remaining: 10000 },
-              entries: [],
-            })),
-          }),
-        }],
+        content: [
+          {
+            type: 'text' as const,
+            text: JSON.stringify({
+              plans: planIds.map(id => ({
+                plan_id: id,
+                budget: { total_committed: 0, budget_remaining: 10000 },
+                entries: [],
+              })),
+            }),
+          },
+        ],
       };
     });
 

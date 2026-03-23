@@ -11,10 +11,7 @@ const assert = require('node:assert/strict');
 const { toolRequiresGovernance, parseCheckResponse } = require('../../dist/lib/core/GovernanceTypes.js');
 
 const { isGovernanceAdapterError, GovernanceAdapter } = require('../../dist/lib/adapters/governance-adapter.js');
-const {
-  setAtPath,
-  GovernanceMiddleware,
-} = require('../../dist/lib/core/GovernanceMiddleware.js');
+const { setAtPath, GovernanceMiddleware } = require('../../dist/lib/core/GovernanceMiddleware.js');
 
 describe('toolRequiresGovernance', () => {
   const baseConfig = {
