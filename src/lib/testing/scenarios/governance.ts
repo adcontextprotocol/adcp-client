@@ -1928,7 +1928,7 @@ export async function testSellerGovernanceContext(
       getStep.response_preview = JSON.stringify(
         {
           media_buy_id: buy.media_buy_id,
-          governance_context: returnedGC || '(absent)',
+          governance_context: returnedGC ? `(present, ${returnedGC.length} chars)` : '(absent)',
           status: buy.status,
         },
         null,
