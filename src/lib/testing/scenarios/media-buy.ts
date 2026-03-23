@@ -276,9 +276,9 @@ export async function testCreateMediaBuy(
     const packages = (mediaBuy.packages || nested?.packages) as unknown[] | undefined;
     createStep.details = `Created media buy: ${mediaBuyId}, status: ${status}`;
     createStep.created_id = mediaBuyId;
-    const confirmedAt = (mediaBuy.confirmed_at || nested?.confirmed_at) as string | undefined;
+    const confirmedAt = (mediaBuy.confirmed_at ?? nested?.confirmed_at) as string | undefined;
     const revision = (mediaBuy.revision ?? nested?.revision) as number | undefined;
-    const validActions = (mediaBuy.valid_actions || nested?.valid_actions) as string[] | undefined;
+    const validActions = (mediaBuy.valid_actions ?? nested?.valid_actions) as string[] | undefined;
     createStep.response_preview = JSON.stringify(
       {
         media_buy_id: mediaBuyId,
