@@ -25,10 +25,10 @@ export interface CampaignGovernanceConfig {
   callerUrl?: string;
   /** Max re-check iterations after auto-applying conditions. Default: 0 (return conditions to caller without re-checking). The initial governance check always fires. */
   maxConditionsIterations?: number;
-  /** Custom context extractor. Overrides the default extraction of budget, countries, channels, flight from tool params. Return undefined to send no context. */
+  /** Custom context extractor. Overrides the default extraction of budget, countries, channels, flight from tool params. Return undefined to send no context. The returned object is JSON-serialized before sending to the governance agent. */
   extractContext?: (
     params: Record<string, unknown>
-  ) => import('../types/tools.generated').GovernanceContext | undefined;
+  ) => Record<string, unknown> | undefined;
 }
 
 /**
@@ -123,6 +123,8 @@ export interface GovernanceCheckResult {
   conditions?: GovernanceCondition[];
   escalation?: GovernanceEscalation;
   expiresAt?: string;
+  /** Opaque context from the governance agent — pass to reportOutcome */
+  governanceContext?: string;
   /** Whether conditions were auto-applied by the middleware */
   conditionsApplied?: boolean;
   /** The modified params after conditions were applied */
@@ -176,5 +178,6 @@ export function parseCheckResponse(response: CheckGovernanceResponse): Governanc
         }
       : undefined,
     expiresAt: response.expires_at,
+    governanceContext: response.governance_context,
   };
 }

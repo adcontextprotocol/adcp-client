@@ -8,7 +8,7 @@
 export type ErrorRecovery = 'transient' | 'correctable' | 'terminal';
 
 /**
- * The 20 standard error codes defined in the AdCP specification.
+ * The 26 standard error codes defined in the AdCP specification.
  * Use these for type-safe error handling in agent recovery logic.
  */
 export type StandardErrorCode =
@@ -31,7 +31,13 @@ export type StandardErrorCode =
   | 'ACCOUNT_SUSPENDED'
   | 'COMPLIANCE_UNSATISFIED'
   | 'BUDGET_EXHAUSTED'
-  | 'CONFLICT';
+  | 'BUDGET_EXCEEDED'
+  | 'CONFLICT'
+  | 'INVALID_STATE'
+  | 'MEDIA_BUY_NOT_FOUND'
+  | 'NOT_CANCELLABLE'
+  | 'PACKAGE_NOT_FOUND'
+  | 'VALIDATION_ERROR';
 
 interface ErrorCodeInfo {
   description: string;
@@ -39,7 +45,7 @@ interface ErrorCodeInfo {
 }
 
 /**
- * Runtime lookup table for the 20 standard AdCP error codes.
+ * Runtime lookup table for the 26 standard AdCP error codes.
  * Each entry includes a description and the recommended recovery strategy.
  */
 export const STANDARD_ERROR_CODES: Record<StandardErrorCode, ErrorCodeInfo> = {
@@ -119,14 +125,38 @@ export const STANDARD_ERROR_CODES: Record<StandardErrorCode, ErrorCodeInfo> = {
     description: 'The budget has been fully spent',
     recovery: 'terminal',
   },
+  BUDGET_EXCEEDED: {
+    description: 'Operation would exceed the allocated budget for the media buy or package',
+    recovery: 'correctable',
+  },
   CONFLICT: {
     description: 'The request conflicts with the current state of the resource',
+    recovery: 'correctable',
+  },
+  INVALID_STATE: {
+    description: 'Operation is not permitted for the resource\'s current status',
+    recovery: 'correctable',
+  },
+  MEDIA_BUY_NOT_FOUND: {
+    description: 'Referenced media buy does not exist or is not accessible',
+    recovery: 'correctable',
+  },
+  NOT_CANCELLABLE: {
+    description: 'The media buy or package cannot be canceled in its current state',
+    recovery: 'correctable',
+  },
+  PACKAGE_NOT_FOUND: {
+    description: 'Referenced package does not exist within the specified media buy',
+    recovery: 'correctable',
+  },
+  VALIDATION_ERROR: {
+    description: 'Request contains invalid field values or violates business rules beyond schema validation',
     recovery: 'correctable',
   },
 } as const;
 
 /**
- * Check whether an error code is one of the 20 standard AdCP codes.
+ * Check whether an error code is one of the 26 standard AdCP codes.
  */
 export function isStandardErrorCode(code: string): code is StandardErrorCode {
   return code in STANDARD_ERROR_CODES;

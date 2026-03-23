@@ -15,7 +15,6 @@ import type { AgentConfig } from '../types';
 import type {
   CheckGovernanceRequest,
   CheckGovernanceResponse,
-  GovernanceContext,
   ReportPlanOutcomeRequest,
   ReportPlanOutcomeResponse,
   OutcomeType,
@@ -81,6 +80,18 @@ export function setAtPath(obj: Record<string, any>, path: string, value: unknown
 }
 
 /**
+ * Structured governance context built by the client from tool parameters.
+ * Serialized to an opaque string before sending to the governance agent.
+ */
+export interface GovernanceContext {
+  total_budget?: { amount: number; currency: string };
+  countries?: string[];
+  channels?: string[];
+  flight?: { start: string; end: string };
+  seller_url?: string;
+}
+
+/**
  * Extract structured governance context from tool call parameters.
  *
  * Extracts budget, countries, channels, flight dates, and seller URL from
@@ -90,7 +101,7 @@ export function setAtPath(obj: Record<string, any>, path: string, value: unknown
 export function extractGovernanceContext(
   params: Record<string, unknown>,
   config: CampaignGovernanceConfig
-): GovernanceContext | undefined {
+): Record<string, unknown> | undefined {
   const ctx: GovernanceContext = {};
   let hasField = false;
 
@@ -130,7 +141,7 @@ export function extractGovernanceContext(
     hasField = true;
   }
 
-  return hasField ? ctx : undefined;
+  return hasField ? ctx as Record<string, unknown> : undefined;
 }
 
 export class GovernanceMiddleware {
@@ -181,16 +192,16 @@ export class GovernanceMiddleware {
     // Always make the initial governance check. maxConditionsIterations only
     // controls how many times we re-apply conditions and re-check.
     do {
+      const contextData = config.extractContext
+        ? config.extractContext(currentParams)
+        : extractGovernanceContext(currentParams, config);
       const request: CheckGovernanceRequest = {
         plan_id: config.planId,
-        buyer_campaign_ref: config.buyerCampaignRef ?? '',
         binding: 'proposed',
         caller: config.callerUrl ?? '',
         tool,
         payload: currentParams,
-        governance_context: config.extractContext
-          ? config.extractContext(currentParams)
-          : extractGovernanceContext(currentParams, config),
+        ...(contextData && { governance_context: JSON.stringify(contextData) }),
       };
 
       debugLogs.push({
@@ -283,6 +294,7 @@ export class GovernanceMiddleware {
   async reportOutcome(
     checkId: string,
     outcome: OutcomeType,
+    governanceContext?: string,
     sellerResponse?: Record<string, unknown>,
     error?: { code?: string; message: string },
     debugLogs: GovernanceDebugEntry[] = []
@@ -293,8 +305,8 @@ export class GovernanceMiddleware {
     const request: ReportPlanOutcomeRequest = {
       plan_id: config.planId,
       check_id: checkId,
-      buyer_campaign_ref: config.buyerCampaignRef ?? '',
       outcome,
+      governance_context: governanceContext || '{}',
     };
 
     if (outcome === 'completed' && sellerResponse) {

@@ -121,10 +121,10 @@ describe('validateResponseSchema', () => {
       assert.strictEqual(result.passed, false);
     });
 
-    it('fails when buyer_ref is missing', () => {
+    it('passes when buyer_ref is missing (no longer required)', () => {
       const { buyer_ref, ...without } = validCreateMediaBuySuccess;
       const result = validateResponseSchema('create_media_buy', without);
-      assert.strictEqual(result.passed, false);
+      assert.strictEqual(result.passed, true, `Expected pass, got: ${result.error || ''}`);
     });
 
     it('passes for valid error response', () => {

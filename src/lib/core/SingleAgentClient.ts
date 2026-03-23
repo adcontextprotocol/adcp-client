@@ -1500,6 +1500,7 @@ export class SingleAgentClient {
   async reportGovernanceOutcome(
     checkId: string,
     outcome: OutcomeType,
+    governanceContext?: string,
     sellerResponse?: Record<string, unknown>,
     error?: { code?: string; message: string }
   ): Promise<import('./GovernanceTypes').GovernanceOutcome | undefined> {
@@ -1507,7 +1508,7 @@ export class SingleAgentClient {
     if (!middleware) {
       throw new Error('No governance middleware configured. Set config.governance.campaign to enable governance.');
     }
-    return middleware.reportOutcome(checkId, outcome, sellerResponse, error);
+    return middleware.reportOutcome(checkId, outcome, governanceContext, sellerResponse, error);
   }
 
   private getGovernanceAgent(): AgentConfig {

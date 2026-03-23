@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas vlatest
-// Generated at: 2026-03-20T22:32:42.474Z
+// Generated at: 2026-03-23T10:56:38.783Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -14,6 +14,10 @@ export type AuthenticationScheme = 'Bearer' | 'HMAC-SHA256';
  * Status of a media buy.
  */
 export type MediaBuyStatus = 'pending_activation' | 'active' | 'paused' | 'completed' | 'rejected' | 'canceled';
+/**
+ * Which party initiated the cancellation. 'buyer' when canceled via update_media_buy; 'seller' when the seller cancels (e.g., policy violation, inventory withdrawal).
+ */
+export type CanceledBy = 'buyer' | 'seller';
 /**
  * Budget pacing strategy
  */
@@ -295,23 +299,33 @@ export type OptimizationGoal =
  */
 export interface MediaBuy {
   /**
-   * Publisher's unique identifier for the media buy
+   * Seller's unique identifier for the media buy
    */
   media_buy_id: string;
-  /**
-   * Buyer's reference identifier for this media buy. Sellers SHOULD deduplicate requests with the same buyer_ref and account, returning the existing media buy rather than creating a duplicate.
-   */
-  buyer_ref?: string;
-  /**
-   * Buyer's campaign reference label. Groups related operations under a single campaign for CRM and ad server correlation.
-   */
-  buyer_campaign_ref?: string;
   account?: Account;
   status: MediaBuyStatus;
   /**
    * Reason provided by the seller when status is 'rejected'. Present only when status is 'rejected'.
    */
   rejection_reason?: string;
+  /**
+   * ISO 8601 timestamp when the seller confirmed this media buy. A successful create_media_buy response constitutes order confirmation.
+   */
+  confirmed_at?: string;
+  /**
+   * Cancellation metadata. Present only when status is 'canceled'.
+   */
+  cancellation?: {
+    /**
+     * ISO 8601 timestamp when this media buy was canceled.
+     */
+    canceled_at: string;
+    canceled_by: CanceledBy;
+    /**
+     * Reason provided when the media buy was canceled.
+     */
+    reason?: string;
+  };
   /**
    * Total budget amount
    */
@@ -324,6 +338,10 @@ export interface MediaBuy {
    * ISO 8601 timestamp for creative upload deadline
    */
   creative_deadline?: string;
+  /**
+   * Monotonically increasing revision number. Incremented on every state change or update. Callers MAY include this in update_media_buy requests for optimistic concurrency — sellers MUST reject with CONFLICT if the provided revision does not match the current value.
+   */
+  revision?: number;
   /**
    * Creation timestamp
    */
@@ -451,13 +469,9 @@ export interface ExtensionObject {}
  */
 export interface Package {
   /**
-   * Publisher's unique identifier for the package
+   * Seller's unique identifier for the package
    */
   package_id: string;
-  /**
-   * Buyer's reference identifier for this package. Sellers SHOULD deduplicate requests with the same buyer_ref within a media buy, returning the existing package rather than creating a duplicate.
-   */
-  buyer_ref?: string;
   /**
    * ID of the product this package is based on
    */
@@ -512,6 +526,29 @@ export interface Package {
    * Whether this package is paused by the buyer. Paused packages do not deliver impressions. Defaults to false.
    */
   paused?: boolean;
+  /**
+   * Whether this package has been canceled. Canceled packages stop delivery and cannot be reactivated. Defaults to false.
+   */
+  canceled?: boolean;
+  /**
+   * Cancellation metadata. Present only when canceled is true.
+   */
+  cancellation?: {
+    /**
+     * ISO 8601 timestamp when this package was canceled.
+     */
+    canceled_at: string;
+    canceled_by: CanceledBy;
+    /**
+     * Reason the package was canceled.
+     */
+    reason?: string;
+  };
+  /**
+   * ISO 8601 timestamp for creative upload or change deadline for this package. After this deadline, creative changes are rejected. When absent, the media buy's creative_deadline applies.
+   */
+  creative_deadline?: string;
+  context?: ContextObject;
   ext?: ExtensionObject;
 }
 /**
@@ -879,6 +916,10 @@ export interface CreativeAssignment {
    */
   placement_ids?: string[];
 }
+/**
+ * Opaque correlation data that is echoed unchanged in responses. Used for internal tracking, UI session IDs, trace IDs, and other caller-specific identifiers that don't affect protocol behavior. Context data is never parsed by AdCP agents - it's simply preserved and returned.
+ */
+export interface ContextObject {}
 
 // CREATIVE-ASSET SCHEMA
 /**
@@ -2048,6 +2089,10 @@ export type DataProviderSignalSelector =
       signal_tags: string[];
     };
 /**
+ * Overall measurement readiness level for this product given the buyer's event setup. 'insufficient' means the product cannot optimize effectively with the current setup.
+ */
+export type AssessmentStatus = 'insufficient' | 'minimum' | 'good' | 'excellent';
+/**
  * Where the conversion event originated
  */
 export type ActionSource =
@@ -2214,6 +2259,7 @@ export interface Product {
    * Maximum number of optimization_goals this product accepts on a package. When absent, no limit is declared. Most social platforms accept only 1 goal — buyers sending arrays longer than this value should expect the seller to use only the highest-priority (lowest priority number) goal.
    */
   max_optimization_goals?: number;
+  measurement_readiness?: MeasurementReadiness;
   /**
    * Conversion event tracking for this product. Presence indicates the product supports optimization_goals with kind: 'event'. Seller-level capabilities (supported event types, UID types, attribution windows) are declared in get_adcp_capabilities.
    */
@@ -2910,6 +2956,41 @@ export interface CreativePolicy {
   provenance_required?: boolean;
 }
 /**
+ * Assessment of whether the buyer's event source setup is sufficient for this product to optimize effectively. Only present when the seller can evaluate the buyer's account context. Buyers should check this before creating media buys with event-based optimization goals.
+ */
+export interface MeasurementReadiness {
+  status: AssessmentStatus;
+  /**
+   * Event types this product needs for effective optimization. Buyers should ensure their event sources cover these types.
+   */
+  required_event_types?: EventType[];
+  /**
+   * Event types this product requires that the buyer has not configured. Empty or absent when all required types are covered.
+   */
+  missing_event_types?: EventType[];
+  /**
+   * Actionable issues preventing full measurement readiness. Sellers should limit to the top 3-5 most actionable items. Buyer agents should sort by severity rather than relying on array position.
+   */
+  issues?: DiagnosticIssue[];
+  /**
+   * Seller explanation of the readiness assessment, recommendations for improvement, or context about what the buyer needs to change.
+   */
+  notes?: string;
+}
+/**
+ * An actionable issue detected during a health or readiness assessment. Used by event source health and measurement readiness to surface problems and recommendations.
+ */
+export interface DiagnosticIssue {
+  /**
+   * 'error': blocks optimization until resolved. 'warning': optimization works but effectiveness is reduced. 'info': suggestion for improvement.
+   */
+  severity: 'error' | 'warning' | 'info';
+  /**
+   * Human/agent-readable description of the issue and how to resolve it.
+   */
+  message: string;
+}
+/**
  * References shows declared in an adagents.json. Buyers resolve full show objects by fetching the adagents.json at the given domain and matching show_ids against its shows array.
  */
 export interface ShowSelector {
@@ -3200,6 +3281,105 @@ export type AdCPAsyncResponseData =
  * Response for completed or failed create_media_buy
  */
 export type CreateMediaBuyResponse = CreateMediaBuySuccess | CreateMediaBuyError;
+/**
+ * Selects an audience by signal reference or natural language description. Uses 'type' as the primary discriminator (signal vs description). Signal selectors additionally use 'value_type' to determine the targeting expression format (matching signal-targeting.json variants).
+ */
+export type AudienceSelector =
+  | {
+      /**
+       * Discriminator for signal-based selectors
+       */
+      type: 'signal';
+      signal_id: SignalID;
+      /**
+       * Discriminator for binary signals
+       */
+      value_type: 'binary';
+      /**
+       * Whether to include (true) or exclude (false) users matching this signal
+       */
+      value: boolean;
+    }
+  | {
+      /**
+       * Discriminator for signal-based selectors
+       */
+      type: 'signal';
+      signal_id: SignalID;
+      /**
+       * Discriminator for categorical signals
+       */
+      value_type: 'categorical';
+      /**
+       * Values to target. Users with any of these values will be included.
+       */
+      values: string[];
+    }
+  | {
+      /**
+       * Discriminator for signal-based selectors
+       */
+      type: 'signal';
+      signal_id: SignalID;
+      /**
+       * Discriminator for numeric signals
+       */
+      value_type: 'numeric';
+      /**
+       * Minimum value (inclusive). Omit for no minimum. Must be <= max_value when both are provided.
+       */
+      min_value?: number;
+      /**
+       * Maximum value (inclusive). Omit for no maximum. Must be >= min_value when both are provided.
+       */
+      max_value?: number;
+    }
+  | {
+      /**
+       * Discriminator for description-based selectors
+       */
+      type: 'description';
+      /**
+       * Natural language description of the audience (e.g., 'likely EV buyers', 'high net worth individuals', 'vulnerable communities')
+       */
+      description: string;
+      /**
+       * Optional grouping hint for the governance agent (e.g., 'demographic', 'behavioral', 'contextual', 'financial')
+       */
+      category?: string;
+    };
+/**
+ * The signal to target
+ */
+export type SignalID =
+  | {
+      /**
+       * Discriminator indicating this signal is from a data provider's published catalog
+       */
+      source: 'catalog';
+      /**
+       * Domain of the data provider that owns this signal (e.g., 'polk.com', 'experian.com'). The signal definition is published at this domain's /.well-known/adagents.json
+       */
+      data_provider_domain: string;
+      /**
+       * Signal identifier within the data provider's catalog (e.g., 'likely_tesla_buyers', 'income_100k_plus')
+       */
+      id: string;
+    }
+  | {
+      /**
+       * Discriminator indicating this signal is native to the agent (not from a data provider catalog)
+       */
+      source: 'agent';
+      /**
+       * URL of the signals agent that provides this signal (e.g., 'https://liveramp.com/.well-known/adcp/signals')
+       */
+      agent_url: string;
+      /**
+       * Signal identifier within the agent's signal set (e.g., 'custom_auto_intenders')
+       */
+      id: string;
+    };
 /**
  * Response for completed or failed update_media_buy
  */
@@ -3639,10 +3819,6 @@ export interface PaginationResponse {
   total_count?: number;
 }
 /**
- * Opaque correlation data that is echoed unchanged in responses. Used for internal tracking, UI session IDs, trace IDs, and other caller-specific identifiers that don't affect protocol behavior. Context data is never parsed by AdCP agents - it's simply preserved and returned.
- */
-export interface ContextObject {}
-/**
  * Progress data for working get_products
  */
 export interface GetProductsAsyncWorking {
@@ -3700,22 +3876,36 @@ export interface GetProductsAsyncSubmitted {
  */
 export interface CreateMediaBuySuccess {
   /**
-   * Publisher's unique identifier for the created media buy
+   * Seller's unique identifier for the created media buy
    */
   media_buy_id: string;
-  /**
-   * Buyer's reference identifier for this media buy
-   */
-  buyer_ref: string;
-  /**
-   * Buyer's campaign reference label, echoed from the request
-   */
-  buyer_campaign_ref?: string;
   account?: Account;
+  status?: MediaBuyStatus;
+  /**
+   * ISO 8601 timestamp when this media buy was confirmed by the seller. A successful create_media_buy response constitutes order confirmation.
+   */
+  confirmed_at?: string;
   /**
    * ISO 8601 timestamp for creative upload deadline
    */
   creative_deadline?: string;
+  /**
+   * Initial revision number for this media buy. Use in subsequent update_media_buy requests for optimistic concurrency.
+   */
+  revision?: number;
+  /**
+   * Actions the buyer can perform on this media buy after creation. Saves a round-trip to get_media_buys.
+   */
+  valid_actions?: (
+    | 'pause'
+    | 'resume'
+    | 'cancel'
+    | 'update_budget'
+    | 'update_dates'
+    | 'update_packages'
+    | 'add_packages'
+    | 'sync_creatives'
+  )[];
   /**
    * Array of created packages with complete state information
    */
@@ -3762,6 +3952,10 @@ export interface PlannedDelivery {
    * Human-readable summary of the audience the seller will target.
    */
   audience_summary?: string;
+  /**
+   * Structured audience targeting the seller will activate. Each entry is either a signal reference or a descriptive criterion. When present, governance agents MUST use this for bias/fairness validation and SHOULD ignore audience_summary for validation purposes. The audience_summary field is a human-readable rendering of this array, not an independent declaration.
+   */
+  audience_targeting?: AudienceSelector[];
   /**
    * Total budget the seller will deliver against.
    */
@@ -3837,13 +4031,14 @@ export interface CreateMediaBuyAsyncSubmitted {
  */
 export interface UpdateMediaBuySuccess {
   /**
-   * Publisher's identifier for the media buy
+   * Seller's identifier for the media buy
    */
   media_buy_id: string;
+  status?: MediaBuyStatus;
   /**
-   * Buyer's reference identifier for the media buy
+   * Revision number after this update. Use this value in subsequent update_media_buy requests for optimistic concurrency.
    */
-  buyer_ref: string;
+  revision?: number;
   /**
    * ISO 8601 timestamp when changes take effect (null if pending approval)
    */
@@ -3852,6 +4047,19 @@ export interface UpdateMediaBuySuccess {
    * Array of packages that were modified with complete state information
    */
   affected_packages?: Package[];
+  /**
+   * Actions the buyer can perform after this update. Saves a round-trip to get_media_buys.
+   */
+  valid_actions?: (
+    | 'pause'
+    | 'resume'
+    | 'cancel'
+    | 'update_budget'
+    | 'update_dates'
+    | 'update_packages'
+    | 'add_packages'
+    | 'sync_creatives'
+  )[];
   /**
    * When true, this response contains simulated data from sandbox mode.
    */

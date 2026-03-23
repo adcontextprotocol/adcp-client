@@ -284,10 +284,6 @@ export interface GetProductsRequest {
   catalog?: Catalog;
   account?: AccountReference;
   /**
-   * Buyer's campaign reference label. Groups related discovery and buy operations under a single campaign for CRM and ad server correlation (e.g., 'NovaDrink_Meals_Q2').
-   */
-  buyer_campaign_ref?: string;
-  /**
    * Delivery types the buyer prefers, in priority order. Unlike filters.delivery_type which excludes non-matching products, this signals preference for curation — the publisher may still include other delivery types when they match the brief well.
    */
   preferred_delivery_types?: DeliveryType[];
@@ -803,6 +799,10 @@ export type DataProviderSignalSelector =
       signal_tags: string[];
     };
 /**
+ * Overall measurement readiness level for this product given the buyer's event setup. 'insufficient' means the product cannot optimize effectively with the current setup.
+ */
+export type AssessmentStatus = 'insufficient' | 'minimum' | 'good' | 'excellent';
+/**
  * Where the conversion event originated
  */
 export type ActionSource =
@@ -1043,6 +1043,7 @@ export interface Product {
    * Maximum number of optimization_goals this product accepts on a package. When absent, no limit is declared. Most social platforms accept only 1 goal — buyers sending arrays longer than this value should expect the seller to use only the highest-priority (lowest priority number) goal.
    */
   max_optimization_goals?: number;
+  measurement_readiness?: MeasurementReadiness;
   /**
    * Conversion event tracking for this product. Presence indicates the product supports optimization_goals with kind: 'event'. Seller-level capabilities (supported event types, UID types, attribution windows) are declared in get_adcp_capabilities.
    */
@@ -1737,6 +1738,41 @@ export interface CreativePolicy {
    * Whether creatives must include provenance metadata. When true, the seller requires buyers to attach provenance declarations to creative submissions. The seller may independently verify claims via get_creative_features.
    */
   provenance_required?: boolean;
+}
+/**
+ * Assessment of whether the buyer's event source setup is sufficient for this product to optimize effectively. Only present when the seller can evaluate the buyer's account context. Buyers should check this before creating media buys with event-based optimization goals.
+ */
+export interface MeasurementReadiness {
+  status: AssessmentStatus;
+  /**
+   * Event types this product needs for effective optimization. Buyers should ensure their event sources cover these types.
+   */
+  required_event_types?: EventType[];
+  /**
+   * Event types this product requires that the buyer has not configured. Empty or absent when all required types are covered.
+   */
+  missing_event_types?: EventType[];
+  /**
+   * Actionable issues preventing full measurement readiness. Sellers should limit to the top 3-5 most actionable items. Buyer agents should sort by severity rather than relying on array position.
+   */
+  issues?: DiagnosticIssue[];
+  /**
+   * Seller explanation of the readiness assessment, recommendations for improvement, or context about what the buyer needs to change.
+   */
+  notes?: string;
+}
+/**
+ * An actionable issue detected during a health or readiness assessment. Used by event source health and measurement readiness to surface problems and recommendations.
+ */
+export interface DiagnosticIssue {
+  /**
+   * 'error': blocks optimization until resolved. 'warning': optimization works but effectiveness is reduced. 'info': suggestion for improvement.
+   */
+  severity: 'error' | 'warning' | 'info';
+  /**
+   * Human/agent-readable description of the issue and how to resolve it.
+   */
+  message: string;
 }
 /**
  * References shows declared in an adagents.json. Buyers resolve full show objects by fetching the adagents.json at the given domain and matching show_ids against its shows array.
@@ -2920,13 +2956,9 @@ export type AuthenticationScheme = 'Bearer' | 'HMAC-SHA256';
  */
 export interface CreateMediaBuyRequest {
   /**
-   * Buyer's reference identifier for this media buy. Sellers SHOULD deduplicate requests with the same buyer_ref and account, returning the existing media buy rather than creating a duplicate.
+   * Client-generated unique key for this request. If a request with the same idempotency_key and account has already been processed, the seller returns the existing media buy rather than creating a duplicate. MUST be unique per (seller, request) pair to prevent cross-seller correlation. Use a fresh UUID v4 for each request.
    */
-  buyer_ref: string;
-  /**
-   * Buyer's campaign reference label. Groups related discovery and buy operations under a single campaign for CRM and ad server correlation (e.g., 'NovaDrink_Meals_Q2').
-   */
-  buyer_campaign_ref?: string;
+  idempotency_key?: string;
   /**
    * Campaign governance plan identifier. Required when the account has governance_agents. The seller includes this in the committed check_governance request so the governance agent can validate against the correct plan.
    */
@@ -4001,26 +4033,115 @@ export interface ReportingWebhook {
  */
 export type CreateMediaBuyResponse = CreateMediaBuySuccess | CreateMediaBuyError;
 /**
+ * Initial media buy status. Either 'active' (immediate activation) or 'pending_activation' (awaiting platform setup).
+ */
+export type MediaBuyStatus = 'pending_activation' | 'active' | 'paused' | 'completed' | 'rejected' | 'canceled';
+/**
+ * Which party initiated the package cancellation.
+ */
+export type CanceledBy = 'buyer' | 'seller';
+/**
+ * Selects an audience by signal reference or natural language description. Uses 'type' as the primary discriminator (signal vs description). Signal selectors additionally use 'value_type' to determine the targeting expression format (matching signal-targeting.json variants).
+ */
+export type AudienceSelector =
+  | {
+      /**
+       * Discriminator for signal-based selectors
+       */
+      type: 'signal';
+      signal_id: SignalID;
+      /**
+       * Discriminator for binary signals
+       */
+      value_type: 'binary';
+      /**
+       * Whether to include (true) or exclude (false) users matching this signal
+       */
+      value: boolean;
+    }
+  | {
+      /**
+       * Discriminator for signal-based selectors
+       */
+      type: 'signal';
+      signal_id: SignalID;
+      /**
+       * Discriminator for categorical signals
+       */
+      value_type: 'categorical';
+      /**
+       * Values to target. Users with any of these values will be included.
+       */
+      values: string[];
+    }
+  | {
+      /**
+       * Discriminator for signal-based selectors
+       */
+      type: 'signal';
+      signal_id: SignalID;
+      /**
+       * Discriminator for numeric signals
+       */
+      value_type: 'numeric';
+      /**
+       * Minimum value (inclusive). Omit for no minimum. Must be <= max_value when both are provided.
+       */
+      min_value?: number;
+      /**
+       * Maximum value (inclusive). Omit for no maximum. Must be >= min_value when both are provided.
+       */
+      max_value?: number;
+    }
+  | {
+      /**
+       * Discriminator for description-based selectors
+       */
+      type: 'description';
+      /**
+       * Natural language description of the audience (e.g., 'likely EV buyers', 'high net worth individuals', 'vulnerable communities')
+       */
+      description: string;
+      /**
+       * Optional grouping hint for the governance agent (e.g., 'demographic', 'behavioral', 'contextual', 'financial')
+       */
+      category?: string;
+    };
+/**
  * Success response - media buy created successfully
  */
 export interface CreateMediaBuySuccess {
   /**
-   * Publisher's unique identifier for the created media buy
+   * Seller's unique identifier for the created media buy
    */
   media_buy_id: string;
-  /**
-   * Buyer's reference identifier for this media buy
-   */
-  buyer_ref: string;
-  /**
-   * Buyer's campaign reference label, echoed from the request
-   */
-  buyer_campaign_ref?: string;
   account?: Account;
+  status?: MediaBuyStatus;
+  /**
+   * ISO 8601 timestamp when this media buy was confirmed by the seller. A successful create_media_buy response constitutes order confirmation.
+   */
+  confirmed_at?: string;
   /**
    * ISO 8601 timestamp for creative upload deadline
    */
   creative_deadline?: string;
+  /**
+   * Initial revision number for this media buy. Use in subsequent update_media_buy requests for optimistic concurrency.
+   */
+  revision?: number;
+  /**
+   * Actions the buyer can perform on this media buy after creation. Saves a round-trip to get_media_buys.
+   */
+  valid_actions?: (
+    | 'pause'
+    | 'resume'
+    | 'cancel'
+    | 'update_budget'
+    | 'update_dates'
+    | 'update_packages'
+    | 'add_packages'
+    | 'sync_creatives'
+  )[];
   /**
    * Array of created packages with complete state information
    */
@@ -4136,13 +4257,9 @@ export interface Account {
  */
 export interface Package {
   /**
-   * Publisher's unique identifier for the package
+   * Seller's unique identifier for the package
    */
   package_id: string;
-  /**
-   * Buyer's reference identifier for this package. Sellers SHOULD deduplicate requests with the same buyer_ref within a media buy, returning the existing package rather than creating a duplicate.
-   */
-  buyer_ref?: string;
   /**
    * ID of the product this package is based on
    */
@@ -4197,6 +4314,29 @@ export interface Package {
    * Whether this package is paused by the buyer. Paused packages do not deliver impressions. Defaults to false.
    */
   paused?: boolean;
+  /**
+   * Whether this package has been canceled. Canceled packages stop delivery and cannot be reactivated. Defaults to false.
+   */
+  canceled?: boolean;
+  /**
+   * Cancellation metadata. Present only when canceled is true.
+   */
+  cancellation?: {
+    /**
+     * ISO 8601 timestamp when this package was canceled.
+     */
+    canceled_at: string;
+    canceled_by: CanceledBy;
+    /**
+     * Reason the package was canceled.
+     */
+    reason?: string;
+  };
+  /**
+   * ISO 8601 timestamp for creative upload or change deadline for this package. After this deadline, creative changes are rejected. When absent, the media buy's creative_deadline applies.
+   */
+  creative_deadline?: string;
+  context?: ContextObject;
   ext?: ExtensionObject;
 }
 /**
@@ -4234,6 +4374,10 @@ export interface PlannedDelivery {
    */
   audience_summary?: string;
   /**
+   * Structured audience targeting the seller will activate. Each entry is either a signal reference or a descriptive criterion. When present, governance agents MUST use this for bias/fairness validation and SHOULD ignore audience_summary for validation purposes. The audience_summary field is a human-readable rendering of this array, not an independent declaration.
+   */
+  audience_targeting?: AudienceSelector[];
+  /**
    * Total budget the seller will deliver against.
    */
   total_budget?: number;
@@ -4260,42 +4404,6 @@ export interface CreateMediaBuyError {
 }
 
 // update_media_buy parameters
-/**
- * Request parameters for updating campaign and package settings
- */
-export type UpdateMediaBuyRequest = {
-  /**
-   * Publisher's ID of the media buy to update
-   */
-  media_buy_id?: string;
-  /**
-   * Buyer's reference for the media buy to update
-   */
-  buyer_ref?: string;
-  /**
-   * Pause/resume the entire media buy (true = paused, false = active)
-   */
-  paused?: boolean;
-  start_time?: StartTiming;
-  /**
-   * New end date/time in ISO 8601 format
-   */
-  end_time?: string;
-  /**
-   * Package-specific updates
-   */
-  packages?: PackageUpdate[];
-  reporting_webhook?: ReportingWebhook;
-  push_notification_config?: PushNotificationConfig;
-  /**
-   * Client-generated idempotency key for safe retries. If an update fails without a response, resending with the same idempotency_key guarantees the update is applied at most once.
-   */
-  idempotency_key?: string;
-  context?: ContextObject;
-  ext?: ExtensionObject;
-} & {
-  [k: string]: unknown | undefined;
-};
 /**
  * Package update configuration for update_media_buy. Identifies package by package_id or buyer_ref and specifies fields to modify. Fields not present are left unchanged. Note: product_id, format_ids, and pricing_option_id cannot be changed after creation.
  */
@@ -4412,8 +4520,52 @@ export type PackageUpdate = {
 } & {
   [k: string]: unknown | undefined;
 };
-
-// update_media_buy response
+/**
+ * Request parameters for updating campaign and package settings
+ */
+export interface UpdateMediaBuyRequest {
+  /**
+   * Seller's ID of the media buy to update
+   */
+  media_buy_id: string;
+  /**
+   * Expected current revision for optimistic concurrency. When provided, sellers MUST reject the update with CONFLICT if the media buy's current revision does not match. Obtain from get_media_buys or the most recent update response.
+   */
+  revision?: number;
+  /**
+   * Pause/resume the entire media buy (true = paused, false = active)
+   */
+  paused?: boolean;
+  /**
+   * Cancel the entire media buy. Cancellation is irreversible — canceled media buys cannot be reactivated. Sellers MAY reject with NOT_CANCELLABLE if the media buy cannot be canceled in its current state.
+   */
+  canceled?: true;
+  /**
+   * Reason for cancellation. Sellers SHOULD store this and return it in subsequent get_media_buys responses.
+   */
+  cancellation_reason?: string;
+  start_time?: StartTiming;
+  /**
+   * New end date/time in ISO 8601 format
+   */
+  end_time?: string;
+  /**
+   * Package-specific updates for existing packages
+   */
+  packages?: PackageUpdate[];
+  /**
+   * New packages to add to this media buy. Uses the same schema as create_media_buy packages. Sellers that support mid-flight package additions advertise add_packages in valid_actions. Sellers that do not support this MUST reject with UNSUPPORTED_FEATURE.
+   */
+  new_packages?: PackageRequest[];
+  reporting_webhook?: ReportingWebhook;
+  push_notification_config?: PushNotificationConfig;
+  /**
+   * Client-generated idempotency key for safe retries. If an update fails without a response, resending with the same idempotency_key guarantees the update is applied at most once. MUST be unique per (seller, request) pair to prevent cross-seller correlation. Use a fresh UUID v4 for each request.
+   */
+  idempotency_key?: string;
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
 /**
  * Response payload for update_media_buy task. Returns either complete success data OR error information, never both. This enforces atomic operation semantics - updates are either fully applied or not applied at all.
  */
@@ -4423,13 +4575,14 @@ export type UpdateMediaBuyResponse = UpdateMediaBuySuccess | UpdateMediaBuyError
  */
 export interface UpdateMediaBuySuccess {
   /**
-   * Publisher's identifier for the media buy
+   * Seller's identifier for the media buy
    */
   media_buy_id: string;
+  status?: MediaBuyStatus;
   /**
-   * Buyer's reference identifier for the media buy
+   * Revision number after this update. Use this value in subsequent update_media_buy requests for optimistic concurrency.
    */
-  buyer_ref: string;
+  revision?: number;
   /**
    * ISO 8601 timestamp when changes take effect (null if pending approval)
    */
@@ -4438,6 +4591,19 @@ export interface UpdateMediaBuySuccess {
    * Array of packages that were modified with complete state information
    */
   affected_packages?: Package[];
+  /**
+   * Actions the buyer can perform after this update. Saves a round-trip to get_media_buys.
+   */
+  valid_actions?: (
+    | 'pause'
+    | 'resume'
+    | 'cancel'
+    | 'update_budget'
+    | 'update_dates'
+    | 'update_packages'
+    | 'add_packages'
+    | 'sync_creatives'
+  )[];
   /**
    * When true, this response contains simulated data from sandbox mode.
    */
@@ -4459,31 +4625,26 @@ export interface UpdateMediaBuyError {
 
 // get_media_buys parameters
 /**
- * Status of a media buy.
- */
-export type MediaBuyStatus = 'pending_activation' | 'active' | 'paused' | 'completed' | 'rejected' | 'canceled';
-
-/**
  * Request parameters for retrieving media buy status, creative approval state, and optional delivery snapshots
  */
 export interface GetMediaBuysRequest {
   account?: AccountReference;
   /**
-   * Array of publisher media buy IDs to retrieve. When omitted along with buyer_refs, returns a paginated set of accessible media buys matching status_filter.
+   * Array of media buy IDs to retrieve. When omitted, returns a paginated set of accessible media buys matching status_filter.
    */
   media_buy_ids?: string[];
   /**
-   * Array of buyer reference IDs to retrieve
-   */
-  buyer_refs?: string[];
-  /**
-   * Filter by status. Can be a single status or array of statuses. Defaults to ["active"] only when media_buy_ids and buyer_refs are both omitted. When media_buy_ids or buyer_refs are provided, no implicit status filter is applied.
+   * Filter by status. Can be a single status or array of statuses. Defaults to ["active"] when media_buy_ids is omitted. When media_buy_ids is provided, no implicit status filter is applied.
    */
   status_filter?: MediaBuyStatus | MediaBuyStatus[];
   /**
    * When true, include a near-real-time delivery snapshot for each package. Snapshots reflect the latest available entity-level stats from the platform (e.g., updated every ~15 minutes on GAM, ~1 hour on batch-only platforms). The staleness_seconds field on each snapshot indicates data freshness. If a snapshot cannot be returned, package.snapshot_unavailable_reason explains why. Defaults to false.
    */
   include_snapshot?: boolean;
+  /**
+   * When present, include the last N revision history entries for each media buy (returns min(N, available entries)). Each entry contains revision number, timestamp, actor, and a summary of what changed. Omit or set to 0 to exclude history (default). Recommended: 5-10 for monitoring, 50+ for audit.
+   */
+  include_history?: number;
   pagination?: PaginationRequest;
   context?: ContextObject;
   ext?: ExtensionObject;
@@ -4504,17 +4665,9 @@ export interface GetMediaBuysResponse {
    */
   media_buys: {
     /**
-     * Publisher's unique identifier for the media buy
+     * Seller's unique identifier for the media buy
      */
     media_buy_id: string;
-    /**
-     * Buyer's reference identifier for this media buy
-     */
-    buyer_ref?: string;
-    /**
-     * Buyer campaign reference label sourced from create_media_buy.buyer_campaign_ref. Groups related operations under a single campaign; may be absent when not provided at creation time.
-     */
-    buyer_campaign_ref?: string;
     account?: Account;
     status: MediaBuyStatus;
     /**
@@ -4538,6 +4691,28 @@ export interface GetMediaBuysResponse {
      */
     creative_deadline?: string;
     /**
+     * ISO 8601 timestamp when the seller confirmed this media buy. A successful create_media_buy response constitutes order confirmation.
+     */
+    confirmed_at?: string;
+    /**
+     * Cancellation metadata. Present only when status is 'canceled'.
+     */
+    cancellation?: {
+      /**
+       * ISO 8601 timestamp when this media buy was canceled.
+       */
+      canceled_at: string;
+      canceled_by: CanceledBy;
+      /**
+       * Reason the media buy was canceled.
+       */
+      reason?: string;
+    };
+    /**
+     * Current revision number. Pass this in update_media_buy for optimistic concurrency.
+     */
+    revision?: number;
+    /**
      * Creation timestamp
      */
     created_at?: string;
@@ -4545,6 +4720,49 @@ export interface GetMediaBuysResponse {
      * Last update timestamp
      */
     updated_at?: string;
+    /**
+     * Actions the buyer can perform on this media buy in its current state. Eliminates the need for agents to internalize the state machine — the seller declares what is permitted right now.
+     */
+    valid_actions?: (
+      | 'pause'
+      | 'resume'
+      | 'cancel'
+      | 'update_budget'
+      | 'update_dates'
+      | 'update_packages'
+      | 'add_packages'
+      | 'sync_creatives'
+    )[];
+    /**
+     * Revision history entries, most recent first. Only present when include_history > 0 in the request. Each entry represents a state change or update to the media buy. Entries are append-only: sellers MUST NOT modify or delete previously emitted history entries. Callers MAY cache entries by revision number. Returns min(N, available entries) when include_history exceeds the total.
+     */
+    history?: {
+      /**
+       * Revision number after this change was applied.
+       */
+      revision: number;
+      /**
+       * When this change occurred.
+       */
+      timestamp: string;
+      /**
+       * Identity of who made the change — derived from authentication context, not caller-provided. Format is seller-defined (e.g., agent URL, user email, API key label).
+       */
+      actor?: string;
+      /**
+       * What happened. Standard actions: created, activated, paused, resumed, canceled, rejected, completed, updated_budget, updated_dates, updated_packages, package_canceled, package_paused, package_resumed. Sellers MAY use additional platform-specific actions (e.g., creative_approved, targeting_updated) — use ext on the history entry for structured metadata about custom actions.
+       */
+      action: string;
+      /**
+       * Human-readable summary of the change (e.g., 'Budget increased from $5,000 to $7,500 on pkg_abc').
+       */
+      summary?: string;
+      /**
+       * Package affected, when the change targeted a specific package.
+       */
+      package_id?: string;
+      ext?: ExtensionObject;
+    }[];
     /**
      * Packages within this media buy, augmented with creative approval status and optional delivery snapshots
      */
@@ -4568,13 +4786,9 @@ export interface GetMediaBuysResponse {
  */
 export interface PackageStatus {
   /**
-   * Publisher's package identifier
+   * Seller's package identifier
    */
   package_id: string;
-  /**
-   * Buyer's reference identifier for this package
-   */
-  buyer_ref?: string;
   /**
    * Product identifier this package is purchased from
    */
@@ -4607,6 +4821,28 @@ export interface PackageStatus {
    * Whether this package is currently paused by the buyer
    */
   paused?: boolean;
+  /**
+   * Whether this package has been canceled. Canceled packages stop delivery and cannot be reactivated.
+   */
+  canceled?: boolean;
+  /**
+   * Cancellation metadata. Present only when canceled is true.
+   */
+  cancellation?: {
+    /**
+     * ISO 8601 timestamp when this package was canceled.
+     */
+    canceled_at: string;
+    canceled_by: CanceledBy;
+    /**
+     * Reason the package was canceled.
+     */
+    reason?: string;
+  };
+  /**
+   * ISO 8601 timestamp for creative upload or change deadline for this package. After this deadline, creative changes are rejected. When absent, the media buy's creative_deadline applies.
+   */
+  creative_deadline?: string;
   /**
    * Approval status for each creative assigned to this package. Absent when no creatives have been assigned.
    */
@@ -4708,13 +4944,9 @@ export type SortMetric =
 export interface GetMediaBuyDeliveryRequest {
   account?: AccountReference;
   /**
-   * Array of publisher media buy IDs to get delivery data for
+   * Array of media buy IDs to get delivery data for
    */
   media_buy_ids?: string[];
-  /**
-   * Array of buyer reference IDs to get delivery data for
-   */
-  buyer_refs?: string[];
   /**
    * Filter by status. Can be a single status or array of statuses
    */
@@ -4911,17 +5143,9 @@ export interface GetMediaBuyDeliveryResponse {
    */
   media_buy_deliveries: {
     /**
-     * Publisher's media buy identifier
+     * Seller's media buy identifier
      */
     media_buy_id: string;
-    /**
-     * Buyer's reference identifier for this media buy
-     */
-    buyer_ref?: string;
-    /**
-     * Buyer's campaign reference label from create_media_buy.buyer_campaign_ref. Groups related operations under a single campaign for CRM and ad server correlation; may be absent when not provided at creation time.
-     */
-    buyer_campaign_ref?: string;
     /**
      * Current media buy status. Lifecycle states use the same taxonomy as media-buy-status (`pending_activation`, `active`, `paused`, `completed`, `rejected`, `canceled`). In webhook context, reporting_delayed indicates data temporarily unavailable. `pending` is accepted as a legacy alias for pending_activation.
      */
@@ -4955,13 +5179,9 @@ export interface GetMediaBuyDeliveryResponse {
      */
     by_package: (DeliveryMetrics & {
       /**
-       * Publisher's package identifier
+       * Seller's package identifier
        */
       package_id: string;
-      /**
-       * Buyer's reference identifier for this package
-       */
-      buyer_ref?: string;
       /**
        * Delivery pace (1.0 = on track, <1.0 = behind, >1.0 = ahead)
        */
@@ -5417,38 +5637,6 @@ export interface DeliveryMetrics {
 
 // provide_performance_feedback parameters
 /**
- * Request payload for provide_performance_feedback task
- */
-export type ProvidePerformanceFeedbackRequest = {
-  /**
-   * Publisher's media buy identifier
-   */
-  media_buy_id?: string;
-  /**
-   * Buyer's reference for the media buy
-   */
-  buyer_ref?: string;
-  measurement_period?: DatetimeRange;
-  /**
-   * Normalized performance score (0.0 = no value, 1.0 = expected, >1.0 = above expected)
-   */
-  performance_index?: number;
-  /**
-   * Specific package within the media buy (if feedback is package-specific)
-   */
-  package_id?: string;
-  /**
-   * Specific creative asset (if feedback is creative-specific)
-   */
-  creative_id?: string;
-  metric_type?: MetricType;
-  feedback_source?: FeedbackSource;
-  context?: ContextObject;
-  ext?: ExtensionObject;
-} & {
-  [k: string]: unknown | undefined;
-};
-/**
  * The business metric being measured
  */
 export type MetricType =
@@ -5469,6 +5657,36 @@ export type FeedbackSource =
   | 'platform_analytics'
   | 'verification_partner';
 
+/**
+ * Request payload for provide_performance_feedback task
+ */
+export interface ProvidePerformanceFeedbackRequest {
+  /**
+   * Seller's media buy identifier
+   */
+  media_buy_id: string;
+  /**
+   * Client-generated unique key for this request. Prevents duplicate feedback submissions on retries. MUST be unique per (seller, request) pair to prevent cross-seller correlation. Use a fresh UUID v4 for each request.
+   */
+  idempotency_key?: string;
+  measurement_period: DatetimeRange;
+  /**
+   * Normalized performance score (0.0 = no value, 1.0 = expected, >1.0 = above expected)
+   */
+  performance_index: number;
+  /**
+   * Specific package within the media buy (if feedback is package-specific)
+   */
+  package_id?: string;
+  /**
+   * Specific creative asset (if feedback is creative-specific)
+   */
+  creative_id?: string;
+  metric_type?: MetricType;
+  feedback_source?: FeedbackSource;
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
 /**
  * Time period for performance measurement
  */
@@ -5606,6 +5824,7 @@ export interface SyncEventSourcesSuccess {
      * Action taken for this event source
      */
     action: 'created' | 'updated' | 'unchanged' | 'deleted' | 'failed';
+    health?: EventSourceHealth;
     /**
      * Errors for this event source (only present when action='failed')
      */
@@ -5617,6 +5836,49 @@ export interface SyncEventSourcesSuccess {
   sandbox?: boolean;
   context?: ContextObject;
   ext?: ExtensionObject;
+}
+/**
+ * Health assessment for this event source. Reflects event volume, data quality, and parameter completeness. Sellers that support health scoring include this on every source (buyer-managed and seller-managed). Absent when the seller does not evaluate event source health.
+ */
+export interface EventSourceHealth {
+  status: AssessmentStatus;
+  /**
+   * Seller-specific scoring detail. Only present when the seller has a native quality score to relay. Buyer agents should use status (not detail) for cross-seller decisions. Detail is supplementary context for human review or advanced diagnostics.
+   */
+  detail?: {
+    /**
+     * Seller-defined quality score. Scale varies by seller — only compare within the same seller.
+     */
+    score: number;
+    /**
+     * Maximum possible score on this seller's scale.
+     */
+    max_score: number;
+    /**
+     * Seller's name for this score (e.g., 'Event Quality Score', 'Event Match Quality').
+     */
+    label?: string;
+  };
+  /**
+   * Fraction of events from this source that the seller successfully matched to ad interactions (0.0-1.0). Low match rates indicate weak user_match identifiers. Absent when the seller does not compute match rates.
+   */
+  match_rate?: number;
+  /**
+   * ISO 8601 timestamp of the most recent event received from this source. Absent when no events have been received.
+   */
+  last_event_at?: string;
+  /**
+   * ISO 8601 timestamp of when this health assessment was computed. When health is derived from reporting data, this may lag real-time. Buyer agents can use this to decide whether to trust stale assessments or re-request.
+   */
+  evaluated_at?: string;
+  /**
+   * Number of events received from this source in the last 24 hours. Zero indicates the source is configured but not firing.
+   */
+  events_received_24h?: number;
+  /**
+   * Actionable issues detected with this event source. Sellers should limit to the top 3-5 most actionable items. Buyer agents should sort by severity rather than relying on array position.
+   */
+  issues?: DiagnosticIssue[];
 }
 /**
  * Error response - operation failed completely
@@ -5695,6 +5957,10 @@ export interface LogEventRequest {
    * @maxItems 10000
    */
   events: Event[];
+  /**
+   * Client-generated unique key for this request. Prevents duplicate event logging on retries. MUST be unique per (seller, request) pair to prevent cross-seller correlation. Use a fresh UUID v4 for each request.
+   */
+  idempotency_key?: string;
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -5942,6 +6208,19 @@ export interface SyncAudiencesRequest {
  * Response from audience sync operation. Returns either per-audience results OR operation-level errors.
  */
 export type SyncAudiencesResponse = SyncAudiencesSuccess | SyncAudiencesError;
+/**
+ * Identifier type. Combines hashed PII types (hashed_email, hashed_phone) with universal ID types (rampid, uid2, maid, etc.).
+ */
+export type MatchIDType =
+  | 'hashed_email'
+  | 'hashed_phone'
+  | 'rampid'
+  | 'id5'
+  | 'uid2'
+  | 'euid'
+  | 'pairid'
+  | 'maid'
+  | 'other';
 
 /**
  * Success response - sync operation processed audiences
@@ -5983,6 +6262,28 @@ export interface SyncAudiencesSuccess {
      * Total members matched to platform users across all syncs (cumulative, not just this call). Populated when status is 'ready'.
      */
     matched_count?: number;
+    /**
+     * Deduplicated match rate across all identifier types (matched_count / total_uploaded_count after deduplication). A single number for reach estimation. Populated when status is 'ready'.
+     */
+    effective_match_rate?: number;
+    /**
+     * Per-identifier-type match results. Shows which ID types are resolving and at what rate. Helps buyers decide which identifiers to prioritize. Populated when the seller can report per-type matching. Omitted when the seller only supports aggregate match counts.
+     */
+    match_breakdown?: {
+      id_type: MatchIDType;
+      /**
+       * Cumulative number of members submitted with this identifier type across all syncs (matches total_uploaded_count semantics, not uploaded_count). Compare with matched to calculate per-type match rate.
+       */
+      submitted: number;
+      /**
+       * Cumulative number of members matched via this identifier type across all syncs.
+       */
+      matched: number;
+      /**
+       * Match rate for this identifier type (matched / submitted). Server-authoritative — consumers should prefer this value over computing their own.
+       */
+      match_rate: number;
+    }[];
     /**
      * ISO 8601 timestamp of when the most recent sync operation was accepted by the platform. Useful for agents reasoning about audience freshness. Omitted if the seller does not track this.
      */
@@ -6204,11 +6505,11 @@ export interface BuildCreativeRequest {
    */
   concept_id?: string;
   /**
-   * Buyer's media buy reference for tag generation context. When the creative agent is also the ad server, this provides the trafficking context needed to generate placement-specific tags (e.g., CM360 placement ID). Not needed when tags are generated at the creative level (most creative platforms). This is the buyer's reference — the same value used as buyer_ref in create_media_buy.
+   * Media buy identifier for tag generation context. When the creative agent is also the ad server, this provides the trafficking context needed to generate placement-specific tags (e.g., CM360 placement ID). Not needed when tags are generated at the creative level (most creative platforms).
    */
   media_buy_id?: string;
   /**
-   * Buyer's package or line item reference within the media buy. Used with media_buy_id when the creative agent needs line-item-level context for tag generation. Omit to get a tag not scoped to a specific package.
+   * Package identifier within the media buy. Used with media_buy_id when the creative agent needs line-item-level context for tag generation. Omit to get a tag not scoped to a specific package.
    */
   package_id?: string;
   target_format_id?: FormatID;
@@ -6253,6 +6554,10 @@ export interface BuildCreativeRequest {
   macro_values?: {
     [k: string]: string | undefined;
   };
+  /**
+   * Client-generated unique key for this request. Prevents duplicate creative generation on retries. MUST be unique per (seller, request) pair to prevent cross-seller correlation. Use a fresh UUID v4 for each request.
+   */
+  idempotency_key?: string;
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -6879,7 +7184,7 @@ export interface PreviewCreativeVariantResponse {
 
 // get_creative_delivery parameters
 /**
- * Request parameters for retrieving creative delivery data including variant-level metrics from a creative agent. At least one scoping filter (media_buy_ids, media_buy_buyer_refs, or creative_ids) is required.
+ * Request parameters for retrieving creative delivery data including variant-level metrics from a creative agent. At least one scoping filter (media_buy_ids or creative_ids) is required.
  */
 export type GetCreativeDeliveryRequest = {
   [k: string]: unknown | undefined;
@@ -6889,10 +7194,6 @@ export type GetCreativeDeliveryRequest = {
    * Filter to specific media buys by publisher ID. If omitted, returns creative delivery across all matching media buys.
    */
   media_buy_ids?: string[];
-  /**
-   * Filter to specific media buys by buyer reference ID. Alternative to media_buy_ids when the buyer doesn't have the publisher's identifiers.
-   */
-  media_buy_buyer_refs?: string[];
   /**
    * Filter to specific creatives by ID. If omitted, returns delivery for all creatives matching the other filters.
    */
@@ -6981,10 +7282,6 @@ export interface GetCreativeDeliveryResponse {
    * Publisher's media buy identifier. Present when the request was scoped to a single media buy.
    */
   media_buy_id?: string;
-  /**
-   * Buyer's reference identifier for the media buy. Echoed back so the buyer can correlate without mapping publisher IDs.
-   */
-  media_buy_buyer_ref?: string;
   /**
    * ISO 4217 currency code for monetary values in this response (e.g., 'USD', 'EUR')
    */
@@ -7186,10 +7483,6 @@ export interface CreativeFilters {
    */
   media_buy_ids?: string[];
   /**
-   * Filter creatives assigned to media buys with any of these buyer references. Sales-agent-specific — standalone creative agents SHOULD ignore this filter.
-   */
-  buyer_refs?: string[];
-  /**
    * Filter for unassigned creatives when true, assigned creatives when false. Sales-agent-specific — standalone creative agents SHOULD ignore this filter.
    */
   unassigned?: boolean;
@@ -7362,10 +7655,6 @@ export interface ListCreativesResponse {
          */
         package_id: string;
         /**
-         * Buyer's reference identifier for this package
-         */
-        buyer_ref?: string;
-        /**
          * When this assignment was created
          */
         assigned_date: string;
@@ -7518,7 +7807,7 @@ export interface SyncCreativesRequest {
     placement_ids?: string[];
   }[];
   /**
-   * Client-generated idempotency key for safe retries. If a sync fails without a response, resending with the same idempotency_key guarantees at-most-once execution.
+   * Client-generated idempotency key for safe retries. If a sync fails without a response, resending with the same idempotency_key guarantees at-most-once execution. MUST be unique per (seller, request) pair to prevent cross-seller correlation. Use a fresh UUID v4 for each request.
    */
   idempotency_key?: string;
   /**
@@ -7631,10 +7920,6 @@ export type GetSignalsRequest = {
   [k: string]: unknown | undefined;
 } & {
   account?: AccountReference;
-  /**
-   * The buyer's campaign reference. Used to correlate signal discovery with subsequent report_usage calls.
-   */
-  buyer_campaign_ref?: string;
   /**
    * Natural language description of the desired signals. When used alone, enables semantic discovery. When combined with signal_ids, provides context for the agent but signal_ids matches are returned first.
    */
@@ -7974,9 +8259,9 @@ export interface ActivateSignalRequest {
   pricing_option_id?: string;
   account?: AccountReference;
   /**
-   * The buyer's campaign reference for this activation. Enables the signals agent to correlate activations with subsequent report_usage calls.
+   * Client-generated unique key for this request. Prevents duplicate activations on retries. MUST be unique per (seller, request) pair to prevent cross-seller correlation. Use a fresh UUID v4 for each request.
    */
-  buyer_campaign_ref?: string;
+  idempotency_key?: string;
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -8048,6 +8333,10 @@ export interface CreatePropertyListRequest {
   base_properties?: BasePropertySource[];
   filters?: PropertyListFilters;
   brand?: BrandReference;
+  /**
+   * Client-generated unique key for this request. Prevents duplicate property list creation on retries. MUST be unique per (seller, request) pair to prevent cross-seller correlation. Use a fresh UUID v4 for each request.
+   */
+  idempotency_key?: string;
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -8238,6 +8527,10 @@ export interface UpdatePropertyListRequest {
   webhook_url?: string;
   context?: ContextObject;
   ext?: ExtensionObject;
+  /**
+   * Client-generated unique key for at-most-once execution. If a request with the same key has already been processed, the server returns the original response without re-processing. MUST be unique per (seller, request) pair to prevent cross-seller correlation. Use a fresh UUID v4 for each request.
+   */
+  idempotency_key?: string;
 }
 
 // update_property_list response
@@ -8349,6 +8642,10 @@ export interface DeletePropertyListRequest {
   list_id: string;
   context?: ContextObject;
   ext?: ExtensionObject;
+  /**
+   * Client-generated unique key for at-most-once execution. If a request with the same key has already been processed, the server returns the original response without re-processing. MUST be unique per (seller, request) pair to prevent cross-seller correlation. Use a fresh UUID v4 for each request.
+   */
+  idempotency_key?: string;
 }
 
 // delete_property_list response
@@ -8763,6 +9060,10 @@ export interface CreateContentStandardsRequest {
       | Artifact
     )[];
   };
+  /**
+   * Client-generated unique key for this request. Prevents duplicate content standards creation on retries. MUST be unique per (seller, request) pair to prevent cross-seller correlation. Use a fresh UUID v4 for each request.
+   */
+  idempotency_key?: string;
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -8874,6 +9175,10 @@ export interface UpdateContentStandardsRequest {
   };
   context?: ContextObject;
   ext?: ExtensionObject;
+  /**
+   * Client-generated unique key for at-most-once execution. If a request with the same key has already been processed, the server returns the original response without re-processing. MUST be unique per (seller, request) pair to prevent cross-seller correlation. Use a fresh UUID v4 for each request.
+   */
+  idempotency_key?: string;
 }
 
 // update_content_standards response
@@ -8921,6 +9226,10 @@ export interface CalibrateContentRequest {
    */
   standards_id: string;
   artifact: Artifact;
+  /**
+   * Client-generated unique key for at-most-once execution. If a request with the same key has already been processed, the server returns the original response without re-processing. MUST be unique per (seller, request) pair to prevent cross-seller correlation. Use a fresh UUID v4 for each request.
+   */
+  idempotency_key?: string;
 }
 
 // calibrate_content response
@@ -9304,6 +9613,18 @@ export interface CreativeFeatureResult {
  */
 export type BudgetAuthorityLevel = 'agent_full' | 'agent_limited' | 'human_required';
 /**
+ * Personal data categories that may be restricted from use in audience targeting. Based on GDPR Article 9 special categories of personal data, which are also referenced by EU DSA Article 26 for advertising restrictions. Used in two places: (1) on campaign plans via restricted_attributes to declare which categories are prohibited, and (2) on signal-definition.json via restricted_attributes to declare which categories a signal touches. Governance agents match plan restrictions against signal declarations for structural validation.
+ */
+export type RestrictedAttribute =
+  | 'racial_ethnic_origin'
+  | 'political_opinions'
+  | 'religious_beliefs'
+  | 'trade_union_membership'
+  | 'health_data'
+  | 'sex_life_sexual_orientation'
+  | 'genetic_data'
+  | 'biometric_data';
+/**
  * Authority level granted to this agent.
  */
 export type DelegationAuthority = 'full' | 'execute_only' | 'propose_only';
@@ -9401,6 +9722,23 @@ export interface SyncPlansRequest {
      */
     policy_ids?: string[];
     /**
+     * Regulatory categories that apply to this campaign. Determines which policy regimes the governance agent enforces (e.g., 'children_directed' activates COPPA/AADC, 'political_advertising' activates disclosure requirements). The governance agent resolves categories to specific policies based on the plan's jurisdictions. When omitted, governance agents MAY infer categories from the brand's industries and the plan's objectives. Values are registry-defined category IDs (intentionally freeform strings, not an enum — new categories are added as regulations evolve).
+     */
+    policy_categories?: string[];
+    audience?: AudienceConstraints;
+    /**
+     * Personal data categories that must not be used for targeting in this campaign. Applies horizontally across all audience criteria. Used for EU DSA Article 26 compliance (prohibits targeting on GDPR Article 9 special categories) and similar regulations. The governance agent flags any audience targeting that references these attributes.
+     */
+    restricted_attributes?: RestrictedAttribute[];
+    /**
+     * Additional restricted attributes not covered by the restricted-attribute enum. Freeform strings for jurisdiction-specific or brand-specific restrictions beyond GDPR Article 9 categories (e.g., 'financial_status', 'immigration_status'). Governance agents use semantic matching for these.
+     */
+    restricted_attributes_custom?: string[];
+    /**
+     * Minimum audience segment size. Prevents micro-targeting by ensuring segments meet a k-anonymity threshold. Applies to the estimated combined (intersection) audience when multiple criteria are used, not just individual criterion sizes. The governance agent validates this by querying signal catalog metadata or seller-reported segment sizes. When segment size data is unavailable, the governance agent SHOULD produce a finding with reduced confidence rather than silently passing.
+     */
+    min_audience_size?: number;
+    /**
      * Natural language policy statements specific to this campaign (e.g., 'No advertising adjacent to competitor content'). Applied regardless of geography.
      */
     custom_policies?: string[];
@@ -9461,6 +9799,19 @@ export interface SyncPlansRequest {
     ext?: ExtensionObject;
   }[];
 }
+/**
+ * Audience targeting constraints. Defines who the campaign should reach (include) and must not reach (exclude). The governance agent evaluates seller targeting against these constraints.
+ */
+export interface AudienceConstraints {
+  /**
+   * Desired audience criteria. The seller's targeting should align with these. Each criterion is evaluated independently — the combined targeting should satisfy at least one inclusion criterion.
+   */
+  include?: AudienceSelector[];
+  /**
+   * Excluded audience criteria. The seller's targeting must not overlap with these. Exclusions take precedence over inclusions. Used for protected groups, vulnerable communities, regulatory restrictions, or brand safety.
+   */
+  exclude?: AudienceSelector[];
+}
 
 // sync_plans response
 /**
@@ -9502,7 +9853,7 @@ export interface SyncPlansResponse {
       status: 'active' | 'inactive';
     }[];
     /**
-     * Policies the governance agent will enforce for this plan. Includes explicitly referenced policies from the brand compliance configuration and auto-applied policies matched by jurisdiction or vertical. Present when the governance agent supports policy resolution.
+     * Policies the governance agent will enforce for this plan. Includes explicitly referenced policies from the brand compliance configuration and auto-applied policies matched by jurisdiction or policy category. Present when the governance agent supports policy resolution.
      */
     resolved_policies?: {
       /**
@@ -9510,12 +9861,12 @@ export interface SyncPlansResponse {
        */
       policy_id: string;
       /**
-       * How this policy was included. 'explicit': referenced in the brand compliance configuration. 'auto_applied': matched automatically by jurisdiction, vertical, or category.
+       * How this policy was included. 'explicit': referenced in the brand compliance configuration. 'auto_applied': matched automatically by jurisdiction or policy category.
        */
       source: 'explicit' | 'auto_applied';
       enforcement: PolicyEnforcementLevel;
       /**
-       * Why this policy was included (e.g., 'Matched jurisdiction US and vertical pharmaceutical').
+       * Why this policy was included (e.g., 'Matched jurisdiction US and policy category pharmaceutical_advertising').
        */
       reason?: string;
     }[];
@@ -9541,9 +9892,9 @@ export interface ReportPlanOutcomeRequest {
    */
   check_id?: string;
   /**
-   * Campaign identifier.
+   * Client-generated unique key for this request. Prevents duplicate outcome reports on retries. MUST be unique per (seller, request) pair to prevent cross-seller correlation. Use a fresh UUID v4 for each request.
    */
-  buyer_campaign_ref: string;
+  idempotency_key?: string;
   outcome: OutcomeType;
   /**
    * The seller's full response. Required when outcome is 'completed'.
@@ -9553,10 +9904,6 @@ export interface ReportPlanOutcomeRequest {
      * Seller's media buy identifier.
      */
     media_buy_id?: string;
-    /**
-     * The buyer reference echoed back by the seller.
-     */
-    buyer_ref?: string;
     /**
      * Total budget committed across all confirmed packages. When present, the governance agent uses this directly instead of summing package budgets.
      */
@@ -9622,6 +9969,10 @@ export interface ReportPlanOutcomeRequest {
      */
     message?: string;
   };
+  /**
+   * Opaque governance context from the check_governance response that authorized this action. Enables the governance agent to correlate the outcome to the original check.
+   */
+  governance_context: string;
 }
 
 // report_plan_outcome response
@@ -9696,10 +10047,6 @@ export type GetPlanAuditLogsRequest = {
    */
   portfolio_plan_ids?: string[];
   /**
-   * Filter to a specific campaign. Omit for plan-level aggregate.
-   */
-  buyer_campaign_ref?: string;
-  /**
    * Include the full audit trail. Default: false.
    */
   include_entries?: boolean;
@@ -9765,27 +10112,6 @@ export interface GetPlanAuditLogsResponse {
           }
         | undefined;
     };
-    /**
-     * Per-campaign breakdown.
-     */
-    campaigns: {
-      /**
-       * Campaign identifier.
-       */
-      buyer_campaign_ref: string;
-      /**
-       * Campaign status.
-       */
-      status: 'active' | 'suspended' | 'completed';
-      /**
-       * Budget committed in this campaign.
-       */
-      committed: number;
-      /**
-       * Media buy IDs currently active.
-       */
-      active_media_buys?: string[];
-    }[];
     /**
      * Aggregate validation and outcome statistics.
      */
@@ -9951,6 +10277,27 @@ export interface GetPlanAuditLogsResponse {
        */
       outcome_status?: string;
     }[];
+    /**
+     * Per-media-buy breakdown.
+     */
+    media_buys: {
+      /**
+       * Seller-assigned media buy identifier.
+       */
+      media_buy_id: string;
+      /**
+       * Media buy status.
+       */
+      status: 'active' | 'suspended' | 'completed';
+      /**
+       * Budget committed for this media buy.
+       */
+      committed: number;
+      /**
+       * Number of governance checks performed for this media buy.
+       */
+      check_count?: number;
+    }[];
   }[];
 }
 
@@ -9969,10 +10316,6 @@ export interface CheckGovernanceRequest {
    */
   plan_id: string;
   /**
-   * Buyer's campaign identifier. The governance agent tracks state per campaign within a plan.
-   */
-  buyer_campaign_ref: string;
-  /**
    * Whether this is an advisory check or a binding commitment. 'proposed': the orchestrator is checking before sending to a seller — no budget is committed. 'committed': the seller is about to execute — the governance agent validates the planned delivery against the plan. Budget is committed later via report_plan_outcome, not on approval.
    */
   binding: 'proposed' | 'committed';
@@ -9988,15 +10331,14 @@ export interface CheckGovernanceRequest {
    * The full tool arguments as they would be sent to the seller. Expected for proposed checks. The governance agent can inspect any field to validate against the plan.
    */
   payload?: {};
-  governance_context?: GovernanceContext;
+  /**
+   * Opaque governance context from a prior check_governance response. Pass this on subsequent checks for the same media buy so the governance agent can maintain continuity across the lifecycle. Issued by the governance agent, never interpreted by callers.
+   */
+  governance_context?: string;
   /**
    * The seller's identifier for the media buy. Expected for committed checks.
    */
   media_buy_id?: string;
-  /**
-   * The buyer's reference identifier from the create_media_buy request.
-   */
-  buyer_ref?: string;
   phase?: GovernancePhase;
   planned_delivery?: PlannedDelivery;
   /**
@@ -10042,54 +10384,36 @@ export interface CheckGovernanceRequest {
      * Whether delivery is ahead of, on track with, or behind the planned pace.
      */
     pacing?: 'ahead' | 'on_track' | 'behind';
+    /**
+     * Actual audience composition during the reporting period. Enables mid-flight drift detection when actual delivery skews from planned audience targeting.
+     */
+    audience_distribution?: {
+      /**
+       * Population baseline used for index calculation. 'census': national census or equivalent population data. 'platform': the seller's active user base. 'custom': a custom baseline defined by the seller (describe in baseline_description).
+       */
+      baseline: 'census' | 'platform' | 'custom';
+      /**
+       * Description of the baseline when baseline is 'custom' (e.g., 'US adults 18+ with broadband access').
+       */
+      baseline_description?: string;
+      /**
+       * Audience index values for the current reporting period. Keys are seller-defined dimension:value strings (e.g., 'age:25-34', 'gender:female', 'income:high'). The protocol does not mandate a taxonomy — dimensions and value labels vary by seller. Values are index relative to the declared baseline (1.0 = at parity, >1.0 = over-indexed, <1.0 = under-indexed).
+       */
+      indices: {
+        [k: string]: number | undefined;
+      };
+      /**
+       * Cumulative audience index values since the media buy started. Same key format as indices (dimension:value). Use for detecting sustained bias drift that may not appear in a single reporting period.
+       */
+      cumulative_indices?: {
+        [k: string]: number | undefined;
+      };
+    };
   };
   /**
    * Human-readable summary of what changed. SHOULD be present for 'modification' phase.
    */
   modification_summary?: string;
-}
-/**
- * Normalized governance-relevant fields extracted from the tool payload. When present, the governance agent SHOULD use these fields for plan validation instead of parsing the payload directly. The caller is responsible for extracting these from the tool arguments.
- */
-export interface GovernanceContext {
-  /**
-   * Total budget for the action.
-   */
-  total_budget?: {
-    /**
-     * Budget amount.
-     */
-    amount: number;
-    /**
-     * ISO 4217 currency code.
-     */
-    currency: string;
-  };
-  /**
-   * ISO 3166-1 alpha-2 country codes targeted by this action.
-   */
-  countries?: string[];
-  /**
-   * Channels targeted by this action.
-   */
-  channels?: string[];
-  /**
-   * Flight dates for this action.
-   */
-  flight?: {
-    /**
-     * Flight start (ISO 8601).
-     */
-    start: string;
-    /**
-     * Flight end (ISO 8601).
-     */
-    end: string;
-  };
-  /**
-   * URL of the seller agent this action targets.
-   */
-  seller_url?: string;
 }
 
 // check_governance response
@@ -10113,10 +10437,6 @@ export interface CheckGovernanceResponse {
    * Echoed from request.
    */
   plan_id: string;
-  /**
-   * Echoed from request.
-   */
-  buyer_campaign_ref: string;
   /**
    * Human-readable explanation of the governance decision.
    */
@@ -10205,6 +10525,10 @@ export interface CheckGovernanceResponse {
    * Registry policy IDs evaluated during this check.
    */
   policies_evaluated?: string[];
+  /**
+   * Opaque governance context for this media buy. The buyer MUST attach this to the protocol envelope when sending the media buy to the seller. The seller MUST persist it and include it on all subsequent check_governance calls for this media buy's lifecycle. Only the issuing governance agent interprets this value.
+   */
+  governance_context?: string;
 }
 
 
@@ -10369,6 +10693,10 @@ export interface SIInitiateSessionRequest {
    * Token from si_get_offering response for session continuity. Brand uses this to recall what products were shown to the user, enabling natural references like 'the second one' or 'that blue shoe'.
    */
   offering_token?: string;
+  /**
+   * Client-generated unique key for this request. Prevents duplicate session creation on retries. MUST be unique per (seller, request) pair to prevent cross-seller correlation. Use a fresh UUID v4 for each request.
+   */
+  idempotency_key?: string;
   ext?: ExtensionObject;
 }
 /**
@@ -11618,19 +11946,19 @@ export interface SyncAccountsError {
  */
 export interface ReportUsageRequest {
   /**
-   * Client-generated unique key for this request. If a request with the same key has already been accepted, the server returns the original response without re-processing. Use a UUID or other unique identifier. Prevents duplicate billing on retries.
+   * Client-generated unique key for this request. If a request with the same key has already been accepted, the server returns the original response without re-processing. MUST be unique per (seller, request) pair to prevent cross-seller correlation. Use a fresh UUID v4 for each request. Prevents duplicate billing on retries.
    */
   idempotency_key?: string;
   reporting_period: DatetimeRange;
   /**
-   * One or more usage records. Each record is self-contained: it carries its own account and buyer_campaign_ref, allowing a single request to span multiple accounts and campaigns.
+   * One or more usage records. Each record is self-contained: it carries its own account, allowing a single request to span multiple accounts.
    */
   usage: {
     account: AccountReference;
     /**
-     * The buyer's campaign reference (e.g., a media_buy_id). Used to group records by campaign.
+     * Seller-assigned media buy identifier. Links this usage record to a specific media buy.
      */
-    buyer_campaign_ref?: string;
+    media_buy_id?: string;
     /**
      * Amount owed to the vendor for this record, denominated in currency.
      */

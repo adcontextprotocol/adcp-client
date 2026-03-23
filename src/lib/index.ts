@@ -279,6 +279,8 @@ export type {
   SyncEventSourcesResponse,
   LogEventRequest,
   LogEventResponse,
+  // Enums
+  CanceledBy,
   // Core data structures used within requests and responses
   Format,
   Product,

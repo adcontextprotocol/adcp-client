@@ -89,7 +89,6 @@ describe('SingleAgentClient Request Validation', () => {
         async () => {
           // Valid request with required fields + invalid top-level field
           await agent.createMediaBuy({
-            buyer_ref: 'buyer123',
             packages: [],
             brand: { domain: 'example.com' },
             start_time: 'immediate',
@@ -112,7 +111,6 @@ describe('SingleAgentClient Request Validation', () => {
       await assert.doesNotReject(async () => {
         try {
           await agent.createMediaBuy({
-            buyer_ref: 'buyer123',
             account: { account_id: 'test-account' },
             packages: [],
             brand_manifest: { name: 'Acme', url: 'https://acme.com/brand.json' },
@@ -153,7 +151,6 @@ describe('SingleAgentClient Request Validation', () => {
         const agent = client.agent(mockAgent.id);
 
         await agent.createMediaBuy({
-          buyer_ref: 'buyer123',
           account: { account_id: 'test-account' },
           packages: [],
           brand_manifest: { name: 'Acme', url: 'https://acme.com/brand.json' },
@@ -187,7 +184,6 @@ describe('SingleAgentClient Request Validation', () => {
       await assert.doesNotReject(async () => {
         try {
           await agent.createMediaBuy({
-            buyer_ref: 'buyer123',
             account: { account_id: 'test-account' },
             packages: [],
             brand: { domain: 'example.com' },
@@ -343,7 +339,6 @@ describe('SingleAgentClient Request Validation', () => {
       await assert.doesNotReject(async () => {
         try {
           await agent.createMediaBuy({
-            buyer_ref: 'buyer123',
             account: { account_id: 'test-account' },
             packages: [
               {
@@ -386,7 +381,6 @@ describe('SingleAgentClient Request Validation', () => {
       await assert.doesNotReject(async () => {
         try {
           await agent.createMediaBuy({
-            buyer_ref: 'buyer123',
             account: { account_id: 'test-account' },
             packages: [
               {
@@ -491,7 +485,6 @@ describe('SingleAgentClient Request Validation', () => {
       await assert.doesNotReject(async () => {
         try {
           await agent.createMediaBuy({
-            buyer_ref: 'buyer123',
             account: { account_id: 'test-account' },
             packages: [],
             brand: { domain: 'example.com' },

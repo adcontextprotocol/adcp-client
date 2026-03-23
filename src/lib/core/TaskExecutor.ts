@@ -344,6 +344,7 @@ export class TaskExecutor {
           result.governanceOutcome = await this.governanceMiddleware.reportOutcome(
             governanceCheckId,
             'completed',
+            governanceResult?.governanceContext,
             result.data as Record<string, unknown> | undefined,
             undefined,
             debugLogs
@@ -355,6 +356,7 @@ export class TaskExecutor {
           result.governanceOutcome = await this.governanceMiddleware.reportOutcome(
             governanceCheckId,
             'failed',
+            governanceResult?.governanceContext,
             undefined,
             { message: result.error },
             debugLogs
@@ -375,6 +377,7 @@ export class TaskExecutor {
         await this.governanceMiddleware.reportOutcome(
           governanceCheckId,
           'failed',
+          governanceResult?.governanceContext,
           undefined,
           { message: (error as Error).message },
           debugLogs
