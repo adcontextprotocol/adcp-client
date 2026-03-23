@@ -398,8 +398,19 @@ describe('Zod Schema Validation', () => {
           revision: 3,
           history: [
             { revision: 3, timestamp: '2026-01-18T12:00:00Z', action: 'resumed', actor: 'buyer-agent' },
-            { revision: 2, timestamp: '2026-01-17T10:00:00Z', action: 'paused', actor: 'buyer-agent', summary: 'Paused for budget review' },
-            { revision: 1, timestamp: '2026-01-15T10:00:00Z', action: 'created', summary: 'Created with 2 packages, budget $25,000' },
+            {
+              revision: 2,
+              timestamp: '2026-01-17T10:00:00Z',
+              action: 'paused',
+              actor: 'buyer-agent',
+              summary: 'Paused for budget review',
+            },
+            {
+              revision: 1,
+              timestamp: '2026-01-15T10:00:00Z',
+              action: 'created',
+              summary: 'Created with 2 packages, budget $25,000',
+            },
           ],
           packages: [{ package_id: 'pkg_1', budget: 25000 }],
         },
@@ -430,10 +441,7 @@ describe('Zod Schema Validation', () => {
       revision: 4,
       packages: [],
     });
-    assert.ok(
-      result.success,
-      `MediaBuy with lifecycle fields should succeed: ${JSON.stringify(result.error?.issues)}`
-    );
+    assert.ok(result.success, `MediaBuy with lifecycle fields should succeed: ${JSON.stringify(result.error?.issues)}`);
   });
 
   test('GetCreativeFeaturesRequestSchema validates valid request', async () => {

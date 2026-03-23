@@ -180,12 +180,14 @@ describe('validateResponseSchema', () => {
   describe('get_media_buys — lifecycle fields', () => {
     it('passes with lifecycle fields (confirmed_at, revision, valid_actions)', () => {
       const data = {
-        media_buys: [{
-          ...validMediaBuy,
-          confirmed_at: '2026-01-15T10:00:00Z',
-          revision: 3,
-          valid_actions: ['pause', 'cancel', 'update_budget'],
-        }],
+        media_buys: [
+          {
+            ...validMediaBuy,
+            confirmed_at: '2026-01-15T10:00:00Z',
+            revision: 3,
+            valid_actions: ['pause', 'cancel', 'update_budget'],
+          },
+        ],
       };
       const result = validateResponseSchema('get_media_buys', data);
       assert.strictEqual(result.passed, true, `Expected pass, got: ${result.error || ''}`);
@@ -193,15 +195,17 @@ describe('validateResponseSchema', () => {
 
     it('passes with canceled media buy fields', () => {
       const data = {
-        media_buys: [{
-          ...validMediaBuy,
-          status: 'canceled',
-          canceled_at: '2026-01-20T14:30:00Z',
-          canceled_by: 'buyer',
-          cancellation_reason: 'Campaign strategy changed',
-          revision: 5,
-          valid_actions: [],
-        }],
+        media_buys: [
+          {
+            ...validMediaBuy,
+            status: 'canceled',
+            canceled_at: '2026-01-20T14:30:00Z',
+            canceled_by: 'buyer',
+            cancellation_reason: 'Campaign strategy changed',
+            revision: 5,
+            valid_actions: [],
+          },
+        ],
       };
       const result = validateResponseSchema('get_media_buys', data);
       assert.strictEqual(result.passed, true, `Expected pass, got: ${result.error || ''}`);
@@ -209,17 +213,21 @@ describe('validateResponseSchema', () => {
 
     it('passes with package cancellation fields', () => {
       const data = {
-        media_buys: [{
-          ...validMediaBuy,
-          packages: [{
-            package_id: 'pkg1',
-            canceled: true,
-            canceled_at: '2026-01-20T14:30:00Z',
-            canceled_by: 'seller',
-            cancellation_reason: 'Policy violation',
-            creative_deadline: '2026-02-01T23:59:59Z',
-          }],
-        }],
+        media_buys: [
+          {
+            ...validMediaBuy,
+            packages: [
+              {
+                package_id: 'pkg1',
+                canceled: true,
+                canceled_at: '2026-01-20T14:30:00Z',
+                canceled_by: 'seller',
+                cancellation_reason: 'Policy violation',
+                creative_deadline: '2026-02-01T23:59:59Z',
+              },
+            ],
+          },
+        ],
       };
       const result = validateResponseSchema('get_media_buys', data);
       assert.strictEqual(result.passed, true, `Expected pass, got: ${result.error || ''}`);
@@ -227,15 +235,17 @@ describe('validateResponseSchema', () => {
 
     it('passes with history entries', () => {
       const data = {
-        media_buys: [{
-          ...validMediaBuy,
-          revision: 3,
-          history: [
-            { revision: 3, timestamp: '2026-01-18T12:00:00Z', action: 'resumed', actor: 'buyer-agent' },
-            { revision: 2, timestamp: '2026-01-17T10:00:00Z', action: 'paused' },
-            { revision: 1, timestamp: '2026-01-15T10:00:00Z', action: 'created', summary: 'Created with 2 packages' },
-          ],
-        }],
+        media_buys: [
+          {
+            ...validMediaBuy,
+            revision: 3,
+            history: [
+              { revision: 3, timestamp: '2026-01-18T12:00:00Z', action: 'resumed', actor: 'buyer-agent' },
+              { revision: 2, timestamp: '2026-01-17T10:00:00Z', action: 'paused' },
+              { revision: 1, timestamp: '2026-01-15T10:00:00Z', action: 'created', summary: 'Created with 2 packages' },
+            ],
+          },
+        ],
       };
       const result = validateResponseSchema('get_media_buys', data);
       assert.strictEqual(result.passed, true, `Expected pass, got: ${result.error || ''}`);

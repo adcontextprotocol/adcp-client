@@ -1296,7 +1296,11 @@ export async function testMediaBuyLifecycle(
     const status = extractStatus(data);
     const resumeRevision = data.revision as number | undefined;
     resumeStep.details = `Resumed media buy, status: ${status}`;
-    resumeStep.response_preview = JSON.stringify({ media_buy_id: mediaBuyId, status, revision: resumeRevision }, null, 2);
+    resumeStep.response_preview = JSON.stringify(
+      { media_buy_id: mediaBuyId, status, revision: resumeRevision },
+      null,
+      2
+    );
     if (status && status !== 'active' && status !== 'pending_activation') {
       resumeStep.warnings = [`Expected status 'active' or 'pending_activation', got '${status}'`];
     }
@@ -1374,7 +1378,9 @@ export async function testMediaBuyLifecycle(
       // Agent rejected for another reason — still acceptable, revision may not be supported
       conflictStep.passed = true;
       conflictStep.details = `Agent rejected update: ${error}`;
-      conflictStep.warnings = ['Agent did not return CONFLICT for stale revision — revision concurrency may not be supported'];
+      conflictStep.warnings = [
+        'Agent did not return CONFLICT for stale revision — revision concurrency may not be supported',
+      ];
     }
   } else if (conflictResult?.success) {
     // Agent accepted stale revision — revision concurrency not enforced
@@ -1405,7 +1411,11 @@ export async function testMediaBuyLifecycle(
     const status = extractStatus(data);
     const cancelRevision = data.revision as number | undefined;
     cancelStep.details = `Canceled media buy, status: ${status}`;
-    cancelStep.response_preview = JSON.stringify({ media_buy_id: mediaBuyId, status, revision: cancelRevision }, null, 2);
+    cancelStep.response_preview = JSON.stringify(
+      { media_buy_id: mediaBuyId, status, revision: cancelRevision },
+      null,
+      2
+    );
     if (status && status !== 'canceled') {
       cancelStep.warnings = [`Expected status 'canceled', got '${status}'`];
     }
