@@ -23,8 +23,8 @@ export interface CampaignGovernanceConfig {
   callerUrl?: string;
   /** Max re-check iterations after auto-applying conditions. Default: 0 (return conditions to caller without re-checking). The initial governance check always fires. */
   maxConditionsIterations?: number;
-  /** Custom context extractor. Overrides the default extraction of budget, countries, channels, flight from tool params. Return undefined to send no context. */
-  extractContext?: (params: Record<string, unknown>) => import('./GovernanceMiddleware').GovernanceContext | undefined;
+  /** Opaque governance context string from a prior check_governance response. The middleware passes this through on subsequent checks and outcome reports. */
+  governanceContext?: string;
 }
 
 /**
@@ -119,7 +119,7 @@ export interface GovernanceCheckResult {
   conditions?: GovernanceCondition[];
   escalation?: GovernanceEscalation;
   expiresAt?: string;
-  /** Opaque governance context string from the check response. Pass to reportOutcome. */
+  /** Opaque governance context issued by the governance agent. Callers must thread this to subsequent checks and outcome reports. */
   governanceContext?: string;
   /** Whether conditions were auto-applied by the middleware */
   conditionsApplied?: boolean;

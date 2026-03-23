@@ -1015,11 +1015,14 @@ export class SingleAgentClient {
       if (!toolSchema) return params;
 
       const declaredFields = new Set(Object.keys(toolSchema));
+      // Protocol envelope fields are always preserved — they live at the
+      // protocol layer, not in individual tool schemas.
+      const envelopeFields = new Set(['governance_context', 'push_notification_config', 'context_id']);
       const filtered: Record<string, unknown> = {};
       const stripped: string[] = [];
 
       for (const [key, value] of Object.entries(params)) {
-        if (declaredFields.has(key)) {
+        if (declaredFields.has(key) || envelopeFields.has(key)) {
           filtered[key] = value;
         } else {
           stripped.push(key);
@@ -1508,7 +1511,7 @@ export class SingleAgentClient {
     if (!middleware) {
       throw new Error('No governance middleware configured. Set config.governance.campaign to enable governance.');
     }
-    return middleware.reportOutcome(checkId, outcome, governanceContext, sellerResponse, error);
+    return middleware.reportOutcome(checkId, outcome, sellerResponse, error, [], governanceContext);
   }
 
   private getGovernanceAgent(): AgentConfig {

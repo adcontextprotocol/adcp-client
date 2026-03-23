@@ -113,3 +113,7 @@ export {
   type CoherenceFinding,
   type PlatformCoherenceResult,
 } from './compliance';
+
+// Test stubs for compliance testing
+export { GovernanceAgentStub } from './stubs';
+export type { StubCallRecord } from './stubs';

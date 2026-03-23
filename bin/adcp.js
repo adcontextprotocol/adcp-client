@@ -60,6 +60,7 @@ const TEST_SCENARIOS = [
   'campaign_governance_denied',
   'campaign_governance_conditions',
   'campaign_governance_delivery',
+  'seller_governance_context',
 ];
 
 // Built-in test agent aliases (shared between main CLI and test command)
@@ -256,6 +257,7 @@ async function handleTestCommand(args) {
       campaign_governance_denied: 'Denied flow: over-budget, unauthorized market',
       campaign_governance_conditions: 'Conditions flow: apply conditions → re-check',
       campaign_governance_delivery: 'Delivery monitoring with drift detection',
+      seller_governance_context: 'Verify seller persists governance_context from media buy lifecycle',
     };
 
     for (const scenario of TEST_SCENARIOS) {

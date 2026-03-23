@@ -13,7 +13,7 @@
 import type { Product } from '../../types/core.generated';
 import type { GetProductsResponse, ListCreativeFormatsResponse, Format } from '../../types/tools.generated';
 import type { TestOptions, TestStepResult, AgentProfile, TaskResult } from '../types';
-import { createTestClient, runStep, discoverAgentProfile, validateResponseSchema } from '../client';
+import { getOrCreateClient, runStep, getOrDiscoverProfile, validateResponseSchema } from '../client';
 
 // v3 channel taxonomy — 19 channels
 const V3_CHANNELS = new Set([
@@ -43,9 +43,9 @@ export async function testSchemaCompliance(
   options: TestOptions
 ): Promise<{ steps: TestStepResult[]; profile?: AgentProfile }> {
   const steps: TestStepResult[] = [];
-  const client = createTestClient(agentUrl, options.protocol || 'mcp', options);
+  const client = getOrCreateClient(agentUrl, options);
 
-  const { profile, step: profileStep } = await discoverAgentProfile(client);
+  const { profile, step: profileStep } = await getOrDiscoverProfile(client, options);
   steps.push(profileStep);
 
   if (!profileStep.passed) {

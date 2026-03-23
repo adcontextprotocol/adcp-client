@@ -6,7 +6,7 @@
  */
 
 import { testAgent } from './agent-tester';
-import { createTestClient, discoverAgentProfile } from './client';
+import { createTestClient, discoverAgentProfile, getOrCreateClient, getOrDiscoverProfile } from './client';
 import type { TestScenario, TestOptions, TestResult, SuiteResult } from './types';
 
 /**
@@ -54,6 +54,9 @@ export const SCENARIO_REQUIREMENTS: Partial<Record<TestScenario, string[]>> = {
   campaign_governance_denied: ['sync_plans', 'check_governance'],
   campaign_governance_conditions: ['sync_plans', 'check_governance'],
   campaign_governance_delivery: ['check_governance'],
+
+  // Requires seller tools (governance context persistence)
+  seller_governance_context: ['get_products', 'create_media_buy', 'get_media_buys'],
 
   // Requires SI tools
   si_session_lifecycle: ['si_initiate_session'],
@@ -107,6 +110,7 @@ export const DEFAULT_SCENARIOS: readonly TestScenario[] = [
   'campaign_governance_denied',
   'campaign_governance_conditions',
   'campaign_governance_delivery',
+  'seller_governance_context',
   'si_session_lifecycle',
   'si_availability',
   'si_handoff',
@@ -172,8 +176,10 @@ export async function testAllScenarios(agentUrl: string, options: OrchestratorOp
   // Discover the agent's tools to determine which scenarios apply.
   // If discovery fails (agent unreachable or rejects the request), return early
   // rather than attempting scenarios with no tool information.
-  const client = createTestClient(agentUrl, effectiveOptions.protocol ?? 'mcp', effectiveOptions);
-  const { profile, step: profileStep } = await discoverAgentProfile(client);
+  const client = getOrCreateClient(agentUrl, effectiveOptions);
+  const { profile, step: profileStep } = await getOrDiscoverProfile(client, effectiveOptions);
+  effectiveOptions._client = client;
+  effectiveOptions._profile = profile;
 
   if (!profileStep.passed) {
     return {

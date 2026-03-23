@@ -5,7 +5,7 @@
  */
 
 import type { TestOptions, TestStepResult } from '../types';
-import { createTestClient, discoverAgentProfile } from '../client';
+import { getOrCreateClient, getOrDiscoverProfile } from '../client';
 
 /**
  * Test: Health Check
@@ -13,9 +13,9 @@ import { createTestClient, discoverAgentProfile } from '../client';
  */
 export async function testHealthCheck(agentUrl: string, options: TestOptions): Promise<TestStepResult[]> {
   const steps: TestStepResult[] = [];
-  const client = createTestClient(agentUrl, options.protocol || 'mcp', options);
+  const client = getOrCreateClient(agentUrl, options);
 
-  const { step } = await discoverAgentProfile(client);
+  const { step } = await getOrDiscoverProfile(client, options);
   steps.push(step);
 
   return steps;

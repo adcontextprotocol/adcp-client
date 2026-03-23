@@ -36,6 +36,8 @@ export interface CommittedCheckRequest {
   planId: string;
   /** The seller's media buy ID */
   mediaBuyId: string;
+  /** Opaque governance context from the buyer's protocol envelope. Pass through verbatim. */
+  governanceContext?: string;
   /** What the seller will actually deliver */
   plannedDelivery: PlannedDelivery;
   /** Lifecycle phase of the check */
@@ -115,6 +117,7 @@ export class GovernanceAdapter implements IGovernanceAdapter {
       binding: 'committed',
       caller: this.agentConfig.callerUrl,
       media_buy_id: request.mediaBuyId,
+      governance_context: request.governanceContext,
       planned_delivery: request.plannedDelivery,
       phase: request.phase,
       delivery_metrics: request.deliveryMetrics,

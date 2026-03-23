@@ -52,6 +52,7 @@ export {
   testCampaignGovernanceDenied,
   testCampaignGovernanceConditions,
   testCampaignGovernanceDelivery,
+  testSellerGovernanceContext,
   hasGovernanceTools,
   hasCampaignGovernanceTools,
 } from './governance';

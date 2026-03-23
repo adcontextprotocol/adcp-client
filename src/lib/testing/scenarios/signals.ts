@@ -12,7 +12,7 @@
 
 import type { TestOptions, TestStepResult, AgentProfile, TaskResult } from '../types';
 import type { ActivateSignalSuccess, Destination } from '../../types/tools.generated';
-import { createTestClient, runStep, discoverAgentProfile, discoverSignals, validateResponseSchema } from '../client';
+import { getOrCreateClient, runStep, getOrDiscoverProfile, discoverSignals, validateResponseSchema } from '../client';
 
 /**
  * Test: Signals Flow (for signals agents)
@@ -24,10 +24,10 @@ export async function testSignalsFlow(
   options: TestOptions
 ): Promise<{ steps: TestStepResult[]; profile?: AgentProfile }> {
   const steps: TestStepResult[] = [];
-  const client = createTestClient(agentUrl, options.protocol || 'mcp', options);
+  const client = getOrCreateClient(agentUrl, options);
 
   // Discover agent profile
-  const { profile, step: profileStep } = await discoverAgentProfile(client);
+  const { profile, step: profileStep } = await getOrDiscoverProfile(client, options);
   steps.push(profileStep);
 
   if (!profileStep.passed) {

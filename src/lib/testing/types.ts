@@ -35,6 +35,7 @@ export type TestScenario =
   | 'campaign_governance_denied' // Denied flow: over-budget, unauthorized market
   | 'campaign_governance_conditions' // Conditions flow: apply conditions -> re-check
   | 'campaign_governance_delivery' // Delivery monitoring with drift detection
+  | 'seller_governance_context' // Seller persistence of governance_context
   // v3 SI (Sponsored Intelligence) protocol scenarios
   | 'si_session_lifecycle' // Full SI session: initiate -> messages -> terminate
   | 'si_availability' // Check SI offering availability
@@ -130,6 +131,10 @@ export interface TestOptions {
   // When true, use sandbox mode. For implicit accounts, uses the natural key with
   // sandbox: true. For explicit accounts, discovers sandbox accounts via list_accounts.
   sandbox?: boolean;
+  /** @internal Pre-created client from comply() — avoids per-scenario MCP reconnection */
+  _client?: unknown;
+  /** @internal Pre-discovered profile from comply() — skips per-scenario discovery */
+  _profile?: AgentProfile;
 }
 
 export interface TestStepResult {

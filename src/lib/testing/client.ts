@@ -130,6 +130,31 @@ export function createTestClient(agentUrl: string, protocol: 'mcp' | 'a2a' = 'mc
 export type TestClient = ReturnType<typeof createTestClient>;
 
 /**
+ * Return a shared client from options (set by comply()) or create a fresh one.
+ * When comply() runs, it creates a single client and passes it via options._client
+ * so scenarios reuse the same MCP connection instead of opening 36+ connections.
+ */
+export function getOrCreateClient(agentUrl: string, options: TestOptions): TestClient {
+  return (options._client as TestClient) ?? createTestClient(agentUrl, options.protocol || 'mcp', options);
+}
+
+/**
+ * Return a pre-discovered profile from options (set by comply()) or discover fresh.
+ */
+export async function getOrDiscoverProfile(
+  client: TestClient,
+  options: TestOptions
+): Promise<{ profile: AgentProfile; step: TestStepResult }> {
+  if (options._profile) {
+    return {
+      profile: options._profile,
+      step: { step: 'Discover agent capabilities', passed: true, duration_ms: 0 },
+    };
+  }
+  return discoverAgentProfile(client);
+}
+
+/**
  * Run a single test step with timing
  */
 export async function runStep<T>(
