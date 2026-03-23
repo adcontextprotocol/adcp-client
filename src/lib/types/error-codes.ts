@@ -134,7 +134,7 @@ export const STANDARD_ERROR_CODES: Record<StandardErrorCode, ErrorCodeInfo> = {
     recovery: 'correctable',
   },
   INVALID_STATE: {
-    description: 'Operation is not permitted for the resource\'s current status',
+    description: "Operation is not permitted for the resource's current status",
     recovery: 'correctable',
   },
   MEDIA_BUY_NOT_FOUND: {
