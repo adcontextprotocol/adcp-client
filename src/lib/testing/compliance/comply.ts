@@ -272,6 +272,70 @@ function collectObservations(
       }
     }
 
+    // Check for confirmed_at and revision in create_media_buy responses (first match only)
+    let checkedCreateLifecycle = false;
+    for (const result of results) {
+      if (checkedCreateLifecycle) break;
+      for (const step of result.steps ?? []) {
+        if (step.task === 'create_media_buy' && step.response_preview) {
+          try {
+            const preview = JSON.parse(step.response_preview) as { confirmed_at?: unknown; revision?: unknown };
+            if (preview.confirmed_at === undefined || preview.confirmed_at === null) {
+              observations.push({
+                category: 'best_practice',
+                severity: 'suggestion',
+                track,
+                message:
+                  'Agent does not return confirmed_at in create_media_buy response. ' +
+                  'A successful response constitutes order confirmation — include confirmed_at for audit trails.',
+              });
+            }
+            if (preview.revision === undefined || preview.revision === null) {
+              observations.push({
+                category: 'best_practice',
+                severity: 'suggestion',
+                track,
+                message:
+                  'Agent does not return revision in create_media_buy response. ' +
+                  'Revision numbers enable optimistic concurrency for safe concurrent updates.',
+              });
+            }
+            checkedCreateLifecycle = true;
+          } catch {
+            // not always JSON
+          }
+          break;
+        }
+      }
+    }
+
+    // Check for history support in get_media_buys responses (first match only)
+    let checkedHistory = false;
+    for (const result of results) {
+      if (checkedHistory) break;
+      for (const step of result.steps ?? []) {
+        if (step.task === 'get_media_buys' && step.response_preview) {
+          try {
+            const preview = JSON.parse(step.response_preview) as { history_entries?: number };
+            if (preview.history_entries !== undefined && preview.history_entries === 0) {
+              observations.push({
+                category: 'best_practice',
+                severity: 'suggestion',
+                track,
+                message:
+                  'Agent does not return revision history when include_history is requested. ' +
+                  'History enables audit trails and helps buyers understand what changed.',
+              });
+            }
+            checkedHistory = true;
+          } catch {
+            // not always JSON
+          }
+          break;
+        }
+      }
+    }
+
     // Check if lifecycle scenarios revealed missing pause/resume support
     const lifecycleResult = results.find(r => r.scenario === 'media_buy_lifecycle');
     if (lifecycleResult && !lifecycleResult.overall_passed) {

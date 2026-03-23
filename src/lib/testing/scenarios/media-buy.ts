@@ -276,10 +276,16 @@ export async function testCreateMediaBuy(
     const packages = (mediaBuy.packages || nested?.packages) as unknown[] | undefined;
     createStep.details = `Created media buy: ${mediaBuyId}, status: ${status}`;
     createStep.created_id = mediaBuyId;
+    const confirmedAt = (mediaBuy.confirmed_at || nested?.confirmed_at) as string | undefined;
+    const revision = (mediaBuy.revision ?? nested?.revision) as number | undefined;
+    const validActions = (mediaBuy.valid_actions || nested?.valid_actions) as string[] | undefined;
     createStep.response_preview = JSON.stringify(
       {
         media_buy_id: mediaBuyId,
         status,
+        confirmed_at: confirmedAt,
+        revision,
+        valid_actions: validActions,
         packages_count: packages?.length,
         pricing_model: pricingOption.pricing_model,
         product_name: product.name,
@@ -1261,8 +1267,9 @@ export async function testMediaBuyLifecycle(
   if (pauseResult?.success && pauseResult?.data) {
     const data = pauseResult.data as unknown as Record<string, unknown>;
     const status = extractStatus(data);
+    const pauseRevision = data.revision as number | undefined;
     pauseStep.details = `Paused media buy, status: ${status}`;
-    pauseStep.response_preview = JSON.stringify({ media_buy_id: mediaBuyId, status }, null, 2);
+    pauseStep.response_preview = JSON.stringify({ media_buy_id: mediaBuyId, status, revision: pauseRevision }, null, 2);
     if (status && status !== 'paused') {
       pauseStep.warnings = [`Expected status 'paused', got '${status}'`];
     }
@@ -1287,8 +1294,9 @@ export async function testMediaBuyLifecycle(
   if (resumeResult?.success && resumeResult?.data) {
     const data = resumeResult.data as unknown as Record<string, unknown>;
     const status = extractStatus(data);
+    const resumeRevision = data.revision as number | undefined;
     resumeStep.details = `Resumed media buy, status: ${status}`;
-    resumeStep.response_preview = JSON.stringify({ media_buy_id: mediaBuyId, status }, null, 2);
+    resumeStep.response_preview = JSON.stringify({ media_buy_id: mediaBuyId, status, revision: resumeRevision }, null, 2);
     if (status && status !== 'active' && status !== 'pending_activation') {
       resumeStep.warnings = [`Expected status 'active' or 'pending_activation', got '${status}'`];
     }
@@ -1298,7 +1306,7 @@ export async function testMediaBuyLifecycle(
   }
   steps.push(resumeStep);
 
-  // Step 3: Get status and check valid_actions (if get_media_buys available)
+  // Step 3: Get status and check valid_actions, confirmed_at, revision (if get_media_buys available)
   if (profile.tools.includes('get_media_buys')) {
     const { result: statusResult, step: statusStep } = await runStep<TaskResult>(
       'Get media buy status and valid_actions',
@@ -1306,6 +1314,7 @@ export async function testMediaBuyLifecycle(
       async () =>
         client.executeTask('get_media_buys', {
           media_buy_ids: [mediaBuyId],
+          include_history: 10,
         }) as Promise<TaskResult>
     );
 
@@ -1319,12 +1328,18 @@ export async function testMediaBuyLifecycle(
         statusStep.error = 'get_media_buys did not return the created media buy';
       } else {
         const validActions = mediaBuy.valid_actions as string[] | undefined;
-        statusStep.details = `Status: ${mediaBuy.status}, valid_actions: ${validActions ? validActions.join(', ') : 'not provided'}`;
+        const mbRevision = mediaBuy.revision as number | undefined;
+        const mbConfirmedAt = mediaBuy.confirmed_at as string | undefined;
+        const history = mediaBuy.history as unknown[] | undefined;
+        statusStep.details = `Status: ${mediaBuy.status}, valid_actions: ${validActions ? validActions.join(', ') : 'not provided'}, revision: ${mbRevision ?? 'not provided'}`;
         statusStep.response_preview = JSON.stringify(
           {
             media_buy_id: mediaBuy.media_buy_id,
             status: mediaBuy.status,
+            confirmed_at: mbConfirmedAt,
+            revision: mbRevision,
             valid_actions: validActions,
+            history_entries: history?.length ?? 0,
           },
           null,
           2
@@ -1336,6 +1351,41 @@ export async function testMediaBuyLifecycle(
     }
     steps.push(statusStep);
   }
+
+  // Step 3b: Revision concurrency check — send update with stale revision
+  const { result: conflictResult, step: conflictStep } = await runStep<TaskResult>(
+    'Update with stale revision (expect CONFLICT)',
+    'update_media_buy',
+    async () =>
+      client.updateMediaBuy({
+        media_buy_id: mediaBuyId,
+        revision: -1,
+        end_time: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- intentional: test request bypasses strict typing
+      } as any) as Promise<TaskResult>
+  );
+
+  if (conflictResult && !conflictResult.success) {
+    const error = conflictResult.error || '';
+    if (error.includes('CONFLICT') || error.includes('conflict') || error.includes('revision')) {
+      conflictStep.passed = true;
+      conflictStep.details = 'Correctly rejected stale revision with CONFLICT';
+    } else {
+      // Agent rejected for another reason — still acceptable, revision may not be supported
+      conflictStep.passed = true;
+      conflictStep.details = `Agent rejected update: ${error}`;
+      conflictStep.warnings = ['Agent did not return CONFLICT for stale revision — revision concurrency may not be supported'];
+    }
+  } else if (conflictResult?.success) {
+    // Agent accepted stale revision — revision concurrency not enforced
+    conflictStep.passed = true;
+    conflictStep.details = 'Agent accepted stale revision — optimistic concurrency not enforced';
+    conflictStep.warnings = ['Agent does not enforce optimistic concurrency via revision numbers'];
+  } else if (!conflictResult) {
+    conflictStep.passed = false;
+    conflictStep.error = 'No response from update_media_buy';
+  }
+  steps.push(conflictStep);
 
   // Step 4: Cancel the media buy
   const { result: cancelResult, step: cancelStep } = await runStep<TaskResult>(
@@ -1353,8 +1403,9 @@ export async function testMediaBuyLifecycle(
   if (cancelResult?.success && cancelResult?.data) {
     const data = cancelResult.data as unknown as Record<string, unknown>;
     const status = extractStatus(data);
+    const cancelRevision = data.revision as number | undefined;
     cancelStep.details = `Canceled media buy, status: ${status}`;
-    cancelStep.response_preview = JSON.stringify({ media_buy_id: mediaBuyId, status }, null, 2);
+    cancelStep.response_preview = JSON.stringify({ media_buy_id: mediaBuyId, status, revision: cancelRevision }, null, 2);
     if (status && status !== 'canceled') {
       cancelStep.warnings = [`Expected status 'canceled', got '${status}'`];
     }

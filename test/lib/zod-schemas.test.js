@@ -293,6 +293,149 @@ describe('Zod Schema Validation', () => {
     assert.ok(!result.success, 'GetMediaBuysResponse with missing required fields should fail');
   });
 
+  // --- Lifecycle field tests ---
+
+  test('GetMediaBuysRequestSchema validates request with include_history', async () => {
+    if (!schemas) {
+      schemas = await import('../../dist/lib/types/schemas.generated.js');
+    }
+
+    const result = schemas.GetMediaBuysRequestSchema.safeParse({
+      account: { account_id: 'acc_123' },
+      media_buy_ids: ['mb_123'],
+      include_history: 10,
+    });
+    assert.ok(
+      result.success,
+      `GetMediaBuysRequest with include_history should succeed: ${JSON.stringify(result.error?.issues)}`
+    );
+  });
+
+  test('GetMediaBuysResponseSchema validates response with lifecycle fields', async () => {
+    if (!schemas) {
+      schemas = await import('../../dist/lib/types/schemas.generated.js');
+    }
+
+    const validResponse = {
+      media_buys: [
+        {
+          media_buy_id: 'mb_123',
+          status: 'active',
+          currency: 'USD',
+          total_budget: 50000,
+          confirmed_at: '2026-01-15T10:00:00Z',
+          revision: 3,
+          valid_actions: ['pause', 'cancel', 'update_budget'],
+          packages: [
+            {
+              package_id: 'pkg_1',
+              budget: 25000,
+              creative_deadline: '2026-02-01T23:59:59Z',
+            },
+          ],
+        },
+      ],
+    };
+
+    const result = schemas.GetMediaBuysResponseSchema.safeParse(validResponse);
+    assert.ok(
+      result.success,
+      `GetMediaBuysResponse with lifecycle fields should succeed: ${JSON.stringify(result.error?.issues)}`
+    );
+  });
+
+  test('GetMediaBuysResponseSchema validates canceled media buy with cancellation fields', async () => {
+    if (!schemas) {
+      schemas = await import('../../dist/lib/types/schemas.generated.js');
+    }
+
+    const validResponse = {
+      media_buys: [
+        {
+          media_buy_id: 'mb_456',
+          status: 'canceled',
+          currency: 'USD',
+          total_budget: 30000,
+          confirmed_at: '2026-01-10T08:00:00Z',
+          canceled_at: '2026-01-20T14:30:00Z',
+          canceled_by: 'buyer',
+          cancellation_reason: 'Campaign strategy changed',
+          revision: 5,
+          valid_actions: [],
+          packages: [
+            {
+              package_id: 'pkg_2',
+              budget: 30000,
+              canceled: true,
+              canceled_at: '2026-01-20T14:30:00Z',
+              canceled_by: 'buyer',
+              cancellation_reason: 'Parent media buy canceled',
+            },
+          ],
+        },
+      ],
+    };
+
+    const result = schemas.GetMediaBuysResponseSchema.safeParse(validResponse);
+    assert.ok(
+      result.success,
+      `GetMediaBuysResponse with canceled media buy should succeed: ${JSON.stringify(result.error?.issues)}`
+    );
+  });
+
+  test('GetMediaBuysResponseSchema validates response with history entries', async () => {
+    if (!schemas) {
+      schemas = await import('../../dist/lib/types/schemas.generated.js');
+    }
+
+    const validResponse = {
+      media_buys: [
+        {
+          media_buy_id: 'mb_789',
+          status: 'active',
+          currency: 'USD',
+          total_budget: 25000,
+          revision: 3,
+          history: [
+            { revision: 3, timestamp: '2026-01-18T12:00:00Z', action: 'resumed', actor: 'buyer-agent' },
+            { revision: 2, timestamp: '2026-01-17T10:00:00Z', action: 'paused', actor: 'buyer-agent', summary: 'Paused for budget review' },
+            { revision: 1, timestamp: '2026-01-15T10:00:00Z', action: 'created', summary: 'Created with 2 packages, budget $25,000' },
+          ],
+          packages: [{ package_id: 'pkg_1', budget: 25000 }],
+        },
+      ],
+    };
+
+    const result = schemas.GetMediaBuysResponseSchema.safeParse(validResponse);
+    assert.ok(
+      result.success,
+      `GetMediaBuysResponse with history should succeed: ${JSON.stringify(result.error?.issues)}`
+    );
+  });
+
+  test('MediaBuySchema validates media buy with lifecycle fields', async () => {
+    if (!schemas) {
+      schemas = await import('../../dist/lib/types/schemas.generated.js');
+    }
+
+    const result = schemas.MediaBuySchema.safeParse({
+      media_buy_id: 'mb_123',
+      status: 'canceled',
+      promoted_offering: 'Test Campaign',
+      total_budget: 10000,
+      confirmed_at: '2026-01-10T08:00:00Z',
+      canceled_at: '2026-01-15T12:00:00Z',
+      canceled_by: 'seller',
+      cancellation_reason: 'Policy violation',
+      revision: 4,
+      packages: [],
+    });
+    assert.ok(
+      result.success,
+      `MediaBuy with lifecycle fields should succeed: ${JSON.stringify(result.error?.issues)}`
+    );
+  });
+
   test('GetCreativeFeaturesRequestSchema validates valid request', async () => {
     if (!schemas) {
       schemas = await import('../../dist/lib/types/schemas.generated.js');
