@@ -1149,10 +1149,23 @@ export async function testSyncAudiences(
         action: testAudience?.action,
         status: testAudience?.status,
         uploaded_count: testAudience?.uploaded_count,
+        matched_count: testAudience?.matched_count,
+        effective_match_rate: testAudience?.effective_match_rate,
+        match_breakdown: testAudience?.match_breakdown,
       },
       null,
       2
     );
+
+    // Advisory: report match breakdown availability
+    if (testAudience?.status === 'ready') {
+      if (testAudience.match_breakdown) {
+        createStep.details += `, match_breakdown: ${testAudience.match_breakdown.length} ID type(s)`;
+      }
+      if (testAudience.effective_match_rate != null) {
+        createStep.details += `, effective_match_rate: ${(testAudience.effective_match_rate * 100).toFixed(1)}%`;
+      }
+    }
   } else if (createResult && !createResult.success) {
     createStep.passed = false;
     createStep.error = createResult.error || 'sync_audiences create call failed';

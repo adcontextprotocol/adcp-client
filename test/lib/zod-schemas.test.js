@@ -447,6 +447,278 @@ describe('Zod Schema Validation', () => {
     }
   });
 
+  // ---- Audience governance schemas ----
+
+  test('AudienceSelectorSchema validates signal-type selector', async () => {
+    if (!schemas) {
+      schemas = await import('../../dist/lib/types/schemas.generated.js');
+    }
+
+    const signalSelector = {
+      type: 'signal',
+      signal_id: { source: 'catalog', data_provider_domain: 'signals.example.com', id: 'ev_buyers' },
+      value_type: 'binary',
+      value: true,
+    };
+
+    const result = schemas.AudienceSelectorSchema.safeParse(signalSelector);
+    assert.ok(result.success, `Signal selector should validate: ${JSON.stringify(result.error?.issues)}`);
+    assert.strictEqual(result.data.type, 'signal');
+  });
+
+  test('AudienceSelectorSchema validates description-type selector', async () => {
+    if (!schemas) {
+      schemas = await import('../../dist/lib/types/schemas.generated.js');
+    }
+
+    const descSelector = {
+      type: 'description',
+      description: 'Adults aged 25-54 in urban areas',
+      category: 'demographic',
+    };
+
+    const result = schemas.AudienceSelectorSchema.safeParse(descSelector);
+    assert.ok(result.success, `Description selector should validate: ${JSON.stringify(result.error?.issues)}`);
+    assert.strictEqual(result.data.type, 'description');
+  });
+
+  test('AudienceSelectorSchema validates categorical signal selector', async () => {
+    if (!schemas) {
+      schemas = await import('../../dist/lib/types/schemas.generated.js');
+    }
+
+    const catSelector = {
+      type: 'signal',
+      signal_id: { source: 'catalog', data_provider_domain: 'signals.example.com', id: 'income_bracket' },
+      value_type: 'categorical',
+      values: ['high', 'medium'],
+    };
+
+    const result = schemas.AudienceSelectorSchema.safeParse(catSelector);
+    assert.ok(result.success, `Categorical signal selector should validate: ${JSON.stringify(result.error?.issues)}`);
+  });
+
+  test('AudienceConstraintsSchema validates include/exclude arrays', async () => {
+    if (!schemas) {
+      schemas = await import('../../dist/lib/types/schemas.generated.js');
+    }
+
+    const constraints = {
+      include: [{ type: 'description', description: 'Adults 25-54 interested in home improvement' }],
+      exclude: [{ type: 'description', description: 'Children under 13' }],
+    };
+
+    const result = schemas.AudienceConstraintsSchema.safeParse(constraints);
+    assert.ok(result.success, `Audience constraints should validate: ${JSON.stringify(result.error?.issues)}`);
+    assert.strictEqual(result.data.include.length, 1);
+    assert.strictEqual(result.data.exclude.length, 1);
+  });
+
+  test('RestrictedAttributeSchema validates GDPR Article 9 categories', async () => {
+    if (!schemas) {
+      schemas = await import('../../dist/lib/types/schemas.generated.js');
+    }
+
+    const validValues = [
+      'racial_ethnic_origin',
+      'political_opinions',
+      'religious_beliefs',
+      'trade_union_membership',
+      'health_data',
+      'sex_life_sexual_orientation',
+      'genetic_data',
+      'biometric_data',
+    ];
+
+    for (const value of validValues) {
+      const result = schemas.RestrictedAttributeSchema.safeParse(value);
+      assert.ok(result.success, `"${value}" should be a valid restricted attribute`);
+    }
+  });
+
+  test('RestrictedAttributeSchema rejects invalid values', async () => {
+    if (!schemas) {
+      schemas = await import('../../dist/lib/types/schemas.generated.js');
+    }
+
+    const result = schemas.RestrictedAttributeSchema.safeParse('financial_status');
+    assert.ok(!result.success, 'Non-enum value should be rejected');
+  });
+
+  test('MatchIdTypeSchema validates identifier types', async () => {
+    if (!schemas) {
+      schemas = await import('../../dist/lib/types/schemas.generated.js');
+    }
+
+    const validTypes = ['hashed_email', 'hashed_phone', 'rampid', 'id5', 'uid2', 'euid', 'pairid', 'maid', 'other'];
+
+    for (const idType of validTypes) {
+      const result = schemas.MatchIDTypeSchema.safeParse(idType);
+      assert.ok(result.success, `"${idType}" should be a valid match ID type`);
+    }
+  });
+
+  test('MatchIdTypeSchema rejects invalid values', async () => {
+    if (!schemas) {
+      schemas = await import('../../dist/lib/types/schemas.generated.js');
+    }
+
+    const result = schemas.MatchIDTypeSchema.safeParse('cookie_id');
+    assert.ok(!result.success, 'Non-enum value should be rejected');
+  });
+
+  test('SyncPlansRequestSchema validates plan with audience governance fields', async () => {
+    if (!schemas) {
+      schemas = await import('../../dist/lib/types/schemas.generated.js');
+    }
+
+    const planWithAudience = {
+      plans: [
+        {
+          plan_id: 'plan-tylenol-q4',
+          brand: { domain: 'tylenol.com' },
+          objectives: "Drive awareness of children's Tylenol",
+          budget: { total: 500000, currency: 'USD', authority_level: 'agent_full' },
+          flight: { start: '2026-04-01T00:00:00Z', end: '2026-06-30T00:00:00Z' },
+          countries: ['US'],
+          policy_categories: ['children_directed', 'pharmaceutical_advertising'],
+          audience: {
+            include: [{ type: 'description', description: 'Parents of children aged 2-12' }],
+            exclude: [{ type: 'description', description: 'Children under 13' }],
+          },
+          restricted_attributes: ['health_data'],
+          restricted_attributes_custom: ['parental_status'],
+          min_audience_size: 1000,
+          policy_ids: ['us_coppa_data_collection'],
+        },
+      ],
+    };
+
+    const result = schemas.SyncPlansRequestSchema.safeParse(planWithAudience);
+    assert.ok(result.success, `Plan with audience fields should validate: ${JSON.stringify(result.error?.issues)}`);
+  });
+
+  test('SyncPlansRequestSchema rejects invalid restricted_attributes', async () => {
+    if (!schemas) {
+      schemas = await import('../../dist/lib/types/schemas.generated.js');
+    }
+
+    const plan = {
+      plans: [
+        {
+          plan_id: 'plan-1',
+          brand: { domain: 'example.com' },
+          objectives: 'Test',
+          budget: { total: 1000, currency: 'USD', authority_level: 'agent_full' },
+          flight: { start: '2026-04-01T00:00:00Z', end: '2026-06-30T00:00:00Z' },
+          restricted_attributes: ['invalid_attribute'],
+        },
+      ],
+    };
+
+    const result = schemas.SyncPlansRequestSchema.safeParse(plan);
+    assert.ok(!result.success, 'Invalid restricted_attribute value should be rejected');
+  });
+
+  test('CheckGovernanceRequestSchema validates delivery_metrics with audience_distribution', async () => {
+    if (!schemas) {
+      schemas = await import('../../dist/lib/types/schemas.generated.js');
+    }
+
+    const request = {
+      plan_id: 'plan-1',
+      binding: 'committed',
+      caller: 'https://seller.example.com',
+      phase: 'delivery',
+      delivery_metrics: {
+        reporting_period: { start: '2026-04-01T00:00:00Z', end: '2026-04-08T00:00:00Z' },
+        spend: 12500,
+        cumulative_spend: 125000,
+        impressions: 500000,
+        cumulative_impressions: 5000000,
+        pacing: 'on_track',
+        audience_distribution: {
+          baseline: 'platform',
+          indices: {
+            'age:18-24': 0.8,
+            'age:25-34': 1.4,
+            'gender:female': 1.05,
+          },
+          cumulative_indices: {
+            'age:18-24': 0.85,
+            'age:25-34': 1.35,
+            'gender:female': 1.03,
+          },
+        },
+      },
+    };
+
+    const result = schemas.CheckGovernanceRequestSchema.safeParse(request);
+    assert.ok(
+      result.success,
+      `Delivery metrics with audience_distribution should validate: ${JSON.stringify(result.error?.issues)}`
+    );
+  });
+
+  test('SyncAudiencesSuccessSchema validates response with match breakdown', async () => {
+    if (!schemas) {
+      schemas = await import('../../dist/lib/types/schemas.generated.js');
+    }
+
+    const response = {
+      audiences: [
+        {
+          audience_id: 'existing_customers',
+          action: 'updated',
+          status: 'ready',
+          uploaded_count: 5000,
+          matched_count: 18750,
+          effective_match_rate: 0.75,
+          match_breakdown: [
+            { id_type: 'hashed_email', submitted: 25000, matched: 17500, match_rate: 0.7 },
+            { id_type: 'hashed_phone', submitted: 15000, matched: 12000, match_rate: 0.8 },
+            { id_type: 'rampid', submitted: 8000, matched: 7200, match_rate: 0.9 },
+          ],
+        },
+      ],
+    };
+
+    const result = schemas.SyncAudiencesSuccessSchema.safeParse(response);
+    assert.ok(
+      result.success,
+      `Sync audiences with match breakdown should validate: ${JSON.stringify(result.error?.issues)}`
+    );
+  });
+
+  test('GetSignalsResponseSchema validates signals with governance metadata', async () => {
+    if (!schemas) {
+      schemas = await import('../../dist/lib/types/schemas.generated.js');
+    }
+
+    const response = {
+      signals: [
+        {
+          signal_agent_segment_id: 'seg-001',
+          name: 'Chronic Condition Households',
+          description: 'Households with modeled indicators of chronic health conditions',
+          signal_type: 'marketplace',
+          data_provider: 'Health Data Co',
+          coverage_percentage: 8.2,
+          deployments: [{ type: 'platform', platform: 'dv360', is_live: false }],
+          pricing_options: [{ pricing_option_id: 'spo1', model: 'cpm', cpm: 3.5, currency: 'USD' }],
+          restricted_attributes: ['health_data'],
+          policy_categories: ['pharmaceutical_advertising', 'health_wellness'],
+        },
+      ],
+    };
+
+    const result = schemas.GetSignalsResponseSchema.safeParse(response);
+    assert.ok(
+      result.success,
+      `Signal with governance metadata should validate: ${JSON.stringify(result.error?.issues)}`
+    );
+  });
+
   test('record schemas preserve value types after undefined removal', async () => {
     if (!schemas) {
       schemas = await import('../../dist/lib/types/schemas.generated.js');

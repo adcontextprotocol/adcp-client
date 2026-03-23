@@ -26,7 +26,6 @@ const validProduct = {
 
 const validCreateMediaBuySuccess = {
   media_buy_id: 'mb1',
-  buyer_ref: 'buyer-123',
   packages: [{ package_id: 'pkg1' }],
 };
 
@@ -117,12 +116,6 @@ describe('validateResponseSchema', () => {
 
     it('fails when media_buy_id is missing', () => {
       const { media_buy_id, ...without } = validCreateMediaBuySuccess;
-      const result = validateResponseSchema('create_media_buy', without);
-      assert.strictEqual(result.passed, false);
-    });
-
-    it('fails when buyer_ref is missing', () => {
-      const { buyer_ref, ...without } = validCreateMediaBuySuccess;
       const result = validateResponseSchema('create_media_buy', without);
       assert.strictEqual(result.passed, false);
     });
@@ -258,6 +251,77 @@ describe('validateResponseSchema', () => {
     });
   });
 
+  // ---- sync_audiences ----
+  describe('sync_audiences — match breakdown and effective_match_rate', () => {
+    const validAudienceResult = {
+      audience_id: 'existing_customers',
+      action: 'updated',
+      status: 'ready',
+      uploaded_count: 5000,
+      matched_count: 18750,
+    };
+
+    it('passes for valid response without match breakdown', () => {
+      const result = validateResponseSchema('sync_audiences', {
+        audiences: [validAudienceResult],
+      });
+      assert.strictEqual(result.passed, true, `Expected pass, got: ${result.error || ''}`);
+    });
+
+    it('passes for response with effective_match_rate and match_breakdown', () => {
+      const result = validateResponseSchema('sync_audiences', {
+        audiences: [
+          {
+            ...validAudienceResult,
+            effective_match_rate: 0.75,
+            match_breakdown: [
+              { id_type: 'hashed_email', submitted: 25000, matched: 17500, match_rate: 0.7 },
+              { id_type: 'hashed_phone', submitted: 15000, matched: 12000, match_rate: 0.8 },
+              { id_type: 'rampid', submitted: 8000, matched: 7200, match_rate: 0.9 },
+            ],
+          },
+        ],
+      });
+      assert.strictEqual(result.passed, true, `Expected pass, got: ${result.error || ''}`);
+    });
+
+    it('passes for valid error response', () => {
+      const result = validateResponseSchema('sync_audiences', {
+        errors: [{ code: 'validation_error', message: 'Invalid audience data' }],
+      });
+      assert.strictEqual(result.passed, true, `Expected pass, got: ${result.error || ''}`);
+    });
+
+    it('passes for audience with failed action', () => {
+      const result = validateResponseSchema('sync_audiences', {
+        audiences: [
+          {
+            audience_id: 'bad_audience',
+            action: 'failed',
+            errors: [{ code: 'invalid_format', message: 'Bad hash' }],
+          },
+        ],
+      });
+      assert.strictEqual(result.passed, true, `Expected pass, got: ${result.error || ''}`);
+    });
+  });
+
+  // ---- get_signals with governance metadata ----
+  describe('get_signals — governance metadata on signal definitions', () => {
+    it('passes for signal with restricted_attributes and policy_categories', () => {
+      const result = validateResponseSchema('get_signals', {
+        signals: [
+          {
+            ...validSignal,
+            restricted_attributes: ['health_data'],
+            policy_categories: ['pharmaceutical_advertising'],
+          },
+        ],
+      });
+      assert.strictEqual(result.passed, true, `Expected pass, got: ${result.error || ''}`);
+    });
+  });
+
   // ---- Schema registry completeness ----
   describe('schema registry', () => {
     it('has schemas for all tools used in compliance scenarios', () => {
@@ -268,6 +332,7 @@ describe('validateResponseSchema', () => {
         'list_creative_formats',
         'get_signals',
         'activate_signal',
+        'sync_audiences',
       ];
       for (const tool of scenarioTools) {
         assert.ok(TOOL_RESPONSE_SCHEMAS[tool], `Missing schema for scenario tool: ${tool}`);

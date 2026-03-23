@@ -59,7 +59,15 @@ const TRACK_DEFINITIONS: Record<ComplianceTrack, { label: string; scenarios: Tes
   },
   governance: {
     label: 'Governance',
-    scenarios: ['governance_property_lists', 'governance_content_standards', 'property_list_filters'],
+    scenarios: [
+      'governance_property_lists',
+      'governance_content_standards',
+      'property_list_filters',
+      'campaign_governance',
+      'campaign_governance_denied',
+      'campaign_governance_conditions',
+      'campaign_governance_delivery',
+    ],
   },
   signals: {
     label: 'Signals',
@@ -89,7 +97,7 @@ const TRACK_RELEVANCE: Record<ComplianceTrack, string[]> = {
   media_buy: ['create_media_buy', 'update_media_buy', 'get_media_buys'],
   creative: ['sync_creatives', 'build_creative', 'list_creative_formats'],
   reporting: ['get_media_buy_delivery'],
-  governance: ['create_property_list', 'list_content_standards'],
+  governance: ['create_property_list', 'list_content_standards', 'sync_plans', 'check_governance'],
   signals: ['get_signals'],
   si: ['si_initiate_session'],
   audiences: ['sync_audiences'],
