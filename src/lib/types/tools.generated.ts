@@ -799,6 +799,10 @@ export type DataProviderSignalSelector =
       signal_tags: string[];
     };
 /**
+ * Overall measurement readiness level for this product given the buyer's event setup. 'insufficient' means the product cannot optimize effectively with the current setup.
+ */
+export type AssessmentStatus = 'insufficient' | 'minimum' | 'good' | 'excellent';
+/**
  * Where the conversion event originated
  */
 export type ActionSource =
@@ -1039,6 +1043,7 @@ export interface Product {
    * Maximum number of optimization_goals this product accepts on a package. When absent, no limit is declared. Most social platforms accept only 1 goal — buyers sending arrays longer than this value should expect the seller to use only the highest-priority (lowest priority number) goal.
    */
   max_optimization_goals?: number;
+  measurement_readiness?: MeasurementReadiness;
   /**
    * Conversion event tracking for this product. Presence indicates the product supports optimization_goals with kind: 'event'. Seller-level capabilities (supported event types, UID types, attribution windows) are declared in get_adcp_capabilities.
    */
@@ -1733,6 +1738,41 @@ export interface CreativePolicy {
    * Whether creatives must include provenance metadata. When true, the seller requires buyers to attach provenance declarations to creative submissions. The seller may independently verify claims via get_creative_features.
    */
   provenance_required?: boolean;
+}
+/**
+ * Assessment of whether the buyer's event source setup is sufficient for this product to optimize effectively. Only present when the seller can evaluate the buyer's account context. Buyers should check this before creating media buys with event-based optimization goals.
+ */
+export interface MeasurementReadiness {
+  status: AssessmentStatus;
+  /**
+   * Event types this product needs for effective optimization. Buyers should ensure their event sources cover these types.
+   */
+  required_event_types?: EventType[];
+  /**
+   * Event types this product requires that the buyer has not configured. Empty or absent when all required types are covered.
+   */
+  missing_event_types?: EventType[];
+  /**
+   * Actionable issues preventing full measurement readiness. Sellers should limit to the top 3-5 most actionable items. Buyer agents should sort by severity rather than relying on array position.
+   */
+  issues?: DiagnosticIssue[];
+  /**
+   * Seller explanation of the readiness assessment, recommendations for improvement, or context about what the buyer needs to change.
+   */
+  notes?: string;
+}
+/**
+ * An actionable issue detected during a health or readiness assessment. Used by event source health and measurement readiness to surface problems and recommendations.
+ */
+export interface DiagnosticIssue {
+  /**
+   * 'error': blocks optimization until resolved. 'warning': optimization works but effectiveness is reduced. 'info': suggestion for improvement.
+   */
+  severity: 'error' | 'warning' | 'info';
+  /**
+   * Human/agent-readable description of the issue and how to resolve it.
+   */
+  message: string;
 }
 /**
  * References shows declared in an adagents.json. Buyers resolve full show objects by fetching the adagents.json at the given domain and matching show_ids against its shows array.
@@ -5614,6 +5654,7 @@ export interface SyncEventSourcesSuccess {
      * Action taken for this event source
      */
     action: 'created' | 'updated' | 'unchanged' | 'deleted' | 'failed';
+    health?: EventSourceHealth;
     /**
      * Errors for this event source (only present when action='failed')
      */
@@ -5625,6 +5666,49 @@ export interface SyncEventSourcesSuccess {
   sandbox?: boolean;
   context?: ContextObject;
   ext?: ExtensionObject;
+}
+/**
+ * Health assessment for this event source. Reflects event volume, data quality, and parameter completeness. Sellers that support health scoring include this on every source (buyer-managed and seller-managed). Absent when the seller does not evaluate event source health.
+ */
+export interface EventSourceHealth {
+  status: AssessmentStatus;
+  /**
+   * Seller-specific scoring detail. Only present when the seller has a native quality score to relay. Buyer agents should use status (not detail) for cross-seller decisions. Detail is supplementary context for human review or advanced diagnostics.
+   */
+  detail?: {
+    /**
+     * Seller-defined quality score. Scale varies by seller — only compare within the same seller.
+     */
+    score: number;
+    /**
+     * Maximum possible score on this seller's scale.
+     */
+    max_score: number;
+    /**
+     * Seller's name for this score (e.g., 'Event Quality Score', 'Event Match Quality').
+     */
+    label?: string;
+  };
+  /**
+   * Fraction of events from this source that the seller successfully matched to ad interactions (0.0-1.0). Low match rates indicate weak user_match identifiers. Absent when the seller does not compute match rates.
+   */
+  match_rate?: number;
+  /**
+   * ISO 8601 timestamp of the most recent event received from this source. Absent when no events have been received.
+   */
+  last_event_at?: string;
+  /**
+   * ISO 8601 timestamp of when this health assessment was computed. When health is derived from reporting data, this may lag real-time. Buyer agents can use this to decide whether to trust stale assessments or re-request.
+   */
+  evaluated_at?: string;
+  /**
+   * Number of events received from this source in the last 24 hours. Zero indicates the source is configured but not firing.
+   */
+  events_received_24h?: number;
+  /**
+   * Actionable issues detected with this event source. Sellers should limit to the top 3-5 most actionable items. Buyer agents should sort by severity rather than relying on array position.
+   */
+  issues?: DiagnosticIssue[];
 }
 /**
  * Error response - operation failed completely

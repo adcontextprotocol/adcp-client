@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-03-23T01:15:06.462Z
+// Generated at: 2026-03-23T03:04:14.221Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -455,6 +455,8 @@ export const DataProviderSignalSelectorSchema = z.union([z.object({
         signal_tags: z.array(z.string())
     }).passthrough()]);
 
+export const AssessmentStatusSchema = z.union([z.literal("insufficient"), z.literal("minimum"), z.literal("good"), z.literal("excellent")]);
+
 export const ActionSourceSchema = z.union([z.literal("website"), z.literal("app"), z.literal("offline"), z.literal("phone_call"), z.literal("chat"), z.literal("email"), z.literal("in_store"), z.literal("system_generated"), z.literal("other")]);
 
 export const EpisodeStatusSchema = z.union([z.literal("scheduled"), z.literal("tentative"), z.literal("live"), z.literal("postponed"), z.literal("cancelled"), z.literal("aired"), z.literal("published")]);
@@ -614,6 +616,11 @@ export const GeographicBreakdownSupportSchema = z.object({
     region: z.boolean().nullish(),
     metro: z.record(z.string(), z.boolean()).nullish(),
     postal_area: z.record(z.string(), z.boolean()).nullish()
+}).passthrough();
+
+export const DiagnosticIssueSchema = z.object({
+    severity: z.union([z.literal("error"), z.literal("warning"), z.literal("info")]),
+    message: z.string()
 }).passthrough();
 
 export const ContentRatingSchema = z.object({
@@ -1100,6 +1107,14 @@ export const ReportingCapabilitiesSchema = z.object({
     supports_audience_breakdown: z.boolean().nullish(),
     supports_placement_breakdown: z.boolean().nullish(),
     date_range_support: z.union([z.literal("date_range"), z.literal("lifetime_only")])
+}).passthrough();
+
+export const MeasurementReadinessSchema = z.object({
+    status: AssessmentStatusSchema,
+    required_event_types: z.array(EventTypeSchema).nullish(),
+    missing_event_types: z.array(EventTypeSchema).nullish(),
+    issues: z.array(DiagnosticIssueSchema).nullish(),
+    notes: z.string().nullish()
 }).passthrough();
 
 export const EpisodeSchema = z.object({
@@ -1623,31 +1638,24 @@ export const SyncEventSourcesRequestSchema = z.object({
     ext: ExtensionObjectSchema.nullish()
 }).passthrough();
 
-export const SyncEventSourcesSuccessSchema = z.object({
-    event_sources: z.array(z.object({
-        event_source_id: z.string(),
-        name: z.string().nullish(),
-        seller_id: z.string().nullish(),
-        event_types: z.array(EventTypeSchema).nullish(),
-        action_source: ActionSourceSchema.nullish(),
-        managed_by: z.union([z.literal("buyer"), z.literal("seller")]).nullish(),
-        setup: z.object({
-            snippet: z.string().nullish(),
-            snippet_type: z.union([z.literal("javascript"), z.literal("html"), z.literal("pixel_url"), z.literal("server_only")]).nullish(),
-            instructions: z.string().nullish()
-        }).passthrough().nullish(),
-        action: z.union([z.literal("created"), z.literal("updated"), z.literal("unchanged"), z.literal("deleted"), z.literal("failed")]),
-        errors: z.array(z.string()).nullish()
-    }).passthrough()),
-    sandbox: z.boolean().nullish(),
-    context: ContextObjectSchema.nullish(),
-    ext: ExtensionObjectSchema.nullish()
-}).passthrough();
-
 export const SyncEventSourcesErrorSchema = z.object({
     errors: z.array(ErrorSchema),
     context: ContextObjectSchema.nullish(),
     ext: ExtensionObjectSchema.nullish()
+}).passthrough();
+
+export const EventSourceHealthSchema = z.object({
+    status: AssessmentStatusSchema,
+    detail: z.object({
+        score: z.number(),
+        max_score: z.number(),
+        label: z.string().nullish()
+    }).passthrough().nullish(),
+    match_rate: z.number().nullish(),
+    last_event_at: z.string().nullish(),
+    evaluated_at: z.string().nullish(),
+    events_received_24h: z.number().nullish(),
+    issues: z.array(DiagnosticIssueSchema).nullish()
 }).passthrough();
 
 export const UIDTypeSchema = z.union([z.literal("rampid"), z.literal("id5"), z.literal("uid2"), z.literal("euid"), z.literal("pairid"), z.literal("maid"), z.literal("other")]);
@@ -3306,6 +3314,7 @@ export const ProductSchema = z.object({
         supported_targets: z.array(z.union([z.literal("cost_per"), z.literal("threshold_rate")])).nullish()
     }).passthrough().nullish(),
     max_optimization_goals: z.number().nullish(),
+    measurement_readiness: MeasurementReadinessSchema.nullish(),
     conversion_tracking: z.object({
         action_sources: z.array(ActionSourceSchema).nullish(),
         supported_targets: z.array(z.union([z.literal("cost_per"), z.literal("per_ad_spend"), z.literal("maximize_value")])).nullish(),
@@ -3609,7 +3618,27 @@ export const ProvidePerformanceFeedbackRequestSchema = z.object({
 
 export const ProvidePerformanceFeedbackResponseSchema = z.union([ProvidePerformanceFeedbackSuccessSchema, ProvidePerformanceFeedbackErrorSchema]);
 
-export const SyncEventSourcesResponseSchema = z.union([SyncEventSourcesSuccessSchema, SyncEventSourcesErrorSchema]);
+export const SyncEventSourcesSuccessSchema = z.object({
+    event_sources: z.array(z.object({
+        event_source_id: z.string(),
+        name: z.string().nullish(),
+        seller_id: z.string().nullish(),
+        event_types: z.array(EventTypeSchema).nullish(),
+        action_source: ActionSourceSchema.nullish(),
+        managed_by: z.union([z.literal("buyer"), z.literal("seller")]).nullish(),
+        setup: z.object({
+            snippet: z.string().nullish(),
+            snippet_type: z.union([z.literal("javascript"), z.literal("html"), z.literal("pixel_url"), z.literal("server_only")]).nullish(),
+            instructions: z.string().nullish()
+        }).passthrough().nullish(),
+        action: z.union([z.literal("created"), z.literal("updated"), z.literal("unchanged"), z.literal("deleted"), z.literal("failed")]),
+        health: EventSourceHealthSchema.nullish(),
+        errors: z.array(z.string()).nullish()
+    }).passthrough()),
+    sandbox: z.boolean().nullish(),
+    context: ContextObjectSchema.nullish(),
+    ext: ExtensionObjectSchema.nullish()
+}).passthrough();
 
 export const EventSchema = z.object({
     event_id: z.string(),
@@ -4038,6 +4067,8 @@ export const CreateMediaBuyRequestSchema = z.object({
     context: ContextObjectSchema.nullish(),
     ext: ExtensionObjectSchema.nullish()
 }).passthrough();
+
+export const SyncEventSourcesResponseSchema = z.union([SyncEventSourcesSuccessSchema, SyncEventSourcesErrorSchema]);
 
 export const LogEventRequestSchema = z.object({
     event_source_id: z.string(),
