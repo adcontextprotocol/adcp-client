@@ -79,73 +79,6 @@ export function setAtPath(obj: Record<string, any>, path: string, value: unknown
   current[parts[parts.length - 1]!] = value;
 }
 
-/**
- * Structured governance context extracted from tool parameters.
- * Matches the governance-context.json schema shape.
- */
-export interface GovernanceContext {
-  total_budget?: { amount: number; currency: string };
-  countries?: string[];
-  channels?: string[];
-  flight?: { start: string; end: string };
-  seller_url?: string;
-  audience_targeting?: unknown[];
-  [key: string]: unknown;
-}
-
-/**
- * Extract structured governance context from tool call parameters.
- *
- * Extracts budget, countries, channels, flight dates, and seller URL from
- * common AdCP tool parameter conventions. Override via
- * CampaignGovernanceConfig.extractContext for custom tool schemas.
- */
-export function extractGovernanceContext(
-  params: Record<string, unknown>,
-  config: CampaignGovernanceConfig
-): GovernanceContext | undefined {
-  const ctx: GovernanceContext = {};
-  let hasField = false;
-
-  // Extract budget from common locations
-  const budget = params.budget as Record<string, unknown> | undefined;
-  if (budget?.total != null && budget?.currency) {
-    ctx.total_budget = { amount: budget.total as number, currency: budget.currency as string };
-    hasField = true;
-  }
-
-  // Extract countries
-  if (Array.isArray(params.countries) && params.countries.length > 0) {
-    ctx.countries = params.countries as string[];
-    hasField = true;
-  }
-
-  // Extract channels
-  const channel = params.channel as string | undefined;
-  if (channel) {
-    ctx.channels = [channel];
-    hasField = true;
-  } else if (Array.isArray(params.channels) && params.channels.length > 0) {
-    ctx.channels = params.channels as string[];
-    hasField = true;
-  }
-
-  // Extract flight dates
-  const flight = params.flight as Record<string, unknown> | undefined;
-  if (flight?.start && flight?.end) {
-    ctx.flight = { start: flight.start as string, end: flight.end as string };
-    hasField = true;
-  }
-
-  // Include seller URL if the agent config has it
-  if (config.callerUrl) {
-    ctx.seller_url = config.callerUrl;
-    hasField = true;
-  }
-
-  return hasField ? ctx : undefined;
-}
-
 export class GovernanceMiddleware {
   constructor(
     private governanceConfig: GovernanceConfig,
@@ -200,6 +133,7 @@ export class GovernanceMiddleware {
         caller: config.callerUrl ?? '',
         tool,
         payload: currentParams,
+        governance_context: config.governanceContext,
       };
 
       debugLogs.push({
@@ -227,6 +161,11 @@ export class GovernanceMiddleware {
       });
 
       const checkResult = parseCheckResponse(responseData as unknown as CheckGovernanceResponse);
+
+      // Thread governance_context from response to subsequent checks
+      if (checkResult.governanceContext) {
+        config.governanceContext = checkResult.governanceContext;
+      }
 
       if (checkResult.status === 'approved') {
         return { result: checkResult, params: currentParams };
@@ -292,19 +231,21 @@ export class GovernanceMiddleware {
   async reportOutcome(
     checkId: string,
     outcome: OutcomeType,
-    governanceContext?: string,
     sellerResponse?: Record<string, unknown>,
     error?: { code?: string; message: string },
-    debugLogs: GovernanceDebugEntry[] = []
+    debugLogs: GovernanceDebugEntry[] = [],
+    governanceContext?: string
   ): Promise<GovernanceOutcome | undefined> {
     const config = this.governanceConfig.campaign;
     if (!config) return undefined;
 
+    const gc = governanceContext ?? config.governanceContext ?? '';
+
     const request: ReportPlanOutcomeRequest = {
       plan_id: config.planId,
       check_id: checkId,
-      governance_context: governanceContext || '{}',
       outcome,
+      governance_context: gc,
     };
 
     if (outcome === 'completed' && sellerResponse) {

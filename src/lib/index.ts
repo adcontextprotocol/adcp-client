@@ -94,7 +94,7 @@ export type {
   GovernanceCondition,
   GovernanceEscalation,
 } from './core/GovernanceTypes';
-export { GovernanceMiddleware, extractGovernanceContext } from './core/GovernanceMiddleware';
+export { GovernanceMiddleware } from './core/GovernanceMiddleware';
 export type { GovernanceDebugEntry } from './core/GovernanceMiddleware';
 
 // ====== TASK EVENT TYPES ======

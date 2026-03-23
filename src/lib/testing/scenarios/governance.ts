@@ -9,8 +9,10 @@
  */
 
 import type { TestOptions, TestStepResult, AgentProfile, TaskResult } from '../types';
-import { createTestClient, runStep, discoverAgentProfile } from '../client';
+import { getOrCreateClient, runStep, getOrDiscoverProfile } from '../client';
 import { GOVERNANCE_TOOLS } from '../../utils/capabilities';
+import { GovernanceAgentStub } from '../stubs';
+import { callMCPTool } from '../../protocols/mcp';
 import type {
   CreatePropertyListRequest,
   CreatePropertyListResponse,
@@ -62,10 +64,10 @@ export async function testGovernancePropertyLists(
   options: TestOptions
 ): Promise<{ steps: TestStepResult[]; profile?: AgentProfile }> {
   const steps: TestStepResult[] = [];
-  const client = createTestClient(agentUrl, options.protocol || 'mcp', options);
+  const client = getOrCreateClient(agentUrl, options);
 
   // Discover agent profile
-  const { profile, step: profileStep } = await discoverAgentProfile(client);
+  const { profile, step: profileStep } = await getOrDiscoverProfile(client, options);
   steps.push(profileStep);
 
   if (!profileStep.passed) {
@@ -330,10 +332,10 @@ export async function testGovernanceContentStandards(
   options: TestOptions
 ): Promise<{ steps: TestStepResult[]; profile?: AgentProfile }> {
   const steps: TestStepResult[] = [];
-  const client = createTestClient(agentUrl, options.protocol || 'mcp', options);
+  const client = getOrCreateClient(agentUrl, options);
 
   // Discover agent profile
-  const { profile, step: profileStep } = await discoverAgentProfile(client);
+  const { profile, step: profileStep } = await getOrDiscoverProfile(client, options);
   steps.push(profileStep);
 
   if (!profileStep.passed) {
@@ -577,9 +579,9 @@ export async function testPropertyListFilters(
   options: TestOptions
 ): Promise<{ steps: TestStepResult[]; profile?: AgentProfile }> {
   const steps: TestStepResult[] = [];
-  const client = createTestClient(agentUrl, options.protocol || 'mcp', options);
+  const client = getOrCreateClient(agentUrl, options);
 
-  const { profile, step: profileStep } = await discoverAgentProfile(client);
+  const { profile, step: profileStep } = await getOrDiscoverProfile(client, options);
   steps.push(profileStep);
 
   if (!profileStep.passed) {
@@ -799,10 +801,10 @@ export async function testCampaignGovernance(
   options: TestOptions
 ): Promise<{ steps: TestStepResult[]; profile?: AgentProfile }> {
   const steps: TestStepResult[] = [];
-  const client = createTestClient(agentUrl, options.protocol || 'mcp', options);
+  const client = getOrCreateClient(agentUrl, options);
 
   // Discover agent profile
-  const { profile, step: profileStep } = await discoverAgentProfile(client);
+  const { profile, step: profileStep } = await getOrDiscoverProfile(client, options);
   steps.push(profileStep);
 
   if (!profileStep.passed) {
@@ -825,6 +827,7 @@ export async function testCampaignGovernance(
   profile.supports_governance = true;
 
   const testPlanId = `test-plan-${Date.now()}`;
+  const testMediaBuyId = `test-mb-${Date.now()}`;
   const callerUrl = 'https://test-orchestrator.example.com';
   const flightStart = new Date();
   const flightEnd = new Date(flightStart.getTime() + 30 * 24 * 60 * 60 * 1000); // 30 days
@@ -854,13 +857,6 @@ export async function testCampaignGovernance(
               channels: {
                 allowed: ['display', 'video'],
               },
-              policy_categories: ['age_restricted'],
-              audience: {
-                include: [{ type: 'description', description: 'Adults 25-54 interested in home improvement' }],
-                exclude: [{ type: 'description', description: 'Children under 13' }],
-              },
-              restricted_attributes: ['health_data'],
-              min_audience_size: 1000,
               delegations: [
                 {
                   agent_url: callerUrl,
@@ -885,8 +881,6 @@ export async function testCampaignGovernance(
             version: synced.version,
             categories: synced.categories?.map((c: any) => c.category_id),
             resolved_policies: synced.resolved_policies?.length || 0,
-            policy_categories_sent: ['age_restricted'],
-            restricted_attributes_sent: ['health_data'],
           },
           null,
           2
@@ -906,7 +900,7 @@ export async function testCampaignGovernance(
 
   // Step 2: check_governance (proposed, expecting approved)
   let checkId: string | undefined;
-  let governanceCtx: string | undefined;
+  let governanceContext: string | undefined;
   if (profile.tools.includes('check_governance')) {
     const { result, step } = await runStep<TaskResult>(
       'Check governance (proposed buy)',
@@ -932,7 +926,7 @@ export async function testCampaignGovernance(
     if (result?.success && result?.data) {
       const data = result.data;
       checkId = data.check_id;
-      governanceCtx = data.governance_context;
+      governanceContext = data.governance_context;
       const status = data.status;
 
       step.details = `Governance check: status=${status}, binding=${data.binding}, mode=${data.mode || 'unknown'}`;
@@ -956,6 +950,18 @@ export async function testCampaignGovernance(
         step.passed = false;
         step.error = `Unexpected governance status: ${status}`;
       }
+
+      // Validate governance_context format if present
+      if (governanceContext !== undefined) {
+        if (typeof governanceContext !== 'string') {
+          step.warnings = [...(step.warnings || []), 'governance_context is not a string'];
+        } else if (governanceContext.length > 4096) {
+          step.warnings = [
+            ...(step.warnings || []),
+            `governance_context exceeds 4096 chars (${governanceContext.length})`,
+          ];
+        }
+      }
     } else if (result && !result.success) {
       step.passed = false;
       step.error = result.error || 'check_governance failed';
@@ -963,32 +969,31 @@ export async function testCampaignGovernance(
     steps.push(step);
   }
 
-  // Step 3: report_plan_outcome (completed)
+  // Step 3: report_plan_outcome (completed) — thread governance_context
   if (profile.tools.includes('report_plan_outcome') && checkId) {
+    const outcomeRequest: Record<string, unknown> = {
+      plan_id: testPlanId,
+      check_id: checkId,
+      outcome: 'completed',
+      governance_context: governanceContext || '',
+      seller_response: {
+        media_buy_id: testMediaBuyId,
+        packages: [
+          {
+            budget: 1000,
+          },
+        ],
+      },
+    };
+
     const { result, step } = await runStep<TaskResult>(
       'Report plan outcome (completed)',
       'report_plan_outcome',
-      async () =>
-        client.executeTask('report_plan_outcome', {
-          plan_id: testPlanId,
-          check_id: checkId,
-          ...(governanceCtx ? { governance_context: governanceCtx } : {}),
-          outcome: 'completed',
-          seller_response: {
-            media_buy_id: `test-mb-${Date.now()}`,
-            packages: [
-              {
-                package_id: 'test-pkg-1',
-                name: 'E2E Test Package',
-                budget: { total: 1000, currency: 'USD' },
-              },
-            ],
-          },
-        }) as Promise<TaskResult>
+      async () => client.executeTask('report_plan_outcome', outcomeRequest) as Promise<TaskResult>
     );
 
     if (result?.success && result?.data) {
-      step.details = 'Outcome reported to governance agent';
+      step.details = `Outcome reported with governance_context=${governanceContext ? 'present' : 'absent'}`;
       step.response_preview = JSON.stringify(result.data, null, 2);
     } else if (result && !result.success) {
       step.passed = false;
@@ -997,7 +1002,7 @@ export async function testCampaignGovernance(
     steps.push(step);
   }
 
-  // Step 4: get_plan_audit_logs
+  // Step 4: get_plan_audit_logs — query by media_buy_id
   if (profile.tools.includes('get_plan_audit_logs')) {
     const { result, step } = await runStep<TaskResult>(
       'Get plan audit logs',
@@ -1005,6 +1010,7 @@ export async function testCampaignGovernance(
       async () =>
         client.executeTask('get_plan_audit_logs', {
           plan_ids: [testPlanId],
+          media_buy_id: testMediaBuyId,
           include_entries: true,
         }) as Promise<TaskResult>
     );
@@ -1043,9 +1049,9 @@ export async function testCampaignGovernanceDenied(
   options: TestOptions
 ): Promise<{ steps: TestStepResult[]; profile?: AgentProfile }> {
   const steps: TestStepResult[] = [];
-  const client = createTestClient(agentUrl, options.protocol || 'mcp', options);
+  const client = getOrCreateClient(agentUrl, options);
 
-  const { profile, step: profileStep } = await discoverAgentProfile(client);
+  const { profile, step: profileStep } = await getOrDiscoverProfile(client, options);
   steps.push(profileStep);
 
   if (!profileStep.passed) {
@@ -1126,8 +1132,10 @@ export async function testCampaignGovernanceDenied(
       }) as Promise<TaskResult>
   );
 
+  let overBudgetGovernanceContext: string | undefined;
   if (overBudgetResult?.success && overBudgetResult?.data) {
     const data = overBudgetResult.data;
+    overBudgetGovernanceContext = data.governance_context;
     overBudgetStep.details = `Over-budget check: status=${data.status}, explanation: ${data.explanation}`;
     overBudgetStep.response_preview = JSON.stringify(
       {
@@ -1139,6 +1147,7 @@ export async function testCampaignGovernanceDenied(
           explanation: f.explanation,
         })),
         conditions: data.conditions,
+        governance_context: data.governance_context ? '(present)' : '(absent)',
       },
       null,
       2
@@ -1208,9 +1217,8 @@ export async function testCampaignGovernanceDenied(
   }
   steps.push(geoStep);
 
-  // Report failed outcome
-  const deniedGovCtx = overBudgetResult?.data?.governance_context as string | undefined;
-  if (profile.tools.includes('report_plan_outcome') && overBudgetResult?.data?.check_id && deniedGovCtx) {
+  // Report failed outcome — thread governance_context
+  if (profile.tools.includes('report_plan_outcome') && overBudgetResult?.data?.check_id) {
     const { step: outcomeStep } = await runStep<TaskResult>(
       'Report failed outcome for denied check',
       'report_plan_outcome',
@@ -1218,8 +1226,8 @@ export async function testCampaignGovernanceDenied(
         client.executeTask('report_plan_outcome', {
           plan_id: testPlanId,
           check_id: overBudgetResult.data.check_id,
-          governance_context: deniedGovCtx,
           outcome: 'failed',
+          governance_context: overBudgetGovernanceContext || '',
           error: {
             code: 'governance_denied',
             message: 'Action blocked by governance check',
@@ -1243,9 +1251,9 @@ export async function testCampaignGovernanceConditions(
   options: TestOptions
 ): Promise<{ steps: TestStepResult[]; profile?: AgentProfile }> {
   const steps: TestStepResult[] = [];
-  const client = createTestClient(agentUrl, options.protocol || 'mcp', options);
+  const client = getOrCreateClient(agentUrl, options);
 
-  const { profile, step: profileStep } = await discoverAgentProfile(client);
+  const { profile, step: profileStep } = await getOrDiscoverProfile(client, options);
   steps.push(profileStep);
 
   if (!profileStep.passed) {
@@ -1333,6 +1341,7 @@ export async function testCampaignGovernanceConditions(
 
   if (checkResult?.success && checkResult?.data) {
     const data = checkResult.data;
+    const initialGovernanceContext: string | undefined = data.governance_context;
     checkStep.details = `Initial check: status=${data.status}`;
     checkStep.response_preview = JSON.stringify(
       {
@@ -1344,12 +1353,13 @@ export async function testCampaignGovernanceConditions(
           category_id: f.category_id,
           explanation: f.explanation,
         })),
+        governance_context: initialGovernanceContext ? '(present)' : '(absent)',
       },
       null,
       2
     );
 
-    // If we got conditions, apply them and re-check
+    // If we got conditions, apply them and re-check with governance_context round-trip
     if (data.status === 'conditions' && data.conditions?.length > 0) {
       const conditions = data.conditions;
       const appliedConditions = conditions
@@ -1375,18 +1385,18 @@ export async function testCampaignGovernanceConditions(
         }
       }
 
-      // Re-check with adjusted parameters
+      // Re-check with adjusted parameters — thread governance_context from initial check
       const { result: recheckResult, step: recheckStep } = await runStep<TaskResult>(
         'Re-check governance (after applying conditions)',
         'check_governance',
         async () =>
           client.executeTask('check_governance', {
             plan_id: testPlanId,
-
             binding: 'proposed',
             caller: callerUrl,
             tool: 'create_media_buy',
             payload: adjustedPayload,
+            governance_context: initialGovernanceContext,
           }) as Promise<TaskResult>
       );
 
@@ -1398,6 +1408,7 @@ export async function testCampaignGovernanceConditions(
             check_id: recheckData.check_id,
             status: recheckData.status,
             explanation: recheckData.explanation,
+            governance_context: recheckData.governance_context ? '(present)' : '(absent)',
           },
           null,
           2
@@ -1428,9 +1439,9 @@ export async function testCampaignGovernanceDelivery(
   options: TestOptions
 ): Promise<{ steps: TestStepResult[]; profile?: AgentProfile }> {
   const steps: TestStepResult[] = [];
-  const client = createTestClient(agentUrl, options.protocol || 'mcp', options);
+  const client = getOrCreateClient(agentUrl, options);
 
-  const { profile, step: profileStep } = await discoverAgentProfile(client);
+  const { profile, step: profileStep } = await getOrDiscoverProfile(client, options);
   steps.push(profileStep);
 
   if (!profileStep.passed) {
@@ -1450,6 +1461,7 @@ export async function testCampaignGovernanceDelivery(
   profile.supports_governance = true;
 
   const testPlanId = `test-delivery-plan-${Date.now()}`;
+  const testMediaBuyId = `test-mb-${Date.now()}`;
   const callerUrl = 'https://test-seller.example.com';
   const flightStart = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
   const flightEnd = new Date(Date.now() + 23 * 24 * 60 * 60 * 1000);
@@ -1497,10 +1509,9 @@ export async function testCampaignGovernanceDelivery(
     async () =>
       client.executeTask('check_governance', {
         plan_id: testPlanId,
-
         binding: 'committed',
         caller: callerUrl,
-        media_buy_id: `test-mb-${Date.now()}`,
+        media_buy_id: testMediaBuyId,
         phase: 'delivery',
         planned_delivery: {
           total_budget: 3000,
@@ -1520,29 +1531,14 @@ export async function testCampaignGovernanceDelivery(
           geo_distribution: { US: 100 },
           channel_distribution: { display: 100 },
           pacing: 'on_track',
-          audience_distribution: {
-            baseline: 'platform',
-            indices: {
-              'age:18-24': 0.9,
-              'age:25-34': 1.2,
-              'age:35-44': 1.1,
-              'gender:female': 1.05,
-              'gender:male': 0.95,
-            },
-            cumulative_indices: {
-              'age:18-24': 0.92,
-              'age:25-34': 1.18,
-              'age:35-44': 1.08,
-              'gender:female': 1.03,
-              'gender:male': 0.97,
-            },
-          },
         },
       }) as Promise<TaskResult>
   );
 
+  let deliveryGovernanceContext: string | undefined;
   if (deliveryResult?.success && deliveryResult?.data) {
     const data = deliveryResult.data;
+    deliveryGovernanceContext = data.governance_context;
     deliveryStep.details = `Delivery check: status=${data.status}, next_check=${data.next_check || 'not specified'}`;
     deliveryStep.response_preview = JSON.stringify(
       {
@@ -1556,6 +1552,7 @@ export async function testCampaignGovernanceDelivery(
           explanation: f.explanation,
         })),
         next_check: data.next_check,
+        governance_context: data.governance_context ? '(present)' : '(absent)',
       },
       null,
       2
@@ -1566,18 +1563,18 @@ export async function testCampaignGovernanceDelivery(
   }
   steps.push(deliveryStep);
 
-  // Delivery-phase check with drift (overspend)
+  // Delivery-phase check with drift (overspend) — thread governance_context from first check
   const { result: driftResult, step: driftStep } = await runStep<TaskResult>(
     'Check governance (delivery phase with overspend drift)',
     'check_governance',
     async () =>
       client.executeTask('check_governance', {
         plan_id: testPlanId,
-
         binding: 'committed',
         caller: callerUrl,
-        media_buy_id: `test-mb-${Date.now()}`,
+        media_buy_id: testMediaBuyId,
         phase: 'delivery',
+        governance_context: deliveryGovernanceContext,
         planned_delivery: {
           total_budget: 3000,
           currency: 'USD',
@@ -1594,23 +1591,6 @@ export async function testCampaignGovernanceDelivery(
           impressions: 5000,
           cumulative_impressions: 90000,
           pacing: 'ahead',
-          audience_distribution: {
-            baseline: 'platform',
-            indices: {
-              'age:18-24': 0.3,
-              'age:25-34': 2.1,
-              'age:55-64': 0.2,
-              'gender:female': 0.4,
-              'gender:male': 1.6,
-            },
-            cumulative_indices: {
-              'age:18-24': 0.4,
-              'age:25-34': 1.9,
-              'age:55-64': 0.3,
-              'gender:female': 0.5,
-              'gender:male': 1.5,
-            },
-          },
         },
       }) as Promise<TaskResult>
   );
@@ -1642,6 +1622,389 @@ export async function testCampaignGovernanceDelivery(
   steps.push(driftStep);
 
   return { steps, profile };
+}
+
+/**
+ * Test: Seller Governance Context Round-Trip
+ *
+ * Two-tier test:
+ * 1. (Active) If seller supports register_governance: starts a stub governance
+ *    agent, registers it with the seller, creates a media buy, and verifies
+ *    the seller called check_governance on the stub with the correct
+ *    governance_context.
+ * 2. (Passive) Verifies the seller persists governance_context from
+ *    create_media_buy and returns it on get_media_buys.
+ */
+export async function testSellerGovernanceContext(
+  agentUrl: string,
+  options: TestOptions
+): Promise<{ steps: TestStepResult[]; profile?: AgentProfile }> {
+  const steps: TestStepResult[] = [];
+  const client = getOrCreateClient(agentUrl, options);
+
+  const { profile, step: profileStep } = await getOrDiscoverProfile(client, options);
+  steps.push(profileStep);
+
+  if (!profileStep.passed) {
+    return { steps, profile };
+  }
+
+  // This scenario requires create_media_buy + get_media_buys (seller tools)
+  if (!profile.tools.includes('create_media_buy') || !profile.tools.includes('get_media_buys')) {
+    steps.push({
+      step: 'Seller governance_context support check',
+      passed: false,
+      duration_ms: 0,
+      error: 'Agent requires create_media_buy + get_media_buys for governance_context persistence testing',
+    });
+    return { steps, profile };
+  }
+
+  // Need get_products to create a valid media buy
+  if (!profile.tools.includes('get_products')) {
+    steps.push({
+      step: 'Seller governance_context support check',
+      passed: false,
+      duration_ms: 0,
+      error: 'Agent requires get_products for governance_context persistence testing',
+    });
+    return { steps, profile };
+  }
+
+  // Step 1: Get products
+  const { result: productsResult, step: productsStep } = await runStep<TaskResult>(
+    'Fetch products for governance context test',
+    'get_products',
+    async () =>
+      client.executeTask('get_products', {
+        buying_mode: 'brief',
+        brief: options.brief || 'display advertising',
+        brand: options.brand || { domain: 'test.example.com' },
+      }) as Promise<TaskResult>
+  );
+  steps.push(productsStep);
+
+  const products = productsResult?.data?.products as Array<Record<string, unknown>> | undefined;
+  if (!products?.length) {
+    return { steps, profile };
+  }
+
+  // Pick first product with pricing
+  const product = products[0]!;
+  const pricingOptions = product.pricing_options as Array<Record<string, unknown>> | undefined;
+  const pricing = pricingOptions?.[0];
+  if (!pricing) {
+    steps.push({
+      step: 'Select product for governance context test',
+      passed: false,
+      duration_ms: 0,
+      error: 'No products with pricing options available',
+    });
+    return { steps, profile };
+  }
+
+  // Step 2: Resolve an account to use for the test
+  const account = await resolveTestAccount(client, profile, options);
+
+  // Step 3: If seller supports register_governance, start stub and register it
+  let stub: GovernanceAgentStub | null = null;
+  let stubUrl: string | null = null;
+  let governanceContext: string | null = null;
+  const planId = `plan-comply-gc-${Date.now()}`;
+  // register_governance is from AdCP PR #1644 — merged but schemas not yet deployed.
+  // Once deployed and synced, sellers that implement it will get the active stub test.
+  const hasRegisterGovernance = profile.tools.includes('register_governance');
+
+  if (hasRegisterGovernance) {
+    stub = new GovernanceAgentStub();
+    try {
+      const info = await stub.startHttps();
+      stubUrl = info.url;
+    } catch {
+      // HTTPS generation failed (no openssl?) — fall back to HTTP
+      try {
+        const info = await stub.start();
+        stubUrl = info.url;
+      } catch (err) {
+        steps.push({
+          step: 'Start governance agent stub',
+          passed: false,
+          duration_ms: 0,
+          error: `Failed to start governance agent stub: ${(err as Error).message}`,
+        });
+        return { steps, profile };
+      }
+    }
+
+    steps.push({
+      step: 'Start governance agent stub',
+      passed: true,
+      duration_ms: 0,
+      details: `Stub running at ${stubUrl}`,
+    });
+
+    // Register the stub with the seller
+    const { result: registerResult, step: registerStep } = await runStep<TaskResult>(
+      'Register governance agent with seller',
+      'register_governance',
+      async () =>
+        client.executeTask('register_governance', {
+          accounts: [
+            {
+              account,
+              governance_agents: [
+                {
+                  url: stubUrl,
+                  authentication: {
+                    schemes: ['Bearer'],
+                    credentials: stub!.authToken,
+                  },
+                },
+              ],
+            },
+          ],
+        }) as Promise<TaskResult>
+    );
+    steps.push(registerStep);
+
+    if (!registerResult?.success) {
+      // Registration failed — fall through to passive test
+      steps.push({
+        step: 'Governance agent registration',
+        passed: true,
+        duration_ms: 0,
+        details: 'register_governance failed — falling back to passive governance_context persistence test',
+        warnings: ['Cannot verify seller calls governance agent — register_governance returned an error'],
+      });
+    } else {
+      // Get governance_context from the stub (simulate buyer's proposed check)
+      try {
+        const checkResult = await callMCPTool(stubUrl!, 'check_governance', {
+          plan_id: planId,
+          binding: 'proposed',
+          caller: 'buyer',
+          tool: 'create_media_buy',
+          payload: {},
+        });
+        const parsed = JSON.parse((checkResult as { content: Array<{ text: string }> }).content[0]!.text);
+        governanceContext = parsed.governance_context as string;
+
+        steps.push({
+          step: 'Obtain governance_context from stub (proposed check)',
+          passed: true,
+          duration_ms: 0,
+          details: `governance_context received (${governanceContext?.length ?? 0} chars)`,
+        });
+      } catch (err) {
+        steps.push({
+          step: 'Obtain governance_context from stub (proposed check)',
+          passed: false,
+          duration_ms: 0,
+          error: `Failed to call check_governance on stub: ${(err as Error).message}`,
+        });
+      }
+    }
+  } else {
+    steps.push({
+      step: 'Check register_governance support',
+      passed: true,
+      duration_ms: 0,
+      details: 'Seller does not support register_governance — running passive governance_context persistence test only',
+      warnings: ['Cannot verify seller calls governance agent — register_governance not supported'],
+    });
+  }
+
+  // Step 4: Create media buy WITH governance_context
+  const testGovernanceContext = governanceContext || `test-gc-comply-${Date.now()}`;
+  const flightStart = new Date();
+  const flightEnd = new Date(flightStart.getTime() + 30 * 24 * 60 * 60 * 1000);
+
+  const { result: createResult, step: createStep } = await runStep<TaskResult>(
+    'Create media buy with governance_context',
+    'create_media_buy',
+    async () =>
+      client.executeTask('create_media_buy', {
+        account,
+        brand: options.brand || { domain: 'test.example.com' },
+        start_time: flightStart.toISOString(),
+        end_time: flightEnd.toISOString(),
+        plan_id: governanceContext ? planId : undefined,
+        packages: [
+          {
+            product_id: product.product_id,
+            pricing_option_id: pricing.pricing_option_id,
+            budget: (pricing.min_spend_per_package as number) || 500,
+            bid_price: ((pricing.floor_price as number) || (pricing.fixed_price as number) || 10) + 1,
+            name: 'Governance context test package',
+          },
+        ],
+        governance_context: testGovernanceContext,
+      }) as Promise<TaskResult>
+  );
+
+  if (!createResult?.success || !createResult?.data) {
+    createStep.passed = false;
+    createStep.error = createResult?.error || 'create_media_buy failed';
+    steps.push(createStep);
+    await stopStub(stub);
+    return { steps, profile };
+  }
+
+  const mediaBuyId = createResult.data.media_buy_id as string;
+  createStep.details = `Created media buy ${mediaBuyId} with governance_context`;
+  steps.push(createStep);
+
+  // Step 5: If stub is active, verify seller called check_governance(committed)
+  if (stub && governanceContext && stubUrl) {
+    // Poll the stub's call log for the committed check (100ms interval, 5s timeout)
+    const pollStart = Date.now();
+    const pollTimeout = 5000;
+    const pollInterval = 100;
+    while (Date.now() - pollStart < pollTimeout) {
+      const calls = stub.getCallsForTool('check_governance');
+      if (calls.some(c => c.params.binding === 'committed')) break;
+      await new Promise(r => setTimeout(r, pollInterval));
+    }
+
+    const committedCalls = stub.getCallsForTool('check_governance').filter(c => c.params.binding === 'committed');
+
+    const { step: callbackStep } = await runStep<void>(
+      'Verify seller called check_governance(committed) on governance agent',
+      'check_governance (callback)',
+      async () => {
+        if (committedCalls.length === 0) {
+          throw new Error(
+            'Seller did not call check_governance(committed) on the registered governance agent. ' +
+              'Sellers MUST call check_governance with binding="committed" before executing a media buy.'
+          );
+        }
+
+        const callWithContext = committedCalls.find(c => c.params.governance_context === governanceContext);
+
+        if (!callWithContext) {
+          throw new Error(
+            `Seller called check_governance(committed) but with wrong governance_context. ` +
+              `Expected "${governanceContext}", got: ${committedCalls.map(c => JSON.stringify(c.params.governance_context)).join(', ')}`
+          );
+        }
+      }
+    );
+
+    if (committedCalls.length > 0) {
+      callbackStep.response_preview = JSON.stringify(committedCalls[0]!.params, null, 2);
+    }
+    steps.push(callbackStep);
+  }
+
+  // Step 6: Retrieve the media buy and check for governance_context persistence
+  const { result: getResult, step: getStep } = await runStep<TaskResult>(
+    'Verify governance_context persisted on get_media_buys',
+    'get_media_buys',
+    async () =>
+      client.executeTask('get_media_buys', {
+        media_buy_ids: [mediaBuyId],
+      }) as Promise<TaskResult>
+  );
+
+  if (getResult?.success && getResult?.data) {
+    const buys = (getResult.data.media_buys as Array<Record<string, unknown>>) || [];
+    const buy =
+      buys.find((b: Record<string, unknown>) => b.media_buy_id === mediaBuyId) ||
+      (buys.length === 1 ? buys[0] : undefined);
+
+    if (buy) {
+      const returnedGC = buy.governance_context as string | undefined;
+      if (returnedGC === testGovernanceContext) {
+        getStep.details = 'governance_context persisted and returned correctly';
+      } else if (returnedGC) {
+        getStep.passed = false;
+        getStep.error = `governance_context returned but value changed: expected "${testGovernanceContext}", got "${returnedGC}"`;
+      } else {
+        getStep.passed = false;
+        getStep.error =
+          'Seller did not return governance_context on get_media_buys. ' +
+          'Sellers MUST persist governance_context from create_media_buy and include it on all subsequent responses.';
+      }
+      getStep.response_preview = JSON.stringify(
+        {
+          media_buy_id: buy.media_buy_id,
+          governance_context: returnedGC ? `(present, ${returnedGC.length} chars)` : '(absent)',
+          status: buy.status,
+        },
+        null,
+        2
+      );
+    } else if (buys.length === 0) {
+      getStep.details =
+        'get_media_buys returned 0 buys — agent may be stateless (test agent). Cannot verify governance_context persistence.';
+      getStep.warnings = [
+        'governance_context persistence could not be verified — agent does not persist media buys across requests',
+      ];
+    } else {
+      getStep.passed = false;
+      getStep.error = `Media buy ${mediaBuyId} not found among ${buys.length} returned buys`;
+    }
+  } else if (getResult && !getResult.success) {
+    getStep.passed = false;
+    getStep.error = getResult.error || 'get_media_buys failed';
+  }
+  steps.push(getStep);
+
+  await stopStub(stub);
+  return { steps, profile };
+}
+
+/**
+ * Resolve a test account from the seller. Tries list_accounts first,
+ * then sync_accounts, then falls back to a static account reference.
+ */
+async function resolveTestAccount(
+  client: ReturnType<typeof getOrCreateClient>,
+  profile: AgentProfile,
+  options: TestOptions
+): Promise<Record<string, unknown>> {
+  if (profile.tools.includes('list_accounts')) {
+    try {
+      const result = (await client.executeTask('list_accounts', {})) as TaskResult;
+      const accounts = result?.data?.accounts as Array<Record<string, unknown>> | undefined;
+      if (accounts?.length && accounts[0]) {
+        return { account_id: accounts[0].account_id };
+      }
+    } catch {
+      // Fall through
+    }
+  }
+
+  if (profile.tools.includes('sync_accounts')) {
+    try {
+      const result = (await client.executeTask('sync_accounts', {
+        accounts: [
+          {
+            brand: options.brand || { domain: 'test.example.com' },
+            operator: 'comply-test',
+            billing: 'operator',
+            sandbox: true,
+          },
+        ],
+      })) as TaskResult;
+      const accounts = result?.data?.accounts as Array<Record<string, unknown>> | undefined;
+      if (accounts?.length && accounts[0] && accounts[0].account_id) {
+        return { account_id: accounts[0].account_id };
+      }
+    } catch {
+      // Fall through
+    }
+  }
+
+  return { account_id: 'test-gc-acct' };
+}
+
+async function stopStub(stub: GovernanceAgentStub | null): Promise<void> {
+  if (stub) {
+    try {
+      await stub.stop();
+    } catch {}
+  }
 }
 
 /**

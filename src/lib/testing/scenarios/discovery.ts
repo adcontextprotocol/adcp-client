@@ -6,7 +6,7 @@
 
 import type { ListCreativeFormatsResponse, Format } from '../../types/tools.generated';
 import type { TestOptions, TestStepResult, AgentProfile, TaskResult } from '../types';
-import { createTestClient, runStep, discoverAgentProfile, discoverAgentCapabilities } from '../client';
+import { getOrCreateClient, runStep, getOrDiscoverProfile, discoverAgentCapabilities } from '../client';
 
 /**
  * Test: Discovery
@@ -17,10 +17,10 @@ export async function testDiscovery(
   options: TestOptions
 ): Promise<{ steps: TestStepResult[]; profile?: AgentProfile }> {
   const steps: TestStepResult[] = [];
-  const client = createTestClient(agentUrl, options.protocol || 'mcp', options);
+  const client = getOrCreateClient(agentUrl, options);
 
   // Discover agent profile
-  const { profile, step: profileStep } = await discoverAgentProfile(client);
+  const { profile, step: profileStep } = await getOrDiscoverProfile(client, options);
   steps.push(profileStep);
 
   if (!profileStep.passed) {

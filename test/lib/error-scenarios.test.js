@@ -15,42 +15,28 @@ const assert = require('node:assert');
  */
 
 describe('TaskExecutor Error Scenarios', { skip: process.env.CI ? 'Slow tests - skipped in CI' : false }, () => {
-  let TaskExecutor;
-  let ProtocolClient;
-  let TaskTimeoutError;
-  let InputRequiredError;
-  let DeferredTaskError;
-  let MaxClarificationError;
-  let ADCP_STATUS;
+  // Import once to avoid OOM from repeatedly clearing require cache with ~366 Zod schemas
+  const lib = require('../../dist/lib/index.js');
+  const TaskExecutor = lib.TaskExecutor;
+  const ProtocolClient = lib.ProtocolClient;
+  const TaskTimeoutError = lib.TaskTimeoutError;
+  const InputRequiredError = lib.InputRequiredError;
+  const DeferredTaskError = lib.DeferredTaskError;
+  const MaxClarificationError = lib.MaxClarificationError;
+  const ADCP_STATUS = lib.ADCP_STATUS || {
+    COMPLETED: 'completed',
+    WORKING: 'working',
+    SUBMITTED: 'submitted',
+    INPUT_REQUIRED: 'input-required',
+    FAILED: 'failed',
+    REJECTED: 'rejected',
+    CANCELED: 'canceled',
+  };
+
   let originalCallTool;
   let mockAgent;
 
   beforeEach(() => {
-    // Fresh imports - clear ALL dist/lib cache entries to ensure mocks work
-    Object.keys(require.cache).forEach(key => {
-      if (key.includes('dist/lib')) {
-        delete require.cache[key];
-      }
-    });
-    const lib = require('../../dist/lib/index.js');
-
-    TaskExecutor = lib.TaskExecutor;
-    // ProtocolClient is now exported from the main library (for testing purposes)
-    ProtocolClient = lib.ProtocolClient;
-    TaskTimeoutError = lib.TaskTimeoutError;
-    InputRequiredError = lib.InputRequiredError;
-    DeferredTaskError = lib.DeferredTaskError;
-    MaxClarificationError = lib.MaxClarificationError;
-    ADCP_STATUS = lib.ADCP_STATUS || {
-      COMPLETED: 'completed',
-      WORKING: 'working',
-      SUBMITTED: 'submitted',
-      INPUT_REQUIRED: 'input-required',
-      FAILED: 'failed',
-      REJECTED: 'rejected',
-      CANCELED: 'canceled',
-    };
-
     originalCallTool = ProtocolClient.callTool;
 
     mockAgent = {

@@ -345,10 +345,10 @@ export class TaskExecutor {
           result.governanceOutcome = await this.governanceMiddleware.reportOutcome(
             governanceCheckId,
             'completed',
-            govCtx,
             result.data as Record<string, unknown> | undefined,
             undefined,
-            debugLogs
+            debugLogs,
+            govCtx
           );
           if (!result.governanceOutcome) {
             result.governanceOutcomeError = 'Outcome reporting to governance agent failed';
@@ -357,10 +357,10 @@ export class TaskExecutor {
           result.governanceOutcome = await this.governanceMiddleware.reportOutcome(
             governanceCheckId,
             'failed',
-            govCtx,
             undefined,
             { message: result.error },
-            debugLogs
+            debugLogs,
+            govCtx
           );
           if (!result.governanceOutcome) {
             result.governanceOutcomeError = 'Outcome reporting to governance agent failed';
@@ -378,10 +378,10 @@ export class TaskExecutor {
         await this.governanceMiddleware.reportOutcome(
           governanceCheckId,
           'failed',
-          governanceResult.governanceContext,
           undefined,
           { message: (error as Error).message },
-          debugLogs
+          debugLogs,
+          governanceResult.governanceContext
         );
       }
       return this.createErrorResult<T>(taskId, agent, error, debugLogs, startTime);

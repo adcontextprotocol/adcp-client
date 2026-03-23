@@ -18,9 +18,9 @@ import type {
 import type { Product, PricingOption, FormatID } from '../../types/core.generated';
 import type { TestOptions, TestStepResult, AgentProfile, TaskResult } from '../types';
 import {
-  createTestClient,
+  getOrCreateClient,
   runStep,
-  discoverAgentProfile,
+  getOrDiscoverProfile,
   resolveBrand,
   resolveAccount,
   validateResponseSchema,
@@ -188,7 +188,7 @@ export async function testCreateMediaBuy(
   options: TestOptions
 ): Promise<{ steps: TestStepResult[]; profile?: AgentProfile; mediaBuyId?: string }> {
   const steps: TestStepResult[] = [];
-  const client = createTestClient(agentUrl, options.protocol || 'mcp', options);
+  const client = getOrCreateClient(agentUrl, options);
 
   // First run discovery
   const { steps: discoverySteps, profile } = await testDiscovery(agentUrl, options);
@@ -305,7 +305,7 @@ export async function testFullSalesFlow(
   options: TestOptions
 ): Promise<{ steps: TestStepResult[]; profile?: AgentProfile }> {
   const steps: TestStepResult[] = [];
-  const client = createTestClient(agentUrl, options.protocol || 'mcp', options);
+  const client = getOrCreateClient(agentUrl, options);
 
   // Run create media buy flow first
   const { steps: createSteps, profile, mediaBuyId } = await testCreateMediaBuy(agentUrl, options);
@@ -448,10 +448,10 @@ export async function testCreativeSync(
   options: TestOptions
 ): Promise<{ steps: TestStepResult[]; profile?: AgentProfile }> {
   const steps: TestStepResult[] = [];
-  const client = createTestClient(agentUrl, options.protocol || 'mcp', options);
+  const client = getOrCreateClient(agentUrl, options);
 
   // Discover profile
-  const { profile, step: profileStep } = await discoverAgentProfile(client);
+  const { profile, step: profileStep } = await getOrDiscoverProfile(client, options);
   steps.push(profileStep);
 
   if (!profile.tools.includes('sync_creatives')) {
@@ -600,7 +600,7 @@ export async function testCreativeInline(
   options: TestOptions
 ): Promise<{ steps: TestStepResult[]; profile?: AgentProfile }> {
   const steps: TestStepResult[] = [];
-  const client = createTestClient(agentUrl, options.protocol || 'mcp', options);
+  const client = getOrCreateClient(agentUrl, options);
 
   // Discovery first
   const { steps: discoverySteps, profile } = await testDiscovery(agentUrl, options);
@@ -781,7 +781,7 @@ export async function testCreativeReference(
   options: TestOptions
 ): Promise<{ steps: TestStepResult[]; profile?: AgentProfile }> {
   const steps: TestStepResult[] = [];
-  const client = createTestClient(agentUrl, options.protocol || 'mcp', options);
+  const client = getOrCreateClient(agentUrl, options);
 
   const { steps: discoverySteps, profile } = await testDiscovery(agentUrl, options);
   steps.push(...discoverySteps);
@@ -1043,10 +1043,10 @@ export async function testSyncAudiences(
   options: TestOptions
 ): Promise<{ steps: TestStepResult[]; profile?: AgentProfile }> {
   const steps: TestStepResult[] = [];
-  const client = createTestClient(agentUrl, options.protocol || 'mcp', options);
+  const client = getOrCreateClient(agentUrl, options);
 
   // Discover agent profile
-  const { profile, step: profileStep } = await discoverAgentProfile(client);
+  const { profile, step: profileStep } = await getOrDiscoverProfile(client, options);
   steps.push(profileStep);
 
   if (!profileStep.passed) {
@@ -1236,7 +1236,7 @@ export async function testMediaBuyLifecycle(
   options: TestOptions
 ): Promise<{ steps: TestStepResult[]; profile?: AgentProfile }> {
   const steps: TestStepResult[] = [];
-  const client = createTestClient(agentUrl, options.protocol || 'mcp', options);
+  const client = getOrCreateClient(agentUrl, options);
 
   // Create a media buy to work with
   const { steps: createSteps, profile, mediaBuyId } = await testCreateMediaBuy(agentUrl, options);
@@ -1383,7 +1383,7 @@ export async function testTerminalStateEnforcement(
   options: TestOptions
 ): Promise<{ steps: TestStepResult[]; profile?: AgentProfile }> {
   const steps: TestStepResult[] = [];
-  const client = createTestClient(agentUrl, options.protocol || 'mcp', options);
+  const client = getOrCreateClient(agentUrl, options);
 
   // Create and cancel a media buy
   const { steps: createSteps, profile, mediaBuyId } = await testCreateMediaBuy(agentUrl, options);
@@ -1488,7 +1488,7 @@ export async function testPackageLifecycle(
   options: TestOptions
 ): Promise<{ steps: TestStepResult[]; profile?: AgentProfile }> {
   const steps: TestStepResult[] = [];
-  const client = createTestClient(agentUrl, options.protocol || 'mcp', options);
+  const client = getOrCreateClient(agentUrl, options);
 
   // Create a media buy
   const { steps: createSteps, profile, mediaBuyId } = await testCreateMediaBuy(agentUrl, options);

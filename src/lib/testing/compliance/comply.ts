@@ -45,6 +45,7 @@ const TRACK_DEFINITIONS: Record<ComplianceTrack, { label: string; scenarios: Tes
       'media_buy_lifecycle',
       'terminal_state_enforcement',
       'package_lifecycle',
+      'seller_governance_context',
     ],
   },
   creative: {
@@ -59,10 +60,11 @@ const TRACK_DEFINITIONS: Record<ComplianceTrack, { label: string; scenarios: Tes
   },
   governance: {
     label: 'Governance',
+    scenarios: ['governance_property_lists', 'governance_content_standards', 'property_list_filters'],
+  },
+  campaign_governance: {
+    label: 'Campaign Governance',
     scenarios: [
-      'governance_property_lists',
-      'governance_content_standards',
-      'property_list_filters',
       'campaign_governance',
       'campaign_governance_denied',
       'campaign_governance_conditions',
@@ -97,7 +99,8 @@ const TRACK_RELEVANCE: Record<ComplianceTrack, string[]> = {
   media_buy: ['create_media_buy', 'update_media_buy', 'get_media_buys'],
   creative: ['sync_creatives', 'build_creative', 'list_creative_formats'],
   reporting: ['get_media_buy_delivery'],
-  governance: ['create_property_list', 'list_content_standards', 'sync_plans', 'check_governance'],
+  governance: ['create_property_list', 'list_content_standards'],
+  campaign_governance: ['sync_plans', 'check_governance'],
   signals: ['get_signals'],
   si: ['si_initiate_session'],
   audiences: ['sync_audiences'],
@@ -111,6 +114,7 @@ const TRACK_ORDER: ComplianceTrack[] = [
   'creative',
   'reporting',
   'governance',
+  'campaign_governance',
   'signals',
   'si',
   'audiences',
@@ -325,6 +329,35 @@ function collectObservations(
     }
   }
 
+  // Campaign governance track observations
+  if (track === 'campaign_governance') {
+    let anyCheckMissingContext = false;
+    for (const result of results) {
+      for (const step of result.steps ?? []) {
+        if (step.task === 'check_governance' && step.passed && step.response_preview) {
+          try {
+            const preview = JSON.parse(step.response_preview) as { governance_context?: string };
+            if (!preview.governance_context || preview.governance_context === '(absent)') {
+              anyCheckMissingContext = true;
+            }
+          } catch {
+            // not always JSON
+          }
+        }
+      }
+    }
+    if (anyCheckMissingContext) {
+      observations.push({
+        category: 'best_practice',
+        severity: 'warning',
+        track,
+        message:
+          'Governance agent did not return governance_context on check_governance response. ' +
+          'Without it, sellers cannot maintain governance continuity across the media buy lifecycle.',
+      });
+    }
+  }
+
   // Check for slow responses
   for (const result of results) {
     for (const step of result.steps ?? []) {
@@ -373,9 +406,11 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
     test_session_id: testOptions.test_session_id || `comply-${Date.now()}`,
   };
 
-  // Discover agent capabilities first
+  // Discover agent capabilities once and share across all scenarios
   const client = createTestClient(agentUrl, effectiveOptions.protocol ?? 'mcp', effectiveOptions);
   const { profile, step: profileStep } = await discoverAgentProfile(client);
+  effectiveOptions._client = client;
+  effectiveOptions._profile = profile;
 
   if (!profileStep.passed) {
     const errorMsg = profileStep.error || 'Unknown error';
