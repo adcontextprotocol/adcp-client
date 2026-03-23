@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas vlatest
-// Generated at: 2026-03-23T09:31:56.266Z
+// Generated at: 2026-03-23T11:40:18.032Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -1109,8 +1109,8 @@ export type UniversalMacro =
   | 'POD_SIZE'
   | 'AD_BREAK_ID'
   | 'STATION_ID'
-  | 'SHOW_NAME'
-  | 'EPISODE_ID'
+  | 'COLLECTION_NAME'
+  | 'INSTALLMENT_ID'
   | 'AUDIO_DURATION'
   | 'AXEM'
   | 'CATALOG_ID'
@@ -1980,7 +1980,7 @@ export type MediaChannel =
  */
 export type DeliveryType = 'guaranteed' | 'non_guaranteed';
 /**
- * Whether this product offers exclusive access to its inventory. Defaults to 'none' when absent. Most relevant for guaranteed products tied to specific shows or placements.
+ * Whether this product offers exclusive access to its inventory. Defaults to 'none' when absent. Most relevant for guaranteed products tied to specific collections or placements.
  */
 export type Exclusivity = 'none' | 'category' | 'exclusive';
 /**
@@ -2106,9 +2106,9 @@ export type ActionSource =
   | 'system_generated'
   | 'other';
 /**
- * Lifecycle status of the episode
+ * Lifecycle status of the installment
  */
-export type EpisodeStatus = 'scheduled' | 'tentative' | 'live' | 'postponed' | 'cancelled' | 'aired' | 'published';
+export type InstallmentStatus = 'scheduled' | 'tentative' | 'live' | 'postponed' | 'cancelled' | 'aired' | 'published';
 /**
  * Rating system used
  */
@@ -2327,17 +2327,17 @@ export interface Product {
     manifest: {};
   };
   /**
-   * Shows available in this product. Each entry references shows declared in an adagents.json by domain and show ID. Buyers resolve full show objects from the referenced adagents.json.
+   * Collections available in this product. Each entry references collections declared in an adagents.json by domain and collection ID. Buyers resolve full collection objects from the referenced adagents.json.
    */
-  shows?: ShowSelector[];
+  collections?: CollectionSelector[];
   /**
-   * Whether buyers can target a subset of this product's shows. When false (default), the product is a bundle — buyers get all listed shows. When true, buyers can select specific shows in the media buy.
+   * Whether buyers can target a subset of this product's collections. When false (default), the product is a bundle — buyers get all listed collections. When true, buyers can select specific collections in the media buy.
    */
-  show_targeting_allowed?: boolean;
+  collection_targeting_allowed?: boolean;
   /**
-   * Specific episodes included in this product. Each episode references its parent show via show_id when the product spans multiple shows. When absent with shows present, the product covers the shows broadly (run-of-show).
+   * Specific installments included in this product. Each installment references its parent collection via collection_id when the product spans multiple collections. When absent with collections present, the product covers the collections broadly (run-of-collection).
    */
-  episodes?: Episode[];
+  installments?: Installment[];
   /**
    * Registry policy IDs the seller enforces for this product. Enforcement level comes from the policy registry. Buyers can filter products by required policies.
    */
@@ -2991,32 +2991,32 @@ export interface DiagnosticIssue {
   message: string;
 }
 /**
- * References shows declared in an adagents.json. Buyers resolve full show objects by fetching the adagents.json at the given domain and matching show_ids against its shows array.
+ * References collections declared in an adagents.json. Buyers resolve full collection objects by fetching the adagents.json at the given domain and matching collection_ids against its collections array.
  */
-export interface ShowSelector {
+export interface CollectionSelector {
   /**
-   * Domain where the adagents.json declaring these shows is hosted (e.g., 'mrbeast.com'). The shows array in that file contains the authoritative show definitions.
+   * Domain where the adagents.json declaring these collections is hosted (e.g., 'mrbeast.com'). The collections array in that file contains the authoritative collection definitions.
    */
   publisher_domain: string;
   /**
-   * Show IDs from the adagents.json shows array. Each ID must match a show_id declared in that file.
+   * Collection IDs from the adagents.json collections array. Each ID must match a collection_id declared in that file.
    */
-  show_ids: string[];
+  collection_ids: string[];
 }
 /**
- * A specific installment of a show. Episodes inherit show-level fields they don't override: content_rating defaults to the show's baseline, guest_talent is additive to the show's recurring talent, and topics add context beyond the show's genre.
+ * A single bookable unit within a collection — one episode, issue, event, or rotation period. The parent collection's kind indicates how to interpret each installment: TV/podcast episodes, print issues, live event airings, newsletter editions, or DOOH rotation periods. Installments inherit collection-level fields they don't override: content_rating defaults to the collection's baseline, guest_talent is additive to the collection's recurring talent, and topics add context beyond the collection's genre.
  */
-export interface Episode {
+export interface Installment {
   /**
-   * Unique identifier for this episode within the show
+   * Unique identifier for this installment within the collection
    */
-  episode_id: string;
+  installment_id: string;
   /**
-   * Parent show reference. Required when the product spans multiple shows. Maps to a show_id declared in one of the publishers' adagents.json files referenced by the product's shows selectors.
+   * Parent collection reference. Required when the product spans multiple collections. Maps to a collection_id declared in one of the publishers' adagents.json files referenced by the product's collection selectors.
    */
-  show_id?: string;
+  collection_id?: string;
   /**
-   * Episode title
+   * Installment title
    */
   name?: string;
   /**
@@ -3024,16 +3024,16 @@ export interface Episode {
    */
   season?: string;
   /**
-   * Episode number within the season (e.g., '3', '47')
+   * Installment number within the season (e.g., '3', '47')
    */
-  episode_number?: string;
+  installment_number?: string;
   /**
-   * When the episode airs or publishes (ISO 8601)
+   * When the installment airs or publishes (ISO 8601)
    */
   scheduled_at?: string;
-  status?: EpisodeStatus;
+  status?: InstallmentStatus;
   /**
-   * Expected duration of the episode in seconds
+   * Expected duration of the installment in seconds
    */
   duration_seconds?: number;
   /**
@@ -3041,34 +3041,35 @@ export interface Episode {
    */
   flexible_end?: boolean;
   /**
-   * When this episode data expires and should be re-queried. Agents should re-query before committing budget to products with tentative episodes.
+   * When this installment data expires and should be re-queried. Agents should re-query before committing budget to products with tentative installments.
    */
   valid_until?: string;
   content_rating?: ContentRating;
   /**
-   * Content topics for this episode. Uses the same taxonomy as the show's genre_taxonomy when present. Enables episode-level brand safety evaluation beyond content_rating.
+   * Content topics for this installment. Uses the same taxonomy as the collection's genre_taxonomy when present. Enables installment-level brand safety evaluation beyond content_rating.
    */
   topics?: string[];
   special?: Special;
   /**
-   * Episode-specific guests and talent. Additive to the show's recurring talent.
+   * Installment-specific guests and talent. Additive to the collection's recurring talent.
    */
   guest_talent?: Talent[];
   ad_inventory?: AdInventoryConfiguration;
+  deadlines?: InstallmentDeadlines;
   /**
-   * When this episode is a clip, highlight, or recap derived from a full episode. The source episode_id must reference an episode within the same response.
+   * When this installment is a clip, highlight, or recap derived from a full installment. The source installment_id must reference an installment within the same response.
    */
   derivative_of?: {
     /**
-     * The source episode this content is derived from
+     * The source installment this content is derived from
      */
-    episode_id: string;
+    installment_id: string;
     type: DerivativeType;
   };
   ext?: ExtensionObject;
 }
 /**
- * Episode-specific content rating. Overrides the show's baseline content_rating when present.
+ * Installment-specific content rating. Overrides the collection's baseline content_rating when present.
  */
 export interface ContentRating {
   system: ContentRatingSystem;
@@ -3078,7 +3079,7 @@ export interface ContentRating {
   rating: string;
 }
 /**
- * Episode-specific event context. When present, this episode is anchored to a real-world event. Overrides the show-level special when present.
+ * Installment-specific event context. When present, this installment is anchored to a real-world event. Overrides the collection-level special when present.
  */
 export interface Special {
   /**
@@ -3110,7 +3111,7 @@ export interface Talent {
   brand_url?: string;
 }
 /**
- * Break-based ad inventory for this episode. For non-break formats (host reads, integrations), use product placements.
+ * Break-based ad inventory for this installment. For non-break formats (host reads, integrations), use product placements.
  */
 export interface AdInventoryConfiguration {
   /**
@@ -3133,6 +3134,40 @@ export interface AdInventoryConfiguration {
    * Ad format types supported in breaks (e.g., 'video', 'audio', 'display')
    */
   supported_formats?: string[];
+}
+/**
+ * Booking, cancellation, and material submission deadlines for this installment. Present when the installment has time-sensitive inventory that requires advance commitment or material delivery.
+ */
+export interface InstallmentDeadlines {
+  /**
+   * Last date/time to book a placement in this installment (ISO 8601). After this point, the seller will not accept new bookings.
+   */
+  booking_deadline?: string;
+  /**
+   * Last date/time to cancel without penalty (ISO 8601). Cancellations after this point may incur fees per the seller's terms.
+   */
+  cancellation_deadline?: string;
+  /**
+   * Stages for creative material submission. Items MUST be in chronological order by due_at (earliest first). Typical pattern: 'draft' for raw materials the seller will process, 'final' for production-ready assets. Print example: draft artwork then press-ready PDF. Influencer example: talking points then approved script.
+   */
+  material_deadlines?: MaterialDeadline[];
+}
+/**
+ * A deadline for creative material submission. Sellers declare stages to distinguish draft materials (e.g., talking points, raw artwork) from production-ready assets (e.g., approved scripts, press-ready PDFs).
+ */
+export interface MaterialDeadline {
+  /**
+   * Submission stage identifier. Use 'draft' for materials that need seller processing and 'final' for production-ready assets. Sellers may define additional stages.
+   */
+  stage: string;
+  /**
+   * When materials for this stage are due (ISO 8601)
+   */
+  due_at: string;
+  /**
+   * What the seller needs at this stage (e.g., 'Talking points and brand guidelines', 'Press-ready PDF with bleed')
+   */
+  label?: string;
 }
 
 // TARGETING SCHEMA
@@ -3171,7 +3206,7 @@ export type PropertyIdentifierTypes =
   | 'openooh_venue_type'
   | 'rss_url'
   | 'apple_podcast_id'
-  | 'spotify_show_id'
+  | 'spotify_collection_id'
   | 'podcast_guid';
 /**
  * An advertising property that can be validated via adagents.json

@@ -372,8 +372,6 @@ export type {
   SignalFilters,
   PricingOption,
   PriceGuidance,
-  Episode,
-  ShowSelector,
 } from './types/tools.generated';
 
 // ====== ERROR CODES ======
