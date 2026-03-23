@@ -184,6 +184,20 @@ describe('parseCheckResponse', () => {
     assert.equal(result.escalation, undefined);
     assert.equal(result.expiresAt, undefined);
     assert.equal(result.mode, undefined);
+    assert.equal(result.governanceContext, undefined);
+  });
+
+  it('captures governance_context from response', () => {
+    const response = {
+      check_id: 'chk-7',
+      status: 'approved',
+      binding: 'committed',
+      explanation: 'All checks passed',
+      governance_context: 'opaque-token-abc123',
+    };
+
+    const result = parseCheckResponse(response);
+    assert.equal(result.governanceContext, 'opaque-token-abc123');
   });
 });
 

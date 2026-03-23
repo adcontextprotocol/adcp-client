@@ -340,11 +340,12 @@ export class TaskExecutor {
       // the caller reports via client.reportGovernanceOutcome() when the
       // task resolves through polling or webhooks.
       if (governanceCheckId && this.governanceMiddleware) {
-        if (result.status === 'completed') {
+        const govCtx = governanceResult?.governanceContext;
+        if (result.status === 'completed' && govCtx) {
           result.governanceOutcome = await this.governanceMiddleware.reportOutcome(
             governanceCheckId,
             'completed',
-            governanceResult?.governanceContext,
+            govCtx,
             result.data as Record<string, unknown> | undefined,
             undefined,
             debugLogs
@@ -352,11 +353,11 @@ export class TaskExecutor {
           if (!result.governanceOutcome) {
             result.governanceOutcomeError = 'Outcome reporting to governance agent failed';
           }
-        } else if (result.error) {
+        } else if (result.error && govCtx) {
           result.governanceOutcome = await this.governanceMiddleware.reportOutcome(
             governanceCheckId,
             'failed',
-            governanceResult?.governanceContext,
+            govCtx,
             undefined,
             { message: result.error },
             debugLogs
@@ -373,11 +374,11 @@ export class TaskExecutor {
       return result;
     } catch (error) {
       // Report failed outcome on error
-      if (governanceCheckId && this.governanceMiddleware) {
+      if (governanceCheckId && this.governanceMiddleware && governanceResult?.governanceContext) {
         await this.governanceMiddleware.reportOutcome(
           governanceCheckId,
           'failed',
-          governanceResult?.governanceContext,
+          governanceResult.governanceContext,
           undefined,
           { message: (error as Error).message },
           debugLogs

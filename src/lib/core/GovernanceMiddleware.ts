@@ -80,8 +80,8 @@ export function setAtPath(obj: Record<string, any>, path: string, value: unknown
 }
 
 /**
- * Structured governance context built by the client from tool parameters.
- * Serialized to an opaque string before sending to the governance agent.
+ * Structured governance context extracted from tool parameters.
+ * Matches the governance-context.json schema shape.
  */
 export interface GovernanceContext {
   total_budget?: { amount: number; currency: string };
@@ -89,6 +89,8 @@ export interface GovernanceContext {
   channels?: string[];
   flight?: { start: string; end: string };
   seller_url?: string;
+  audience_targeting?: unknown[];
+  [key: string]: unknown;
 }
 
 /**
@@ -101,7 +103,7 @@ export interface GovernanceContext {
 export function extractGovernanceContext(
   params: Record<string, unknown>,
   config: CampaignGovernanceConfig
-): Record<string, unknown> | undefined {
+): GovernanceContext | undefined {
   const ctx: GovernanceContext = {};
   let hasField = false;
 
@@ -141,7 +143,7 @@ export function extractGovernanceContext(
     hasField = true;
   }
 
-  return hasField ? ctx as Record<string, unknown> : undefined;
+  return hasField ? ctx : undefined;
 }
 
 export class GovernanceMiddleware {
@@ -192,16 +194,12 @@ export class GovernanceMiddleware {
     // Always make the initial governance check. maxConditionsIterations only
     // controls how many times we re-apply conditions and re-check.
     do {
-      const contextData = config.extractContext
-        ? config.extractContext(currentParams)
-        : extractGovernanceContext(currentParams, config);
       const request: CheckGovernanceRequest = {
         plan_id: config.planId,
         binding: 'proposed',
         caller: config.callerUrl ?? '',
         tool,
         payload: currentParams,
-        ...(contextData && { governance_context: JSON.stringify(contextData) }),
       };
 
       debugLogs.push({
@@ -305,8 +303,8 @@ export class GovernanceMiddleware {
     const request: ReportPlanOutcomeRequest = {
       plan_id: config.planId,
       check_id: checkId,
-      outcome,
       governance_context: governanceContext || '{}',
+      outcome,
     };
 
     if (outcome === 'completed' && sellerResponse) {

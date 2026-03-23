@@ -89,6 +89,7 @@ describe('SingleAgentClient Request Validation', () => {
         async () => {
           // Valid request with required fields + invalid top-level field
           await agent.createMediaBuy({
+            account: { account_id: 'test-account' },
             packages: [],
             brand: { domain: 'example.com' },
             start_time: 'immediate',

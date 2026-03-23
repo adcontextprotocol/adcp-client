@@ -19,16 +19,12 @@ export interface CampaignGovernanceConfig {
   agent: AgentConfig;
   /** Plan ID for this advertiser's campaign */
   planId: string;
-  /** Buyer's campaign reference (groups checks within a plan) */
-  buyerCampaignRef?: string;
   /** Caller URL for the check_governance request */
   callerUrl?: string;
   /** Max re-check iterations after auto-applying conditions. Default: 0 (return conditions to caller without re-checking). The initial governance check always fires. */
   maxConditionsIterations?: number;
-  /** Custom context extractor. Overrides the default extraction of budget, countries, channels, flight from tool params. Return undefined to send no context. The returned object is JSON-serialized before sending to the governance agent. */
-  extractContext?: (
-    params: Record<string, unknown>
-  ) => Record<string, unknown> | undefined;
+  /** Custom context extractor. Overrides the default extraction of budget, countries, channels, flight from tool params. Return undefined to send no context. */
+  extractContext?: (params: Record<string, unknown>) => import('./GovernanceMiddleware').GovernanceContext | undefined;
 }
 
 /**
@@ -123,7 +119,7 @@ export interface GovernanceCheckResult {
   conditions?: GovernanceCondition[];
   escalation?: GovernanceEscalation;
   expiresAt?: string;
-  /** Opaque context from the governance agent — pass to reportOutcome */
+  /** Opaque governance context string from the check response. Pass to reportOutcome. */
   governanceContext?: string;
   /** Whether conditions were auto-applied by the middleware */
   conditionsApplied?: boolean;
