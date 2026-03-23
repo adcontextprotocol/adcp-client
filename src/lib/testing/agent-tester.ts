@@ -66,6 +66,7 @@ import {
   testCampaignGovernanceDenied,
   testCampaignGovernanceConditions,
   testCampaignGovernanceDelivery,
+  testSellerGovernanceContext,
   testSISessionLifecycle,
   testSIAvailability,
   testSIHandoff,
@@ -256,6 +257,12 @@ export async function testAgent(
         profile = result.profile;
         break;
 
+      case 'seller_governance_context':
+        result = await testSellerGovernanceContext(agentUrl, effectiveOptions);
+        steps = result.steps;
+        profile = result.profile;
+        break;
+
       // v3 SI protocol scenarios
       case 'si_session_lifecycle':
         result = await testSISessionLifecycle(agentUrl, effectiveOptions);
@@ -419,6 +426,7 @@ export {
   testCampaignGovernanceDenied,
   testCampaignGovernanceConditions,
   testCampaignGovernanceDelivery,
+  testSellerGovernanceContext,
   testSISessionLifecycle,
   testSIAvailability,
   testSIHandoff,

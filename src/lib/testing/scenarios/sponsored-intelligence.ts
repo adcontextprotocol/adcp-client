@@ -9,7 +9,7 @@
  */
 
 import type { TestOptions, TestStepResult, AgentProfile, TaskResult } from '../types';
-import { createTestClient, runStep, discoverAgentProfile, resolveAuthPrincipal } from '../client';
+import { getOrCreateClient, runStep, getOrDiscoverProfile, resolveAuthPrincipal } from '../client';
 import { SPONSORED_INTELLIGENCE_TOOLS } from '../../utils/capabilities';
 import type {
   SIGetOfferingRequest,
@@ -33,10 +33,10 @@ export async function testSISessionLifecycle(
   options: TestOptions
 ): Promise<{ steps: TestStepResult[]; profile?: AgentProfile }> {
   const steps: TestStepResult[] = [];
-  const client = createTestClient(agentUrl, options.protocol || 'mcp', options);
+  const client = getOrCreateClient(agentUrl, options);
 
   // Discover agent profile
-  const { profile, step: profileStep } = await discoverAgentProfile(client);
+  const { profile, step: profileStep } = await getOrDiscoverProfile(client, options);
   steps.push(profileStep);
 
   if (!profileStep.passed) {
@@ -394,9 +394,9 @@ export async function testSIHandoff(
   options: TestOptions
 ): Promise<{ steps: TestStepResult[]; profile?: AgentProfile }> {
   const steps: TestStepResult[] = [];
-  const client = createTestClient(agentUrl, options.protocol || 'mcp', options);
+  const client = getOrCreateClient(agentUrl, options);
 
-  const { profile, step: profileStep } = await discoverAgentProfile(client);
+  const { profile, step: profileStep } = await getOrDiscoverProfile(client, options);
   steps.push(profileStep);
 
   if (!profileStep.passed) {
@@ -592,10 +592,10 @@ export async function testSIAvailability(
   options: TestOptions
 ): Promise<{ steps: TestStepResult[]; profile?: AgentProfile }> {
   const steps: TestStepResult[] = [];
-  const client = createTestClient(agentUrl, options.protocol || 'mcp', options);
+  const client = getOrCreateClient(agentUrl, options);
 
   // Discover agent profile
-  const { profile, step: profileStep } = await discoverAgentProfile(client);
+  const { profile, step: profileStep } = await getOrDiscoverProfile(client, options);
   steps.push(profileStep);
 
   if (!profileStep.passed) {

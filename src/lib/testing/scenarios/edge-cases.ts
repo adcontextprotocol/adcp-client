@@ -23,7 +23,7 @@ import type {
   ListCreativesResponse,
 } from '../../types/tools.generated';
 import type { TestOptions, TestStepResult, AgentProfile, TaskResult } from '../types';
-import { createTestClient, runStep, resolveBrand, resolveAccount, discoverAgentProfile } from '../client';
+import { getOrCreateClient, runStep, resolveBrand, resolveAccount, getOrDiscoverProfile } from '../client';
 import { testDiscovery } from './discovery';
 
 /**
@@ -35,9 +35,9 @@ export async function testErrorHandling(
   options: TestOptions
 ): Promise<{ steps: TestStepResult[]; profile?: AgentProfile }> {
   const steps: TestStepResult[] = [];
-  const client = createTestClient(agentUrl, options.protocol || 'mcp', options);
+  const client = getOrCreateClient(agentUrl, options);
 
-  const { profile, step: profileStep } = await discoverAgentProfile(client);
+  const { profile, step: profileStep } = await getOrDiscoverProfile(client, options);
   steps.push(profileStep);
 
   if (!profileStep.passed) {
@@ -181,9 +181,9 @@ export async function testValidation(
   options: TestOptions
 ): Promise<{ steps: TestStepResult[]; profile?: AgentProfile }> {
   const steps: TestStepResult[] = [];
-  const client = createTestClient(agentUrl, options.protocol || 'mcp', options);
+  const client = getOrCreateClient(agentUrl, options);
 
-  const { profile, step: profileStep } = await discoverAgentProfile(client);
+  const { profile, step: profileStep } = await getOrDiscoverProfile(client, options);
   steps.push(profileStep);
 
   if (!profileStep.passed) {
@@ -327,7 +327,7 @@ export async function testPricingEdgeCases(
   options: TestOptions
 ): Promise<{ steps: TestStepResult[]; profile?: AgentProfile }> {
   const steps: TestStepResult[] = [];
-  const client = createTestClient(agentUrl, options.protocol || 'mcp', options);
+  const client = getOrCreateClient(agentUrl, options);
 
   const { steps: discoverySteps, profile } = await testDiscovery(agentUrl, options);
   steps.push(...discoverySteps);
@@ -475,9 +475,9 @@ export async function testTemporalValidation(
   options: TestOptions
 ): Promise<{ steps: TestStepResult[]; profile?: AgentProfile }> {
   const steps: TestStepResult[] = [];
-  const client = createTestClient(agentUrl, options.protocol || 'mcp', options);
+  const client = getOrCreateClient(agentUrl, options);
 
-  const { profile, step: profileStep } = await discoverAgentProfile(client);
+  const { profile, step: profileStep } = await getOrDiscoverProfile(client, options);
   steps.push(profileStep);
 
   if (!profileStep.passed || !profile.tools.includes('create_media_buy')) {
@@ -564,9 +564,9 @@ export async function testBehaviorAnalysis(
   options: TestOptions
 ): Promise<{ steps: TestStepResult[]; profile?: AgentProfile }> {
   const steps: TestStepResult[] = [];
-  const client = createTestClient(agentUrl, options.protocol || 'mcp', options);
+  const client = getOrCreateClient(agentUrl, options);
 
-  const { profile, step: profileStep } = await discoverAgentProfile(client);
+  const { profile, step: profileStep } = await getOrDiscoverProfile(client, options);
   steps.push(profileStep);
 
   if (!profileStep.passed) {
@@ -645,9 +645,9 @@ export async function testResponseConsistency(
   options: TestOptions
 ): Promise<{ steps: TestStepResult[]; profile?: AgentProfile }> {
   const steps: TestStepResult[] = [];
-  const client = createTestClient(agentUrl, options.protocol || 'mcp', options);
+  const client = getOrCreateClient(agentUrl, options);
 
-  const { profile, step: profileStep } = await discoverAgentProfile(client);
+  const { profile, step: profileStep } = await getOrDiscoverProfile(client, options);
   steps.push(profileStep);
 
   if (!profileStep.passed) {

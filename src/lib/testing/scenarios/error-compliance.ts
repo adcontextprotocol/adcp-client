@@ -7,8 +7,7 @@
  */
 
 import type { TestOptions, TestStepResult, AgentProfile } from '../types';
-import { discoverAgentProfile } from '../client';
-import { createTestClient } from '../client';
+import { getOrDiscoverProfile, getOrCreateClient } from '../client';
 import { callMCPToolRaw } from '../../protocols/mcp';
 import { extractAdcpErrorFromMcp, resolveRecovery } from '../../utils/error-extraction';
 import type { ExtractedAdcpError } from '../../utils/error-extraction';
@@ -109,9 +108,9 @@ export async function testErrorCodes(
   options: TestOptions
 ): Promise<{ steps: TestStepResult[]; profile?: AgentProfile }> {
   const steps: TestStepResult[] = [];
-  const client = createTestClient(agentUrl, options.protocol || 'mcp', options);
+  const client = getOrCreateClient(agentUrl, options);
 
-  const { profile, step: profileStep } = await discoverAgentProfile(client);
+  const { profile, step: profileStep } = await getOrDiscoverProfile(client, options);
   steps.push(profileStep);
   if (!profileStep.passed) return { steps, profile };
 
@@ -233,9 +232,9 @@ export async function testErrorStructure(
   options: TestOptions
 ): Promise<{ steps: TestStepResult[]; profile?: AgentProfile }> {
   const steps: TestStepResult[] = [];
-  const client = createTestClient(agentUrl, options.protocol || 'mcp', options);
+  const client = getOrCreateClient(agentUrl, options);
 
-  const { profile, step: profileStep } = await discoverAgentProfile(client);
+  const { profile, step: profileStep } = await getOrDiscoverProfile(client, options);
   steps.push(profileStep);
   if (!profileStep.passed) return { steps, profile };
 
@@ -336,9 +335,9 @@ export async function testErrorTransport(
   options: TestOptions
 ): Promise<{ steps: TestStepResult[]; profile?: AgentProfile }> {
   const steps: TestStepResult[] = [];
-  const client = createTestClient(agentUrl, options.protocol || 'mcp', options);
+  const client = getOrCreateClient(agentUrl, options);
 
-  const { profile, step: profileStep } = await discoverAgentProfile(client);
+  const { profile, step: profileStep } = await getOrDiscoverProfile(client, options);
   steps.push(profileStep);
   if (!profileStep.passed) return { steps, profile };
 

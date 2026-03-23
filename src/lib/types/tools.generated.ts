@@ -314,9 +314,9 @@ export interface GetProductsRequest {
     | 'data_provider_signals'
     | 'max_optimization_goals'
     | 'catalog_match'
-    | 'shows'
-    | 'show_targeting_allowed'
-    | 'episodes'
+    | 'collections'
+    | 'collection_targeting_allowed'
+    | 'installments'
     | 'brief_relevance'
     | 'expires_at'
     | 'product_card'
@@ -816,9 +816,9 @@ export type ActionSource =
   | 'system_generated'
   | 'other';
 /**
- * Lifecycle status of the episode
+ * Lifecycle status of the installment
  */
-export type EpisodeStatus = 'scheduled' | 'tentative' | 'live' | 'postponed' | 'cancelled' | 'aired' | 'published';
+export type InstallmentStatus = 'scheduled' | 'tentative' | 'live' | 'postponed' | 'cancelled' | 'aired' | 'published';
 /**
  * Rating system used
  */
@@ -1111,17 +1111,17 @@ export interface Product {
     manifest: {};
   };
   /**
-   * Shows available in this product. Each entry references shows declared in an adagents.json by domain and show ID. Buyers resolve full show objects from the referenced adagents.json.
+   * Collections available in this product. Each entry references collections declared in an adagents.json by domain and collection ID. Buyers resolve full collection objects from the referenced adagents.json.
    */
-  shows?: ShowSelector[];
+  collections?: CollectionSelector[];
   /**
-   * Whether buyers can target a subset of this product's shows. When false (default), the product is a bundle — buyers get all listed shows. When true, buyers can select specific shows in the media buy.
+   * Whether buyers can target a subset of this product's collections. When false (default), the product is a bundle — buyers get all listed collections. When true, buyers can select specific collections in the media buy.
    */
-  show_targeting_allowed?: boolean;
+  collection_targeting_allowed?: boolean;
   /**
-   * Specific episodes included in this product. Each episode references its parent show via show_id when the product spans multiple shows. When absent with shows present, the product covers the shows broadly (run-of-show).
+   * Specific installments included in this product. Each installment references its parent collection via collection_id when the product spans multiple collections. When absent with collections present, the product covers the collections broadly (run-of-collection).
    */
-  episodes?: Episode[];
+  installments?: Installment[];
   /**
    * Registry policy IDs the seller enforces for this product. Enforcement level comes from the policy registry. Buyers can filter products by required policies.
    */
@@ -1775,32 +1775,32 @@ export interface DiagnosticIssue {
   message: string;
 }
 /**
- * References shows declared in an adagents.json. Buyers resolve full show objects by fetching the adagents.json at the given domain and matching show_ids against its shows array.
+ * References collections declared in an adagents.json. Buyers resolve full collection objects by fetching the adagents.json at the given domain and matching collection_ids against its collections array.
  */
-export interface ShowSelector {
+export interface CollectionSelector {
   /**
-   * Domain where the adagents.json declaring these shows is hosted (e.g., 'mrbeast.com'). The shows array in that file contains the authoritative show definitions.
+   * Domain where the adagents.json declaring these collections is hosted (e.g., 'mrbeast.com'). The collections array in that file contains the authoritative collection definitions.
    */
   publisher_domain: string;
   /**
-   * Show IDs from the adagents.json shows array. Each ID must match a show_id declared in that file.
+   * Collection IDs from the adagents.json collections array. Each ID must match a collection_id declared in that file.
    */
-  show_ids: string[];
+  collection_ids: string[];
 }
 /**
- * A specific installment of a show. Episodes inherit show-level fields they don't override: content_rating defaults to the show's baseline, guest_talent is additive to the show's recurring talent, and topics add context beyond the show's genre.
+ * A single bookable unit within a collection — one episode, issue, event, or rotation period. The parent collection's kind indicates how to interpret each installment: TV/podcast episodes, print issues, live event airings, newsletter editions, or DOOH rotation periods. Installments inherit collection-level fields they don't override: content_rating defaults to the collection's baseline, guest_talent is additive to the collection's recurring talent, and topics add context beyond the collection's genre.
  */
-export interface Episode {
+export interface Installment {
   /**
-   * Unique identifier for this episode within the show
+   * Unique identifier for this installment within the collection
    */
-  episode_id: string;
+  installment_id: string;
   /**
-   * Parent show reference. Required when the product spans multiple shows. Maps to a show_id declared in one of the publishers' adagents.json files referenced by the product's shows selectors.
+   * Parent collection reference. Required when the product spans multiple collections. Maps to a collection_id declared in one of the publishers' adagents.json files referenced by the product's collection selectors.
    */
-  show_id?: string;
+  collection_id?: string;
   /**
-   * Episode title
+   * Installment title
    */
   name?: string;
   /**
@@ -1808,16 +1808,16 @@ export interface Episode {
    */
   season?: string;
   /**
-   * Episode number within the season (e.g., '3', '47')
+   * Installment number within the season (e.g., '3', '47')
    */
-  episode_number?: string;
+  installment_number?: string;
   /**
-   * When the episode airs or publishes (ISO 8601)
+   * When the installment airs or publishes (ISO 8601)
    */
   scheduled_at?: string;
-  status?: EpisodeStatus;
+  status?: InstallmentStatus;
   /**
-   * Expected duration of the episode in seconds
+   * Expected duration of the installment in seconds
    */
   duration_seconds?: number;
   /**
@@ -1825,34 +1825,35 @@ export interface Episode {
    */
   flexible_end?: boolean;
   /**
-   * When this episode data expires and should be re-queried. Agents should re-query before committing budget to products with tentative episodes.
+   * When this installment data expires and should be re-queried. Agents should re-query before committing budget to products with tentative installments.
    */
   valid_until?: string;
   content_rating?: ContentRating;
   /**
-   * Content topics for this episode. Uses the same taxonomy as the show's genre_taxonomy when present. Enables episode-level brand safety evaluation beyond content_rating.
+   * Content topics for this installment. Uses the same taxonomy as the collection's genre_taxonomy when present. Enables installment-level brand safety evaluation beyond content_rating.
    */
   topics?: string[];
   special?: Special;
   /**
-   * Episode-specific guests and talent. Additive to the show's recurring talent.
+   * Installment-specific guests and talent. Additive to the collection's recurring talent.
    */
   guest_talent?: Talent[];
   ad_inventory?: AdInventoryConfiguration;
+  deadlines?: InstallmentDeadlines;
   /**
-   * When this episode is a clip, highlight, or recap derived from a full episode. The source episode_id must reference an episode within the same response.
+   * When this installment is a clip, highlight, or recap derived from a full installment. The source installment_id must reference an installment within the same response.
    */
   derivative_of?: {
     /**
-     * The source episode this content is derived from
+     * The source installment this content is derived from
      */
-    episode_id: string;
+    installment_id: string;
     type: DerivativeType;
   };
   ext?: ExtensionObject;
 }
 /**
- * Episode-specific content rating. Overrides the show's baseline content_rating when present.
+ * Installment-specific content rating. Overrides the collection's baseline content_rating when present.
  */
 export interface ContentRating {
   system: ContentRatingSystem;
@@ -1862,7 +1863,7 @@ export interface ContentRating {
   rating: string;
 }
 /**
- * Episode-specific event context. When present, this episode is anchored to a real-world event. Overrides the show-level special when present.
+ * Installment-specific event context. When present, this installment is anchored to a real-world event. Overrides the collection-level special when present.
  */
 export interface Special {
   /**
@@ -1894,7 +1895,7 @@ export interface Talent {
   brand_url?: string;
 }
 /**
- * Break-based ad inventory for this episode. For non-break formats (host reads, integrations), use product placements.
+ * Break-based ad inventory for this installment. For non-break formats (host reads, integrations), use product placements.
  */
 export interface AdInventoryConfiguration {
   /**
@@ -1917,6 +1918,40 @@ export interface AdInventoryConfiguration {
    * Ad format types supported in breaks (e.g., 'video', 'audio', 'display')
    */
   supported_formats?: string[];
+}
+/**
+ * Booking, cancellation, and material submission deadlines for this installment. Present when the installment has time-sensitive inventory that requires advance commitment or material delivery.
+ */
+export interface InstallmentDeadlines {
+  /**
+   * Last date/time to book a placement in this installment (ISO 8601). After this point, the seller will not accept new bookings.
+   */
+  booking_deadline?: string;
+  /**
+   * Last date/time to cancel without penalty (ISO 8601). Cancellations after this point may incur fees per the seller's terms.
+   */
+  cancellation_deadline?: string;
+  /**
+   * Stages for creative material submission. Items MUST be in chronological order by due_at (earliest first). Typical pattern: 'draft' for raw materials the seller will process, 'final' for production-ready assets. Print example: draft artwork then press-ready PDF. Influencer example: talking points then approved script.
+   */
+  material_deadlines?: MaterialDeadline[];
+}
+/**
+ * A deadline for creative material submission. Sellers declare stages to distinguish draft materials (e.g., talking points, raw artwork) from production-ready assets (e.g., approved scripts, press-ready PDFs).
+ */
+export interface MaterialDeadline {
+  /**
+   * Submission stage identifier. Use 'draft' for materials that need seller processing and 'final' for production-ready assets. Sellers may define additional stages.
+   */
+  stage: string;
+  /**
+   * When materials for this stage are due (ISO 8601)
+   */
+  due_at: string;
+  /**
+   * What the seller needs at this stage (e.g., 'Talking points and brand guidelines', 'Press-ready PDF with bleed')
+   */
+  label?: string;
 }
 /**
  * A proposed media plan with budget allocations across products. Represents the publisher's strategic recommendation for how to structure a campaign based on the brief. Proposals are actionable - buyers can execute them directly via create_media_buy by providing the proposal_id.
@@ -2243,8 +2278,8 @@ export type UniversalMacro =
   | 'POD_SIZE'
   | 'AD_BREAK_ID'
   | 'STATION_ID'
-  | 'SHOW_NAME'
-  | 'EPISODE_ID'
+  | 'COLLECTION_NAME'
+  | 'INSTALLMENT_ID'
   | 'AUDIO_DURATION'
   | 'AXEM'
   | 'CATALOG_ID'
@@ -2509,9 +2544,9 @@ export interface Overlay {
      */
     height: number;
     /**
-     * 'px' = absolute pixels from asset top-left. 'fraction' = proportional to asset dimensions (x/y: 0.0 = asset edge, 1.0 = opposite edge; width/height: 0.12 = 12% of asset dimension).
+     * 'px' = absolute pixels from asset top-left. 'fraction' = proportional to asset dimensions (0.0 = edge, 1.0 = opposite edge). 'inches', 'cm', 'mm', 'pt' (1/72 inch) = physical units for print overlays, measured from asset top-left.
      */
-    unit: 'px' | 'fraction';
+    unit: 'px' | 'fraction' | 'inches' | 'cm' | 'mm' | 'pt';
   };
 }
 export interface BaseGroupAsset {
@@ -3045,6 +3080,10 @@ export interface CreateMediaBuyRequest {
  */
 export interface PackageRequest {
   /**
+   * Buyer's reference identifier for this package. Sellers SHOULD deduplicate requests with the same buyer_ref within a media buy, returning the existing package rather than creating a duplicate.
+   */
+  buyer_ref: string;
+  /**
    * Product ID for this package
    */
   product_id: string;
@@ -3100,7 +3139,6 @@ export interface PackageRequest {
    * @maxItems 100
    */
   creatives?: CreativeAsset[];
-  context?: ContextObject;
   ext?: ExtensionObject;
 }
 /**
@@ -4024,7 +4062,6 @@ export interface ReportingWebhook {
   requested_metrics?: AvailableMetric[];
 }
 
-
 // create_media_buy response
 /**
  * Response payload for create_media_buy task. Returns either complete success data OR error information, never both. This enforces atomic operation semantics - the media buy is either fully created or not created at all.
@@ -4222,28 +4259,8777 @@ export interface Account {
    */
   account_scope?: 'operator' | 'brand' | 'operator_brand' | 'agent';
   /**
-   * Governance agent endpoints for this account. When present, the seller MUST call these agents for governance approval before confirming media buy requests. Each agent can be scoped to specific validation categories. All applicable agents must approve for the action to proceed (unanimous approval).
+   * Governance agent endpoints registered on this account. Authentication credentials are write-only and not included in responses — use sync_governance to set or update credentials.
+   *
+   * @maxItems 10
    */
-  governance_agents?: {
-    /**
-     * Governance agent endpoint URL.
-     */
-    url: string;
-    authentication: {
-      /**
-       * @maxItems 1
-       */
-      schemes: [] | [AuthenticationScheme];
-      /**
-       * Authentication credential (e.g., Bearer token).
-       */
-      credentials: string;
-    };
-    /**
-     * Governance categories this agent handles (e.g., ['budget_authority', 'strategic_alignment']). When omitted, the agent handles all categories.
-     */
-    categories?: string[];
-  }[];
+  governance_agents?:
+    | []
+    | [
+        {
+          /**
+           * Governance agent endpoint URL. Must use HTTPS.
+           */
+          url: string;
+          /**
+           * Governance categories this agent handles (e.g., ['budget_authority', 'strategic_alignment']). When omitted, the agent handles all categories.
+           *
+           * @maxItems 20
+           */
+          categories?:
+            | []
+            | [string]
+            | [string, string]
+            | [string, string, string]
+            | [string, string, string, string]
+            | [string, string, string, string, string]
+            | [string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string, string]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ];
+        }
+      ]
+    | [
+        {
+          /**
+           * Governance agent endpoint URL. Must use HTTPS.
+           */
+          url: string;
+          /**
+           * Governance categories this agent handles (e.g., ['budget_authority', 'strategic_alignment']). When omitted, the agent handles all categories.
+           *
+           * @maxItems 20
+           */
+          categories?:
+            | []
+            | [string]
+            | [string, string]
+            | [string, string, string]
+            | [string, string, string, string]
+            | [string, string, string, string, string]
+            | [string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string, string]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ];
+        },
+        {
+          /**
+           * Governance agent endpoint URL. Must use HTTPS.
+           */
+          url: string;
+          /**
+           * Governance categories this agent handles (e.g., ['budget_authority', 'strategic_alignment']). When omitted, the agent handles all categories.
+           *
+           * @maxItems 20
+           */
+          categories?:
+            | []
+            | [string]
+            | [string, string]
+            | [string, string, string]
+            | [string, string, string, string]
+            | [string, string, string, string, string]
+            | [string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string, string]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ];
+        }
+      ]
+    | [
+        {
+          /**
+           * Governance agent endpoint URL. Must use HTTPS.
+           */
+          url: string;
+          /**
+           * Governance categories this agent handles (e.g., ['budget_authority', 'strategic_alignment']). When omitted, the agent handles all categories.
+           *
+           * @maxItems 20
+           */
+          categories?:
+            | []
+            | [string]
+            | [string, string]
+            | [string, string, string]
+            | [string, string, string, string]
+            | [string, string, string, string, string]
+            | [string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string, string]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ];
+        },
+        {
+          /**
+           * Governance agent endpoint URL. Must use HTTPS.
+           */
+          url: string;
+          /**
+           * Governance categories this agent handles (e.g., ['budget_authority', 'strategic_alignment']). When omitted, the agent handles all categories.
+           *
+           * @maxItems 20
+           */
+          categories?:
+            | []
+            | [string]
+            | [string, string]
+            | [string, string, string]
+            | [string, string, string, string]
+            | [string, string, string, string, string]
+            | [string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string, string]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ];
+        },
+        {
+          /**
+           * Governance agent endpoint URL. Must use HTTPS.
+           */
+          url: string;
+          /**
+           * Governance categories this agent handles (e.g., ['budget_authority', 'strategic_alignment']). When omitted, the agent handles all categories.
+           *
+           * @maxItems 20
+           */
+          categories?:
+            | []
+            | [string]
+            | [string, string]
+            | [string, string, string]
+            | [string, string, string, string]
+            | [string, string, string, string, string]
+            | [string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string, string]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ];
+        }
+      ]
+    | [
+        {
+          /**
+           * Governance agent endpoint URL. Must use HTTPS.
+           */
+          url: string;
+          /**
+           * Governance categories this agent handles (e.g., ['budget_authority', 'strategic_alignment']). When omitted, the agent handles all categories.
+           *
+           * @maxItems 20
+           */
+          categories?:
+            | []
+            | [string]
+            | [string, string]
+            | [string, string, string]
+            | [string, string, string, string]
+            | [string, string, string, string, string]
+            | [string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string, string]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ];
+        },
+        {
+          /**
+           * Governance agent endpoint URL. Must use HTTPS.
+           */
+          url: string;
+          /**
+           * Governance categories this agent handles (e.g., ['budget_authority', 'strategic_alignment']). When omitted, the agent handles all categories.
+           *
+           * @maxItems 20
+           */
+          categories?:
+            | []
+            | [string]
+            | [string, string]
+            | [string, string, string]
+            | [string, string, string, string]
+            | [string, string, string, string, string]
+            | [string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string, string]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ];
+        },
+        {
+          /**
+           * Governance agent endpoint URL. Must use HTTPS.
+           */
+          url: string;
+          /**
+           * Governance categories this agent handles (e.g., ['budget_authority', 'strategic_alignment']). When omitted, the agent handles all categories.
+           *
+           * @maxItems 20
+           */
+          categories?:
+            | []
+            | [string]
+            | [string, string]
+            | [string, string, string]
+            | [string, string, string, string]
+            | [string, string, string, string, string]
+            | [string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string, string]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ];
+        },
+        {
+          /**
+           * Governance agent endpoint URL. Must use HTTPS.
+           */
+          url: string;
+          /**
+           * Governance categories this agent handles (e.g., ['budget_authority', 'strategic_alignment']). When omitted, the agent handles all categories.
+           *
+           * @maxItems 20
+           */
+          categories?:
+            | []
+            | [string]
+            | [string, string]
+            | [string, string, string]
+            | [string, string, string, string]
+            | [string, string, string, string, string]
+            | [string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string, string]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ];
+        }
+      ]
+    | [
+        {
+          /**
+           * Governance agent endpoint URL. Must use HTTPS.
+           */
+          url: string;
+          /**
+           * Governance categories this agent handles (e.g., ['budget_authority', 'strategic_alignment']). When omitted, the agent handles all categories.
+           *
+           * @maxItems 20
+           */
+          categories?:
+            | []
+            | [string]
+            | [string, string]
+            | [string, string, string]
+            | [string, string, string, string]
+            | [string, string, string, string, string]
+            | [string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string, string]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ];
+        },
+        {
+          /**
+           * Governance agent endpoint URL. Must use HTTPS.
+           */
+          url: string;
+          /**
+           * Governance categories this agent handles (e.g., ['budget_authority', 'strategic_alignment']). When omitted, the agent handles all categories.
+           *
+           * @maxItems 20
+           */
+          categories?:
+            | []
+            | [string]
+            | [string, string]
+            | [string, string, string]
+            | [string, string, string, string]
+            | [string, string, string, string, string]
+            | [string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string, string]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ];
+        },
+        {
+          /**
+           * Governance agent endpoint URL. Must use HTTPS.
+           */
+          url: string;
+          /**
+           * Governance categories this agent handles (e.g., ['budget_authority', 'strategic_alignment']). When omitted, the agent handles all categories.
+           *
+           * @maxItems 20
+           */
+          categories?:
+            | []
+            | [string]
+            | [string, string]
+            | [string, string, string]
+            | [string, string, string, string]
+            | [string, string, string, string, string]
+            | [string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string, string]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ];
+        },
+        {
+          /**
+           * Governance agent endpoint URL. Must use HTTPS.
+           */
+          url: string;
+          /**
+           * Governance categories this agent handles (e.g., ['budget_authority', 'strategic_alignment']). When omitted, the agent handles all categories.
+           *
+           * @maxItems 20
+           */
+          categories?:
+            | []
+            | [string]
+            | [string, string]
+            | [string, string, string]
+            | [string, string, string, string]
+            | [string, string, string, string, string]
+            | [string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string, string]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ];
+        },
+        {
+          /**
+           * Governance agent endpoint URL. Must use HTTPS.
+           */
+          url: string;
+          /**
+           * Governance categories this agent handles (e.g., ['budget_authority', 'strategic_alignment']). When omitted, the agent handles all categories.
+           *
+           * @maxItems 20
+           */
+          categories?:
+            | []
+            | [string]
+            | [string, string]
+            | [string, string, string]
+            | [string, string, string, string]
+            | [string, string, string, string, string]
+            | [string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string, string]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ];
+        }
+      ]
+    | [
+        {
+          /**
+           * Governance agent endpoint URL. Must use HTTPS.
+           */
+          url: string;
+          /**
+           * Governance categories this agent handles (e.g., ['budget_authority', 'strategic_alignment']). When omitted, the agent handles all categories.
+           *
+           * @maxItems 20
+           */
+          categories?:
+            | []
+            | [string]
+            | [string, string]
+            | [string, string, string]
+            | [string, string, string, string]
+            | [string, string, string, string, string]
+            | [string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string, string]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ];
+        },
+        {
+          /**
+           * Governance agent endpoint URL. Must use HTTPS.
+           */
+          url: string;
+          /**
+           * Governance categories this agent handles (e.g., ['budget_authority', 'strategic_alignment']). When omitted, the agent handles all categories.
+           *
+           * @maxItems 20
+           */
+          categories?:
+            | []
+            | [string]
+            | [string, string]
+            | [string, string, string]
+            | [string, string, string, string]
+            | [string, string, string, string, string]
+            | [string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string, string]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ];
+        },
+        {
+          /**
+           * Governance agent endpoint URL. Must use HTTPS.
+           */
+          url: string;
+          /**
+           * Governance categories this agent handles (e.g., ['budget_authority', 'strategic_alignment']). When omitted, the agent handles all categories.
+           *
+           * @maxItems 20
+           */
+          categories?:
+            | []
+            | [string]
+            | [string, string]
+            | [string, string, string]
+            | [string, string, string, string]
+            | [string, string, string, string, string]
+            | [string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string, string]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ];
+        },
+        {
+          /**
+           * Governance agent endpoint URL. Must use HTTPS.
+           */
+          url: string;
+          /**
+           * Governance categories this agent handles (e.g., ['budget_authority', 'strategic_alignment']). When omitted, the agent handles all categories.
+           *
+           * @maxItems 20
+           */
+          categories?:
+            | []
+            | [string]
+            | [string, string]
+            | [string, string, string]
+            | [string, string, string, string]
+            | [string, string, string, string, string]
+            | [string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string, string]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ];
+        },
+        {
+          /**
+           * Governance agent endpoint URL. Must use HTTPS.
+           */
+          url: string;
+          /**
+           * Governance categories this agent handles (e.g., ['budget_authority', 'strategic_alignment']). When omitted, the agent handles all categories.
+           *
+           * @maxItems 20
+           */
+          categories?:
+            | []
+            | [string]
+            | [string, string]
+            | [string, string, string]
+            | [string, string, string, string]
+            | [string, string, string, string, string]
+            | [string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string, string]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ];
+        },
+        {
+          /**
+           * Governance agent endpoint URL. Must use HTTPS.
+           */
+          url: string;
+          /**
+           * Governance categories this agent handles (e.g., ['budget_authority', 'strategic_alignment']). When omitted, the agent handles all categories.
+           *
+           * @maxItems 20
+           */
+          categories?:
+            | []
+            | [string]
+            | [string, string]
+            | [string, string, string]
+            | [string, string, string, string]
+            | [string, string, string, string, string]
+            | [string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string, string]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ];
+        }
+      ]
+    | [
+        {
+          /**
+           * Governance agent endpoint URL. Must use HTTPS.
+           */
+          url: string;
+          /**
+           * Governance categories this agent handles (e.g., ['budget_authority', 'strategic_alignment']). When omitted, the agent handles all categories.
+           *
+           * @maxItems 20
+           */
+          categories?:
+            | []
+            | [string]
+            | [string, string]
+            | [string, string, string]
+            | [string, string, string, string]
+            | [string, string, string, string, string]
+            | [string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string, string]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ];
+        },
+        {
+          /**
+           * Governance agent endpoint URL. Must use HTTPS.
+           */
+          url: string;
+          /**
+           * Governance categories this agent handles (e.g., ['budget_authority', 'strategic_alignment']). When omitted, the agent handles all categories.
+           *
+           * @maxItems 20
+           */
+          categories?:
+            | []
+            | [string]
+            | [string, string]
+            | [string, string, string]
+            | [string, string, string, string]
+            | [string, string, string, string, string]
+            | [string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string, string]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ];
+        },
+        {
+          /**
+           * Governance agent endpoint URL. Must use HTTPS.
+           */
+          url: string;
+          /**
+           * Governance categories this agent handles (e.g., ['budget_authority', 'strategic_alignment']). When omitted, the agent handles all categories.
+           *
+           * @maxItems 20
+           */
+          categories?:
+            | []
+            | [string]
+            | [string, string]
+            | [string, string, string]
+            | [string, string, string, string]
+            | [string, string, string, string, string]
+            | [string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string, string]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ];
+        },
+        {
+          /**
+           * Governance agent endpoint URL. Must use HTTPS.
+           */
+          url: string;
+          /**
+           * Governance categories this agent handles (e.g., ['budget_authority', 'strategic_alignment']). When omitted, the agent handles all categories.
+           *
+           * @maxItems 20
+           */
+          categories?:
+            | []
+            | [string]
+            | [string, string]
+            | [string, string, string]
+            | [string, string, string, string]
+            | [string, string, string, string, string]
+            | [string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string, string]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ];
+        },
+        {
+          /**
+           * Governance agent endpoint URL. Must use HTTPS.
+           */
+          url: string;
+          /**
+           * Governance categories this agent handles (e.g., ['budget_authority', 'strategic_alignment']). When omitted, the agent handles all categories.
+           *
+           * @maxItems 20
+           */
+          categories?:
+            | []
+            | [string]
+            | [string, string]
+            | [string, string, string]
+            | [string, string, string, string]
+            | [string, string, string, string, string]
+            | [string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string, string]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ];
+        },
+        {
+          /**
+           * Governance agent endpoint URL. Must use HTTPS.
+           */
+          url: string;
+          /**
+           * Governance categories this agent handles (e.g., ['budget_authority', 'strategic_alignment']). When omitted, the agent handles all categories.
+           *
+           * @maxItems 20
+           */
+          categories?:
+            | []
+            | [string]
+            | [string, string]
+            | [string, string, string]
+            | [string, string, string, string]
+            | [string, string, string, string, string]
+            | [string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string, string]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ];
+        },
+        {
+          /**
+           * Governance agent endpoint URL. Must use HTTPS.
+           */
+          url: string;
+          /**
+           * Governance categories this agent handles (e.g., ['budget_authority', 'strategic_alignment']). When omitted, the agent handles all categories.
+           *
+           * @maxItems 20
+           */
+          categories?:
+            | []
+            | [string]
+            | [string, string]
+            | [string, string, string]
+            | [string, string, string, string]
+            | [string, string, string, string, string]
+            | [string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string, string]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ];
+        }
+      ]
+    | [
+        {
+          /**
+           * Governance agent endpoint URL. Must use HTTPS.
+           */
+          url: string;
+          /**
+           * Governance categories this agent handles (e.g., ['budget_authority', 'strategic_alignment']). When omitted, the agent handles all categories.
+           *
+           * @maxItems 20
+           */
+          categories?:
+            | []
+            | [string]
+            | [string, string]
+            | [string, string, string]
+            | [string, string, string, string]
+            | [string, string, string, string, string]
+            | [string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string, string]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ];
+        },
+        {
+          /**
+           * Governance agent endpoint URL. Must use HTTPS.
+           */
+          url: string;
+          /**
+           * Governance categories this agent handles (e.g., ['budget_authority', 'strategic_alignment']). When omitted, the agent handles all categories.
+           *
+           * @maxItems 20
+           */
+          categories?:
+            | []
+            | [string]
+            | [string, string]
+            | [string, string, string]
+            | [string, string, string, string]
+            | [string, string, string, string, string]
+            | [string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string, string]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ];
+        },
+        {
+          /**
+           * Governance agent endpoint URL. Must use HTTPS.
+           */
+          url: string;
+          /**
+           * Governance categories this agent handles (e.g., ['budget_authority', 'strategic_alignment']). When omitted, the agent handles all categories.
+           *
+           * @maxItems 20
+           */
+          categories?:
+            | []
+            | [string]
+            | [string, string]
+            | [string, string, string]
+            | [string, string, string, string]
+            | [string, string, string, string, string]
+            | [string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string, string]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ];
+        },
+        {
+          /**
+           * Governance agent endpoint URL. Must use HTTPS.
+           */
+          url: string;
+          /**
+           * Governance categories this agent handles (e.g., ['budget_authority', 'strategic_alignment']). When omitted, the agent handles all categories.
+           *
+           * @maxItems 20
+           */
+          categories?:
+            | []
+            | [string]
+            | [string, string]
+            | [string, string, string]
+            | [string, string, string, string]
+            | [string, string, string, string, string]
+            | [string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string, string]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ];
+        },
+        {
+          /**
+           * Governance agent endpoint URL. Must use HTTPS.
+           */
+          url: string;
+          /**
+           * Governance categories this agent handles (e.g., ['budget_authority', 'strategic_alignment']). When omitted, the agent handles all categories.
+           *
+           * @maxItems 20
+           */
+          categories?:
+            | []
+            | [string]
+            | [string, string]
+            | [string, string, string]
+            | [string, string, string, string]
+            | [string, string, string, string, string]
+            | [string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string, string]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ];
+        },
+        {
+          /**
+           * Governance agent endpoint URL. Must use HTTPS.
+           */
+          url: string;
+          /**
+           * Governance categories this agent handles (e.g., ['budget_authority', 'strategic_alignment']). When omitted, the agent handles all categories.
+           *
+           * @maxItems 20
+           */
+          categories?:
+            | []
+            | [string]
+            | [string, string]
+            | [string, string, string]
+            | [string, string, string, string]
+            | [string, string, string, string, string]
+            | [string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string, string]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ];
+        },
+        {
+          /**
+           * Governance agent endpoint URL. Must use HTTPS.
+           */
+          url: string;
+          /**
+           * Governance categories this agent handles (e.g., ['budget_authority', 'strategic_alignment']). When omitted, the agent handles all categories.
+           *
+           * @maxItems 20
+           */
+          categories?:
+            | []
+            | [string]
+            | [string, string]
+            | [string, string, string]
+            | [string, string, string, string]
+            | [string, string, string, string, string]
+            | [string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string, string]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ];
+        },
+        {
+          /**
+           * Governance agent endpoint URL. Must use HTTPS.
+           */
+          url: string;
+          /**
+           * Governance categories this agent handles (e.g., ['budget_authority', 'strategic_alignment']). When omitted, the agent handles all categories.
+           *
+           * @maxItems 20
+           */
+          categories?:
+            | []
+            | [string]
+            | [string, string]
+            | [string, string, string]
+            | [string, string, string, string]
+            | [string, string, string, string, string]
+            | [string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string, string]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ];
+        }
+      ]
+    | [
+        {
+          /**
+           * Governance agent endpoint URL. Must use HTTPS.
+           */
+          url: string;
+          /**
+           * Governance categories this agent handles (e.g., ['budget_authority', 'strategic_alignment']). When omitted, the agent handles all categories.
+           *
+           * @maxItems 20
+           */
+          categories?:
+            | []
+            | [string]
+            | [string, string]
+            | [string, string, string]
+            | [string, string, string, string]
+            | [string, string, string, string, string]
+            | [string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string, string]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ];
+        },
+        {
+          /**
+           * Governance agent endpoint URL. Must use HTTPS.
+           */
+          url: string;
+          /**
+           * Governance categories this agent handles (e.g., ['budget_authority', 'strategic_alignment']). When omitted, the agent handles all categories.
+           *
+           * @maxItems 20
+           */
+          categories?:
+            | []
+            | [string]
+            | [string, string]
+            | [string, string, string]
+            | [string, string, string, string]
+            | [string, string, string, string, string]
+            | [string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string, string]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ];
+        },
+        {
+          /**
+           * Governance agent endpoint URL. Must use HTTPS.
+           */
+          url: string;
+          /**
+           * Governance categories this agent handles (e.g., ['budget_authority', 'strategic_alignment']). When omitted, the agent handles all categories.
+           *
+           * @maxItems 20
+           */
+          categories?:
+            | []
+            | [string]
+            | [string, string]
+            | [string, string, string]
+            | [string, string, string, string]
+            | [string, string, string, string, string]
+            | [string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string, string]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ];
+        },
+        {
+          /**
+           * Governance agent endpoint URL. Must use HTTPS.
+           */
+          url: string;
+          /**
+           * Governance categories this agent handles (e.g., ['budget_authority', 'strategic_alignment']). When omitted, the agent handles all categories.
+           *
+           * @maxItems 20
+           */
+          categories?:
+            | []
+            | [string]
+            | [string, string]
+            | [string, string, string]
+            | [string, string, string, string]
+            | [string, string, string, string, string]
+            | [string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string, string]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ];
+        },
+        {
+          /**
+           * Governance agent endpoint URL. Must use HTTPS.
+           */
+          url: string;
+          /**
+           * Governance categories this agent handles (e.g., ['budget_authority', 'strategic_alignment']). When omitted, the agent handles all categories.
+           *
+           * @maxItems 20
+           */
+          categories?:
+            | []
+            | [string]
+            | [string, string]
+            | [string, string, string]
+            | [string, string, string, string]
+            | [string, string, string, string, string]
+            | [string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string, string]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ];
+        },
+        {
+          /**
+           * Governance agent endpoint URL. Must use HTTPS.
+           */
+          url: string;
+          /**
+           * Governance categories this agent handles (e.g., ['budget_authority', 'strategic_alignment']). When omitted, the agent handles all categories.
+           *
+           * @maxItems 20
+           */
+          categories?:
+            | []
+            | [string]
+            | [string, string]
+            | [string, string, string]
+            | [string, string, string, string]
+            | [string, string, string, string, string]
+            | [string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string, string]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ];
+        },
+        {
+          /**
+           * Governance agent endpoint URL. Must use HTTPS.
+           */
+          url: string;
+          /**
+           * Governance categories this agent handles (e.g., ['budget_authority', 'strategic_alignment']). When omitted, the agent handles all categories.
+           *
+           * @maxItems 20
+           */
+          categories?:
+            | []
+            | [string]
+            | [string, string]
+            | [string, string, string]
+            | [string, string, string, string]
+            | [string, string, string, string, string]
+            | [string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string, string]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ];
+        },
+        {
+          /**
+           * Governance agent endpoint URL. Must use HTTPS.
+           */
+          url: string;
+          /**
+           * Governance categories this agent handles (e.g., ['budget_authority', 'strategic_alignment']). When omitted, the agent handles all categories.
+           *
+           * @maxItems 20
+           */
+          categories?:
+            | []
+            | [string]
+            | [string, string]
+            | [string, string, string]
+            | [string, string, string, string]
+            | [string, string, string, string, string]
+            | [string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string, string]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ];
+        },
+        {
+          /**
+           * Governance agent endpoint URL. Must use HTTPS.
+           */
+          url: string;
+          /**
+           * Governance categories this agent handles (e.g., ['budget_authority', 'strategic_alignment']). When omitted, the agent handles all categories.
+           *
+           * @maxItems 20
+           */
+          categories?:
+            | []
+            | [string]
+            | [string, string]
+            | [string, string, string]
+            | [string, string, string, string]
+            | [string, string, string, string, string]
+            | [string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string, string]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ];
+        }
+      ]
+    | [
+        {
+          /**
+           * Governance agent endpoint URL. Must use HTTPS.
+           */
+          url: string;
+          /**
+           * Governance categories this agent handles (e.g., ['budget_authority', 'strategic_alignment']). When omitted, the agent handles all categories.
+           *
+           * @maxItems 20
+           */
+          categories?:
+            | []
+            | [string]
+            | [string, string]
+            | [string, string, string]
+            | [string, string, string, string]
+            | [string, string, string, string, string]
+            | [string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string, string]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ];
+        },
+        {
+          /**
+           * Governance agent endpoint URL. Must use HTTPS.
+           */
+          url: string;
+          /**
+           * Governance categories this agent handles (e.g., ['budget_authority', 'strategic_alignment']). When omitted, the agent handles all categories.
+           *
+           * @maxItems 20
+           */
+          categories?:
+            | []
+            | [string]
+            | [string, string]
+            | [string, string, string]
+            | [string, string, string, string]
+            | [string, string, string, string, string]
+            | [string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string, string]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ];
+        },
+        {
+          /**
+           * Governance agent endpoint URL. Must use HTTPS.
+           */
+          url: string;
+          /**
+           * Governance categories this agent handles (e.g., ['budget_authority', 'strategic_alignment']). When omitted, the agent handles all categories.
+           *
+           * @maxItems 20
+           */
+          categories?:
+            | []
+            | [string]
+            | [string, string]
+            | [string, string, string]
+            | [string, string, string, string]
+            | [string, string, string, string, string]
+            | [string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string, string]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ];
+        },
+        {
+          /**
+           * Governance agent endpoint URL. Must use HTTPS.
+           */
+          url: string;
+          /**
+           * Governance categories this agent handles (e.g., ['budget_authority', 'strategic_alignment']). When omitted, the agent handles all categories.
+           *
+           * @maxItems 20
+           */
+          categories?:
+            | []
+            | [string]
+            | [string, string]
+            | [string, string, string]
+            | [string, string, string, string]
+            | [string, string, string, string, string]
+            | [string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string, string]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ];
+        },
+        {
+          /**
+           * Governance agent endpoint URL. Must use HTTPS.
+           */
+          url: string;
+          /**
+           * Governance categories this agent handles (e.g., ['budget_authority', 'strategic_alignment']). When omitted, the agent handles all categories.
+           *
+           * @maxItems 20
+           */
+          categories?:
+            | []
+            | [string]
+            | [string, string]
+            | [string, string, string]
+            | [string, string, string, string]
+            | [string, string, string, string, string]
+            | [string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string, string]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ];
+        },
+        {
+          /**
+           * Governance agent endpoint URL. Must use HTTPS.
+           */
+          url: string;
+          /**
+           * Governance categories this agent handles (e.g., ['budget_authority', 'strategic_alignment']). When omitted, the agent handles all categories.
+           *
+           * @maxItems 20
+           */
+          categories?:
+            | []
+            | [string]
+            | [string, string]
+            | [string, string, string]
+            | [string, string, string, string]
+            | [string, string, string, string, string]
+            | [string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string, string]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ];
+        },
+        {
+          /**
+           * Governance agent endpoint URL. Must use HTTPS.
+           */
+          url: string;
+          /**
+           * Governance categories this agent handles (e.g., ['budget_authority', 'strategic_alignment']). When omitted, the agent handles all categories.
+           *
+           * @maxItems 20
+           */
+          categories?:
+            | []
+            | [string]
+            | [string, string]
+            | [string, string, string]
+            | [string, string, string, string]
+            | [string, string, string, string, string]
+            | [string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string, string]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ];
+        },
+        {
+          /**
+           * Governance agent endpoint URL. Must use HTTPS.
+           */
+          url: string;
+          /**
+           * Governance categories this agent handles (e.g., ['budget_authority', 'strategic_alignment']). When omitted, the agent handles all categories.
+           *
+           * @maxItems 20
+           */
+          categories?:
+            | []
+            | [string]
+            | [string, string]
+            | [string, string, string]
+            | [string, string, string, string]
+            | [string, string, string, string, string]
+            | [string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string, string]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ];
+        },
+        {
+          /**
+           * Governance agent endpoint URL. Must use HTTPS.
+           */
+          url: string;
+          /**
+           * Governance categories this agent handles (e.g., ['budget_authority', 'strategic_alignment']). When omitted, the agent handles all categories.
+           *
+           * @maxItems 20
+           */
+          categories?:
+            | []
+            | [string]
+            | [string, string]
+            | [string, string, string]
+            | [string, string, string, string]
+            | [string, string, string, string, string]
+            | [string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string, string]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ];
+        },
+        {
+          /**
+           * Governance agent endpoint URL. Must use HTTPS.
+           */
+          url: string;
+          /**
+           * Governance categories this agent handles (e.g., ['budget_authority', 'strategic_alignment']). When omitted, the agent handles all categories.
+           *
+           * @maxItems 20
+           */
+          categories?:
+            | []
+            | [string]
+            | [string, string]
+            | [string, string, string]
+            | [string, string, string, string]
+            | [string, string, string, string, string]
+            | [string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string]
+            | [string, string, string, string, string, string, string, string, string, string, string, string, string]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ]
+            | [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                string
+              ];
+        }
+      ];
   /**
    * When true, this is a sandbox account — no real platform calls, no real spend. For explicit accounts (require_operator_auth: true), sandbox accounts are pre-existing test accounts on the platform discovered via list_accounts. For implicit accounts, sandbox is part of the natural key: the same brand/operator pair can have both a production and sandbox account.
    */
@@ -4403,59 +13189,17 @@ export interface CreateMediaBuyError {
 
 // update_media_buy parameters
 /**
- * Request parameters for updating campaign and package settings
+ * Package update configuration for update_media_buy. Identifies package by package_id or buyer_ref and specifies fields to modify. Fields not present are left unchanged. Note: product_id, format_ids, and pricing_option_id cannot be changed after creation.
  */
-export interface UpdateMediaBuyRequest {
+export type PackageUpdate = {
   /**
-   * Seller's ID of the media buy to update
+   * Publisher's ID of package to update
    */
-  media_buy_id: string;
+  package_id?: string;
   /**
-   * Expected current revision for optimistic concurrency. When provided, sellers MUST reject the update with CONFLICT if the media buy's current revision does not match. Obtain from get_media_buys or the most recent update response.
+   * Buyer's reference for the package to update
    */
-  revision?: number;
-  /**
-   * Pause/resume the entire media buy (true = paused, false = active)
-   */
-  paused?: boolean;
-  /**
-   * Cancel the entire media buy. Cancellation is irreversible — canceled media buys cannot be reactivated. Sellers MAY reject with NOT_CANCELLABLE if the media buy cannot be canceled in its current state.
-   */
-  canceled?: true;
-  /**
-   * Reason for cancellation. Sellers SHOULD store this and return it in subsequent get_media_buys responses.
-   */
-  cancellation_reason?: string;
-  start_time?: StartTiming;
-  /**
-   * New end date/time in ISO 8601 format
-   */
-  end_time?: string;
-  /**
-   * Package-specific updates for existing packages
-   */
-  packages?: PackageUpdate[];
-  /**
-   * New packages to add to this media buy. Uses the same schema as create_media_buy packages. Sellers that support mid-flight package additions advertise add_packages in valid_actions. Sellers that do not support this MUST reject with UNSUPPORTED_FEATURE.
-   */
-  new_packages?: PackageRequest[];
-  reporting_webhook?: ReportingWebhook;
-  push_notification_config?: PushNotificationConfig;
-  /**
-   * Client-generated idempotency key for safe retries. If an update fails without a response, resending with the same idempotency_key guarantees the update is applied at most once. MUST be unique per (seller, request) pair to prevent cross-seller correlation. Use a fresh UUID v4 for each request.
-   */
-  idempotency_key?: string;
-  context?: ContextObject;
-  ext?: ExtensionObject;
-}
-/**
- * Package update configuration for update_media_buy. Identifies package by package_id and specifies fields to modify. Fields not present are left unchanged. Note: product_id, format_ids, and pricing_option_id cannot be changed after creation.
- */
-export interface PackageUpdate {
-  /**
-   * Seller's ID of package to update
-   */
-  package_id: string;
+  buyer_ref?: string;
   /**
    * Updated budget allocation for this package in the currency specified by the pricing option
    */
@@ -4481,14 +13225,6 @@ export interface PackageUpdate {
    * Pause/resume specific package (true = paused, false = active)
    */
   paused?: boolean;
-  /**
-   * Cancel this specific package. Cancellation is irreversible — canceled packages stop delivery and cannot be reactivated. Sellers MAY reject with NOT_CANCELLABLE.
-   */
-  canceled?: true;
-  /**
-   * Reason for canceling this package.
-   */
-  cancellation_reason?: string;
   /**
    * Replace the catalogs this package promotes. Uses replacement semantics — the provided array replaces the current list. Omit to leave catalogs unchanged.
    */
@@ -4564,6 +13300,53 @@ export interface PackageUpdate {
    * @maxItems 100
    */
   creatives?: CreativeAsset[];
+  ext?: ExtensionObject;
+} & {
+  [k: string]: unknown | undefined;
+};
+/**
+ * Request parameters for updating campaign and package settings
+ */
+export interface UpdateMediaBuyRequest {
+  /**
+   * Seller's ID of the media buy to update
+   */
+  media_buy_id: string;
+  /**
+   * Expected current revision for optimistic concurrency. When provided, sellers MUST reject the update with CONFLICT if the media buy's current revision does not match. Obtain from get_media_buys or the most recent update response.
+   */
+  revision?: number;
+  /**
+   * Pause/resume the entire media buy (true = paused, false = active)
+   */
+  paused?: boolean;
+  /**
+   * Cancel the entire media buy. Cancellation is irreversible — canceled media buys cannot be reactivated. Sellers MAY reject with NOT_CANCELLABLE if the media buy cannot be canceled in its current state.
+   */
+  canceled?: true;
+  /**
+   * Reason for cancellation. Sellers SHOULD store this and return it in subsequent get_media_buys responses.
+   */
+  cancellation_reason?: string;
+  start_time?: StartTiming;
+  /**
+   * New end date/time in ISO 8601 format
+   */
+  end_time?: string;
+  /**
+   * Package-specific updates for existing packages
+   */
+  packages?: PackageUpdate[];
+  /**
+   * New packages to add to this media buy. Uses the same schema as create_media_buy packages. Sellers that support mid-flight package additions advertise add_packages in valid_actions. Sellers that do not support this MUST reject with UNSUPPORTED_FEATURE.
+   */
+  new_packages?: PackageRequest[];
+  reporting_webhook?: ReportingWebhook;
+  push_notification_config?: PushNotificationConfig;
+  /**
+   * Client-generated idempotency key for safe retries. If an update fails without a response, resending with the same idempotency_key guarantees the update is applied at most once. MUST be unique per (seller, request) pair to prevent cross-seller correlation. Use a fresh UUID v4 for each request.
+   */
+  idempotency_key?: string;
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -7268,7 +16051,7 @@ export type PropertyIdentifierTypes =
   | 'openooh_venue_type'
   | 'rss_url'
   | 'apple_podcast_id'
-  | 'spotify_show_id'
+  | 'spotify_collection_id'
   | 'podcast_guid';
 
 /**
@@ -11801,32 +20584,6 @@ export interface SyncAccountsRequest {
      * When true, provision this as a sandbox account with no real platform calls or billing. Only applicable to implicit accounts (require_operator_auth: false). For explicit accounts, sandbox accounts are pre-existing test accounts discovered via list_accounts.
      */
     sandbox?: boolean;
-    /**
-     * Governance agent endpoints for this account. When present, the seller MUST call these agents for governance approval before confirming media buy requests. Each agent can be scoped to specific validation categories. The seller routes check_governance calls to the appropriate agent based on the action being validated. All applicable agents must approve for the action to proceed (unanimous approval).
-     */
-    governance_agents?: {
-      /**
-       * Governance agent endpoint URL.
-       */
-      url: string;
-      /**
-       * Authentication the seller presents when calling this governance agent.
-       */
-      authentication: {
-        /**
-         * @maxItems 1
-         */
-        schemes: [] | [AuthenticationScheme];
-        /**
-         * Authentication credential (e.g., Bearer token).
-         */
-        credentials: string;
-      };
-      /**
-       * Governance categories this agent handles (e.g., ['budget_authority', 'strategic_alignment']). When omitted, the agent handles all categories.
-       */
-      categories?: string[];
-    }[];
   }[];
   /**
    * When true, accounts previously synced by this agent but not included in this request will be deactivated. Scoped to the authenticated agent — does not affect accounts managed by other agents. Use with caution.

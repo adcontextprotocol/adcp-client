@@ -8,7 +8,7 @@
  */
 
 import type { TestOptions, TestStepResult, AgentProfile, TaskResult } from '../types';
-import { createTestClient, runStep, discoverAgentProfile } from '../client';
+import { getOrCreateClient, runStep, getOrDiscoverProfile } from '../client';
 import {
   buildSyntheticCapabilities,
   parseCapabilitiesResponse,
@@ -36,10 +36,10 @@ export async function testCapabilityDiscovery(
   options: TestOptions
 ): Promise<{ steps: TestStepResult[]; profile?: AgentProfile }> {
   const steps: TestStepResult[] = [];
-  const client = createTestClient(agentUrl, options.protocol || 'mcp', options);
+  const client = getOrCreateClient(agentUrl, options);
 
   // Discover agent profile
-  const { profile, step: profileStep } = await discoverAgentProfile(client);
+  const { profile, step: profileStep } = await getOrDiscoverProfile(client, options);
   steps.push(profileStep);
 
   if (!profileStep.passed) {

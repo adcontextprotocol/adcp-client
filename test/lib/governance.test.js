@@ -14,7 +14,6 @@ const { isGovernanceAdapterError, GovernanceAdapter } = require('../../dist/lib/
 const {
   setAtPath,
   GovernanceMiddleware,
-  extractGovernanceContext,
 } = require('../../dist/lib/core/GovernanceMiddleware.js');
 
 describe('toolRequiresGovernance', () => {
@@ -191,13 +190,13 @@ describe('parseCheckResponse', () => {
     const response = {
       check_id: 'chk-7',
       status: 'approved',
-      binding: 'committed',
-      explanation: 'All checks passed',
-      governance_context: 'opaque-token-abc123',
+      binding: 'proposed',
+      explanation: 'OK',
+      governance_context: 'opaque-gc-token-abc123',
     };
 
     const result = parseCheckResponse(response);
-    assert.equal(result.governanceContext, 'opaque-token-abc123');
+    assert.equal(result.governanceContext, 'opaque-gc-token-abc123');
   });
 });
 
@@ -362,99 +361,6 @@ describe('GovernanceMiddleware', () => {
   });
 });
 
-describe('extractGovernanceContext', () => {
-  const config = {
-    agent: { id: 'gov', name: 'Gov', agent_uri: 'http://localhost', protocol: 'mcp' },
-    planId: 'plan-1',
-    callerUrl: 'https://buyer.example.com',
-  };
-
-  it('extracts budget when total and currency are present', () => {
-    const params = { budget: { total: 5000, currency: 'USD' } };
-    const ctx = extractGovernanceContext(params, config);
-    assert.deepEqual(ctx.total_budget, { amount: 5000, currency: 'USD' });
-  });
-
-  it('returns undefined when params have no recognizable fields', () => {
-    const ctx = extractGovernanceContext({ foo: 'bar' }, { ...config, callerUrl: undefined });
-    assert.equal(ctx, undefined);
-  });
-
-  it('skips budget when total is missing', () => {
-    const params = { budget: { currency: 'USD' } };
-    const ctx = extractGovernanceContext(params, { ...config, callerUrl: undefined });
-    assert.equal(ctx, undefined);
-  });
-
-  it('skips budget when currency is missing', () => {
-    const params = { budget: { total: 5000 } };
-    const ctx = extractGovernanceContext(params, { ...config, callerUrl: undefined });
-    assert.equal(ctx, undefined);
-  });
-
-  it('extracts countries array', () => {
-    const params = { countries: ['US', 'CA'] };
-    const ctx = extractGovernanceContext(params, { ...config, callerUrl: undefined });
-    assert.deepEqual(ctx.countries, ['US', 'CA']);
-  });
-
-  it('skips empty countries array', () => {
-    const params = { countries: [] };
-    const ctx = extractGovernanceContext(params, { ...config, callerUrl: undefined });
-    assert.equal(ctx, undefined);
-  });
-
-  it('extracts single channel as array', () => {
-    const params = { channel: 'display' };
-    const ctx = extractGovernanceContext(params, { ...config, callerUrl: undefined });
-    assert.deepEqual(ctx.channels, ['display']);
-  });
-
-  it('extracts channels array', () => {
-    const params = { channels: ['display', 'video'] };
-    const ctx = extractGovernanceContext(params, { ...config, callerUrl: undefined });
-    assert.deepEqual(ctx.channels, ['display', 'video']);
-  });
-
-  it('prefers channel over channels', () => {
-    const params = { channel: 'social', channels: ['display'] };
-    const ctx = extractGovernanceContext(params, { ...config, callerUrl: undefined });
-    assert.deepEqual(ctx.channels, ['social']);
-  });
-
-  it('extracts flight dates', () => {
-    const params = { flight: { start: '2026-01-01', end: '2026-02-01' } };
-    const ctx = extractGovernanceContext(params, { ...config, callerUrl: undefined });
-    assert.deepEqual(ctx.flight, { start: '2026-01-01', end: '2026-02-01' });
-  });
-
-  it('skips flight when start or end is missing', () => {
-    const params = { flight: { start: '2026-01-01' } };
-    const ctx = extractGovernanceContext(params, { ...config, callerUrl: undefined });
-    assert.equal(ctx, undefined);
-  });
-
-  it('includes seller_url from config', () => {
-    const ctx = extractGovernanceContext({}, config);
-    assert.equal(ctx.seller_url, 'https://buyer.example.com');
-  });
-
-  it('extracts all fields together', () => {
-    const params = {
-      budget: { total: 10000, currency: 'EUR' },
-      countries: ['DE', 'FR'],
-      channel: 'display',
-      flight: { start: '2026-03-01', end: '2026-04-01' },
-    };
-    const ctx = extractGovernanceContext(params, config);
-    assert.deepEqual(ctx.total_budget, { amount: 10000, currency: 'EUR' });
-    assert.deepEqual(ctx.countries, ['DE', 'FR']);
-    assert.deepEqual(ctx.channels, ['display']);
-    assert.deepEqual(ctx.flight, { start: '2026-03-01', end: '2026-04-01' });
-    assert.equal(ctx.seller_url, 'https://buyer.example.com');
-  });
-});
-
 describe('GovernanceAdapter', () => {
   it('isSupported returns false when not configured', () => {
     const adapter = new GovernanceAdapter();
@@ -473,8 +379,8 @@ describe('GovernanceAdapter', () => {
     const adapter = new GovernanceAdapter();
     const result = await adapter.checkCommitted({
       planId: 'plan-1',
-      buyerCampaignRef: 'campaign-1',
       mediaBuyId: 'buy-1',
+      governanceContext: 'gc-token-123',
       plannedDelivery: { impressions: 1000, budget: 500 },
     });
     assert.equal(result.status, 'denied');

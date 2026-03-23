@@ -20,6 +20,7 @@ export type ComplianceTrack =
   | 'creative' // Sync, approve/reject, format management
   | 'reporting' // Delivery data, reporting mechanisms
   | 'governance' // Property lists, content standards
+  | 'campaign_governance' // Campaign governance lifecycle: sync, check, report, audit
   | 'signals' // Signal discovery, activation
   | 'si' // Sponsored intelligence sessions
   | 'audiences' // CRM audience sync
