@@ -1,5 +1,37 @@
 # Changelog
 
+## 4.15.0
+
+### Minor Changes
+
+- 656e5f2: Add audience governance schemas, match breakdown, and compliance testing.
+
+  **Schemas**: audience-selector (signal ref or description discriminated union), audience-constraints (include/exclude), restricted-attribute (GDPR Article 9 enum), match-id-type (hashed PII + universal IDs). Synced from AdCP PR #1593.
+
+  **Breaking upstream changes**: `buyer_ref` removed from create/update_media_buy, `buyer_campaign_ref` removed from check_governance/report_plan_outcome, `governance_context` changed from structured object to opaque string token. GovernanceMiddleware, GovernanceAdapter, and TaskExecutor updated accordingly.
+
+  **Compliance**: sync_audiences response schema registered for validation. Campaign governance scenarios added to comply() governance track. sync_plans now exercises policy_categories, audience constraints, and restricted_attributes. Delivery monitoring includes audience_distribution indices. Signals flow reports governance metadata availability.
+
+- fef68a7: Add governance_context round-trip verification to comply() with stub governance agent for active seller testing
+- 83ecdcc: Support MCP Tasks protocol for async tool calls
+
+  When connected to MCP servers that declare `capabilities.tasks.requests.tools.call`, the client now uses MCP Tasks protocol methods (`tasks/get`, `tasks/result`, `tasks/cancel`, `tasks/list`) instead of custom AdCP tool calls for async lifecycle management. This removes the LLM from the polling path and aligns with the MCP specification (2025-11-25 experimental).
+
+  Client-side: `ProtocolClient.callTool()` transparently uses `callToolStream()` when the server supports tasks, falling back to standard `callTool` otherwise. `TaskExecutor.getTaskStatus()` and `listTasks()` use protocol-level methods when available.
+
+  Server-side: New helpers for publishers to add MCP Tasks support — `createTaskCapableServer()`, `registerAdcpTaskTool()`, `taskToolResponse()`, plus re-exports of `InMemoryTaskStore`, `TaskStore`, and `isTerminal` from the MCP SDK.
+
+- 8ea9139: Support order lifecycle management from AdCP spec.
+  - Cancellation fields on media buys and packages (`canceled`, `canceled_at`, `canceled_by`, `cancellation_reason`)
+  - `confirmed_at` timestamp on create and get responses
+  - `revision` for optimistic concurrency on create, get, and update
+  - `valid_actions` on responses so agents know permitted operations per state
+  - `include_history` parameter and revision history on `get_media_buys`
+  - Per-package `creative_deadline` for mixed-channel orders
+  - 6 new error codes: `INVALID_STATE`, `NOT_CANCELLABLE`, `MEDIA_BUY_NOT_FOUND`, `PACKAGE_NOT_FOUND`, `VALIDATION_ERROR`, `BUDGET_EXCEEDED`
+  - `CanceledBy` enum type (`buyer` | `seller`)
+  - Updated governance middleware for upstream schema changes (`governance_context` now opaque string, `buyer_campaign_ref` removed from governance requests)
+
 ## 4.14.0
 
 ### Minor Changes
