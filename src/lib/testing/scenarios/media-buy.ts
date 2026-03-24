@@ -1252,6 +1252,9 @@ export async function testMediaBuyLifecycle(
     return { steps, profile };
   }
 
+  // Track revisions across steps for monotonicity check
+  const revisions: { step: string; revision: number }[] = [];
+
   // Step 1: Pause the media buy
   const { result: pauseResult, step: pauseStep } = await runStep<TaskResult>(
     'Pause media buy',
@@ -1268,6 +1271,7 @@ export async function testMediaBuyLifecycle(
     const data = pauseResult.data as unknown as Record<string, unknown>;
     const status = extractStatus(data);
     const pauseRevision = data.revision as number | undefined;
+    if (pauseRevision !== undefined) revisions.push({ step: 'pause', revision: pauseRevision });
     pauseStep.details = `Paused media buy, status: ${status}`;
     pauseStep.response_preview = JSON.stringify({ media_buy_id: mediaBuyId, status, revision: pauseRevision }, null, 2);
     if (status && status !== 'paused') {
@@ -1295,6 +1299,7 @@ export async function testMediaBuyLifecycle(
     const data = resumeResult.data as unknown as Record<string, unknown>;
     const status = extractStatus(data);
     const resumeRevision = data.revision as number | undefined;
+    if (resumeRevision !== undefined) revisions.push({ step: 'resume', revision: resumeRevision });
     resumeStep.details = `Resumed media buy, status: ${status}`;
     resumeStep.response_preview = JSON.stringify(
       { media_buy_id: mediaBuyId, status, revision: resumeRevision },
@@ -1310,7 +1315,64 @@ export async function testMediaBuyLifecycle(
   }
   steps.push(resumeStep);
 
-  // Step 3: Get status and check valid_actions, confirmed_at, revision (if get_media_buys available)
+  // Step 2b: Budget update — verify substantive field mutation
+  // Find a package to update budget on
+  let budgetPackageId: string | undefined;
+  let originalBudget: number | undefined;
+  if (profile.tools.includes('get_media_buys')) {
+    const { result: fetchResult } = await runStep<TaskResult>(
+      'Fetch packages for budget test',
+      'get_media_buys',
+      async () => client.executeTask('get_media_buys', { media_buy_ids: [mediaBuyId] }) as Promise<TaskResult>
+    );
+    if (fetchResult?.success && fetchResult?.data) {
+      const mbs = (fetchResult.data.media_buys || []) as Array<Record<string, unknown>>;
+      const mb = mbs.find((item: Record<string, unknown>) => item.media_buy_id === mediaBuyId) || mbs[0];
+      const pkgs = (mb?.packages || []) as Array<Record<string, unknown>>;
+      if (pkgs[0]) {
+        budgetPackageId = pkgs[0].package_id as string;
+        originalBudget = pkgs[0].budget as number;
+      }
+    }
+  }
+
+  if (budgetPackageId && originalBudget !== undefined) {
+    const newBudget = Math.round(originalBudget * 1.2 * 100) / 100; // 20% increase
+    const { result: budgetResult, step: budgetStep } = await runStep<TaskResult>(
+      'Update package budget',
+      'update_media_buy',
+      async () =>
+        client.updateMediaBuy({
+          media_buy_id: mediaBuyId,
+          packages: [{ package_id: budgetPackageId, budget: newBudget }],
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any -- intentional: test request bypasses strict typing
+        } as any) as Promise<TaskResult>
+    );
+
+    if (budgetResult?.success && budgetResult?.data) {
+      const data = budgetResult.data as unknown as Record<string, unknown>;
+      const budgetRevision = data.revision as number | undefined;
+      if (budgetRevision !== undefined) revisions.push({ step: 'budget_update', revision: budgetRevision });
+      budgetStep.details = `Updated budget from $${originalBudget} to $${newBudget}`;
+      budgetStep.response_preview = JSON.stringify(
+        { media_buy_id: mediaBuyId, package_id: budgetPackageId, new_budget: newBudget, revision: budgetRevision },
+        null,
+        2
+      );
+    } else if (budgetResult && !budgetResult.success) {
+      const error = budgetResult.error || '';
+      if (error.includes('BUDGET_EXCEEDED') || error.includes('budget_exceeded')) {
+        budgetStep.passed = true;
+        budgetStep.details = `Agent rejected budget increase with BUDGET_EXCEEDED — acceptable`;
+      } else {
+        budgetStep.passed = false;
+        budgetStep.error = budgetResult.error || 'Budget update failed';
+      }
+    }
+    steps.push(budgetStep);
+  }
+
+  // Step 3: Get status and check valid_actions, confirmed_at, revision, history (if get_media_buys available)
   if (profile.tools.includes('get_media_buys')) {
     const { result: statusResult, step: statusStep } = await runStep<TaskResult>(
       'Get media buy status and valid_actions',
@@ -1334,7 +1396,18 @@ export async function testMediaBuyLifecycle(
         const validActions = mediaBuy.valid_actions as string[] | undefined;
         const mbRevision = mediaBuy.revision as number | undefined;
         const mbConfirmedAt = mediaBuy.confirmed_at as string | undefined;
-        const history = mediaBuy.history as unknown[] | undefined;
+        const history = mediaBuy.history as Array<Record<string, unknown>> | undefined;
+        const packages = (mediaBuy.packages || []) as Array<Record<string, unknown>>;
+        const hasCreativeDeadline = packages.some(p => p.creative_deadline) || !!mediaBuy.creative_deadline;
+
+        // Validate history entry shape if present
+        let historyValid = true;
+        if (history?.length) {
+          const missingTimestamp = history.some(h => !h.timestamp);
+          const missingAction = history.some(h => !h.action);
+          if (missingTimestamp || missingAction) historyValid = false;
+        }
+
         statusStep.details = `Status: ${mediaBuy.status}, valid_actions: ${validActions ? validActions.join(', ') : 'not provided'}, revision: ${mbRevision ?? 'not provided'}`;
         statusStep.response_preview = JSON.stringify(
           {
@@ -1344,6 +1417,9 @@ export async function testMediaBuyLifecycle(
             revision: mbRevision,
             valid_actions: validActions,
             history_entries: history?.length ?? 0,
+            history_valid: historyValid,
+            has_creative_deadline: hasCreativeDeadline,
+            sandbox: mediaBuy.sandbox,
           },
           null,
           2
@@ -1356,14 +1432,17 @@ export async function testMediaBuyLifecycle(
     steps.push(statusStep);
   }
 
-  // Step 3b: Revision concurrency check — send update with stale revision
+  // Step 3b: Revision concurrency check — use actual stale revision from an earlier step
+  const lastRevision = revisions.length > 0 ? revisions[revisions.length - 1]!.revision : undefined;
+  const staleRevision = revisions.length >= 2 ? revisions[0]!.revision : -1;
+
   const { result: conflictResult, step: conflictStep } = await runStep<TaskResult>(
     'Update with stale revision (expect CONFLICT)',
     'update_media_buy',
     async () =>
       client.updateMediaBuy({
         media_buy_id: mediaBuyId,
-        revision: -1,
+        revision: staleRevision,
         end_time: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
         // eslint-disable-next-line @typescript-eslint/no-explicit-any -- intentional: test request bypasses strict typing
       } as any) as Promise<TaskResult>
@@ -1373,7 +1452,7 @@ export async function testMediaBuyLifecycle(
     const error = conflictResult.error || '';
     if (error.includes('CONFLICT') || error.includes('conflict') || error.includes('revision')) {
       conflictStep.passed = true;
-      conflictStep.details = 'Correctly rejected stale revision with CONFLICT';
+      conflictStep.details = `Correctly rejected stale revision ${staleRevision} with CONFLICT (current: ${lastRevision ?? 'unknown'})`;
     } else {
       // Agent rejected for another reason — still acceptable, revision may not be supported
       conflictStep.passed = true;
@@ -1385,13 +1464,34 @@ export async function testMediaBuyLifecycle(
   } else if (conflictResult?.success) {
     // Agent accepted stale revision — revision concurrency not enforced
     conflictStep.passed = true;
-    conflictStep.details = 'Agent accepted stale revision — optimistic concurrency not enforced';
+    conflictStep.details = `Agent accepted stale revision ${staleRevision} — optimistic concurrency not enforced`;
     conflictStep.warnings = ['Agent does not enforce optimistic concurrency via revision numbers'];
   } else if (!conflictResult) {
     conflictStep.passed = false;
     conflictStep.error = 'No response from update_media_buy';
   }
   steps.push(conflictStep);
+
+  // Step 3c: Check revision monotonicity
+  if (revisions.length >= 2) {
+    const monotonicStep: TestStepResult = {
+      step: 'Revision monotonicity check',
+      task: 'update_media_buy',
+      passed: true,
+      duration_ms: 0,
+    };
+    const isMonotonic = revisions.every((r, i) => i === 0 || r.revision > revisions[i - 1]!.revision);
+    if (isMonotonic) {
+      monotonicStep.details = `Revisions are monotonically increasing: ${revisions.map(r => `${r.step}=${r.revision}`).join(' → ')}`;
+    } else {
+      monotonicStep.passed = true; // advisory, not a hard fail
+      monotonicStep.details = `Revisions: ${revisions.map(r => `${r.step}=${r.revision}`).join(' → ')}`;
+      monotonicStep.warnings = [
+        `Revision numbers are not monotonically increasing — buyers depend on this for concurrency safety`,
+      ];
+    }
+    steps.push(monotonicStep);
+  }
 
   // Step 4: Cancel the media buy
   const { result: cancelResult, step: cancelStep } = await runStep<TaskResult>(
@@ -1411,8 +1511,11 @@ export async function testMediaBuyLifecycle(
     const status = extractStatus(data);
     const cancelRevision = data.revision as number | undefined;
     cancelStep.details = `Canceled media buy, status: ${status}`;
+    const canceledBy = data.canceled_by as string | undefined;
+    const canceledAt = data.canceled_at as string | undefined;
+    if (cancelRevision !== undefined) revisions.push({ step: 'cancel', revision: cancelRevision });
     cancelStep.response_preview = JSON.stringify(
-      { media_buy_id: mediaBuyId, status, revision: cancelRevision },
+      { media_buy_id: mediaBuyId, status, revision: cancelRevision, canceled_by: canceledBy, canceled_at: canceledAt },
       null,
       2
     );
@@ -1473,10 +1576,69 @@ export async function testTerminalStateEnforcement(
   } else if (cancelResult && !cancelResult.success) {
     const error = cancelResult.error || '';
     if (error.includes('NOT_CANCELLABLE') || error.includes('not_cancellable')) {
-      // Agent doesn't support cancellation — can't test terminal state enforcement
+      // Agent doesn't support cancellation — try to find a completed buy instead
       cancelStep.passed = true;
-      cancelStep.details = 'Agent does not support cancellation — skipping terminal state tests';
+      cancelStep.details = 'Agent does not support cancellation — will check for completed media buys instead';
       steps.push(cancelStep);
+
+      // Look for a completed media buy to test terminal state enforcement against
+      if (profile.tools.includes('get_media_buys')) {
+        const { result: completedResult, step: completedStep } = await runStep<TaskResult>(
+          'Find completed media buy for terminal state test',
+          'get_media_buys',
+          async () =>
+            client.executeTask('get_media_buys', {
+              status_filter: ['completed'],
+              pagination: { max_results: 1 },
+            }) as Promise<TaskResult>
+        );
+
+        if (completedResult?.success && completedResult?.data) {
+          const completedBuys = (completedResult.data.media_buys || []) as Array<Record<string, unknown>>;
+          if (completedBuys.length > 0) {
+            const completedId = completedBuys[0]!.media_buy_id as string;
+            completedStep.details = `Found completed media buy: ${completedId}`;
+            steps.push(completedStep);
+
+            // Try to update the completed media buy
+            const { result: updateCompletedResult, step: updateCompletedStep } = await runStep<TaskResult>(
+              'Update completed media buy (expect rejection)',
+              'update_media_buy',
+              async () =>
+                client.updateMediaBuy({
+                  media_buy_id: completedId,
+                  paused: true,
+                  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- intentional: test request bypasses strict typing
+                } as any) as Promise<TaskResult>
+            );
+
+            if (updateCompletedResult?.success) {
+              updateCompletedStep.passed = false;
+              updateCompletedStep.error =
+                'Agent accepted update to completed media buy — should reject with INVALID_STATE';
+            } else if (updateCompletedResult) {
+              updateCompletedStep.passed = true;
+              const err = updateCompletedResult.error || '';
+              const hasCode = err.includes('INVALID_STATE') || err.includes('invalid_state');
+              updateCompletedStep.details = hasCode
+                ? 'Correctly rejected update to completed media buy with INVALID_STATE'
+                : `Correctly rejected update to completed media buy: ${err}`;
+              if (!hasCode && err) {
+                updateCompletedStep.warnings = ['Agent rejected the update but did not use INVALID_STATE error code'];
+              }
+            }
+            steps.push(updateCompletedStep);
+          } else {
+            completedStep.details = 'No completed media buys found — cannot test terminal state enforcement';
+            steps.push(completedStep);
+          }
+        } else {
+          completedStep.passed = false;
+          completedStep.error = completedResult?.error || 'Failed to query for completed media buys';
+          steps.push(completedStep);
+        }
+      }
+
       return { steps, profile };
     }
     cancelStep.passed = false;
@@ -1485,7 +1647,7 @@ export async function testTerminalStateEnforcement(
   steps.push(cancelStep);
 
   // Try to pause the canceled media buy — should be rejected
-  const { result: pauseResult, step: pauseStep } = await runStep<TaskResult>(
+  const { result: pauseTerminalResult, step: pauseTerminalStep } = await runStep<TaskResult>(
     'Update canceled media buy (expect rejection)',
     'update_media_buy',
     async () =>
@@ -1496,23 +1658,23 @@ export async function testTerminalStateEnforcement(
       } as any) as Promise<TaskResult>
   );
 
-  if (pauseResult?.success) {
-    pauseStep.passed = false;
-    pauseStep.error = 'Agent accepted update to canceled media buy — should reject with INVALID_STATE';
-  } else if (pauseResult) {
+  if (pauseTerminalResult?.success) {
+    pauseTerminalStep.passed = false;
+    pauseTerminalStep.error = 'Agent accepted update to canceled media buy — should reject with INVALID_STATE';
+  } else if (pauseTerminalResult) {
     // Agent returned { success: false } — correct behavior
-    pauseStep.passed = true;
-    const error = pauseResult.error || '';
+    pauseTerminalStep.passed = true;
+    const error = pauseTerminalResult.error || '';
     const hasExpectedCode = error.includes('INVALID_STATE') || error.includes('invalid_state');
-    pauseStep.details = hasExpectedCode
+    pauseTerminalStep.details = hasExpectedCode
       ? 'Correctly rejected with INVALID_STATE'
       : `Correctly rejected update to canceled media buy: ${error}`;
     if (!hasExpectedCode && error) {
-      pauseStep.warnings = ['Agent rejected the update but did not use INVALID_STATE error code'];
+      pauseTerminalStep.warnings = ['Agent rejected the update but did not use INVALID_STATE error code'];
     }
   }
-  // else: pauseResult is undefined (exception thrown) — runStep already set passed=false and error
-  steps.push(pauseStep);
+  // else: result is undefined (exception thrown) — runStep already set passed=false and error
+  steps.push(pauseTerminalStep);
 
   // Try to cancel again — should also be rejected (or idempotent)
   const { result: reCancelResult, step: reCancelStep } = await runStep<TaskResult>(
@@ -1536,6 +1698,49 @@ export async function testTerminalStateEnforcement(
     reCancelStep.details = `Correctly rejected re-cancellation: ${error}`;
   }
   steps.push(reCancelStep);
+
+  // Also check completed terminal state if get_media_buys is available
+  if (profile.tools.includes('get_media_buys')) {
+    const { result: completedResult } = await runStep<TaskResult>(
+      'Find completed media buy',
+      'get_media_buys',
+      async () =>
+        client.executeTask('get_media_buys', {
+          status_filter: ['completed'],
+          pagination: { max_results: 1 },
+        }) as Promise<TaskResult>
+    );
+
+    if (completedResult?.success && completedResult?.data) {
+      const completedBuys = (completedResult.data.media_buys || []) as Array<Record<string, unknown>>;
+      if (completedBuys.length > 0) {
+        const completedId = completedBuys[0]!.media_buy_id as string;
+        const { result: updateCompletedResult, step: updateCompletedStep } = await runStep<TaskResult>(
+          'Update completed media buy (expect rejection)',
+          'update_media_buy',
+          async () =>
+            client.updateMediaBuy({
+              media_buy_id: completedId,
+              paused: true,
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any -- intentional: test request bypasses strict typing
+            } as any) as Promise<TaskResult>
+        );
+
+        if (updateCompletedResult?.success) {
+          updateCompletedStep.passed = false;
+          updateCompletedStep.error = 'Agent accepted update to completed media buy — should reject with INVALID_STATE';
+        } else if (updateCompletedResult) {
+          updateCompletedStep.passed = true;
+          const err = updateCompletedResult.error || '';
+          const hasCode = err.includes('INVALID_STATE') || err.includes('invalid_state');
+          updateCompletedStep.details = hasCode
+            ? 'Correctly rejected update to completed media buy with INVALID_STATE'
+            : `Correctly rejected update to completed media buy: ${err}`;
+        }
+        steps.push(updateCompletedStep);
+      }
+    }
+  }
 
   return { steps, profile };
 }
