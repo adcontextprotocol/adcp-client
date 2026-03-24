@@ -1503,7 +1503,7 @@ export class SingleAgentClient {
   async reportGovernanceOutcome(
     checkId: string,
     outcome: OutcomeType,
-    governanceContext: string,
+    governanceContext?: string,
     sellerResponse?: Record<string, unknown>,
     error?: { code?: string; message: string }
   ): Promise<import('./GovernanceTypes').GovernanceOutcome | undefined> {

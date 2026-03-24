@@ -273,10 +273,10 @@ describe('terminal_state_enforcement: pass/fail decision matrix', () => {
     const path = require('node:path');
     const src = fs.readFileSync(path.join(__dirname, '../../dist/lib/testing/scenarios/media-buy.js'), 'utf8');
 
-    // Should have early return when NOT_CANCELLABLE during setup
+    // Should try completed media buys when NOT_CANCELLABLE during setup
     assert.ok(
-      src.includes('skipping terminal state tests'),
-      'should skip terminal tests when cancellation not supported'
+      src.includes('will check for completed media buys instead'),
+      'should fall back to completed state test when cancellation not supported'
     );
   });
 });
@@ -334,7 +334,7 @@ describe('comply observations for state machine scenarios', () => {
     const src = fs.readFileSync(path.join(__dirname, '../../dist/lib/testing/compliance/comply.js'), 'utf8');
     assert.ok(src.includes('valid_actions'), 'comply should observe valid_actions presence');
     assert.ok(
-      src.includes('eliminates the need for buyers to internalize the state machine'),
+      src.includes('buyer agents must hardcode the state machine'),
       'comply should explain why valid_actions matters'
     );
   });

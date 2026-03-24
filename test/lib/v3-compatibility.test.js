@@ -1679,9 +1679,9 @@ const { STANDARD_ERROR_CODES, isStandardErrorCode, getErrorRecovery } = require(
 const { ErrorSchema } = require('../../dist/lib/types/schemas.generated.js');
 
 describe('Standard Error Codes', () => {
-  test('STANDARD_ERROR_CODES contains exactly 20 codes', () => {
+  test('STANDARD_ERROR_CODES contains exactly 26 codes', () => {
     const codes = Object.keys(STANDARD_ERROR_CODES);
-    assert.strictEqual(codes.length, 20);
+    assert.strictEqual(codes.length, 26);
   });
 
   test('every code has description and recovery', () => {
