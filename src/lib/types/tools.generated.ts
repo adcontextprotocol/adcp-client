@@ -3085,6 +3085,7 @@ export interface CreateMediaBuyRequest {
    */
   packages?: PackageRequest[];
   brand: BrandReference;
+  invoice_recipient?: BusinessEntity;
   /**
    * Purchase order number for tracking
    */
@@ -4055,6 +4056,87 @@ export interface ReferenceAsset {
   description?: string;
 }
 /**
+ * Override the account's default billing entity for this specific buy. When provided, the seller invoices this entity instead. The seller MUST validate the invoice recipient is authorized for this account. When governance_agents are configured, the seller MUST include invoice_recipient in the check_governance request.
+ */
+export interface BusinessEntity {
+  /**
+   * Registered legal name of the business entity
+   */
+  legal_name: string;
+  /**
+   * VAT identification number (e.g., DE123456789 for Germany, FR12345678901 for France). Required for B2B invoicing in the EU. Must be normalized: no spaces, dots, or dashes.
+   */
+  vat_id?: string;
+  /**
+   * Tax identification number for jurisdictions that do not use VAT (e.g., US EIN)
+   */
+  tax_id?: string;
+  /**
+   * Company registration number (e.g., HRB 12345 for German Handelsregister)
+   */
+  registration_number?: string;
+  /**
+   * Postal address for invoicing and legal correspondence
+   */
+  address?: {
+    /**
+     * Street address including building number
+     */
+    street: string;
+    city: string;
+    postal_code: string;
+    /**
+     * State, province, or region
+     */
+    region?: string;
+    /**
+     * ISO 3166-1 alpha-2 country code
+     */
+    country: string;
+  };
+  /**
+   * Contacts for billing, legal, and operational matters. Contains personal data subject to GDPR and equivalent regulations. Implementations MUST use this data only for invoicing and account management.
+   */
+  contacts?: {
+    /**
+     * Contact's functional role in the business relationship
+     */
+    role: 'billing' | 'legal' | 'creative' | 'general';
+    /**
+     * Full name of the contact
+     */
+    name?: string;
+    email?: string;
+    phone?: string;
+  }[];
+  /**
+   * Bank account details for payment processing. Write-only: included in requests to provide payment coordinates, but MUST NOT be echoed in responses. Sellers store these details and confirm receipt without returning them.
+   */
+  bank?: {
+    /**
+     * Name on the bank account
+     */
+    account_holder: string;
+    /**
+     * International Bank Account Number (SEPA markets)
+     */
+    iban?: string;
+    /**
+     * Bank Identifier Code / SWIFT code (SEPA markets)
+     */
+    bic?: string;
+    /**
+     * Bank routing number for non-SEPA markets (e.g., US ABA routing number, Canadian transit/institution number)
+     */
+    routing_number?: string;
+    /**
+     * Bank account number for non-SEPA markets
+     */
+    account_number?: string;
+  };
+  ext?: ExtensionObject;
+}
+/**
  * Optional webhook configuration for async task status notifications. Publisher will send webhooks when status changes (working, input-required, completed, failed). The client generates an operation_id and embeds it in the URL before sending — the publisher echoes it back in webhook payloads for correlation.
  */
 export interface PushNotificationConfig {
@@ -4205,6 +4287,7 @@ export interface CreateMediaBuySuccess {
    */
   media_buy_id: string;
   account?: Account;
+  invoice_recipient?: BusinessEntity;
   status?: MediaBuyStatus;
   /**
    * ISO 8601 timestamp when this media buy was confirmed by the seller. A successful create_media_buy response constitutes order confirmation.
@@ -4273,9 +4356,10 @@ export interface Account {
    */
   operator?: string;
   /**
-   * Who is invoiced on this account. operator: seller invoices the operator (agency or brand buying direct). agent: agent consolidates billing.
+   * Who is invoiced on this account. operator: seller invoices the operator (agency or brand buying direct). agent: agent consolidates billing. advertiser: seller invoices the advertiser directly, even when a different operator places orders on their behalf. See billing_entity for the invoiced party's business details.
    */
-  billing?: 'operator' | 'agent';
+  billing?: 'operator' | 'agent' | 'advertiser';
+  billing_entity?: BusinessEntity;
   /**
    * Identifier for the rate card applied to this account
    */
@@ -4517,6 +4601,7 @@ export interface UpdateMediaBuyRequest {
    * Package-specific updates for existing packages
    */
   packages?: PackageUpdate[];
+  invoice_recipient?: BusinessEntity;
   /**
    * New packages to add to this media buy. Uses the same schema as create_media_buy packages. Sellers that support mid-flight package additions advertise add_packages in valid_actions. Sellers that do not support this MUST reject with UNSUPPORTED_FEATURE.
    */
@@ -4668,6 +4753,7 @@ export interface UpdateMediaBuySuccess {
    * ISO 8601 timestamp when changes take effect (null if pending approval)
    */
   implementation_date?: string | null;
+  invoice_recipient?: BusinessEntity;
   /**
    * Array of packages that were modified with complete state information
    */
@@ -4750,6 +4836,7 @@ export interface GetMediaBuysResponse {
      */
     media_buy_id: string;
     account?: Account;
+    invoice_recipient?: BusinessEntity;
     status: MediaBuyStatus;
     /**
      * ISO 4217 currency code (e.g., USD, EUR, GBP) for monetary values at this media buy level. total_budget is always denominated in this currency. Package-level fields may override with package.currency.
@@ -10503,6 +10590,7 @@ export interface CheckGovernanceRequest {
    * Human-readable summary of what changed. SHOULD be present for 'modification' phase.
    */
   modification_summary?: string;
+  invoice_recipient?: BusinessEntity;
 }
 
 // check_governance response
@@ -11305,9 +11393,9 @@ export interface GetAdCPCapabilitiesResponse {
      */
     authorization_endpoint?: string;
     /**
-     * Billing models this seller supports. operator: seller invoices the operator (agency or brand buying direct). agent: agent consolidates billing. The buyer must pass one of these values in sync_accounts.
+     * Billing models this seller supports. operator: seller invoices the operator (agency or brand buying direct). agent: agent consolidates billing. advertiser: seller invoices the advertiser directly, even when a different operator places orders on their behalf. The buyer must pass one of these values in sync_accounts.
      */
-    supported_billing: ('operator' | 'agent')[];
+    supported_billing: ('operator' | 'agent' | 'advertiser')[];
     /**
      * Whether an account reference is required for get_products. When true, the buyer must establish an account before browsing products. When false (default), the buyer can browse products without an account — useful for price comparison and discovery before committing to a seller.
      */
@@ -11887,9 +11975,10 @@ export interface SyncAccountsRequest {
      */
     operator: string;
     /**
-     * Who should be invoiced. operator: seller invoices the operator (agency or brand buying direct). agent: agent consolidates billing across brands. The seller must either accept this billing model or reject the request.
+     * Who should be invoiced. operator: seller invoices the operator (agency or brand buying direct). agent: agent consolidates billing across brands. advertiser: seller invoices the advertiser directly, even when a different operator places orders on their behalf. The seller must either accept this billing model or reject the request.
      */
-    billing: 'operator' | 'agent';
+    billing: 'operator' | 'agent' | 'advertiser';
+    billing_entity?: BusinessEntity;
     /**
      * Payment terms for this account. The seller must either accept these terms or reject the account — terms are never silently remapped. When omitted, the seller applies its default terms.
      */
@@ -11929,6 +12018,10 @@ export interface SyncAccountsSuccess {
    * Results for each account processed
    */
   accounts: {
+    /**
+     * Seller-assigned account identifier. Use this in subsequent create_media_buy and other account-scoped operations.
+     */
+    account_id?: string;
     brand: BrandReference;
     /**
      * Operator domain, echoed from request
@@ -11949,7 +12042,8 @@ export interface SyncAccountsSuccess {
     /**
      * Who is invoiced on this account. Matches the requested billing model.
      */
-    billing?: 'operator' | 'agent';
+    billing?: 'operator' | 'agent' | 'advertiser';
+    billing_entity?: BusinessEntity;
     /**
      * How the seller scoped this account. operator: shared across all brands for this operator. brand: shared across all operators for this brand. operator_brand: dedicated to this operator+brand pair. agent: the agent's default account.
      */

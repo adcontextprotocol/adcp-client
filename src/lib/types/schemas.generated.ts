@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-03-25T12:06:18.374Z
+// Generated at: 2026-03-25T12:16:32.199Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -91,6 +91,34 @@ export const ExtensionObjectSchema = z.object({}).passthrough();
 export const BrandReferenceSchema = z.object({
     domain: z.string(),
     brand_id: BrandIDSchema.nullish()
+}).passthrough();
+
+export const BusinessEntitySchema = z.object({
+    legal_name: z.string(),
+    vat_id: z.string().nullish(),
+    tax_id: z.string().nullish(),
+    registration_number: z.string().nullish(),
+    address: z.object({
+        street: z.string(),
+        city: z.string(),
+        postal_code: z.string(),
+        region: z.string().nullish(),
+        country: z.string()
+    }).passthrough().nullish(),
+    contacts: z.array(z.object({
+        role: z.union([z.literal("billing"), z.literal("legal"), z.literal("creative"), z.literal("general")]),
+        name: z.string().nullish(),
+        email: z.string().nullish(),
+        phone: z.string().nullish()
+    }).passthrough()).nullish(),
+    bank: z.object({
+        account_holder: z.string(),
+        iban: z.string().nullish(),
+        bic: z.string().nullish(),
+        routing_number: z.string().nullish(),
+        account_number: z.string().nullish()
+    }).passthrough().nullish(),
+    ext: ExtensionObjectSchema.nullish()
 }).passthrough();
 
 export const PriceBreakdownSchema = z.object({
@@ -900,7 +928,8 @@ export const AccountSchema = z.object({
     status: z.union([z.literal("active"), z.literal("pending_approval"), z.literal("rejected"), z.literal("payment_required"), z.literal("suspended"), z.literal("closed")]),
     brand: BrandReferenceSchema.nullish(),
     operator: z.string().nullish(),
-    billing: z.union([z.literal("operator"), z.literal("agent")]).nullish(),
+    billing: z.union([z.literal("operator"), z.literal("agent"), z.literal("advertiser")]).nullish(),
+    billing_entity: BusinessEntitySchema.nullish(),
     rate_card: z.string().nullish(),
     payment_terms: z.union([z.literal("net_15"), z.literal("net_30"), z.literal("net_45"), z.literal("net_60"), z.literal("net_90"), z.literal("prepay")]).nullish(),
     credit_limit: z.object({
@@ -1423,6 +1452,7 @@ export const UpdateMediaBuySuccessSchema = z.object({
     status: MediaBuyStatusSchema.nullish(),
     revision: z.number().nullish(),
     implementation_date: z.string().nullish().nullable(),
+    invoice_recipient: BusinessEntitySchema.nullish(),
     affected_packages: z.array(PackageSchema).nullish(),
     valid_actions: z.array(z.union([z.literal("pause"), z.literal("resume"), z.literal("cancel"), z.literal("update_budget"), z.literal("update_dates"), z.literal("update_packages"), z.literal("add_packages"), z.literal("sync_creatives")])).nullish(),
     sandbox: z.boolean().nullish(),
@@ -2753,7 +2783,8 @@ export const CheckGovernanceRequestSchema = z.object({
             cumulative_indices: z.record(z.string(), z.number()).nullish()
         }).passthrough().nullish()
     }).passthrough().nullish(),
-    modification_summary: z.string().nullish()
+    modification_summary: z.string().nullish(),
+    invoice_recipient: BusinessEntitySchema.nullish()
 }).passthrough();
 
 export const CheckGovernanceResponseSchema = z.object({
@@ -2967,7 +2998,7 @@ export const GetAdCPCapabilitiesResponseSchema = z.object({
     account: z.object({
         require_operator_auth: z.boolean().nullish(),
         authorization_endpoint: z.string().nullish(),
-        supported_billing: z.array(z.union([z.literal("operator"), z.literal("agent")])),
+        supported_billing: z.array(z.union([z.literal("operator"), z.literal("agent"), z.literal("advertiser")])),
         required_for_products: z.boolean().nullish(),
         account_financials: z.boolean().nullish(),
         sandbox: z.boolean().nullish()
@@ -3146,7 +3177,8 @@ export const SyncAccountsRequestSchema = z.object({
     accounts: z.array(z.object({
         brand: BrandReferenceSchema,
         operator: z.string(),
-        billing: z.union([z.literal("operator"), z.literal("agent")]),
+        billing: z.union([z.literal("operator"), z.literal("agent"), z.literal("advertiser")]),
+        billing_entity: BusinessEntitySchema.nullish(),
         payment_terms: z.union([z.literal("net_15"), z.literal("net_30"), z.literal("net_45"), z.literal("net_60"), z.literal("net_90"), z.literal("prepay")]).nullish(),
         sandbox: z.boolean().nullish()
     }).passthrough()),
@@ -3160,12 +3192,14 @@ export const SyncAccountsRequestSchema = z.object({
 export const SyncAccountsSuccessSchema = z.object({
     dry_run: z.boolean().nullish(),
     accounts: z.array(z.object({
+        account_id: z.string().nullish(),
         brand: BrandReferenceSchema,
         operator: z.string(),
         name: z.string().nullish(),
         action: z.union([z.literal("created"), z.literal("updated"), z.literal("unchanged"), z.literal("failed")]),
         status: z.union([z.literal("active"), z.literal("pending_approval"), z.literal("rejected"), z.literal("payment_required"), z.literal("suspended"), z.literal("closed")]),
-        billing: z.union([z.literal("operator"), z.literal("agent")]).nullish(),
+        billing: z.union([z.literal("operator"), z.literal("agent"), z.literal("advertiser")]).nullish(),
+        billing_entity: BusinessEntitySchema.nullish(),
         account_scope: z.union([z.literal("operator"), z.literal("brand"), z.literal("operator_brand"), z.literal("agent")]).nullish(),
         setup: z.object({
             url: z.string().nullish(),
@@ -3278,6 +3312,7 @@ export const MediaBuySchema = z.object({
     }).passthrough().nullish(),
     total_budget: z.number(),
     packages: z.array(PackageSchema),
+    invoice_recipient: BusinessEntitySchema.nullish(),
     creative_deadline: z.string().nullish(),
     revision: z.number().nullish(),
     created_at: z.string().nullish(),
@@ -3316,6 +3351,7 @@ export const BuildCreativeResponseSchema = z.union([BuildCreativeSuccessSchema, 
 export const CreateMediaBuySuccessSchema = z.object({
     media_buy_id: z.string(),
     account: AccountSchema.nullish(),
+    invoice_recipient: BusinessEntitySchema.nullish(),
     status: MediaBuyStatusSchema.nullish(),
     confirmed_at: z.string().nullish(),
     creative_deadline: z.string().nullish(),
@@ -3534,6 +3570,7 @@ export const GetMediaBuysResponseSchema = z.object({
     media_buys: z.array(z.object({
         media_buy_id: z.string(),
         account: AccountSchema.nullish(),
+        invoice_recipient: BusinessEntitySchema.nullish(),
         status: MediaBuyStatusSchema,
         currency: z.string(),
         total_budget: z.number().nullish(),
@@ -4124,6 +4161,7 @@ export const CreateMediaBuyRequestSchema = z.object({
     }).passthrough().nullish(),
     packages: z.array(PackageRequestSchema).nullish(),
     brand: BrandReferenceSchema,
+    invoice_recipient: BusinessEntitySchema.nullish(),
     po_number: z.string().nullish(),
     start_time: StartTimingSchema,
     end_time: z.string(),
@@ -4153,6 +4191,7 @@ export const UpdateMediaBuyRequestSchema = z.object({
     start_time: StartTimingSchema.nullish(),
     end_time: z.string().nullish(),
     packages: z.array(PackageUpdateSchema).nullish(),
+    invoice_recipient: BusinessEntitySchema.nullish(),
     new_packages: z.array(PackageRequestSchema).nullish(),
     reporting_webhook: ReportingWebhookSchema.nullish(),
     push_notification_config: PushNotificationConfigSchema.nullish(),

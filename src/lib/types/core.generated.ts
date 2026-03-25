@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas vlatest
-// Generated at: 2026-03-25T12:06:16.631Z
+// Generated at: 2026-03-25T12:16:30.216Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -330,6 +330,7 @@ export interface MediaBuy {
    * Array of packages within this media buy
    */
   packages: Package[];
+  invoice_recipient?: BusinessEntity;
   /**
    * ISO 8601 timestamp for creative upload deadline
    */
@@ -378,9 +379,10 @@ export interface Account {
    */
   operator?: string;
   /**
-   * Who is invoiced on this account. operator: seller invoices the operator (agency or brand buying direct). agent: agent consolidates billing.
+   * Who is invoiced on this account. operator: seller invoices the operator (agency or brand buying direct). agent: agent consolidates billing. advertiser: seller invoices the advertiser directly, even when a different operator places orders on their behalf. See billing_entity for the invoiced party's business details.
    */
-  billing?: 'operator' | 'agent';
+  billing?: 'operator' | 'agent' | 'advertiser';
+  billing_entity?: BusinessEntity;
   /**
    * Identifier for the rate card applied to this account
    */
@@ -445,6 +447,87 @@ export interface BrandReference {
    */
   domain: string;
   brand_id?: BrandID;
+}
+/**
+ * Business entity details for the party responsible for payment. Contains the legal name, tax IDs, address, and bank details needed for formal B2B invoicing. Corresponds to whoever billing points to (operator, agent, or advertiser). When this account appears in a response, bank details MUST be omitted (write-only).
+ */
+export interface BusinessEntity {
+  /**
+   * Registered legal name of the business entity
+   */
+  legal_name: string;
+  /**
+   * VAT identification number (e.g., DE123456789 for Germany, FR12345678901 for France). Required for B2B invoicing in the EU. Must be normalized: no spaces, dots, or dashes.
+   */
+  vat_id?: string;
+  /**
+   * Tax identification number for jurisdictions that do not use VAT (e.g., US EIN)
+   */
+  tax_id?: string;
+  /**
+   * Company registration number (e.g., HRB 12345 for German Handelsregister)
+   */
+  registration_number?: string;
+  /**
+   * Postal address for invoicing and legal correspondence
+   */
+  address?: {
+    /**
+     * Street address including building number
+     */
+    street: string;
+    city: string;
+    postal_code: string;
+    /**
+     * State, province, or region
+     */
+    region?: string;
+    /**
+     * ISO 3166-1 alpha-2 country code
+     */
+    country: string;
+  };
+  /**
+   * Contacts for billing, legal, and operational matters. Contains personal data subject to GDPR and equivalent regulations. Implementations MUST use this data only for invoicing and account management.
+   */
+  contacts?: {
+    /**
+     * Contact's functional role in the business relationship
+     */
+    role: 'billing' | 'legal' | 'creative' | 'general';
+    /**
+     * Full name of the contact
+     */
+    name?: string;
+    email?: string;
+    phone?: string;
+  }[];
+  /**
+   * Bank account details for payment processing. Write-only: included in requests to provide payment coordinates, but MUST NOT be echoed in responses. Sellers store these details and confirm receipt without returning them.
+   */
+  bank?: {
+    /**
+     * Name on the bank account
+     */
+    account_holder: string;
+    /**
+     * International Bank Account Number (SEPA markets)
+     */
+    iban?: string;
+    /**
+     * Bank Identifier Code / SWIFT code (SEPA markets)
+     */
+    bic?: string;
+    /**
+     * Bank routing number for non-SEPA markets (e.g., US ABA routing number, Canadian transit/institution number)
+     */
+    routing_number?: string;
+    /**
+     * Bank account number for non-SEPA markets
+     */
+    account_number?: string;
+  };
+  ext?: ExtensionObject;
 }
 /**
  * Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.
@@ -922,8 +1005,6 @@ export interface CreativeAssignment {
  * Opaque correlation data that is echoed unchanged in responses. Used for internal tracking, UI session IDs, trace IDs, and other caller-specific identifiers that don't affect protocol behavior. Context data is never parsed by AdCP agents - it's simply preserved and returned.
  */
 export interface ContextObject {}
-
-// CREATIVE-ASSET SCHEMA
 /**
  * IPTC-aligned classification of AI involvement in producing this content
  */
@@ -3966,6 +4047,7 @@ export interface CreateMediaBuySuccess {
    */
   media_buy_id: string;
   account?: Account;
+  invoice_recipient?: BusinessEntity;
   status?: MediaBuyStatus;
   /**
    * ISO 8601 timestamp when this media buy was confirmed by the seller. A successful create_media_buy response constitutes order confirmation.
@@ -4129,6 +4211,7 @@ export interface UpdateMediaBuySuccess {
    * ISO 8601 timestamp when changes take effect (null if pending approval)
    */
   implementation_date?: string | null;
+  invoice_recipient?: BusinessEntity;
   /**
    * Array of packages that were modified with complete state information
    */
