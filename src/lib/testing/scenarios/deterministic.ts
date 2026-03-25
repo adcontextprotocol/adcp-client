@@ -74,22 +74,29 @@ function transitionStep(
   }
 }
 
-/** Timed wrapper for forceStatus */
-async function timedForceStatus(
-  ...args: Parameters<typeof forceStatus>
-): Promise<{ response: Awaited<ReturnType<typeof forceStatus>>; durationMs: number }> {
-  const start = Date.now();
-  const response = await forceStatus(...args);
-  return { response, durationMs: Date.now() - start };
-}
-
-/** Timed wrapper for simulate */
-async function timedSimulate(
-  ...args: Parameters<typeof simulate>
-): Promise<{ response: Awaited<ReturnType<typeof simulate>>; durationMs: number }> {
-  const start = Date.now();
-  const response = await simulate(...args);
-  return { response, durationMs: Date.now() - start };
+/**
+ * Create timed wrappers bound to specific options.
+ * This ensures controller calls use the same account as test scenarios.
+ */
+function createTimedHelpers(client: ReturnType<typeof getOrCreateClient>, options: TestOptions) {
+  return {
+    async forceStatus(
+      scenario: Parameters<typeof forceStatus>[1],
+      params: Parameters<typeof forceStatus>[2]
+    ): Promise<{ response: Awaited<ReturnType<typeof forceStatus>>; durationMs: number }> {
+      const start = Date.now();
+      const response = await forceStatus(client, scenario, params, options);
+      return { response, durationMs: Date.now() - start };
+    },
+    async simulate(
+      scenario: Parameters<typeof simulate>[1],
+      params: Parameters<typeof simulate>[2]
+    ): Promise<{ response: Awaited<ReturnType<typeof simulate>>; durationMs: number }> {
+      const start = Date.now();
+      const response = await simulate(client, scenario, params, options);
+      return { response, durationMs: Date.now() - start };
+    },
+  };
 }
 
 /**
@@ -124,6 +131,8 @@ export async function testCreativeStateMachine(
     return { steps };
   }
 
+  const ctrl = createTimedHelpers(client, options);
+
   // Step 1: Sync a creative to get an entity to work with
   const { steps: syncSteps, profile } = await testCreativeSync(agentUrl, options);
   steps.push(...syncSteps);
@@ -141,7 +150,7 @@ export async function testCreativeStateMachine(
   }
 
   // Step 2: Force to approved
-  const { response: approveResult, durationMs: approveDur } = await timedForceStatus(client, 'force_creative_status', {
+  const { response: approveResult, durationMs: approveDur } = await ctrl.forceStatus('force_creative_status', {
     creative_id: creativeId,
     status: 'approved',
   });
@@ -169,14 +178,14 @@ export async function testCreativeStateMachine(
   }
 
   // Step 4: Force to archived
-  const { response: archiveResult, durationMs: archiveDur } = await timedForceStatus(client, 'force_creative_status', {
+  const { response: archiveResult, durationMs: archiveDur } = await ctrl.forceStatus('force_creative_status', {
     creative_id: creativeId,
     status: 'archived',
   });
   steps.push(transitionStep('Force creative → archived', archiveResult, true, archiveDur));
 
   // Step 5: Invalid transition — archived is terminal, can't go back to processing
-  const { response: invalidResult, durationMs: invalidDur } = await timedForceStatus(client, 'force_creative_status', {
+  const { response: invalidResult, durationMs: invalidDur } = await ctrl.forceStatus('force_creative_status', {
     creative_id: creativeId,
     status: 'processing',
   });
@@ -197,7 +206,7 @@ export async function testCreativeStateMachine(
   const freshCreativeId = extractIdFromSteps(resyncSteps, 'creative_id');
 
   if (freshCreativeId) {
-    const { response: rejectResult, durationMs: rejectDur } = await timedForceStatus(client, 'force_creative_status', {
+    const { response: rejectResult, durationMs: rejectDur } = await ctrl.forceStatus('force_creative_status', {
       creative_id: freshCreativeId,
       status: 'rejected',
       rejection_reason: 'Brand safety policy violation (comply test)',
@@ -231,6 +240,8 @@ export async function testMediaBuyStateMachine(
     return { steps };
   }
 
+  const ctrl = createTimedHelpers(client, options);
+
   // Create a media buy
   const { steps: createSteps, profile, mediaBuyId } = await testCreateMediaBuy(agentUrl, options);
   steps.push(...createSteps);
@@ -246,7 +257,7 @@ export async function testMediaBuyStateMachine(
   }
 
   // Force to active
-  const { response: activateResult, durationMs: activateDur } = await timedForceStatus(client, 'force_media_buy_status', {
+  const { response: activateResult, durationMs: activateDur } = await ctrl.forceStatus('force_media_buy_status', {
     media_buy_id: mediaBuyId,
     status: 'active',
   });
@@ -275,14 +286,14 @@ export async function testMediaBuyStateMachine(
   }
 
   // Force to completed (terminal)
-  const { response: completeResult, durationMs: completeDur } = await timedForceStatus(client, 'force_media_buy_status', {
+  const { response: completeResult, durationMs: completeDur } = await ctrl.forceStatus('force_media_buy_status', {
     media_buy_id: mediaBuyId,
     status: 'completed',
   });
   steps.push(transitionStep('Force media buy → completed', completeResult, true, completeDur));
 
   // Invalid: completed → active (terminal)
-  const { response: invalidResult, durationMs: invalidDur } = await timedForceStatus(client, 'force_media_buy_status', {
+  const { response: invalidResult, durationMs: invalidDur } = await ctrl.forceStatus('force_media_buy_status', {
     media_buy_id: mediaBuyId,
     status: 'active',
   });
@@ -293,7 +304,7 @@ export async function testMediaBuyStateMachine(
   steps.push(...create2Steps);
 
   if (mediaBuyId2) {
-    const { response: rejectResult, durationMs: rejectDur } = await timedForceStatus(client, 'force_media_buy_status', {
+    const { response: rejectResult, durationMs: rejectDur } = await ctrl.forceStatus('force_media_buy_status', {
       media_buy_id: mediaBuyId2,
       status: 'rejected',
       rejection_reason: 'Policy violation (comply test)',
@@ -327,6 +338,8 @@ export async function testAccountStateMachine(
     return { steps };
   }
 
+  const ctrl = createTimedHelpers(client, options);
+
   // Discover an account to work with
   const profile = options._profile;
   let accountId: string | undefined;
@@ -357,7 +370,7 @@ export async function testAccountStateMachine(
   }
 
   // Force to suspended
-  const { response: suspendResult, durationMs: suspendDur } = await timedForceStatus(client, 'force_account_status', {
+  const { response: suspendResult, durationMs: suspendDur } = await ctrl.forceStatus('force_account_status', {
     account_id: accountId,
     status: 'suspended',
   });
@@ -385,21 +398,21 @@ export async function testAccountStateMachine(
   }
 
   // Reactivate
-  const { response: reactivateResult, durationMs: reactivateDur } = await timedForceStatus(client, 'force_account_status', {
+  const { response: reactivateResult, durationMs: reactivateDur } = await ctrl.forceStatus('force_account_status', {
     account_id: accountId,
     status: 'active',
   });
   steps.push(transitionStep('Force account → active (reactivate)', reactivateResult, true, reactivateDur));
 
   // Force to payment_required
-  const { response: paymentResult, durationMs: paymentDur } = await timedForceStatus(client, 'force_account_status', {
+  const { response: paymentResult, durationMs: paymentDur } = await ctrl.forceStatus('force_account_status', {
     account_id: accountId,
     status: 'payment_required',
   });
   steps.push(transitionStep('Force account → payment_required', paymentResult, true, paymentDur));
 
   // Restore to active
-  const { response: restoreResult, durationMs: restoreDur } = await timedForceStatus(client, 'force_account_status', {
+  const { response: restoreResult, durationMs: restoreDur } = await ctrl.forceStatus('force_account_status', {
     account_id: accountId,
     status: 'active',
   });
@@ -442,6 +455,8 @@ export async function testSessionStateMachine(
     return { steps };
   }
 
+  const ctrl = createTimedHelpers(client, options);
+
   // Initiate a session
   const { result: initResult, step: initStep } = await runStep<TaskResult>(
     'Initiate SI session for state machine test',
@@ -465,7 +480,7 @@ export async function testSessionStateMachine(
   }
 
   // Force session timeout
-  const { response: timeoutResult, durationMs: timeoutDur } = await timedForceStatus(client, 'force_session_status', {
+  const { response: timeoutResult, durationMs: timeoutDur } = await ctrl.forceStatus('force_session_status', {
     session_id: sessionId,
     status: 'terminated',
     termination_reason: 'session_timeout',
@@ -527,6 +542,8 @@ export async function testDeliverySimulation(
     return { steps };
   }
 
+  const ctrl = createTimedHelpers(client, options);
+
   // Create a media buy to simulate delivery on
   const { steps: createSteps, mediaBuyId } = await testCreateMediaBuy(agentUrl, options);
   steps.push(...createSteps);
@@ -542,7 +559,7 @@ export async function testDeliverySimulation(
   }
 
   // Simulate delivery
-  const { response: simResult, durationMs: simDur } = await timedSimulate(client, 'simulate_delivery', {
+  const { response: simResult, durationMs: simDur } = await ctrl.simulate('simulate_delivery', {
     media_buy_id: mediaBuyId,
     impressions: 10000,
     clicks: 150,
@@ -623,6 +640,8 @@ export async function testBudgetSimulation(
     return { steps };
   }
 
+  const ctrl = createTimedHelpers(client, options);
+
   // Create a media buy with a known budget
   const { steps: createSteps, mediaBuyId } = await testCreateMediaBuy(agentUrl, options);
   steps.push(...createSteps);
@@ -638,7 +657,7 @@ export async function testBudgetSimulation(
   }
 
   // Simulate 95% spend
-  const { response: simResult, durationMs: simDur } = await timedSimulate(client, 'simulate_budget_spend', {
+  const { response: simResult, durationMs: simDur } = await ctrl.simulate('simulate_budget_spend', {
     media_buy_id: mediaBuyId,
     spend_percentage: 95,
   });
@@ -664,7 +683,7 @@ export async function testBudgetSimulation(
   }
 
   // Simulate 100% spend
-  const { response: depletedResult, durationMs: depletedDur } = await timedSimulate(client, 'simulate_budget_spend', {
+  const { response: depletedResult, durationMs: depletedDur } = await ctrl.simulate('simulate_budget_spend', {
     media_buy_id: mediaBuyId,
     spend_percentage: 100,
   });
@@ -721,7 +740,7 @@ export async function testControllerValidation(
     async () => callControllerRaw(client, {
       scenario: 'nonexistent_scenario',
       params: {},
-    })
+    }, options)
   );
 
   const unknownData = unknownResult?.data as ControllerError | undefined;
@@ -736,7 +755,7 @@ export async function testControllerValidation(
   // Test 2: Missing required params → expect INVALID_PARAMS
   if (supportsScenario(controller, 'force_creative_status')) {
     const start = Date.now();
-    const missingResult = await forceStatus(client, 'force_creative_status', {});
+    const missingResult = await forceStatus(client, 'force_creative_status', {}, options);
     const dur = Date.now() - start;
     if (!missingResult.success && missingResult.error === 'INVALID_PARAMS') {
       steps.push({
@@ -763,7 +782,7 @@ export async function testControllerValidation(
     const notFoundResult = await forceStatus(client, 'force_creative_status', {
       creative_id: 'comply-test-nonexistent-000000000000',
       status: 'approved',
-    });
+    }, options);
     const dur = Date.now() - start;
     if (!notFoundResult.success && notFoundResult.error === 'NOT_FOUND') {
       steps.push({

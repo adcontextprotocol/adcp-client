@@ -6,8 +6,8 @@
  */
 
 import type { TestClient } from './client';
-import { getLogger } from './client';
-import type { AgentProfile, TaskResult } from './types';
+import { getLogger, resolveAccount } from './client';
+import type { AgentProfile, TaskResult, TestOptions } from './types';
 import type {
   ComplyTestControllerResponse,
   ListScenariosSuccess,
@@ -40,21 +40,29 @@ export type ControllerDetection = ControllerCapabilities | NoController;
 
 const TOOL_NAME = 'comply_test_controller';
 
-/** Default sandbox account ref — required by sellers that gate the controller on sandbox mode */
-const SANDBOX_ACCOUNT = { brand: { domain: 'comply-test.adcp.dev' }, operator: 'comply', sandbox: true };
+/** Fallback sandbox account when no options are available (detection phase) */
+const DEFAULT_SANDBOX_ACCOUNT = { brand: { domain: 'test.example.com' }, operator: 'test.example.com', sandbox: true };
+
+/**
+ * Build the account ref for controller calls.
+ * Uses the same resolution as test scenarios so entities are in the same session.
+ */
+function buildAccount(options?: TestOptions): Record<string, unknown> {
+  if (options) {
+    const account = resolveAccount(options);
+    // Ensure sandbox is set — controller requires it
+    return { ...account, sandbox: true };
+  }
+  return DEFAULT_SANDBOX_ACCOUNT;
+}
 
 /**
  * Call executeTask on the test client and parse the MCP content envelope.
  * executeTask returns { success, data: { content: [{ type: 'text', text: '...' }] } }
  * where the text is the JSON-serialized tool response. This helper extracts and parses it.
- * Always includes a sandbox account ref so sellers with sandbox gating accept the call.
  */
-export async function callControllerRaw(client: TestClient, params: Record<string, unknown>): Promise<TaskResult> {
-  return callController(client, params);
-}
-
-async function callController(client: TestClient, params: Record<string, unknown>): Promise<TaskResult> {
-  const withAccount = { account: SANDBOX_ACCOUNT, ...params };
+async function callController(client: TestClient, params: Record<string, unknown>, options?: TestOptions): Promise<TaskResult> {
+  const withAccount = { account: buildAccount(options), ...params };
   const raw = await (client as unknown as { executeTask(name: string, params: Record<string, unknown>): Promise<TaskResult> })
     .executeTask(TOOL_NAME, withAccount);
 
@@ -80,6 +88,11 @@ async function callController(client: TestClient, params: Record<string, unknown
   return raw;
 }
 
+/** Public wrapper for scenarios that need raw controller access (e.g., controller validation) */
+export async function callControllerRaw(client: TestClient, params: Record<string, unknown>, options?: TestOptions): Promise<TaskResult> {
+  return callController(client, params, options);
+}
+
 /** Check if the agent exposes comply_test_controller */
 export function hasTestController(profile: AgentProfile): boolean {
   return profile.tools.includes(TOOL_NAME);
@@ -91,14 +104,15 @@ export function hasTestController(profile: AgentProfile): boolean {
  */
 export async function detectController(
   client: TestClient,
-  profile: AgentProfile
+  profile: AgentProfile,
+  options?: TestOptions
 ): Promise<ControllerDetection> {
   if (!hasTestController(profile)) {
     return { detected: false };
   }
 
   try {
-    const result = await callController(client, { scenario: 'list_scenarios' });
+    const result = await callController(client, { scenario: 'list_scenarios' }, options);
 
     if (!result.success || !result.data) {
       getLogger().warn(
@@ -145,9 +159,10 @@ export function supportsScenario(
 export async function forceStatus(
   client: TestClient,
   scenario: 'force_creative_status' | 'force_account_status' | 'force_media_buy_status' | 'force_session_status',
-  params: Record<string, unknown>
+  params: Record<string, unknown>,
+  options?: TestOptions
 ): Promise<StateTransitionSuccess | ControllerError> {
-  const result = await callController(client, { scenario, params });
+  const result = await callController(client, { scenario, params }, options);
 
   if (!result.success || !result.data) {
     return {
@@ -166,9 +181,10 @@ export async function forceStatus(
 export async function simulate(
   client: TestClient,
   scenario: 'simulate_delivery' | 'simulate_budget_spend',
-  params: Record<string, unknown>
+  params: Record<string, unknown>,
+  options?: TestOptions
 ): Promise<SimulationSuccess | ControllerError> {
-  const result = await callController(client, { scenario, params });
+  const result = await callController(client, { scenario, params }, options);
 
   if (!result.success || !result.data) {
     return {

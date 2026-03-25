@@ -565,7 +565,7 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
   // Detect test controller for deterministic mode
   let controllerDetection: ControllerDetection = { detected: false };
   if (profileStep.passed && hasTestController(profile)) {
-    controllerDetection = await detectController(client as any, profile);
+    controllerDetection = await detectController(client as any, profile, effectiveOptions);
     if (controllerDetection.detected) {
       effectiveOptions._controllerCapabilities = controllerDetection;
     }
