@@ -2,4 +2,4 @@
 "@adcp/client": patch
 ---
 
-Fix schema validation for MCP responses using `content[0].text` instead of `structuredContent`. ResponseValidator now parses JSON from text content when `structuredContent` is absent. TaskExecutor retries unwrapping without schema validation before falling back to the raw envelope.
+Fix TaskExecutor.extractResponseData() to retry unwrapping without schema validation when the initial call fails, preventing the raw MCP protocol envelope from leaking through as response data.
