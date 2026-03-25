@@ -13895,9 +13895,13 @@ export interface GetMediaBuyDeliveryResponse {
      */
     clicks?: number;
     /**
-     * Total video completions across all media buys (if applicable)
+     * Total audio/video completions across all media buys (if applicable)
      */
-    video_completions?: number;
+    completed_views?: number;
+    /**
+     * Total views across all media buys (if applicable)
+     */
+    views?: number;
     /**
      * Total conversions across all media buys (if applicable)
      */
@@ -13918,6 +13922,22 @@ export interface GetMediaBuyDeliveryResponse {
      * Aggregate cost per conversion across all media buys (total spend / total conversions)
      */
     cost_per_acquisition?: number;
+    /**
+     * Aggregate completion rate across all media buys (weighted by impressions, not a simple average of per-buy rates)
+     */
+    completion_rate?: number;
+    /**
+     * Deduplicated reach across all media buys (if the seller can deduplicate across buys; otherwise sum of per-buy reach). Only present when all media buys share the same reach_unit. Omitted when reach units are heterogeneous — use per-buy reach values instead.
+     */
+    reach?: number;
+    /**
+     * Unit of measurement for reach. Only present when all aggregated media buys use the same reach_unit.
+     */
+    reach_unit?: ReachUnit;
+    /**
+     * Average frequency per reach unit across all media buys (impressions / reach when cross-buy deduplication is available). Only present when reach is present.
+     */
+    frequency?: number;
     /**
      * Number of media buys included in the response
      */
@@ -14215,7 +14235,7 @@ export interface DeliveryMetrics {
    */
   ctr?: number;
   /**
-   * Views at threshold (for CPV)
+   * Content engagements counted toward the billable view threshold. For video this is a platform-defined view event (e.g., 30 seconds or video midpoint); for audio/podcast it is a stream start; for other formats it follows the pricing model's view definition. When the package uses CPV pricing, spend = views × rate.
    */
   views?: number;
   /**
@@ -14273,15 +14293,19 @@ export interface DeliveryMetrics {
    */
   grps?: number;
   /**
-   * Unique reach - units depend on measurement provider (e.g., individuals, households, devices, cookies). See delivery_measurement.provider for methodology.
+   * Unique reach in the units specified by reach_unit. When reach_unit is omitted, units are unspecified — do not compare reach values across packages or media buys without a common reach_unit.
    */
   reach?: number;
   /**
-   * Average frequency per individual (typically measured over campaign duration, but can vary by measurement provider)
+   * Unit of measurement for the reach field. Aligns with the reach_unit declared on optimization goals and delivery forecasts. Required when reach is present to enable cross-platform comparison.
+   */
+  reach_unit?: ReachUnit;
+  /**
+   * Average frequency per reach unit (typically measured over campaign duration, but can vary by measurement provider). When reach_unit is 'households', this is average exposures per household; when 'accounts', per logged-in account; etc.
    */
   frequency?: number;
   /**
-   * Video quartile completion data
+   * Audio/video quartile completion data
    */
   quartile_data?: {
     /**
