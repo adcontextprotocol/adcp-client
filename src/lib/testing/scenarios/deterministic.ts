@@ -18,13 +18,29 @@ import { testCreateMediaBuy, testCreativeSync } from './media-buy';
 // ---------------------------------------------------------------------------
 
 function getController(options: TestOptions): ControllerDetection | undefined {
-  return (options as any)._controllerCapabilities as ControllerDetection | undefined;
+  return options._controllerCapabilities;
 }
 
+/** Extract an entity ID from step results (created_id or response_preview.creative_id) */
+function extractIdFromSteps(stepsToSearch: TestStepResult[], field: string): string | undefined {
+  for (const step of stepsToSearch) {
+    if (step.created_id) return step.created_id;
+    if (step.response_preview) {
+      try {
+        const preview = JSON.parse(step.response_preview);
+        if (preview[field]) return preview[field];
+      } catch { /* skip */ }
+    }
+  }
+  return undefined;
+}
+
+/** Build a TestStepResult from a controller transition response */
 function transitionStep(
   label: string,
   response: StateTransitionSuccess | ControllerError,
-  expectedSuccess: boolean
+  expectedSuccess: boolean,
+  durationMs: number
 ): TestStepResult {
   const passed = response.success === expectedSuccess;
   if (response.success) {
@@ -32,7 +48,7 @@ function transitionStep(
       step: label,
       task: 'comply_test_controller',
       passed,
-      duration_ms: 0,
+      duration_ms: durationMs,
       details: `${response.previous_state} → ${response.current_state}`,
       response_preview: JSON.stringify(
         { previous_state: response.previous_state, current_state: response.current_state },
@@ -46,7 +62,7 @@ function transitionStep(
       step: label,
       task: 'comply_test_controller',
       passed,
-      duration_ms: 0,
+      duration_ms: durationMs,
       details: `Error: ${response.error} — ${response.error_detail || ''}`,
       response_preview: JSON.stringify(
         { error: response.error, current_state: response.current_state },
@@ -56,6 +72,33 @@ function transitionStep(
       ...(!passed && { error: `Expected success but got ${response.error}: ${response.error_detail || ''}` }),
     };
   }
+}
+
+/** Timed wrapper for forceStatus */
+async function timedForceStatus(
+  ...args: Parameters<typeof forceStatus>
+): Promise<{ response: Awaited<ReturnType<typeof forceStatus>>; durationMs: number }> {
+  const start = Date.now();
+  const response = await forceStatus(...args);
+  return { response, durationMs: Date.now() - start };
+}
+
+/** Timed wrapper for simulate */
+async function timedSimulate(
+  ...args: Parameters<typeof simulate>
+): Promise<{ response: Awaited<ReturnType<typeof simulate>>; durationMs: number }> {
+  const start = Date.now();
+  const response = await simulate(...args);
+  return { response, durationMs: Date.now() - start };
+}
+
+/**
+ * Call a typed method on the client via executeTask.
+ * Uses the same pattern as existing scenarios but through the typed executeTask overload.
+ */
+function callTask(client: ReturnType<typeof getOrCreateClient>, taskName: string, params: Record<string, unknown>): Promise<TaskResult> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- AgentClient.executeTask exists but TestClient type doesn't expose it directly
+  return (client as any).executeTask(taskName, params) as Promise<TaskResult>;
 }
 
 // ---------------------------------------------------------------------------
@@ -85,23 +128,7 @@ export async function testCreativeStateMachine(
   const { steps: syncSteps, profile } = await testCreativeSync(agentUrl, options);
   steps.push(...syncSteps);
 
-  // Find a creative_id from sync results
-  let creativeId: string | undefined;
-  for (const step of syncSteps) {
-    if (step.created_id) {
-      creativeId = step.created_id;
-      break;
-    }
-    if (step.response_preview) {
-      try {
-        const preview = JSON.parse(step.response_preview);
-        if (preview.creative_id) {
-          creativeId = preview.creative_id;
-          break;
-        }
-      } catch { /* skip */ }
-    }
-  }
+  const creativeId = extractIdFromSteps(syncSteps, 'creative_id');
 
   if (!creativeId) {
     steps.push({
@@ -114,22 +141,22 @@ export async function testCreativeStateMachine(
   }
 
   // Step 2: Force to approved
-  const approveResult = await forceStatus(client, 'force_creative_status', {
+  const { response: approveResult, durationMs: approveDur } = await timedForceStatus(client, 'force_creative_status', {
     creative_id: creativeId,
     status: 'approved',
   });
-  steps.push(transitionStep('Force creative → approved', approveResult, true));
+  steps.push(transitionStep('Force creative → approved', approveResult, true, approveDur));
 
   // Step 3: Verify via list_creatives
   if (approveResult.success && profile?.tools.includes('list_creatives')) {
     const { result: listResult, step: listStep } = await runStep<TaskResult>(
       'Verify creative status via list_creatives',
       'list_creatives',
-      async () => (client as any).listCreatives({}) as Promise<TaskResult>
+      async () => callTask(client, 'list_creatives', {})
     );
     if (listResult?.success && listResult?.data) {
-      const creatives = ((listResult.data as any).creatives || []) as any[];
-      const found = creatives.find((c: any) => c.creative_id === creativeId);
+      const creatives = ((listResult.data as Record<string, unknown>).creatives as any[] || []);
+      const found = creatives.find((c: Record<string, unknown>) => c.creative_id === creativeId);
       if (found) {
         listStep.details = `Creative ${creativeId} status: ${found.status}`;
         if (found.status !== 'approved') {
@@ -142,18 +169,18 @@ export async function testCreativeStateMachine(
   }
 
   // Step 4: Force to archived
-  const archiveResult = await forceStatus(client, 'force_creative_status', {
+  const { response: archiveResult, durationMs: archiveDur } = await timedForceStatus(client, 'force_creative_status', {
     creative_id: creativeId,
     status: 'archived',
   });
-  steps.push(transitionStep('Force creative → archived', archiveResult, true));
+  steps.push(transitionStep('Force creative → archived', archiveResult, true, archiveDur));
 
   // Step 5: Invalid transition — archived is terminal, can't go back to processing
-  const invalidResult = await forceStatus(client, 'force_creative_status', {
+  const { response: invalidResult, durationMs: invalidDur } = await timedForceStatus(client, 'force_creative_status', {
     creative_id: creativeId,
     status: 'processing',
   });
-  steps.push(transitionStep('Invalid: archived → processing (expect INVALID_TRANSITION)', invalidResult, false));
+  steps.push(transitionStep('Invalid: archived → processing (expect INVALID_TRANSITION)', invalidResult, false, invalidDur));
 
   if (!invalidResult.success && invalidResult.error !== 'INVALID_TRANSITION') {
     steps.push({
@@ -165,33 +192,17 @@ export async function testCreativeStateMachine(
     });
   }
 
-  // Step 6: Force to rejected with reason
-  // First re-sync a fresh creative since archived may be terminal
+  // Step 6: Force to rejected with reason on a fresh creative
   const { steps: resyncSteps } = await testCreativeSync(agentUrl, options);
-  let freshCreativeId: string | undefined;
-  for (const step of resyncSteps) {
-    if (step.created_id) {
-      freshCreativeId = step.created_id;
-      break;
-    }
-    if (step.response_preview) {
-      try {
-        const preview = JSON.parse(step.response_preview);
-        if (preview.creative_id) {
-          freshCreativeId = preview.creative_id;
-          break;
-        }
-      } catch { /* skip */ }
-    }
-  }
+  const freshCreativeId = extractIdFromSteps(resyncSteps, 'creative_id');
 
   if (freshCreativeId) {
-    const rejectResult = await forceStatus(client, 'force_creative_status', {
+    const { response: rejectResult, durationMs: rejectDur } = await timedForceStatus(client, 'force_creative_status', {
       creative_id: freshCreativeId,
       status: 'rejected',
       rejection_reason: 'Brand safety policy violation (comply test)',
     });
-    steps.push(transitionStep('Force creative → rejected with reason', rejectResult, true));
+    steps.push(transitionStep('Force creative → rejected with reason', rejectResult, true, rejectDur));
   }
 
   return { steps, profile };
@@ -235,23 +246,23 @@ export async function testMediaBuyStateMachine(
   }
 
   // Force to active
-  const activateResult = await forceStatus(client, 'force_media_buy_status', {
+  const { response: activateResult, durationMs: activateDur } = await timedForceStatus(client, 'force_media_buy_status', {
     media_buy_id: mediaBuyId,
     status: 'active',
   });
-  steps.push(transitionStep('Force media buy → active', activateResult, true));
+  steps.push(transitionStep('Force media buy → active', activateResult, true, activateDur));
 
   // Verify via get_media_buys
   if (activateResult.success && profile?.tools.includes('get_media_buys')) {
     const { result: getResult, step: getStep } = await runStep<TaskResult>(
       'Verify media buy status via get_media_buys',
       'get_media_buys',
-      async () => (client as any).getMediaBuys({ media_buy_id: mediaBuyId }) as Promise<TaskResult>
+      async () => callTask(client, 'get_media_buys', { media_buy_id: mediaBuyId })
     );
     if (getResult?.success && getResult?.data) {
-      const data = getResult.data as any;
-      const buys = data.media_buys || [data];
-      const found = buys.find((b: any) => b.media_buy_id === mediaBuyId);
+      const data = getResult.data as Record<string, unknown>;
+      const buys = (data.media_buys as Record<string, unknown>[] || [data]);
+      const found = buys.find((b: Record<string, unknown>) => b.media_buy_id === mediaBuyId);
       if (found) {
         getStep.details = `Media buy ${mediaBuyId} status: ${found.status}`;
         if (found.status !== 'active') {
@@ -264,30 +275,30 @@ export async function testMediaBuyStateMachine(
   }
 
   // Force to completed (terminal)
-  const completeResult = await forceStatus(client, 'force_media_buy_status', {
+  const { response: completeResult, durationMs: completeDur } = await timedForceStatus(client, 'force_media_buy_status', {
     media_buy_id: mediaBuyId,
     status: 'completed',
   });
-  steps.push(transitionStep('Force media buy → completed', completeResult, true));
+  steps.push(transitionStep('Force media buy → completed', completeResult, true, completeDur));
 
   // Invalid: completed → active (terminal)
-  const invalidResult = await forceStatus(client, 'force_media_buy_status', {
+  const { response: invalidResult, durationMs: invalidDur } = await timedForceStatus(client, 'force_media_buy_status', {
     media_buy_id: mediaBuyId,
     status: 'active',
   });
-  steps.push(transitionStep('Invalid: completed → active (expect INVALID_TRANSITION)', invalidResult, false));
+  steps.push(transitionStep('Invalid: completed → active (expect INVALID_TRANSITION)', invalidResult, false, invalidDur));
 
   // Test rejection from pending_activation
   const { steps: create2Steps, mediaBuyId: mediaBuyId2 } = await testCreateMediaBuy(agentUrl, options);
   steps.push(...create2Steps);
 
   if (mediaBuyId2) {
-    const rejectResult = await forceStatus(client, 'force_media_buy_status', {
+    const { response: rejectResult, durationMs: rejectDur } = await timedForceStatus(client, 'force_media_buy_status', {
       media_buy_id: mediaBuyId2,
       status: 'rejected',
       rejection_reason: 'Policy violation (comply test)',
     });
-    steps.push(transitionStep('Force media buy → rejected from pending_activation', rejectResult, true));
+    steps.push(transitionStep('Force media buy → rejected from pending_activation', rejectResult, true, rejectDur));
   }
 
   return { steps, profile };
@@ -324,12 +335,12 @@ export async function testAccountStateMachine(
     const { result: listResult, step: listStep } = await runStep<TaskResult>(
       'List accounts for state machine test',
       'list_accounts',
-      async () => (client as any).listAccounts({}) as Promise<TaskResult>
+      async () => callTask(client, 'list_accounts', {})
     );
     if (listResult?.success && listResult?.data) {
-      const accounts = ((listResult.data as any).accounts || []) as any[];
-      const active = accounts.find((a: any) => a.status === 'active');
-      accountId = active?.account_id || accounts[0]?.account_id;
+      const accounts = ((listResult.data as Record<string, unknown>).accounts as Record<string, unknown>[] || []);
+      const active = accounts.find((a: Record<string, unknown>) => a.status === 'active');
+      accountId = (active?.account_id || accounts[0]?.account_id) as string | undefined;
       listStep.details = `Found ${accounts.length} account(s), using ${accountId || 'none'}`;
     }
     steps.push(listStep);
@@ -346,22 +357,21 @@ export async function testAccountStateMachine(
   }
 
   // Force to suspended
-  const suspendResult = await forceStatus(client, 'force_account_status', {
+  const { response: suspendResult, durationMs: suspendDur } = await timedForceStatus(client, 'force_account_status', {
     account_id: accountId,
     status: 'suspended',
   });
-  steps.push(transitionStep('Force account → suspended', suspendResult, true));
+  steps.push(transitionStep('Force account → suspended', suspendResult, true, suspendDur));
 
   // Verify operations are gated: create_media_buy should fail
   if (suspendResult.success && profile?.tools.includes('create_media_buy') && profile?.tools.includes('get_products')) {
     const { result: createResult, step: createStep } = await runStep<TaskResult>(
       'Verify create_media_buy blocked when suspended',
       'create_media_buy',
-      async () =>
-        (client as any).createMediaBuy({
-          brief: 'comply test — should be blocked by suspension',
-          budget: { amount: 100, currency: 'USD' },
-        }) as Promise<TaskResult>
+      async () => callTask(client, 'create_media_buy', {
+        brief: 'comply test — should be blocked by suspension',
+        budget: { amount: 100, currency: 'USD' },
+      })
     );
     // We expect this to fail
     if (createResult?.success) {
@@ -375,25 +385,25 @@ export async function testAccountStateMachine(
   }
 
   // Reactivate
-  const reactivateResult = await forceStatus(client, 'force_account_status', {
+  const { response: reactivateResult, durationMs: reactivateDur } = await timedForceStatus(client, 'force_account_status', {
     account_id: accountId,
     status: 'active',
   });
-  steps.push(transitionStep('Force account → active (reactivate)', reactivateResult, true));
+  steps.push(transitionStep('Force account → active (reactivate)', reactivateResult, true, reactivateDur));
 
   // Force to payment_required
-  const paymentResult = await forceStatus(client, 'force_account_status', {
+  const { response: paymentResult, durationMs: paymentDur } = await timedForceStatus(client, 'force_account_status', {
     account_id: accountId,
     status: 'payment_required',
   });
-  steps.push(transitionStep('Force account → payment_required', paymentResult, true));
+  steps.push(transitionStep('Force account → payment_required', paymentResult, true, paymentDur));
 
   // Restore to active
-  const restoreResult = await forceStatus(client, 'force_account_status', {
+  const { response: restoreResult, durationMs: restoreDur } = await timedForceStatus(client, 'force_account_status', {
     account_id: accountId,
     status: 'active',
   });
-  steps.push(transitionStep('Force account → active (restore)', restoreResult, true));
+  steps.push(transitionStep('Force account → active (restore)', restoreResult, true, restoreDur));
 
   return { steps, profile };
 }
@@ -436,15 +446,14 @@ export async function testSessionStateMachine(
   const { result: initResult, step: initStep } = await runStep<TaskResult>(
     'Initiate SI session for state machine test',
     'si_initiate_session',
-    async () =>
-      (client as any).siInitiateSession({
-        identity: { user_type: 'consumer' },
-        supported_capabilities: { response_formats: ['text'] },
-      }) as Promise<TaskResult>
+    async () => callTask(client, 'si_initiate_session', {
+      identity: { user_type: 'consumer' },
+      supported_capabilities: { response_formats: ['text'] },
+    })
   );
   steps.push(initStep);
 
-  const sessionId = (initResult?.data as any)?.session_id;
+  const sessionId = (initResult?.data as Record<string, unknown> | undefined)?.session_id as string | undefined;
   if (!sessionId) {
     steps.push({
       step: 'Extract session ID',
@@ -456,29 +465,28 @@ export async function testSessionStateMachine(
   }
 
   // Force session timeout
-  const timeoutResult = await forceStatus(client, 'force_session_status', {
+  const { response: timeoutResult, durationMs: timeoutDur } = await timedForceStatus(client, 'force_session_status', {
     session_id: sessionId,
     status: 'terminated',
     termination_reason: 'session_timeout',
   });
-  steps.push(transitionStep('Force session → terminated (timeout)', timeoutResult, true));
+  steps.push(transitionStep('Force session → terminated (timeout)', timeoutResult, true, timeoutDur));
 
   // Verify: si_send_message should fail with SESSION_NOT_FOUND or similar
   if (timeoutResult.success && profile.tools.includes('si_send_message')) {
     const { result: msgResult, step: msgStep } = await runStep<TaskResult>(
       'Verify si_send_message fails after forced termination',
       'si_send_message',
-      async () =>
-        (client as any).siSendMessage({
-          session_id: sessionId,
-          message: 'comply test — session should be terminated',
-        }) as Promise<TaskResult>
+      async () => callTask(client, 'si_send_message', {
+        session_id: sessionId,
+        message: 'comply test — session should be terminated',
+      })
     );
 
     if (msgResult?.success) {
-      // Check if it returned an error in the data
-      const data = msgResult.data as any;
-      if (data?.errors?.length > 0 || data?.session_status === 'terminated') {
+      const data = msgResult.data as Record<string, unknown> | undefined;
+      const errors = data?.errors as unknown[] | undefined;
+      if ((errors && errors.length > 0) || data?.session_status === 'terminated') {
         msgStep.passed = true;
         msgStep.details = 'Agent correctly returned error/terminated status for expired session';
       } else {
@@ -534,7 +542,7 @@ export async function testDeliverySimulation(
   }
 
   // Simulate delivery
-  const simResult = await simulate(client, 'simulate_delivery', {
+  const { response: simResult, durationMs: simDur } = await timedSimulate(client, 'simulate_delivery', {
     media_buy_id: mediaBuyId,
     impressions: 10000,
     clicks: 150,
@@ -546,7 +554,7 @@ export async function testDeliverySimulation(
       step: 'Simulate delivery data',
       task: 'comply_test_controller',
       passed: true,
-      duration_ms: 0,
+      duration_ms: simDur,
       details: simResult.message || 'Delivery simulated',
       response_preview: JSON.stringify(simResult.simulated, null, 2),
     });
@@ -555,7 +563,7 @@ export async function testDeliverySimulation(
       step: 'Simulate delivery data',
       task: 'comply_test_controller',
       passed: false,
-      duration_ms: 0,
+      duration_ms: simDur,
       error: `${simResult.error}: ${simResult.error_detail || ''}`,
     });
     return { steps, profile };
@@ -566,12 +574,13 @@ export async function testDeliverySimulation(
     const { result: deliveryResult, step: deliveryStep } = await runStep<TaskResult>(
       'Verify delivery data via get_media_buy_delivery',
       'get_media_buy_delivery',
-      async () => (client as any).getMediaBuyDelivery({ media_buy_id: mediaBuyId }) as Promise<TaskResult>
+      async () => callTask(client, 'get_media_buy_delivery', { media_buy_id: mediaBuyId })
     );
 
     if (deliveryResult?.success && deliveryResult?.data) {
-      const data = deliveryResult.data as any;
-      const impressions = data.impressions ?? data.total_impressions ?? data.summary?.impressions;
+      const data = deliveryResult.data as Record<string, unknown>;
+      const summary = data.summary as Record<string, unknown> | undefined;
+      const impressions = (data.impressions ?? data.total_impressions ?? summary?.impressions) as number | undefined;
       if (impressions !== undefined && impressions >= 10000) {
         deliveryStep.details = `Delivery reflects simulated data: ${impressions} impressions`;
       } else {
@@ -629,7 +638,7 @@ export async function testBudgetSimulation(
   }
 
   // Simulate 95% spend
-  const simResult = await simulate(client, 'simulate_budget_spend', {
+  const { response: simResult, durationMs: simDur } = await timedSimulate(client, 'simulate_budget_spend', {
     media_buy_id: mediaBuyId,
     spend_percentage: 95,
   });
@@ -639,7 +648,7 @@ export async function testBudgetSimulation(
       step: 'Simulate budget spend to 95%',
       task: 'comply_test_controller',
       passed: true,
-      duration_ms: 0,
+      duration_ms: simDur,
       details: simResult.message || 'Budget spend simulated to 95%',
       response_preview: JSON.stringify(simResult.simulated, null, 2),
     });
@@ -648,14 +657,14 @@ export async function testBudgetSimulation(
       step: 'Simulate budget spend to 95%',
       task: 'comply_test_controller',
       passed: false,
-      duration_ms: 0,
+      duration_ms: simDur,
       error: `${simResult.error}: ${simResult.error_detail || ''}`,
     });
     return { steps, profile };
   }
 
   // Simulate 100% spend
-  const depletedResult = await simulate(client, 'simulate_budget_spend', {
+  const { response: depletedResult, durationMs: depletedDur } = await timedSimulate(client, 'simulate_budget_spend', {
     media_buy_id: mediaBuyId,
     spend_percentage: 100,
   });
@@ -665,7 +674,7 @@ export async function testBudgetSimulation(
       step: 'Simulate budget fully depleted (100%)',
       task: 'comply_test_controller',
       passed: true,
-      duration_ms: 0,
+      duration_ms: depletedDur,
       details: depletedResult.message || 'Budget fully depleted',
       response_preview: JSON.stringify(depletedResult.simulated, null, 2),
     });
@@ -674,7 +683,7 @@ export async function testBudgetSimulation(
       step: 'Simulate budget fully depleted (100%)',
       task: 'comply_test_controller',
       passed: false,
-      duration_ms: 0,
+      duration_ms: depletedDur,
       error: `${depletedResult.error}: ${depletedResult.error_detail || ''}`,
     });
   }
@@ -706,41 +715,35 @@ export async function testControllerValidation(
   }
 
   // Test 1: Unknown scenario → expect UNKNOWN_SCENARIO
-  const unknownResult = (await (client as any).executeTask('comply_test_controller', {
-    scenario: 'nonexistent_scenario',
-    params: {},
-  })) as TaskResult;
+  const { result: unknownResult, step: unknownStep } = await runStep<TaskResult>(
+    'Unknown scenario returns UNKNOWN_SCENARIO',
+    'comply_test_controller',
+    async () => callTask(client, 'comply_test_controller', {
+      scenario: 'nonexistent_scenario',
+      params: {},
+    })
+  );
 
-  const unknownData = unknownResult.data as ControllerError | undefined;
+  const unknownData = unknownResult?.data as ControllerError | undefined;
   if (unknownData && !unknownData.success && unknownData.error === 'UNKNOWN_SCENARIO') {
-    steps.push({
-      step: 'Unknown scenario returns UNKNOWN_SCENARIO',
-      task: 'comply_test_controller',
-      passed: true,
-      duration_ms: 0,
-      details: `Correctly returned UNKNOWN_SCENARIO for nonexistent_scenario`,
-    });
+    unknownStep.details = 'Correctly returned UNKNOWN_SCENARIO for nonexistent_scenario';
   } else {
-    steps.push({
-      step: 'Unknown scenario returns UNKNOWN_SCENARIO',
-      task: 'comply_test_controller',
-      passed: false,
-      duration_ms: 0,
-      error: `Expected UNKNOWN_SCENARIO error, got: ${JSON.stringify(unknownData)}`,
-    });
+    unknownStep.passed = false;
+    unknownStep.error = `Expected UNKNOWN_SCENARIO error, got: ${JSON.stringify(unknownData)}`;
   }
+  steps.push(unknownStep);
 
   // Test 2: Missing required params → expect INVALID_PARAMS
   if (supportsScenario(controller, 'force_creative_status')) {
-    const missingResult = await forceStatus(client, 'force_creative_status', {
-      // Missing creative_id and status
-    });
+    const start = Date.now();
+    const missingResult = await forceStatus(client, 'force_creative_status', {});
+    const dur = Date.now() - start;
     if (!missingResult.success && missingResult.error === 'INVALID_PARAMS') {
       steps.push({
         step: 'Missing params returns INVALID_PARAMS',
         task: 'comply_test_controller',
         passed: true,
-        duration_ms: 0,
+        duration_ms: dur,
         details: 'Correctly returned INVALID_PARAMS for missing creative_id/status',
       });
     } else {
@@ -748,7 +751,7 @@ export async function testControllerValidation(
         step: 'Missing params returns INVALID_PARAMS',
         task: 'comply_test_controller',
         passed: false,
-        duration_ms: 0,
+        duration_ms: dur,
         error: `Expected INVALID_PARAMS, got: ${!missingResult.success ? missingResult.error : 'success'}`,
       });
     }
@@ -756,16 +759,18 @@ export async function testControllerValidation(
 
   // Test 3: NOT_FOUND for nonexistent entity
   if (supportsScenario(controller, 'force_creative_status')) {
+    const start = Date.now();
     const notFoundResult = await forceStatus(client, 'force_creative_status', {
-      creative_id: 'comply-test-nonexistent-' + Date.now(),
+      creative_id: 'comply-test-nonexistent-000000000000',
       status: 'approved',
     });
+    const dur = Date.now() - start;
     if (!notFoundResult.success && notFoundResult.error === 'NOT_FOUND') {
       steps.push({
         step: 'Nonexistent entity returns NOT_FOUND',
         task: 'comply_test_controller',
         passed: true,
-        duration_ms: 0,
+        duration_ms: dur,
         details: 'Correctly returned NOT_FOUND for nonexistent creative',
       });
     } else {
@@ -773,7 +778,7 @@ export async function testControllerValidation(
         step: 'Nonexistent entity returns NOT_FOUND',
         task: 'comply_test_controller',
         passed: false,
-        duration_ms: 0,
+        duration_ms: dur,
         error: `Expected NOT_FOUND, got: ${!notFoundResult.success ? notFoundResult.error : 'success'}`,
       });
     }

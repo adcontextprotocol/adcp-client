@@ -93,6 +93,10 @@ export const SCENARIO_REQUIREMENTS: Partial<Record<TestScenario, string[]>> = {
  * Default set of scenarios the orchestrator will attempt.
  * Excludes unimplemented scenarios and deduplicates coverage
  * (pricing_models is omitted since pricing_edge_cases covers the same ground).
+ *
+ * Deterministic scenarios (deterministic_*, controller_validation) are excluded here —
+ * they are managed by the comply engine via TRACK_DEFINITIONS and only run when the
+ * seller exposes comply_test_controller.
  */
 export const DEFAULT_SCENARIOS: readonly TestScenario[] = [
   'health_check',

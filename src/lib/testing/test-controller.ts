@@ -6,6 +6,7 @@
  */
 
 import type { TestClient } from './client';
+import { getLogger } from './client';
 import type { AgentProfile, TaskResult } from './types';
 import type {
   ComplyTestControllerResponse,
@@ -39,6 +40,17 @@ export type ControllerDetection = ControllerCapabilities | NoController;
 
 const TOOL_NAME = 'comply_test_controller';
 
+/**
+ * Call executeTask on the test client.
+ * TestClient is AgentClient which has executeTask, but the inferred type
+ * doesn't expose it directly. This helper provides the typed bridge.
+ */
+function callController(client: TestClient, params: Record<string, unknown>): Promise<TaskResult> {
+  // AgentClient.executeTask(taskName, params) is the public API
+  return (client as unknown as { executeTask(name: string, params: Record<string, unknown>): Promise<TaskResult> })
+    .executeTask(TOOL_NAME, params);
+}
+
 /** Check if the agent exposes comply_test_controller */
 export function hasTestController(profile: AgentProfile): boolean {
   return profile.tools.includes(TOOL_NAME);
@@ -57,11 +69,13 @@ export async function detectController(
   }
 
   try {
-    const result = (await (client as any).executeTask(TOOL_NAME, {
-      scenario: 'list_scenarios',
-    })) as TaskResult;
+    const result = await callController(client, { scenario: 'list_scenarios' });
 
     if (!result.success || !result.data) {
+      getLogger().warn(
+        { tool: TOOL_NAME },
+        'comply_test_controller exists but list_scenarios returned no data'
+      );
       return { detected: false };
     }
 
@@ -74,8 +88,11 @@ export async function detectController(
     }
 
     return { detected: false };
-  } catch {
-    // Controller tool exists but list_scenarios failed — treat as unavailable
+  } catch (error) {
+    getLogger().warn(
+      { tool: TOOL_NAME, error: error instanceof Error ? error.message : String(error) },
+      'comply_test_controller list_scenarios failed — treating as unavailable'
+    );
     return { detected: false };
   }
 }
@@ -90,17 +107,14 @@ export function supportsScenario(
 
 /**
  * Call a force_* scenario on the test controller.
- * Returns the typed response or throws on transport errors.
+ * Returns the typed response or a ControllerError on transport failure.
  */
 export async function forceStatus(
   client: TestClient,
   scenario: 'force_creative_status' | 'force_account_status' | 'force_media_buy_status' | 'force_session_status',
   params: Record<string, unknown>
 ): Promise<StateTransitionSuccess | ControllerError> {
-  const result = (await (client as any).executeTask(TOOL_NAME, {
-    scenario,
-    params,
-  })) as TaskResult;
+  const result = await callController(client, { scenario, params });
 
   if (!result.success || !result.data) {
     return {
@@ -121,10 +135,7 @@ export async function simulate(
   scenario: 'simulate_delivery' | 'simulate_budget_spend',
   params: Record<string, unknown>
 ): Promise<SimulationSuccess | ControllerError> {
-  const result = (await (client as any).executeTask(TOOL_NAME, {
-    scenario,
-    params,
-  })) as TaskResult;
+  const result = await callController(client, { scenario, params });
 
   if (!result.success || !result.data) {
     return {

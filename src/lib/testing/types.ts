@@ -3,6 +3,7 @@
  */
 
 import type { FormatID } from '../types/core.generated';
+import type { ControllerDetection } from './test-controller';
 
 // Test scenarios that can be run
 export type TestScenario =
@@ -144,7 +145,7 @@ export interface TestOptions {
   /** @internal Pre-discovered profile from comply() — skips per-scenario discovery */
   _profile?: AgentProfile;
   /** @internal Test controller capabilities from comply() — set when comply_test_controller detected */
-  _controllerCapabilities?: unknown;
+  _controllerCapabilities?: ControllerDetection;
 }
 
 export interface TestStepResult {
