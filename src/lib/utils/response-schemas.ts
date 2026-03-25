@@ -23,4 +23,5 @@ export const TOOL_RESPONSE_SCHEMAS: Partial<Record<string, z.ZodType>> = {
   get_signals: schemas.GetSignalsResponseSchema,
   activate_signal: schemas.ActivateSignalResponseSchema,
   sync_audiences: schemas.SyncAudiencesResponseSchema,
+  comply_test_controller: schemas.ComplyTestControllerResponseSchema,
 };

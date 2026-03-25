@@ -150,6 +150,7 @@ export class SISessionManager implements ISISessionManager {
     if (!this.isSupported()) {
       return {
         session_id: '',
+        session_status: 'terminated',
         errors: [
           {
             code: SIErrorCodes.NOT_SUPPORTED,
@@ -185,6 +186,7 @@ export class SISessionManager implements ISISessionManager {
 
     return {
       session_id: sessionId,
+      session_status: 'active',
       response: initialResponse,
       negotiated_capabilities: session.negotiatedCapabilities,
     };

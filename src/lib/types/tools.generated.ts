@@ -271,9 +271,9 @@ export interface GetProductsRequest {
          */
         id: string;
         /**
-         * 'include': return this proposal with updated allocations and pricing. 'omit': exclude this proposal from the response.
+         * 'include': return this proposal with updated allocations and pricing. 'omit': exclude this proposal from the response. 'finalize': request firm pricing and inventory hold — transitions a draft proposal to committed with an expires_at hold window. May trigger seller-side approval (HITL). The buyer should not set a time_budget for finalize requests — they represent a commitment to wait for the result.
          */
-        action: 'include' | 'omit';
+        action: 'include' | 'omit' | 'finalize';
         /**
          * What the buyer is asking for on this proposal (e.g., 'shift more budget toward video', 'reduce total by 10%'). Ignored when action is 'omit'.
          */
@@ -703,6 +703,10 @@ export type PricingOption =
   | FlatRatePricingOption
   | TimeBasedPricingOption;
 /**
+ * Categorizes how a price adjustment affects the transaction
+ */
+export type PriceAdjustmentKind = 'fee' | 'discount' | 'commission' | 'settlement';
+/**
  * Measurement system for the demographic field. Defaults to nielsen when omitted.
  */
 export type DemographicSystem = 'nielsen' | 'barb' | 'agf' | 'oztam' | 'mediametrie' | 'custom';
@@ -860,6 +864,10 @@ export type DerivativeType = 'clip' | 'highlight' | 'recap' | 'trailer' | 'bonus
  * Days of the week for daypart targeting
  */
 export type DayOfWeek = 'monday' | 'tuesday' | 'wednesday' | 'thursday' | 'friday' | 'saturday' | 'sunday';
+/**
+ * Lifecycle status of this proposal. When absent, the proposal is ready to buy (backward compatible). 'draft' means indicative pricing — finalize via refine before purchasing. 'committed' means firm pricing with inventory reserved until expires_at.
+ */
+export type ProposalStatus = 'draft' | 'committed';
 
 /**
  * Response payload for get_products task
@@ -1087,7 +1095,7 @@ export interface Product {
    */
   brief_relevance?: string;
   /**
-   * Expiration timestamp for custom products
+   * Expiration timestamp. After this time, the product may no longer be available for purchase and create_media_buy may reject packages referencing it.
    */
   expires_at?: string;
   /**
@@ -1126,6 +1134,24 @@ export interface Product {
    * Registry policy IDs the seller enforces for this product. Enforcement level comes from the policy registry. Buyers can filter products by required policies.
    */
   enforced_policies?: string[];
+  /**
+   * Instructions for submitting physical creative materials (print, static OOH, cinema). Present only for products requiring physical delivery outside the digital creative assignment flow. Buyer agents MUST validate url and email domains against the seller's known domains (from adagents.json) before submitting materials. Never auto-submit without human confirmation.
+   */
+  material_submission?: {
+    /**
+     * HTTPS URL for uploading or submitting physical creative materials
+     */
+    url?: string;
+    /**
+     * Email address for creative material submission
+     */
+    email?: string;
+    /**
+     * Human-readable instructions for material submission (file naming conventions, shipping address, etc.)
+     */
+    instructions?: string;
+    ext?: ExtensionObject;
+  };
   ext?: ExtensionObject;
 }
 /**
@@ -1182,6 +1208,11 @@ export interface CPMPricingOption {
    * Minimum spend requirement per package using this pricing option, in the specified currency
    */
   min_spend_per_package?: number;
+  price_breakdown?: PriceBreakdown;
+  /**
+   * Adjustment kinds applicable to this pricing option. Tells buyer agents which adjustments are available before negotiation. When absent, no adjustments are pre-declared — the buyer should check price_breakdown if present.
+   */
+  eligible_adjustments?: PriceAdjustmentKind[];
 }
 /**
  * Optional pricing guidance for auction-based bidding
@@ -1203,6 +1234,1740 @@ export interface PriceGuidance {
    * 90th percentile of recent winning bids
    */
   p90?: number;
+}
+/**
+ * Breakdown of how fixed_price was derived from the list (rate card) price. Only meaningful when fixed_price is present.
+ */
+export interface PriceBreakdown {
+  /**
+   * Rate card or base price before any adjustments. The starting point from which fixed_price is derived by applying fee and discount adjustments sequentially.
+   */
+  list_price: number;
+  /**
+   * Ordered list of price adjustments. Fee and discount adjustments walk list_price to fixed_price — fees increase the running price, discounts reduce it. Commission and settlement adjustments are disclosed for transparency but do not affect the buyer's committed price.
+   *
+   * @maxItems 20
+   */
+  adjustments:
+    | []
+    | [
+        | {
+            [k: string]: unknown | undefined;
+          }
+        | {
+            [k: string]: unknown | undefined;
+          }
+      ]
+    | [
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        )
+      ]
+    | [
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        )
+      ]
+    | [
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        )
+      ]
+    | [
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        )
+      ]
+    | [
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        )
+      ]
+    | [
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        )
+      ]
+    | [
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        )
+      ]
+    | [
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        )
+      ]
+    | [
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        )
+      ]
+    | [
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        )
+      ]
+    | [
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        )
+      ]
+    | [
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        )
+      ]
+    | [
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        )
+      ]
+    | [
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        )
+      ]
+    | [
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        )
+      ]
+    | [
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        )
+      ]
+    | [
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        )
+      ]
+    | [
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        )
+      ]
+    | [
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        )
+      ];
 }
 /**
  * Viewable Cost Per Mille (cost per 1,000 viewable impressions) pricing - MRC viewability standard. If fixed_price is present, it's fixed pricing. If absent, it's auction-based.
@@ -1237,6 +3002,11 @@ export interface VCPMPricingOption {
    * Minimum spend requirement per package using this pricing option, in the specified currency
    */
   min_spend_per_package?: number;
+  price_breakdown?: PriceBreakdown;
+  /**
+   * Adjustment kinds applicable to this pricing option. Tells buyer agents which adjustments are available before negotiation. When absent, no adjustments are pre-declared — the buyer should check price_breakdown if present.
+   */
+  eligible_adjustments?: PriceAdjustmentKind[];
 }
 /**
  * Cost Per Click pricing. If fixed_price is present, it's fixed pricing. If absent, it's auction-based.
@@ -1271,6 +3041,11 @@ export interface CPCPricingOption {
    * Minimum spend requirement per package using this pricing option, in the specified currency
    */
   min_spend_per_package?: number;
+  price_breakdown?: PriceBreakdown;
+  /**
+   * Adjustment kinds applicable to this pricing option. Tells buyer agents which adjustments are available before negotiation. When absent, no adjustments are pre-declared — the buyer should check price_breakdown if present.
+   */
+  eligible_adjustments?: PriceAdjustmentKind[];
 }
 /**
  * Cost Per Completed View (100% video/audio completion) pricing. If fixed_price is present, it's fixed pricing. If absent, it's auction-based.
@@ -1305,6 +3080,11 @@ export interface CPCVPricingOption {
    * Minimum spend requirement per package using this pricing option, in the specified currency
    */
   min_spend_per_package?: number;
+  price_breakdown?: PriceBreakdown;
+  /**
+   * Adjustment kinds applicable to this pricing option. Tells buyer agents which adjustments are available before negotiation. When absent, no adjustments are pre-declared — the buyer should check price_breakdown if present.
+   */
+  eligible_adjustments?: PriceAdjustmentKind[];
 }
 /**
  * Cost Per View (at publisher-defined threshold) pricing for video/audio. If fixed_price is present, it's fixed pricing. If absent, it's auction-based.
@@ -1352,6 +3132,11 @@ export interface CPVPricingOption {
    * Minimum spend requirement per package using this pricing option, in the specified currency
    */
   min_spend_per_package?: number;
+  price_breakdown?: PriceBreakdown;
+  /**
+   * Adjustment kinds applicable to this pricing option. Tells buyer agents which adjustments are available before negotiation. When absent, no adjustments are pre-declared — the buyer should check price_breakdown if present.
+   */
+  eligible_adjustments?: PriceAdjustmentKind[];
 }
 /**
  * Cost Per Point (Gross Rating Point) pricing for TV and audio campaigns. If fixed_price is present, it's fixed pricing. If absent, it's auction-based.
@@ -1396,6 +3181,11 @@ export interface CPPPricingOption {
    * Minimum spend requirement per package using this pricing option, in the specified currency
    */
   min_spend_per_package?: number;
+  price_breakdown?: PriceBreakdown;
+  /**
+   * Adjustment kinds applicable to this pricing option. Tells buyer agents which adjustments are available before negotiation. When absent, no adjustments are pre-declared — the buyer should check price_breakdown if present.
+   */
+  eligible_adjustments?: PriceAdjustmentKind[];
 }
 /**
  * Cost Per Acquisition pricing. Advertiser pays a fixed price when a specified conversion event occurs. The event_type field declares which event triggers billing (e.g., purchase, lead, app_install).
@@ -1433,6 +3223,11 @@ export interface CPAPricingOption {
    * Minimum spend requirement per package using this pricing option, in the specified currency
    */
   min_spend_per_package?: number;
+  price_breakdown?: PriceBreakdown;
+  /**
+   * Adjustment kinds applicable to this pricing option. Tells buyer agents which adjustments are available before negotiation. When absent, no adjustments are pre-declared — the buyer should check price_breakdown if present.
+   */
+  eligible_adjustments?: PriceAdjustmentKind[];
 }
 /**
  * Flat rate pricing for sponsorships, takeovers, and DOOH exclusive placements. A fixed total cost regardless of delivery volume. For duration-scaled pricing (rate × time units), use the `time` model instead. If fixed_price is present, it's fixed pricing. If absent, it's auction-based.
@@ -1464,6 +3259,11 @@ export interface FlatRatePricingOption {
    * Minimum spend requirement per package using this pricing option, in the specified currency
    */
   min_spend_per_package?: number;
+  price_breakdown?: PriceBreakdown;
+  /**
+   * Adjustment kinds applicable to this pricing option. Tells buyer agents which adjustments are available before negotiation. When absent, no adjustments are pre-declared — the buyer should check price_breakdown if present.
+   */
+  eligible_adjustments?: PriceAdjustmentKind[];
 }
 /**
  * DOOH inventory allocation parameters. Sponsorship and takeover flat_rate options omit this field entirely — only include for digital out-of-home inventory.
@@ -1548,6 +3348,11 @@ export interface TimeBasedPricingOption {
    * Minimum spend requirement per package using this pricing option, in the specified currency
    */
   min_spend_per_package?: number;
+  price_breakdown?: PriceBreakdown;
+  /**
+   * Adjustment kinds applicable to this pricing option. Tells buyer agents which adjustments are available before negotiation. When absent, no adjustments are pre-declared — the buyer should check price_breakdown if present.
+   */
+  eligible_adjustments?: PriceAdjustmentKind[];
 }
 /**
  * Forecasted delivery metrics for this product. Gives buyers an estimate of expected performance before requesting a proposal.
@@ -1973,10 +3778,12 @@ export interface Proposal {
    * Budget allocations across products. Allocation percentages MUST sum to 100. Publishers are responsible for ensuring the sum equals 100; buyers SHOULD validate this before execution.
    */
   allocations: ProductAllocation[];
+  proposal_status?: ProposalStatus;
   /**
-   * When this proposal expires and can no longer be executed. After expiration, referenced products or pricing may no longer be available.
+   * When this proposal expires and can no longer be executed. For draft proposals, indicates when indicative pricing becomes stale. For committed proposals, indicates when the inventory hold lapses — the buyer must call create_media_buy before this time.
    */
   expires_at?: string;
+  insertion_order?: InsertionOrder;
   /**
    * Optional budget guidance for this proposal
    */
@@ -2068,6 +3875,62 @@ export interface DaypartTarget {
    * Optional human-readable name for this time window (e.g., 'Morning Drive', 'Prime Time')
    */
   label?: string;
+}
+/**
+ * Formal insertion order attached to a committed proposal. Present when the seller requires a signed agreement before the media buy can proceed. The buyer references the io_id in io_acceptance on create_media_buy.
+ */
+export interface InsertionOrder {
+  /**
+   * Unique identifier for this insertion order. Referenced by io_acceptance on create_media_buy.
+   */
+  io_id: string;
+  /**
+   * Structured terms for agent validation. Agents can programmatically verify these match the proposal and campaign requirements.
+   */
+  terms?: {
+    /**
+     * Advertiser name or identifier
+     */
+    advertiser?: string;
+    /**
+     * Publisher name or identifier
+     */
+    publisher?: string;
+    /**
+     * Total committed budget
+     */
+    total_budget?: {
+      amount: number;
+      /**
+       * ISO 4217 currency code
+       */
+      currency: string;
+    };
+    /**
+     * Campaign start date
+     */
+    flight_start?: string;
+    /**
+     * Campaign end date
+     */
+    flight_end?: string;
+    /**
+     * Payment terms
+     */
+    payment_terms?: 'net_30' | 'net_60' | 'net_90' | 'prepaid' | 'due_on_receipt';
+  };
+  /**
+   * URL to a human-readable document containing the full insertion order terms
+   */
+  terms_url?: string;
+  /**
+   * URL to an electronic signing service (e.g., DocuSign) for human signature workflows. When present, a human must sign before the buyer agent can proceed with create_media_buy.
+   */
+  signing_url?: string;
+  /**
+   * Whether the buyer must accept this IO before creating a media buy. When true, create_media_buy requires an io_acceptance referencing this io_id.
+   */
+  requires_signature: boolean;
 }
 /**
  * Standard error structure for task-specific errors and warnings
@@ -2977,7 +4840,7 @@ export type CatalogAsset = Catalog;
 /**
  * For generative creatives: set to 'approved' to finalize, 'rejected' to request regeneration with updated assets/message. Omit for non-generative creatives (system will set based on processing state).
  */
-export type CreativeStatus = 'processing' | 'approved' | 'rejected' | 'pending_review' | 'archived';
+export type CreativeStatus = 'processing' | 'pending_review' | 'approved' | 'rejected' | 'archived';
 /**
  * Campaign start timing: 'asap' or ISO 8601 date-time
  */
@@ -3021,6 +4884,28 @@ export interface CreateMediaBuyRequest {
    */
   packages?: PackageRequest[];
   brand: BrandReference;
+  invoice_recipient?: BusinessEntity;
+  /**
+   * Acceptance of an insertion order from a committed proposal. Required when the proposal's insertion_order has requires_signature: true. References the io_id from the proposal's insertion_order.
+   */
+  io_acceptance?: {
+    /**
+     * The io_id from the proposal's insertion_order being accepted
+     */
+    io_id: string;
+    /**
+     * ISO 8601 timestamp when the IO was accepted
+     */
+    accepted_at: string;
+    /**
+     * Who accepted the IO — agent identifier or human name
+     */
+    signatory: string;
+    /**
+     * Reference to the electronic signature from the signing service, when signing_url was used
+     */
+    signature_id?: string;
+  };
   /**
    * Purchase order number for tracking
    */
@@ -3995,6 +5880,759 @@ export interface ReferenceAsset {
   description?: string;
 }
 /**
+ * Override the account's default billing entity for this specific buy. When provided, the seller invoices this entity instead. The seller MUST validate the invoice recipient is authorized for this account. When governance_agents are configured, the seller MUST include invoice_recipient in the check_governance request.
+ */
+export interface BusinessEntity {
+  /**
+   * Registered legal name of the business entity
+   */
+  legal_name: string;
+  /**
+   * VAT identification number (e.g., DE123456789 for Germany, FR12345678901 for France). Required for B2B invoicing in the EU. Must be normalized: no spaces, dots, or dashes.
+   */
+  vat_id?: string;
+  /**
+   * Tax identification number for jurisdictions that do not use VAT (e.g., US EIN)
+   */
+  tax_id?: string;
+  /**
+   * Company registration number (e.g., HRB 12345 for German Handelsregister)
+   */
+  registration_number?: string;
+  /**
+   * Postal address for invoicing and legal correspondence
+   */
+  address?: {
+    /**
+     * Street address including building number
+     */
+    street: string;
+    city: string;
+    postal_code: string;
+    /**
+     * State, province, or region
+     */
+    region?: string;
+    /**
+     * ISO 3166-1 alpha-2 country code
+     */
+    country: string;
+  };
+  /**
+   * Contacts for billing, legal, and operational matters. Contains personal data subject to GDPR and equivalent regulations. Implementations MUST use this data only for invoicing and account management.
+   *
+   * @maxItems 10
+   */
+  contacts?:
+    | []
+    | [
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        }
+      ]
+    | [
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        }
+      ]
+    | [
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        }
+      ]
+    | [
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        }
+      ]
+    | [
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        }
+      ]
+    | [
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        }
+      ]
+    | [
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        }
+      ]
+    | [
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        }
+      ]
+    | [
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        }
+      ]
+    | [
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        }
+      ];
+  /**
+   * Bank account details for payment processing. Write-only: included in requests to provide payment coordinates, but MUST NOT be echoed in responses. Sellers store these details and confirm receipt without returning them.
+   */
+  bank?: {
+    /**
+     * Name on the bank account
+     */
+    account_holder: string;
+    /**
+     * International Bank Account Number (SEPA markets)
+     */
+    iban?: string;
+    /**
+     * Bank Identifier Code / SWIFT code (SEPA markets)
+     */
+    bic?: string;
+    /**
+     * Bank routing number for non-SEPA markets (e.g., US ABA routing number, Canadian transit/institution number)
+     */
+    routing_number?: string;
+    /**
+     * Bank account number for non-SEPA markets
+     */
+    account_number?: string;
+  };
+  ext?: ExtensionObject;
+}
+/**
  * Optional webhook configuration for async task status notifications. Publisher will send webhooks when status changes (working, input-required, completed, failed). The client generates an operation_id and embeds it in the URL before sending — the publisher echoes it back in webhook payloads for correlation.
  */
 export interface PushNotificationConfig {
@@ -4065,6 +6703,10 @@ export interface ReportingWebhook {
  * Response payload for create_media_buy task. Returns either complete success data OR error information, never both. This enforces atomic operation semantics - the media buy is either fully created or not created at all.
  */
 export type CreateMediaBuyResponse = CreateMediaBuySuccess | CreateMediaBuyError;
+/**
+ * Account lifecycle status. See the Accounts Protocol overview for the operations matrix showing which tasks are permitted in each state.
+ */
+export type AccountStatus = 'active' | 'pending_approval' | 'rejected' | 'payment_required' | 'suspended' | 'closed';
 /**
  * Initial media buy status. Either 'active' (immediate activation) or 'pending_activation' (awaiting platform setup).
  */
@@ -4149,6 +6791,7 @@ export interface CreateMediaBuySuccess {
    */
   media_buy_id: string;
   account?: Account;
+  invoice_recipient?: BusinessEntity;
   status?: MediaBuyStatus;
   /**
    * ISO 8601 timestamp when this media buy was confirmed by the seller. A successful create_media_buy response constitutes order confirmation.
@@ -4207,19 +6850,17 @@ export interface Account {
    * Optional intermediary who receives invoices on behalf of the advertiser (e.g., agency)
    */
   billing_proxy?: string;
-  /**
-   * Account status. pending_approval: seller reviewing (credit, contracts). rejected: seller declined the account request. payment_required: credit limit reached or funds depleted. suspended: was active, now paused. closed: was active, now terminated.
-   */
-  status: 'active' | 'pending_approval' | 'rejected' | 'payment_required' | 'suspended' | 'closed';
+  status: AccountStatus;
   brand?: BrandReference;
   /**
    * Domain of the entity operating this account. When the brand operates directly, this is the brand's domain.
    */
   operator?: string;
   /**
-   * Who is invoiced on this account. operator: seller invoices the operator (agency or brand buying direct). agent: agent consolidates billing.
+   * Who is invoiced on this account. operator: seller invoices the operator (agency or brand buying direct). agent: agent consolidates billing. advertiser: seller invoices the advertiser directly, even when a different operator places orders on their behalf. See billing_entity for the invoiced party's business details.
    */
-  billing?: 'operator' | 'agent';
+  billing?: 'operator' | 'agent' | 'advertiser';
+  billing_entity?: BusinessEntity;
   /**
    * Identifier for the rate card applied to this account
    */
@@ -13059,6 +15700,7 @@ export interface Package {
    * Bid price for auction-based pricing. This is the exact bid/price to honor unless the selected pricing option has max_bid=true, in which case bid_price is the buyer's maximum willingness to pay (ceiling).
    */
   bid_price?: number;
+  price_breakdown?: PriceBreakdown;
   /**
    * Impression goal for this package
    */
@@ -13113,6 +15755,10 @@ export interface Package {
      * Reason the package was canceled.
      */
     reason?: string;
+    /**
+     * ISO 8601 timestamp when the seller acknowledged the cancellation. Confirms inventory has been released and billing stopped. Absent until the seller processes the cancellation.
+     */
+    acknowledged_at?: string;
   };
   /**
    * ISO 8601 timestamp for creative upload or change deadline for this package. After this deadline, creative changes are rejected. When absent, the media buy's creative_deadline applies.
@@ -13219,6 +15865,7 @@ export interface UpdateMediaBuyRequest {
    * Package-specific updates for existing packages
    */
   packages?: PackageUpdate[];
+  invoice_recipient?: BusinessEntity;
   /**
    * New packages to add to this media buy. Uses the same schema as create_media_buy packages. Sellers that support mid-flight package additions advertise add_packages in valid_actions. Sellers that do not support this MUST reject with UNSUPPORTED_FEATURE.
    */
@@ -13372,6 +16019,7 @@ export interface UpdateMediaBuySuccess {
    * ISO 8601 timestamp when changes take effect (null if pending approval)
    */
   implementation_date?: string | null;
+  invoice_recipient?: BusinessEntity;
   /**
    * Array of packages that were modified with complete state information
    */
@@ -13454,6 +16102,7 @@ export interface GetMediaBuysResponse {
      */
     media_buy_id: string;
     account?: Account;
+    invoice_recipient?: BusinessEntity;
     status: MediaBuyStatus;
     /**
      * ISO 4217 currency code (e.g., USD, EUR, GBP) for monetary values at this media buy level. total_budget is always denominated in this currency. Package-level fields may override with package.currency.
@@ -13895,9 +16544,13 @@ export interface GetMediaBuyDeliveryResponse {
      */
     clicks?: number;
     /**
-     * Total video completions across all media buys (if applicable)
+     * Total audio/video completions across all media buys (if applicable)
      */
-    video_completions?: number;
+    completed_views?: number;
+    /**
+     * Total views across all media buys (if applicable)
+     */
+    views?: number;
     /**
      * Total conversions across all media buys (if applicable)
      */
@@ -13918,6 +16571,22 @@ export interface GetMediaBuyDeliveryResponse {
      * Aggregate cost per conversion across all media buys (total spend / total conversions)
      */
     cost_per_acquisition?: number;
+    /**
+     * Aggregate completion rate across all media buys (weighted by impressions, not a simple average of per-buy rates)
+     */
+    completion_rate?: number;
+    /**
+     * Deduplicated reach across all media buys (if the seller can deduplicate across buys; otherwise sum of per-buy reach). Only present when all media buys share the same reach_unit. Omitted when reach units are heterogeneous — use per-buy reach values instead.
+     */
+    reach?: number;
+    /**
+     * Unit of measurement for reach. Only present when all aggregated media buys use the same reach_unit.
+     */
+    reach_unit?: ReachUnit;
+    /**
+     * Average frequency per reach unit across all media buys (impressions / reach when cross-buy deduplication is available). Only present when reach is present.
+     */
+    frequency?: number;
     /**
      * Number of media buys included in the response
      */
@@ -14215,7 +16884,7 @@ export interface DeliveryMetrics {
    */
   ctr?: number;
   /**
-   * Views at threshold (for CPV)
+   * Content engagements counted toward the billable view threshold. For video this is a platform-defined view event (e.g., 30 seconds or video midpoint); for audio/podcast it is a stream start; for other formats it follows the pricing model's view definition. When the package uses CPV pricing, spend = views × rate.
    */
   views?: number;
   /**
@@ -14273,15 +16942,19 @@ export interface DeliveryMetrics {
    */
   grps?: number;
   /**
-   * Unique reach - units depend on measurement provider (e.g., individuals, households, devices, cookies). See delivery_measurement.provider for methodology.
+   * Unique reach in the units specified by reach_unit. When reach_unit is omitted, units are unspecified — do not compare reach values across packages or media buys without a common reach_unit.
    */
   reach?: number;
   /**
-   * Average frequency per individual (typically measured over campaign duration, but can vary by measurement provider)
+   * Unit of measurement for the reach field. Aligns with the reach_unit declared on optimization goals and delivery forecasts. Required when reach is present to enable cross-platform comparison.
+   */
+  reach_unit?: ReachUnit;
+  /**
+   * Average frequency per reach unit (typically measured over campaign duration, but can vary by measurement provider). When reach_unit is 'households', this is average exposures per household; when 'accounts', per logged-in account; etc.
    */
   frequency?: number;
   /**
-   * Video quartile completion data
+   * Audio/video quartile completion data
    */
   quartile_data?: {
     /**
@@ -19199,6 +21872,7 @@ export interface CheckGovernanceRequest {
    * Human-readable summary of what changed. SHOULD be present for 'modification' phase.
    */
   modification_summary?: string;
+  invoice_recipient?: BusinessEntity;
 }
 
 // check_governance response
@@ -19672,6 +22346,10 @@ export type SIUIElement = {
    */
   data?: {};
 };
+/**
+ * Session status after initiation. Always 'active' on success.
+ */
+export type SISessionStatus = 'active' | 'pending_handoff' | 'complete' | 'terminated';
 
 /**
  * Brand agent's response to session initiation
@@ -19695,6 +22373,11 @@ export interface SIInitiateSessionResponse {
     ui_elements?: SIUIElement[];
   };
   negotiated_capabilities?: SICapabilities;
+  session_status: SISessionStatus;
+  /**
+   * Session inactivity timeout in seconds. After this duration without a message, the brand agent may terminate the session. Hosts SHOULD warn users before timeout when possible.
+   */
+  session_ttl_seconds?: number;
   /**
    * Errors during session initiation
    */
@@ -19762,10 +22445,7 @@ export interface SISendMessageResponse {
    * MCP resource URI for hosts with MCP Apps support (e.g., ui://si/session-abc123)
    */
   mcp_resource_uri?: string;
-  /**
-   * Current session status
-   */
-  session_status: 'active' | 'pending_handoff' | 'complete';
+  session_status: SISessionStatus;
   /**
    * Handoff request when session_status is pending_handoff
    */
@@ -19911,22 +22591,27 @@ export interface SITerminateSessionResponse {
    * Whether session was successfully terminated
    */
   terminated: boolean;
+  session_status?: SISessionStatus;
   /**
-   * ACP checkout handoff data (for handoff_transaction)
+   * ACP checkout handoff data. Present when reason is handoff_transaction.
    */
   acp_handoff?: {
     /**
-     * ACP checkout initiation URL
+     * Brand's ACP checkout endpoint. Hosts MUST validate this is HTTPS before opening.
      */
     checkout_url?: string;
     /**
-     * Token for ACP checkout flow
+     * Opaque token for the checkout flow. The host passes this to the checkout endpoint to correlate the SI session with the transaction.
      */
     checkout_token?: string;
     /**
-     * Product details for checkout
+     * Rich checkout context to pass to the ACP endpoint (product details, applied offers, pricing). Alternative to checkout_token for integrations that need structured data.
      */
-    product?: {};
+    payload?: {};
+    /**
+     * When this handoff data expires. Hosts should initiate checkout before this time.
+     */
+    expires_at?: string;
   };
   /**
    * Suggested follow-up actions
@@ -19990,9 +22675,9 @@ export interface GetAdCPCapabilitiesResponse {
      */
     authorization_endpoint?: string;
     /**
-     * Billing models this seller supports. operator: seller invoices the operator (agency or brand buying direct). agent: agent consolidates billing. The buyer must pass one of these values in sync_accounts.
+     * Billing models this seller supports. operator: seller invoices the operator (agency or brand buying direct). agent: agent consolidates billing. advertiser: seller invoices the advertiser directly, even when a different operator places orders on their behalf. The buyer must pass one of these values in sync_accounts.
      */
-    supported_billing: ('operator' | 'agent')[];
+    supported_billing: ('operator' | 'agent' | 'advertiser')[];
     /**
      * Whether an account reference is required for get_products. When true, the buyer must establish an account before browsing products. When false (default), the buyer can browse products without an account — useful for price comparison and discovery before committing to a seller.
      */
@@ -20574,9 +23259,10 @@ export interface SyncAccountsRequest {
      */
     operator: string;
     /**
-     * Who should be invoiced. operator: seller invoices the operator (agency or brand buying direct). agent: agent consolidates billing across brands. The seller must either accept this billing model or reject the request.
+     * Who should be invoiced. operator: seller invoices the operator (agency or brand buying direct). agent: agent consolidates billing across brands. advertiser: seller invoices the advertiser directly, even when a different operator places orders on their behalf. The seller must either accept this billing model or reject the request.
      */
-    billing: 'operator' | 'agent';
+    billing: 'operator' | 'agent' | 'advertiser';
+    billing_entity?: BusinessEntity;
     /**
      * Payment terms for this account. The seller must either accept these terms or reject the account — terms are never silently remapped. When omitted, the seller applies its default terms.
      */
@@ -20616,6 +23302,10 @@ export interface SyncAccountsSuccess {
    * Results for each account processed
    */
   accounts: {
+    /**
+     * Seller-assigned account identifier. Use this in subsequent create_media_buy and other account-scoped operations.
+     */
+    account_id?: string;
     brand: BrandReference;
     /**
      * Operator domain, echoed from request
@@ -20636,7 +23326,8 @@ export interface SyncAccountsSuccess {
     /**
      * Who is invoiced on this account. Matches the requested billing model.
      */
-    billing?: 'operator' | 'agent';
+    billing?: 'operator' | 'agent' | 'advertiser';
+    billing_entity?: BusinessEntity;
     /**
      * How the seller scoped this account. operator: shared across all brands for this operator. brand: shared across all operators for this brand. operator_brand: dedicated to this operator+brand pair. agent: the agent's default account.
      */
@@ -20919,3 +23610,232 @@ export interface GetAccountFinancialsError {
   context?: ContextObject;
   ext?: ExtensionObject;
 }
+
+// comply_test_controller parameters
+/**
+ * Request payload for the comply_test_controller tool. Triggers seller-side state transitions for compliance testing. Sandbox only — sellers MUST NOT expose this tool in production.
+ */
+export type ComplyTestControllerRequest =
+  | ListScenarios
+  | ForceCreativeStatus
+  | ForceAccountStatus
+  | ForceMediaBuyStatus
+  | ForceSessionStatus
+  | SimulateDelivery
+  | SimulateBudgetSpend;
+/**
+ * Discover which scenarios this seller supports
+ */
+export interface ListScenarios {
+  scenario: 'list_scenarios';
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Transition a creative to the specified status
+ */
+export interface ForceCreativeStatus {
+  scenario: 'force_creative_status';
+  params: {
+    /**
+     * Creative to transition
+     */
+    creative_id: string;
+    status: CreativeStatus;
+    /**
+     * Reason for rejection. Required when status = rejected.
+     */
+    rejection_reason?: string;
+  };
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Transition an account to the specified status
+ */
+export interface ForceAccountStatus {
+  scenario: 'force_account_status';
+  params: {
+    /**
+     * Account to transition
+     */
+    account_id: string;
+    status: AccountStatus;
+  };
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Transition a media buy to the specified status
+ */
+export interface ForceMediaBuyStatus {
+  scenario: 'force_media_buy_status';
+  params: {
+    /**
+     * Media buy to transition
+     */
+    media_buy_id: string;
+    status: MediaBuyStatus;
+    /**
+     * Reason for rejection. Required when status = rejected.
+     */
+    rejection_reason?: string;
+  };
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Transition an SI session to a terminal status
+ */
+export interface ForceSessionStatus {
+  scenario: 'force_session_status';
+  params: {
+    /**
+     * Session to transition
+     */
+    session_id: string;
+    /**
+     * Target terminal status. Only terminal statuses are valid — active and pending_handoff are session-internal transitions.
+     */
+    status: 'complete' | 'terminated';
+    /**
+     * Reason for termination (e.g., session_timeout, host_terminated, policy_violation). Required when status = terminated.
+     */
+    termination_reason?: string;
+  };
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Inject synthetic delivery data for a media buy
+ */
+export interface SimulateDelivery {
+  scenario: 'simulate_delivery';
+  params: {
+    /**
+     * Media buy to add delivery to
+     */
+    media_buy_id: string;
+    /**
+     * Impressions to simulate
+     */
+    impressions?: number;
+    /**
+     * Clicks to simulate
+     */
+    clicks?: number;
+    /**
+     * Spend as reported in delivery data. Does not affect budget.
+     */
+    reported_spend?: {
+      amount: number;
+      currency: string;
+    };
+    /**
+     * Conversions to simulate
+     */
+    conversions?: number;
+  };
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Simulate budget consumption to a specified percentage
+ */
+export interface SimulateBudgetSpend {
+  scenario: 'simulate_budget_spend';
+  params: {
+    [k: string]: unknown | undefined;
+  };
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+
+
+// comply_test_controller response
+/**
+ * Response from the comply_test_controller tool. Shape varies by scenario type: list_scenarios returns available scenarios, force_* returns state transition results, simulate_* returns simulation results.
+ */
+export type ComplyTestControllerResponse =
+  | ListScenariosSuccess
+  | StateTransitionSuccess
+  | SimulationSuccess
+  | ControllerError;
+
+/**
+ * Lists which scenarios this seller's test controller supports
+ */
+export interface ListScenariosSuccess {
+  success: true;
+  /**
+   * Scenarios this seller has implemented
+   */
+  scenarios: (
+    | 'force_creative_status'
+    | 'force_account_status'
+    | 'force_media_buy_status'
+    | 'force_session_status'
+    | 'simulate_delivery'
+    | 'simulate_budget_spend'
+  )[];
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * A force_* scenario successfully transitioned the entity to the target state
+ */
+export interface StateTransitionSuccess {
+  success: true;
+  /**
+   * State before this transition
+   */
+  previous_state: string;
+  /**
+   * State after this transition
+   */
+  current_state: string;
+  /**
+   * Human-readable description of the transition
+   */
+  message?: string;
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * A simulate_delivery or simulate_budget_spend scenario succeeded. For delivery: simulated contains impressions/clicks/reported_spend/conversions and cumulative contains running totals. For budget: simulated contains spend_percentage/computed_spend/budget.
+ */
+export interface SimulationSuccess {
+  success: true;
+  /**
+   * Values injected or applied by this call. Shape depends on scenario.
+   */
+  simulated: {};
+  /**
+   * Running totals across all simulation calls (simulate_delivery only)
+   */
+  cumulative?: {};
+  message?: string;
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * The scenario failed — invalid transition, unknown entity, unsupported scenario, or invalid params
+ */
+export interface ControllerError {
+  success: false;
+  /**
+   * Structured error code
+   */
+  error: 'INVALID_TRANSITION' | 'NOT_FOUND' | 'UNKNOWN_SCENARIO' | 'INVALID_PARAMS' | 'INTERNAL_ERROR';
+  /**
+   * Human-readable explanation of the failure
+   */
+  error_detail?: string;
+  /**
+   * Current state of the entity, or null if not found
+   */
+  current_state?: string | null;
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+

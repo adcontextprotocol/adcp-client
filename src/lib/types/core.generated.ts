@@ -1,7 +1,11 @@
 // Generated AdCP core types from official schemas vlatest
-// Generated at: 2026-03-23T12:17:27.383Z
+// Generated at: 2026-03-25T12:31:34.774Z
 
 // MEDIA-BUY SCHEMA
+/**
+ * Account lifecycle status. See the Accounts Protocol overview for the operations matrix showing which tasks are permitted in each state.
+ */
+export type AccountStatus = 'active' | 'pending_approval' | 'rejected' | 'payment_required' | 'suspended' | 'closed';
 /**
  * Brand identifier within the house portfolio. Optional for single-brand domains.
  */
@@ -330,6 +334,7 @@ export interface MediaBuy {
    * Array of packages within this media buy
    */
   packages: Package[];
+  invoice_recipient?: BusinessEntity;
   /**
    * ISO 8601 timestamp for creative upload deadline
    */
@@ -368,19 +373,17 @@ export interface Account {
    * Optional intermediary who receives invoices on behalf of the advertiser (e.g., agency)
    */
   billing_proxy?: string;
-  /**
-   * Account status. pending_approval: seller reviewing (credit, contracts). rejected: seller declined the account request. payment_required: credit limit reached or funds depleted. suspended: was active, now paused. closed: was active, now terminated.
-   */
-  status: 'active' | 'pending_approval' | 'rejected' | 'payment_required' | 'suspended' | 'closed';
+  status: AccountStatus;
   brand?: BrandReference;
   /**
    * Domain of the entity operating this account. When the brand operates directly, this is the brand's domain.
    */
   operator?: string;
   /**
-   * Who is invoiced on this account. operator: seller invoices the operator (agency or brand buying direct). agent: agent consolidates billing.
+   * Who is invoiced on this account. operator: seller invoices the operator (agency or brand buying direct). agent: agent consolidates billing. advertiser: seller invoices the advertiser directly, even when a different operator places orders on their behalf. See billing_entity for the invoiced party's business details.
    */
-  billing?: 'operator' | 'agent';
+  billing?: 'operator' | 'agent' | 'advertiser';
+  billing_entity?: BusinessEntity;
   /**
    * Identifier for the rate card applied to this account
    */
@@ -9206,6 +9209,759 @@ export interface BrandReference {
   brand_id?: BrandID;
 }
 /**
+ * Business entity details for the party responsible for payment. Contains the legal name, tax IDs, address, and bank details needed for formal B2B invoicing. Corresponds to whoever billing points to (operator, agent, or advertiser). When this account appears in a response, bank details MUST be omitted (write-only).
+ */
+export interface BusinessEntity {
+  /**
+   * Registered legal name of the business entity
+   */
+  legal_name: string;
+  /**
+   * VAT identification number (e.g., DE123456789 for Germany, FR12345678901 for France). Required for B2B invoicing in the EU. Must be normalized: no spaces, dots, or dashes.
+   */
+  vat_id?: string;
+  /**
+   * Tax identification number for jurisdictions that do not use VAT (e.g., US EIN)
+   */
+  tax_id?: string;
+  /**
+   * Company registration number (e.g., HRB 12345 for German Handelsregister)
+   */
+  registration_number?: string;
+  /**
+   * Postal address for invoicing and legal correspondence
+   */
+  address?: {
+    /**
+     * Street address including building number
+     */
+    street: string;
+    city: string;
+    postal_code: string;
+    /**
+     * State, province, or region
+     */
+    region?: string;
+    /**
+     * ISO 3166-1 alpha-2 country code
+     */
+    country: string;
+  };
+  /**
+   * Contacts for billing, legal, and operational matters. Contains personal data subject to GDPR and equivalent regulations. Implementations MUST use this data only for invoicing and account management.
+   *
+   * @maxItems 10
+   */
+  contacts?:
+    | []
+    | [
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        }
+      ]
+    | [
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        }
+      ]
+    | [
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        }
+      ]
+    | [
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        }
+      ]
+    | [
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        }
+      ]
+    | [
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        }
+      ]
+    | [
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        }
+      ]
+    | [
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        }
+      ]
+    | [
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        }
+      ]
+    | [
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        },
+        {
+          /**
+           * Contact's functional role in the business relationship
+           */
+          role: 'billing' | 'legal' | 'creative' | 'general';
+          /**
+           * Full name of the contact
+           */
+          name?: string;
+          email?: string;
+          phone?: string;
+        }
+      ];
+  /**
+   * Bank account details for payment processing. Write-only: included in requests to provide payment coordinates, but MUST NOT be echoed in responses. Sellers store these details and confirm receipt without returning them.
+   */
+  bank?: {
+    /**
+     * Name on the bank account
+     */
+    account_holder: string;
+    /**
+     * International Bank Account Number (SEPA markets)
+     */
+    iban?: string;
+    /**
+     * Bank Identifier Code / SWIFT code (SEPA markets)
+     */
+    bic?: string;
+    /**
+     * Bank routing number for non-SEPA markets (e.g., US ABA routing number, Canadian transit/institution number)
+     */
+    routing_number?: string;
+    /**
+     * Bank account number for non-SEPA markets
+     */
+    account_number?: string;
+  };
+  ext?: ExtensionObject;
+}
+/**
  * Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.
  */
 export interface ExtensionObject {}
@@ -9234,6 +9990,7 @@ export interface Package {
    * Bid price for auction-based pricing. This is the exact bid/price to honor unless the selected pricing option has max_bid=true, in which case bid_price is the buyer's maximum willingness to pay (ceiling).
    */
   bid_price?: number;
+  price_breakdown?: PriceBreakdown;
   /**
    * Impression goal for this package
    */
@@ -9288,6 +10045,10 @@ export interface Package {
      * Reason the package was canceled.
      */
     reason?: string;
+    /**
+     * ISO 8601 timestamp when the seller acknowledged the cancellation. Confirms inventory has been released and billing stopped. Absent until the seller processes the cancellation.
+     */
+    acknowledged_at?: string;
   };
   /**
    * ISO 8601 timestamp for creative upload or change deadline for this package. After this deadline, creative changes are rejected. When absent, the media buy's creative_deadline applies.
@@ -9295,6 +10056,1740 @@ export interface Package {
   creative_deadline?: string;
   context?: ContextObject;
   ext?: ExtensionObject;
+}
+/**
+ * Breakdown of the effective price for this package. On fixed-price packages, echoes the pricing option's breakdown. On auction packages, shows the clearing price breakdown including any commission or settlement terms.
+ */
+export interface PriceBreakdown {
+  /**
+   * Rate card or base price before any adjustments. The starting point from which fixed_price is derived by applying fee and discount adjustments sequentially.
+   */
+  list_price: number;
+  /**
+   * Ordered list of price adjustments. Fee and discount adjustments walk list_price to fixed_price — fees increase the running price, discounts reduce it. Commission and settlement adjustments are disclosed for transparency but do not affect the buyer's committed price.
+   *
+   * @maxItems 20
+   */
+  adjustments:
+    | []
+    | [
+        | {
+            [k: string]: unknown | undefined;
+          }
+        | {
+            [k: string]: unknown | undefined;
+          }
+      ]
+    | [
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        )
+      ]
+    | [
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        )
+      ]
+    | [
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        )
+      ]
+    | [
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        )
+      ]
+    | [
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        )
+      ]
+    | [
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        )
+      ]
+    | [
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        )
+      ]
+    | [
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        )
+      ]
+    | [
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        )
+      ]
+    | [
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        )
+      ]
+    | [
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        )
+      ]
+    | [
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        )
+      ]
+    | [
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        )
+      ]
+    | [
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        )
+      ]
+    | [
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        )
+      ]
+    | [
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        )
+      ]
+    | [
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        )
+      ]
+    | [
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        )
+      ]
+    | [
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        ),
+        (
+          | {
+              [k: string]: unknown | undefined;
+            }
+          | {
+              [k: string]: unknown | undefined;
+            }
+        )
+      ];
 }
 /**
  * A typed data feed. Catalogs carry the items, locations, stock levels, or pricing that publishers use to render ads. They can be synced to a platform via sync_catalogs (managed lifecycle with approval), provided inline, or fetched from an external URL. The catalog type determines the item schema and can be structural (offering, product, inventory, store, promotion) or vertical-specific (hotel, flight, job, vehicle, real_estate, education, destination, app). Selectors (ids, tags, category, query) filter items regardless of sourcing method.
@@ -9665,8 +12160,6 @@ export interface CreativeAssignment {
  * Opaque correlation data that is echoed unchanged in responses. Used for internal tracking, UI session IDs, trace IDs, and other caller-specific identifiers that don't affect protocol behavior. Context data is never parsed by AdCP agents - it's simply preserved and returned.
  */
 export interface ContextObject {}
-
-// CREATIVE-ASSET SCHEMA
 /**
  * IPTC-aligned classification of AI involvement in producing this content
  */
@@ -9974,7 +12467,7 @@ export type CatalogAsset = Catalog;
 /**
  * For generative creatives: set to 'approved' to finalize, 'rejected' to request regeneration with updated assets/message. Omit for non-generative creatives (system will set based on processing state).
  */
-export type CreativeStatus = 'processing' | 'approved' | 'rejected' | 'pending_review' | 'archived';
+export type CreativeStatus = 'processing' | 'pending_review' | 'approved' | 'rejected' | 'archived';
 
 /**
  * Creative asset for upload to library - supports static assets, generative formats, and third-party snippets
@@ -10742,6 +13235,10 @@ export type PricingOption =
   | FlatRatePricingOption
   | TimeBasedPricingOption;
 /**
+ * Categorizes how a price adjustment affects the transaction
+ */
+export type PriceAdjustmentKind = 'fee' | 'discount' | 'commission' | 'settlement';
+/**
  * Measurement system for the demographic field. Defaults to nielsen when omitted.
  */
 export type DemographicSystem = 'nielsen' | 'barb' | 'agf' | 'oztam' | 'mediametrie' | 'custom';
@@ -11048,7 +13545,7 @@ export interface Product {
    */
   brief_relevance?: string;
   /**
-   * Expiration timestamp for custom products
+   * Expiration timestamp. After this time, the product may no longer be available for purchase and create_media_buy may reject packages referencing it.
    */
   expires_at?: string;
   /**
@@ -11087,6 +13584,24 @@ export interface Product {
    * Registry policy IDs the seller enforces for this product. Enforcement level comes from the policy registry. Buyers can filter products by required policies.
    */
   enforced_policies?: string[];
+  /**
+   * Instructions for submitting physical creative materials (print, static OOH, cinema). Present only for products requiring physical delivery outside the digital creative assignment flow. Buyer agents MUST validate url and email domains against the seller's known domains (from adagents.json) before submitting materials. Never auto-submit without human confirmation.
+   */
+  material_submission?: {
+    /**
+     * HTTPS URL for uploading or submitting physical creative materials
+     */
+    url?: string;
+    /**
+     * Email address for creative material submission
+     */
+    email?: string;
+    /**
+     * Human-readable instructions for material submission (file naming conventions, shipping address, etc.)
+     */
+    instructions?: string;
+    ext?: ExtensionObject;
+  };
   ext?: ExtensionObject;
 }
 /**
@@ -11143,6 +13658,11 @@ export interface CPMPricingOption {
    * Minimum spend requirement per package using this pricing option, in the specified currency
    */
   min_spend_per_package?: number;
+  price_breakdown?: PriceBreakdown;
+  /**
+   * Adjustment kinds applicable to this pricing option. Tells buyer agents which adjustments are available before negotiation. When absent, no adjustments are pre-declared — the buyer should check price_breakdown if present.
+   */
+  eligible_adjustments?: PriceAdjustmentKind[];
 }
 /**
  * Optional pricing guidance for auction-based bidding
@@ -11198,6 +13718,11 @@ export interface VCPMPricingOption {
    * Minimum spend requirement per package using this pricing option, in the specified currency
    */
   min_spend_per_package?: number;
+  price_breakdown?: PriceBreakdown;
+  /**
+   * Adjustment kinds applicable to this pricing option. Tells buyer agents which adjustments are available before negotiation. When absent, no adjustments are pre-declared — the buyer should check price_breakdown if present.
+   */
+  eligible_adjustments?: PriceAdjustmentKind[];
 }
 /**
  * Cost Per Click pricing. If fixed_price is present, it's fixed pricing. If absent, it's auction-based.
@@ -11232,6 +13757,11 @@ export interface CPCPricingOption {
    * Minimum spend requirement per package using this pricing option, in the specified currency
    */
   min_spend_per_package?: number;
+  price_breakdown?: PriceBreakdown;
+  /**
+   * Adjustment kinds applicable to this pricing option. Tells buyer agents which adjustments are available before negotiation. When absent, no adjustments are pre-declared — the buyer should check price_breakdown if present.
+   */
+  eligible_adjustments?: PriceAdjustmentKind[];
 }
 /**
  * Cost Per Completed View (100% video/audio completion) pricing. If fixed_price is present, it's fixed pricing. If absent, it's auction-based.
@@ -11266,6 +13796,11 @@ export interface CPCVPricingOption {
    * Minimum spend requirement per package using this pricing option, in the specified currency
    */
   min_spend_per_package?: number;
+  price_breakdown?: PriceBreakdown;
+  /**
+   * Adjustment kinds applicable to this pricing option. Tells buyer agents which adjustments are available before negotiation. When absent, no adjustments are pre-declared — the buyer should check price_breakdown if present.
+   */
+  eligible_adjustments?: PriceAdjustmentKind[];
 }
 /**
  * Cost Per View (at publisher-defined threshold) pricing for video/audio. If fixed_price is present, it's fixed pricing. If absent, it's auction-based.
@@ -11313,6 +13848,11 @@ export interface CPVPricingOption {
    * Minimum spend requirement per package using this pricing option, in the specified currency
    */
   min_spend_per_package?: number;
+  price_breakdown?: PriceBreakdown;
+  /**
+   * Adjustment kinds applicable to this pricing option. Tells buyer agents which adjustments are available before negotiation. When absent, no adjustments are pre-declared — the buyer should check price_breakdown if present.
+   */
+  eligible_adjustments?: PriceAdjustmentKind[];
 }
 /**
  * Cost Per Point (Gross Rating Point) pricing for TV and audio campaigns. If fixed_price is present, it's fixed pricing. If absent, it's auction-based.
@@ -11357,6 +13897,11 @@ export interface CPPPricingOption {
    * Minimum spend requirement per package using this pricing option, in the specified currency
    */
   min_spend_per_package?: number;
+  price_breakdown?: PriceBreakdown;
+  /**
+   * Adjustment kinds applicable to this pricing option. Tells buyer agents which adjustments are available before negotiation. When absent, no adjustments are pre-declared — the buyer should check price_breakdown if present.
+   */
+  eligible_adjustments?: PriceAdjustmentKind[];
 }
 /**
  * Cost Per Acquisition pricing. Advertiser pays a fixed price when a specified conversion event occurs. The event_type field declares which event triggers billing (e.g., purchase, lead, app_install).
@@ -11394,6 +13939,11 @@ export interface CPAPricingOption {
    * Minimum spend requirement per package using this pricing option, in the specified currency
    */
   min_spend_per_package?: number;
+  price_breakdown?: PriceBreakdown;
+  /**
+   * Adjustment kinds applicable to this pricing option. Tells buyer agents which adjustments are available before negotiation. When absent, no adjustments are pre-declared — the buyer should check price_breakdown if present.
+   */
+  eligible_adjustments?: PriceAdjustmentKind[];
 }
 /**
  * Flat rate pricing for sponsorships, takeovers, and DOOH exclusive placements. A fixed total cost regardless of delivery volume. For duration-scaled pricing (rate × time units), use the `time` model instead. If fixed_price is present, it's fixed pricing. If absent, it's auction-based.
@@ -11425,6 +13975,11 @@ export interface FlatRatePricingOption {
    * Minimum spend requirement per package using this pricing option, in the specified currency
    */
   min_spend_per_package?: number;
+  price_breakdown?: PriceBreakdown;
+  /**
+   * Adjustment kinds applicable to this pricing option. Tells buyer agents which adjustments are available before negotiation. When absent, no adjustments are pre-declared — the buyer should check price_breakdown if present.
+   */
+  eligible_adjustments?: PriceAdjustmentKind[];
 }
 /**
  * DOOH inventory allocation parameters. Sponsorship and takeover flat_rate options omit this field entirely — only include for digital out-of-home inventory.
@@ -11509,6 +14064,11 @@ export interface TimeBasedPricingOption {
    * Minimum spend requirement per package using this pricing option, in the specified currency
    */
   min_spend_per_package?: number;
+  price_breakdown?: PriceBreakdown;
+  /**
+   * Adjustment kinds applicable to this pricing option. Tells buyer agents which adjustments are available before negotiation. When absent, no adjustments are pre-declared — the buyer should check price_breakdown if present.
+   */
+  eligible_adjustments?: PriceAdjustmentKind[];
 }
 /**
  * Forecasted delivery metrics for this product. Gives buyers an estimate of expected performance before requesting a proposal.
@@ -12058,6 +14618,10 @@ export type AdCPAsyncResponseData =
   | SyncCatalogsAsyncInputRequired
   | SyncCatalogsAsyncSubmitted;
 /**
+ * Lifecycle status of this proposal. When absent, the proposal is ready to buy (backward compatible). 'draft' means indicative pricing — finalize via refine before purchasing. 'committed' means firm pricing with inventory reserved until expires_at.
+ */
+export type ProposalStatus = 'draft' | 'committed';
+/**
  * Response for completed or failed create_media_buy
  */
 export type CreateMediaBuyResponse = CreateMediaBuySuccess | CreateMediaBuyError;
@@ -12473,10 +15037,12 @@ export interface Proposal {
    * Budget allocations across products. Allocation percentages MUST sum to 100. Publishers are responsible for ensuring the sum equals 100; buyers SHOULD validate this before execution.
    */
   allocations: ProductAllocation[];
+  proposal_status?: ProposalStatus;
   /**
-   * When this proposal expires and can no longer be executed. After expiration, referenced products or pricing may no longer be available.
+   * When this proposal expires and can no longer be executed. For draft proposals, indicates when indicative pricing becomes stale. For committed proposals, indicates when the inventory hold lapses — the buyer must call create_media_buy before this time.
    */
   expires_at?: string;
+  insertion_order?: InsertionOrder;
   /**
    * Optional budget guidance for this proposal
    */
@@ -12547,6 +15113,62 @@ export interface ProductAllocation {
   daypart_targets?: DaypartTarget[];
   forecast?: DeliveryForecast;
   ext?: ExtensionObject;
+}
+/**
+ * Formal insertion order attached to a committed proposal. Present when the seller requires a signed agreement before the media buy can proceed. The buyer references the io_id in io_acceptance on create_media_buy.
+ */
+export interface InsertionOrder {
+  /**
+   * Unique identifier for this insertion order. Referenced by io_acceptance on create_media_buy.
+   */
+  io_id: string;
+  /**
+   * Structured terms for agent validation. Agents can programmatically verify these match the proposal and campaign requirements.
+   */
+  terms?: {
+    /**
+     * Advertiser name or identifier
+     */
+    advertiser?: string;
+    /**
+     * Publisher name or identifier
+     */
+    publisher?: string;
+    /**
+     * Total committed budget
+     */
+    total_budget?: {
+      amount: number;
+      /**
+       * ISO 4217 currency code
+       */
+      currency: string;
+    };
+    /**
+     * Campaign start date
+     */
+    flight_start?: string;
+    /**
+     * Campaign end date
+     */
+    flight_end?: string;
+    /**
+     * Payment terms
+     */
+    payment_terms?: 'net_30' | 'net_60' | 'net_90' | 'prepaid' | 'due_on_receipt';
+  };
+  /**
+   * URL to a human-readable document containing the full insertion order terms
+   */
+  terms_url?: string;
+  /**
+   * URL to an electronic signing service (e.g., DocuSign) for human signature workflows. When present, a human must sign before the buyer agent can proceed with create_media_buy.
+   */
+  signing_url?: string;
+  /**
+   * Whether the buyer must accept this IO before creating a media buy. When true, create_media_buy requires an io_acceptance referencing this io_id.
+   */
+  requires_signature: boolean;
 }
 /**
  * Standard error structure for task-specific errors and warnings
@@ -12660,6 +15282,7 @@ export interface CreateMediaBuySuccess {
    */
   media_buy_id: string;
   account?: Account;
+  invoice_recipient?: BusinessEntity;
   status?: MediaBuyStatus;
   /**
    * ISO 8601 timestamp when this media buy was confirmed by the seller. A successful create_media_buy response constitutes order confirmation.
@@ -12823,6 +15446,7 @@ export interface UpdateMediaBuySuccess {
    * ISO 8601 timestamp when changes take effect (null if pending approval)
    */
   implementation_date?: string | null;
+  invoice_recipient?: BusinessEntity;
   /**
    * Array of packages that were modified with complete state information
    */
