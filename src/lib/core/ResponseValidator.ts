@@ -179,6 +179,27 @@ export class ResponseValidator {
   }
 
   /**
+   * Extract data from an MCP response, falling back to content[0].text JSON parsing
+   * when structuredContent is not present.
+   */
+  private extractMCPData(response: any): any {
+    if (response.structuredContent) {
+      return response.structuredContent;
+    }
+    if (response.content && Array.isArray(response.content)) {
+      const textContent = response.content.find((c: any) => c.type === 'text');
+      if (textContent?.text) {
+        try {
+          return JSON.parse(textContent.text);
+        } catch {
+          return undefined;
+        }
+      }
+    }
+    return undefined;
+  }
+
+  /**
    * Validate expected fields are present in the response
    */
   private validateExpectedFields(
@@ -192,7 +213,7 @@ export class ResponseValidator {
 
     // Extract data based on protocol
     if (protocol === 'mcp') {
-      data = response.structuredContent;
+      data = this.extractMCPData(response);
     } else if (protocol === 'a2a') {
       data = response.result?.artifacts?.[0]?.parts?.[0]?.data;
     } else {
@@ -218,10 +239,13 @@ export class ResponseValidator {
    * Validate response is not empty
    */
   private validateNotEmpty(response: any, protocol: string, warnings: string[]): void {
-    if (protocol === 'mcp' && response.structuredContent) {
-      const keys = Object.keys(response.structuredContent);
-      if (keys.length === 0) {
-        warnings.push('MCP structuredContent is empty object');
+    if (protocol === 'mcp') {
+      const data = this.extractMCPData(response);
+      if (data && typeof data === 'object') {
+        const keys = Object.keys(data);
+        if (keys.length === 0) {
+          warnings.push('MCP response data is empty object');
+        }
       }
     }
 
@@ -278,7 +302,7 @@ export class ResponseValidator {
     // Extract data based on protocol
     let data: any;
     if (protocol === 'mcp') {
-      data = response.structuredContent;
+      data = this.extractMCPData(response);
     } else if (protocol === 'a2a') {
       data = response.result?.artifacts?.[0]?.parts?.[0]?.data;
     } else {

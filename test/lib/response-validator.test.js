@@ -436,6 +436,101 @@ describe('ResponseValidator Tests', () => {
     });
   });
 
+  describe('MCP content[0].text fallback', () => {
+    it('should validate expected fields from content[0].text JSON when structuredContent is absent', () => {
+      const response = {
+        content: [{ type: 'text', text: JSON.stringify({ products: [createValidProduct()] }) }],
+      };
+
+      const result = validator.validate(response, null, {
+        expectedFields: ['products'],
+      });
+
+      assert.strictEqual(result.valid, true);
+      assert.strictEqual(result.protocol, 'mcp');
+      assert.strictEqual(result.errors.length, 0);
+    });
+
+    it('should run schema validation against content[0].text JSON when structuredContent is absent', () => {
+      const response = {
+        content: [{ type: 'text', text: JSON.stringify({ products: [createValidProduct()] }) }],
+      };
+
+      const result = validator.validate(response, 'get_products', {
+        validateSchema: true,
+      });
+
+      assert.strictEqual(result.valid, true);
+      assert.strictEqual(result.protocol, 'mcp');
+    });
+
+    it('should error on missing expected field when content[0].text has no matching field', () => {
+      const response = {
+        content: [{ type: 'text', text: JSON.stringify({ other_field: 'value' }) }],
+      };
+
+      const result = validator.validate(response, null, {
+        expectedFields: ['products'],
+      });
+
+      assert.strictEqual(result.valid, false);
+      assert.ok(result.errors.some(e => e.includes('Missing expected field: products')));
+    });
+
+    it('should report schema errors for invalid content[0].text data', () => {
+      const response = {
+        content: [{ type: 'text', text: JSON.stringify({ products: 'not an array' }) }],
+      };
+
+      const result = validator.validate(response, 'get_products', {
+        validateSchema: true,
+      });
+
+      assert.strictEqual(result.valid, false);
+      assert.ok(result.errors.some(e => e.includes('Schema validation')));
+    });
+
+    it('should handle non-JSON content[0].text gracefully', () => {
+      const response = {
+        content: [{ type: 'text', text: 'This is not JSON' }],
+      };
+
+      const result = validator.validate(response, null, {
+        expectedFields: ['products'],
+      });
+
+      assert.strictEqual(result.valid, false);
+      assert.ok(result.errors.some(e => e.includes('Cannot validate fields: no data extracted')));
+    });
+
+    it('should detect empty data object from content[0].text', () => {
+      const response = {
+        content: [{ type: 'text', text: '{}' }],
+      };
+
+      const result = validator.validate(response);
+
+      assert.strictEqual(result.protocol, 'mcp');
+      assert.ok(result.warnings.some(w => w.includes('empty object')));
+    });
+
+    it('should prefer structuredContent over content[0].text when both are present', () => {
+      const response = {
+        structuredContent: {
+          products: [createValidProduct({ product_id: 'from-structured' })],
+        },
+        content: [{ type: 'text', text: JSON.stringify({ products: [createValidProduct({ product_id: 'from-text' })] }) }],
+      };
+
+      const result = validator.validate(response, null, {
+        expectedFields: ['products'],
+      });
+
+      assert.strictEqual(result.valid, true);
+      assert.strictEqual(result.protocol, 'mcp');
+    });
+  });
+
   describe('Edge Cases', () => {
     it('should handle null response', () => {
       const result = validator.validate(null);

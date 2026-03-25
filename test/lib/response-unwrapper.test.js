@@ -790,4 +790,55 @@ describe('Response Unwrapper', () => {
       assert.strictEqual(isAdcpSuccess(errorResponse, 'get_products'), false);
     });
   });
+
+  describe('TaskExecutor.extractResponseData retry behavior', () => {
+    let TaskExecutor;
+
+    test('should extract data from content[0].text when schema validation fails with toolName', () => {
+      // Lazy-load to avoid import order issues
+      TaskExecutor = require('../../dist/lib/core/TaskExecutor').TaskExecutor;
+      const executor = new TaskExecutor({});
+
+      // MCP response with content[0].text containing JSON that has extra fields
+      // that would fail schema validation but is otherwise valid JSON
+      const mcpResponse = {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify({
+              products: [createTestProduct({ product_id: 'p1' })],
+              extra_field: 'unexpected',
+            }),
+          },
+        ],
+      };
+
+      const debugLogs = [];
+      // With toolName, unwrapProtocolResponse may do schema validation;
+      // without toolName, it just extracts the data
+      const result = executor.extractResponseData(mcpResponse, debugLogs);
+
+      // Should successfully extract the data (not return the raw envelope)
+      assert.ok(result.products, 'Should extract products from content[0].text');
+      assert.strictEqual(result.products[0].product_id, 'p1');
+      // Should NOT have protocol envelope fields
+      assert.strictEqual(result.content, undefined, 'Should not return raw MCP envelope');
+    });
+
+    test('should return raw response when unwrapping fails completely', () => {
+      TaskExecutor = require('../../dist/lib/core/TaskExecutor').TaskExecutor;
+      const executor = new TaskExecutor({});
+
+      // Response that is not recognizable as any protocol
+      const unknownResponse = {
+        someField: 'value',
+      };
+
+      const debugLogs = [];
+      const result = executor.extractResponseData(unknownResponse, debugLogs);
+
+      // Should fall back to raw response
+      assert.strictEqual(result.someField, 'value');
+    });
+  });
 });

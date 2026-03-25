@@ -614,13 +614,22 @@ export class TaskExecutor {
 
       return unwrapped;
     } catch (error) {
-      // If unwrapper fails, log and try fallback
-      this.logDebug(debugLogs, 'warning', 'Response unwrapper failed, using fallback', {
+      this.logDebug(debugLogs, 'warning', 'Response unwrapper failed', {
         error: error instanceof Error ? error.message : String(error),
+        toolName,
         responseKeys: Object.keys(response || {}),
       });
 
-      // Fallback to full response
+      // If toolName was provided, schema validation may have caused the failure.
+      // Retry without toolName to extract the payload without schema checks.
+      if (toolName) {
+        try {
+          return unwrapProtocolResponse(response);
+        } catch {
+          // Unwrapping itself failed — fall through to raw response
+        }
+      }
+
       return response;
     }
   }
