@@ -22,6 +22,9 @@ on:
       - 'scripts/sync-schemas.ts'
       - 'scripts/sync-version.ts'
 
+permissions:
+  contents: read
+
 jobs:
   validate-schemas:
     name: Validate Schema Synchronization
@@ -114,6 +117,9 @@ jobs:
   auto-update-schemas:
     name: Auto-update Schemas (Scheduled)
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
     if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.event.inputs.force_update == 'true')
     
     steps:

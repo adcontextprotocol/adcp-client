@@ -395,7 +395,7 @@ export class AsyncHandler {
         await handlerToCall(result, metadata);
       } catch (error) {
         // Log error but don't crash webhook processing
-        console.error(`Error in handler for task ${taskType}:`, error);
+        console.error(`Error in handler for task ${taskType}:`, error instanceof Error ? error.message : 'unknown error');
       }
     }
   }

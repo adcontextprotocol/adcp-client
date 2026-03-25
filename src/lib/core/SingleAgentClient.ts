@@ -729,7 +729,7 @@ export class SingleAgentClient {
           // Try to unwrap artifacts for all statuses
           result = unwrapProtocolResponse({ result: a2aPayload }, taskType, 'a2a') as AdCPAsyncResponseData;
         } catch (error) {
-          console.warn('Failed to unwrap A2A webhook payload:', error);
+          console.warn('Failed to unwrap A2A webhook payload:', error instanceof Error ? error.message : 'unknown error');
           // Fallback: pass raw artifacts so handler has something to work with
           result = a2aPayload.artifacts as unknown as AdCPAsyncResponseData;
         }
