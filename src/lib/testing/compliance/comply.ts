@@ -22,6 +22,8 @@ import type {
 import { getPlatformProfile } from './profiles';
 import type { PlatformProfile } from './profiles';
 import { closeMCPConnections } from '../../protocols/mcp';
+import { detectController, hasTestController } from '../test-controller';
+import type { ControllerDetection, ControllerCapabilities } from '../test-controller';
 
 /**
  * Maps each track to its constituent scenarios and a human-readable label.
@@ -29,7 +31,7 @@ import { closeMCPConnections } from '../../protocols/mcp';
 const TRACK_DEFINITIONS: Record<ComplianceTrack, { label: string; scenarios: TestScenario[] }> = {
   core: {
     label: 'Core Protocol',
-    scenarios: ['health_check', 'discovery', 'capability_discovery', 'schema_compliance'],
+    scenarios: ['health_check', 'discovery', 'capability_discovery', 'schema_compliance', 'controller_validation', 'deterministic_account'],
   },
   products: {
     label: 'Product Discovery',
@@ -46,17 +48,19 @@ const TRACK_DEFINITIONS: Record<ComplianceTrack, { label: string; scenarios: Tes
       'terminal_state_enforcement',
       'package_lifecycle',
       'seller_governance_context',
+      'deterministic_media_buy',
+      'deterministic_budget',
     ],
   },
   creative: {
     label: 'Creative Management',
-    scenarios: ['creative_sync', 'creative_flow'],
+    scenarios: ['creative_sync', 'creative_flow', 'deterministic_creative'],
   },
   reporting: {
     label: 'Reporting',
     // full_sales_flow covers get_media_buy_delivery — but we assess it as a
     // separate track concern by checking if the agent has the tool
-    scenarios: ['full_sales_flow'],
+    scenarios: ['full_sales_flow', 'deterministic_delivery'],
   },
   governance: {
     label: 'Governance',
@@ -77,7 +81,7 @@ const TRACK_DEFINITIONS: Record<ComplianceTrack, { label: string; scenarios: Tes
   },
   si: {
     label: 'Sponsored Intelligence',
-    scenarios: ['si_session_lifecycle', 'si_availability', 'si_handoff'],
+    scenarios: ['si_session_lifecycle', 'si_availability', 'si_handoff', 'deterministic_session'],
   },
   audiences: {
     label: 'Audience Management',
@@ -558,6 +562,15 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
   effectiveOptions._client = client;
   effectiveOptions._profile = profile;
 
+  // Detect test controller for deterministic mode
+  let controllerDetection: ControllerDetection = { detected: false };
+  if (profileStep.passed && hasTestController(profile)) {
+    controllerDetection = await detectController(client as any, profile);
+    if (controllerDetection.detected) {
+      effectiveOptions._controllerCapabilities = controllerDetection;
+    }
+  }
+
   if (!profileStep.passed) {
     const errorMsg = profileStep.error || 'Unknown error';
     const observations: AdvisoryObservation[] = [];
@@ -708,6 +721,9 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
     allObservations.push(...observations);
 
     const status = computeTrackStatus(results, skipped.length, hasAuth);
+    // Determine mode: deterministic if any deterministic scenario ran for this track
+    const hasDeterministicScenario = applicable.some(s => s.startsWith('deterministic_') || s === 'controller_validation');
+    const mode = hasDeterministicScenario ? 'deterministic' : 'observational';
     trackResults.push({
       track,
       status,
@@ -716,6 +732,7 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
       skipped_scenarios: skipped,
       observations,
       duration_ms: Date.now() - trackStart,
+      mode,
     });
   }
 
@@ -758,6 +775,8 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
     summary,
     observations: allObservations,
     platform_coherence: platformCoherence,
+    controller_detected: controllerDetection.detected,
+    controller_scenarios: controllerDetection.detected ? controllerDetection.scenarios : undefined,
     tested_at: new Date().toISOString(),
     total_duration_ms: Date.now() - start,
     dry_run: effectiveOptions.dry_run !== false,

@@ -53,7 +53,15 @@ export type TestScenario =
   // Error compliance (transport error mapping spec)
   | 'error_codes' // Validate standard AdCP error codes in responses
   | 'error_structure' // Validate error JSON structure against error.json schema
-  | 'error_transport'; // Validate transport binding (structuredContent, text fallback)
+  | 'error_transport' // Validate transport binding (structuredContent, text fallback)
+  // Deterministic state machine scenarios (require comply_test_controller)
+  | 'deterministic_creative' // Force creative status transitions via test controller
+  | 'deterministic_media_buy' // Force media buy status transitions via test controller
+  | 'deterministic_account' // Force account status transitions + operation gates
+  | 'deterministic_session' // Force SI session timeout/termination
+  | 'deterministic_delivery' // Simulate delivery data and verify reporting
+  | 'deterministic_budget' // Simulate budget spend and verify financials
+  | 'controller_validation'; // Validate the test controller itself (error codes, edge cases)
 
 export interface TestOptions {
   // Protocol to use for testing (default: 'mcp')
@@ -135,6 +143,8 @@ export interface TestOptions {
   _client?: unknown;
   /** @internal Pre-discovered profile from comply() — skips per-scenario discovery */
   _profile?: AgentProfile;
+  /** @internal Test controller capabilities from comply() — set when comply_test_controller detected */
+  _controllerCapabilities?: unknown;
 }
 
 export interface TestStepResult {

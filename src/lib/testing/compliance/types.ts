@@ -41,6 +41,8 @@ export interface TrackResult {
   observations: AdvisoryObservation[];
   /** Total time for this track */
   duration_ms: number;
+  /** Compliance testing mode: observational (default) or deterministic (test controller available) */
+  mode?: 'observational' | 'deterministic';
 }
 
 export interface ComplianceResult {
@@ -54,6 +56,10 @@ export interface ComplianceResult {
   observations: AdvisoryObservation[];
   /** Platform coherence assessment (only when platform_type provided) */
   platform_coherence?: PlatformCoherenceResult;
+  /** Whether the seller exposes comply_test_controller */
+  controller_detected?: boolean;
+  /** Scenarios the seller's test controller supports */
+  controller_scenarios?: string[];
   tested_at: string;
   total_duration_ms: number;
   dry_run: boolean;
