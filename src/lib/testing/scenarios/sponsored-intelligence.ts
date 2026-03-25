@@ -562,7 +562,7 @@ export async function testSIHandoff(
           {
             has_checkout_url: hasCheckoutUrl,
             has_checkout_token: hasCheckoutToken,
-            has_product: !!handoff.product,
+            has_payload: !!handoff.payload,
           },
           null,
           2

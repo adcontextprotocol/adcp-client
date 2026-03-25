@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-03-25T09:26:45.865Z
+// Generated at: 2026-03-25T10:26:40.535Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -232,7 +232,7 @@ export const CatalogSchema = z.object({
     feed_field_mappings: z.array(CatalogFieldMappingSchema).nullish()
 }).passthrough();
 
-export const CreativeStatusSchema = z.union([z.literal("processing"), z.literal("approved"), z.literal("rejected"), z.literal("pending_review"), z.literal("archived")]);
+export const CreativeStatusSchema = z.union([z.literal("processing"), z.literal("pending_review"), z.literal("approved"), z.literal("rejected"), z.literal("archived")]);
 
 export const ImageAssetSchema = z.object({
     url: z.string(),
@@ -3024,6 +3024,8 @@ export const SIUIElementSchema = z.object({
     data: z.object({}).passthrough().nullish()
 }).passthrough();
 
+export const SISessionStatusSchema = z.union([z.literal("active"), z.literal("pending_handoff"), z.literal("complete"), z.literal("terminated")]);
+
 export const SIInitiateSessionResponseSchema = z.object({
     session_id: z.string(),
     response: z.object({
@@ -3031,6 +3033,8 @@ export const SIInitiateSessionResponseSchema = z.object({
         ui_elements: z.array(SIUIElementSchema).nullish()
     }).passthrough().nullish(),
     negotiated_capabilities: SICapabilitiesSchema.nullish(),
+    session_status: SISessionStatusSchema,
+    session_ttl_seconds: z.number().nullish(),
     errors: z.array(ErrorSchema).nullish(),
     ext: ExtensionObjectSchema.nullish()
 }).passthrough();
@@ -3068,10 +3072,12 @@ export const SITerminateSessionRequestSchema = z.object({
 export const SITerminateSessionResponseSchema = z.object({
     session_id: z.string(),
     terminated: z.boolean(),
+    session_status: SISessionStatusSchema.nullish(),
     acp_handoff: z.object({
         checkout_url: z.string().nullish(),
         checkout_token: z.string().nullish(),
-        product: z.object({}).passthrough().nullish()
+        payload: z.object({}).passthrough().nullish(),
+        expires_at: z.string().nullish()
     }).passthrough().nullish(),
     follow_up: z.object({
         action: z.union([z.literal("save_for_later"), z.literal("set_reminder"), z.literal("subscribe_updates"), z.literal("none")]).nullish(),
@@ -4337,7 +4343,7 @@ export const SISendMessageResponseSchema = z.object({
         ui_elements: z.array(SIUIElementSchema).nullish()
     }).passthrough().nullish(),
     mcp_resource_uri: z.string().nullish(),
-    session_status: z.union([z.literal("active"), z.literal("pending_handoff"), z.literal("complete")]),
+    session_status: SISessionStatusSchema,
     handoff: z.object({
         type: z.union([z.literal("transaction"), z.literal("complete")]).nullish(),
         intent: z.object({

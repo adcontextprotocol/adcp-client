@@ -2977,7 +2977,7 @@ export type CatalogAsset = Catalog;
 /**
  * For generative creatives: set to 'approved' to finalize, 'rejected' to request regeneration with updated assets/message. Omit for non-generative creatives (system will set based on processing state).
  */
-export type CreativeStatus = 'processing' | 'approved' | 'rejected' | 'pending_review' | 'archived';
+export type CreativeStatus = 'processing' | 'pending_review' | 'approved' | 'rejected' | 'archived';
 /**
  * Campaign start timing: 'asap' or ISO 8601 date-time
  */
@@ -4208,7 +4208,7 @@ export interface Account {
    */
   billing_proxy?: string;
   /**
-   * Account status. pending_approval: seller reviewing (credit, contracts). rejected: seller declined the account request. payment_required: credit limit reached or funds depleted. suspended: was active, now paused. closed: was active, now terminated.
+   * Account lifecycle status. See the Accounts Protocol overview for the operations matrix showing which tasks are permitted in each state.
    */
   status: 'active' | 'pending_approval' | 'rejected' | 'payment_required' | 'suspended' | 'closed';
   brand?: BrandReference;
@@ -19696,6 +19696,10 @@ export type SIUIElement = {
    */
   data?: {};
 };
+/**
+ * Session status after initiation. Always 'active' on success.
+ */
+export type SISessionStatus = 'active' | 'pending_handoff' | 'complete' | 'terminated';
 
 /**
  * Brand agent's response to session initiation
@@ -19719,6 +19723,11 @@ export interface SIInitiateSessionResponse {
     ui_elements?: SIUIElement[];
   };
   negotiated_capabilities?: SICapabilities;
+  session_status: SISessionStatus;
+  /**
+   * Session inactivity timeout in seconds. After this duration without a message, the brand agent may terminate the session. Hosts SHOULD warn users before timeout when possible.
+   */
+  session_ttl_seconds?: number;
   /**
    * Errors during session initiation
    */
@@ -19786,10 +19795,7 @@ export interface SISendMessageResponse {
    * MCP resource URI for hosts with MCP Apps support (e.g., ui://si/session-abc123)
    */
   mcp_resource_uri?: string;
-  /**
-   * Current session status
-   */
-  session_status: 'active' | 'pending_handoff' | 'complete';
+  session_status: SISessionStatus;
   /**
    * Handoff request when session_status is pending_handoff
    */
@@ -19935,22 +19941,27 @@ export interface SITerminateSessionResponse {
    * Whether session was successfully terminated
    */
   terminated: boolean;
+  session_status?: SISessionStatus;
   /**
-   * ACP checkout handoff data (for handoff_transaction)
+   * ACP checkout handoff data. Present when reason is handoff_transaction.
    */
   acp_handoff?: {
     /**
-     * ACP checkout initiation URL
+     * Brand's ACP checkout endpoint. Hosts MUST validate this is HTTPS before opening.
      */
     checkout_url?: string;
     /**
-     * Token for ACP checkout flow
+     * Opaque token for the checkout flow. The host passes this to the checkout endpoint to correlate the SI session with the transaction.
      */
     checkout_token?: string;
     /**
-     * Product details for checkout
+     * Rich checkout context to pass to the ACP endpoint (product details, applied offers, pricing). Alternative to checkout_token for integrations that need structured data.
      */
-    product?: {};
+    payload?: {};
+    /**
+     * When this handoff data expires. Hosts should initiate checkout before this time.
+     */
+    expires_at?: string;
   };
   /**
    * Suggested follow-up actions

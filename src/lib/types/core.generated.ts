@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas vlatest
-// Generated at: 2026-03-23T12:17:27.383Z
+// Generated at: 2026-03-25T10:26:37.890Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -369,7 +369,7 @@ export interface Account {
    */
   billing_proxy?: string;
   /**
-   * Account status. pending_approval: seller reviewing (credit, contracts). rejected: seller declined the account request. payment_required: credit limit reached or funds depleted. suspended: was active, now paused. closed: was active, now terminated.
+   * Account lifecycle status. See the Accounts Protocol overview for the operations matrix showing which tasks are permitted in each state.
    */
   status: 'active' | 'pending_approval' | 'rejected' | 'payment_required' | 'suspended' | 'closed';
   brand?: BrandReference;
@@ -9974,7 +9974,7 @@ export type CatalogAsset = Catalog;
 /**
  * For generative creatives: set to 'approved' to finalize, 'rejected' to request regeneration with updated assets/message. Omit for non-generative creatives (system will set based on processing state).
  */
-export type CreativeStatus = 'processing' | 'approved' | 'rejected' | 'pending_review' | 'archived';
+export type CreativeStatus = 'processing' | 'pending_review' | 'approved' | 'rejected' | 'archived';
 
 /**
  * Creative asset for upload to library - supports static assets, generative formats, and third-party snippets
