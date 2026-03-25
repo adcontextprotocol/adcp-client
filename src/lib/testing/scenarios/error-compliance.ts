@@ -41,12 +41,11 @@ function createProvocations(): ErrorProvocation[] {
       name: 'Nonexistent product_id',
       tool: 'create_media_buy',
       args: {
-        buyer_ref: `error-compliance-${now}`,
+        idempotency_key: `error-compliance-${now}`,
         start_time: new Date(now + 86400000).toISOString(),
         end_time: new Date(now + 604800000).toISOString(),
         packages: [
           {
-            buyer_ref: 'pkg-error-test',
             product_id: 'NONEXISTENT_PRODUCT_ID_12345',
             budget: 1000,
             pricing_option_id: 'nonexistent-pricing',
@@ -61,12 +60,11 @@ function createProvocations(): ErrorProvocation[] {
       name: 'Negative budget',
       tool: 'create_media_buy',
       args: {
-        buyer_ref: `error-compliance-neg-${now}`,
+        idempotency_key: `error-compliance-neg-${now}`,
         start_time: new Date(now + 86400000).toISOString(),
         end_time: new Date(now + 604800000).toISOString(),
         packages: [
           {
-            buyer_ref: 'pkg-neg-budget',
             product_id: 'test-product',
             budget: -500,
             pricing_option_id: 'test-pricing',
@@ -81,12 +79,11 @@ function createProvocations(): ErrorProvocation[] {
       name: 'End time before start time',
       tool: 'create_media_buy',
       args: {
-        buyer_ref: `error-compliance-temporal-${now}`,
+        idempotency_key: `error-compliance-temporal-${now}`,
         start_time: new Date(now + 604800000).toISOString(),
         end_time: new Date(now + 86400000).toISOString(),
         packages: [
           {
-            buyer_ref: 'pkg-temporal',
             product_id: 'test-product',
             budget: 1000,
             pricing_option_id: 'test-pricing',
