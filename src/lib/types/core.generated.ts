@@ -1,7 +1,11 @@
 // Generated AdCP core types from official schemas vlatest
-// Generated at: 2026-03-25T12:16:30.216Z
+// Generated at: 2026-03-25T23:46:05.698Z
 
 // MEDIA-BUY SCHEMA
+/**
+ * Account lifecycle status. See the Accounts Protocol overview for the operations matrix showing which tasks are permitted in each state.
+ */
+export type AccountStatus = 'active' | 'pending_approval' | 'rejected' | 'payment_required' | 'suspended' | 'closed';
 /**
  * Brand identifier within the house portfolio. Optional for single-brand domains.
  */
@@ -369,10 +373,7 @@ export interface Account {
    * Optional intermediary who receives invoices on behalf of the advertiser (e.g., agency)
    */
   billing_proxy?: string;
-  /**
-   * Account lifecycle status. See the Accounts Protocol overview for the operations matrix showing which tasks are permitted in each state.
-   */
-  status: 'active' | 'pending_approval' | 'rejected' | 'payment_required' | 'suspended' | 'closed';
+  status: AccountStatus;
   brand?: BrandReference;
   /**
    * Domain of the entity operating this account. When the brand operates directly, this is the brand's domain.
@@ -613,6 +614,10 @@ export interface Package {
      * Reason the package was canceled.
      */
     reason?: string;
+    /**
+     * ISO 8601 timestamp when the seller acknowledged the cancellation. Confirms inventory has been released and billing stopped. Absent until the seller processes the cancellation.
+     */
+    acknowledged_at?: string;
   };
   /**
    * ISO 8601 timestamp for creative upload or change deadline for this package. After this deadline, creative changes are rejected. When absent, the media buy's creative_deadline applies.
@@ -2390,7 +2395,7 @@ export interface Product {
    */
   brief_relevance?: string;
   /**
-   * Expiration timestamp for custom products
+   * Expiration timestamp. After this time, the product may no longer be available for purchase and create_media_buy may reject packages referencing it.
    */
   expires_at?: string;
   /**
@@ -2429,6 +2434,24 @@ export interface Product {
    * Registry policy IDs the seller enforces for this product. Enforcement level comes from the policy registry. Buyers can filter products by required policies.
    */
   enforced_policies?: string[];
+  /**
+   * Instructions for submitting physical creative materials (print, static OOH, cinema). Present only for products requiring physical delivery outside the digital creative assignment flow. Buyer agents MUST validate url and email domains against the seller's known domains (from adagents.json) before submitting materials. Never auto-submit without human confirmation.
+   */
+  material_submission?: {
+    /**
+     * HTTPS URL for uploading or submitting physical creative materials
+     */
+    url?: string;
+    /**
+     * Email address for creative material submission
+     */
+    email?: string;
+    /**
+     * Human-readable instructions for material submission (file naming conventions, shipping address, etc.)
+     */
+    instructions?: string;
+    ext?: ExtensionObject;
+  };
   ext?: ExtensionObject;
 }
 /**
@@ -3445,6 +3468,10 @@ export type AdCPAsyncResponseData =
   | SyncCatalogsAsyncInputRequired
   | SyncCatalogsAsyncSubmitted;
 /**
+ * Lifecycle status of this proposal. When absent, the proposal is ready to buy (backward compatible). 'draft' means indicative pricing — finalize via refine before purchasing. 'committed' means firm pricing with inventory reserved until expires_at.
+ */
+export type ProposalStatus = 'draft' | 'committed';
+/**
  * Response for completed or failed create_media_buy
  */
 export type CreateMediaBuyResponse = CreateMediaBuySuccess | CreateMediaBuyError;
@@ -3860,10 +3887,12 @@ export interface Proposal {
    * Budget allocations across products. Allocation percentages MUST sum to 100. Publishers are responsible for ensuring the sum equals 100; buyers SHOULD validate this before execution.
    */
   allocations: ProductAllocation[];
+  proposal_status?: ProposalStatus;
   /**
-   * When this proposal expires and can no longer be executed. After expiration, referenced products or pricing may no longer be available.
+   * When this proposal expires and can no longer be executed. For draft proposals, indicates when indicative pricing becomes stale. For committed proposals, indicates when the inventory hold lapses — the buyer must call create_media_buy before this time.
    */
   expires_at?: string;
+  insertion_order?: InsertionOrder;
   /**
    * Optional budget guidance for this proposal
    */
@@ -3934,6 +3963,62 @@ export interface ProductAllocation {
   daypart_targets?: DaypartTarget[];
   forecast?: DeliveryForecast;
   ext?: ExtensionObject;
+}
+/**
+ * Formal insertion order attached to a committed proposal. Present when the seller requires a signed agreement before the media buy can proceed. The buyer references the io_id in io_acceptance on create_media_buy.
+ */
+export interface InsertionOrder {
+  /**
+   * Unique identifier for this insertion order. Referenced by io_acceptance on create_media_buy.
+   */
+  io_id: string;
+  /**
+   * Structured terms for agent validation. Agents can programmatically verify these match the proposal and campaign requirements.
+   */
+  terms?: {
+    /**
+     * Advertiser name or identifier
+     */
+    advertiser?: string;
+    /**
+     * Publisher name or identifier
+     */
+    publisher?: string;
+    /**
+     * Total committed budget
+     */
+    total_budget?: {
+      amount: number;
+      /**
+       * ISO 4217 currency code
+       */
+      currency: string;
+    };
+    /**
+     * Campaign start date
+     */
+    flight_start?: string;
+    /**
+     * Campaign end date
+     */
+    flight_end?: string;
+    /**
+     * Payment terms
+     */
+    payment_terms?: 'net_30' | 'net_60' | 'net_90' | 'prepaid' | 'due_on_receipt';
+  };
+  /**
+   * URL to a human-readable document containing the full insertion order terms
+   */
+  terms_url?: string;
+  /**
+   * URL to an electronic signing service (e.g., DocuSign) for human signature workflows. When present, a human must sign before the buyer agent can proceed with create_media_buy.
+   */
+  signing_url?: string;
+  /**
+   * Whether the buyer must accept this IO before creating a media buy. When true, create_media_buy requires an io_acceptance referencing this io_id.
+   */
+  requires_signature: boolean;
 }
 /**
  * Standard error structure for task-specific errors and warnings

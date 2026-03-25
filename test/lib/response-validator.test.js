@@ -519,7 +519,9 @@ describe('ResponseValidator Tests', () => {
         structuredContent: {
           products: [createValidProduct({ product_id: 'from-structured' })],
         },
-        content: [{ type: 'text', text: JSON.stringify({ products: [createValidProduct({ product_id: 'from-text' })] }) }],
+        content: [
+          { type: 'text', text: JSON.stringify({ products: [createValidProduct({ product_id: 'from-text' })] }) },
+        ],
       };
 
       const result = validator.validate(response, null, {
