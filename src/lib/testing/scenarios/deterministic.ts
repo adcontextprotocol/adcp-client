@@ -6,7 +6,7 @@
  * Only run when the controller is detected.
  */
 
-import { getOrCreateClient, runStep } from '../client';
+import { getOrCreateClient, runStep, resolveAccount } from '../client';
 import { forceStatus, simulate, supportsScenario, callControllerRaw } from '../test-controller';
 import type { ControllerDetection } from '../test-controller';
 import type { TestOptions, TestStepResult, AgentProfile, TaskResult } from '../types';
@@ -21,14 +21,18 @@ function getController(options: TestOptions): ControllerDetection | undefined {
   return options._controllerCapabilities;
 }
 
-/** Extract an entity ID from step results (created_id or response_preview.creative_id) */
+/** Extract an entity ID from step results (created_id, response_preview field, or plural array) */
 function extractIdFromSteps(stepsToSearch: TestStepResult[], field: string): string | undefined {
+  const pluralField = field.endsWith('_id') ? field + 's' : undefined; // creative_id → creative_ids
   for (const step of stepsToSearch) {
     if (step.created_id) return step.created_id;
     if (step.response_preview) {
       try {
         const preview = JSON.parse(step.response_preview);
         if (preview[field]) return preview[field];
+        if (pluralField && Array.isArray(preview[pluralField]) && preview[pluralField][0]) {
+          return preview[pluralField][0];
+        }
       } catch { /* skip */ }
     }
   }
@@ -201,17 +205,28 @@ export async function testCreativeStateMachine(
     });
   }
 
-  // Step 6: Force to rejected with reason on a fresh creative
+  // Step 6: Force to rejected with reason on a fresh creative.
+  // Sellers may auto-approve on sync, so force to pending_review first (the only state
+  // that allows rejection in most state machines), then reject.
   const { steps: resyncSteps } = await testCreativeSync(agentUrl, options);
   const freshCreativeId = extractIdFromSteps(resyncSteps, 'creative_id');
 
   if (freshCreativeId) {
-    const { response: rejectResult, durationMs: rejectDur } = await ctrl.forceStatus('force_creative_status', {
+    // Try to reach a state that allows rejection
+    const { response: toPendingReview } = await ctrl.forceStatus('force_creative_status', {
       creative_id: freshCreativeId,
-      status: 'rejected',
-      rejection_reason: 'Brand safety policy violation (comply test)',
+      status: 'pending_review',
     });
-    steps.push(transitionStep('Force creative → rejected with reason', rejectResult, true, rejectDur));
+    // If pending_review isn't reachable (e.g., creative starts as processing which allows rejection directly),
+    // try rejecting from wherever we are
+    if (toPendingReview.success || !toPendingReview.success) {
+      const { response: rejectResult, durationMs: rejectDur } = await ctrl.forceStatus('force_creative_status', {
+        creative_id: freshCreativeId,
+        status: 'rejected',
+        rejection_reason: 'Brand safety policy violation (comply test)',
+      });
+      steps.push(transitionStep('Force creative → rejected with reason', rejectResult, true, rejectDur));
+    }
   }
 
   return { steps, profile };
@@ -299,17 +314,34 @@ export async function testMediaBuyStateMachine(
   });
   steps.push(transitionStep('Invalid: completed → active (expect INVALID_TRANSITION)', invalidResult, false, invalidDur));
 
-  // Test rejection from pending_activation
+  // Test rejection: force to pending_activation first (some sellers create as active),
+  // then reject from there. If the seller doesn't support pending_activation, skip.
   const { steps: create2Steps, mediaBuyId: mediaBuyId2 } = await testCreateMediaBuy(agentUrl, options);
   steps.push(...create2Steps);
 
   if (mediaBuyId2) {
-    const { response: rejectResult, durationMs: rejectDur } = await ctrl.forceStatus('force_media_buy_status', {
+    // Try to force to pending_activation first
+    const { response: pendingResult } = await ctrl.forceStatus('force_media_buy_status', {
       media_buy_id: mediaBuyId2,
-      status: 'rejected',
-      rejection_reason: 'Policy violation (comply test)',
+      status: 'pending_activation',
     });
-    steps.push(transitionStep('Force media buy → rejected from pending_activation', rejectResult, true, rejectDur));
+
+    if (pendingResult.success) {
+      // Now reject from pending_activation
+      const { response: rejectResult, durationMs: rejectDur } = await ctrl.forceStatus('force_media_buy_status', {
+        media_buy_id: mediaBuyId2,
+        status: 'rejected',
+        rejection_reason: 'Policy violation (comply test)',
+      });
+      steps.push(transitionStep('Force media buy → rejected from pending_activation', rejectResult, true, rejectDur));
+    } else {
+      // Can't reach pending_activation — test cancellation instead (valid from active)
+      const { response: cancelResult, durationMs: cancelDur } = await ctrl.forceStatus('force_media_buy_status', {
+        media_buy_id: mediaBuyId2,
+        status: 'canceled',
+      });
+      steps.push(transitionStep('Force media buy → canceled from active', cancelResult, true, cancelDur));
+    }
   }
 
   return { steps, profile };
@@ -591,13 +623,18 @@ export async function testDeliverySimulation(
     const { result: deliveryResult, step: deliveryStep } = await runStep<TaskResult>(
       'Verify delivery data via get_media_buy_delivery',
       'get_media_buy_delivery',
-      async () => callTask(client, 'get_media_buy_delivery', { media_buy_id: mediaBuyId })
+      async () => callTask(client, 'get_media_buy_delivery', { media_buy_id: mediaBuyId, account: resolveAccount(options) })
     );
 
     if (deliveryResult?.success && deliveryResult?.data) {
       const data = deliveryResult.data as Record<string, unknown>;
+      // Handle multiple response shapes:
+      // - { media_buy_deliveries: [{ totals: { impressions } }] } (training agent)
+      // - { summary: { impressions } } or { impressions } (other agents)
+      const deliveries = data.media_buy_deliveries as Record<string, unknown>[] | undefined;
+      const totals = deliveries?.[0]?.totals as Record<string, unknown> | undefined;
       const summary = data.summary as Record<string, unknown> | undefined;
-      const impressions = (data.impressions ?? data.total_impressions ?? summary?.impressions) as number | undefined;
+      const impressions = (totals?.impressions ?? data.impressions ?? data.total_impressions ?? summary?.impressions) as number | undefined;
       if (impressions !== undefined && impressions >= 10000) {
         deliveryStep.details = `Delivery reflects simulated data: ${impressions} impressions`;
       } else {
