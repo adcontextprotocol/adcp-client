@@ -527,6 +527,10 @@ export interface ComplyOptions extends TestOptions {
   tracks?: ComplianceTrack[];
   /** Declare the platform type for coherence checking */
   platform_type?: PlatformType;
+  /** Timeout in milliseconds — stops new scenarios from starting when exceeded */
+  timeout_ms?: number;
+  /** AbortSignal for external cancellation (e.g., graceful shutdown) */
+  signal?: AbortSignal;
 }
 
 /**
@@ -543,225 +547,274 @@ export async function comply(agentUrl: string, options: ComplyOptions = {}): Pro
 
 async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<ComplianceResult> {
   const start = Date.now();
-  const { tracks: trackFilter, platform_type, ...testOptions } = options;
+  const { tracks: trackFilter, platform_type, timeout_ms, signal: externalSignal, ...testOptions } = options;
   const platformProfile = platform_type ? getPlatformProfile(platform_type) : undefined;
 
-  const effectiveOptions: TestOptions = {
-    ...testOptions,
-    dry_run: testOptions.dry_run !== false,
-    test_session_id: testOptions.test_session_id || `comply-${Date.now()}`,
-  };
-
-  // Discover agent capabilities once and share across all scenarios
-  const client = createTestClient(agentUrl, effectiveOptions.protocol ?? 'mcp', effectiveOptions);
-  const { profile, step: profileStep } = await discoverAgentProfile(client);
-  effectiveOptions._client = client;
-  effectiveOptions._profile = profile;
-
-  if (!profileStep.passed) {
-    const errorMsg = profileStep.error || 'Unknown error';
-    const observations: AdvisoryObservation[] = [];
-
-    // Check for auth errors — either explicit 401/Unauthorized or MCP SDK's generic
-    // "Failed to discover" which often wraps a 401
-    const isExplicitAuthError =
-      errorMsg.includes('401') ||
-      errorMsg.includes('Unauthorized') ||
-      errorMsg.includes('unauthorized') ||
-      errorMsg.includes('authentication') ||
-      errorMsg.includes('JWS') ||
-      errorMsg.includes('JWT') ||
-      errorMsg.includes('signature verification');
-
-    // When MCP SDK wraps the error, probe the endpoint directly
-    let isAuthError = isExplicitAuthError;
-    if (!isAuthError && errorMsg.includes('Failed to discover')) {
-      try {
-        const probe = await fetch(agentUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' } });
-        if (probe.status === 401 || probe.status === 403) {
-          isAuthError = true;
-        }
-      } catch {
-        // Network error — not an auth issue
-      }
+  // Validate timeout_ms
+  if (timeout_ms !== undefined) {
+    if (typeof timeout_ms !== 'number' || !Number.isFinite(timeout_ms) || timeout_ms <= 0) {
+      throw new TypeError(`timeout_ms must be a positive finite number, got: ${timeout_ms}`);
     }
-
-    const headline = isAuthError ? `Authentication required` : `Agent unreachable — ${errorMsg}`;
-
-    if (isAuthError) {
-      // Check if agent supports OAuth
-      const { discoverOAuthMetadata } = await import('../../auth/oauth/discovery');
-      const oauthMeta = await discoverOAuthMetadata(agentUrl);
-      if (oauthMeta) {
-        observations.push({
-          category: 'auth',
-          severity: 'error',
-          message: `Agent requires OAuth (issuer: ${oauthMeta.issuer || 'unknown'}). Save credentials: adcp --save-auth <alias> ${agentUrl} --oauth`,
-        });
-      } else {
-        observations.push({
-          category: 'auth',
-          severity: 'error',
-          message: 'Agent returned 401. Check your --auth token.',
-        });
-      }
-    }
-
-    return {
-      agent_url: agentUrl,
-      agent_profile: profile,
-      tracks: [],
-      summary: {
-        tracks_passed: 0,
-        tracks_failed: 0,
-        tracks_skipped: 0,
-        tracks_partial: 0,
-        tracks_expected: 0,
-        headline,
-      },
-      observations,
-      tested_at: new Date().toISOString(),
-      total_duration_ms: Date.now() - start,
-      dry_run: effectiveOptions.dry_run !== false,
-    };
   }
 
-  const tracksToRun = trackFilter ?? TRACK_ORDER;
-  const trackResults: TrackResult[] = [];
-  const allObservations: AdvisoryObservation[] = [];
+  // Build a combined AbortSignal from timeout_ms and/or external signal
+  const needsAbort = timeout_ms !== undefined || externalSignal !== undefined;
+  const abortController = needsAbort ? new AbortController() : undefined;
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const onExternalAbort = externalSignal ? () => abortController!.abort(externalSignal.reason) : undefined;
 
-  for (const track of tracksToRun) {
-    const def = TRACK_DEFINITIONS[track];
-    if (!def) continue;
+  if (timeout_ms !== undefined && abortController) {
+    timeoutId = setTimeout(
+      () => abortController.abort(new Error(`comply() timed out after ${timeout_ms}ms`)),
+      timeout_ms
+    );
+  }
 
-    if (!isTrackApplicable(track, profile.tools)) {
-      const isExpected = track !== 'core' && (platformProfile?.expected_tracks.includes(track) ?? false);
-      trackResults.push({
-        track,
-        status: isExpected ? 'expected' : 'skip',
-        label: def.label,
-        scenarios: [],
-        skipped_scenarios: def.scenarios,
-        observations: [],
-        duration_ms: 0,
-      });
-      continue;
+  if (externalSignal && abortController) {
+    if (externalSignal.aborted) {
+      abortController.abort(externalSignal.reason);
+    } else {
+      externalSignal.addEventListener('abort', onExternalAbort!, { once: true });
+    }
+  }
+
+  const signal = abortController?.signal;
+
+  try {
+    const effectiveOptions: TestOptions = {
+      ...testOptions,
+      dry_run: testOptions.dry_run !== false,
+      test_session_id: testOptions.test_session_id || `comply-${Date.now()}`,
+    };
+
+    // Check for abort before starting
+    signal?.throwIfAborted();
+
+    // Discover agent capabilities once and share across all scenarios
+    const client = createTestClient(agentUrl, effectiveOptions.protocol ?? 'mcp', effectiveOptions);
+    const { profile, step: profileStep } = await discoverAgentProfile(client);
+    effectiveOptions._client = client;
+    effectiveOptions._profile = profile;
+
+    if (!profileStep.passed) {
+      const errorMsg = profileStep.error || 'Unknown error';
+      const observations: AdvisoryObservation[] = [];
+
+      // Check for auth errors — either explicit 401/Unauthorized or MCP SDK's generic
+      // "Failed to discover" which often wraps a 401
+      const isExplicitAuthError =
+        errorMsg.includes('401') ||
+        errorMsg.includes('Unauthorized') ||
+        errorMsg.includes('unauthorized') ||
+        errorMsg.includes('authentication') ||
+        errorMsg.includes('JWS') ||
+        errorMsg.includes('JWT') ||
+        errorMsg.includes('signature verification');
+
+      // When MCP SDK wraps the error, probe the endpoint directly
+      let isAuthError = isExplicitAuthError;
+      if (!isAuthError && errorMsg.includes('Failed to discover')) {
+        try {
+          const probe = await fetch(agentUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            signal,
+          });
+          if (probe.status === 401 || probe.status === 403) {
+            isAuthError = true;
+          }
+        } catch {
+          // Network error — not an auth issue
+        }
+      }
+
+      const headline = isAuthError ? `Authentication required` : `Agent unreachable — ${errorMsg}`;
+
+      if (isAuthError) {
+        // Check if agent supports OAuth
+        const { discoverOAuthMetadata } = await import('../../auth/oauth/discovery');
+        const oauthMeta = await discoverOAuthMetadata(agentUrl);
+        if (oauthMeta) {
+          observations.push({
+            category: 'auth',
+            severity: 'error',
+            message: `Agent requires OAuth (issuer: ${oauthMeta.issuer || 'unknown'}). Save credentials: adcp --save-auth <alias> ${agentUrl} --oauth`,
+          });
+        } else {
+          observations.push({
+            category: 'auth',
+            severity: 'error',
+            message: 'Agent returned 401. Check your --auth token.',
+          });
+        }
+      }
+
+      return {
+        agent_url: agentUrl,
+        agent_profile: profile,
+        tracks: [],
+        summary: {
+          tracks_passed: 0,
+          tracks_failed: 0,
+          tracks_skipped: 0,
+          tracks_partial: 0,
+          tracks_expected: 0,
+          headline,
+        },
+        observations,
+        tested_at: new Date().toISOString(),
+        total_duration_ms: Date.now() - start,
+        dry_run: effectiveOptions.dry_run !== false,
+      };
     }
 
-    const trackStart = Date.now();
-    const applicable = getApplicableScenarios(profile.tools, def.scenarios);
-    const skipped = def.scenarios.filter(s => !applicable.includes(s));
+    const tracksToRun = trackFilter ?? TRACK_ORDER;
+    const trackResults: TrackResult[] = [];
+    const allObservations: AdvisoryObservation[] = [];
 
-    // Track is relevant (agent has some related tools) but no scenarios match
-    // the specific tool combinations. Report as pass with an observation.
-    if (applicable.length === 0) {
-      const relevantTools = TRACK_RELEVANCE[track].filter(t => profile.tools.includes(t));
-      const observations: AdvisoryObservation[] = [
-        {
-          category: 'completeness',
+    for (const track of tracksToRun) {
+      // Check for abort between tracks
+      signal?.throwIfAborted();
+
+      const def = TRACK_DEFINITIONS[track];
+      if (!def) continue;
+
+      if (!isTrackApplicable(track, profile.tools)) {
+        const isExpected = track !== 'core' && (platformProfile?.expected_tracks.includes(track) ?? false);
+        trackResults.push({
+          track,
+          status: isExpected ? 'expected' : 'skip',
+          label: def.label,
+          scenarios: [],
+          skipped_scenarios: def.scenarios,
+          observations: [],
+          duration_ms: 0,
+        });
+        continue;
+      }
+
+      const trackStart = Date.now();
+      const applicable = getApplicableScenarios(profile.tools, def.scenarios);
+      const skipped = def.scenarios.filter(s => !applicable.includes(s));
+
+      // Track is relevant (agent has some related tools) but no scenarios match
+      // the specific tool combinations. Report as pass with an observation.
+      if (applicable.length === 0) {
+        const relevantTools = TRACK_RELEVANCE[track].filter(t => profile.tools.includes(t));
+        const observations: AdvisoryObservation[] = [
+          {
+            category: 'completeness',
+            severity: 'info',
+            track,
+            message:
+              `Agent has ${relevantTools.join(', ')} but no test scenarios cover this tool combination. ` +
+              `Compliance tests exist for: ${def.scenarios.join(', ')}.`,
+            evidence: { tools_present: relevantTools, scenarios_available: def.scenarios },
+          },
+        ];
+        allObservations.push(...observations);
+        trackResults.push({
+          track,
+          status: 'pass',
+          label: def.label,
+          scenarios: [],
+          skipped_scenarios: skipped,
+          observations,
+          duration_ms: Date.now() - trackStart,
+        });
+        continue;
+      }
+
+      // Run each applicable scenario for this track
+      const results: TestResult[] = [];
+      for (const scenario of applicable) {
+        // Check for abort between scenarios
+        signal?.throwIfAborted();
+        const result = await runAgentTest(agentUrl, scenario, effectiveOptions);
+        results.push(result);
+      }
+
+      const observations = collectObservations(track, results, profile);
+
+      // Detect auth-only failures when running without auth
+      const hasAuth = !!effectiveOptions.auth;
+      const authSkippedScenarios = !hasAuth ? results.filter(r => isAuthOnlyFailure(r)).map(r => r.scenario) : [];
+
+      if (authSkippedScenarios.length > 0) {
+        observations.push({
+          category: 'auth',
           severity: 'info',
           track,
           message:
-            `Agent has ${relevantTools.join(', ')} but no test scenarios cover this tool combination. ` +
-            `Compliance tests exist for: ${def.scenarios.join(', ')}.`,
-          evidence: { tools_present: relevantTools, scenarios_available: def.scenarios },
-        },
-      ];
+            `${authSkippedScenarios.length} scenario(s) require authentication: ${authSkippedScenarios.join(', ')}. ` +
+            `Re-run with --auth to test.`,
+          evidence: { scenarios: authSkippedScenarios },
+        });
+      }
+
       allObservations.push(...observations);
+
+      const status = computeTrackStatus(results, skipped.length, hasAuth);
       trackResults.push({
         track,
-        status: 'pass',
+        status,
         label: def.label,
-        scenarios: [],
+        scenarios: results,
         skipped_scenarios: skipped,
         observations,
         duration_ms: Date.now() - trackStart,
       });
-      continue;
     }
 
-    // Run each applicable scenario for this track
-    const results: TestResult[] = [];
-    for (const scenario of applicable) {
-      const result = await runAgentTest(agentUrl, scenario, effectiveOptions);
-      results.push(result);
+    // Build platform coherence result if platform type was declared
+    let platformCoherence: PlatformCoherenceResult | undefined;
+    if (platformProfile) {
+      const findings = platformProfile.checkCoherence(profile);
+      const missingTracks = platformProfile.expected_tracks.filter(
+        t => !isTrackApplicable(t, profile.tools) && t !== 'core'
+      );
+
+      // Add coherence findings as observations
+      for (const finding of findings) {
+        allObservations.push({
+          category: 'coherence',
+          severity: finding.severity,
+          message: `${finding.expected} — ${finding.actual}. ${finding.guidance}`,
+          evidence: { platform_type: platformProfile.type },
+        });
+      }
+
+      platformCoherence = {
+        platform_type: platformProfile.type,
+        label: platformProfile.label,
+        expected_tracks: platformProfile.expected_tracks,
+        missing_tracks: missingTracks,
+        findings,
+        coherent:
+          findings.filter(f => f.severity === 'error' || f.severity === 'warning').length === 0 &&
+          missingTracks.length === 0,
+      };
     }
 
-    const observations = collectObservations(track, results, profile);
+    const summary = buildSummary(trackResults);
 
-    // Detect auth-only failures when running without auth
-    const hasAuth = !!effectiveOptions.auth;
-    const authSkippedScenarios = !hasAuth ? results.filter(r => isAuthOnlyFailure(r)).map(r => r.scenario) : [];
-
-    if (authSkippedScenarios.length > 0) {
-      observations.push({
-        category: 'auth',
-        severity: 'info',
-        track,
-        message:
-          `${authSkippedScenarios.length} scenario(s) require authentication: ${authSkippedScenarios.join(', ')}. ` +
-          `Re-run with --auth to test.`,
-        evidence: { scenarios: authSkippedScenarios },
-      });
-    }
-
-    allObservations.push(...observations);
-
-    const status = computeTrackStatus(results, skipped.length, hasAuth);
-    trackResults.push({
-      track,
-      status,
-      label: def.label,
-      scenarios: results,
-      skipped_scenarios: skipped,
-      observations,
-      duration_ms: Date.now() - trackStart,
-    });
-  }
-
-  // Build platform coherence result if platform type was declared
-  let platformCoherence: PlatformCoherenceResult | undefined;
-  if (platformProfile) {
-    const findings = platformProfile.checkCoherence(profile);
-    const missingTracks = platformProfile.expected_tracks.filter(
-      t => !isTrackApplicable(t, profile.tools) && t !== 'core'
-    );
-
-    // Add coherence findings as observations
-    for (const finding of findings) {
-      allObservations.push({
-        category: 'coherence',
-        severity: finding.severity,
-        message: `${finding.expected} — ${finding.actual}. ${finding.guidance}`,
-        evidence: { platform_type: platformProfile.type },
-      });
-    }
-
-    platformCoherence = {
-      platform_type: platformProfile.type,
-      label: platformProfile.label,
-      expected_tracks: platformProfile.expected_tracks,
-      missing_tracks: missingTracks,
-      findings,
-      coherent:
-        findings.filter(f => f.severity === 'error' || f.severity === 'warning').length === 0 &&
-        missingTracks.length === 0,
+    return {
+      agent_url: agentUrl,
+      agent_profile: profile,
+      tracks: trackResults,
+      summary,
+      observations: allObservations,
+      platform_coherence: platformCoherence,
+      tested_at: new Date().toISOString(),
+      total_duration_ms: Date.now() - start,
+      dry_run: effectiveOptions.dry_run !== false,
     };
+  } finally {
+    if (timeoutId !== undefined) clearTimeout(timeoutId);
+    if (onExternalAbort && externalSignal) {
+      externalSignal.removeEventListener('abort', onExternalAbort);
+    }
   }
-
-  const summary = buildSummary(trackResults);
-
-  return {
-    agent_url: agentUrl,
-    agent_profile: profile,
-    tracks: trackResults,
-    summary,
-    observations: allObservations,
-    platform_coherence: platformCoherence,
-    tested_at: new Date().toISOString(),
-    total_duration_ms: Date.now() - start,
-    dry_run: effectiveOptions.dry_run !== false,
-  };
 }
 
 function buildSummary(tracks: TrackResult[]): ComplianceSummary {
