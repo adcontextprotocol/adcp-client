@@ -40,15 +40,44 @@ export type ControllerDetection = ControllerCapabilities | NoController;
 
 const TOOL_NAME = 'comply_test_controller';
 
+/** Default sandbox account ref — required by sellers that gate the controller on sandbox mode */
+const SANDBOX_ACCOUNT = { brand: { domain: 'comply-test.adcp.dev' }, operator: 'comply', sandbox: true };
+
 /**
- * Call executeTask on the test client.
- * TestClient is AgentClient which has executeTask, but the inferred type
- * doesn't expose it directly. This helper provides the typed bridge.
+ * Call executeTask on the test client and parse the MCP content envelope.
+ * executeTask returns { success, data: { content: [{ type: 'text', text: '...' }] } }
+ * where the text is the JSON-serialized tool response. This helper extracts and parses it.
+ * Always includes a sandbox account ref so sellers with sandbox gating accept the call.
  */
-function callController(client: TestClient, params: Record<string, unknown>): Promise<TaskResult> {
-  // AgentClient.executeTask(taskName, params) is the public API
-  return (client as unknown as { executeTask(name: string, params: Record<string, unknown>): Promise<TaskResult> })
-    .executeTask(TOOL_NAME, params);
+export async function callControllerRaw(client: TestClient, params: Record<string, unknown>): Promise<TaskResult> {
+  return callController(client, params);
+}
+
+async function callController(client: TestClient, params: Record<string, unknown>): Promise<TaskResult> {
+  const withAccount = { account: SANDBOX_ACCOUNT, ...params };
+  const raw = await (client as unknown as { executeTask(name: string, params: Record<string, unknown>): Promise<TaskResult> })
+    .executeTask(TOOL_NAME, withAccount);
+
+  // Parse the MCP content envelope to extract the JSON response.
+  // Success responses come as { content: [{ type: 'text', text: '...' }] }.
+  // Error responses are already parsed by the client (data has the fields directly).
+  if (raw.data) {
+    const data = raw.data as Record<string, unknown>;
+    const content = data.content as Array<{ type: string; text?: string }> | undefined;
+    if (content?.[0]?.text) {
+      try {
+        return { success: true, data: JSON.parse(content[0].text) };
+      } catch {
+        // Fall through to return raw
+      }
+    }
+    // Error responses: data is already the parsed controller response
+    if (data.error && data.success === false) {
+      return { success: true, data };
+    }
+  }
+
+  return raw;
 }
 
 /** Check if the agent exposes comply_test_controller */
@@ -79,11 +108,15 @@ export async function detectController(
       return { detected: false };
     }
 
-    const data = result.data as ListScenariosSuccess;
-    if (data.success && Array.isArray(data.scenarios)) {
+    const data = result.data as Record<string, unknown>;
+    if (data.success && data.scenarios) {
+      // Handle both array format (spec) and object format (training agent returns scenario descriptions)
+      const scenarios = Array.isArray(data.scenarios)
+        ? data.scenarios as ControllerScenario[]
+        : Object.keys(data.scenarios) as ControllerScenario[];
       return {
         detected: true,
-        scenarios: data.scenarios as ControllerScenario[],
+        scenarios,
       };
     }
 

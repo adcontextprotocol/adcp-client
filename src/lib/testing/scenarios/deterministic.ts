@@ -7,7 +7,7 @@
  */
 
 import { getOrCreateClient, runStep } from '../client';
-import { forceStatus, simulate, supportsScenario } from '../test-controller';
+import { forceStatus, simulate, supportsScenario, callControllerRaw } from '../test-controller';
 import type { ControllerDetection } from '../test-controller';
 import type { TestOptions, TestStepResult, AgentProfile, TaskResult } from '../types';
 import type { StateTransitionSuccess, ControllerError } from '../../types/tools.generated';
@@ -718,7 +718,7 @@ export async function testControllerValidation(
   const { result: unknownResult, step: unknownStep } = await runStep<TaskResult>(
     'Unknown scenario returns UNKNOWN_SCENARIO',
     'comply_test_controller',
-    async () => callTask(client, 'comply_test_controller', {
+    async () => callControllerRaw(client, {
       scenario: 'nonexistent_scenario',
       params: {},
     })
