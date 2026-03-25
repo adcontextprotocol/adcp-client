@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-03-23T12:17:30.912Z
+// Generated at: 2026-03-25T09:26:45.865Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -1693,6 +1693,7 @@ export const DeliveryMetricsSchema = z.object({
     }).passthrough()).nullish(),
     grps: z.number().nullish(),
     reach: z.number().nullish(),
+    reach_unit: ReachUnitSchema.nullish(),
     frequency: z.number().nullish(),
     quartile_data: z.object({
         q1_views: z.number().nullish(),
@@ -3714,12 +3715,17 @@ export const GetMediaBuyDeliveryResponseSchema = z.object({
         impressions: z.number(),
         spend: z.number(),
         clicks: z.number().nullish(),
-        video_completions: z.number().nullish(),
+        completed_views: z.number().nullish(),
+        views: z.number().nullish(),
         conversions: z.number().nullish(),
         conversion_value: z.number().nullish(),
         roas: z.number().nullish(),
         new_to_brand_rate: z.number().nullish(),
         cost_per_acquisition: z.number().nullish(),
+        completion_rate: z.number().nullish(),
+        reach: z.number().nullish(),
+        reach_unit: ReachUnitSchema.nullish(),
+        frequency: z.number().nullish(),
         media_buy_count: z.number()
     }).passthrough().nullish(),
     media_buy_deliveries: z.array(z.object({

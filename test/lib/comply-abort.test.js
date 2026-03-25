@@ -18,8 +18,11 @@ describe('comply() signal option', () => {
 
     await assert.rejects(
       () => comply('https://unreachable.test/mcp', { signal: controller.signal }),
-      (err) => {
-        assert.ok(err.name === 'AbortError' || err.message?.includes('aborted'), `Expected AbortError, got: ${err.name} - ${err.message}`);
+      err => {
+        assert.ok(
+          err.name === 'AbortError' || err.message?.includes('aborted'),
+          `Expected AbortError, got: ${err.name} - ${err.message}`
+        );
         return true;
       }
     );
@@ -31,11 +34,8 @@ describe('comply() signal option', () => {
 
     await assert.rejects(
       () => comply('https://unreachable.test/mcp', { signal: controller.signal }),
-      (err) => {
-        assert.ok(
-          err.message?.includes('shutdown'),
-          `Expected shutdown reason, got: ${err.message}`
-        );
+      err => {
+        assert.ok(err.message?.includes('shutdown'), `Expected shutdown reason, got: ${err.message}`);
         return true;
       }
     );
@@ -62,7 +62,7 @@ describe('comply() timeout_ms option', () => {
   test('rejects with TypeError for timeout_ms: 0', async () => {
     await assert.rejects(
       () => comply('https://unreachable.test/mcp', { timeout_ms: 0 }),
-      (err) => {
+      err => {
         assert.ok(err instanceof TypeError, `Expected TypeError, got ${err.constructor.name}`);
         assert.ok(err.message.includes('positive finite number'), err.message);
         return true;
@@ -73,7 +73,7 @@ describe('comply() timeout_ms option', () => {
   test('rejects with TypeError for negative timeout_ms', async () => {
     await assert.rejects(
       () => comply('https://unreachable.test/mcp', { timeout_ms: -1 }),
-      (err) => {
+      err => {
         assert.ok(err instanceof TypeError);
         return true;
       }
@@ -83,7 +83,7 @@ describe('comply() timeout_ms option', () => {
   test('rejects with TypeError for NaN timeout_ms', async () => {
     await assert.rejects(
       () => comply('https://unreachable.test/mcp', { timeout_ms: NaN }),
-      (err) => {
+      err => {
         assert.ok(err instanceof TypeError);
         return true;
       }
@@ -93,7 +93,7 @@ describe('comply() timeout_ms option', () => {
   test('rejects with TypeError for Infinity timeout_ms', async () => {
     await assert.rejects(
       () => comply('https://unreachable.test/mcp', { timeout_ms: Infinity }),
-      (err) => {
+      err => {
         assert.ok(err instanceof TypeError);
         return true;
       }
@@ -112,11 +112,8 @@ describe('comply() combined timeout_ms + signal', () => {
           timeout_ms: 60000,
           signal: controller.signal,
         }),
-      (err) => {
-        assert.ok(
-          err.message?.includes('caller canceled'),
-          `Expected caller reason, got: ${err.message}`
-        );
+      err => {
+        assert.ok(err.message?.includes('caller canceled'), `Expected caller reason, got: ${err.message}`);
         return true;
       }
     );
