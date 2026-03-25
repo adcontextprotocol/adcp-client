@@ -1348,6 +1348,21 @@ if (require.main === module) {
       const { generateZodSchemas } = await import('./generate-zod-from-ts');
       await generateZodSchemas();
 
+      // Fix TS7056 on large union schemas that exceed TypeScript's serialization limit.
+      // The Zod generator doesn't know which schemas are too complex for TS inference,
+      // so we add explicit `: z.ZodType` annotations to known offenders.
+      const schemasPath = path.join(__dirname, '../src/lib/types/schemas.generated.ts');
+      const TS7056_SCHEMAS = ['AdCPAsyncResponseDataSchema', 'MCPWebhookPayloadSchema'];
+      let schemasContent = readFileSync(schemasPath, 'utf8');
+      for (const name of TS7056_SCHEMAS) {
+        schemasContent = schemasContent.replace(
+          new RegExp(`export const ${name} = `),
+          `export const ${name}: z.ZodType = `
+        );
+      }
+      writeFileSync(schemasPath, schemasContent);
+      console.log(`🔧 Added explicit type annotations to ${TS7056_SCHEMAS.length} large union schemas`);
+
       console.log('\n✅ All type generation complete!');
     } catch (error) {
       console.error('❌ Failed to generate types:', error);
