@@ -80,6 +80,14 @@ import {
   testMediaBuyLifecycle,
   testTerminalStateEnforcement,
   testPackageLifecycle,
+  // Deterministic state machine testing
+  testCreativeStateMachine,
+  testMediaBuyStateMachine,
+  testAccountStateMachine,
+  testSessionStateMachine,
+  testDeliverySimulation,
+  testBudgetSimulation,
+  testControllerValidation,
 } from './scenarios';
 
 // Import types
@@ -338,6 +346,49 @@ export async function testAgent(
         profile = result.profile;
         break;
 
+      // Deterministic state machine scenarios (require comply_test_controller)
+      case 'deterministic_creative':
+        result = await testCreativeStateMachine(agentUrl, effectiveOptions);
+        steps = result.steps;
+        profile = result.profile;
+        break;
+
+      case 'deterministic_media_buy':
+        result = await testMediaBuyStateMachine(agentUrl, effectiveOptions);
+        steps = result.steps;
+        profile = result.profile;
+        break;
+
+      case 'deterministic_account':
+        result = await testAccountStateMachine(agentUrl, effectiveOptions);
+        steps = result.steps;
+        profile = result.profile;
+        break;
+
+      case 'deterministic_session':
+        result = await testSessionStateMachine(agentUrl, effectiveOptions);
+        steps = result.steps;
+        profile = result.profile;
+        break;
+
+      case 'deterministic_delivery':
+        result = await testDeliverySimulation(agentUrl, effectiveOptions);
+        steps = result.steps;
+        profile = result.profile;
+        break;
+
+      case 'deterministic_budget':
+        result = await testBudgetSimulation(agentUrl, effectiveOptions);
+        steps = result.steps;
+        profile = result.profile;
+        break;
+
+      case 'controller_validation':
+        result = await testControllerValidation(agentUrl, effectiveOptions);
+        steps = result.steps;
+        profile = result.profile;
+        break;
+
       default:
         steps = [
           {
@@ -441,6 +492,14 @@ export {
   testMediaBuyLifecycle,
   testTerminalStateEnforcement,
   testPackageLifecycle,
+  // Deterministic state machine testing
+  testCreativeStateMachine,
+  testMediaBuyStateMachine,
+  testAccountStateMachine,
+  testSessionStateMachine,
+  testDeliverySimulation,
+  testBudgetSimulation,
+  testControllerValidation,
   // v3 helpers
   hasGovernanceTools,
   hasCampaignGovernanceTools,

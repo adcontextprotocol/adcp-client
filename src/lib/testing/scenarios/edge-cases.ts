@@ -51,7 +51,7 @@ export async function testErrorHandling(
       'create_media_buy',
       async () =>
         client.createMediaBuy({
-          buyer_ref: `error-test-${Date.now()}`,
+          idempotency_key: `error-test-${Date.now()}`,
           brand_manifest: {
             name: 'Error Test Brand',
             url: 'https://test.example.com',
@@ -60,7 +60,6 @@ export async function testErrorHandling(
           end_time: new Date(Date.now() + 604800000).toISOString(),
           packages: [
             {
-              buyer_ref: 'pkg-error-test',
               product_id: 'NONEXISTENT_PRODUCT_ID_12345',
               budget: 1000,
               pricing_option_id: 'nonexistent-pricing',
@@ -197,13 +196,12 @@ export async function testValidation(
       'create_media_buy',
       async () =>
         client.createMediaBuy({
-          buyer_ref: `validation-test-${Date.now()}`,
+          idempotency_key: `validation-test-${Date.now()}`,
           brand_manifest: { name: 'Validation Test', url: 'https://test.example.com' },
           start_time: new Date(Date.now() + 86400000).toISOString(),
           end_time: new Date(Date.now() + 604800000).toISOString(),
           packages: [
             {
-              buyer_ref: 'pkg-validation',
               product_id: 'test-product',
               budget: 1000,
               pricing_option_id: 'test-pricing',
@@ -230,13 +228,12 @@ export async function testValidation(
       'create_media_buy',
       async () =>
         client.createMediaBuy({
-          buyer_ref: `negative-budget-test-${Date.now()}`,
+          idempotency_key: `negative-budget-test-${Date.now()}`,
           brand_manifest: { name: 'Negative Budget Test', url: 'https://test.example.com' },
           start_time: new Date(Date.now() + 86400000).toISOString(),
           end_time: new Date(Date.now() + 604800000).toISOString(),
           packages: [
             {
-              buyer_ref: 'pkg-negative',
               product_id: 'test-product',
               budget: -500,
               pricing_option_id: 'test-pricing',
@@ -403,13 +400,12 @@ export async function testPricingEdgeCases(
       'create_media_buy',
       async () =>
         client.createMediaBuy({
-          buyer_ref: `auction-no-bid-${Date.now()}`,
+          idempotency_key: `auction-no-bid-${Date.now()}`,
           brand_manifest: { name: 'Auction Test', url: 'https://test.example.com' },
           start_time: new Date(Date.now() + 86400000).toISOString(),
           end_time: new Date(Date.now() + 604800000).toISOString(),
           packages: [
             {
-              buyer_ref: 'pkg-auction-no-bid',
               product_id: product.product_id,
               budget: 5000,
               pricing_option_id: pricingOption.pricing_option_id,
@@ -438,13 +434,12 @@ export async function testPricingEdgeCases(
       'create_media_buy',
       async () =>
         client.createMediaBuy({
-          buyer_ref: `under-min-spend-${Date.now()}`,
+          idempotency_key: `under-min-spend-${Date.now()}`,
           brand_manifest: { name: 'Min Spend Test', url: 'https://test.example.com' },
           start_time: new Date(Date.now() + 86400000).toISOString(),
           end_time: new Date(Date.now() + 604800000).toISOString(),
           packages: [
             {
-              buyer_ref: 'pkg-under-min',
               product_id: product.product_id,
               budget: underBudget,
               pricing_option_id: pricingOption.pricing_option_id,
@@ -490,13 +485,12 @@ export async function testTemporalValidation(
     'create_media_buy',
     async () =>
       client.createMediaBuy({
-        buyer_ref: `temporal-test-${Date.now()}`,
+        idempotency_key: `temporal-test-${Date.now()}`,
         brand_manifest: { name: 'Temporal Test', url: 'https://test.example.com' },
         start_time: new Date(Date.now() + 604800000).toISOString(), // 7 days from now
         end_time: new Date(Date.now() + 86400000).toISOString(), // 1 day from now (before start!)
         packages: [
           {
-            buyer_ref: 'pkg-temporal',
             product_id: 'test-product',
             budget: 1000,
             pricing_option_id: 'test-pricing',
@@ -524,13 +518,12 @@ export async function testTemporalValidation(
     'create_media_buy',
     async () =>
       client.createMediaBuy({
-        buyer_ref: `past-start-${Date.now()}`,
+        idempotency_key: `past-start-${Date.now()}`,
         brand_manifest: { name: 'Past Start Test', url: 'https://test.example.com' },
         start_time: new Date(Date.now() - 86400000).toISOString(), // Yesterday
         end_time: new Date(Date.now() + 604800000).toISOString(), // 7 days from now
         packages: [
           {
-            buyer_ref: 'pkg-past',
             product_id: 'test-product',
             budget: 1000,
             pricing_option_id: 'test-pricing',

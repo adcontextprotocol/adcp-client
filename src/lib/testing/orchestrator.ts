@@ -78,12 +78,25 @@ export const SCENARIO_REQUIREMENTS: Partial<Record<TestScenario, string[]>> = {
   error_codes: ['create_media_buy'],
   error_structure: ['create_media_buy'],
   error_transport: ['create_media_buy'],
+
+  // Deterministic state machine scenarios (require comply_test_controller)
+  deterministic_creative: ['comply_test_controller', 'sync_creatives'],
+  deterministic_media_buy: ['comply_test_controller', 'get_products', 'create_media_buy'],
+  deterministic_account: ['comply_test_controller', 'list_accounts'],
+  deterministic_session: ['comply_test_controller', 'si_initiate_session'],
+  deterministic_delivery: ['comply_test_controller', 'get_products', 'create_media_buy', 'get_media_buy_delivery'],
+  deterministic_budget: ['comply_test_controller', 'get_products', 'create_media_buy'],
+  controller_validation: ['comply_test_controller'],
 };
 
 /**
  * Default set of scenarios the orchestrator will attempt.
  * Excludes unimplemented scenarios and deduplicates coverage
  * (pricing_models is omitted since pricing_edge_cases covers the same ground).
+ *
+ * Deterministic scenarios (deterministic_*, controller_validation) are excluded here —
+ * they are managed by the comply engine via TRACK_DEFINITIONS and only run when the
+ * seller exposes comply_test_controller.
  */
 export const DEFAULT_SCENARIOS: readonly TestScenario[] = [
   'health_check',

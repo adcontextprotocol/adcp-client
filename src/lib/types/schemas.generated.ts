@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-03-25T23:46:07.384Z
+// Generated at: 2026-03-26T05:11:22.413Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -495,6 +495,8 @@ export const TalentRoleSchema = z.union([z.literal("host"), z.literal("guest"), 
 
 export const DerivativeTypeSchema = z.union([z.literal("clip"), z.literal("highlight"), z.literal("recap"), z.literal("trailer"), z.literal("bonus")]);
 
+export const TMPResponseTypeSchema = z.union([z.literal("activation"), z.literal("catalog_items"), z.literal("creative"), z.literal("deal")]);
+
 export const PublisherPropertySelectorSchema = z.union([z.object({
         publisher_domain: z.string(),
         selection_type: z.literal("all")
@@ -706,7 +708,7 @@ export const MaterialDeadlineSchema = z.object({
     label: z.string().nullish()
 }).passthrough();
 
-export const PropertyTypeSchema = z.union([z.literal("website"), z.literal("mobile_app"), z.literal("ctv_app"), z.literal("desktop_app"), z.literal("dooh"), z.literal("podcast"), z.literal("radio"), z.literal("streaming_audio")]);
+export const PropertyTypeSchema = z.union([z.literal("website"), z.literal("mobile_app"), z.literal("ctv_app"), z.literal("desktop_app"), z.literal("dooh"), z.literal("podcast"), z.literal("radio"), z.literal("streaming_audio"), z.literal("ai_assistant")]);
 
 export const PropertyIdentifierTypesSchema = z.union([z.literal("domain"), z.literal("subdomain"), z.literal("network_id"), z.literal("ios_bundle"), z.literal("android_package"), z.literal("apple_app_store_id"), z.literal("google_play_id"), z.literal("roku_store_id"), z.literal("fire_tv_asin"), z.literal("samsung_app_id"), z.literal("apple_tv_bundle"), z.literal("bundle_id"), z.literal("venue_id"), z.literal("screen_id"), z.literal("openooh_venue_type"), z.literal("rss_url"), z.literal("apple_podcast_id"), z.literal("spotify_collection_id"), z.literal("podcast_guid")]);
 
@@ -1708,7 +1710,7 @@ export const EventSourceHealthSchema = z.object({
     issues: z.array(DiagnosticIssueSchema).nullish()
 }).passthrough();
 
-export const UIDTypeSchema = z.union([z.literal("rampid"), z.literal("id5"), z.literal("uid2"), z.literal("euid"), z.literal("pairid"), z.literal("maid"), z.literal("other")]);
+export const UIDTypeSchema = z.union([z.literal("rampid"), z.literal("id5"), z.literal("uid2"), z.literal("euid"), z.literal("pairid"), z.literal("maid"), z.literal("hashed_email"), z.literal("publisher_first_party"), z.literal("other")]);
 
 export const UserMatchSchema = z.object({
     uids: z.array(z.object({
@@ -3322,6 +3324,112 @@ export const GetAccountFinancialsErrorSchema = z.object({
     ext: ExtensionObjectSchema.nullish()
 }).passthrough();
 
+export const ListScenariosSchema = z.object({
+    scenario: z.literal("list_scenarios"),
+    context: ContextObjectSchema.nullish(),
+    ext: ExtensionObjectSchema.nullish()
+}).passthrough();
+
+export const ForceCreativeStatusSchema = z.object({
+    scenario: z.literal("force_creative_status"),
+    params: z.object({
+        creative_id: z.string(),
+        status: CreativeStatusSchema,
+        rejection_reason: z.string().nullish()
+    }).passthrough(),
+    context: ContextObjectSchema.nullish(),
+    ext: ExtensionObjectSchema.nullish()
+}).passthrough();
+
+export const ForceAccountStatusSchema = z.object({
+    scenario: z.literal("force_account_status"),
+    params: z.object({
+        account_id: z.string(),
+        status: AccountStatusSchema
+    }).passthrough(),
+    context: ContextObjectSchema.nullish(),
+    ext: ExtensionObjectSchema.nullish()
+}).passthrough();
+
+export const ForceMediaBuyStatusSchema = z.object({
+    scenario: z.literal("force_media_buy_status"),
+    params: z.object({
+        media_buy_id: z.string(),
+        status: MediaBuyStatusSchema,
+        rejection_reason: z.string().nullish()
+    }).passthrough(),
+    context: ContextObjectSchema.nullish(),
+    ext: ExtensionObjectSchema.nullish()
+}).passthrough();
+
+export const ForceSessionStatusSchema = z.object({
+    scenario: z.literal("force_session_status"),
+    params: z.object({
+        session_id: z.string(),
+        status: z.union([z.literal("complete"), z.literal("terminated")]),
+        termination_reason: z.string().nullish()
+    }).passthrough(),
+    context: ContextObjectSchema.nullish(),
+    ext: ExtensionObjectSchema.nullish()
+}).passthrough();
+
+export const SimulateDeliverySchema = z.object({
+    scenario: z.literal("simulate_delivery"),
+    params: z.object({
+        media_buy_id: z.string(),
+        impressions: z.number().nullish(),
+        clicks: z.number().nullish(),
+        reported_spend: z.object({
+            amount: z.number(),
+            currency: z.string()
+        }).passthrough().nullish(),
+        conversions: z.number().nullish()
+    }).passthrough(),
+    context: ContextObjectSchema.nullish(),
+    ext: ExtensionObjectSchema.nullish()
+}).passthrough();
+
+export const SimulateBudgetSpendSchema = z.object({
+    scenario: z.literal("simulate_budget_spend"),
+    params: z.record(z.string(), z.unknown()),
+    context: ContextObjectSchema.nullish(),
+    ext: ExtensionObjectSchema.nullish()
+}).passthrough();
+
+export const ListScenariosSuccessSchema = z.object({
+    success: z.literal(true),
+    scenarios: z.array(z.union([z.literal("force_creative_status"), z.literal("force_account_status"), z.literal("force_media_buy_status"), z.literal("force_session_status"), z.literal("simulate_delivery"), z.literal("simulate_budget_spend")])),
+    context: ContextObjectSchema.nullish(),
+    ext: ExtensionObjectSchema.nullish()
+}).passthrough();
+
+export const StateTransitionSuccessSchema = z.object({
+    success: z.literal(true),
+    previous_state: z.string(),
+    current_state: z.string(),
+    message: z.string().nullish(),
+    context: ContextObjectSchema.nullish(),
+    ext: ExtensionObjectSchema.nullish()
+}).passthrough();
+
+export const SimulationSuccessSchema = z.object({
+    success: z.literal(true),
+    simulated: z.object({}).passthrough(),
+    cumulative: z.object({}).passthrough().nullish(),
+    message: z.string().nullish(),
+    context: ContextObjectSchema.nullish(),
+    ext: ExtensionObjectSchema.nullish()
+}).passthrough();
+
+export const ControllerErrorSchema = z.object({
+    success: z.literal(false),
+    error: z.union([z.literal("INVALID_TRANSITION"), z.literal("INVALID_STATE"), z.literal("NOT_FOUND"), z.literal("UNKNOWN_SCENARIO"), z.literal("INVALID_PARAMS"), z.literal("FORBIDDEN"), z.literal("INTERNAL_ERROR")]),
+    error_detail: z.string().nullish(),
+    current_state: z.string().nullish().nullable(),
+    context: ContextObjectSchema.nullish(),
+    ext: ExtensionObjectSchema.nullish()
+}).passthrough();
+
 export const MediaBuySchema = z.object({
     media_buy_id: z.string(),
     account: AccountSchema.nullish(),
@@ -3444,6 +3552,12 @@ export const ProductSchema = z.object({
     collection_targeting_allowed: z.boolean().nullish(),
     installments: z.array(InstallmentSchema).nullish(),
     enforced_policies: z.array(z.string()).nullish(),
+    trusted_match: z.object({
+        context_match: z.boolean(),
+        identity_match: z.boolean().nullish(),
+        response_types: z.array(TMPResponseTypeSchema).nullish(),
+        dynamic_brands: z.boolean().nullish()
+    }).passthrough().nullish(),
     material_submission: z.object({
         url: z.string().nullish(),
         email: z.string().nullish(),
@@ -4093,9 +4207,13 @@ export const GetAccountFinancialsRequestSchema = z.object({
 
 export const GetAccountFinancialsResponseSchema = z.union([GetAccountFinancialsSuccessSchema, GetAccountFinancialsErrorSchema]);
 
-export const AdCPAsyncResponseDataSchema = z.union([GetProductsResponseSchema, GetProductsAsyncWorkingSchema, GetProductsAsyncInputRequiredSchema, GetProductsAsyncSubmittedSchema, CreateMediaBuyResponseSchema, CreateMediaBuyAsyncWorkingSchema, CreateMediaBuyAsyncInputRequiredSchema, CreateMediaBuyAsyncSubmittedSchema, UpdateMediaBuyResponseSchema, UpdateMediaBuyAsyncWorkingSchema, UpdateMediaBuyAsyncInputRequiredSchema, UpdateMediaBuyAsyncSubmittedSchema, BuildCreativeResponseSchema, BuildCreativeAsyncWorkingSchema, BuildCreativeAsyncInputRequiredSchema, BuildCreativeAsyncSubmittedSchema, SyncCreativesResponseSchema, SyncCreativesAsyncWorkingSchema, SyncCreativesAsyncInputRequiredSchema, SyncCreativesAsyncSubmittedSchema, SyncCatalogsResponseSchema, SyncCatalogsAsyncWorkingSchema, SyncCatalogsAsyncInputRequiredSchema, SyncCatalogsAsyncSubmittedSchema]);
+export const ComplyTestControllerRequestSchema = z.union([ListScenariosSchema, ForceCreativeStatusSchema, ForceAccountStatusSchema, ForceMediaBuyStatusSchema, ForceSessionStatusSchema, SimulateDeliverySchema, SimulateBudgetSpendSchema]);
 
-export const MCPWebhookPayloadSchema = z.object({
+export const ComplyTestControllerResponseSchema = z.union([ListScenariosSuccessSchema, StateTransitionSuccessSchema, SimulationSuccessSchema, ControllerErrorSchema]);
+
+export const AdCPAsyncResponseDataSchema: z.ZodType = z.union([GetProductsResponseSchema, GetProductsAsyncWorkingSchema, GetProductsAsyncInputRequiredSchema, GetProductsAsyncSubmittedSchema, CreateMediaBuyResponseSchema, CreateMediaBuyAsyncWorkingSchema, CreateMediaBuyAsyncInputRequiredSchema, CreateMediaBuyAsyncSubmittedSchema, UpdateMediaBuyResponseSchema, UpdateMediaBuyAsyncWorkingSchema, UpdateMediaBuyAsyncInputRequiredSchema, UpdateMediaBuyAsyncSubmittedSchema, BuildCreativeResponseSchema, BuildCreativeAsyncWorkingSchema, BuildCreativeAsyncInputRequiredSchema, BuildCreativeAsyncSubmittedSchema, SyncCreativesResponseSchema, SyncCreativesAsyncWorkingSchema, SyncCreativesAsyncInputRequiredSchema, SyncCreativesAsyncSubmittedSchema, SyncCatalogsResponseSchema, SyncCatalogsAsyncWorkingSchema, SyncCatalogsAsyncInputRequiredSchema, SyncCatalogsAsyncSubmittedSchema]);
+
+export const MCPWebhookPayloadSchema: z.ZodType = z.object({
     operation_id: z.string().nullish(),
     task_id: z.string(),
     task_type: TaskTypeSchema,

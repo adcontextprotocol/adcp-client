@@ -59,6 +59,14 @@ export {
   testMediaBuyLifecycle,
   testTerminalStateEnforcement,
   testPackageLifecycle,
+  // Deterministic state machine testing
+  testCreativeStateMachine,
+  testMediaBuyStateMachine,
+  testAccountStateMachine,
+  testSessionStateMachine,
+  testDeliverySimulation,
+  testBudgetSimulation,
+  testControllerValidation,
   // v3 helpers
   hasGovernanceTools,
   hasSITools,

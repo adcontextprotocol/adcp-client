@@ -86,7 +86,6 @@ export function buildCreateMediaBuyRequest(
     (pricingOption.floor_price !== undefined || pricingOption.price_guidance !== undefined);
 
   const packageRequest: Record<string, unknown> = {
-    buyer_ref: `pkg-test-${Date.now()}`,
     product_id: product.product_id,
     budget,
     pricing_option_id: pricingOption.pricing_option_id,
@@ -108,7 +107,6 @@ export function buildCreateMediaBuyRequest(
   }
 
   return {
-    buyer_ref: `e2e-test-${Date.now()}`,
     account: resolveAccount(options),
     brand: resolveBrand(options),
     start_time: startTime.toISOString(),

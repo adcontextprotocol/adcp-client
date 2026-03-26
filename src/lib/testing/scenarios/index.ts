@@ -68,3 +68,14 @@ export { testSchemaCompliance } from './schema-compliance';
 
 // Error compliance testing (transport error mapping spec)
 export { testErrorCodes, testErrorStructure, testErrorTransport } from './error-compliance';
+
+// Deterministic state machine testing (requires comply_test_controller)
+export {
+  testCreativeStateMachine,
+  testMediaBuyStateMachine,
+  testAccountStateMachine,
+  testSessionStateMachine,
+  testDeliverySimulation,
+  testBudgetSimulation,
+  testControllerValidation,
+} from './deterministic';

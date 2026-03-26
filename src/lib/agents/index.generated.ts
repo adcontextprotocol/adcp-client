@@ -93,7 +93,9 @@ import type {
   ReportUsageRequest,
   ReportUsageResponse,
   GetAccountFinancialsRequest,
-  GetAccountFinancialsResponse
+  GetAccountFinancialsResponse,
+  ComplyTestControllerRequest,
+  ComplyTestControllerResponse
 } from '../types/tools.generated';
 
 /**
@@ -443,6 +445,13 @@ export class Agent {
     return this.callTool<GetAccountFinancialsResponse>('get_account_financials', params);
   }
 
+  /**
+   * Official AdCP comply_test_controller tool schema
+   */
+  async complyTestController(params: ComplyTestControllerRequest): Promise<ComplyTestControllerResponse> {
+    return this.callTool<ComplyTestControllerResponse>('comply_test_controller', params);
+  }
+
 }
 
 /**
@@ -703,6 +712,13 @@ export class AgentCollection {
    */
   async getAccountFinancials(params: GetAccountFinancialsRequest): Promise<GetAccountFinancialsResponse[]> {
     return this.callToolOnAll<GetAccountFinancialsResponse>('get_account_financials', params);
+  }
+
+  /**
+   * Official AdCP comply_test_controller tool schema (across multiple agents)
+   */
+  async complyTestController(params: ComplyTestControllerRequest): Promise<ComplyTestControllerResponse[]> {
+    return this.callToolOnAll<ComplyTestControllerResponse>('comply_test_controller', params);
   }
 
 }

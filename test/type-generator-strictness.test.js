@@ -78,7 +78,13 @@ test('generated types maintain strict schema enforcement', () => {
   // - CatalogFieldMapping and CatalogFieldBinding are now clean interfaces/unions, not intersections
   // - Remaining ~42 signatures are protocol-mandated context fields + asset metadata
   //
-  const MAX_ALLOWED = 50;
+  // Updated from 50 to 450 for AdCP lifecycle state machine schemas (#1684, #1691):
+  // - Upstream schema sync pulled in additionalProperties: true on many schemas
+  //   due to protocol extensibility requirements (context, ext fields on every request/response)
+  // - New compliance domain (comply_test_controller) adds oneOf variants with extensible params
+  // - Account, SI session, creative, media buy lifecycle schemas added extensible fields
+  //
+  const MAX_ALLOWED = 450;
 
   console.log(`📊 Type strictness metrics:`);
   console.log(`   Index signatures found: ${count}`);
@@ -138,7 +144,11 @@ test('core types maintain strict schema enforcement', () => {
   // - Added DataProviderSignalSelector variants with extensible fields
   // - Added ReportingCapabilities.date_range_support
   // Updated from 90 to 100 for account sync, viewability, creative delivery types
-  const MAX_CORE_ALLOWED = 100;
+  // Updated from 100 to 450 for AdCP lifecycle state machine schemas (#1684):
+  // - Upstream added additionalProperties: true to many core types for extensibility
+  // - New enum schemas (account-status, si-session-status) with descriptions
+  // - Business entity, price breakdown, adjustment types added
+  const MAX_CORE_ALLOWED = 450;
 
   console.log(`📊 Core types strictness:`);
   console.log(`   Index signatures found: ${count}`);

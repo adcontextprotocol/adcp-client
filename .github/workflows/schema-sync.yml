@@ -52,8 +52,8 @@ jobs:
         # Generate types from synced schemas
         npm run generate-types
         
-        # Check if generated files have changed
-        if git diff --exit-code src/lib/types/ src/lib/agents/; then
+        # Check if generated files have changed (ignore timestamp comments)
+        if git diff --exit-code -I '// Generated at:' src/lib/types/ src/lib/agents/; then
           echo "schemas_changed=false" >> $GITHUB_OUTPUT
           echo "✅ Schemas are up to date"
         else

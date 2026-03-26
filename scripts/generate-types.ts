@@ -280,6 +280,7 @@ const TASK_DOMAINS = [
   'sponsored-intelligence',
   'protocol',
   'account',
+  'compliance',
 ] as const;
 type TaskDomain = (typeof TASK_DOMAINS)[number];
 
@@ -440,6 +441,7 @@ function loadOfficialAdCPToolsWithTypes(): {
     const sponsoredIntelligenceTools: string[] = [];
     const protocolTools: string[] = [];
     const accountTools: string[] = [];
+    const complianceTools: string[] = [];
 
     // Extract tools from each domain's tasks (skipping deprecated tools)
     const extractToolsFromDomain = (domain: string, targetArray: string[]) => {
@@ -474,6 +476,7 @@ function loadOfficialAdCPToolsWithTypes(): {
     extractToolsFromDomain('sponsored-intelligence', sponsoredIntelligenceTools);
     extractToolsFromDomain('protocol', protocolTools);
     extractToolsFromDomain('account', accountTools);
+    extractToolsFromDomain('compliance', complianceTools);
 
     const totalTools =
       mediaBuyTools.length +
@@ -482,7 +485,8 @@ function loadOfficialAdCPToolsWithTypes(): {
       governanceTools.length +
       sponsoredIntelligenceTools.length +
       protocolTools.length +
-      accountTools.length;
+      accountTools.length +
+      complianceTools.length;
 
     console.log(`✅ Discovered ${totalTools} official AdCP tools:`);
     console.log(`   📈 Media-buy tools: ${mediaBuyTools.join(', ')}`);
@@ -492,6 +496,7 @@ function loadOfficialAdCPToolsWithTypes(): {
     console.log(`   💬 Sponsored Intelligence tools: ${sponsoredIntelligenceTools.join(', ')}`);
     console.log(`   🔧 Protocol tools: ${protocolTools.join(', ')}`);
     console.log(`   💳 Account tools: ${accountTools.join(', ')}`);
+    console.log(`   🧪 Compliance tools: ${complianceTools.join(', ')}`);
 
     return {
       mediaBuyTools,
@@ -501,6 +506,7 @@ function loadOfficialAdCPToolsWithTypes(): {
       sponsoredIntelligenceTools,
       protocolTools,
       accountTools,
+      complianceTools,
     };
   } catch (error) {
     console.warn(`⚠️  Failed to load cached tools, falling back to known tools:`, error.message);
@@ -513,6 +519,7 @@ function loadOfficialAdCPToolsWithTypes(): {
       sponsoredIntelligenceTools: [],
       protocolTools: [],
       accountTools: [],
+      complianceTools: [],
     };
   }
 }
@@ -531,12 +538,21 @@ function loadAdCPTools(): ToolDefinition[] {
     sponsoredIntelligenceTools,
     protocolTools,
     accountTools,
+    complianceTools,
   } = loadOfficialAdCPToolsWithTypes();
 
   // Helper to process tools from a domain
   const processToolsFromDomain = (
     toolNames: string[],
-    domain: 'media-buy' | 'creative' | 'signals' | 'governance' | 'sponsored-intelligence' | 'protocol' | 'account',
+    domain:
+      | 'media-buy'
+      | 'creative'
+      | 'signals'
+      | 'governance'
+      | 'sponsored-intelligence'
+      | 'protocol'
+      | 'account'
+      | 'compliance',
     domainLabel: string,
     singleAgentOnlyTools: string[] = []
   ) => {
@@ -588,6 +604,7 @@ function loadAdCPTools(): ToolDefinition[] {
   ]);
   processToolsFromDomain(protocolTools, 'protocol', 'protocol');
   processToolsFromDomain(accountTools, 'account', 'account');
+  processToolsFromDomain(complianceTools, 'compliance', 'compliance');
 
   return tools;
 }
@@ -1338,6 +1355,21 @@ if (require.main === module) {
       console.log('\n🔄 Generating Zod schemas...');
       const { generateZodSchemas } = await import('./generate-zod-from-ts');
       await generateZodSchemas();
+
+      // Fix TS7056 on large union schemas that exceed TypeScript's serialization limit.
+      // The Zod generator doesn't know which schemas are too complex for TS inference,
+      // so we add explicit `: z.ZodType` annotations to known offenders.
+      const schemasPath = path.join(__dirname, '../src/lib/types/schemas.generated.ts');
+      const TS7056_SCHEMAS = ['AdCPAsyncResponseDataSchema', 'MCPWebhookPayloadSchema'];
+      let schemasContent = readFileSync(schemasPath, 'utf8');
+      for (const name of TS7056_SCHEMAS) {
+        schemasContent = schemasContent.replace(
+          new RegExp(`export const ${name} = `),
+          `export const ${name}: z.ZodType = `
+        );
+      }
+      writeFileSync(schemasPath, schemasContent);
+      console.log(`🔧 Added explicit type annotations to ${TS7056_SCHEMAS.length} large union schemas`);
 
       console.log('\n✅ All type generation complete!');
     } catch (error) {
