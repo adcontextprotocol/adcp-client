@@ -1566,6 +1566,86 @@ describe('Package Parameter Normalization', () => {
     assert.strictEqual(normalizePackageParams(undefined), undefined);
     assert.strictEqual(normalizePackageParams(42), 42);
   });
+
+  test('should copy context.buyer_ref to top-level buyer_ref for pre-4.15 compat', () => {
+    const result = normalizePackageParams({
+      product_id: 'prod-1',
+      budget: 5000,
+      pricing_option_id: 'po-1',
+      context: { buyer_ref: 'br-123' },
+    });
+    assert.strictEqual(result.buyer_ref, 'br-123');
+    assert.strictEqual(result.context.buyer_ref, 'br-123');
+  });
+
+  test('should not overwrite existing top-level buyer_ref with context.buyer_ref', () => {
+    const result = normalizePackageParams({
+      product_id: 'prod-1',
+      buyer_ref: 'existing-ref',
+      context: { buyer_ref: 'context-ref' },
+    });
+    assert.strictEqual(result.buyer_ref, 'existing-ref');
+  });
+
+  test('should not set buyer_ref when context has no buyer_ref', () => {
+    const result = normalizePackageParams({
+      product_id: 'prod-1',
+      context: { trace_id: 'abc' },
+    });
+    assert.strictEqual(result.buyer_ref, undefined);
+  });
+});
+
+describe('Request-level context.buyer_ref → buyer_ref (create_media_buy)', () => {
+  test('should copy context.buyer_ref to top-level buyer_ref for pre-4.15 compat', () => {
+    resetWarnings();
+    const result = normalizeRequestParams('create_media_buy', {
+      account: { account_id: 'acc-1' },
+      brand: { domain: 'example.com' },
+      context: { buyer_ref: 'br-request-123' },
+    });
+    assert.strictEqual(result.buyer_ref, 'br-request-123');
+    assert.strictEqual(result.context.buyer_ref, 'br-request-123');
+  });
+
+  test('should not overwrite existing top-level buyer_ref with context.buyer_ref', () => {
+    resetWarnings();
+    const result = normalizeRequestParams('create_media_buy', {
+      buyer_ref: 'existing-ref',
+      account: { account_id: 'acc-1' },
+      brand: { domain: 'example.com' },
+      context: { buyer_ref: 'context-ref' },
+    });
+    assert.strictEqual(result.buyer_ref, 'existing-ref');
+  });
+
+  test('should not set buyer_ref when context has no buyer_ref', () => {
+    resetWarnings();
+    const result = normalizeRequestParams('create_media_buy', {
+      account: { account_id: 'acc-1' },
+      brand: { domain: 'example.com' },
+      context: { trace_id: 'abc' },
+    });
+    assert.strictEqual(result.buyer_ref, undefined);
+  });
+
+  test('should copy context.buyer_ref to top-level buyer_ref for update_media_buy', () => {
+    resetWarnings();
+    const result = normalizeRequestParams('update_media_buy', {
+      media_buy_id: 'mb-1',
+      context: { buyer_ref: 'br-update-123' },
+    });
+    assert.strictEqual(result.buyer_ref, 'br-update-123');
+  });
+
+  test('should not apply request-level buyer_ref shim to other task types', () => {
+    resetWarnings();
+    const result = normalizeRequestParams('get_products', {
+      brand: { domain: 'example.com' },
+      context: { buyer_ref: 'br-123' },
+    });
+    assert.strictEqual(result.buyer_ref, undefined);
+  });
 });
 
 // ============================================

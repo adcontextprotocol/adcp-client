@@ -13,6 +13,7 @@ import { warnOnce } from './deprecation';
  * Normalize a single package's params for backward compatibility.
  *
  * Handles:
+ * - context.buyer_ref → buyer_ref (pre-4.15 servers require top-level buyer_ref)
  * - optimization_goal (scalar) → optimization_goals (array)
  * - catalog (scalar object) → catalogs (array)
  */
@@ -20,6 +21,13 @@ export function normalizePackageParams(pkg: any): any {
   if (!pkg || typeof pkg !== 'object') return pkg;
 
   const normalized = { ...pkg };
+
+  // context.buyer_ref → buyer_ref (backward compat for pre-4.15 AdCP servers)
+  // AdCP 4.15 moved buyer_ref into context, but older servers still require it
+  // at the top level. Copy it back so requests validate on both old and new servers.
+  if (normalized.context?.buyer_ref && !normalized.buyer_ref) {
+    normalized.buyer_ref = normalized.context.buyer_ref;
+  }
 
   // optimization_goal (scalar) → optimization_goals (array)
   if (normalized.optimization_goal && !normalized.optimization_goals?.length) {
@@ -100,6 +108,17 @@ export function normalizeRequestParams(taskType: string, params: any): any {
       brand: normalized.brand,
       operator: normalized.brand.domain,
     };
+  }
+
+  // ── context.buyer_ref → buyer_ref (create_media_buy, update_media_buy) ──
+  // AdCP 4.15 moved buyer_ref into context, but pre-4.15 servers still require
+  // it at the top level. Copy it back so requests validate on both old and new servers.
+  if (
+    (taskType === 'create_media_buy' || taskType === 'update_media_buy') &&
+    normalized.context?.buyer_ref &&
+    !normalized.buyer_ref
+  ) {
+    normalized.buyer_ref = normalized.context.buyer_ref;
   }
 
   // ── Package normalization (create_media_buy, update_media_buy) ──
