@@ -196,7 +196,7 @@ export class SISessionManager implements ISISessionManager {
     if (!this.isSupported()) {
       return {
         session_id: request.session_id,
-        session_status: 'complete',
+        session_status: 'terminated',
         errors: [
           {
             code: SIErrorCodes.NOT_SUPPORTED,
@@ -210,7 +210,7 @@ export class SISessionManager implements ISISessionManager {
     if (!session) {
       return {
         session_id: request.session_id,
-        session_status: 'complete',
+        session_status: 'terminated',
         errors: [
           {
             code: SIErrorCodes.SESSION_NOT_FOUND,
@@ -223,7 +223,7 @@ export class SISessionManager implements ISISessionManager {
     if (session.status === 'terminated' || session.status === 'complete') {
       return {
         session_id: request.session_id,
-        session_status: 'complete',
+        session_status: 'terminated',
         errors: [
           {
             code: SIErrorCodes.SESSION_TERMINATED,
@@ -271,6 +271,7 @@ export class SISessionManager implements ISISessionManager {
       return {
         session_id: request.session_id,
         terminated: false,
+        session_status: 'terminated',
         errors: [
           {
             code: SIErrorCodes.NOT_SUPPORTED,
@@ -285,6 +286,7 @@ export class SISessionManager implements ISISessionManager {
       return {
         session_id: request.session_id,
         terminated: false,
+        session_status: 'terminated',
         errors: [
           {
             code: SIErrorCodes.SESSION_NOT_FOUND,
@@ -307,6 +309,7 @@ export class SISessionManager implements ISISessionManager {
     return {
       session_id: session.sessionId,
       terminated: true,
+      session_status: 'terminated',
       acp_handoff: acpHandoff,
     };
   }

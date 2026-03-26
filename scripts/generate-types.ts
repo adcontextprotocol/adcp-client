@@ -3,7 +3,7 @@
 import { writeFileSync, mkdirSync, readFileSync, existsSync } from 'fs';
 import { compile } from 'json-schema-to-typescript';
 import path from 'path';
-import { removeMinItemsConstraints } from './schema-utils';
+import { removeArrayLengthConstraints } from './schema-utils';
 
 // Write file only if content differs (excluding timestamp)
 function writeFileIfChanged(filePath: string, newContent: string): boolean {
@@ -668,7 +668,7 @@ async function generateToolTypes(tools: ToolDefinition[]) {
       if (url.startsWith('/schemas/')) {
         const schema = loadCachedSchema(url);
         if (schema) {
-          return Promise.resolve(enforceStrictSchema(removeMinItemsConstraints(schema)));
+          return Promise.resolve(enforceStrictSchema(removeArrayLengthConstraints(schema)));
         }
       }
       return Promise.reject(new Error(`Cannot resolve $ref: ${url}`));
@@ -685,7 +685,7 @@ async function generateToolTypes(tools: ToolDefinition[]) {
       if (tool.paramsSchema) {
         const paramTypeName = `${tool.methodName.charAt(0).toUpperCase() + tool.methodName.slice(1)}Request`;
         // Process schema: remove additionalProperties and minItems constraints
-        const strictParamsSchema = enforceStrictSchema(removeMinItemsConstraints(tool.paramsSchema));
+        const strictParamsSchema = enforceStrictSchema(removeArrayLengthConstraints(tool.paramsSchema));
         const paramTypes = await compile(strictParamsSchema, paramTypeName, {
           bannerComment: '',
           style: { semi: true, singleQuote: true },
@@ -708,7 +708,7 @@ async function generateToolTypes(tools: ToolDefinition[]) {
       if (tool.responseSchema) {
         const responseTypeName = `${tool.methodName.charAt(0).toUpperCase() + tool.methodName.slice(1)}Response`;
         // Process schema: remove additionalProperties and minItems constraints
-        const strictResponseSchema = enforceStrictSchema(removeMinItemsConstraints(tool.responseSchema));
+        const strictResponseSchema = enforceStrictSchema(removeArrayLengthConstraints(tool.responseSchema));
         const responseTypes = await compile(strictResponseSchema, responseTypeName, {
           bannerComment: '',
           style: { semi: true, singleQuote: true },
@@ -1189,7 +1189,7 @@ async function generateTypes() {
       if (url.startsWith('/schemas/')) {
         const schema = loadCachedSchema(url);
         if (schema) {
-          return Promise.resolve(enforceStrictSchema(removeMinItemsConstraints(schema)));
+          return Promise.resolve(enforceStrictSchema(removeArrayLengthConstraints(schema)));
         }
       }
       return Promise.reject(new Error(`Cannot resolve $ref: ${url}`));
@@ -1207,7 +1207,7 @@ async function generateTypes() {
       if (schema) {
         console.log(`🔧 Generating TypeScript types for ${schemaName}...`);
         // Process schema: remove additionalProperties and minItems constraints
-        const strictSchema = enforceStrictSchema(removeMinItemsConstraints(schema));
+        const strictSchema = enforceStrictSchema(removeArrayLengthConstraints(schema));
         const types = await compile(strictSchema, schemaName, {
           bannerComment: '',
           style: {
@@ -1259,7 +1259,7 @@ async function generateTypes() {
       if (schema) {
         console.log(`🔧 Generating TypeScript types for ${schemaName}...`);
         // Process schema: remove additionalProperties and minItems constraints
-        const strictSchema = enforceStrictSchema(removeMinItemsConstraints(schema));
+        const strictSchema = enforceStrictSchema(removeArrayLengthConstraints(schema));
         const types = await compile(strictSchema, schemaName, {
           bannerComment: '',
           style: {

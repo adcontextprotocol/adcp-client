@@ -956,9 +956,16 @@ export class ADCPMultiAgentClient {
   private inferAgentIdFromPayload(payload: any): string | null {
     // Try to extract from operation_id pattern (e.g., "delivery_report_agent1_2024-01")
     if (payload.operation_id && typeof payload.operation_id === 'string') {
-      const match = payload.operation_id.match(/_([\w-]+)_\d{4}-\d{2}$/);
-      if (match && this.hasAgent(match[1])) {
-        return match[1];
+      const dateMatch = payload.operation_id.match(/_(\d{4}-\d{2})$/);
+      if (dateMatch) {
+        const prefix = payload.operation_id.slice(0, -dateMatch[0].length);
+        const lastUnderscore = prefix.lastIndexOf('_');
+        if (lastUnderscore >= 0) {
+          const candidateId = prefix.slice(lastUnderscore + 1);
+          if (candidateId && this.hasAgent(candidateId)) {
+            return candidateId;
+          }
+        }
       }
     }
 

@@ -614,13 +614,22 @@ export class TaskExecutor {
 
       return unwrapped;
     } catch (error) {
-      // If unwrapper fails, log and try fallback
-      this.logDebug(debugLogs, 'warning', 'Response unwrapper failed, using fallback', {
+      this.logDebug(debugLogs, 'warning', 'Response unwrapper failed', {
         error: error instanceof Error ? error.message : String(error),
+        toolName,
         responseKeys: Object.keys(response || {}),
       });
 
-      // Fallback to full response
+      // If toolName was provided, schema validation may have caused the failure.
+      // Retry without toolName to extract the payload without schema checks.
+      if (toolName) {
+        try {
+          return unwrapProtocolResponse(response);
+        } catch {
+          // Unwrapping itself failed — fall through to raw response
+        }
+      }
+
       return response;
     }
   }
@@ -924,7 +933,7 @@ export class TaskExecutor {
     try {
       return await this.listTasksForAgent(agent);
     } catch (error) {
-      console.warn('Failed to list tasks:', error);
+      console.warn('Failed to list tasks:', error instanceof Error ? error.message : 'unknown error');
       return [];
     }
   }
@@ -1139,7 +1148,7 @@ export class TaskExecutor {
       try {
         return await this.listTasksForAgent(agent);
       } catch (error) {
-        console.warn('Failed to get remote task list:', error);
+        console.warn('Failed to get remote task list:', error instanceof Error ? error.message : 'unknown error');
       }
     }
 
@@ -1264,7 +1273,7 @@ export class TaskExecutor {
           try {
             callback(task);
           } catch (error) {
-            console.error('Error in task event callback:', error);
+            console.error('Error in task event callback:', error instanceof Error ? error.message : 'unknown error');
           }
         }
       });
@@ -1355,11 +1364,12 @@ export class TaskExecutor {
         errors: [],
       };
     } catch (error) {
-      console.error(`Error during schema validation:`, error);
+      const errorMessage = error instanceof Error ? error.message : 'unknown error';
+      console.error('Error during schema validation:', errorMessage);
       // On validation error, fail safe based on strict mode
       return {
         valid: !strictMode, // In strict mode, treat validation errors as failures
-        errors: strictMode ? [`Validation error: ${error}`] : [],
+        errors: strictMode ? [`Validation error: ${errorMessage}`] : [],
       };
     }
   }
