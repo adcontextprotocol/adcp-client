@@ -110,10 +110,10 @@ export function normalizeRequestParams(taskType: string, params: any): any {
     };
   }
 
-  // ── context.buyer_ref → buyer_ref (create_media_buy) ──
+  // ── context.buyer_ref → buyer_ref (create_media_buy, update_media_buy) ──
   // AdCP 4.15 moved buyer_ref into context, but pre-4.15 servers still require
   // it at the top level. Copy it back so requests validate on both old and new servers.
-  if (taskType === 'create_media_buy' && normalized.context?.buyer_ref && !normalized.buyer_ref) {
+  if ((taskType === 'create_media_buy' || taskType === 'update_media_buy') && normalized.context?.buyer_ref && !normalized.buyer_ref) {
     normalized.buyer_ref = normalized.context.buyer_ref;
   }
 

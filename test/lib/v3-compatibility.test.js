@@ -1629,10 +1629,19 @@ describe('Request-level context.buyer_ref → buyer_ref (create_media_buy)', () 
     assert.strictEqual(result.buyer_ref, undefined);
   });
 
-  test('should not apply request-level buyer_ref shim to other task types', () => {
+  test('should copy context.buyer_ref to top-level buyer_ref for update_media_buy', () => {
     resetWarnings();
     const result = normalizeRequestParams('update_media_buy', {
       media_buy_id: 'mb-1',
+      context: { buyer_ref: 'br-update-123' },
+    });
+    assert.strictEqual(result.buyer_ref, 'br-update-123');
+  });
+
+  test('should not apply request-level buyer_ref shim to other task types', () => {
+    resetWarnings();
+    const result = normalizeRequestParams('get_products', {
+      brand: { domain: 'example.com' },
       context: { buyer_ref: 'br-123' },
     });
     assert.strictEqual(result.buyer_ref, undefined);
