@@ -1,5 +1,5 @@
 /**
- * Test Controller Client
+ * Test Controller Client — comply_test_controller integration
  *
  * Encapsulates all interaction with the comply_test_controller tool.
  * Handles detection, scenario discovery, and typed invocations.
