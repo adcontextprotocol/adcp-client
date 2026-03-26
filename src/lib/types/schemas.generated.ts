@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-03-26T05:01:10.975Z
+// Generated at: 2026-03-26T05:11:22.413Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -1710,7 +1710,7 @@ export const EventSourceHealthSchema = z.object({
     issues: z.array(DiagnosticIssueSchema).nullish()
 }).passthrough();
 
-export const UIDTypeSchema = z.union([z.literal("rampid"), z.literal("id5"), z.literal("uid2"), z.literal("euid"), z.literal("pairid"), z.literal("maid"), z.literal("other")]);
+export const UIDTypeSchema = z.union([z.literal("rampid"), z.literal("id5"), z.literal("uid2"), z.literal("euid"), z.literal("pairid"), z.literal("maid"), z.literal("hashed_email"), z.literal("publisher_first_party"), z.literal("other")]);
 
 export const UserMatchSchema = z.object({
     uids: z.array(z.object({

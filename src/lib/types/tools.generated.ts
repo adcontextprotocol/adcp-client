@@ -6261,7 +6261,16 @@ export type UserMatch = {
 /**
  * Universal ID type
  */
-export type UIDType = 'rampid' | 'id5' | 'uid2' | 'euid' | 'pairid' | 'maid' | 'other';
+export type UIDType =
+  | 'rampid'
+  | 'id5'
+  | 'uid2'
+  | 'euid'
+  | 'pairid'
+  | 'maid'
+  | 'hashed_email'
+  | 'publisher_first_party'
+  | 'other';
 /**
  * Request parameters for logging marketing events
  */
