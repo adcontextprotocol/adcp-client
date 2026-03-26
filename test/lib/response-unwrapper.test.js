@@ -624,13 +624,14 @@ describe('Response Unwrapper', () => {
         content: [{ type: 'text', text: 'Created' }],
       };
 
-      try {
-        unwrapProtocolResponse(mcpResponse, 'create_media_buy', 'mcp');
-        assert.fail('Should have thrown');
-      } catch (e) {
-        assert.ok(e.message.includes('media_buy_id'), `Error should mention missing field, got: ${e.message}`);
-        assert.ok(!e.message.includes('"Invalid input"'), 'Should not show generic union error');
-      }
+      assert.throws(
+        () => unwrapProtocolResponse(mcpResponse, 'create_media_buy', 'mcp'),
+        err => {
+          assert.ok(err.message.includes('media_buy_id'), `Error should mention missing field, got: ${err.message}`);
+          assert.ok(!err.message.includes('"Invalid input"'), 'Should not show generic union error');
+          return true;
+        }
+      );
     });
   });
 

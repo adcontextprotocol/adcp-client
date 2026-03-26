@@ -459,12 +459,21 @@ describe('validateResponseSchema', () => {
       const result = validateResponseSchema('build_creative', { creative_id: 'c1' });
       assert.strictEqual(result.passed, false);
       assert.ok(!result.error.includes('(root): Invalid input'), 'Should not show generic union error');
+      assert.ok(result.error.includes('creative_manifest'), 'Should mention a specific missing field');
     });
 
     it('still reports normal errors for non-union schemas', () => {
       const result = validateResponseSchema('get_products', { not_products: true });
       assert.strictEqual(result.passed, false);
       assert.ok(result.error.includes('products'), 'Should mention missing products field');
+    });
+
+    it('can access union variant options from Zod schema internals', () => {
+      // Canary test: if Zod upgrades break _def.options, this catches it
+      const schema = TOOL_RESPONSE_SCHEMAS['create_media_buy'];
+      const options = schema._def?.options;
+      assert.ok(Array.isArray(options), 'Expected _def.options to be an array (Zod internals may have changed)');
+      assert.ok(options.length >= 2, 'create_media_buy should be a union of at least 2 variants');
     });
   });
 });

@@ -3,6 +3,7 @@
  */
 
 import { ADCPMultiAgentClient } from '../core/ADCPMultiAgentClient';
+import { getBestUnionErrors } from '../utils/union-errors';
 import { getFormatAssets, usesDeprecatedAssetsField } from '../utils/format-assets';
 import { brandManifestToBrandReference } from '../types/compat';
 import type { Product } from '../types/core.generated';
@@ -515,30 +516,12 @@ export function validateResponseSchema(toolName: string, data: unknown): TestSte
   // Try each variant individually and report the closest match's errors.
   const first = violations[0];
   const isUnionError = violations.length === 1 && first && first.path === '(root)' && first.code === 'invalid_union';
-  const options = (schema as any)._def?.options as any[] | undefined;
 
-  if (isUnionError && options && options.length > 0) {
-    let bestErrors: typeof violations = violations;
-    let fewestIssues = Infinity;
-
-    for (const variant of options) {
-      const variantResult = variant.safeParse(data);
-      if (variantResult.success) {
-        // Shouldn't happen (union already failed), but handle gracefully
-        bestErrors = [];
-        break;
-      }
-      const variantViolations = variantResult.error.issues.map((i: any) => {
-        const path = i.path.length > 0 ? i.path.join('.') : '(root)';
-        return { path, message: i.message, code: i.code };
-      });
-      if (variantViolations.length < fewestIssues) {
-        fewestIssues = variantViolations.length;
-        bestErrors = variantViolations;
-      }
+  if (isUnionError) {
+    const betterErrors = getBestUnionErrors(schema, data);
+    if (betterErrors && betterErrors.length > 0) {
+      violations = betterErrors;
     }
-
-    violations = bestErrors;
   }
 
   return {
