@@ -1,5 +1,11 @@
 # Changelog
 
+## 4.16.1
+
+### Patch Changes
+
+- f34a58d: fix: add buyer_ref backward compatibility shim for pre-4.15 servers on create_media_buy and update_media_buy
+
 ## 4.16.0
 
 ### Minor Changes
