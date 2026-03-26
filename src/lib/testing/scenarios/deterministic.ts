@@ -33,7 +33,9 @@ function extractIdFromSteps(stepsToSearch: TestStepResult[], field: string): str
         if (pluralField && Array.isArray(preview[pluralField]) && preview[pluralField][0]) {
           return preview[pluralField][0];
         }
-      } catch { /* skip */ }
+      } catch {
+        /* skip */
+      }
     }
   }
   return undefined;
@@ -59,7 +61,9 @@ function transitionStep(
         null,
         2
       ),
-      ...(!passed && { error: `Expected failure but got success: ${response.previous_state} → ${response.current_state}` }),
+      ...(!passed && {
+        error: `Expected failure but got success: ${response.previous_state} → ${response.current_state}`,
+      }),
     };
   } else {
     return {
@@ -68,11 +72,7 @@ function transitionStep(
       passed,
       duration_ms: durationMs,
       details: `Error: ${response.error} — ${response.error_detail || ''}`,
-      response_preview: JSON.stringify(
-        { error: response.error, current_state: response.current_state },
-        null,
-        2
-      ),
+      response_preview: JSON.stringify({ error: response.error, current_state: response.current_state }, null, 2),
       ...(!passed && { error: `Expected success but got ${response.error}: ${response.error_detail || ''}` }),
     };
   }
@@ -107,7 +107,11 @@ function createTimedHelpers(client: ReturnType<typeof getOrCreateClient>, option
  * Call a typed method on the client via executeTask.
  * Uses the same pattern as existing scenarios but through the typed executeTask overload.
  */
-function callTask(client: ReturnType<typeof getOrCreateClient>, taskName: string, params: Record<string, unknown>): Promise<TaskResult> {
+function callTask(
+  client: ReturnType<typeof getOrCreateClient>,
+  taskName: string,
+  params: Record<string, unknown>
+): Promise<TaskResult> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- AgentClient.executeTask exists but TestClient type doesn't expose it directly
   return (client as any).executeTask(taskName, params) as Promise<TaskResult>;
 }
@@ -168,7 +172,7 @@ export async function testCreativeStateMachine(
       async () => callTask(client, 'list_creatives', {})
     );
     if (listResult?.success && listResult?.data) {
-      const creatives = ((listResult.data as Record<string, unknown>).creatives as any[] || []);
+      const creatives = ((listResult.data as Record<string, unknown>).creatives as any[]) || [];
       const found = creatives.find((c: Record<string, unknown>) => c.creative_id === creativeId);
       if (found) {
         listStep.details = `Creative ${creativeId} status: ${found.status}`;
@@ -193,7 +197,9 @@ export async function testCreativeStateMachine(
     creative_id: creativeId,
     status: 'processing',
   });
-  steps.push(transitionStep('Invalid: archived → processing (expect INVALID_TRANSITION)', invalidResult, false, invalidDur));
+  steps.push(
+    transitionStep('Invalid: archived → processing (expect INVALID_TRANSITION)', invalidResult, false, invalidDur)
+  );
 
   if (!invalidResult.success && invalidResult.error !== 'INVALID_TRANSITION') {
     steps.push({
@@ -285,7 +291,7 @@ export async function testMediaBuyStateMachine(
     );
     if (getResult?.success && getResult?.data) {
       const data = getResult.data as Record<string, unknown>;
-      const buys = (data.media_buys as Record<string, unknown>[] || [data]);
+      const buys = (data.media_buys as Record<string, unknown>[]) || [data];
       const found = buys.find((b: Record<string, unknown>) => b.media_buy_id === mediaBuyId);
       if (found) {
         getStep.details = `Media buy ${mediaBuyId} status: ${found.status}`;
@@ -310,7 +316,9 @@ export async function testMediaBuyStateMachine(
     media_buy_id: mediaBuyId,
     status: 'active',
   });
-  steps.push(transitionStep('Invalid: completed → active (expect INVALID_TRANSITION)', invalidResult, false, invalidDur));
+  steps.push(
+    transitionStep('Invalid: completed → active (expect INVALID_TRANSITION)', invalidResult, false, invalidDur)
+  );
 
   // Test rejection: force to pending_activation first (some sellers create as active),
   // then reject from there. If the seller doesn't support pending_activation, skip.
@@ -381,7 +389,7 @@ export async function testAccountStateMachine(
       async () => callTask(client, 'list_accounts', {})
     );
     if (listResult?.success && listResult?.data) {
-      const accounts = ((listResult.data as Record<string, unknown>).accounts as Record<string, unknown>[] || []);
+      const accounts = ((listResult.data as Record<string, unknown>).accounts as Record<string, unknown>[]) || [];
       const active = accounts.find((a: Record<string, unknown>) => a.status === 'active');
       accountId = (active?.account_id || accounts[0]?.account_id) as string | undefined;
       listStep.details = `Found ${accounts.length} account(s), using ${accountId || 'none'}`;
@@ -411,10 +419,11 @@ export async function testAccountStateMachine(
     const { result: createResult, step: createStep } = await runStep<TaskResult>(
       'Verify create_media_buy blocked when suspended',
       'create_media_buy',
-      async () => callTask(client, 'create_media_buy', {
-        brief: 'comply test — should be blocked by suspension',
-        budget: { amount: 100, currency: 'USD' },
-      })
+      async () =>
+        callTask(client, 'create_media_buy', {
+          brief: 'comply test — should be blocked by suspension',
+          budget: { amount: 100, currency: 'USD' },
+        })
     );
     // We expect this to fail
     if (createResult?.success) {
@@ -491,10 +500,11 @@ export async function testSessionStateMachine(
   const { result: initResult, step: initStep } = await runStep<TaskResult>(
     'Initiate SI session for state machine test',
     'si_initiate_session',
-    async () => callTask(client, 'si_initiate_session', {
-      identity: { user_type: 'consumer' },
-      supported_capabilities: { response_formats: ['text'] },
-    })
+    async () =>
+      callTask(client, 'si_initiate_session', {
+        identity: { user_type: 'consumer' },
+        supported_capabilities: { response_formats: ['text'] },
+      })
   );
   steps.push(initStep);
 
@@ -522,10 +532,11 @@ export async function testSessionStateMachine(
     const { result: msgResult, step: msgStep } = await runStep<TaskResult>(
       'Verify si_send_message fails after forced termination',
       'si_send_message',
-      async () => callTask(client, 'si_send_message', {
-        session_id: sessionId,
-        message: 'comply test — session should be terminated',
-      })
+      async () =>
+        callTask(client, 'si_send_message', {
+          session_id: sessionId,
+          message: 'comply test — session should be terminated',
+        })
     );
 
     if (msgResult?.success) {
@@ -621,7 +632,8 @@ export async function testDeliverySimulation(
     const { result: deliveryResult, step: deliveryStep } = await runStep<TaskResult>(
       'Verify delivery data via get_media_buy_delivery',
       'get_media_buy_delivery',
-      async () => callTask(client, 'get_media_buy_delivery', { media_buy_id: mediaBuyId, account: resolveAccount(options) })
+      async () =>
+        callTask(client, 'get_media_buy_delivery', { media_buy_id: mediaBuyId, account: resolveAccount(options) })
     );
 
     if (deliveryResult?.success && deliveryResult?.data) {
@@ -632,18 +644,17 @@ export async function testDeliverySimulation(
       const deliveries = data.media_buy_deliveries as Record<string, unknown>[] | undefined;
       const totals = deliveries?.[0]?.totals as Record<string, unknown> | undefined;
       const summary = data.summary as Record<string, unknown> | undefined;
-      const impressions = (totals?.impressions ?? data.impressions ?? data.total_impressions ?? summary?.impressions) as number | undefined;
+      const impressions = (totals?.impressions ??
+        data.impressions ??
+        data.total_impressions ??
+        summary?.impressions) as number | undefined;
       if (impressions !== undefined && impressions >= 10000) {
         deliveryStep.details = `Delivery reflects simulated data: ${impressions} impressions`;
       } else {
         deliveryStep.passed = false;
         deliveryStep.error = `Expected ≥10000 impressions in delivery report, got ${impressions}`;
       }
-      deliveryStep.response_preview = JSON.stringify(
-        { impressions, raw_keys: Object.keys(data) },
-        null,
-        2
-      );
+      deliveryStep.response_preview = JSON.stringify({ impressions, raw_keys: Object.keys(data) }, null, 2);
     }
     steps.push(deliveryStep);
   }
@@ -772,10 +783,15 @@ export async function testControllerValidation(
   const { result: unknownResult, step: unknownStep } = await runStep<TaskResult>(
     'Unknown scenario returns UNKNOWN_SCENARIO',
     'comply_test_controller',
-    async () => callControllerRaw(client, {
-      scenario: 'nonexistent_scenario',
-      params: {},
-    }, options)
+    async () =>
+      callControllerRaw(
+        client,
+        {
+          scenario: 'nonexistent_scenario',
+          params: {},
+        },
+        options
+      )
   );
 
   const unknownData = unknownResult?.data as ControllerError | undefined;
@@ -814,10 +830,15 @@ export async function testControllerValidation(
   // Test 3: NOT_FOUND for nonexistent entity
   if (supportsScenario(controller, 'force_creative_status')) {
     const start = Date.now();
-    const notFoundResult = await forceStatus(client, 'force_creative_status', {
-      creative_id: 'comply-test-nonexistent-000000000000',
-      status: 'approved',
-    }, options);
+    const notFoundResult = await forceStatus(
+      client,
+      'force_creative_status',
+      {
+        creative_id: 'comply-test-nonexistent-000000000000',
+        status: 'approved',
+      },
+      options
+    );
     const dur = Date.now() - start;
     if (!notFoundResult.success && notFoundResult.error === 'NOT_FOUND') {
       steps.push({

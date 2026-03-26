@@ -60,7 +60,6 @@ export async function testErrorHandling(
           end_time: new Date(Date.now() + 604800000).toISOString(),
           packages: [
             {
-
               product_id: 'NONEXISTENT_PRODUCT_ID_12345',
               budget: 1000,
               pricing_option_id: 'nonexistent-pricing',
@@ -203,7 +202,6 @@ export async function testValidation(
           end_time: new Date(Date.now() + 604800000).toISOString(),
           packages: [
             {
-
               product_id: 'test-product',
               budget: 1000,
               pricing_option_id: 'test-pricing',
@@ -236,7 +234,6 @@ export async function testValidation(
           end_time: new Date(Date.now() + 604800000).toISOString(),
           packages: [
             {
-
               product_id: 'test-product',
               budget: -500,
               pricing_option_id: 'test-pricing',
@@ -409,7 +406,6 @@ export async function testPricingEdgeCases(
           end_time: new Date(Date.now() + 604800000).toISOString(),
           packages: [
             {
-
               product_id: product.product_id,
               budget: 5000,
               pricing_option_id: pricingOption.pricing_option_id,
@@ -444,7 +440,6 @@ export async function testPricingEdgeCases(
           end_time: new Date(Date.now() + 604800000).toISOString(),
           packages: [
             {
-
               product_id: product.product_id,
               budget: underBudget,
               pricing_option_id: pricingOption.pricing_option_id,
@@ -496,7 +491,6 @@ export async function testTemporalValidation(
         end_time: new Date(Date.now() + 86400000).toISOString(), // 1 day from now (before start!)
         packages: [
           {
-
             product_id: 'test-product',
             budget: 1000,
             pricing_option_id: 'test-pricing',
@@ -530,7 +524,6 @@ export async function testTemporalValidation(
         end_time: new Date(Date.now() + 604800000).toISOString(), // 7 days from now
         packages: [
           {
-
             product_id: 'test-product',
             budget: 1000,
             pricing_option_id: 'test-pricing',

@@ -544,7 +544,15 @@ function loadAdCPTools(): ToolDefinition[] {
   // Helper to process tools from a domain
   const processToolsFromDomain = (
     toolNames: string[],
-    domain: 'media-buy' | 'creative' | 'signals' | 'governance' | 'sponsored-intelligence' | 'protocol' | 'account' | 'compliance',
+    domain:
+      | 'media-buy'
+      | 'creative'
+      | 'signals'
+      | 'governance'
+      | 'sponsored-intelligence'
+      | 'protocol'
+      | 'account'
+      | 'compliance',
     domainLabel: string,
     singleAgentOnlyTools: string[] = []
   ) => {

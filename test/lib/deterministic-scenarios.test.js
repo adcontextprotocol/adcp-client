@@ -176,11 +176,7 @@ describe('Deterministic scenario applicability', () => {
 
     // Agent with typical tools but no controller
     const tools = ['get_products', 'create_media_buy', 'sync_creatives', 'get_media_buys'];
-    const scenarios = [
-      'deterministic_creative',
-      'deterministic_media_buy',
-      'controller_validation',
-    ];
+    const scenarios = ['deterministic_creative', 'deterministic_media_buy', 'controller_validation'];
 
     const applicable = getApplicableScenarios(tools, scenarios);
     assert.strictEqual(applicable.length, 0, 'No deterministic scenarios should be applicable without controller');
@@ -250,10 +246,7 @@ describe('Generated comply test controller types', () => {
   test('ComplyTestControllerRequest type exists', () => {
     const fs = require('fs');
     const path = require('path');
-    const typesContent = fs.readFileSync(
-      path.join(__dirname, '../../src/lib/types/tools.generated.ts'),
-      'utf8'
-    );
+    const typesContent = fs.readFileSync(path.join(__dirname, '../../src/lib/types/tools.generated.ts'), 'utf8');
     assert.ok(typesContent.includes('export type ComplyTestControllerRequest'));
     assert.ok(typesContent.includes('export type ComplyTestControllerResponse'));
   });
@@ -261,10 +254,7 @@ describe('Generated comply test controller types', () => {
   test('Request has all scenario variants', () => {
     const fs = require('fs');
     const path = require('path');
-    const typesContent = fs.readFileSync(
-      path.join(__dirname, '../../src/lib/types/tools.generated.ts'),
-      'utf8'
-    );
+    const typesContent = fs.readFileSync(path.join(__dirname, '../../src/lib/types/tools.generated.ts'), 'utf8');
     assert.ok(typesContent.includes('interface ListScenarios'));
     assert.ok(typesContent.includes('interface ForceCreativeStatus'));
     assert.ok(typesContent.includes('interface ForceAccountStatus'));
@@ -277,10 +267,7 @@ describe('Generated comply test controller types', () => {
   test('Response has all variant types', () => {
     const fs = require('fs');
     const path = require('path');
-    const typesContent = fs.readFileSync(
-      path.join(__dirname, '../../src/lib/types/tools.generated.ts'),
-      'utf8'
-    );
+    const typesContent = fs.readFileSync(path.join(__dirname, '../../src/lib/types/tools.generated.ts'), 'utf8');
     assert.ok(typesContent.includes('interface ListScenariosSuccess'));
     assert.ok(typesContent.includes('interface StateTransitionSuccess'));
     assert.ok(typesContent.includes('interface SimulationSuccess'));
@@ -290,10 +277,7 @@ describe('Generated comply test controller types', () => {
   test('ControllerError has correct error codes', () => {
     const fs = require('fs');
     const path = require('path');
-    const typesContent = fs.readFileSync(
-      path.join(__dirname, '../../src/lib/types/tools.generated.ts'),
-      'utf8'
-    );
+    const typesContent = fs.readFileSync(path.join(__dirname, '../../src/lib/types/tools.generated.ts'), 'utf8');
     assert.ok(typesContent.includes("'INVALID_TRANSITION'"));
     assert.ok(typesContent.includes("'NOT_FOUND'"));
     assert.ok(typesContent.includes("'UNKNOWN_SCENARIO'"));
@@ -304,10 +288,7 @@ describe('Generated comply test controller types', () => {
   test('Zod schemas exist for validation', () => {
     const fs = require('fs');
     const path = require('path');
-    const schemasContent = fs.readFileSync(
-      path.join(__dirname, '../../src/lib/types/schemas.generated.ts'),
-      'utf8'
-    );
+    const schemasContent = fs.readFileSync(path.join(__dirname, '../../src/lib/types/schemas.generated.ts'), 'utf8');
     assert.ok(schemasContent.includes('ComplyTestControllerRequestSchema'));
     assert.ok(schemasContent.includes('ComplyTestControllerResponseSchema'));
   });

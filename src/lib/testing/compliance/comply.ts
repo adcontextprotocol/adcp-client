@@ -31,7 +31,14 @@ import type { ControllerDetection } from '../test-controller';
 const TRACK_DEFINITIONS: Record<ComplianceTrack, { label: string; scenarios: TestScenario[] }> = {
   core: {
     label: 'Core Protocol',
-    scenarios: ['health_check', 'discovery', 'capability_discovery', 'schema_compliance', 'controller_validation', 'deterministic_account'],
+    scenarios: [
+      'health_check',
+      'discovery',
+      'capability_discovery',
+      'schema_compliance',
+      'controller_validation',
+      'deterministic_account',
+    ],
   },
   products: {
     label: 'Product Discovery',
@@ -768,8 +775,10 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
       allObservations.push(...observations);
 
       const status = computeTrackStatus(results, skipped.length, hasAuth);
-      const hasDeterministicScenario = applicable.some(s => s.startsWith('deterministic_') || s === 'controller_validation');
-      const mode = hasDeterministicScenario ? 'deterministic' as const : 'observational' as const;
+      const hasDeterministicScenario = applicable.some(
+        s => s.startsWith('deterministic_') || s === 'controller_validation'
+      );
+      const mode = hasDeterministicScenario ? ('deterministic' as const) : ('observational' as const);
       trackResults.push({
         track,
         status,

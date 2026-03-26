@@ -61,10 +61,15 @@ function buildAccount(options?: TestOptions): Record<string, unknown> {
  * executeTask returns { success, data: { content: [{ type: 'text', text: '...' }] } }
  * where the text is the JSON-serialized tool response. This helper extracts and parses it.
  */
-async function callController(client: TestClient, params: Record<string, unknown>, options?: TestOptions): Promise<TaskResult> {
+async function callController(
+  client: TestClient,
+  params: Record<string, unknown>,
+  options?: TestOptions
+): Promise<TaskResult> {
   const withAccount = { account: buildAccount(options), ...params };
-  const raw = await (client as unknown as { executeTask(name: string, params: Record<string, unknown>): Promise<TaskResult> })
-    .executeTask(TOOL_NAME, withAccount);
+  const raw = await (
+    client as unknown as { executeTask(name: string, params: Record<string, unknown>): Promise<TaskResult> }
+  ).executeTask(TOOL_NAME, withAccount);
 
   // Parse the MCP content envelope to extract the JSON response.
   // Success responses come as { content: [{ type: 'text', text: '...' }] }.
@@ -89,7 +94,11 @@ async function callController(client: TestClient, params: Record<string, unknown
 }
 
 /** Public wrapper for scenarios that need raw controller access (e.g., controller validation) */
-export async function callControllerRaw(client: TestClient, params: Record<string, unknown>, options?: TestOptions): Promise<TaskResult> {
+export async function callControllerRaw(
+  client: TestClient,
+  params: Record<string, unknown>,
+  options?: TestOptions
+): Promise<TaskResult> {
   return callController(client, params, options);
 }
 
@@ -115,10 +124,7 @@ export async function detectController(
     const result = await callController(client, { scenario: 'list_scenarios' }, options);
 
     if (!result.success || !result.data) {
-      getLogger().warn(
-        { tool: TOOL_NAME },
-        'comply_test_controller exists but list_scenarios returned no data'
-      );
+      getLogger().warn({ tool: TOOL_NAME }, 'comply_test_controller exists but list_scenarios returned no data');
       return { detected: false };
     }
 
@@ -126,8 +132,8 @@ export async function detectController(
     if (data.success && data.scenarios) {
       // Handle both array format (spec) and object format (training agent returns scenario descriptions)
       const scenarios = Array.isArray(data.scenarios)
-        ? data.scenarios as ControllerScenario[]
-        : Object.keys(data.scenarios) as ControllerScenario[];
+        ? (data.scenarios as ControllerScenario[])
+        : (Object.keys(data.scenarios) as ControllerScenario[]);
       return {
         detected: true,
         scenarios,
@@ -145,10 +151,7 @@ export async function detectController(
 }
 
 /** Check if a specific scenario is supported */
-export function supportsScenario(
-  controller: ControllerDetection,
-  scenario: ControllerScenario
-): boolean {
+export function supportsScenario(controller: ControllerDetection, scenario: ControllerScenario): boolean {
   return controller.detected && controller.scenarios.includes(scenario);
 }
 
@@ -205,8 +208,6 @@ export function isSuccess(
 }
 
 /** Type guard: is the response an error? */
-export function isControllerError(
-  response: ComplyTestControllerResponse
-): response is ControllerError {
+export function isControllerError(response: ComplyTestControllerResponse): response is ControllerError {
   return response.success === false;
 }
