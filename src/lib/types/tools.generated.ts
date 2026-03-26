@@ -8623,7 +8623,8 @@ export type PropertyType =
   | 'dooh'
   | 'podcast'
   | 'radio'
-  | 'streaming_audio';
+  | 'streaming_audio'
+  | 'ai_assistant';
 /**
  * Request parameters for creating a new property list
  */

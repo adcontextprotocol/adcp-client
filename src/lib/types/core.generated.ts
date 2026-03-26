@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas vlatest
-// Generated at: 2026-03-26T04:35:25.102Z
+// Generated at: 2026-03-26T05:01:08.589Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -3364,7 +3364,8 @@ export type PropertyType =
   | 'dooh'
   | 'podcast'
   | 'radio'
-  | 'streaming_audio';
+  | 'streaming_audio'
+  | 'ai_assistant';
 /**
  * Type of identifier for this property
  */
