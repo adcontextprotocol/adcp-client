@@ -178,6 +178,55 @@ describe('SingleAgentClient Request Validation', () => {
       }
     });
 
+    test('should pass validation with buyer_ref present (backward compat)', async () => {
+      const client = new AdCPClient([mockAgent]);
+      const agent = client.agent(mockAgent.id);
+
+      // buyer_ref is copied from context.buyer_ref by the normalizer for pre-4.15 servers.
+      // validateRequest() strips it before strict validation so it doesn't trigger
+      // "Unrecognized key" errors.
+      await assert.doesNotReject(async () => {
+        try {
+          await agent.createMediaBuy({
+            account: { account_id: 'test-account' },
+            packages: [],
+            brand: { domain: 'example.com' },
+            buyer_ref: 'buyer-123',
+            start_time: 'immediate',
+            end_time: '2025-12-31T23:59:59Z',
+          });
+        } catch (err) {
+          if (err.message.includes('Request validation failed')) {
+            throw err;
+          }
+        }
+      }, 'buyer_ref should not cause a validation error');
+    });
+
+    test('should pass validation with both buyer_ref and brand_manifest present', async () => {
+      const client = new AdCPClient([mockAgent]);
+      const agent = client.agent(mockAgent.id);
+
+      // Both deprecated top-level fields should be stripped before strict validation
+      await assert.doesNotReject(async () => {
+        try {
+          await agent.createMediaBuy({
+            account: { account_id: 'test-account' },
+            packages: [],
+            brand: { domain: 'example.com' },
+            buyer_ref: 'buyer-456',
+            brand_manifest: { name: 'Acme', url: 'https://acme.com/brand.json' },
+            start_time: 'immediate',
+            end_time: '2025-12-31T23:59:59Z',
+          });
+        } catch (err) {
+          if (err.message.includes('Request validation failed')) {
+            throw err;
+          }
+        }
+      }, 'buyer_ref + brand_manifest together should not cause a validation error');
+    });
+
     test('should prefer explicit brand over brand_manifest when both are supplied', async () => {
       const client = new AdCPClient([mockAgent]);
       const agent = client.agent(mockAgent.id);

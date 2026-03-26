@@ -2595,9 +2595,9 @@ export class SingleAgentClient {
     try {
       // Use strict() to reject unknown top-level keys so callers get fast failures
       // on typos. Strip known deprecated fields that the normalizer preserves
-      // (e.g. brand_manifest) before the strict check so they don't trigger it.
+      // (e.g. brand_manifest, buyer_ref) before the strict check so they don't trigger it.
       if (schema instanceof z.ZodObject) {
-        const { brand_manifest, ...validationParams } = params;
+        const { brand_manifest, buyer_ref, ...validationParams } = params;
         schema.strict().parse(validationParams);
       } else {
         schema.parse(params);
