@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TMP Browser Embedding Demo</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 900px; margin: 0 auto; padding: 20px; color: #1a1a1a; }
+    h1 { font-size: 1.4em; margin-bottom: 4px; }
+    h2 { font-size: 1.1em; margin: 20px 0 8px; color: #333; }
+    .subtitle { color: #666; font-size: 0.9em; margin-bottom: 20px; }
+    .status { padding: 10px 14px; border-radius: 6px; margin: 10px 0; font-size: 0.85em; }
+    .status.loading { background: #fff3cd; color: #856404; }
+    .status.ready { background: #d4edda; color: #155724; }
+    .status.error { background: #f8d7da; color: #721c24; }
+
+    .demo-section { border: 1px solid #e0e0e0; border-radius: 8px; padding: 16px; margin: 16px 0; }
+
+    textarea { width: 100%; height: 120px; padding: 10px; border: 1px solid #ccc; border-radius: 6px; font-family: inherit; font-size: 0.9em; resize: vertical; }
+    button { padding: 8px 16px; border: none; border-radius: 6px; cursor: pointer; font-size: 0.85em; margin: 6px 4px 6px 0; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-primary { background: #2563eb; color: white; }
+    .btn-secondary { background: #6b7280; color: white; }
+
+    .results { margin-top: 12px; }
+    .result-row { display: flex; align-items: center; padding: 6px 0; border-bottom: 1px solid #f0f0f0; font-size: 0.85em; }
+    .result-bar { height: 20px; border-radius: 3px; margin-right: 10px; min-width: 4px; transition: width 0.3s; }
+    .result-score { font-family: monospace; min-width: 50px; }
+    .result-name { flex: 1; }
+    .result-match { color: #16a34a; font-weight: 600; }
+    .result-weak { color: #d97706; }
+    .result-none { color: #9ca3af; }
+
+    .timing { font-family: monospace; font-size: 0.8em; color: #666; margin-top: 8px; }
+    .embedding-preview { font-family: monospace; font-size: 0.75em; color: #888; margin-top: 6px; word-break: break-all; max-height: 60px; overflow: hidden; }
+
+    .chat-container { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
+    .chat-msg { padding: 8px 12px; border-radius: 8px; max-width: 80%; font-size: 0.85em; }
+    .chat-user { background: #2563eb; color: white; align-self: flex-end; }
+    .chat-assistant { background: #f3f4f6; align-self: flex-start; }
+    .chat-input { display: flex; gap: 6px; }
+    .chat-input input { flex: 1; padding: 8px 12px; border: 1px solid #ccc; border-radius: 6px; font-size: 0.9em; }
+
+    .sponsored { border: 1px solid #d1d5db; border-radius: 8px; padding: 12px; margin-top: 10px; background: #fafafa; }
+    .sponsored-label { font-size: 0.7em; color: #9ca3af; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px; }
+    .sponsored-brand { font-weight: 600; font-size: 0.9em; }
+    .sponsored-desc { font-size: 0.85em; color: #4b5563; margin-top: 2px; }
+
+    .page-demo { display: flex; gap: 12px; }
+    .page-content { flex: 2; }
+    .page-sidebar { flex: 1; }
+
+    .tabs { display: flex; gap: 2px; margin-bottom: 12px; }
+    .tab { padding: 8px 16px; border: 1px solid #e0e0e0; border-bottom: none; border-radius: 6px 6px 0 0; cursor: pointer; font-size: 0.85em; background: #f9fafb; }
+    .tab.active { background: white; font-weight: 600; border-bottom: 1px solid white; margin-bottom: -1px; }
+  </style>
+</head>
+<body>
+  <h1>TMP Browser Embedding</h1>
+  <p class="subtitle">Content classification runs entirely in the browser. No text leaves the page.</p>
+
+  <div id="model-status" class="status loading">Loading embedding model (bge-small-en-v1.5, 34MB int8)...</div>
+
+  <div class="tabs">
+    <div class="tab active" onclick="showTab('chat')">AI Chat</div>
+    <div class="tab" onclick="showTab('page')">Web Page</div>
+    <div class="tab" onclick="showTab('custom')">Custom Text</div>
+  </div>
+
+  <!-- Tab 1: AI Chat Demo -->
+  <div id="tab-chat" class="demo-section">
+    <h2>AI Assistant Conversation</h2>
+    <div id="chat-messages" class="chat-container"></div>
+    <div class="chat-input">
+      <input type="text" id="chat-input" placeholder="Type a message..." onkeydown="if(event.key==='Enter')sendChat()">
+      <button class="btn-primary" onclick="sendChat()" id="btn-chat">Send</button>
+    </div>
+    <div id="chat-results" class="results"></div>
+    <div id="chat-timing" class="timing"></div>
+    <div id="chat-sponsored"></div>
+  </div>
+
+  <!-- Tab 2: Web Page Demo -->
+  <div id="tab-page" class="demo-section" style="display:none">
+    <h2>Web Page Content Embedding</h2>
+    <p style="font-size:0.85em;color:#666;margin-bottom:10px">Paste article text or use a sample. The embedding runs in your browser — the text never leaves.</p>
+    <div style="margin-bottom:8px">
+      <button class="btn-secondary" onclick="loadSample('cooking')">Cooking Article</button>
+      <button class="btn-secondary" onclick="loadSample('finance')">Finance Article</button>
+      <button class="btn-secondary" onclick="loadSample('fitness')">Fitness Article</button>
+      <button class="btn-secondary" onclick="loadSample('travel')">Travel Article</button>
+      <button class="btn-secondary" onclick="loadSample('tech')">Tech Article</button>
+    </div>
+    <textarea id="page-content" placeholder="Paste article content here..."></textarea>
+    <button class="btn-primary" onclick="embedPage()" id="btn-page">Embed & Match</button>
+    <div id="page-results" class="results"></div>
+    <div id="page-timing" class="timing"></div>
+  </div>
+
+  <!-- Tab 3: Custom Text -->
+  <div id="tab-custom" class="demo-section" style="display:none">
+    <h2>Custom Text Embedding</h2>
+    <textarea id="custom-text" placeholder="Type or paste any text..."></textarea>
+    <button class="btn-primary" onclick="embedCustom()" id="btn-custom">Embed & Match</button>
+    <div id="custom-results" class="results"></div>
+    <div id="custom-timing" class="timing"></div>
+    <div id="custom-embedding" class="embedding-preview"></div>
+  </div>
+
+  <script type="module">
+    import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.5.1';
+
+    // Use WASM backend (universal), WebGPU when available
+    env.allowLocalModels = false;
+
+    // --- Sponsor Packages ---
+    const PACKAGES = {
+      'pkg-olive-oil': { brand: 'Meridian Foods', desc: 'Premium extra virgin olive oil for Italian cooking', text: 'Italian cooking ingredients olive oil Mediterranean cuisine pasta recipes' },
+      'pkg-cookware': { brand: 'Ironworks Kitchen', desc: 'Professional cast iron and stainless steel cookware', text: 'Kitchen equipment cookware pans skillets chef tools cooking gear' },
+      'pkg-meal-kit': { brand: 'FreshBox', desc: 'Weekly meal kit delivery — fresh ingredients, easy recipes', text: 'Meal delivery kits recipe boxes easy dinner solutions home cooking' },
+      'pkg-running-shoes': { brand: 'StrideWell', desc: 'Running shoes for every foot type', text: 'Running shoes athletic footwear marathon training jogging gear' },
+      'pkg-fitness-app': { brand: 'PulseFit', desc: 'Personalized workout plans and fitness tracking', text: 'Fitness tracking workout plans exercise apps health monitoring' },
+      'pkg-travel-insurance': { brand: 'SafeTrip', desc: 'Comprehensive travel insurance worldwide', text: 'Travel planning flights hotels vacation packages insurance international' },
+      'pkg-home-depot': { brand: 'HomeWorks', desc: 'Kitchen renovation and home improvement supplies', text: 'Home improvement renovation supplies tools kitchen remodel tile cabinets' },
+      'pkg-brokerage': { brand: 'Fidelity', desc: 'Zero-fee investing — index funds, IRAs, retirement', text: 'Stock market investing index funds retirement planning financial services' },
+      'pkg-ev-dealer': { brand: 'ElectraDrive', desc: 'Electric vehicle marketplace', text: 'Electric vehicle EV Tesla charging cars automotive' },
+      'pkg-pet-food': { brand: 'PawsNatural', desc: 'Premium dog food — vet recommended', text: 'Dog puppy food pet nutrition golden retriever' },
+      'pkg-sleep-consultant': { brand: 'Little Dreamers', desc: 'Pediatric sleep consulting for toddlers', text: 'Sleep baby toddler consulting pediatric parenting' },
+      'pkg-prebid': { brand: 'Prebid.org', desc: 'Open-source header bidding platform', text: 'Prebid header bidding open source server side programmatic SSP' },
+      'pkg-scope3': { brand: 'Scope3', desc: 'Carbon emissions and attention measurement', text: 'Carbon sustainability emissions attention measurement media quality' },
+    };
+
+    const SAMPLE_ARTICLES = {
+      cooking: `The Art of Perfect Pasta Carbonara
+
+A true Roman carbonara uses just five ingredients: guanciale, eggs, Pecorino Romano, black pepper, and spaghetti. The secret is in the technique — tempering the egg mixture with hot pasta water to create a silky sauce without scrambling.
+
+Start by rendering the guanciale in a cold pan, letting the fat slowly melt. Meanwhile, whisk egg yolks with finely grated Pecorino. The pasta water is your friend — save a cup before draining. Toss the hot spaghetti with the guanciale, remove from heat, then add the egg mixture. The residual heat cooks the eggs gently. Add pasta water as needed for consistency. Finish with a generous crack of black pepper.
+
+A heavy-bottomed stainless steel pan or well-seasoned carbon steel pan works best. Cast iron retains too much heat and can scramble the eggs. Use a good quality extra virgin olive oil for finishing, not cooking — the guanciale provides all the fat you need.`,
+
+      finance: `Beginner's Guide to Index Fund Investing
+
+If you're just starting to invest, index funds are the simplest path to building wealth over time. An index fund tracks a broad market benchmark like the S&P 500, giving you instant diversification across hundreds of companies.
+
+The math is compelling: over any 20-year period in history, the S&P 500 has produced positive returns. The average annual return is roughly 10% before inflation. A $10,000 investment growing at 10% annually becomes $67,275 in 20 years.
+
+Start with a total market fund like VTI (Vanguard Total Stock Market) or VTSAX (the mutual fund equivalent). The expense ratio is just 0.03% — you pay $3 per year per $10,000 invested. Open a Roth IRA if you're eligible (income under $161K single). Contributions grow tax-free and withdrawals in retirement are tax-free.
+
+Don't try to time the market. Set up automatic monthly contributions and leave them alone. The boring approach beats active trading for 90% of investors.`,
+
+      fitness: `How to Start Running When You're Out of Shape
+
+The biggest mistake new runners make is doing too much too soon. Your cardiovascular system adapts faster than your joints, tendons, and bones. You'll feel like you can run further before your body is ready.
+
+Start with a walk-run program: 1 minute running, 2 minutes walking, repeated for 20-30 minutes. Do this three times per week with rest days between. After two weeks, shift to 2 minutes running, 1 minute walking. By week six, most people can run 20 minutes continuously.
+
+Get fitted for proper shoes at a specialty running store. They'll analyze your gait and recommend stability, neutral, or motion control shoes. For flat feet, look for moderate stability shoes with arch support. Replace shoes every 300-500 miles.
+
+Track your runs with a simple app like Strava or Nike Run Club. Don't worry about pace — focus on time on feet. A 15-minute mile is perfectly fine when you're starting out. Speed comes later, after your body has adapted to the impact.`,
+
+      travel: `Two Weeks in Japan: A First-Timer's Guide
+
+Japan in cherry blossom season is magical but requires planning. The sakura front moves north from late March through mid-April. Tokyo peaks around March 25-April 5; Kyoto about a week later. Book accommodations 3-6 months ahead — everything sells out.
+
+Get a 14-day Japan Rail Pass before you go (must be purchased outside Japan). It covers all JR trains including most Shinkansen bullet trains. At roughly $400, it pays for itself after two Tokyo-Kyoto round trips. The pass works on local JR trains too.
+
+Budget roughly $150-200/day for mid-range travel: $60-80 for accommodation (business hotels or Airbnb), $40-50 for food (mix of convenience stores, ramen shops, and one nice meal), $20-30 for transit beyond the rail pass, and $20-30 for activities.
+
+Get travel insurance with medical evacuation coverage. Japanese hospitals are excellent but expensive for foreigners, and your regular health insurance likely doesn't cover you internationally. A pocket WiFi router ($5-8/day) is essential for navigation.`,
+
+      tech: `Building a REST API with Python and Flask
+
+Flask is the most popular micro-framework for building APIs in Python. Unlike Django, it doesn't impose a project structure — you can start with a single file and scale up.
+
+Install Flask with pip: pip install flask. Create app.py with a basic route:
+
+from flask import Flask, jsonify, request
+app = Flask(__name__)
+
+@app.route('/api/items', methods=['GET'])
+def get_items():
+    return jsonify({'items': []})
+
+For production, use Gunicorn as your WSGI server and put Nginx in front for SSL termination and static files. Deploy on Fly.io or Railway for simplicity, or use Docker on any cloud provider.
+
+Handle errors consistently — return JSON error objects with status codes, not HTML error pages. Use Flask's errorhandler decorator. For database access, SQLAlchemy is the standard ORM. Alembic handles migrations.`,
+    };
+
+    let embedder = null;
+    let packageEmbeddings = {};
+    let chatHistory = [];
+
+    // --- Network Detection ---
+    let embeddingMode = 'none'; // 'embedding', 'keywords', 'none'
+
+    function detectConnection() {
+      const conn = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+      if (!conn) return { canDownload: true, reason: 'good connection', detail: 'Network Info API not supported in this browser' };
+
+      const info = {
+        effectiveType: conn.effectiveType,
+        downlink: conn.downlink,
+        saveData: conn.saveData,
+        rtt: conn.rtt
+      };
+
+      if (conn.saveData) return { canDownload: false, reason: 'Data saver enabled', detail: JSON.stringify(info) };
+      if (conn.effectiveType === 'slow-2g' || conn.effectiveType === '2g')
+        return { canDownload: false, reason: `Slow connection (${conn.effectiveType})`, detail: JSON.stringify(info) };
+      if (conn.effectiveType === '3g' && conn.downlink < 1)
+        return { canDownload: false, reason: `Slow 3G (${conn.downlink} Mbps)`, detail: JSON.stringify(info) };
+      if (conn.downlink && conn.downlink < 2)
+        return { canDownload: false, reason: `Low bandwidth (${conn.downlink} Mbps)`, detail: JSON.stringify(info) };
+
+      const estSeconds = conn.downlink ? (34 / conn.downlink).toFixed(0) : '?';
+      return { canDownload: true, reason: `${conn.effectiveType}, ${conn.downlink} Mbps (~${estSeconds}s for model)`, detail: JSON.stringify(info) };
+    }
+
+    // --- Keyword Fallback ---
+    // When embedding model isn't available, match on keywords extracted from the conversation
+    const PACKAGE_KEYWORDS = {};
+    for (const [id, pkg] of Object.entries(PACKAGES)) {
+      PACKAGE_KEYWORDS[id] = pkg.text.toLowerCase().split(/\s+/);
+    }
+
+    function keywordMatch(text) {
+      const words = text.toLowerCase().split(/\s+/);
+      const scores = {};
+      for (const [id, keywords] of Object.entries(PACKAGE_KEYWORDS)) {
+        let matches = 0;
+        for (const word of words) {
+          if (word.length < 3) continue;
+          for (const kw of keywords) {
+            if (kw.includes(word) || word.includes(kw)) {
+              matches++;
+              break;
+            }
+          }
+        }
+        scores[id] = matches / Math.max(words.length, 1);
+      }
+      return Object.entries(scores)
+        .sort((a, b) => b[1] - a[1])
+        .map(([id, score]) => ({ id, score: Math.min(score * 3, 1.0), ...PACKAGES[id] }));
+    }
+
+    // --- Init ---
+    async function init() {
+      const status = document.getElementById('model-status');
+
+      // Check connection quality
+      const connection = detectConnection();
+      console.log('Connection:', connection);
+
+      if (!connection.canDownload) {
+        // Fallback to keyword matching
+        embeddingMode = 'keywords';
+        status.textContent = `Keyword mode — ${connection.reason}. No model download needed.`;
+        status.className = 'status ready';
+        document.querySelectorAll('button').forEach(b => b.disabled = false);
+        addChatMessage('assistant', 'Hi! I\'m a demo AI assistant. Ask me anything — cooking, fitness, travel, investing, home improvement, or ad tech. Watch how the sponsored content changes based on what we talk about.\n\n(Running in keyword mode — slow connection detected, embedding model not downloaded)');
+        return;
+      }
+
+      try {
+        status.textContent = `Downloading model (~34MB, ${connection.reason})...`;
+        const start = performance.now();
+        embedder = await pipeline('feature-extraction', 'Xenova/bge-small-en-v1.5', {
+          quantized: true, // Use int8 quantized model (34MB)
+        });
+        const loadTime = ((performance.now() - start) / 1000).toFixed(1);
+
+        // Pre-embed all packages
+        status.textContent = 'Embedding sponsor packages...';
+        const pkgTexts = Object.values(PACKAGES).map(p => p.text);
+        const pkgEmbs = await embedder(pkgTexts, { pooling: 'mean', normalize: true });
+
+        Object.keys(PACKAGES).forEach((id, i) => {
+          packageEmbeddings[id] = Array.from(pkgEmbs[i].data);
+        });
+
+        embeddingMode = 'embedding';
+        status.textContent = `Model ready (loaded in ${loadTime}s, ${connection.reason}, ${Object.keys(PACKAGES).length} packages embedded)`;
+        status.className = 'status ready';
+
+        // Enable buttons
+        document.querySelectorAll('button').forEach(b => b.disabled = false);
+
+        // Add initial chat message
+        addChatMessage('assistant', 'Hi! I\'m a demo AI assistant. Ask me anything — cooking, fitness, travel, investing, home improvement, or ad tech. Watch how the sponsored content changes based on what we talk about.');
+      } catch (err) {
+        // Model failed to load — fall back to keywords
+        embeddingMode = 'keywords';
+        status.textContent = `Keyword fallback — model failed: ${err.message}`;
+        status.className = 'status ready';
+        document.querySelectorAll('button').forEach(b => b.disabled = false);
+        addChatMessage('assistant', 'Hi! Ask me anything. (Running in keyword fallback mode)');
+        console.error(err);
+      }
+    }
+
+    // --- Embedding ---
+    async function embedText(text) {
+      const start = performance.now();
+      const output = await embedder([text], { pooling: 'mean', normalize: true });
+      const elapsed = performance.now() - start;
+      const embedding = Array.from(output[0].data);
+      return { embedding, elapsed };
+    }
+
+    function cosineSim(a, b) {
+      let dot = 0, normA = 0, normB = 0;
+      for (let i = 0; i < a.length; i++) {
+        dot += a[i] * b[i];
+        normA += a[i] * a[i];
+        normB += b[i] * b[i];
+      }
+      return dot / (Math.sqrt(normA) * Math.sqrt(normB) + 1e-10);
+    }
+
+    function matchPackages(embedding) {
+      const scores = {};
+      for (const [id, pkgEmb] of Object.entries(packageEmbeddings)) {
+        scores[id] = cosineSim(embedding, pkgEmb);
+      }
+      return Object.entries(scores)
+        .sort((a, b) => b[1] - a[1])
+        .map(([id, score]) => ({ id, score, ...PACKAGES[id] }));
+    }
+
+    function renderResults(containerId, ranked, timingId, elapsed, embeddingId, embedding) {
+      const container = document.getElementById(containerId);
+      const maxScore = ranked[0]?.score || 1;
+
+      container.innerHTML = ranked.slice(0, 8).map(r => {
+        const pct = (r.score / maxScore * 100).toFixed(0);
+        const cls = r.score > 0.55 ? 'result-match' : r.score > 0.4 ? 'result-weak' : 'result-none';
+        const color = r.score > 0.55 ? '#16a34a' : r.score > 0.4 ? '#d97706' : '#e5e7eb';
+        return `<div class="result-row">
+          <div class="result-score ${cls}">${r.score.toFixed(3)}</div>
+          <div class="result-bar" style="width:${pct}%;background:${color}"></div>
+          <div class="result-name"><strong>${r.brand}</strong> — ${r.desc}</div>
+        </div>`;
+      }).join('');
+
+      if (timingId) {
+        document.getElementById(timingId).textContent =
+          `Embedding: ${elapsed.toFixed(0)}ms | Dims: 384 | Wire: 384 bytes (int8) | Model: bge-small-en-v1.5`;
+      }
+      if (embeddingId && embedding) {
+        document.getElementById(embeddingId).textContent =
+          `[${embedding.slice(0, 10).map(v => v.toFixed(4)).join(', ')}, ... (384 dims)]`;
+      }
+    }
+
+    // --- Chat Demo ---
+    function addChatMessage(role, content) {
+      const container = document.getElementById('chat-messages');
+      const div = document.createElement('div');
+      div.className = `chat-msg chat-${role}`;
+      div.textContent = content;
+      container.appendChild(div);
+      container.scrollTop = container.scrollHeight;
+    }
+
+    window.sendChat = async function() {
+      const input = document.getElementById('chat-input');
+      const msg = input.value.trim();
+      if (!msg) return;
+      if (embeddingMode === 'none') return;
+
+      input.value = '';
+      addChatMessage('user', msg);
+      chatHistory.push({ role: 'user', content: msg });
+
+      // Simulate assistant response
+      const response = generateResponse(msg);
+      addChatMessage('assistant', response);
+      chatHistory.push({ role: 'assistant', content: response });
+
+      let ranked;
+      let elapsed = 0;
+
+      if (embeddingMode === 'embedding' && embedder) {
+        // Full embedding mode: embed conversation with recency weighting
+        const userMsgs = chatHistory.filter(m => m.role === 'user').map(m => m.content);
+        const recent = userMsgs.slice(-3);
+        const older = userMsgs.slice(0, -3);
+        const convText = [
+          ...older,
+          ...recent, ...recent, ...recent
+        ].join(' | ');
+
+        const result = await embedText(convText);
+        elapsed = result.elapsed;
+        ranked = matchPackages(result.embedding);
+      } else {
+        // Keyword fallback: match on conversation text
+        const start = performance.now();
+        const userMsgs = chatHistory.filter(m => m.role === 'user').map(m => m.content);
+        const recentText = userMsgs.slice(-3).join(' ');
+        ranked = keywordMatch(recentText);
+        elapsed = performance.now() - start;
+      }
+
+      const modeLabel = embeddingMode === 'embedding'
+        ? `Embedding: ${elapsed.toFixed(0)}ms | Dims: 384 | Wire: 384 bytes (int8) | Model: bge-small-en-v1.5`
+        : `Keyword match: ${elapsed.toFixed(1)}ms | No model | Zero bandwidth`;
+
+      renderResults('chat-results', ranked, 'chat-timing', elapsed);
+      document.getElementById('chat-timing').textContent = modeLabel;
+
+      // Show sponsored content for top match
+      const top = ranked[0];
+      const threshold = embeddingMode === 'embedding' ? 0.45 : 0.15;
+      if (top && top.score > threshold) {
+        document.getElementById('chat-sponsored').innerHTML = `
+          <div class="sponsored">
+            <div class="sponsored-label">SPONSORED</div>
+            <div class="sponsored-brand">${top.brand}</div>
+            <div class="sponsored-desc">${top.desc}</div>
+          </div>`;
+      } else {
+        document.getElementById('chat-sponsored').innerHTML = '';
+      }
+    };
+
+    function generateResponse(msg) {
+      const lower = msg.toLowerCase();
+      const patterns = [
+        { keys: ['pasta', 'carbonara', 'spaghetti', 'italian', 'sauce'], resp: 'For pasta, quality ingredients matter. Use real Pecorino Romano, guanciale instead of bacon, and good olive oil for finishing. The egg tempering technique is what makes or breaks carbonara.' },
+        { keys: ['cook', 'recipe', 'dinner', 'bake', 'roast', 'grill'], resp: 'Cooking at home is rewarding. A solid cast iron pan, sharp knife, and quality olive oil cover 80% of recipes. What cuisine are you interested in?' },
+        { keys: ['pan', 'skillet', 'cookware', 'pot', 'kitchen equip', 'cast iron'], resp: 'For cookware, invest in a 12-inch cast iron skillet and a stainless steel saucepan. Lodge makes great affordable cast iron. Season it properly and it lasts forever.' },
+        { keys: ['olive oil', 'ingredient', 'spice'], resp: 'Extra virgin olive oil is essential. Look for harvest dates on the bottle and store away from heat and light. Italian and Spanish oils are consistently good.' },
+        { keys: ['meal kit', 'meal plan', 'grocery', 'delivery', 'hello fresh', 'blue apron'], resp: 'Meal kits save time on planning and shopping. Most offer family-friendly options for $8-12 per serving. They generate less food waste than grocery shopping too.' },
+        { keys: ['run', 'jog', 'marathon', '5k', '10k', 'couch to'], resp: 'For running, start with a couch-to-5K plan. Get fitted for proper running shoes at a specialty store. Most beginners need stability shoes. Run 3x per week with rest days between.' },
+        { keys: ['shoe', 'sneaker', 'flat feet', 'arch'], resp: 'For running shoes, get a gait analysis at a specialty running store. For flat feet, look at Brooks Adrenaline or Asics Gel-Kayano. Replace shoes every 300-500 miles.' },
+        { keys: ['workout', 'gym', 'exercise', 'fitness', 'weight', 'muscle', 'strength'], resp: 'A balanced fitness routine combines strength training and cardio. Start with compound movements: squats, deadlifts, bench press, rows. An app like Strong or Fitbod can guide your programming.' },
+        { keys: ['peloton', 'rowing', 'home gym', 'dumbbell', 'bench'], resp: 'For a home gym, adjustable dumbbells and a bench cover most exercises. A Peloton or rower adds great cardio. Rubber flooring protects your floors and reduces noise.' },
+        { keys: ['invest', 'stock', 'index fund', 'vanguard', 'fidelity', 'portfolio', 'retire', '401k', 'ira', 'roth'], resp: 'Start with a Roth IRA if eligible. Use total market index funds like VTI or VTSAX. The expense ratio is just 0.03%. Automate monthly contributions and resist the urge to time the market.' },
+        { keys: ['budget', 'money', 'save', 'debt', 'loan', 'mortgage'], resp: 'The priority order: emergency fund (3-6 months expenses), pay off high-interest debt, max tax-advantaged retirement accounts, then invest in taxable accounts.' },
+        { keys: ['japan', 'tokyo', 'kyoto', 'osaka', 'cherry blossom', 'sakura'], resp: 'Japan is incredible. Get a 14-day Japan Rail Pass. Cherry blossoms peak late March in Tokyo, early April in Kyoto. Budget $150-200/day for mid-range travel. A pocket WiFi is essential.' },
+        { keys: ['travel', 'trip', 'vacation', 'flight', 'hotel', 'abroad'], resp: 'For international travel, always get travel insurance with medical evacuation. Book 3-6 months ahead for peak seasons. Google Flights alerts help find deals.' },
+        { keys: ['insurance', 'medical', 'coverage'], resp: 'Travel insurance is essential for international trips. Look for medical evacuation coverage — a medical flight can cost $50-100K without it. World Nomads and SafetyWing are popular options.' },
+        { keys: ['renovate', 'remodel', 'backsplash', 'countertop', 'cabinet', 'tile'], resp: 'For kitchen renovation on a budget: paint cabinets ($200), replace hardware ($100), peel-and-stick backsplash ($150), butcher block counters ($500). Total transformation under $1K.' },
+        { keys: ['house', 'home', 'room', 'floor', 'wall', 'paint'], resp: 'Home improvement projects have the best ROI when they\'re visible: kitchen, bathroom, curb appeal. Paint is the cheapest transformation — a $40 gallon of paint can change a room completely.' },
+        { keys: ['dog', 'puppy', 'golden', 'retriever', 'breed', 'adopt'], resp: 'For a new puppy, crate training from day one is crucial. Start socialization immediately — expose them to different people, sounds, and surfaces. Positive reinforcement only. Puppy classes at 8-12 weeks.' },
+        { keys: ['pet food', 'kibble', 'dog food', 'feed'], resp: 'For puppy food, look for AAFCO-approved formulas specifically for large breed puppies. Golden retrievers need controlled growth — too-fast growth causes joint problems. Royal Canin and Purina Pro Plan are vet-recommended.' },
+        { keys: ['car', 'ev', 'electric vehicle', 'tesla', 'hyundai', 'chevy', 'charging'], resp: 'The best EVs right now: Tesla Model 3/Y for range and charging network, Hyundai Ioniq 5 for value and fast charging, Chevy Equinox EV for affordability. Home charging (Level 2, ~$500 to install) changes everything.' },
+        { keys: ['baby', 'toddler', 'sleep', 'nap', 'bedtime', 'night'], resp: 'For toddler sleep, consistency is everything. Same bedtime, same routine (bath, book, bed), same rules. Dark room, white noise, cool temperature. A sleep consultant can create a custom plan — usually $200-400.' },
+        { keys: ['prebid', 'header bid', 'programmatic', 'rtb', 'bid'], resp: 'Prebid is the industry standard for header bidding, with both client-side (Prebid.js) and server-side (Prebid Server) options. Server-side reduces page latency but adds a network hop. Most large publishers use both.' },
+        { keys: ['identity', 'cookie', 'uid2', 'id5', 'ramp', 'privacy'], resp: 'Post-cookie identity is fragmented: UID2 (deterministic, open-source), ID5 (probabilistic + deterministic), LiveRamp RampID (graph-based). Most publishers hedge by supporting 2-3 solutions.' },
+        { keys: ['ctv', 'streaming', 'ott', 'connected tv', 'roku', 'fire tv'], resp: 'CTV advertising is growing fast but measurement is the challenge. Cross-device attribution through identity graphs, brand lift studies, and attention metrics are the main approaches.' },
+        { keys: ['carbon', 'sustainability', 'emission', 'green', 'environment'], resp: 'Reducing ad carbon emissions starts with measurement (Scope3 is the leader), then optimization: cut made-for-advertising inventory, shorten supply chains, and prioritize direct publisher deals.' },
+        { keys: ['brand safety', 'fraud', 'ivt', 'viewability', 'verification'], resp: 'Pre-bid brand safety filtering with IAS or DoubleVerify catches most issues. Implement ads.txt strictly. For IVT, look at Pixalate or Human (formerly White Ops). Layer multiple vendors.' },
+        { keys: ['retail media', 'sponsored', 'commerce', 'amazon ads', 'walmart'], resp: 'Retail media is booming. You need an ad server (Kevel is popular for custom builds), a product feed, and closed-loop attribution. Start with onsite sponsored products before expanding offsite.' },
+        { keys: ['measurement', 'attribution', 'attention', 'metric'], resp: 'Attention metrics are gaining traction over viewability. Scope3, Adelaide, and Lumen all measure attention differently. The consensus: not all viewable impressions are equal.' },
+      ];
+
+      for (const p of patterns) {
+        if (p.keys.some(k => lower.includes(k))) return p.resp;
+      }
+      return 'Interesting question! Tell me more about what you\'re looking for and I can give more specific advice.';
+    }
+
+    // --- Page Demo ---
+    window.loadSample = function(key) {
+      document.getElementById('page-content').value = SAMPLE_ARTICLES[key] || '';
+    };
+
+    window.embedPage = async function() {
+      const text = document.getElementById('page-content').value.trim();
+      if (!text || !embedder) return;
+
+      const { embedding, elapsed } = await embedText(text);
+      const ranked = matchPackages(embedding);
+      renderResults('page-results', ranked, 'page-timing', elapsed);
+    };
+
+    // --- Custom Demo ---
+    window.embedCustom = async function() {
+      const text = document.getElementById('custom-text').value.trim();
+      if (!text || !embedder) return;
+
+      const { embedding, elapsed } = await embedText(text);
+      const ranked = matchPackages(embedding);
+      renderResults('custom-results', ranked, 'custom-timing', elapsed, 'custom-embedding', embedding);
+    };
+
+    // --- Tabs ---
+    window.showTab = function(tab) {
+      document.querySelectorAll('.demo-section').forEach(s => s.style.display = 'none');
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      document.getElementById(`tab-${tab}`).style.display = 'block';
+      event.target.classList.add('active');
+    };
+
+    // Start
+    init();
+  </script>
+</body>
+</html>
