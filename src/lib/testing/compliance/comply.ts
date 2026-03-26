@@ -23,7 +23,7 @@ import { getPlatformProfile } from './profiles';
 import type { PlatformProfile } from './profiles';
 import { closeMCPConnections } from '../../protocols/mcp';
 import { detectController, hasTestController } from '../test-controller';
-import type { ControllerDetection, ControllerCapabilities } from '../test-controller';
+import type { ControllerDetection } from '../test-controller';
 
 /**
  * Maps each track to its constituent scenarios and a human-readable label.
@@ -565,7 +565,7 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
   // Detect test controller for deterministic mode
   let controllerDetection: ControllerDetection = { detected: false };
   if (profileStep.passed && hasTestController(profile)) {
-    controllerDetection = await detectController(client as any, profile, effectiveOptions);
+    controllerDetection = await detectController(client, profile, effectiveOptions);
     if (controllerDetection.detected) {
       effectiveOptions._controllerCapabilities = controllerDetection;
     }

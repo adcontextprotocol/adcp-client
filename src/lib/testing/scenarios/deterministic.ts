@@ -217,16 +217,14 @@ export async function testCreativeStateMachine(
       creative_id: freshCreativeId,
       status: 'pending_review',
     });
-    // If pending_review isn't reachable (e.g., creative starts as processing which allows rejection directly),
-    // try rejecting from wherever we are
-    if (toPendingReview.success || !toPendingReview.success) {
-      const { response: rejectResult, durationMs: rejectDur } = await ctrl.forceStatus('force_creative_status', {
-        creative_id: freshCreativeId,
-        status: 'rejected',
-        rejection_reason: 'Brand safety policy violation (comply test)',
-      });
-      steps.push(transitionStep('Force creative → rejected with reason', rejectResult, true, rejectDur));
-    }
+    // Whether or not pending_review was reachable, try rejecting from wherever we are.
+    // Some sellers allow rejection from processing directly; others require pending_review first.
+    const { response: rejectResult, durationMs: rejectDur } = await ctrl.forceStatus('force_creative_status', {
+      creative_id: freshCreativeId,
+      status: 'rejected',
+      rejection_reason: 'Brand safety policy violation (comply test)',
+    });
+    steps.push(transitionStep('Force creative → rejected with reason', rejectResult, true, rejectDur));
   }
 
   return { steps, profile };
