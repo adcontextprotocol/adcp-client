@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas vlatest
-// Generated at: 2026-03-25T23:46:05.698Z
+// Generated at: 2026-03-26T04:35:25.102Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -2238,6 +2238,10 @@ export type TalentRole =
  * What kind of derivative content this is
  */
 export type DerivativeType = 'clip' | 'highlight' | 'recap' | 'trailer' | 'bonus';
+/**
+ * What the publisher wants back from a TMP context match. Determines the richness level of the buyer's offer response.
+ */
+export type TMPResponseType = 'activation' | 'catalog_items' | 'creative' | 'deal';
 
 /**
  * Represents available advertising inventory
@@ -2434,6 +2438,27 @@ export interface Product {
    * Registry policy IDs the seller enforces for this product. Enforcement level comes from the policy registry. Buyers can filter products by required policies.
    */
   enforced_policies?: string[];
+  /**
+   * Trusted Match Protocol capabilities for this product. When present, the product supports real-time contextual and/or identity matching via TMP. Buyers use this to determine what response types the publisher can accept and whether brands can be selected dynamically at match time.
+   */
+  trusted_match?: {
+    /**
+     * Whether this product supports Context Match requests. When true, the publisher's TMP router will send context match requests to registered providers for this product's inventory.
+     */
+    context_match: boolean;
+    /**
+     * Whether this product supports Identity Match requests. When true, the publisher's TMP router will send identity match requests to evaluate user eligibility.
+     */
+    identity_match?: boolean;
+    /**
+     * What the publisher can accept back from context match.
+     */
+    response_types?: TMPResponseType[];
+    /**
+     * Whether the buyer can select a brand at match time. When false (default), the brand must be specified on the media buy/package. When true, the buyer's offer can include any brand — the publisher applies approval rules at match time. Enables multi-brand agreements where the holding company or buyer agent selects brand based on context.
+     */
+    dynamic_brands?: boolean;
+  };
   /**
    * Instructions for submitting physical creative materials (print, static OOH, cinema). Present only for products requiring physical delivery outside the digital creative assignment flow. Buyer agents MUST validate url and email domains against the seller's known domains (from adagents.json) before submitting materials. Never auto-submit without human confirmation.
    */

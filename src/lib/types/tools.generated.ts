@@ -861,6 +861,10 @@ export type TalentRole =
  */
 export type DerivativeType = 'clip' | 'highlight' | 'recap' | 'trailer' | 'bonus';
 /**
+ * What the publisher wants back from a TMP context match. Determines the richness level of the buyer's offer response.
+ */
+export type TMPResponseType = 'activation' | 'catalog_items' | 'creative' | 'deal';
+/**
  * Days of the week for daypart targeting
  */
 export type DayOfWeek = 'monday' | 'tuesday' | 'wednesday' | 'thursday' | 'friday' | 'saturday' | 'sunday';
@@ -1134,6 +1138,27 @@ export interface Product {
    * Registry policy IDs the seller enforces for this product. Enforcement level comes from the policy registry. Buyers can filter products by required policies.
    */
   enforced_policies?: string[];
+  /**
+   * Trusted Match Protocol capabilities for this product. When present, the product supports real-time contextual and/or identity matching via TMP. Buyers use this to determine what response types the publisher can accept and whether brands can be selected dynamically at match time.
+   */
+  trusted_match?: {
+    /**
+     * Whether this product supports Context Match requests. When true, the publisher's TMP router will send context match requests to registered providers for this product's inventory.
+     */
+    context_match: boolean;
+    /**
+     * Whether this product supports Identity Match requests. When true, the publisher's TMP router will send identity match requests to evaluate user eligibility.
+     */
+    identity_match?: boolean;
+    /**
+     * What the publisher can accept back from context match.
+     */
+    response_types?: TMPResponseType[];
+    /**
+     * Whether the buyer can select a brand at match time. When false (default), the brand must be specified on the media buy/package. When true, the buyer's offer can include any brand — the publisher applies approval rules at match time. Enables multi-brand agreements where the holding company or buyer agent selects brand based on context.
+     */
+    dynamic_brands?: boolean;
+  };
   /**
    * Instructions for submitting physical creative materials (print, static OOH, cinema). Present only for products requiring physical delivery outside the digital creative assignment flow. Buyer agents MUST validate url and email domains against the seller's known domains (from adagents.json) before submitting materials. Never auto-submit without human confirmation.
    */
@@ -12432,3 +12457,239 @@ export interface GetAccountFinancialsError {
   context?: ContextObject;
   ext?: ExtensionObject;
 }
+
+// comply_test_controller parameters
+/**
+ * Request payload for the comply_test_controller tool. Triggers seller-side state transitions for compliance testing. Sandbox only — sellers MUST NOT expose this tool in production.
+ */
+export type ComplyTestControllerRequest =
+  | ListScenarios
+  | ForceCreativeStatus
+  | ForceAccountStatus
+  | ForceMediaBuyStatus
+  | ForceSessionStatus
+  | SimulateDelivery
+  | SimulateBudgetSpend;
+/**
+ * Discover which scenarios this seller supports
+ */
+export interface ListScenarios {
+  scenario: 'list_scenarios';
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Transition a creative to the specified status
+ */
+export interface ForceCreativeStatus {
+  scenario: 'force_creative_status';
+  params: {
+    /**
+     * Creative to transition
+     */
+    creative_id: string;
+    status: CreativeStatus;
+    /**
+     * Reason for rejection. Required when status = rejected.
+     */
+    rejection_reason?: string;
+  };
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Transition an account to the specified status
+ */
+export interface ForceAccountStatus {
+  scenario: 'force_account_status';
+  params: {
+    /**
+     * Account to transition
+     */
+    account_id: string;
+    status: AccountStatus;
+  };
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Transition a media buy to the specified status
+ */
+export interface ForceMediaBuyStatus {
+  scenario: 'force_media_buy_status';
+  params: {
+    /**
+     * Media buy to transition
+     */
+    media_buy_id: string;
+    status: MediaBuyStatus;
+    /**
+     * Reason for rejection. Required when status = rejected.
+     */
+    rejection_reason?: string;
+  };
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Transition an SI session to a terminal status
+ */
+export interface ForceSessionStatus {
+  scenario: 'force_session_status';
+  params: {
+    /**
+     * Session to transition
+     */
+    session_id: string;
+    /**
+     * Target terminal status. Only terminal statuses are valid — active and pending_handoff are session-internal transitions.
+     */
+    status: 'complete' | 'terminated';
+    /**
+     * Reason for termination (e.g., session_timeout, host_terminated, policy_violation). Required when status = terminated.
+     */
+    termination_reason?: string;
+  };
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Inject synthetic delivery data for a media buy
+ */
+export interface SimulateDelivery {
+  scenario: 'simulate_delivery';
+  params: {
+    /**
+     * Media buy to add delivery to
+     */
+    media_buy_id: string;
+    /**
+     * Impressions to simulate
+     */
+    impressions?: number;
+    /**
+     * Clicks to simulate
+     */
+    clicks?: number;
+    /**
+     * Spend as reported in delivery data. Does not affect budget.
+     */
+    reported_spend?: {
+      amount: number;
+      currency: string;
+    };
+    /**
+     * Conversions to simulate
+     */
+    conversions?: number;
+  };
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Simulate budget consumption to a specified percentage
+ */
+export interface SimulateBudgetSpend {
+  scenario: 'simulate_budget_spend';
+  params: {
+    [k: string]: unknown | undefined;
+  };
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+
+
+// comply_test_controller response
+/**
+ * Response from the comply_test_controller tool. Shape varies by scenario type: list_scenarios returns available scenarios, force_* returns state transition results, simulate_* returns simulation results.
+ */
+export type ComplyTestControllerResponse =
+  | ListScenariosSuccess
+  | StateTransitionSuccess
+  | SimulationSuccess
+  | ControllerError;
+
+/**
+ * Lists which scenarios this seller's test controller supports
+ */
+export interface ListScenariosSuccess {
+  success: true;
+  /**
+   * Scenarios this seller has implemented
+   */
+  scenarios: (
+    | 'force_creative_status'
+    | 'force_account_status'
+    | 'force_media_buy_status'
+    | 'force_session_status'
+    | 'simulate_delivery'
+    | 'simulate_budget_spend'
+  )[];
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * A force_* scenario successfully transitioned the entity to the target state
+ */
+export interface StateTransitionSuccess {
+  success: true;
+  /**
+   * State before this transition
+   */
+  previous_state: string;
+  /**
+   * State after this transition
+   */
+  current_state: string;
+  /**
+   * Human-readable description of the transition
+   */
+  message?: string;
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * A simulate_delivery or simulate_budget_spend scenario succeeded. For delivery: simulated contains impressions/clicks/reported_spend/conversions and cumulative contains running totals. For budget: simulated contains spend_percentage/computed_spend/budget.
+ */
+export interface SimulationSuccess {
+  success: true;
+  /**
+   * Values injected or applied by this call. Shape depends on scenario.
+   */
+  simulated: {};
+  /**
+   * Running totals across all simulation calls (simulate_delivery only)
+   */
+  cumulative?: {};
+  message?: string;
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * The scenario failed — invalid transition, unknown entity, unsupported scenario, or invalid params
+ */
+export interface ControllerError {
+  success: false;
+  /**
+   * Structured error code
+   */
+  error:
+    | 'INVALID_TRANSITION'
+    | 'INVALID_STATE'
+    | 'NOT_FOUND'
+    | 'UNKNOWN_SCENARIO'
+    | 'INVALID_PARAMS'
+    | 'FORBIDDEN'
+    | 'INTERNAL_ERROR';
+  /**
+   * Human-readable explanation of the failure
+   */
+  error_detail?: string;
+  /**
+   * Current state of the entity, or null if not found
+   */
+  current_state?: string | null;
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+
