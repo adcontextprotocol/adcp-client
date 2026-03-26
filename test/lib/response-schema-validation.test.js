@@ -436,4 +436,44 @@ describe('validateResponseSchema', () => {
       assert.ok(result.warnings[0].includes('unknown_tool'));
     });
   });
+
+  // ---- Union schema error messages ----
+  describe('union schema error reporting', () => {
+    it('reports specific field errors for create_media_buy instead of (root): Invalid input', () => {
+      const result = validateResponseSchema('create_media_buy', {
+        packages: [{ package_id: 'pkg1', budget: 1000 }],
+      });
+      assert.strictEqual(result.passed, false);
+      assert.ok(!result.error.includes('(root): Invalid input'), 'Should not show generic union error');
+      assert.ok(result.error.includes('media_buy_id'), 'Should mention the missing field');
+    });
+
+    it('reports specific field errors for activate_signal union schema', () => {
+      const result = validateResponseSchema('activate_signal', { signal_id: 'sig1' });
+      assert.strictEqual(result.passed, false);
+      assert.ok(!result.error.includes('(root): Invalid input'), 'Should not show generic union error');
+      assert.ok(result.error.includes('deployments'), 'Should mention the missing field');
+    });
+
+    it('reports specific field errors for build_creative 3-variant union', () => {
+      const result = validateResponseSchema('build_creative', { creative_id: 'c1' });
+      assert.strictEqual(result.passed, false);
+      assert.ok(!result.error.includes('(root): Invalid input'), 'Should not show generic union error');
+      assert.ok(result.error.includes('creative_manifest'), 'Should mention a specific missing field');
+    });
+
+    it('still reports normal errors for non-union schemas', () => {
+      const result = validateResponseSchema('get_products', { not_products: true });
+      assert.strictEqual(result.passed, false);
+      assert.ok(result.error.includes('products'), 'Should mention missing products field');
+    });
+
+    it('can access union variant options from Zod schema internals', () => {
+      // Canary test: if Zod upgrades break _def.options, this catches it
+      const schema = TOOL_RESPONSE_SCHEMAS['create_media_buy'];
+      const options = schema._def?.options;
+      assert.ok(Array.isArray(options), 'Expected _def.options to be an array (Zod internals may have changed)');
+      assert.ok(options.length >= 2, 'create_media_buy should be a union of at least 2 variants');
+    });
+  });
 });
