@@ -103,6 +103,27 @@ export function unwrapProtocolResponse(
 
       const result = wrapperSchema.safeParse(unwrapped);
       if (!result.success) {
+        // Union schemas produce a generic "Invalid input" at (root).
+        // Try each variant to surface the actual missing/invalid fields.
+        const options = (schema as any)._def?.options as any[] | undefined;
+        const firstIssue = result.error.issues[0];
+        const isUnionError = result.error.issues.length === 1 && firstIssue?.code === 'invalid_union';
+
+        if (isUnionError && options && options.length > 0) {
+          let bestMessage = result.error.message;
+          let fewestIssues = Infinity;
+          for (const variant of options) {
+            const vr = variant.safeParse(unwrapped);
+            if (!vr.success && vr.error.issues.length < fewestIssues) {
+              fewestIssues = vr.error.issues.length;
+              bestMessage = vr.error.issues
+                .map((i: any) => `${i.path.length > 0 ? i.path.join('.') : '(root)'}: ${i.message}`)
+                .join('; ');
+            }
+          }
+          throw new Error(`Response validation failed for ${toolName}: ${bestMessage}`);
+        }
+
         throw new Error(`Response validation failed for ${toolName}: ${result.error.message}`);
       }
 

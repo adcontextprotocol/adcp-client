@@ -614,6 +614,24 @@ describe('Response Unwrapper', () => {
         /Response validation failed for create_media_buy/
       );
     });
+
+    test('should report specific field names for union schema validation failures', () => {
+      const mcpResponse = {
+        structuredContent: {
+          packages: [createTestPackage({ package_id: 'pkg1' })],
+          // Missing media_buy_id — union schema would show "(root): Invalid input"
+        },
+        content: [{ type: 'text', text: 'Created' }],
+      };
+
+      try {
+        unwrapProtocolResponse(mcpResponse, 'create_media_buy', 'mcp');
+        assert.fail('Should have thrown');
+      } catch (e) {
+        assert.ok(e.message.includes('media_buy_id'), `Error should mention missing field, got: ${e.message}`);
+        assert.ok(!e.message.includes('"Invalid input"'), 'Should not show generic union error');
+      }
+    });
   });
 
   describe('Protocol Auto-Detection Edge Cases', () => {

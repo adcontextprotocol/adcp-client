@@ -478,6 +478,11 @@ export async function discoverSignals(
 /**
  * Validate response data against the AdCP Zod schema for a tool.
  * Returns a TestStepResult indicating pass/fail with details on schema violations.
+ *
+ * For union schemas (success | error responses), Zod's top-level error is the
+ * unhelpful "(root): Invalid input". This function detects that case and
+ * reports per-variant errors instead, picking the variant with the fewest
+ * issues (the closest match) so the developer sees actionable field names.
  */
 export function validateResponseSchema(toolName: string, data: unknown): TestStepResult {
   const schema = TOOL_RESPONSE_SCHEMAS[toolName];
@@ -501,10 +506,40 @@ export function validateResponseSchema(toolName: string, data: unknown): TestSte
     };
   }
 
-  const violations = result.error.issues.map(i => {
+  let violations = result.error.issues.map(i => {
     const path = i.path.length > 0 ? i.path.join('.') : '(root)';
     return { path, message: i.message, code: i.code };
   });
+
+  // Union schemas produce "(root): Invalid input" when no variant matches.
+  // Try each variant individually and report the closest match's errors.
+  const first = violations[0];
+  const isUnionError = violations.length === 1 && first && first.path === '(root)' && first.code === 'invalid_union';
+  const options = (schema as any)._def?.options as any[] | undefined;
+
+  if (isUnionError && options && options.length > 0) {
+    let bestErrors: typeof violations = violations;
+    let fewestIssues = Infinity;
+
+    for (const variant of options) {
+      const variantResult = variant.safeParse(data);
+      if (variantResult.success) {
+        // Shouldn't happen (union already failed), but handle gracefully
+        bestErrors = [];
+        break;
+      }
+      const variantViolations = variantResult.error.issues.map((i: any) => {
+        const path = i.path.length > 0 ? i.path.join('.') : '(root)';
+        return { path, message: i.message, code: i.code };
+      });
+      if (variantViolations.length < fewestIssues) {
+        fewestIssues = variantViolations.length;
+        bestErrors = variantViolations;
+      }
+    }
+
+    violations = bestErrors;
+  }
 
   return {
     step: `Schema validation: ${toolName}`,
