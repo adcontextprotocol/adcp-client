@@ -16,10 +16,11 @@ import type {
   ComplianceResult,
   ComplianceSummary,
   AdvisoryObservation,
+  OverallStatus,
   PlatformType,
   PlatformCoherenceResult,
 } from './types';
-import { getPlatformProfile } from './profiles';
+import { getPlatformProfile, getAllPlatformTypes } from './profiles';
 import type { PlatformProfile } from './profiles';
 import { closeMCPConnections } from '../../protocols/mcp';
 import { detectController, hasTestController } from '../test-controller';
@@ -536,8 +537,8 @@ function collectObservations(
 export interface ComplyOptions extends TestOptions {
   /** Only run specific tracks (default: all applicable) */
   tracks?: ComplianceTrack[];
-  /** Declare the platform type for coherence checking */
-  platform_type?: PlatformType;
+  /** Declare the platform type for coherence checking. Accepts any string — validated internally. */
+  platform_type?: PlatformType | string;
   /** Timeout in milliseconds — stops new scenarios from starting when exceeded */
   timeout_ms?: number;
   /** AbortSignal for external cancellation (e.g., graceful shutdown) */
@@ -559,7 +560,18 @@ export async function comply(agentUrl: string, options: ComplyOptions = {}): Pro
 async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<ComplianceResult> {
   const start = Date.now();
   const { tracks: trackFilter, platform_type, timeout_ms, signal: externalSignal, ...testOptions } = options;
-  const platformProfile = platform_type ? getPlatformProfile(platform_type) : undefined;
+
+  // Validate platform_type if provided (issue #402: accept string, validate internally)
+  let platformProfile: PlatformProfile | undefined;
+  if (platform_type) {
+    const validTypes = getAllPlatformTypes();
+    if (!validTypes.includes(platform_type as PlatformType)) {
+      throw new Error(
+        `Unknown platform_type: "${platform_type}". Valid types: ${validTypes.join(', ')}`
+      );
+    }
+    platformProfile = getPlatformProfile(platform_type as PlatformType);
+  }
 
   // Validate timeout_ms
   if (timeout_ms !== undefined) {
@@ -672,7 +684,11 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
       return {
         agent_url: agentUrl,
         agent_profile: profile,
+        overall_status: (isAuthError ? 'auth_required' : 'unreachable') as OverallStatus,
         tracks: [],
+        tested_tracks: [],
+        skipped_tracks: [],
+        expected_tracks: [],
         summary: {
           tracks_passed: 0,
           tracks_failed: 0,
@@ -823,10 +839,32 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
 
     const summary = buildSummary(trackResults);
 
+    // Partition tracks by disposition (issue #403)
+    const testedTracks = trackResults.filter(
+      t => t.status === 'pass' || t.status === 'fail' || t.status === 'partial'
+    );
+    const skippedTracks = trackResults
+      .filter(t => t.status === 'skip')
+      .map(t => ({ track: t.track, label: t.label, reason: 'Agent lacks required tools' }));
+    const expectedTracks = trackResults
+      .filter(t => t.status === 'expected')
+      .map(t => ({
+        track: t.track,
+        label: t.label,
+        reason: `Expected for ${platformCoherence?.label ?? 'declared platform type'}`,
+      }));
+
+    // Compute overall status (issue #401)
+    const overallStatus = computeOverallStatus(summary);
+
     return {
       agent_url: agentUrl,
       agent_profile: profile,
+      overall_status: overallStatus,
       tracks: trackResults,
+      tested_tracks: testedTracks,
+      skipped_tracks: skippedTracks,
+      expected_tracks: expectedTracks,
       summary,
       observations: allObservations,
       platform_coherence: platformCoherence,
@@ -842,6 +880,14 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
       externalSignal.removeEventListener('abort', onExternalAbort);
     }
   }
+}
+
+function computeOverallStatus(summary: ComplianceSummary): OverallStatus {
+  const attempted = summary.tracks_passed + summary.tracks_failed + summary.tracks_partial;
+  if (attempted === 0) return 'failing';
+  if (summary.tracks_failed === 0 && summary.tracks_partial === 0) return 'passing';
+  if (summary.tracks_passed === 0 && summary.tracks_partial === 0) return 'failing';
+  return 'partial';
 }
 
 function buildSummary(tracks: TrackResult[]): ComplianceSummary {

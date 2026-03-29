@@ -16,6 +16,7 @@ export type {
   ComplianceTrack,
   TrackResult,
   TrackStatus,
+  OverallStatus,
   ComplianceResult,
   ComplianceSummary,
   AdvisoryObservation,

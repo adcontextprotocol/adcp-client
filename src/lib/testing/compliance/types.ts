@@ -28,6 +28,8 @@ export type ComplianceTrack =
 
 export type TrackStatus = 'pass' | 'fail' | 'skip' | 'partial' | 'expected';
 
+export type OverallStatus = 'passing' | 'failing' | 'partial' | 'auth_required' | 'unreachable';
+
 export interface TrackResult {
   track: ComplianceTrack;
   status: TrackStatus;
@@ -48,8 +50,16 @@ export interface TrackResult {
 export interface ComplianceResult {
   agent_url: string;
   agent_profile: AgentProfile;
+  /** Machine-readable overall status */
+  overall_status: OverallStatus;
   /** Per-track results — every applicable track is run */
   tracks: TrackResult[];
+  /** Only tracks that were actually tested (status is pass/fail/partial) */
+  tested_tracks: TrackResult[];
+  /** Tracks skipped because the agent lacks the relevant tools */
+  skipped_tracks: Array<{ track: ComplianceTrack; label: string; reason: string }>;
+  /** Tracks expected by the declared platform type but not supported */
+  expected_tracks: Array<{ track: ComplianceTrack; label: string; reason: string }>;
   /** Quick summary: how many tracks pass/fail/skip */
   summary: ComplianceSummary;
   /** Advisory observations across all tracks */

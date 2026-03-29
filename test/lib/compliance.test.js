@@ -359,6 +359,7 @@ describe('formatComplianceResults', () => {
   const mockResult = {
     agent_url: 'https://example.com/mcp',
     agent_profile: { name: 'Test Agent', tools: ['get_products', 'create_media_buy'] },
+    overall_status: 'partial',
     tracks: [
       {
         track: 'core',
@@ -406,6 +407,28 @@ describe('formatComplianceResults', () => {
         duration_ms: 0,
       },
     ],
+    tested_tracks: [
+      {
+        track: 'core',
+        status: 'pass',
+        label: 'Core Protocol',
+        scenarios: [],
+        skipped_scenarios: [],
+        observations: [],
+        duration_ms: 100,
+      },
+      {
+        track: 'products',
+        status: 'fail',
+        label: 'Product Discovery',
+        scenarios: [],
+        skipped_scenarios: [],
+        observations: [],
+        duration_ms: 50,
+      },
+    ],
+    skipped_tracks: [{ track: 'signals', label: 'Signals', reason: 'Agent lacks required tools' }],
+    expected_tracks: [],
     summary: {
       tracks_passed: 1,
       tracks_failed: 1,
@@ -490,6 +513,122 @@ describe('formatComplianceResults', () => {
     const output = formatComplianceResults(mockResult);
     assert.ok(!output.includes('Platform Coherence'), 'Should not show coherence without platform_type');
     assert.ok(!output.includes('Platform:'), 'Should not show platform in header');
+  });
+});
+
+// ============================================================
+// overall_status (issue #401)
+// ============================================================
+
+describe('overall_status', () => {
+  test('passing when all tested tracks pass', () => {
+    const result = {
+      overall_status: 'passing',
+      tracks: [
+        { track: 'core', status: 'pass' },
+        { track: 'signals', status: 'skip' },
+      ],
+      tested_tracks: [{ track: 'core', status: 'pass' }],
+      skipped_tracks: [{ track: 'signals', label: 'Signals', reason: 'Agent lacks required tools' }],
+      expected_tracks: [],
+      summary: { tracks_passed: 1, tracks_failed: 0, tracks_skipped: 1, tracks_partial: 0, tracks_expected: 0, headline: 'All 1 track(s) pass' },
+    };
+    assert.strictEqual(result.overall_status, 'passing');
+  });
+
+  test('failing when all tested tracks fail', () => {
+    const result = {
+      overall_status: 'failing',
+      summary: { tracks_passed: 0, tracks_failed: 2, tracks_skipped: 0, tracks_partial: 0, tracks_expected: 0, headline: 'All 2 attempted track(s) failing' },
+    };
+    assert.strictEqual(result.overall_status, 'failing');
+  });
+
+  test('partial when some pass and some fail', () => {
+    const result = {
+      overall_status: 'partial',
+      summary: { tracks_passed: 1, tracks_failed: 1, tracks_skipped: 0, tracks_partial: 0, tracks_expected: 0, headline: '1 passing, 1 failing' },
+    };
+    assert.strictEqual(result.overall_status, 'partial');
+  });
+
+  test('auth_required is a valid status', () => {
+    const result = { overall_status: 'auth_required' };
+    assert.strictEqual(result.overall_status, 'auth_required');
+  });
+
+  test('unreachable is a valid status', () => {
+    const result = { overall_status: 'unreachable' };
+    assert.strictEqual(result.overall_status, 'unreachable');
+  });
+});
+
+// ============================================================
+// platform_type as string (issue #402)
+// ============================================================
+
+describe('platform_type as string', () => {
+  test('getPlatformProfile works with string values', () => {
+    const type = 'social_platform';
+    const profile = getPlatformProfile(type);
+    assert.strictEqual(profile.type, 'social_platform');
+  });
+
+  test('getPlatformProfile throws for unknown string', () => {
+    assert.throws(() => getPlatformProfile('not_a_type'), /Unknown platform type/);
+  });
+});
+
+// ============================================================
+// Track partitioning (issue #403)
+// ============================================================
+
+describe('track partitioning', () => {
+  const result = {
+    tracks: [
+      { track: 'core', status: 'pass', label: 'Core Protocol' },
+      { track: 'products', status: 'fail', label: 'Product Discovery' },
+      { track: 'media_buy', status: 'partial', label: 'Media Buy Lifecycle' },
+      { track: 'signals', status: 'skip', label: 'Signals' },
+      { track: 'audiences', status: 'expected', label: 'Audience Management' },
+    ],
+    tested_tracks: [
+      { track: 'core', status: 'pass', label: 'Core Protocol' },
+      { track: 'products', status: 'fail', label: 'Product Discovery' },
+      { track: 'media_buy', status: 'partial', label: 'Media Buy Lifecycle' },
+    ],
+    skipped_tracks: [{ track: 'signals', label: 'Signals', reason: 'Agent lacks required tools' }],
+    expected_tracks: [{ track: 'audiences', label: 'Audience Management', reason: 'Expected for Social Platform' }],
+  };
+
+  test('tested_tracks contains only pass/fail/partial tracks', () => {
+    for (const t of result.tested_tracks) {
+      assert.ok(
+        ['pass', 'fail', 'partial'].includes(t.status),
+        `tested_tracks should not contain status: ${t.status}`
+      );
+    }
+  });
+
+  test('skipped_tracks has track, label, and reason', () => {
+    for (const t of result.skipped_tracks) {
+      assert.ok(t.track, 'skipped_tracks entry missing track');
+      assert.ok(t.label, 'skipped_tracks entry missing label');
+      assert.ok(t.reason, 'skipped_tracks entry missing reason');
+    }
+  });
+
+  test('expected_tracks has track, label, and reason', () => {
+    for (const t of result.expected_tracks) {
+      assert.ok(t.track, 'expected_tracks entry missing track');
+      assert.ok(t.label, 'expected_tracks entry missing label');
+      assert.ok(t.reason, 'expected_tracks entry missing reason');
+    }
+  });
+
+  test('tested_tracks + skipped_tracks + expected_tracks cover all tracks', () => {
+    const total = result.tested_tracks.length + result.skipped_tracks.length + result.expected_tracks.length;
+    assert.strictEqual(total, result.tracks.length);
   });
 });
 
