@@ -174,7 +174,14 @@ describe('checkCoherence', () => {
     const profile = getPlatformProfile('social_platform');
     const agent = {
       name: 'Social Agent',
-      tools: ['get_products', 'create_media_buy', 'list_creative_formats', 'sync_audiences', 'sync_creatives', 'get_media_buy_delivery'],
+      tools: [
+        'get_products',
+        'create_media_buy',
+        'list_creative_formats',
+        'sync_audiences',
+        'sync_creatives',
+        'get_media_buy_delivery',
+      ],
     };
     const findings = profile.checkCoherence(agent);
     // Should only have the channel suggestion (which is always present for platforms with expected_channels)
@@ -264,13 +271,7 @@ describe('linear_tv_platform coherence', () => {
     const profile = getPlatformProfile('linear_tv_platform');
     const agent = {
       name: 'Linear TV Agent',
-      tools: [
-        'get_products',
-        'create_media_buy',
-        'list_creative_formats',
-        'sync_creatives',
-        'get_media_buy_delivery',
-      ],
+      tools: ['get_products', 'create_media_buy', 'list_creative_formats', 'sync_creatives', 'get_media_buy_delivery'],
     };
     const findings = profile.checkCoherence(agent);
     const nonSuggestions = findings.filter(f => f.severity !== 'suggestion');
@@ -291,9 +292,18 @@ describe('linear_tv_platform coherence', () => {
     const warnings = findings.filter(f => f.severity === 'warning');
     assert.ok(warnings.length >= 3, `Expected at least 3 warnings, got ${warnings.length}`);
     const missingTools = warnings.map(f => f.expected);
-    assert.ok(missingTools.some(e => e.includes('list_creative_formats')), 'Should flag list_creative_formats');
-    assert.ok(missingTools.some(e => e.includes('sync_creatives')), 'Should flag sync_creatives');
-    assert.ok(missingTools.some(e => e.includes('get_media_buy_delivery')), 'Should flag get_media_buy_delivery');
+    assert.ok(
+      missingTools.some(e => e.includes('list_creative_formats')),
+      'Should flag list_creative_formats'
+    );
+    assert.ok(
+      missingTools.some(e => e.includes('sync_creatives')),
+      'Should flag sync_creatives'
+    );
+    assert.ok(
+      missingTools.some(e => e.includes('get_media_buy_delivery')),
+      'Should flag get_media_buy_delivery'
+    );
   });
 
   test('has correct behavioral characteristics', () => {
@@ -322,7 +332,10 @@ describe('behavioral characteristics', () => {
     const types = getAllPlatformTypes();
     for (const type of types) {
       const profile = getPlatformProfile(type);
-      assert.ok(valid.includes(profile.inventory_model), `${type} has invalid inventory_model: ${profile.inventory_model}`);
+      assert.ok(
+        valid.includes(profile.inventory_model),
+        `${type} has invalid inventory_model: ${profile.inventory_model}`
+      );
     }
   });
 
