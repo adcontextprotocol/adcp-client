@@ -61,7 +61,7 @@ export async function testCreativeFlow(
           client.buildCreative({
             target_format_id: format.format_id,
             brand: resolveBrand(options),
-            message: `Create a ${format.type || 'display'} ad for an e-commerce brand promoting summer sale`,
+            message: `Create an ad for an e-commerce brand promoting summer sale`,
             quality: 'draft',
             include_preview: true,
           } as unknown as BuildCreativeRequest) as Promise<TaskResult>
@@ -220,11 +220,10 @@ export async function testCreativeLifecycle(
 
   profile.supported_formats = formats;
 
-  // Validate format schema: each format should have format_id, type, and required_assets
+  // Validate format schema: each format should have format_id
   const formatSchemaIssues: string[] = [];
   for (const format of formats) {
     if (!format.format_id) formatSchemaIssues.push('Missing format_id');
-    if (!format.type) formatSchemaIssues.push(`Format ${format.format_id}: missing type`);
   }
 
   steps.push({
@@ -240,8 +239,8 @@ export async function testCreativeLifecycle(
 
   // Step 2: Sync multiple creatives (image + video if formats allow)
   if (profile.tools.includes('sync_creatives')) {
-    const imageFormat = formats.find(f => f.type === 'display' || f.type === 'image') ?? formats[0]!;
-    const videoFormat = formats.find(f => f.type === 'video');
+    const imageFormat = formats[0]!;
+    const videoFormat = formats.length > 1 ? formats[1] : undefined;
 
     const creativesToSync = [
       {
@@ -416,7 +415,7 @@ export async function testCreativeLifecycle(
         client.executeTask('build_creative', {
           target_format_id: targetFormat.format_id,
           brand: resolveBrand(options),
-          message: `Create a ${targetFormat.type || 'display'} ad for lifecycle testing`,
+          message: `Create an ad for lifecycle testing`,
           quality: 'draft',
           include_preview: true,
         }) as Promise<TaskResult>
@@ -488,18 +487,8 @@ function selectFormatsToTest(
     return formats.slice(0, maxFormats);
   }
 
-  // Default: test one format of each type (display, video, audio, native, dooh)
-  const byType = new Map<string, NonNullable<AgentProfile['supported_formats']>[0]>();
-  for (const format of formats) {
-    const type = format.type || 'unknown';
-    if (!byType.has(type)) {
-      byType.set(type, format);
-    }
-  }
-
-  // Return at least one format, max 3 different types
-  const selected = Array.from(byType.values()).slice(0, 3);
-  return selected.length > 0 ? selected : formats.slice(0, 1);
+  // Default: test up to 3 formats
+  return formats.slice(0, 3);
 }
 
 /**

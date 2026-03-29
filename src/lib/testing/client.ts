@@ -348,7 +348,6 @@ export async function discoverCreativeFormats(
       const formatInfo: NonNullable<AgentProfile['supported_formats']>[0] = {
         format_id: format.format_id,
         name: format.name,
-        type: format.type,
         required_assets: [],
         optional_assets: [],
       };
@@ -379,7 +378,6 @@ export async function discoverCreativeFormats(
     step.response_preview = JSON.stringify(
       {
         format_count: formats.length,
-        format_types: [...new Set(formats.map(f => f.type).filter(Boolean))],
         sample_formats: formats.slice(0, 3).map(f => ({
           id: f.format_id,
           name: f.name,

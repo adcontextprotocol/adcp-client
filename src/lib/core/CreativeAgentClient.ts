@@ -72,9 +72,6 @@ export class CreativeAgentClient {
    * ```typescript
    * const formats = await creativeAgent.listFormats();
    *
-   * // Filter to display formats
-   * const displayFormats = formats.filter(f => f.type === 'display');
-   *
    * // Find by dimensions
    * const banners = formats.filter(f =>
    *   f.renders?.[0]?.dimensions?.width === 300 &&
@@ -94,23 +91,6 @@ export class CreativeAgentClient {
       ...format,
       agent_url: this.agentUrl,
     }));
-  }
-
-  /**
-   * Find formats by type
-   *
-   * @param type - Format type to filter by
-   * @returns Promise resolving to matching formats
-   *
-   * @example
-   * ```typescript
-   * const videoFormats = await creativeAgent.findByType('video');
-   * const displayFormats = await creativeAgent.findByType('display');
-   * ```
-   */
-  async findByType(type: CreativeFormatType): Promise<CreativeFormat[]> {
-    const allFormats = await this.listFormats();
-    return allFormats.filter(f => f.type === type);
   }
 
   /**
@@ -200,12 +180,7 @@ export class CreativeAgentClient {
 }
 
 /**
- * Creative format type
- */
-export type CreativeFormatType = 'audio' | 'video' | 'display' | 'native' | 'dooh' | 'rich_media' | 'universal';
-
-/**
- * Creative format definition (per AdCP v2.0.0 spec)
+ * Creative format definition.
  *
  * Extends the official Format type from the schema with an additional
  * agent_url field for convenience when working with creative agents.

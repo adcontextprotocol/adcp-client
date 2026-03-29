@@ -29,4 +29,6 @@ export type {
   AINativePlatformType,
   CoherenceFinding,
   PlatformCoherenceResult,
+  InventoryModel,
+  PricingModel,
 } from './types';

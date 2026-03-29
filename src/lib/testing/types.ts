@@ -173,7 +173,6 @@ export interface AgentProfile {
   supported_formats?: Array<{
     format_id: FormatID;
     name?: string;
-    type?: string;
     required_assets?: string[];
     optional_assets?: string[];
   }>;

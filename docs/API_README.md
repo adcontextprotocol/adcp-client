@@ -260,9 +260,6 @@ const creativeClient = new CreativeAgentClient({
 
 // List available formats
 const formats = await creativeClient.listFormats();
-
-// Find formats by type
-const videoFormats = await creativeClient.findByType('video');
 ```
 
 See [`CreativeAgentClient`](./classes/CreativeAgentClient.html) for details.

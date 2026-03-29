@@ -119,7 +119,8 @@ export type SalesPlatformType =
   | 'dsp'
   | 'retail_media'
   | 'search_platform'
-  | 'audio_platform';
+  | 'audio_platform'
+  | 'linear_tv_platform';
 
 /**
  * Creative agent types — differ in statefulness and tool surface.
@@ -137,6 +138,16 @@ export type SponsoredIntelligenceType = 'si_platform';
 export type AINativePlatformType = 'ai_ad_network' | 'ai_platform' | 'generative_dsp';
 
 export type PlatformType = SalesPlatformType | CreativeAgentType | SponsoredIntelligenceType | AINativePlatformType;
+
+// ============================================================
+// PLATFORM BEHAVIORAL CHARACTERISTICS
+// ============================================================
+
+/** How inventory is allocated to buyers */
+export type InventoryModel = 'reserved' | 'auction' | 'guaranteed' | 'hybrid';
+
+/** Pricing models the platform supports — visible in get_products responses */
+export type PricingModel = 'cpm' | 'cpc' | 'cpp' | 'flat' | 'auction';
 
 /**
  * A coherence finding: something expected by the platform type

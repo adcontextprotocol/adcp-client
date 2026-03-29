@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-03-26T14:59:00.173Z
+// Generated at: 2026-03-28T21:19:38.502Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -1112,8 +1112,6 @@ export const AccountReferenceSchema = z.union([z.object({
         sandbox: z.boolean().nullish()
     }).passthrough()]);
 
-export const FormatCategorySchema = z.union([z.literal("audio"), z.literal("video"), z.literal("display"), z.literal("native"), z.literal("dooh"), z.literal("rich_media"), z.literal("universal")]);
-
 export const GeographicTargetingLevelSchema = z.union([z.literal("country"), z.literal("region"), z.literal("metro"), z.literal("postal_area")]);
 
 export const SignalTargetingSchema = z.union([z.object({
@@ -1255,7 +1253,6 @@ export const WCAGLevelSchema = z.union([z.literal("A"), z.literal("AA"), z.liter
 
 export const ListCreativeFormatsRequestSchema = z.object({
     format_ids: z.array(FormatIDSchema).nullish(),
-    type: FormatCategorySchema.nullish(),
     asset_types: z.array(AssetContentTypeSchema).nullish(),
     max_width: z.number().nullish(),
     max_height: z.number().nullish(),
@@ -2022,7 +2019,6 @@ export const SortDirectionSchema = z.union([z.literal("asc"), z.literal("desc")]
 
 export const CreativeFiltersSchema = z.object({
     accounts: z.array(AccountReferenceSchema).nullish(),
-    format_types: z.array(z.string()).nullish(),
     statuses: z.array(CreativeStatusSchema).nullish(),
     tags: z.array(z.string()).nullish(),
     tags_any: z.array(z.string()).nullish(),
@@ -3598,7 +3594,6 @@ export const ProductFiltersSchema = z.object({
     delivery_type: DeliveryTypeSchema.nullish(),
     exclusivity: ExclusivitySchema.nullish(),
     is_fixed_price: z.boolean().nullish(),
-    format_types: z.array(FormatCategorySchema).nullish(),
     format_ids: z.array(FormatIDSchema).nullish(),
     standard_formats_only: z.boolean().nullish(),
     min_exposures: z.number().nullish(),
@@ -4261,7 +4256,6 @@ export const FormatSchema = z.object({
     name: z.string(),
     description: z.string().nullish(),
     example_url: z.string().nullish(),
-    type: FormatCategorySchema.nullish(),
     accepts_parameters: z.array(FormatIDParameterSchema).nullish(),
     renders: z.array(z.union([z.record(z.string(), z.unknown()), z.object({
             parameters_from_format_id: z.literal(true)
