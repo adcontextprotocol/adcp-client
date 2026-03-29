@@ -8,6 +8,7 @@ const assert = require('node:assert');
 const {
   // Comply
   comply,
+  computeOverallStatus,
   formatComplianceResults,
   formatComplianceResultsJSON,
   // Brief library
@@ -427,7 +428,7 @@ describe('formatComplianceResults', () => {
         duration_ms: 50,
       },
     ],
-    skipped_tracks: [{ track: 'signals', label: 'Signals', reason: 'Agent lacks required tools' }],
+    skipped_tracks: [{ track: 'signals', label: 'Signals', reason: 'Agent lacks required tools: get_signals' }],
     expected_tracks: [],
     summary: {
       tracks_passed: 1,
@@ -517,49 +518,33 @@ describe('formatComplianceResults', () => {
 });
 
 // ============================================================
-// overall_status (issue #401)
+// computeOverallStatus (issue #401)
 // ============================================================
 
-describe('overall_status', () => {
-  test('passing when all tested tracks pass', () => {
-    const result = {
-      overall_status: 'passing',
-      tracks: [
-        { track: 'core', status: 'pass' },
-        { track: 'signals', status: 'skip' },
-      ],
-      tested_tracks: [{ track: 'core', status: 'pass' }],
-      skipped_tracks: [{ track: 'signals', label: 'Signals', reason: 'Agent lacks required tools' }],
-      expected_tracks: [],
-      summary: { tracks_passed: 1, tracks_failed: 0, tracks_skipped: 1, tracks_partial: 0, tracks_expected: 0, headline: 'All 1 track(s) pass' },
-    };
-    assert.strictEqual(result.overall_status, 'passing');
+describe('computeOverallStatus', () => {
+  test('returns passing when all tracks pass', () => {
+    const summary = { tracks_passed: 3, tracks_failed: 0, tracks_skipped: 2, tracks_partial: 0, tracks_expected: 0, headline: '' };
+    assert.strictEqual(computeOverallStatus(summary), 'passing');
   });
 
-  test('failing when all tested tracks fail', () => {
-    const result = {
-      overall_status: 'failing',
-      summary: { tracks_passed: 0, tracks_failed: 2, tracks_skipped: 0, tracks_partial: 0, tracks_expected: 0, headline: 'All 2 attempted track(s) failing' },
-    };
-    assert.strictEqual(result.overall_status, 'failing');
+  test('returns failing when all attempted tracks fail', () => {
+    const summary = { tracks_passed: 0, tracks_failed: 2, tracks_skipped: 1, tracks_partial: 0, tracks_expected: 0, headline: '' };
+    assert.strictEqual(computeOverallStatus(summary), 'failing');
   });
 
-  test('partial when some pass and some fail', () => {
-    const result = {
-      overall_status: 'partial',
-      summary: { tracks_passed: 1, tracks_failed: 1, tracks_skipped: 0, tracks_partial: 0, tracks_expected: 0, headline: '1 passing, 1 failing' },
-    };
-    assert.strictEqual(result.overall_status, 'partial');
+  test('returns partial when mix of pass and fail', () => {
+    const summary = { tracks_passed: 1, tracks_failed: 1, tracks_skipped: 0, tracks_partial: 0, tracks_expected: 0, headline: '' };
+    assert.strictEqual(computeOverallStatus(summary), 'partial');
   });
 
-  test('auth_required is a valid status', () => {
-    const result = { overall_status: 'auth_required' };
-    assert.strictEqual(result.overall_status, 'auth_required');
+  test('returns partial when some tracks are partial', () => {
+    const summary = { tracks_passed: 1, tracks_failed: 0, tracks_skipped: 0, tracks_partial: 1, tracks_expected: 0, headline: '' };
+    assert.strictEqual(computeOverallStatus(summary), 'partial');
   });
 
-  test('unreachable is a valid status', () => {
-    const result = { overall_status: 'unreachable' };
-    assert.strictEqual(result.overall_status, 'unreachable');
+  test('returns partial when no tracks attempted (all skipped)', () => {
+    const summary = { tracks_passed: 0, tracks_failed: 0, tracks_skipped: 5, tracks_partial: 0, tracks_expected: 0, headline: '' };
+    assert.strictEqual(computeOverallStatus(summary), 'partial');
   });
 });
 
@@ -568,14 +553,22 @@ describe('overall_status', () => {
 // ============================================================
 
 describe('platform_type as string', () => {
-  test('getPlatformProfile works with string values', () => {
-    const type = 'social_platform';
-    const profile = getPlatformProfile(type);
-    assert.strictEqual(profile.type, 'social_platform');
+  test('comply() rejects unknown platform_type with descriptive error', async () => {
+    await assert.rejects(
+      () => comply('http://localhost:1', { platform_type: 'not_a_type', timeout_ms: 1000 }),
+      (err) => {
+        assert.ok(err.message.includes('Unknown platform_type: "not_a_type"'), 'Should include the bad value');
+        assert.ok(err.message.includes('Valid types:'), 'Should list valid types');
+        return true;
+      }
+    );
   });
 
-  test('getPlatformProfile throws for unknown string', () => {
-    assert.throws(() => getPlatformProfile('not_a_type'), /Unknown platform type/);
+  test('comply() rejects prototype pollution strings', async () => {
+    await assert.rejects(
+      () => comply('http://localhost:1', { platform_type: '__proto__', timeout_ms: 1000 }),
+      /Unknown platform_type/
+    );
   });
 });
 
@@ -597,7 +590,7 @@ describe('track partitioning', () => {
       { track: 'products', status: 'fail', label: 'Product Discovery' },
       { track: 'media_buy', status: 'partial', label: 'Media Buy Lifecycle' },
     ],
-    skipped_tracks: [{ track: 'signals', label: 'Signals', reason: 'Agent lacks required tools' }],
+    skipped_tracks: [{ track: 'signals', label: 'Signals', reason: 'Agent lacks required tools: get_signals' }],
     expected_tracks: [{ track: 'audiences', label: 'Audience Management', reason: 'Expected for Social Platform' }],
   };
 

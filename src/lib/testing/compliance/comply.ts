@@ -564,8 +564,8 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
   // Validate platform_type if provided (issue #402: accept string, validate internally)
   let platformProfile: PlatformProfile | undefined;
   if (platform_type) {
-    const validTypes = getAllPlatformTypes();
-    if (!validTypes.includes(platform_type as PlatformType)) {
+    const validTypes: string[] = getAllPlatformTypes();
+    if (!validTypes.includes(platform_type)) {
       throw new Error(
         `Unknown platform_type: "${platform_type}". Valid types: ${validTypes.join(', ')}`
       );
@@ -845,7 +845,16 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
     );
     const skippedTracks = trackResults
       .filter(t => t.status === 'skip')
-      .map(t => ({ track: t.track, label: t.label, reason: 'Agent lacks required tools' }));
+      .map(t => {
+        const required = TRACK_RELEVANCE[t.track];
+        return {
+          track: t.track,
+          label: t.label,
+          reason: required.length > 0
+            ? `Agent lacks required tools: ${required.join(', ')}`
+            : 'Agent lacks required tools',
+        };
+      });
     const expectedTracks = trackResults
       .filter(t => t.status === 'expected')
       .map(t => ({
@@ -882,9 +891,13 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
   }
 }
 
-function computeOverallStatus(summary: ComplianceSummary): OverallStatus {
+/**
+ * Compute overall status for a reachable agent.
+ * auth_required and unreachable are set directly in the early-exit path.
+ */
+export function computeOverallStatus(summary: ComplianceSummary): OverallStatus {
   const attempted = summary.tracks_passed + summary.tracks_failed + summary.tracks_partial;
-  if (attempted === 0) return 'failing';
+  if (attempted === 0) return 'partial';
   if (summary.tracks_failed === 0 && summary.tracks_partial === 0) return 'passing';
   if (summary.tracks_passed === 0 && summary.tracks_partial === 0) return 'failing';
   return 'partial';
