@@ -479,6 +479,34 @@ async function handleTestCommand(args) {
 /**
  * Parse common agent/auth options shared by test and comply commands.
  */
+function closestFlag(input, known) {
+  let best = null;
+  let bestDist = Infinity;
+  for (const flag of known) {
+    const d = levenshtein(input, flag);
+    if (d < bestDist) {
+      bestDist = d;
+      best = flag;
+    }
+  }
+  // Only suggest if the edit distance is reasonable (at most ~30% of the flag length)
+  return bestDist <= Math.max(2, Math.ceil(input.length * 0.3)) ? best : null;
+}
+
+function levenshtein(a, b) {
+  const m = a.length,
+    n = b.length;
+  const dp = Array.from({ length: m + 1 }, () => new Array(n + 1));
+  for (let i = 0; i <= m; i++) dp[i][0] = i;
+  for (let j = 0; j <= n; j++) dp[0][j] = j;
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      dp[i][j] = a[i - 1] === b[j - 1] ? dp[i - 1][j - 1] : 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
+    }
+  }
+  return dp[m][n];
+}
+
 function parseAgentOptions(args) {
   const authIndex = args.indexOf('--auth');
   let authToken = process.env.ADCP_AUTH_TOKEN;
@@ -611,6 +639,32 @@ EXAMPLES:
   adcp comply --list-platform-types
 `);
     return;
+  }
+
+  // Detect unknown flags before parsing
+  const knownFlags = [
+    '--auth',
+    '--protocol',
+    '--tracks',
+    '--platform-type',
+    '--list-platform-types',
+    '--brief',
+    '--json',
+    '--debug',
+    '--no-dry-run',
+    '--help',
+  ];
+  const unknownFlags = args.filter(a => a.startsWith('--') && !knownFlags.includes(a));
+  if (unknownFlags.length > 0) {
+    for (const flag of unknownFlags) {
+      const suggestion = closestFlag(flag, knownFlags);
+      if (suggestion) {
+        console.error(`ERROR: Unknown flag: ${flag}\nDid you mean: ${suggestion}?\n`);
+      } else {
+        console.error(`ERROR: Unknown flag: ${flag}\n`);
+      }
+    }
+    process.exit(2);
   }
 
   const opts = parseAgentOptions(args);
