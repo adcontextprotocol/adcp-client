@@ -1,5 +1,11 @@
 # Changelog
 
+## 4.18.0
+
+### Minor Changes
+
+- c93b30b: Add `overall_status`, `tested_tracks`, `skipped_tracks`, and `expected_tracks` to ComplianceResult; accept `platform_type` as string with internal validation
+
 ## 4.17.0
 
 ### Minor Changes
