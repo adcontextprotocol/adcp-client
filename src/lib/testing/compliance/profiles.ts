@@ -79,7 +79,13 @@ export const PLATFORM_PROFILES: Record<PlatformType, PlatformProfile> = {
     type: 'display_ad_server',
     label: 'Display Ad Server',
     expected_tracks: ['core', 'products', 'media_buy', 'creative', 'reporting'],
-    expected_tools: ['get_products', 'create_media_buy', 'list_creative_formats', 'sync_creatives', 'get_media_buy_delivery'],
+    expected_tools: [
+      'get_products',
+      'create_media_buy',
+      'list_creative_formats',
+      'sync_creatives',
+      'get_media_buy_delivery',
+    ],
     expected_channels: ['display'],
     inventory_model: 'guaranteed',
     pricing_models: ['cpm', 'flat'],
@@ -105,7 +111,13 @@ export const PLATFORM_PROFILES: Record<PlatformType, PlatformProfile> = {
     type: 'video_ad_server',
     label: 'Video Ad Server',
     expected_tracks: ['core', 'products', 'media_buy', 'creative', 'reporting'],
-    expected_tools: ['get_products', 'create_media_buy', 'list_creative_formats', 'sync_creatives', 'get_media_buy_delivery'],
+    expected_tools: [
+      'get_products',
+      'create_media_buy',
+      'list_creative_formats',
+      'sync_creatives',
+      'get_media_buy_delivery',
+    ],
     expected_channels: ['ctv', 'olv'],
     inventory_model: 'guaranteed',
     pricing_models: ['cpm', 'flat'],
@@ -128,7 +140,13 @@ export const PLATFORM_PROFILES: Record<PlatformType, PlatformProfile> = {
     type: 'social_platform',
     label: 'Social Platform',
     expected_tracks: ['core', 'products', 'media_buy', 'creative', 'reporting', 'audiences'],
-    expected_tools: ['get_products', 'create_media_buy', 'list_creative_formats', 'sync_audiences', 'get_media_buy_delivery'],
+    expected_tools: [
+      'get_products',
+      'create_media_buy',
+      'list_creative_formats',
+      'sync_audiences',
+      'get_media_buy_delivery',
+    ],
     expected_channels: ['social'],
     inventory_model: 'auction',
     pricing_models: ['cpm', 'auction'],
@@ -218,7 +236,13 @@ export const PLATFORM_PROFILES: Record<PlatformType, PlatformProfile> = {
     type: 'retail_media',
     label: 'Retail Media Network',
     expected_tracks: ['core', 'products', 'media_buy', 'creative', 'reporting', 'audiences'],
-    expected_tools: ['get_products', 'create_media_buy', 'list_creative_formats', 'sync_audiences', 'get_media_buy_delivery'],
+    expected_tools: [
+      'get_products',
+      'create_media_buy',
+      'list_creative_formats',
+      'sync_audiences',
+      'get_media_buy_delivery',
+    ],
     expected_channels: ['retail_media'],
     inventory_model: 'hybrid',
     pricing_models: ['cpc', 'cpm', 'flat'],
@@ -309,9 +333,7 @@ export const PLATFORM_PROFILES: Record<PlatformType, PlatformProfile> = {
         );
       }
       for (const tool of missingTools(profile, ['sync_creatives'])) {
-        findings.push(
-          toolFinding(tool, 'Buyers deliver traffic instructions and ISCI codes via sync_creatives.')
-        );
+        findings.push(toolFinding(tool, 'Buyers deliver traffic instructions and ISCI codes via sync_creatives.'));
       }
       findings.push(channelSuggestion(['linear_tv']));
       return findings;

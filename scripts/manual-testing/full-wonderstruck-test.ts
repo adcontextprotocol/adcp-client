@@ -193,10 +193,11 @@ async function fullWonderstruckTest() {
 
   // Choose the best format: prefer image over generative
   // The format's renders array contains the actual dimensions
-  const selectedFormat = allFormats.find(f => {
-    const id = typeof f.format_id === 'object' ? f.format_id.id : f.format_id;
-    return id.includes('display') || id.includes('image');
-  }) || allFormats[0];
+  const selectedFormat =
+    allFormats.find(f => {
+      const id = typeof f.format_id === 'object' ? f.format_id.id : f.format_id;
+      return id.includes('display') || id.includes('image');
+    }) || allFormats[0];
 
   if (!selectedFormat) {
     throw new Error('No display format found in creative agent');
