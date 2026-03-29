@@ -523,27 +523,62 @@ describe('formatComplianceResults', () => {
 
 describe('computeOverallStatus', () => {
   test('returns passing when all tracks pass', () => {
-    const summary = { tracks_passed: 3, tracks_failed: 0, tracks_skipped: 2, tracks_partial: 0, tracks_expected: 0, headline: '' };
+    const summary = {
+      tracks_passed: 3,
+      tracks_failed: 0,
+      tracks_skipped: 2,
+      tracks_partial: 0,
+      tracks_expected: 0,
+      headline: '',
+    };
     assert.strictEqual(computeOverallStatus(summary), 'passing');
   });
 
   test('returns failing when all attempted tracks fail', () => {
-    const summary = { tracks_passed: 0, tracks_failed: 2, tracks_skipped: 1, tracks_partial: 0, tracks_expected: 0, headline: '' };
+    const summary = {
+      tracks_passed: 0,
+      tracks_failed: 2,
+      tracks_skipped: 1,
+      tracks_partial: 0,
+      tracks_expected: 0,
+      headline: '',
+    };
     assert.strictEqual(computeOverallStatus(summary), 'failing');
   });
 
   test('returns partial when mix of pass and fail', () => {
-    const summary = { tracks_passed: 1, tracks_failed: 1, tracks_skipped: 0, tracks_partial: 0, tracks_expected: 0, headline: '' };
+    const summary = {
+      tracks_passed: 1,
+      tracks_failed: 1,
+      tracks_skipped: 0,
+      tracks_partial: 0,
+      tracks_expected: 0,
+      headline: '',
+    };
     assert.strictEqual(computeOverallStatus(summary), 'partial');
   });
 
   test('returns partial when some tracks are partial', () => {
-    const summary = { tracks_passed: 1, tracks_failed: 0, tracks_skipped: 0, tracks_partial: 1, tracks_expected: 0, headline: '' };
+    const summary = {
+      tracks_passed: 1,
+      tracks_failed: 0,
+      tracks_skipped: 0,
+      tracks_partial: 1,
+      tracks_expected: 0,
+      headline: '',
+    };
     assert.strictEqual(computeOverallStatus(summary), 'partial');
   });
 
   test('returns partial when no tracks attempted (all skipped)', () => {
-    const summary = { tracks_passed: 0, tracks_failed: 0, tracks_skipped: 5, tracks_partial: 0, tracks_expected: 0, headline: '' };
+    const summary = {
+      tracks_passed: 0,
+      tracks_failed: 0,
+      tracks_skipped: 5,
+      tracks_partial: 0,
+      tracks_expected: 0,
+      headline: '',
+    };
     assert.strictEqual(computeOverallStatus(summary), 'partial');
   });
 });
@@ -556,7 +591,7 @@ describe('platform_type as string', () => {
   test('comply() rejects unknown platform_type with descriptive error', async () => {
     await assert.rejects(
       () => comply('http://localhost:1', { platform_type: 'not_a_type', timeout_ms: 1000 }),
-      (err) => {
+      err => {
         assert.ok(err.message.includes('Unknown platform_type: "not_a_type"'), 'Should include the bad value');
         assert.ok(err.message.includes('Valid types:'), 'Should list valid types');
         return true;
@@ -596,10 +631,7 @@ describe('track partitioning', () => {
 
   test('tested_tracks contains only pass/fail/partial tracks', () => {
     for (const t of result.tested_tracks) {
-      assert.ok(
-        ['pass', 'fail', 'partial'].includes(t.status),
-        `tested_tracks should not contain status: ${t.status}`
-      );
+      assert.ok(['pass', 'fail', 'partial'].includes(t.status), `tested_tracks should not contain status: ${t.status}`);
     }
   });
 

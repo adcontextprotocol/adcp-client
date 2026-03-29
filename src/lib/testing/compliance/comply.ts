@@ -566,9 +566,7 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
   if (platform_type) {
     const validTypes: string[] = getAllPlatformTypes();
     if (!validTypes.includes(platform_type)) {
-      throw new Error(
-        `Unknown platform_type: "${platform_type}". Valid types: ${validTypes.join(', ')}`
-      );
+      throw new Error(`Unknown platform_type: "${platform_type}". Valid types: ${validTypes.join(', ')}`);
     }
     platformProfile = getPlatformProfile(platform_type as PlatformType);
   }
@@ -840,9 +838,7 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
     const summary = buildSummary(trackResults);
 
     // Partition tracks by disposition (issue #403)
-    const testedTracks = trackResults.filter(
-      t => t.status === 'pass' || t.status === 'fail' || t.status === 'partial'
-    );
+    const testedTracks = trackResults.filter(t => t.status === 'pass' || t.status === 'fail' || t.status === 'partial');
     const skippedTracks = trackResults
       .filter(t => t.status === 'skip')
       .map(t => {
@@ -850,9 +846,8 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
         return {
           track: t.track,
           label: t.label,
-          reason: required.length > 0
-            ? `Agent lacks required tools: ${required.join(', ')}`
-            : 'Agent lacks required tools',
+          reason:
+            required.length > 0 ? `Agent lacks required tools: ${required.join(', ')}` : 'Agent lacks required tools',
         };
       });
     const expectedTracks = trackResults
