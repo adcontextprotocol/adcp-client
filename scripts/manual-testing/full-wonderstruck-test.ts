@@ -187,13 +187,16 @@ async function fullWonderstruckTest() {
   const creativeAgent = client.getStandardCreativeAgent();
   console.log(`📡 Connected to: ${creativeAgent.getAgentUrl()}`);
 
-  // Get all display formats
-  const displayFormats = await client.findFormatsByType('display');
-  console.log(`\n✅ Found ${displayFormats.length} display formats total`);
+  // Get all formats and find a display format
+  const allFormats = await creativeAgent.listFormats();
+  console.log(`\n✅ Found ${allFormats.length} formats total`);
 
   // Choose the best format: prefer image over generative
   // The format's renders array contains the actual dimensions
-  const selectedFormat = displayFormats.find(f => f.format_id.id.includes('image')) || displayFormats[0];
+  const selectedFormat = allFormats.find(f => {
+    const id = typeof f.format_id === 'object' ? f.format_id.id : f.format_id;
+    return id.includes('display') || id.includes('image');
+  }) || allFormats[0];
 
   if (!selectedFormat) {
     throw new Error('No display format found in creative agent');

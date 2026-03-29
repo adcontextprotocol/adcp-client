@@ -1051,25 +1051,6 @@ export class ADCPMultiAgentClient {
   }
 
   /**
-   * Find creative formats by type
-   *
-   * @param type - Format type to filter by
-   * @returns Promise resolving to matching formats
-   *
-   * @example
-   * ```typescript
-   * const videoFormats = await client.findFormatsByType('video');
-   * const displayFormats = await client.findFormatsByType('display');
-   * ```
-   */
-  async findFormatsByType(
-    type: 'audio' | 'video' | 'display' | 'native' | 'dooh' | 'rich_media' | 'universal'
-  ): Promise<CreativeFormat[]> {
-    const creativeAgent = this.getStandardCreativeAgent();
-    return creativeAgent.findByType(type);
-  }
-
-  /**
    * Find creative formats by dimensions
    *
    * @param width - Width in pixels

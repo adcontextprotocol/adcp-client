@@ -120,6 +120,8 @@ export {
   type PlatformProfile,
   type CoherenceFinding,
   type PlatformCoherenceResult,
+  type InventoryModel,
+  type PricingModel,
 } from './compliance';
 
 // Test stubs for compliance testing

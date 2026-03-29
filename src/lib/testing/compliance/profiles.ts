@@ -6,7 +6,7 @@
  */
 
 import type { AgentProfile } from '../types';
-import type { ComplianceTrack, PlatformType, CoherenceFinding } from './types';
+import type { ComplianceTrack, PlatformType, CoherenceFinding, InventoryModel, PricingModel } from './types';
 
 export interface PlatformProfile {
   type: PlatformType;
@@ -17,6 +17,10 @@ export interface PlatformProfile {
   expected_tools: string[];
   /** Channels that make sense for this platform type (at least one expected in products) */
   expected_channels?: string[];
+  /** How inventory is allocated to buyers */
+  inventory_model: InventoryModel;
+  /** Pricing models supported by the platform */
+  pricing_models: PricingModel[];
   /** Run coherence checks against discovered agent profile */
   checkCoherence: (profile: AgentProfile) => CoherenceFinding[];
 }
@@ -53,9 +57,13 @@ function channelSuggestion(expectedChannels: string[]): CoherenceFinding {
 
 function salesBaseCheck(profile: AgentProfile): CoherenceFinding[] {
   const findings: CoherenceFinding[] = [];
-  const coreSalesTools = ['get_products', 'create_media_buy'];
+  const coreSalesTools = ['get_products', 'create_media_buy', 'get_media_buy_delivery'];
   for (const tool of missingTools(profile, coreSalesTools)) {
-    findings.push(toolFinding(tool, `All sales platforms need ${tool} for the buy workflow.`));
+    const guidance =
+      tool === 'get_media_buy_delivery'
+        ? 'Buyers need delivery data to verify campaign performance and reconcile spend.'
+        : `All sales platforms need ${tool} for the buy workflow.`;
+    findings.push(toolFinding(tool, guidance));
   }
   return findings;
 }
@@ -71,8 +79,10 @@ export const PLATFORM_PROFILES: Record<PlatformType, PlatformProfile> = {
     type: 'display_ad_server',
     label: 'Display Ad Server',
     expected_tracks: ['core', 'products', 'media_buy', 'creative', 'reporting'],
-    expected_tools: ['get_products', 'create_media_buy', 'list_creative_formats', 'sync_creatives'],
+    expected_tools: ['get_products', 'create_media_buy', 'list_creative_formats', 'sync_creatives', 'get_media_buy_delivery'],
     expected_channels: ['display'],
+    inventory_model: 'guaranteed',
+    pricing_models: ['cpm', 'flat'],
     checkCoherence(profile) {
       const findings = salesBaseCheck(profile);
       for (const tool of missingTools(profile, ['list_creative_formats'])) {
@@ -95,8 +105,10 @@ export const PLATFORM_PROFILES: Record<PlatformType, PlatformProfile> = {
     type: 'video_ad_server',
     label: 'Video Ad Server',
     expected_tracks: ['core', 'products', 'media_buy', 'creative', 'reporting'],
-    expected_tools: ['get_products', 'create_media_buy', 'list_creative_formats', 'sync_creatives'],
+    expected_tools: ['get_products', 'create_media_buy', 'list_creative_formats', 'sync_creatives', 'get_media_buy_delivery'],
     expected_channels: ['ctv', 'olv'],
+    inventory_model: 'guaranteed',
+    pricing_models: ['cpm', 'flat'],
     checkCoherence(profile) {
       const findings = salesBaseCheck(profile);
       for (const tool of missingTools(profile, ['list_creative_formats'])) {
@@ -116,8 +128,10 @@ export const PLATFORM_PROFILES: Record<PlatformType, PlatformProfile> = {
     type: 'social_platform',
     label: 'Social Platform',
     expected_tracks: ['core', 'products', 'media_buy', 'creative', 'reporting', 'audiences'],
-    expected_tools: ['get_products', 'create_media_buy', 'list_creative_formats', 'sync_audiences'],
+    expected_tools: ['get_products', 'create_media_buy', 'list_creative_formats', 'sync_audiences', 'get_media_buy_delivery'],
     expected_channels: ['social'],
+    inventory_model: 'auction',
+    pricing_models: ['cpm', 'auction'],
     checkCoherence(profile) {
       const findings = salesBaseCheck(profile);
       for (const tool of missingTools(profile, ['sync_audiences'])) {
@@ -142,6 +156,8 @@ export const PLATFORM_PROFILES: Record<PlatformType, PlatformProfile> = {
     type: 'pmax_platform',
     label: 'Performance Max Platform',
     expected_tracks: ['core', 'products', 'media_buy', 'creative', 'reporting', 'audiences', 'signals'],
+    inventory_model: 'auction',
+    pricing_models: ['cpm', 'auction'],
     expected_tools: [
       'get_products',
       'create_media_buy',
@@ -149,6 +165,7 @@ export const PLATFORM_PROFILES: Record<PlatformType, PlatformProfile> = {
       'build_creative',
       'sync_audiences',
       'get_signals',
+      'get_media_buy_delivery',
     ],
     checkCoherence(profile) {
       const findings = salesBaseCheck(profile);
@@ -180,13 +197,10 @@ export const PLATFORM_PROFILES: Record<PlatformType, PlatformProfile> = {
     label: 'DSP / Ad Network',
     expected_tracks: ['core', 'products', 'media_buy', 'reporting', 'governance'],
     expected_tools: ['get_products', 'create_media_buy', 'get_media_buy_delivery'],
+    inventory_model: 'auction',
+    pricing_models: ['auction', 'cpm'],
     checkCoherence(profile) {
       const findings = salesBaseCheck(profile);
-      for (const tool of missingTools(profile, ['get_media_buy_delivery'])) {
-        findings.push(
-          toolFinding(tool, 'DSPs need get_media_buy_delivery for programmatic reporting and pacing data.')
-        );
-      }
       const hasGovernance = profile.tools.some(t => ['create_property_list', 'list_content_standards'].includes(t));
       if (!hasGovernance) {
         findings.push({
@@ -204,8 +218,10 @@ export const PLATFORM_PROFILES: Record<PlatformType, PlatformProfile> = {
     type: 'retail_media',
     label: 'Retail Media Network',
     expected_tracks: ['core', 'products', 'media_buy', 'creative', 'reporting', 'audiences'],
-    expected_tools: ['get_products', 'create_media_buy', 'list_creative_formats', 'sync_audiences'],
+    expected_tools: ['get_products', 'create_media_buy', 'list_creative_formats', 'sync_audiences', 'get_media_buy_delivery'],
     expected_channels: ['retail_media'],
+    inventory_model: 'hybrid',
+    pricing_models: ['cpc', 'cpm', 'flat'],
     checkCoherence(profile) {
       const findings = salesBaseCheck(profile);
       for (const tool of missingTools(profile, ['sync_audiences'])) {
@@ -228,8 +244,11 @@ export const PLATFORM_PROFILES: Record<PlatformType, PlatformProfile> = {
     type: 'search_platform',
     label: 'Search Platform',
     expected_tracks: ['core', 'products', 'media_buy', 'reporting'],
-    expected_tools: ['get_products', 'create_media_buy'],
+    expected_tools: ['get_products', 'create_media_buy', 'get_media_buy_delivery'],
     expected_channels: ['search'],
+    inventory_model: 'auction',
+    pricing_models: ['cpc', 'auction'],
+
     checkCoherence(profile) {
       const findings = salesBaseCheck(profile);
       findings.push(channelSuggestion(['search']));
@@ -248,8 +267,10 @@ export const PLATFORM_PROFILES: Record<PlatformType, PlatformProfile> = {
     type: 'audio_platform',
     label: 'Audio / Podcast Platform',
     expected_tracks: ['core', 'products', 'media_buy', 'creative', 'reporting'],
-    expected_tools: ['get_products', 'create_media_buy', 'list_creative_formats'],
+    expected_tools: ['get_products', 'create_media_buy', 'list_creative_formats', 'get_media_buy_delivery'],
     expected_channels: ['podcast', 'streaming_audio'],
+    inventory_model: 'guaranteed',
+    pricing_models: ['cpm', 'flat'],
     checkCoherence(profile) {
       const findings = salesBaseCheck(profile);
       for (const tool of missingTools(profile, ['list_creative_formats'])) {
@@ -262,6 +283,41 @@ export const PLATFORM_PROFILES: Record<PlatformType, PlatformProfile> = {
     },
   },
 
+  linear_tv_platform: {
+    type: 'linear_tv_platform',
+    label: 'Linear TV Platform',
+    expected_tracks: ['core', 'products', 'media_buy', 'creative', 'reporting'],
+    expected_tools: [
+      'get_products',
+      'create_media_buy',
+      'list_creative_formats',
+      'sync_creatives',
+      'get_media_buy_delivery',
+    ],
+    expected_channels: ['linear_tv'],
+    inventory_model: 'reserved',
+    pricing_models: ['cpp', 'cpm'],
+
+    checkCoherence(profile) {
+      const findings = salesBaseCheck(profile);
+      for (const tool of missingTools(profile, ['list_creative_formats'])) {
+        findings.push(
+          toolFinding(
+            tool,
+            'Linear TV platforms need list_creative_formats to declare broadcast spot formats and ISCI code requirements.'
+          )
+        );
+      }
+      for (const tool of missingTools(profile, ['sync_creatives'])) {
+        findings.push(
+          toolFinding(tool, 'Buyers deliver traffic instructions and ISCI codes via sync_creatives.')
+        );
+      }
+      findings.push(channelSuggestion(['linear_tv']));
+      return findings;
+    },
+  },
+
   // ── Creative agents ──────────────────────────────────────
 
   creative_transformer: {
@@ -269,6 +325,8 @@ export const PLATFORM_PROFILES: Record<PlatformType, PlatformProfile> = {
     label: 'Creative Transformer',
     expected_tracks: ['core', 'creative'],
     expected_tools: ['build_creative', 'preview_creative', 'list_creative_formats'],
+    inventory_model: 'guaranteed',
+    pricing_models: ['flat'],
     checkCoherence(profile) {
       const findings: CoherenceFinding[] = [];
       for (const tool of missingTools(profile, ['build_creative'])) {
@@ -307,6 +365,8 @@ export const PLATFORM_PROFILES: Record<PlatformType, PlatformProfile> = {
     label: 'Creative Format Library',
     expected_tracks: ['core', 'creative'],
     expected_tools: ['preview_creative', 'list_creative_formats'],
+    inventory_model: 'guaranteed',
+    pricing_models: ['flat'],
     checkCoherence(profile) {
       const findings: CoherenceFinding[] = [];
       for (const tool of missingTools(profile, ['list_creative_formats'])) {
@@ -338,6 +398,8 @@ export const PLATFORM_PROFILES: Record<PlatformType, PlatformProfile> = {
     label: 'Creative Ad Server',
     expected_tracks: ['core', 'creative'],
     expected_tools: ['build_creative', 'list_creatives', 'sync_creatives', 'preview_creative', 'list_creative_formats'],
+    inventory_model: 'guaranteed',
+    pricing_models: ['flat'],
     checkCoherence(profile) {
       const findings: CoherenceFinding[] = [];
       const allExpected = [
@@ -369,6 +431,8 @@ export const PLATFORM_PROFILES: Record<PlatformType, PlatformProfile> = {
     expected_tracks: ['core', 'si'],
     expected_tools: ['si_get_offering', 'si_initiate_session', 'si_send_message', 'si_terminate_session'],
     expected_channels: ['sponsored_intelligence'],
+    inventory_model: 'guaranteed',
+    pricing_models: ['cpm', 'flat'],
     checkCoherence(profile) {
       const findings: CoherenceFinding[] = [];
       const siTools = ['si_get_offering', 'si_initiate_session', 'si_send_message', 'si_terminate_session'];
@@ -386,9 +450,12 @@ export const PLATFORM_PROFILES: Record<PlatformType, PlatformProfile> = {
     type: 'ai_ad_network',
     label: 'AI Ad Network',
     expected_tracks: ['core', 'products', 'media_buy', 'si', 'reporting', 'governance'],
+    inventory_model: 'hybrid',
+    pricing_models: ['cpm', 'auction'],
     expected_tools: [
       'get_products',
       'create_media_buy',
+      'get_media_buy_delivery',
       'si_get_offering',
       'si_initiate_session',
       'si_send_message',
@@ -422,9 +489,12 @@ export const PLATFORM_PROFILES: Record<PlatformType, PlatformProfile> = {
     type: 'ai_platform',
     label: 'AI Platform',
     expected_tracks: ['core', 'products', 'media_buy', 'si', 'reporting'],
+    inventory_model: 'hybrid',
+    pricing_models: ['cpm', 'auction'],
     expected_tools: [
       'get_products',
       'create_media_buy',
+      'get_media_buy_delivery',
       'si_get_offering',
       'si_initiate_session',
       'si_send_message',
@@ -450,6 +520,8 @@ export const PLATFORM_PROFILES: Record<PlatformType, PlatformProfile> = {
     label: 'Generative DSP',
     expected_tracks: ['core', 'products', 'media_buy', 'creative', 'reporting', 'audiences', 'governance'],
     expected_tools: ['get_products', 'create_media_buy', 'build_creative', 'sync_audiences', 'get_media_buy_delivery'],
+    inventory_model: 'auction',
+    pricing_models: ['auction', 'cpm'],
     checkCoherence(profile) {
       const findings = salesBaseCheck(profile);
       for (const tool of missingTools(profile, ['build_creative'])) {
@@ -466,11 +538,6 @@ export const PLATFORM_PROFILES: Record<PlatformType, PlatformProfile> = {
             tool,
             'Generative DSPs optimize across audience segments — sync_audiences enables first-party data.'
           )
-        );
-      }
-      for (const tool of missingTools(profile, ['get_media_buy_delivery'])) {
-        findings.push(
-          toolFinding(tool, 'DSPs need get_media_buy_delivery for programmatic reporting and pacing data.')
         );
       }
       return findings;

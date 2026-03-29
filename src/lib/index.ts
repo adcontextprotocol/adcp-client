@@ -54,7 +54,6 @@ export {
   createCreativeAgentClient,
   STANDARD_CREATIVE_AGENTS,
   type CreativeFormat,
-  type CreativeFormatType,
   type CreativeAgentClientConfig,
 } from './core/CreativeAgentClient';
 export { TaskExecutor } from './core/TaskExecutor';

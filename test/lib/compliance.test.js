@@ -92,7 +92,7 @@ describe('getBriefsByVertical', () => {
 describe('getAllPlatformTypes', () => {
   test('returns all platform types', () => {
     const types = getAllPlatformTypes();
-    assert.ok(types.length >= 15, `Expected at least 15 types, got ${types.length}`);
+    assert.ok(types.length >= 16, `Expected at least 16 types, got ${types.length}`);
   });
 
   test('includes all sales platform types', () => {
@@ -106,6 +106,7 @@ describe('getAllPlatformTypes', () => {
       'retail_media',
       'search_platform',
       'audio_platform',
+      'linear_tv_platform',
     ];
     for (const st of salesTypes) {
       assert.ok(types.includes(st), `Missing sales type: ${st}`);
@@ -173,7 +174,7 @@ describe('checkCoherence', () => {
     const profile = getPlatformProfile('social_platform');
     const agent = {
       name: 'Social Agent',
-      tools: ['get_products', 'create_media_buy', 'list_creative_formats', 'sync_audiences', 'sync_creatives'],
+      tools: ['get_products', 'create_media_buy', 'list_creative_formats', 'sync_audiences', 'sync_creatives', 'get_media_buy_delivery'],
     };
     const findings = profile.checkCoherence(agent);
     // Should only have the channel suggestion (which is always present for platforms with expected_channels)
@@ -251,6 +252,89 @@ describe('checkCoherence', () => {
     const findings = profile.checkCoherence(agent);
     const genFinding = findings.find(f => f.expected.includes('build_creative'));
     assert.ok(genFinding, 'Should flag missing build_creative on generative DSP');
+  });
+});
+
+// ============================================================
+// linear_tv_platform coherence
+// ============================================================
+
+describe('linear_tv_platform coherence', () => {
+  test('returns only suggestions for complete agent', () => {
+    const profile = getPlatformProfile('linear_tv_platform');
+    const agent = {
+      name: 'Linear TV Agent',
+      tools: [
+        'get_products',
+        'create_media_buy',
+        'list_creative_formats',
+        'sync_creatives',
+        'get_media_buy_delivery',
+      ],
+    };
+    const findings = profile.checkCoherence(agent);
+    const nonSuggestions = findings.filter(f => f.severity !== 'suggestion');
+    assert.strictEqual(
+      nonSuggestions.length,
+      0,
+      `Unexpected non-suggestion findings: ${JSON.stringify(nonSuggestions)}`
+    );
+  });
+
+  test('flags missing tools for incomplete agent', () => {
+    const profile = getPlatformProfile('linear_tv_platform');
+    const agent = {
+      name: 'Incomplete Linear TV Agent',
+      tools: ['get_products', 'create_media_buy'],
+    };
+    const findings = profile.checkCoherence(agent);
+    const warnings = findings.filter(f => f.severity === 'warning');
+    assert.ok(warnings.length >= 3, `Expected at least 3 warnings, got ${warnings.length}`);
+    const missingTools = warnings.map(f => f.expected);
+    assert.ok(missingTools.some(e => e.includes('list_creative_formats')), 'Should flag list_creative_formats');
+    assert.ok(missingTools.some(e => e.includes('sync_creatives')), 'Should flag sync_creatives');
+    assert.ok(missingTools.some(e => e.includes('get_media_buy_delivery')), 'Should flag get_media_buy_delivery');
+  });
+
+  test('has correct behavioral characteristics', () => {
+    const profile = getPlatformProfile('linear_tv_platform');
+    assert.strictEqual(profile.inventory_model, 'reserved');
+    assert.deepStrictEqual(profile.pricing_models, ['cpp', 'cpm']);
+  });
+});
+
+// ============================================================
+// Behavioral characteristics
+// ============================================================
+
+describe('behavioral characteristics', () => {
+  test('every profile has behavioral fields', () => {
+    const types = getAllPlatformTypes();
+    for (const type of types) {
+      const profile = getPlatformProfile(type);
+      assert.ok(profile.inventory_model, `${type} missing inventory_model`);
+      assert.ok(profile.pricing_models?.length > 0, `${type} missing pricing_models`);
+    }
+  });
+
+  test('inventory_model values are valid', () => {
+    const valid = ['reserved', 'auction', 'guaranteed', 'hybrid'];
+    const types = getAllPlatformTypes();
+    for (const type of types) {
+      const profile = getPlatformProfile(type);
+      assert.ok(valid.includes(profile.inventory_model), `${type} has invalid inventory_model: ${profile.inventory_model}`);
+    }
+  });
+
+  test('pricing_models values are valid', () => {
+    const valid = ['cpm', 'cpc', 'cpp', 'flat', 'auction'];
+    const types = getAllPlatformTypes();
+    for (const type of types) {
+      const profile = getPlatformProfile(type);
+      for (const pm of profile.pricing_models) {
+        assert.ok(valid.includes(pm), `${type} has invalid pricing_model: ${pm}`);
+      }
+    }
   });
 });
 

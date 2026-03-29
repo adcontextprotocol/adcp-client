@@ -154,7 +154,6 @@ describe('Test Helpers', () => {
 
     // Check that it has the expected CreativeAgentClient methods
     assert.strictEqual(typeof creativeAgent.listFormats, 'function', 'should have listFormats method');
-    assert.strictEqual(typeof creativeAgent.findByType, 'function', 'should have findByType method');
     assert.strictEqual(typeof creativeAgent.findByDimensions, 'function', 'should have findByDimensions method');
     assert.strictEqual(typeof creativeAgent.findById, 'function', 'should have findById method');
     assert.strictEqual(typeof creativeAgent.listCreatives, 'function', 'should have listCreatives method');

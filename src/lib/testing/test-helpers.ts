@@ -241,10 +241,6 @@ export function createTestAgent(overrides?: Partial<AgentConfig>): AgentConfig {
  * // List available creative formats
  * const formats = await creativeAgent.listFormats();
  * console.log(`Found ${formats.length} creative formats`);
- *
- * // Filter to specific format types
- * const videoFormats = formats.filter(f => f.type === 'video');
- * const displayFormats = formats.filter(f => f.type === 'display');
  * ```
  *
  * @example

@@ -109,10 +109,6 @@ export type DeliveryType = 'guaranteed' | 'non_guaranteed';
  */
 export type Exclusivity = 'none' | 'category' | 'exclusive';
 /**
- * DEPRECATED: High-level categories for creative formats. These categories are lossy abstractions that don't scale well to emerging ad formats. Use the assets array in Format objects to understand creative requirements instead - it provides precise information about what asset types are needed (video, image, text, etc.).
- */
-export type FormatCategory = 'audio' | 'video' | 'display' | 'native' | 'dooh' | 'rich_media' | 'universal';
-/**
  * Metro classification system
  */
 export type MetroAreaSystem = 'nielsen_dma' | 'uk_itl1' | 'uk_itl2' | 'eurostat_nuts2' | 'custom';
@@ -462,10 +458,6 @@ export interface ProductFilters {
    * Filter by pricing availability: true = products offering fixed pricing (at least one option with fixed_price), false = products offering auction pricing (at least one option without fixed_price). Products with both fixed and auction options match both true and false.
    */
   is_fixed_price?: boolean;
-  /**
-   * Filter by format types
-   */
-  format_types?: FormatCategory[];
   /**
    * Filter by specific format IDs
    */
@@ -2337,7 +2329,6 @@ export interface ListCreativeFormatsRequest {
    * Return only these specific format IDs (e.g., from get_products response)
    */
   format_ids?: FormatID[];
-  type?: FormatCategory;
   /**
    * Filter to formats that include these asset types. For third-party tags, search for 'html' or 'javascript'. E.g., ['image', 'text'] returns formats with images and text, ['javascript'] returns formats accepting JavaScript tags.
    */
@@ -2524,7 +2515,6 @@ export interface Format {
    * Optional URL to showcase page with examples and interactive demos of this format
    */
   example_url?: string;
-  type?: FormatCategory;
   /**
    * List of parameters this format accepts in format_id. Template formats define which parameters (dimensions, duration, etc.) can be specified when instantiating the format. Empty or omitted means this is a concrete format with fixed parameters.
    */
@@ -7756,10 +7746,6 @@ export interface CreativeFilters {
    * Filter creatives by owning accounts. Useful for agencies managing multiple client accounts.
    */
   accounts?: AccountReference[];
-  /**
-   * Filter by high-level format types (e.g., 'video', 'audio', 'display'). For specific format matching, use format_ids instead.
-   */
-  format_types?: string[];
   /**
    * Filter by creative approval statuses
    */
