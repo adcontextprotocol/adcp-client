@@ -2366,12 +2366,13 @@ export class SingleAgentClient {
       const tools = agentCard?.skills
         ? agentCard.skills.map(
             (skill: {
+              id?: string;
               name: string;
               description?: string;
               inputSchema?: Record<string, unknown>;
               inputFormats?: string[];
             }) => ({
-              name: skill.name,
+              name: skill.id || skill.name,
               description: skill.description,
               inputSchema: skill.inputSchema,
               parameters: skill.inputFormats || [],
@@ -2518,11 +2519,7 @@ export class SingleAgentClient {
    * Validate that the seller supports all features required by a task.
    * Throws FeatureUnsupportedError if any required features are missing.
    *
-   * Skipped when:
-   * - validateFeatures is false
-   * - the task has no feature requirements
-   * - the seller declares NO features at all (likely a pre-capabilities seller
-   *   that doesn't implement capability advertisement, e.g. AdCP ≤ v2.5.3)
+   * Skipped when validateFeatures is false or the task has no feature requirements.
    */
   private async validateTaskFeatures(taskName: string): Promise<void> {
     if (this.config.validateFeatures === false) return;
@@ -2530,17 +2527,7 @@ export class SingleAgentClient {
     const requiredFeatures = TASK_FEATURE_MAP[taskName];
     if (!requiredFeatures || requiredFeatures.length === 0) return;
 
-    const capabilities = await this.getCapabilities();
-
-    // If the seller declares zero features, skip validation — they likely
-    // don't support capability advertisement yet. Let the call through and
-    // let it fail naturally if the seller truly can't handle it.
-    if (listDeclaredFeatures(capabilities).length === 0) return;
-
-    const missing = requiredFeatures.filter(f => !resolveFeature(capabilities, f));
-    if (missing.length > 0) {
-      throw new FeatureUnsupportedError(missing, listDeclaredFeatures(capabilities), this.agent.agent_uri);
-    }
+    await this.require(...requiredFeatures);
   }
 
   // ====== STATIC HELPER METHODS ======
