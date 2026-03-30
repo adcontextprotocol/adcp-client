@@ -1,5 +1,12 @@
 # Changelog
 
+## 4.18.1
+
+### Patch Changes
+
+- 60bc7b2: Add unknown flag detection to `comply` command with "did you mean?" suggestions, and remove 5 unused dependencies (better-sqlite3, @types/better-sqlite3, @apidevtools/json-schema-ref-parser, json-schema-to-ts, markdown-it)
+- 64a4bdb: Fix A2A capability detection using `skill.id` instead of `skill.name` for tool mapping, so `buildSyntheticCapabilities` correctly identifies protocols like `media_buy` from A2A agent cards
+
 ## 4.18.0
 
 ### Minor Changes
