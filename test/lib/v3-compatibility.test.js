@@ -139,6 +139,39 @@ describe('Synthetic Capabilities Builder', () => {
     assert.deepStrictEqual(capabilities.protocols, []);
     assert.strictEqual(capabilities._synthetic, true);
   });
+
+  test('should detect protocols from A2A skill IDs, not display names', () => {
+    // A2A agent cards have skill.id (machine name) and skill.name (display name).
+    // The client must use skill.id so buildSyntheticCapabilities matches tool names.
+    // This simulates what happens after the skill.id fix: tool names are IDs.
+    const toolsWithIds = [
+      { name: 'list_authorized_properties' },
+      { name: 'list_creative_formats' },
+      { name: 'create_media_buy' },
+      { name: 'update_media_buy' },
+      { name: 'get_media_buy_delivery' },
+    ];
+
+    const capabilities = buildSyntheticCapabilities(toolsWithIds);
+
+    assert.ok(capabilities.protocols.includes('media_buy'), 'should detect media_buy from skill IDs');
+    assert.ok(capabilities.protocols.includes('creative'), 'should detect creative from skill IDs');
+  });
+
+  test('should NOT detect protocols from A2A display names', () => {
+    // Before the fix, skill.name (display name) was used — these don't match MEDIA_BUY_TOOLS
+    const toolsWithDisplayNames = [
+      { name: 'List Authorized Properties' },
+      { name: 'List Creative Formats' },
+      { name: 'Create Media Buy' },
+      { name: 'Update Media Buy' },
+      { name: 'Get Media Buy Delivery' },
+    ];
+
+    const capabilities = buildSyntheticCapabilities(toolsWithDisplayNames);
+
+    assert.deepStrictEqual(capabilities.protocols, [], 'display names should not match any protocol tools');
+  });
 });
 
 describe('parseCapabilitiesResponse', () => {

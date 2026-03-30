@@ -2366,12 +2366,13 @@ export class SingleAgentClient {
       const tools = agentCard?.skills
         ? agentCard.skills.map(
             (skill: {
+              id?: string;
               name: string;
               description?: string;
               inputSchema?: Record<string, unknown>;
               inputFormats?: string[];
             }) => ({
-              name: skill.name,
+              name: skill.id || skill.name,
               description: skill.description,
               inputSchema: skill.inputSchema,
               parameters: skill.inputFormats || [],
