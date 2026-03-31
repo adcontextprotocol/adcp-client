@@ -1,6 +1,6 @@
 {
   "name": "@adcp/client",
-  "version": "4.18.1",
+  "version": "4.18.2",
   "description": "AdCP client library with protocol support for MCP and A2A",
   "main": "dist/lib/index.js",
   "types": "dist/lib/index.d.ts",

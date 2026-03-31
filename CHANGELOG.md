@@ -1,5 +1,11 @@
 # Changelog
 
+## 4.18.2
+
+### Patch Changes
+
+- e3cb1c3: fix: stop early-exiting product discovery for v2 servers when request contains property_list or required_features filters that are already stripped by the v2 adapter
+
 ## 4.18.1
 
 ### Patch Changes
