@@ -444,6 +444,124 @@ export async function testFullSalesFlow(
 }
 
 /**
+ * Test: Reporting Flow
+ * Validates reporting capabilities by creating a media buy then calling
+ * get_media_buy_delivery and checking the response for expected structure
+ * (delivery data with dimensions/metrics and currency).
+ */
+export async function testReportingFlow(
+  agentUrl: string,
+  options: TestOptions
+): Promise<{ steps: TestStepResult[]; profile?: AgentProfile }> {
+  const steps: TestStepResult[] = [];
+  const client = getOrCreateClient(agentUrl, options);
+
+  // Discover profile
+  const { profile, step: profileStep } = await getOrDiscoverProfile(client, options);
+  steps.push(profileStep);
+
+  if (!profile.tools.includes('get_media_buy_delivery')) {
+    steps.push({
+      step: 'Check get_media_buy_delivery tool',
+      task: 'get_media_buy_delivery',
+      passed: false,
+      duration_ms: 0,
+      error: 'Agent does not support get_media_buy_delivery',
+    });
+    return { steps, profile };
+  }
+
+  // Check supported_protocols includes 'reporting' if agent declares them
+  if (profile.supported_protocols && profile.supported_protocols.length > 0) {
+    const hasReporting = profile.supported_protocols.includes('reporting');
+    steps.push({
+      step: 'Check reporting protocol declaration',
+      passed: true,
+      duration_ms: 0,
+      details: hasReporting
+        ? 'Agent declares reporting in supported_protocols'
+        : 'Agent does not declare reporting in supported_protocols (tool is present but protocol not declared)',
+      warnings: hasReporting
+        ? undefined
+        : ['Agent has get_media_buy_delivery but does not declare reporting in supported_protocols'],
+    });
+  }
+
+  // Create a media buy to report on
+  const { steps: createSteps, mediaBuyId } = await testCreateMediaBuy(agentUrl, options);
+  steps.push(...createSteps);
+
+  if (!mediaBuyId) {
+    steps.push({
+      step: 'Find media buy for delivery report',
+      passed: false,
+      duration_ms: 0,
+      error: 'No media_buy_id — cannot test delivery reporting',
+    });
+    return { steps, profile };
+  }
+
+  // Call get_media_buy_delivery
+  const { result: deliveryResult, step: deliveryStep } = await runStep<TaskResult>(
+    'Get delivery metrics',
+    'get_media_buy_delivery',
+    async () =>
+      client.getMediaBuyDelivery({
+        media_buy_ids: [mediaBuyId],
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- intentional: test request bypasses strict typing
+      } as any) as Promise<TaskResult>
+  );
+
+  if (deliveryResult?.success && deliveryResult?.data) {
+    const delivery = deliveryResult.data as unknown as Record<string, unknown>;
+    const deliveries = delivery.deliveries as unknown[] | undefined;
+    const mediaBuys = delivery.media_buys as unknown[] | undefined;
+    const mediaBuyDeliveries = delivery.media_buy_deliveries as Record<string, unknown>[] | undefined;
+
+    const hasData = !!(deliveries?.length || mediaBuys?.length || mediaBuyDeliveries?.length);
+
+    // Check for currency field anywhere in the response
+    const responseStr = JSON.stringify(delivery);
+    const hasCurrency = responseStr.includes('"currency"');
+
+    // Extract metrics info for diagnostics
+    const totals = mediaBuyDeliveries?.[0]?.totals as Record<string, unknown> | undefined;
+    const summary = delivery.summary as Record<string, unknown> | undefined;
+    const impressions = (totals?.impressions ?? delivery.impressions ?? summary?.impressions) as number | undefined;
+    const clicks = (totals?.clicks ?? delivery.clicks ?? summary?.clicks) as number | undefined;
+
+    deliveryStep.details = hasData
+      ? `Retrieved delivery data${hasCurrency ? ' with currency' : ' (no currency field found)'}`
+      : 'get_media_buy_delivery returned no delivery data';
+    deliveryStep.response_preview = JSON.stringify(
+      {
+        has_data: hasData,
+        has_currency: hasCurrency,
+        impressions,
+        clicks,
+        raw_keys: Object.keys(delivery),
+      },
+      null,
+      2
+    );
+
+    if (!hasData) {
+      deliveryStep.passed = false;
+      deliveryStep.error = 'Expected delivery data in response but found none';
+    }
+    if (!hasCurrency) {
+      deliveryStep.warnings = [...(deliveryStep.warnings || []), 'No currency field found in delivery response'];
+    }
+  } else if (deliveryResult && !deliveryResult.success) {
+    deliveryStep.passed = false;
+    deliveryStep.error = deliveryResult.error || 'get_media_buy_delivery returned unsuccessful result';
+  }
+  steps.push(deliveryStep);
+
+  return { steps, profile };
+}
+
+/**
  * Test: Creative Sync Flow
  * Tests sync_creatives separately from create_media_buy
  */

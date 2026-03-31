@@ -11,6 +11,7 @@ export type TestScenario =
   | 'discovery' // get_products, list_creative_formats, list_authorized_properties
   | 'create_media_buy' // Discovery + create a test media buy
   | 'full_sales_flow' // Full lifecycle: discovery -> create -> update -> delivery
+  | 'reporting_flow' // Dedicated: create media buy -> get_media_buy_delivery validation
   | 'creative_sync' // Test sync_creatives flow
   | 'creative_inline' // Test inline creatives in create_media_buy
   | 'creative_reference' // Build -> sync -> reference a creative via creative_ids

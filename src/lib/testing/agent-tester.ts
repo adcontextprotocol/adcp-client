@@ -46,6 +46,7 @@ import {
   testDiscovery,
   testCreateMediaBuy,
   testFullSalesFlow,
+  testReportingFlow,
   testCreativeSync,
   testCreativeInline,
   testCreativeReference,
@@ -138,6 +139,12 @@ export async function testAgent(
 
       case 'full_sales_flow':
         result = await testFullSalesFlow(agentUrl, effectiveOptions);
+        steps = result.steps;
+        profile = result.profile;
+        break;
+
+      case 'reporting_flow':
+        result = await testReportingFlow(agentUrl, effectiveOptions);
         steps = result.steps;
         profile = result.profile;
         break;
@@ -458,6 +465,7 @@ export {
   testDiscovery,
   testCreateMediaBuy,
   testFullSalesFlow,
+  testReportingFlow,
   testCreativeSync,
   testCreativeInline,
   testCreativeFlow,
