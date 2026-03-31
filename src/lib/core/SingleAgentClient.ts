@@ -1108,15 +1108,13 @@ export class SingleAgentClient {
       return null;
     }
 
-    // Check for v3-only features that would make this query return empty results
+    // Check for v3-only features that would make this query return empty results.
+    // Note: property_list and required_features (including property_list_filtering) are NOT
+    // checked here — they are stripped by adaptGetProductsRequestForV2 so the request can
+    // still proceed and return results from the v2 server.
     const usesUnsupportedFeature =
-      // property_list requires propertyListFiltering
-      (params.property_list && !capabilities.features.propertyListFiltering) ||
       // required_features: content_standards requires contentStandards
-      (params.filters?.required_features?.includes('content_standards') && !capabilities.features.contentStandards) ||
-      // required_features: property_list_filtering requires propertyListFiltering
-      (params.filters?.required_features?.includes('property_list_filtering') &&
-        !capabilities.features.propertyListFiltering);
+      (params.filters?.required_features?.includes('content_standards') && !capabilities.features.contentStandards);
 
     if (!usesUnsupportedFeature) {
       return null; // Proceed normally

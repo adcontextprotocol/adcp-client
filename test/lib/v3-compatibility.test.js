@@ -1010,7 +1010,9 @@ describe('V3 Feature Guard Logic', () => {
    * than throwing an error.
    */
 
-  test('should identify property_list as v3-only feature', () => {
+  test('should allow property_list against v2 servers (stripped by adapter)', () => {
+    // property_list is NOT a v3-only guard — it gets stripped by adaptGetProductsRequestForV2
+    // so the request can proceed and return actual results from v2 servers
     const requestWithPropertyList = {
       brief: 'Premium products',
       property_list: {
@@ -1019,7 +1021,7 @@ describe('V3 Feature Guard Logic', () => {
       },
     };
 
-    // Property list is present, so this requires v3
+    // property_list is present but should NOT trigger early empty return
     assert.ok(requestWithPropertyList.property_list !== undefined);
   });
 
