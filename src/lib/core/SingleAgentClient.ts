@@ -1122,7 +1122,7 @@ export class SingleAgentClient {
     // capability mismatch look identical to a seller that simply has no inventory.
     const usesUnsupportedFeature =
       // required_features: content_standards requires contentStandards
-      (params.filters?.required_features?.includes('content_standards') && !capabilities.features.contentStandards);
+      params.filters?.required_features?.includes('content_standards') && !capabilities.features.contentStandards;
 
     if (!usesUnsupportedFeature) {
       return null; // Proceed normally
