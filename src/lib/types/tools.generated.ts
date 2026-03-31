@@ -137,6 +137,10 @@ export type MediaChannel =
   | 'product_placement'
   | 'sponsored_intelligence';
 /**
+ * What the publisher wants back from a TMP context match. Determines the richness level of the buyer's offer response.
+ */
+export type TMPResponseType = 'activation' | 'catalog_items' | 'creative' | 'deal';
+/**
  * Geographic targeting level (country, region, metro, postal_area)
  */
 export type GeographicTargetingLevel = 'country' | 'region' | 'metro' | 'postal_area';
@@ -318,6 +322,7 @@ export interface GetProductsRequest {
     | 'product_card'
     | 'product_card_detailed'
     | 'enforced_policies'
+    | 'trusted_match'
   )[];
   /**
    * Maximum time the buyer will commit to this request. The seller returns the best results achievable within this budget and does not start processes (human approvals, expensive external queries) that cannot complete in time. When omitted, the seller decides timing.
@@ -507,9 +512,36 @@ export interface ProductFilters {
    */
   channels?: MediaChannel[];
   /**
-   * Filter to products executable through specific agentic ad exchanges. URLs are canonical identifiers.
+   * @deprecated
+   * Deprecated: Use trusted_match filter instead. Filter to products executable through specific agentic ad exchanges. URLs are canonical identifiers.
    */
   required_axe_integrations?: string[];
+  /**
+   * Filter products by Trusted Match Protocol capabilities. Only products with matching TMP support are returned.
+   */
+  trusted_match?: {
+    /**
+     * Filter to products with specific TMP providers and match types. Each entry identifies a provider by agent_url and optionally requires specific match capabilities. Products must match at least one entry.
+     */
+    providers?: {
+      /**
+       * Provider's agent URL from the registry.
+       */
+      agent_url: string;
+      /**
+       * When true, require this provider to support context match.
+       */
+      context_match?: boolean;
+      /**
+       * When true, require this provider to support identity match.
+       */
+      identity_match?: boolean;
+    }[];
+    /**
+     * Filter to products supporting specific TMP response types (e.g., 'activation', 'creative', 'catalog_items'). Products must support at least one of the listed types.
+     */
+    response_types?: TMPResponseType[];
+  };
   required_features?: MediaBuyFeatures;
   /**
    * Filter to products from sellers supporting specific geo targeting capabilities. Each entry specifies a targeting level (country, region, metro, postal_area) and optionally a system for levels that have multiple classification systems.
@@ -853,10 +885,6 @@ export type TalentRole =
  */
 export type DerivativeType = 'clip' | 'highlight' | 'recap' | 'trailer' | 'bonus';
 /**
- * What the publisher wants back from a TMP context match. Determines the richness level of the buyer's offer response.
- */
-export type TMPResponseType = 'activation' | 'catalog_items' | 'creative' | 'deal';
-/**
  * Days of the week for daypart targeting
  */
 export type DayOfWeek = 'monday' | 'tuesday' | 'wednesday' | 'thursday' | 'friday' | 'saturday' | 'sunday';
@@ -1150,6 +1178,23 @@ export interface Product {
      * Whether the buyer can select a brand at match time. When false (default), the brand must be specified on the media buy/package. When true, the buyer's offer can include any brand — the publisher applies approval rules at match time. Enables multi-brand agreements where the holding company or buyer agent selects brand based on context.
      */
     dynamic_brands?: boolean;
+    /**
+     * TMP providers integrated with this product's inventory. Each entry identifies a provider by agent_url (from the registry) and declares what match types it supports for this product. The product-level context_match and identity_match booleans declare what the product supports overall; the per-provider booleans declare which provider handles each match type. Enables buyer discovery: 'find products where a specific provider does context matching.'
+     */
+    providers?: {
+      /**
+       * Provider's agent URL from the registry. Canonical identifier for this TMP provider.
+       */
+      agent_url: string;
+      /**
+       * Whether this provider handles context match for this product.
+       */
+      context_match?: boolean;
+      /**
+       * Whether this provider handles identity match for this product.
+       */
+      identity_match?: boolean;
+    }[];
   };
   /**
    * Instructions for submitting physical creative materials (print, static OOH, cinema). Present only for products requiring physical delivery outside the digital creative assignment flow. Buyer agents MUST validate url and email domains against the seller's known domains (from adagents.json) before submitting materials. Never auto-submit without human confirmation.
@@ -1172,7 +1217,7 @@ export interface Product {
   ext?: ExtensionObject;
 }
 /**
- * Represents a specific ad placement within a product's inventory
+ * Represents a specific ad placement within a product's inventory. When the publisher declares a placement registry in adagents.json, products SHOULD reuse those placement_id values. Reusing a registered placement_id preserves the registry's semantic identity; product-level placement objects may narrow format_ids or add operational detail, but SHOULD NOT redefine the placement's meaning incompatibly.
  */
 export interface Placement {
   /**
@@ -1187,6 +1232,10 @@ export interface Placement {
    * Detailed description of where and how the placement appears
    */
   description?: string;
+  /**
+   * Optional tags for grouping placements within a product (e.g., 'homepage', 'native', 'premium'). When the placement_id comes from the publisher registry, these should align with the registry tags unless the product is narrowing scope.
+   */
+  tags?: string[];
   /**
    * Format IDs supported by this specific placement. Can include: (1) concrete format_ids (fixed dimensions), (2) template format_ids without parameters (accepts any dimensions/duration), or (3) parameterized format_ids (specific dimension/duration constraints).
    */
@@ -3380,11 +3429,13 @@ export interface TargetingOverlay {
    */
   daypart_targets?: DaypartTarget[];
   /**
-   * AXE segment ID to include for targeting
+   * @deprecated
+   * Deprecated: Use TMP provider fields instead. AXE segment ID to include for targeting.
    */
   axe_include_segment?: string;
   /**
-   * AXE segment ID to exclude from targeting
+   * @deprecated
+   * Deprecated: Use TMP provider fields instead. AXE segment ID to exclude from targeting.
    */
   axe_exclude_segment?: string;
   /**

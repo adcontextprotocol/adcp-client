@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas vlatest
-// Generated at: 2026-03-26T05:01:08.589Z
+// Generated at: 2026-03-31T13:58:23.924Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -834,11 +834,13 @@ export interface TargetingOverlay {
    */
   daypart_targets?: DaypartTarget[];
   /**
-   * AXE segment ID to include for targeting
+   * @deprecated
+   * Deprecated: Use TMP provider fields instead. AXE segment ID to include for targeting.
    */
   axe_include_segment?: string;
   /**
-   * AXE segment ID to exclude from targeting
+   * @deprecated
+   * Deprecated: Use TMP provider fields instead. AXE segment ID to exclude from targeting.
    */
   axe_exclude_segment?: string;
   /**
@@ -2458,6 +2460,23 @@ export interface Product {
      * Whether the buyer can select a brand at match time. When false (default), the brand must be specified on the media buy/package. When true, the buyer's offer can include any brand — the publisher applies approval rules at match time. Enables multi-brand agreements where the holding company or buyer agent selects brand based on context.
      */
     dynamic_brands?: boolean;
+    /**
+     * TMP providers integrated with this product's inventory. Each entry identifies a provider by agent_url (from the registry) and declares what match types it supports for this product. The product-level context_match and identity_match booleans declare what the product supports overall; the per-provider booleans declare which provider handles each match type. Enables buyer discovery: 'find products where a specific provider does context matching.'
+     */
+    providers?: {
+      /**
+       * Provider's agent URL from the registry. Canonical identifier for this TMP provider.
+       */
+      agent_url: string;
+      /**
+       * Whether this provider handles context match for this product.
+       */
+      context_match?: boolean;
+      /**
+       * Whether this provider handles identity match for this product.
+       */
+      identity_match?: boolean;
+    }[];
   };
   /**
    * Instructions for submitting physical creative materials (print, static OOH, cinema). Present only for products requiring physical delivery outside the digital creative assignment flow. Buyer agents MUST validate url and email domains against the seller's known domains (from adagents.json) before submitting materials. Never auto-submit without human confirmation.
@@ -2480,7 +2499,7 @@ export interface Product {
   ext?: ExtensionObject;
 }
 /**
- * Represents a specific ad placement within a product's inventory
+ * Represents a specific ad placement within a product's inventory. When the publisher declares a placement registry in adagents.json, products SHOULD reuse those placement_id values. Reusing a registered placement_id preserves the registry's semantic identity; product-level placement objects may narrow format_ids or add operational detail, but SHOULD NOT redefine the placement's meaning incompatibly.
  */
 export interface Placement {
   /**
@@ -2495,6 +2514,10 @@ export interface Placement {
    * Detailed description of where and how the placement appears
    */
   description?: string;
+  /**
+   * Optional tags for grouping placements within a product (e.g., 'homepage', 'native', 'premium'). When the placement_id comes from the publisher registry, these should align with the registry tags unless the product is narrowing scope.
+   */
+  tags?: string[];
   /**
    * Format IDs supported by this specific placement. Can include: (1) concrete format_ids (fixed dimensions), (2) template format_ids without parameters (accepts any dimensions/duration), or (3) parameterized format_ids (specific dimension/duration constraints).
    */

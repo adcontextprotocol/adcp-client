@@ -1108,15 +1108,21 @@ export class SingleAgentClient {
       return null;
     }
 
-    // Check for v3-only features that would make this query return empty results
+    // Check for v3-only features that would make this query return empty results.
+    //
+    // TODO: Once we remove backwards-compatibility stripping in adaptGetProductsRequestForV2,
+    // re-enable these guards so v3-only requests fail fast against v2 servers:
+    //   (params.property_list && !capabilities.features.propertyListFiltering) ||
+    //   (params.filters?.required_features?.includes('property_list_filtering') &&
+    //     !capabilities.features.propertyListFiltering) ||
+    //
+    // TODO: Surface the reason for empty results to the caller (e.g. metadata or a
+    // structured warning) so they can distinguish "no products matched" from "server
+    // lacks v3 feature support" vs "request failed". Right now empty results from a
+    // capability mismatch look identical to a seller that simply has no inventory.
     const usesUnsupportedFeature =
-      // property_list requires propertyListFiltering
-      (params.property_list && !capabilities.features.propertyListFiltering) ||
       // required_features: content_standards requires contentStandards
-      (params.filters?.required_features?.includes('content_standards') && !capabilities.features.contentStandards) ||
-      // required_features: property_list_filtering requires propertyListFiltering
-      (params.filters?.required_features?.includes('property_list_filtering') &&
-        !capabilities.features.propertyListFiltering);
+      params.filters?.required_features?.includes('content_standards') && !capabilities.features.contentStandards;
 
     if (!usesUnsupportedFeature) {
       return null; // Proceed normally
