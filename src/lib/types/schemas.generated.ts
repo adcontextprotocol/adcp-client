@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-03-28T21:19:38.502Z
+// Generated at: 2026-03-31T13:58:25.880Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -514,6 +514,7 @@ export const PlacementSchema = z.object({
     placement_id: z.string(),
     name: z.string(),
     description: z.string().nullish(),
+    tags: z.array(z.string()).nullish(),
     format_ids: z.array(FormatIDSchema).nullish()
 }).passthrough();
 
@@ -3552,7 +3553,12 @@ export const ProductSchema = z.object({
         context_match: z.boolean(),
         identity_match: z.boolean().nullish(),
         response_types: z.array(TMPResponseTypeSchema).nullish(),
-        dynamic_brands: z.boolean().nullish()
+        dynamic_brands: z.boolean().nullish(),
+        providers: z.array(z.object({
+            agent_url: z.string(),
+            context_match: z.boolean().nullish(),
+            identity_match: z.boolean().nullish()
+        }).passthrough()).nullish()
     }).passthrough().nullish(),
     material_submission: z.object({
         url: z.string().nullish(),
@@ -3608,6 +3614,14 @@ export const ProductFiltersSchema = z.object({
     }).passthrough()).nullish(),
     channels: z.array(MediaChannelSchema).nullish(),
     required_axe_integrations: z.array(z.string()).nullish(),
+    trusted_match: z.object({
+        providers: z.array(z.object({
+            agent_url: z.string(),
+            context_match: z.boolean().nullish(),
+            identity_match: z.boolean().nullish()
+        }).passthrough()).nullish(),
+        response_types: z.array(TMPResponseTypeSchema).nullish()
+    }).passthrough().nullish(),
     required_features: MediaBuyFeaturesSchema.nullish(),
     required_geo_targeting: z.array(z.object({
         level: GeographicTargetingLevelSchema,
@@ -4243,7 +4257,7 @@ export const GetProductsRequestSchema = z.object({
     preferred_delivery_types: z.array(DeliveryTypeSchema).nullish(),
     filters: ProductFiltersSchema.nullish(),
     property_list: PropertyListReferenceSchema.nullish(),
-    fields: z.array(z.union([z.literal("product_id"), z.literal("name"), z.literal("description"), z.literal("publisher_properties"), z.literal("channels"), z.literal("format_ids"), z.literal("placements"), z.literal("delivery_type"), z.literal("exclusivity"), z.literal("pricing_options"), z.literal("forecast"), z.literal("outcome_measurement"), z.literal("delivery_measurement"), z.literal("reporting_capabilities"), z.literal("creative_policy"), z.literal("catalog_types"), z.literal("metric_optimization"), z.literal("conversion_tracking"), z.literal("data_provider_signals"), z.literal("max_optimization_goals"), z.literal("catalog_match"), z.literal("collections"), z.literal("collection_targeting_allowed"), z.literal("installments"), z.literal("brief_relevance"), z.literal("expires_at"), z.literal("product_card"), z.literal("product_card_detailed"), z.literal("enforced_policies")])).nullish(),
+    fields: z.array(z.union([z.literal("product_id"), z.literal("name"), z.literal("description"), z.literal("publisher_properties"), z.literal("channels"), z.literal("format_ids"), z.literal("placements"), z.literal("delivery_type"), z.literal("exclusivity"), z.literal("pricing_options"), z.literal("forecast"), z.literal("outcome_measurement"), z.literal("delivery_measurement"), z.literal("reporting_capabilities"), z.literal("creative_policy"), z.literal("catalog_types"), z.literal("metric_optimization"), z.literal("conversion_tracking"), z.literal("data_provider_signals"), z.literal("max_optimization_goals"), z.literal("catalog_match"), z.literal("collections"), z.literal("collection_targeting_allowed"), z.literal("installments"), z.literal("brief_relevance"), z.literal("expires_at"), z.literal("product_card"), z.literal("product_card_detailed"), z.literal("enforced_policies"), z.literal("trusted_match")])).nullish(),
     time_budget: DurationSchema.nullish(),
     pagination: PaginationRequestSchema.nullish(),
     context: ContextObjectSchema.nullish(),
