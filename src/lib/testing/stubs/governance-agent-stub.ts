@@ -269,7 +269,6 @@ export class GovernanceAgentStub {
       this.recordCall('check_governance', args);
 
       const planId = args.plan_id as string;
-      const binding = args.binding as string;
       const checkId = `chk_stub_${randomUUID().slice(0, 8)}`;
       const gc = this.generateContext(planId);
 
@@ -280,7 +279,6 @@ export class GovernanceAgentStub {
             text: JSON.stringify({
               check_id: checkId,
               status: 'approved',
-              binding,
               plan_id: planId,
               explanation: 'Stub governance agent: approved for testing.',
               governance_context: gc,

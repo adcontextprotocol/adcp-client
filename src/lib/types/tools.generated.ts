@@ -218,6 +218,22 @@ export type SignalID =
       id: string;
     };
 /**
+ * Postal code system (e.g., 'us_zip', 'gb_outward')
+ */
+export type PostalCodeSystem =
+  | 'us_zip'
+  | 'us_zip_plus_four'
+  | 'gb_outward'
+  | 'gb_full'
+  | 'ca_fsa'
+  | 'ca_full'
+  | 'de_plz'
+  | 'fr_code_postal'
+  | 'au_postcode'
+  | 'ch_plz'
+  | 'at_plz';
+
+/**
  * Request parameters for discovering or refining advertising products. buying_mode declares the buyer's intent: 'brief' for curated discovery, 'wholesale' for raw catalog access, or 'refine' to iterate on known products and proposals.
  */
 export interface GetProductsRequest {
@@ -557,6 +573,35 @@ export interface ProductFilters {
    * Filter to products supporting specific signals from data provider catalogs. Products must have the requested signals in their data_provider_signals and signal_targeting_allowed must be true (or all signals requested).
    */
   signal_targeting?: SignalTargeting[];
+  /**
+   * Filter by postal area coverage for locally-bound inventory (direct mail, DOOH, local campaigns). Use when products have postal-area-specific coverage. For digital inventory where products have broad coverage, use required_geo_targeting instead to filter by seller capability.
+   */
+  postal_areas?: {
+    system: PostalCodeSystem;
+    /**
+     * Postal codes within the system (e.g., ['10001', '10002'] for us_zip)
+     */
+    values: string[];
+  }[];
+  /**
+   * Filter by proximity to geographic points. Returns products with inventory coverage near these locations. Follows the same format as the targeting overlay — each entry uses exactly one method: travel_time + transport_mode, radius, or geometry. For locally-bound inventory (DOOH, radio), filters to products with coverage in the area. For digital inventory, filters to products from sellers supporting geo_proximity targeting.
+   */
+  geo_proximity?: {
+    [k: string]: unknown | undefined;
+  }[];
+  /**
+   * Filter by keyword relevance for search and retail media platforms. Returns products that support keyword targeting for these terms. Allows the sell-side agent to assess keyword availability and recommend appropriate products. Use match_type to indicate the desired precision.
+   */
+  keywords?: {
+    /**
+     * The keyword to target
+     */
+    keyword: string;
+    /**
+     * Desired match type: broad matches related queries, phrase matches queries containing the keyword phrase, exact matches the query exactly. Defaults to broad.
+     */
+    match_type?: 'broad' | 'phrase' | 'exact';
+  }[];
 }
 /**
  * Structured format identifier with agent URL and format name. Can reference: (1) a concrete format with fixed dimensions (id only), (2) a template format without parameters (id only), or (3) a template format with parameters (id + dimensions/duration). Template formats accept parameters in format_id while concrete formats have fixed dimensions in their definition. Parameterized format IDs create unique, specific format variants.
@@ -735,9 +780,9 @@ export type PriceAdjustmentKind = 'fee' | 'discount' | 'commission' | 'settlemen
  */
 export type DemographicSystem = 'nielsen' | 'barb' | 'agf' | 'oztam' | 'mediametrie' | 'custom';
 /**
- * How to interpret the points array. 'spend' (default when omitted): points at ascending budget levels. 'reach_freq': points at ascending reach/frequency targets. 'weekly'/'daily': metrics are per-period values. 'clicks'/'conversions': points at ascending outcome targets.
+ * How to interpret the points array. 'spend' (default when omitted): points at ascending budget levels. 'availability': total available inventory, budget omitted. 'reach_freq': points at ascending reach/frequency targets. 'weekly'/'daily': metrics are per-period values. 'clicks'/'conversions': points at ascending outcome targets.
  */
-export type ForecastRangeUnit = 'spend' | 'reach_freq' | 'weekly' | 'daily' | 'clicks' | 'conversions';
+export type ForecastRangeUnit = 'spend' | 'availability' | 'reach_freq' | 'weekly' | 'daily' | 'clicks' | 'conversions';
 /**
  * Method used to produce this forecast
  */
@@ -1706,7 +1751,7 @@ export interface TimeBasedPricingOption {
  */
 export interface DeliveryForecast {
   /**
-   * Forecasted delivery at one or more budget levels. A single point is a standard forecast; multiple points ordered by ascending budget form a curve showing how metrics scale with spend. Each point pairs a budget with metric ranges.
+   * Forecasted delivery data points. For spend curves (default), points at ascending budget levels show how metrics scale with spend. For availability forecasts, points represent total available inventory independent of budget. See forecast_range_unit for interpretation.
    */
   points: ForecastPoint[];
   forecast_range_unit?: ForecastRangeUnit;
@@ -1732,15 +1777,15 @@ export interface DeliveryForecast {
   ext?: ExtensionObject;
 }
 /**
- * A forecast at a specific budget level. A single point represents a standard forecast; multiple points ordered by ascending budget form a curve showing how delivery metrics scale with spend.
+ * A forecast data point. When budget is present, the point pairs a spend level with expected delivery — multiple points at ascending budgets form a curve. When budget is omitted, the point represents total available inventory for the requested targeting and dates, independent of spend.
  */
 export interface ForecastPoint {
   /**
-   * Budget amount for this forecast point. For allocation-level forecasts, this is the absolute budget for that allocation (not the percentage). For proposal-level forecasts, this is the total proposal budget.
+   * Budget amount for this forecast point. Required for spend curves; omit for availability forecasts where the metrics represent total available inventory. For allocation-level forecasts, this is the absolute budget for that allocation (not the percentage). For proposal-level forecasts, this is the total proposal budget. When omitted, use metrics.spend to express the estimated cost of the available inventory.
    */
-  budget: number;
+  budget?: number;
   /**
-   * Forecasted metric values at this budget level. Keys are forecastable-metric enum values for delivery/engagement or event-type enum values for outcomes. Values are ForecastRange objects (low/mid/high). Use { "mid": value } for point estimates. Include spend when the platform predicts it will differ from budget. Additional keys beyond the documented properties are allowed for event-type values (purchase, lead, app_install, etc.).
+   * Forecasted metric values. Keys are forecastable-metric enum values for delivery/engagement or event-type enum values for outcomes. Values are ForecastRange objects (low/mid/high). Use { "mid": value } for point estimates. When budget is present, these are the expected metrics at that spend level. When budget is omitted, these represent total available inventory — use spend to express the estimated cost. Additional keys beyond the documented properties are allowed for event-type values (purchase, lead, app_install, etc.).
    */
   metrics: {
     audience_size?: ForecastRange;
@@ -2900,21 +2945,6 @@ export type OptimizationGoal =
        */
       priority?: number;
     };
-/**
- * Postal code system (e.g., 'us_zip', 'gb_outward'). System name encodes country and precision.
- */
-export type PostalCodeSystem =
-  | 'us_zip'
-  | 'us_zip_plus_four'
-  | 'gb_outward'
-  | 'gb_full'
-  | 'ca_fsa'
-  | 'ca_full'
-  | 'de_plz'
-  | 'fr_code_postal'
-  | 'au_postcode'
-  | 'ch_plz'
-  | 'at_plz';
 /**
  * Frequency capping settings for package-level application. Two types of frequency control can be used independently or together: suppress enforces a cooldown between consecutive exposures; max_impressions + per + window caps total exposures per entity in a time window. When both suppress and max_impressions are set, an impression is delivered only if both constraints permit it (AND semantics). At least one of suppress, suppress_minutes, or max_impressions must be set.
  */
@@ -9982,10 +10012,6 @@ export type RestrictedAttribute =
  * Authority level granted to this agent.
  */
 export type DelegationAuthority = 'full' | 'execute_only' | 'propose_only';
-/**
- * Governance enforcement mode for this plan. 'enforce': denied actions are blocked. 'advisory': denied actions proceed with findings logged. 'audit': all actions proceed, findings logged. Defaults to 'enforce' if omitted.
- */
-export type GovernanceMode = 'audit' | 'advisory' | 'enforce';
 
 /**
  * Push campaign plans to the governance agent. A plan defines the authorized parameters for a campaign -- budget limits, channels, flight dates, and authorized markets.
@@ -10149,7 +10175,6 @@ export interface SyncPlansRequest {
        */
       shared_exclusions?: string[];
     };
-    mode?: GovernanceMode;
     ext?: ExtensionObject;
   }[];
 }
@@ -10485,7 +10510,10 @@ export interface GetPlanAuditLogsResponse {
         approved?: number;
         denied?: number;
         conditions?: number;
-        escalated?: number;
+        /**
+         * Supplementary count of checks that went through internal human review. These checks are also counted in approved or denied.
+         */
+        human_reviewed?: number;
       };
       /**
        * Total findings across all checks and outcomes.
@@ -10590,11 +10618,11 @@ export interface GetPlanAuditLogsResponse {
       /**
        * Governance check status (present for check entries).
        */
-      status?: 'approved' | 'denied' | 'conditions' | 'escalated';
+      status?: 'approved' | 'denied' | 'conditions';
       /**
-       * Whether the check was proposed or committed (present for check entries).
+       * Whether the check was an intent check (orchestrator) or execution check (seller). Inferred from the fields present on the original check request. Present for check entries.
        */
-      binding?: 'proposed' | 'committed';
+      check_type?: 'intent' | 'execution';
       /**
        * Human-readable explanation of the governance decision (present for check entries).
        */
@@ -10662,7 +10690,7 @@ export interface GetPlanAuditLogsResponse {
  */
 export type GovernancePhase = 'purchase' | 'modification' | 'delivery';
 /**
- * Universal governance check for campaign actions. Called by the orchestrator before sending to a seller (proposed) or by the seller before executing (committed). The governance agent evaluates the action against the campaign plan and returns a status.
+ * Universal governance check for campaign actions. The governance agent infers the check type from the fields present: tool+payload (intent check, orchestrator) or media_buy_id+planned_delivery (execution check, seller).
  */
 export interface CheckGovernanceRequest {
   /**
@@ -10670,19 +10698,15 @@ export interface CheckGovernanceRequest {
    */
   plan_id: string;
   /**
-   * Whether this is an advisory check or a binding commitment. 'proposed': the orchestrator is checking before sending to a seller — no budget is committed. 'committed': the seller is about to execute — the governance agent validates the planned delivery against the plan. Budget is committed later via report_plan_outcome, not on approval.
-   */
-  binding: 'proposed' | 'committed';
-  /**
-   * URL of the agent making the request (orchestrator for proposed, seller for committed).
+   * URL of the agent making the request.
    */
   caller: string;
   /**
-   * The AdCP tool being checked (e.g., 'create_media_buy', 'get_products'). Expected for proposed checks. The governance agent uses this to apply tool-specific validation rules.
+   * The AdCP tool being checked (e.g., 'create_media_buy', 'get_products'). Present on intent checks (orchestrator). The governance agent uses the presence of tool+payload to identify an intent check.
    */
   tool?: string;
   /**
-   * The full tool arguments as they would be sent to the seller. Expected for proposed checks. The governance agent can inspect any field to validate against the plan.
+   * The full tool arguments as they would be sent to the seller. Present on intent checks. The governance agent can inspect any field to validate against the plan.
    */
   payload?: {};
   /**
@@ -10690,7 +10714,7 @@ export interface CheckGovernanceRequest {
    */
   governance_context?: string;
   /**
-   * The seller's identifier for the media buy. Expected for committed checks.
+   * The seller's identifier for the media buy. Present on execution checks (seller). The governance agent uses the presence of media_buy_id+planned_delivery to identify an execution check.
    */
   media_buy_id?: string;
   phase?: GovernancePhase;
@@ -10781,13 +10805,9 @@ export interface CheckGovernanceResponse {
    */
   check_id: string;
   /**
-   * Governance decision. 'approved': proceed as planned. 'denied': do not proceed. 'conditions': approved if the caller accepts the listed conditions, then re-calls check_governance with the adjusted parameters. 'escalated': halted pending human review.
+   * Governance decision. 'approved': proceed as planned. 'denied': do not proceed. 'conditions': approved if the caller accepts the listed conditions, then re-calls check_governance with the adjusted parameters.
    */
-  status: 'approved' | 'denied' | 'conditions' | 'escalated';
-  /**
-   * Echoed from request. Lets the caller confirm the governance agent understood the commitment level.
-   */
-  binding: 'proposed' | 'committed';
+  status: 'approved' | 'denied' | 'conditions';
   /**
    * Echoed from request.
    */
@@ -10796,9 +10816,8 @@ export interface CheckGovernanceResponse {
    * Human-readable explanation of the governance decision.
    */
   explanation: string;
-  mode?: GovernanceMode;
   /**
-   * Specific issues found during the governance check. Present when status is 'denied', 'conditions', or 'escalated'. MAY also be present on 'approved' for advisory findings (e.g., budget approaching limit).
+   * Specific issues found during the governance check. Present when status is 'denied' or 'conditions'. MAY also be present on 'approved' for informational findings (e.g., budget approaching limit).
    */
   findings?: {
     /**
@@ -10846,24 +10865,6 @@ export interface CheckGovernanceResponse {
      */
     reason: string;
   }[];
-  /**
-   * Present when status is 'escalated'. The action is halted pending human review.
-   */
-  escalation?: {
-    /**
-     * Human-readable explanation of why the action was escalated.
-     */
-    reason: string;
-    severity: EscalationSeverity;
-    /**
-     * Whether human approval is required before proceeding.
-     */
-    requires_human: boolean;
-    /**
-     * Organizational role or tier required to resolve this escalation. The value is organization-defined; the governance agent infers the tier from the escalation context. Common values include 'manager', 'director', 'legal', 'cfo'. Enables programmatic routing of escalations to the right person.
-     */
-    approval_tier?: string;
-  };
   /**
    * When this approval expires. Present when status is 'approved' or 'conditions'. The caller must act before this time or re-call check_governance. A lapsed approval is no approval.
    */

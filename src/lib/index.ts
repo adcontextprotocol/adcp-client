@@ -252,7 +252,6 @@ export type {
   BudgetAuthorityLevel,
   DelegationAuthority,
   GovernancePhase,
-  GovernanceMode,
   EscalationSeverity,
   PolicyEnforcementLevel,
   OutcomeType,

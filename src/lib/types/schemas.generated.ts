@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-03-31T13:58:25.880Z
+// Generated at: 2026-04-01T04:07:58.017Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -456,7 +456,7 @@ export const PriceAdjustmentKindSchema = z.union([z.literal("fee"), z.literal("d
 
 export const DemographicSystemSchema = z.union([z.literal("nielsen"), z.literal("barb"), z.literal("agf"), z.literal("oztam"), z.literal("mediametrie"), z.literal("custom")]);
 
-export const ForecastRangeUnitSchema = z.union([z.literal("spend"), z.literal("reach_freq"), z.literal("weekly"), z.literal("daily"), z.literal("clicks"), z.literal("conversions")]);
+export const ForecastRangeUnitSchema = z.union([z.literal("spend"), z.literal("availability"), z.literal("reach_freq"), z.literal("weekly"), z.literal("daily"), z.literal("clicks"), z.literal("conversions")]);
 
 export const ForecastMethodSchema = z.union([z.literal("estimate"), z.literal("modeled"), z.literal("guaranteed")]);
 
@@ -1197,7 +1197,7 @@ export const MeasurementReadinessSchema = z.object({
 }).passthrough();
 
 export const ForecastPointSchema = z.object({
-    budget: z.number(),
+    budget: z.number().nullish(),
     metrics: z.record(z.string(), ForecastRangeSchema).and(z.object({
         audience_size: ForecastRangeSchema.nullish(),
         reach: ForecastRangeSchema.nullish(),
@@ -2610,8 +2610,6 @@ export const RestrictedAttributeSchema = z.union([z.literal("racial_ethnic_origi
 
 export const DelegationAuthoritySchema = z.union([z.literal("full"), z.literal("execute_only"), z.literal("propose_only")]);
 
-export const GovernanceModeSchema = z.union([z.literal("audit"), z.literal("advisory"), z.literal("enforce")]);
-
 export const AudienceConstraintsSchema = z.object({
     include: z.array(AudienceSelectorSchema).nullish(),
     exclude: z.array(AudienceSelectorSchema).nullish()
@@ -2718,7 +2716,7 @@ export const GetPlanAuditLogsResponseSchema = z.object({
                 approved: z.number().nullish(),
                 denied: z.number().nullish(),
                 conditions: z.number().nullish(),
-                escalated: z.number().nullish()
+                human_reviewed: z.number().nullish()
             }).passthrough().nullish(),
             findings_count: z.number().nullish(),
             escalations: z.array(z.object({
@@ -2748,8 +2746,8 @@ export const GetPlanAuditLogsResponseSchema = z.object({
             plan_id: z.string().nullish(),
             caller: z.string().nullish(),
             tool: z.string().nullish(),
-            status: z.union([z.literal("approved"), z.literal("denied"), z.literal("conditions"), z.literal("escalated")]).nullish(),
-            binding: z.union([z.literal("proposed"), z.literal("committed")]).nullish(),
+            status: z.union([z.literal("approved"), z.literal("denied"), z.literal("conditions")]).nullish(),
+            check_type: z.union([z.literal("intent"), z.literal("execution")]).nullish(),
             explanation: z.string().nullish(),
             policies_evaluated: z.array(z.string()).nullish(),
             categories_evaluated: z.array(z.string()).nullish(),
@@ -2778,7 +2776,6 @@ export const GovernancePhaseSchema = z.union([z.literal("purchase"), z.literal("
 
 export const CheckGovernanceRequestSchema = z.object({
     plan_id: z.string(),
-    binding: z.union([z.literal("proposed"), z.literal("committed")]),
     caller: z.string(),
     tool: z.string().nullish(),
     payload: z.object({}).passthrough().nullish(),
@@ -2811,11 +2808,9 @@ export const CheckGovernanceRequestSchema = z.object({
 
 export const CheckGovernanceResponseSchema = z.object({
     check_id: z.string(),
-    status: z.union([z.literal("approved"), z.literal("denied"), z.literal("conditions"), z.literal("escalated")]),
-    binding: z.union([z.literal("proposed"), z.literal("committed")]),
+    status: z.union([z.literal("approved"), z.literal("denied"), z.literal("conditions")]),
     plan_id: z.string(),
     explanation: z.string(),
-    mode: GovernanceModeSchema.nullish(),
     findings: z.array(z.object({
         category_id: z.string(),
         policy_id: z.string().nullish(),
@@ -2830,12 +2825,6 @@ export const CheckGovernanceResponseSchema = z.object({
         required_value: z.record(z.string(), z.unknown()).nullish(),
         reason: z.string()
     }).passthrough()).nullish(),
-    escalation: z.object({
-        reason: z.string(),
-        severity: EscalationSeveritySchema,
-        requires_human: z.boolean(),
-        approval_tier: z.string().nullish()
-    }).passthrough().nullish(),
     expires_at: z.string().nullish(),
     next_check: z.string().nullish(),
     categories_evaluated: z.array(z.string()).nullish(),
@@ -3627,7 +3616,16 @@ export const ProductFiltersSchema = z.object({
         level: GeographicTargetingLevelSchema,
         system: z.string().nullish()
     }).passthrough()).nullish(),
-    signal_targeting: z.array(SignalTargetingSchema).nullish()
+    signal_targeting: z.array(SignalTargetingSchema).nullish(),
+    postal_areas: z.array(z.object({
+        system: PostalCodeSystemSchema,
+        values: z.array(z.string())
+    }).passthrough()).nullish(),
+    geo_proximity: z.array(z.record(z.string(), z.unknown())).nullish(),
+    keywords: z.array(z.object({
+        keyword: z.string(),
+        match_type: z.union([z.literal("broad"), z.literal("phrase"), z.literal("exact")]).nullish()
+    }).passthrough()).nullish()
 }).passthrough();
 
 export const GetProductsResponseSchema = z.object({
@@ -4180,7 +4178,6 @@ export const SyncPlansRequestSchema = z.object({
             shared_policy_ids: z.array(z.string()).nullish(),
             shared_exclusions: z.array(z.string()).nullish()
         }).passthrough().nullish(),
-        mode: GovernanceModeSchema.nullish(),
         ext: ExtensionObjectSchema.nullish()
     }).passthrough())
 }).passthrough();

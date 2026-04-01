@@ -7,7 +7,7 @@
  */
 
 import type { AgentConfig } from '../types';
-import type { CheckGovernanceResponse, EscalationSeverity, GovernanceMode } from '../types/tools.generated';
+import type { CheckGovernanceResponse, EscalationSeverity } from '../types/tools.generated';
 
 /**
  * Campaign governance agent configuration.
@@ -112,9 +112,7 @@ export interface GovernanceEscalation {
 export interface GovernanceCheckResult {
   checkId: string;
   status: 'approved' | 'denied' | 'conditions' | 'escalated';
-  binding: 'proposed' | 'committed';
   explanation: string;
-  mode?: GovernanceMode;
   findings?: GovernanceFinding[];
   conditions?: GovernanceCondition[];
   escalation?: GovernanceEscalation;
@@ -148,9 +146,7 @@ export function parseCheckResponse(response: CheckGovernanceResponse): Governanc
   return {
     checkId: response.check_id,
     status: response.status,
-    binding: response.binding,
     explanation: response.explanation,
-    mode: response.mode,
     findings: response.findings?.map(f => ({
       categoryId: f.category_id,
       policyId: f.policy_id,
@@ -165,14 +161,6 @@ export function parseCheckResponse(response: CheckGovernanceResponse): Governanc
       requiredValue: c.required_value,
       reason: c.reason,
     })),
-    escalation: response.escalation
-      ? {
-          reason: response.escalation.reason,
-          severity: response.escalation.severity,
-          requiresHuman: response.escalation.requires_human,
-          approvalTier: response.escalation.approval_tier,
-        }
-      : undefined,
     expiresAt: response.expires_at,
     governanceContext: response.governance_context,
   };
