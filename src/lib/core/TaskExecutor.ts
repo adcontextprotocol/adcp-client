@@ -226,9 +226,8 @@ export class TaskExecutor {
           debugLogs
         );
 
-        // In advisory/audit modes, attach findings but allow execution to proceed.
-        // In enforce mode (default), block on denial/escalation/unapplied conditions.
-        const isBlocking = !govResult.mode || govResult.mode === 'enforce';
+        // Governance always blocks on denial/unapplied conditions.
+        const isBlocking = true;
 
         if (govResult.status === 'denied' && isBlocking) {
           return this.buildGovernanceResult<T>(

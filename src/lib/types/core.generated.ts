@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas vlatest
-// Generated at: 2026-03-31T13:58:23.924Z
+// Generated at: 2026-04-01T04:07:56.219Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -2095,9 +2095,9 @@ export type PriceAdjustmentKind = 'fee' | 'discount' | 'commission' | 'settlemen
  */
 export type DemographicSystem = 'nielsen' | 'barb' | 'agf' | 'oztam' | 'mediametrie' | 'custom';
 /**
- * How to interpret the points array. 'spend' (default when omitted): points at ascending budget levels. 'reach_freq': points at ascending reach/frequency targets. 'weekly'/'daily': metrics are per-period values. 'clicks'/'conversions': points at ascending outcome targets.
+ * How to interpret the points array. 'spend' (default when omitted): points at ascending budget levels. 'availability': total available inventory, budget omitted. 'reach_freq': points at ascending reach/frequency targets. 'weekly'/'daily': metrics are per-period values. 'clicks'/'conversions': points at ascending outcome targets.
  */
-export type ForecastRangeUnit = 'spend' | 'reach_freq' | 'weekly' | 'daily' | 'clicks' | 'conversions';
+export type ForecastRangeUnit = 'spend' | 'availability' | 'reach_freq' | 'weekly' | 'daily' | 'clicks' | 'conversions';
 /**
  * Method used to produce this forecast
  */
@@ -2973,7 +2973,7 @@ export interface TimeBasedPricingOption {
  */
 export interface DeliveryForecast {
   /**
-   * Forecasted delivery at one or more budget levels. A single point is a standard forecast; multiple points ordered by ascending budget form a curve showing how metrics scale with spend. Each point pairs a budget with metric ranges.
+   * Forecasted delivery data points. For spend curves (default), points at ascending budget levels show how metrics scale with spend. For availability forecasts, points represent total available inventory independent of budget. See forecast_range_unit for interpretation.
    */
   points: ForecastPoint[];
   forecast_range_unit?: ForecastRangeUnit;
@@ -2999,15 +2999,15 @@ export interface DeliveryForecast {
   ext?: ExtensionObject;
 }
 /**
- * A forecast at a specific budget level. A single point represents a standard forecast; multiple points ordered by ascending budget form a curve showing how delivery metrics scale with spend.
+ * A forecast data point. When budget is present, the point pairs a spend level with expected delivery — multiple points at ascending budgets form a curve. When budget is omitted, the point represents total available inventory for the requested targeting and dates, independent of spend.
  */
 export interface ForecastPoint {
   /**
-   * Budget amount for this forecast point. For allocation-level forecasts, this is the absolute budget for that allocation (not the percentage). For proposal-level forecasts, this is the total proposal budget.
+   * Budget amount for this forecast point. Required for spend curves; omit for availability forecasts where the metrics represent total available inventory. For allocation-level forecasts, this is the absolute budget for that allocation (not the percentage). For proposal-level forecasts, this is the total proposal budget. When omitted, use metrics.spend to express the estimated cost of the available inventory.
    */
-  budget: number;
+  budget?: number;
   /**
-   * Forecasted metric values at this budget level. Keys are forecastable-metric enum values for delivery/engagement or event-type enum values for outcomes. Values are ForecastRange objects (low/mid/high). Use { "mid": value } for point estimates. Include spend when the platform predicts it will differ from budget. Additional keys beyond the documented properties are allowed for event-type values (purchase, lead, app_install, etc.).
+   * Forecasted metric values. Keys are forecastable-metric enum values for delivery/engagement or event-type enum values for outcomes. Values are ForecastRange objects (low/mid/high). Use { "mid": value } for point estimates. When budget is present, these are the expected metrics at that spend level. When budget is omitted, these represent total available inventory — use spend to express the estimated cost. Additional keys beyond the documented properties are allowed for event-type values (purchase, lead, app_install, etc.).
    */
   metrics: {
     audience_size?: ForecastRange;

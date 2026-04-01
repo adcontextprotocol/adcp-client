@@ -14,6 +14,7 @@ export { testDiscovery } from './discovery';
 export {
   testCreateMediaBuy,
   testFullSalesFlow,
+  testReportingFlow,
   testCreativeSync,
   testCreativeInline,
   testCreativeReference,

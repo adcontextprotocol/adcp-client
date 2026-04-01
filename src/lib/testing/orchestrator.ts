@@ -24,6 +24,7 @@ export const SCENARIO_REQUIREMENTS: Partial<Record<TestScenario, string[]>> = {
   // Requires media buy core tools
   create_media_buy: ['get_products', 'create_media_buy'],
   full_sales_flow: ['get_products', 'create_media_buy'],
+  reporting_flow: ['get_products', 'create_media_buy', 'get_media_buy_delivery'],
   creative_inline: ['get_products', 'create_media_buy'],
   creative_reference: ['get_products', 'create_media_buy', 'build_creative', 'sync_creatives'],
   temporal_validation: ['get_products', 'create_media_buy'],

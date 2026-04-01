@@ -114,7 +114,6 @@ export class GovernanceAdapter implements IGovernanceAdapter {
 
     const checkRequest: CheckGovernanceRequest = {
       plan_id: request.planId,
-      binding: 'committed',
       caller: this.agentConfig.callerUrl,
       media_buy_id: request.mediaBuyId,
       governance_context: request.governanceContext,

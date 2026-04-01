@@ -34,6 +34,7 @@ export {
   testDiscovery,
   testCreateMediaBuy,
   testFullSalesFlow,
+  testReportingFlow,
   testCreativeSync,
   testCreativeInline,
   testCreativeFlow,

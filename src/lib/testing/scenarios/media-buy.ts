@@ -444,6 +444,238 @@ export async function testFullSalesFlow(
 }
 
 /**
+ * Test: Reporting Flow
+ * Validates reporting capabilities:
+ * - Agent has get_media_buy_delivery tool
+ * - Products declare reporting_capabilities (frequencies, webhook support)
+ * - get_media_buy_delivery returns valid structure or reporting_delayed with expected_availability
+ * - Currency field is present in delivery data
+ *
+ * The protocol favors async webhook-based report delivery over buyer polling.
+ * This scenario checks that the agent advertises webhook support and properly
+ * handles the reporting_delayed status for data not yet available.
+ */
+export async function testReportingFlow(
+  agentUrl: string,
+  options: TestOptions
+): Promise<{ steps: TestStepResult[]; profile?: AgentProfile }> {
+  const steps: TestStepResult[] = [];
+  const client = getOrCreateClient(agentUrl, options);
+
+  // Discover profile
+  const { profile, step: profileStep } = await getOrDiscoverProfile(client, options);
+  steps.push(profileStep);
+
+  if (!profile.tools.includes('get_media_buy_delivery')) {
+    steps.push({
+      step: 'Check get_media_buy_delivery tool',
+      task: 'get_media_buy_delivery',
+      passed: false,
+      duration_ms: 0,
+      error: 'Agent does not support get_media_buy_delivery',
+    });
+    return { steps, profile };
+  }
+
+  // Check supported_protocols includes 'reporting'
+  const hasReporting = profile.supported_protocols?.includes('reporting') ?? false;
+  steps.push({
+    step: 'Check reporting protocol declaration',
+    passed: true,
+    duration_ms: 0,
+    details: hasReporting
+      ? 'Agent declares reporting in supported_protocols'
+      : 'Agent does not declare reporting in supported_protocols (tool is present but protocol not declared)',
+    warnings: hasReporting
+      ? undefined
+      : ['Agent has get_media_buy_delivery but does not declare reporting in supported_protocols'],
+  });
+
+  // Discover products to check reporting_capabilities
+  const { result: productsResult, step: productsStep } = await runStep<TaskResult>(
+    'Check product reporting capabilities',
+    'get_products',
+    async () =>
+      client.getProducts({
+        buying_mode: 'brief',
+        brief: options.brief || 'Looking for advertising products with reporting',
+        brand: resolveBrand(options),
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- intentional: test request bypasses strict typing
+      } as any) as Promise<TaskResult>
+  );
+
+  const productsData = productsResult?.data as Record<string, unknown> | undefined;
+  const products = (productsData?.products ?? []) as Array<Record<string, unknown>>;
+
+  // Evaluate reporting_capabilities on discovered products
+  const withReporting = products.filter(p => p.reporting_capabilities);
+  const withWebhooks = withReporting.filter(p => {
+    const rc = p.reporting_capabilities as Record<string, unknown> | undefined;
+    return rc?.supports_webhooks === true;
+  });
+
+  if (products.length > 0) {
+    const webhookWarnings: string[] = [];
+    if (withReporting.length === 0) {
+      webhookWarnings.push(
+        'No products declare reporting_capabilities — buyers cannot discover reporting frequency or webhook support'
+      );
+    } else if (withWebhooks.length === 0) {
+      webhookWarnings.push(
+        'No products declare supports_webhooks: true — buyers must poll get_media_buy_delivery instead of receiving async reports'
+      );
+    }
+
+    // Check for available_reporting_frequencies
+    const withFrequencies = withReporting.filter(p => {
+      const rc = p.reporting_capabilities as Record<string, unknown> | undefined;
+      const freqs = rc?.available_reporting_frequencies as unknown[] | undefined;
+      return freqs && freqs.length > 0;
+    });
+
+    productsStep.details = [
+      `${products.length} product(s) discovered`,
+      `${withReporting.length} with reporting_capabilities`,
+      `${withWebhooks.length} with webhook support`,
+      `${withFrequencies.length} with reporting frequencies`,
+    ].join(', ');
+    productsStep.response_preview = JSON.stringify(
+      {
+        product_count: products.length,
+        with_reporting_capabilities: withReporting.length,
+        with_webhook_support: withWebhooks.length,
+        with_frequencies: withFrequencies.length,
+        sample_capabilities: withReporting.slice(0, 2).map(p => ({
+          product_id: p.product_id,
+          reporting_capabilities: p.reporting_capabilities,
+        })),
+      },
+      null,
+      2
+    );
+    productsStep.warnings = webhookWarnings.length > 0 ? webhookWarnings : undefined;
+  }
+  steps.push(productsStep);
+
+  // Create a media buy to report on
+  const { steps: createSteps, mediaBuyId } = await testCreateMediaBuy(agentUrl, options);
+  steps.push(...createSteps);
+
+  if (!mediaBuyId) {
+    steps.push({
+      step: 'Find media buy for delivery report',
+      passed: false,
+      duration_ms: 0,
+      error: 'No media_buy_id — cannot test delivery reporting',
+    });
+    return { steps, profile };
+  }
+
+  // Call get_media_buy_delivery
+  const { result: deliveryResult, step: deliveryStep } = await runStep<TaskResult>(
+    'Get delivery metrics',
+    'get_media_buy_delivery',
+    async () =>
+      client.getMediaBuyDelivery({
+        media_buy_ids: [mediaBuyId],
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- intentional: test request bypasses strict typing
+      } as any) as Promise<TaskResult>
+  );
+
+  if (deliveryResult?.success && deliveryResult?.data) {
+    const delivery = deliveryResult.data as unknown as Record<string, unknown>;
+    const deliveries = delivery.deliveries as unknown[] | undefined;
+    const mediaBuys = delivery.media_buys as unknown[] | undefined;
+    const mediaBuyDeliveries = delivery.media_buy_deliveries as Record<string, unknown>[] | undefined;
+
+    const allEntries = (mediaBuyDeliveries ?? mediaBuys ?? deliveries ?? []) as Record<string, unknown>[];
+    const hasData = allEntries.length > 0;
+
+    // Split entries: some may be delayed while others have actual data
+    const delayedEntries = allEntries.filter(e => e.status === 'reporting_delayed');
+    const readyEntries = allEntries.filter(e => e.status !== 'reporting_delayed');
+
+    // Check for currency on entry objects (not via string search)
+    const hasCurrency = readyEntries.some(
+      e => 'currency' in e || (e.totals as Record<string, unknown> | undefined)?.currency !== undefined
+    );
+
+    // Extract metrics info for diagnostics
+    const firstReady = readyEntries[0];
+    const totals = (firstReady?.totals ?? undefined) as Record<string, unknown> | undefined;
+    const summary = delivery.summary as Record<string, unknown> | undefined;
+    const impressions = (totals?.impressions ?? delivery.impressions ?? summary?.impressions) as number | undefined;
+    const clicks = (totals?.clicks ?? delivery.clicks ?? summary?.clicks) as number | undefined;
+
+    const details: string[] = [];
+    const warnings: string[] = [];
+
+    // Validate delayed entries
+    if (delayedEntries.length > 0) {
+      const withAvailability = delayedEntries.filter(e => e.expected_availability);
+      details.push(`${delayedEntries.length} media buy(s) reporting_delayed`);
+      if (withAvailability.length < delayedEntries.length) {
+        warnings.push(
+          'reporting_delayed entries should include expected_availability so buyers know when to expect data'
+        );
+      }
+    }
+
+    // Validate ready entries
+    if (readyEntries.length > 0) {
+      details.push(`${readyEntries.length} media buy(s) with delivery data`);
+      if (!hasCurrency) {
+        warnings.push('No currency field found in delivery entries');
+      }
+    }
+
+    if (!hasData) {
+      deliveryStep.passed = false;
+      deliveryStep.error = 'Expected delivery data or reporting_delayed status in response but found neither';
+    } else {
+      deliveryStep.details = details.join(', ');
+    }
+
+    if (warnings.length > 0) {
+      deliveryStep.warnings = [...(deliveryStep.warnings || []), ...warnings];
+    }
+
+    const KNOWN_DELIVERY_KEYS = [
+      'media_buy_deliveries',
+      'media_buys',
+      'deliveries',
+      'currency',
+      'summary',
+      'reporting_period',
+      'notification_type',
+      'partial_data',
+    ];
+    deliveryStep.response_preview = JSON.stringify(
+      {
+        has_data: hasData,
+        delayed_count: delayedEntries.length,
+        ready_count: readyEntries.length,
+        has_currency: hasCurrency,
+        impressions,
+        clicks,
+        known_keys: Object.keys(delivery).filter(k => KNOWN_DELIVERY_KEYS.includes(k)),
+      },
+      null,
+      2
+    );
+  } else if (deliveryResult && !deliveryResult.success) {
+    deliveryStep.passed = false;
+    deliveryStep.error = deliveryResult.error || 'get_media_buy_delivery returned unsuccessful result';
+  } else if (!deliveryResult) {
+    deliveryStep.passed = false;
+    deliveryStep.error = 'get_media_buy_delivery returned no result';
+  }
+  steps.push(deliveryStep);
+
+  return { steps, profile };
+}
+
+/**
  * Test: Creative Sync Flow
  * Tests sync_creatives separately from create_media_buy
  */

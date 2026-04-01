@@ -73,7 +73,6 @@ describe('parseCheckResponse', () => {
     const response = {
       check_id: 'chk-1',
       status: 'approved',
-      binding: 'proposed',
       explanation: 'All checks passed',
       expires_at: '2026-04-01T00:00:00Z',
     };
@@ -81,7 +80,6 @@ describe('parseCheckResponse', () => {
     const result = parseCheckResponse(response);
     assert.equal(result.checkId, 'chk-1');
     assert.equal(result.status, 'approved');
-    assert.equal(result.binding, 'proposed');
     assert.equal(result.explanation, 'All checks passed');
     assert.equal(result.expiresAt, '2026-04-01T00:00:00Z');
   });
@@ -90,7 +88,6 @@ describe('parseCheckResponse', () => {
     const response = {
       check_id: 'chk-2',
       status: 'denied',
-      binding: 'proposed',
       explanation: 'Budget exceeded',
       findings: [
         {
@@ -119,7 +116,6 @@ describe('parseCheckResponse', () => {
     const response = {
       check_id: 'chk-3',
       status: 'conditions',
-      binding: 'proposed',
       explanation: 'Budget adjustment required',
       conditions: [{ field: 'budget.total', required_value: 6000, reason: 'Per-seller max exceeded' }],
     };
@@ -131,55 +127,17 @@ describe('parseCheckResponse', () => {
     assert.equal(result.conditions[0].reason, 'Per-seller max exceeded');
   });
 
-  it('parses escalation details', () => {
-    const response = {
-      check_id: 'chk-4',
-      status: 'escalated',
-      binding: 'proposed',
-      explanation: 'Human approval required',
-      escalation: {
-        reason: 'Budget exceeds 50%',
-        severity: 'high',
-        requires_human: true,
-        approval_tier: 'manager',
-      },
-    };
-
-    const result = parseCheckResponse(response);
-    assert.ok(result.escalation);
-    assert.equal(result.escalation.reason, 'Budget exceeds 50%');
-    assert.equal(result.escalation.severity, 'high');
-    assert.equal(result.escalation.requiresHuman, true);
-    assert.equal(result.escalation.approvalTier, 'manager');
-  });
-
-  it('parses mode field', () => {
-    const response = {
-      check_id: 'chk-5',
-      status: 'approved',
-      binding: 'proposed',
-      explanation: 'Advisory mode',
-      mode: 'advisory',
-    };
-
-    const result = parseCheckResponse(response);
-    assert.equal(result.mode, 'advisory');
-  });
-
   it('handles missing optional fields', () => {
     const response = {
       check_id: 'chk-6',
       status: 'approved',
-      binding: 'committed',
       explanation: 'OK',
     };
 
     const result = parseCheckResponse(response);
     assert.equal(result.findings, undefined);
     assert.equal(result.conditions, undefined);
-    assert.equal(result.escalation, undefined);
     assert.equal(result.expiresAt, undefined);
-    assert.equal(result.mode, undefined);
     assert.equal(result.governanceContext, undefined);
   });
 
@@ -187,7 +145,6 @@ describe('parseCheckResponse', () => {
     const response = {
       check_id: 'chk-7',
       status: 'approved',
-      binding: 'proposed',
       explanation: 'OK',
       governance_context: 'opaque-gc-token-abc123',
     };

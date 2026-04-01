@@ -35,7 +35,6 @@ describe('GovernanceAgentStub', () => {
     // Instead, call check_governance and verify it responds
     const result = await callMCPTool(stubUrl, 'check_governance', {
       plan_id: 'plan-test-1',
-      binding: 'proposed',
       caller: 'buyer',
       tool: 'create_media_buy',
       payload: { budget: 1000 },
@@ -45,13 +44,11 @@ describe('GovernanceAgentStub', () => {
     const parsed = JSON.parse(result.content[0].text);
     assert.equal(parsed.status, 'approved');
     assert.equal(parsed.plan_id, 'plan-test-1');
-    assert.equal(parsed.binding, 'proposed');
   });
 
   it('returns governance_context on check_governance response', async () => {
     const result = await callMCPTool(stubUrl, 'check_governance', {
       plan_id: 'plan-gc-round-trip',
-      binding: 'proposed',
       caller: 'buyer',
       tool: 'create_media_buy',
       payload: {},

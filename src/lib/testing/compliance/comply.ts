@@ -66,9 +66,7 @@ const TRACK_DEFINITIONS: Record<ComplianceTrack, { label: string; scenarios: Tes
   },
   reporting: {
     label: 'Reporting',
-    // full_sales_flow covers get_media_buy_delivery — but we assess it as a
-    // separate track concern by checking if the agent has the tool
-    scenarios: ['full_sales_flow', 'deterministic_delivery'],
+    scenarios: ['reporting_flow', 'deterministic_delivery'],
   },
   governance: {
     label: 'Governance',

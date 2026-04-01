@@ -129,7 +129,6 @@ export class GovernanceMiddleware {
     do {
       const request: CheckGovernanceRequest = {
         plan_id: config.planId,
-        binding: 'proposed',
         caller: config.callerUrl ?? '',
         tool,
         payload: currentParams,
@@ -217,7 +216,6 @@ export class GovernanceMiddleware {
       result: {
         checkId: '',
         status: 'denied',
-        binding: 'proposed',
         explanation: `Governance conditions could not be resolved after ${maxReChecks} iterations`,
       },
       params: currentParams,
