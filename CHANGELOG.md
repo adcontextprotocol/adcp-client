@@ -1,5 +1,11 @@
 # Changelog
 
+## 4.19.0
+
+### Minor Changes
+
+- d0dc6b5: Add dedicated `reporting_flow` scenario for precise reporting compliance evaluation. The reporting track now uses `reporting_flow` (which requires `get_media_buy_delivery`) instead of piggybacking on `full_sales_flow`.
+
 ## 4.18.2
 
 ### Patch Changes
