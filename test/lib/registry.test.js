@@ -426,6 +426,60 @@ describe('RegistryClient', () => {
     });
   });
 
+  // ============ lookupPropertiesAll ============
+
+  describe('lookupPropertiesAll', () => {
+    test('auto-paginates in batches of 100', async () => {
+      const domains = Array.from({ length: 250 }, (_, i) => `domain${i}.com`);
+      const batchCalls = [];
+
+      restore = mockFetch(async (url, opts) => {
+        assert.ok(url.includes('/api/properties/resolve/bulk'));
+        const body = JSON.parse(opts.body);
+        batchCalls.push(body.domains.length);
+        const results = {};
+        for (const d of body.domains) {
+          results[d] = { publisher_domain: d, authorized_agents: [], properties: [] };
+        }
+        return new Response(JSON.stringify({ results }), { status: 200 });
+      });
+
+      const client = new RegistryClient();
+      const result = await client.lookupPropertiesAll(domains);
+
+      assert.deepStrictEqual(batchCalls, [100, 100, 50]);
+      assert.strictEqual(Object.keys(result).length, 250);
+      assert.strictEqual(result['domain0.com'].publisher_domain, 'domain0.com');
+      assert.strictEqual(result['domain249.com'].publisher_domain, 'domain249.com');
+    });
+
+    test('deduplicates domains', async () => {
+      const callBodies = [];
+      restore = mockFetch(async (url, opts) => {
+        const body = JSON.parse(opts.body);
+        callBodies.push(body.domains);
+        const results = {};
+        for (const d of body.domains) {
+          results[d] = { publisher_domain: d, authorized_agents: [], properties: [] };
+        }
+        return new Response(JSON.stringify({ results }), { status: 200 });
+      });
+
+      const client = new RegistryClient();
+      const result = await client.lookupPropertiesAll(['a.com', 'b.com', 'a.com', 'b.com', 'c.com']);
+
+      assert.strictEqual(callBodies.length, 1);
+      assert.deepStrictEqual(callBodies[0], ['a.com', 'b.com', 'c.com']);
+      assert.strictEqual(Object.keys(result).length, 3);
+    });
+
+    test('returns empty object for empty array', async () => {
+      const client = new RegistryClient();
+      const result = await client.lookupPropertiesAll([]);
+      assert.deepStrictEqual(result, {});
+    });
+  });
+
   // ============ input validation ============
 
   describe('input validation', () => {
@@ -1634,6 +1688,273 @@ describe('RegistryClient', () => {
         () => client.getPropertyCheckReport('   '),
         err => {
           assert.ok(err.message.includes('reportId is required'));
+          return true;
+        }
+      );
+    });
+  });
+
+  // ============ getFeed ============
+
+  describe('getFeed', () => {
+    const FEED_RESPONSE = {
+      events: [
+        {
+          event_id: '01953abc-0000-7000-8000-000000000001',
+          event_type: 'agent.discovered',
+          entity_type: 'agent',
+          entity_id: 'https://ads.example.com',
+          payload: { agent_url: 'https://ads.example.com' },
+          actor: 'crawler',
+          created_at: '2026-04-01T10:00:00Z',
+        },
+      ],
+      cursor: '01953abc-0000-7000-8000-000000000001',
+      has_more: false,
+    };
+
+    test('polls feed without cursor', async () => {
+      restore = mockFetch(async (url, opts) => {
+        assert.ok(url.includes('/api/registry/feed'));
+        assert.ok(!url.includes('cursor='));
+        assert.strictEqual(opts.headers.Authorization, 'Bearer test-key');
+        return new Response(JSON.stringify(FEED_RESPONSE), { status: 200 });
+      });
+
+      const client = new RegistryClient({ apiKey: 'test-key' });
+      const result = await client.getFeed();
+
+      assert.strictEqual(result.events.length, 1);
+      assert.strictEqual(result.events[0].event_type, 'agent.discovered');
+      assert.strictEqual(result.has_more, false);
+      assert.strictEqual(result.cursor, '01953abc-0000-7000-8000-000000000001');
+    });
+
+    test('passes cursor and types params', async () => {
+      restore = mockFetch(async url => {
+        assert.ok(url.includes('cursor=01953abc'));
+        assert.ok(url.includes('types=property.*'));
+        assert.ok(url.includes('limit=500'));
+        return new Response(JSON.stringify({ ...FEED_RESPONSE, has_more: true }), { status: 200 });
+      });
+
+      const client = new RegistryClient({ apiKey: 'test-key' });
+      const result = await client.getFeed({
+        cursor: '01953abc',
+        types: 'property.*',
+        limit: 500,
+      });
+
+      assert.strictEqual(result.has_more, true);
+    });
+
+    test('throws without apiKey', async () => {
+      const client = new RegistryClient();
+      await assert.rejects(
+        () => client.getFeed(),
+        err => {
+          assert.ok(err.message.includes('apiKey is required'));
+          return true;
+        }
+      );
+    });
+
+    test('throws on 401', async () => {
+      restore = mockFetch(async () => {
+        return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401 });
+      });
+
+      const client = new RegistryClient({ apiKey: 'bad-key' });
+      await assert.rejects(
+        () => client.getFeed(),
+        err => {
+          assert.ok(err.message.includes('401'));
+          return true;
+        }
+      );
+    });
+  });
+
+  // ============ searchAgents ============
+
+  describe('searchAgents', () => {
+    const SEARCH_RESPONSE = {
+      results: [
+        {
+          url: 'https://ads.streamhaus.example.com',
+          name: 'StreamHaus Ad Sales',
+          type: 'sales',
+          inventory_profile: {
+            channels: ['ctv', 'olv'],
+            property_types: ['ctv_app'],
+            markets: ['US', 'GB'],
+            categories: ['IAB-7'],
+            tags: ['premium'],
+            delivery_types: ['guaranteed'],
+            property_count: 42,
+            publisher_count: 3,
+            has_tmp: true,
+          },
+          match: {
+            score: 0.92,
+            matched_filters: ['channels', 'markets'],
+          },
+        },
+      ],
+      cursor: null,
+      has_more: false,
+    };
+
+    test('searches with no filters', async () => {
+      restore = mockFetch(async url => {
+        assert.ok(url.includes('/api/registry/agents/search'));
+        return new Response(JSON.stringify(SEARCH_RESPONSE), { status: 200 });
+      });
+
+      const client = new RegistryClient({ apiKey: 'sk_test' });
+      const result = await client.searchAgents();
+
+      assert.strictEqual(result.results.length, 1);
+      assert.strictEqual(result.results[0].name, 'StreamHaus Ad Sales');
+    });
+
+    test('passes all filter params', async () => {
+      restore = mockFetch(async url => {
+        assert.ok(url.includes('type=sales'));
+        assert.ok(url.includes('channels=ctv%2Colv'));
+        assert.ok(url.includes('markets=US'));
+        assert.ok(url.includes('categories=IAB-7'));
+        assert.ok(url.includes('property_types=ctv_app'));
+        assert.ok(url.includes('tags=premium'));
+        assert.ok(url.includes('delivery_types=guaranteed'));
+        assert.ok(url.includes('has_tmp=true'));
+        assert.ok(url.includes('min_properties=10'));
+        assert.ok(url.includes('sort=relevance'));
+        assert.ok(url.includes('limit=20'));
+        return new Response(JSON.stringify(SEARCH_RESPONSE), { status: 200 });
+      });
+
+      const client = new RegistryClient({ apiKey: 'sk_test' });
+      const result = await client.searchAgents({
+        type: 'sales',
+        channels: 'ctv,olv',
+        markets: 'US',
+        categories: 'IAB-7',
+        property_types: 'ctv_app',
+        tags: 'premium',
+        delivery_types: 'guaranteed',
+        has_tmp: true,
+        min_properties: 10,
+        sort: 'relevance',
+        limit: 20,
+      });
+
+      assert.strictEqual(result.results.length, 1);
+    });
+
+    test('passes cursor for pagination', async () => {
+      restore = mockFetch(async url => {
+        assert.ok(url.includes('cursor=abc123'));
+        return new Response(JSON.stringify({ ...SEARCH_RESPONSE, has_more: true, cursor: 'def456' }), {
+          status: 200,
+        });
+      });
+
+      const client = new RegistryClient({ apiKey: 'sk_test' });
+      const result = await client.searchAgents({ cursor: 'abc123' });
+
+      assert.strictEqual(result.has_more, true);
+      assert.strictEqual(result.cursor, 'def456');
+    });
+
+    test('requires authentication', async () => {
+      const client = new RegistryClient();
+      await assert.rejects(() => client.searchAgents(), { message: /apiKey is required/ });
+    });
+  });
+
+  // ============ requestCrawl ============
+
+  describe('requestCrawl', () => {
+    test('requests crawl for a domain', async () => {
+      restore = mockFetch(async (url, opts) => {
+        assert.ok(url.includes('/api/registry/crawl-request'));
+        assert.strictEqual(opts.method, 'POST');
+        const body = JSON.parse(opts.body);
+        assert.strictEqual(body.domain, 'publisher.example.com');
+        assert.strictEqual(opts.headers.Authorization, 'Bearer test-key');
+        return new Response(
+          JSON.stringify({ status: 'accepted', domain: 'publisher.example.com' }),
+          { status: 200 }
+        );
+      });
+
+      const client = new RegistryClient({ apiKey: 'test-key' });
+      const result = await client.requestCrawl('publisher.example.com');
+
+      assert.strictEqual(result.status, 'accepted');
+      assert.strictEqual(result.domain, 'publisher.example.com');
+    });
+
+    test('handles rate limited response', async () => {
+      restore = mockFetch(async () => {
+        return new Response(
+          JSON.stringify({
+            status: 'rate_limited',
+            domain: 'publisher.example.com',
+            last_crawled: '2026-04-01T09:55:00Z',
+            retry_after: 300,
+          }),
+          { status: 200 }
+        );
+      });
+
+      const client = new RegistryClient({ apiKey: 'test-key' });
+      const result = await client.requestCrawl('publisher.example.com');
+
+      assert.strictEqual(result.status, 'rate_limited');
+      assert.strictEqual(result.retry_after, 300);
+    });
+
+    test('throws without apiKey', async () => {
+      const client = new RegistryClient();
+      await assert.rejects(
+        () => client.requestCrawl('publisher.example.com'),
+        err => {
+          assert.ok(err.message.includes('apiKey is required'));
+          return true;
+        }
+      );
+    });
+
+    test('throws on empty domain', async () => {
+      const client = new RegistryClient({ apiKey: 'test-key' });
+      await assert.rejects(
+        () => client.requestCrawl(''),
+        err => {
+          assert.ok(err.message.includes('domain is required'));
+          return true;
+        }
+      );
+    });
+
+    test('throws on 429', async () => {
+      restore = mockFetch(async () => {
+        return new Response(
+          JSON.stringify({
+            status: 'rate_limited',
+            domain: 'publisher.example.com',
+            retry_after: 300,
+          }),
+          { status: 429 }
+        );
+      });
+
+      const client = new RegistryClient({ apiKey: 'test-key' });
+      await assert.rejects(
+        () => client.requestCrawl('publisher.example.com'),
+        err => {
+          assert.ok(err.message.includes('429'));
           return true;
         }
       );

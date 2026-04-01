@@ -87,6 +87,13 @@ export type AgentCapabilities = components['schemas']['AgentCapabilities'];
 export type PropertySummary = components['schemas']['PropertySummary'];
 export type FederatedPublisher = components['schemas']['FederatedPublisher'];
 export type DomainLookupResult = components['schemas']['DomainLookupResult'];
+export type CatalogEvent = components['schemas']['CatalogEvent'];
+export type FeedResponse = components['schemas']['FeedResponse'];
+export type AgentInventoryProfile = components['schemas']['AgentInventoryProfile'];
+export type AgentSearchResult = components['schemas']['AgentSearchResult'];
+export type AgentSearchResponse = components['schemas']['AgentSearchResponse'];
+export type CrawlRequestResponse = components['schemas']['CrawlRequestResponse'];
+export type AuthorizationEntry = components['schemas']['AuthorizationEntry'];
 `;
 
   const changed = writeFileIfChanged(OUTPUT_FILE, content);

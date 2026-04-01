@@ -22,6 +22,12 @@ import type {
   PublisherPropertySelector,
   CompanySearchResult,
   FindCompanyResult,
+  FeedQuery,
+  FeedResponse,
+  AgentSearchQuery,
+  AgentSearchResponse,
+  CrawlRequest,
+  CrawlRequestResponse,
 } from './types';
 
 export type {
@@ -48,6 +54,9 @@ export type {
   PublisherPropertySelector,
   CompanySearchResult,
   FindCompanyResult,
+  FeedQuery,
+  AgentSearchQuery,
+  CrawlRequest,
 } from './types';
 
 // Re-export all generated types for advanced usage
@@ -62,6 +71,13 @@ export type {
   AgentStats,
   AgentCapabilities,
   PropertySummary,
+  CatalogEvent,
+  FeedResponse,
+  AgentInventoryProfile,
+  AgentSearchResult,
+  AgentSearchResponse,
+  CrawlRequestResponse,
+  AuthorizationEntry,
 } from './types';
 
 const DEFAULT_BASE_URL = 'https://adcontextprotocol.org';
@@ -162,6 +178,20 @@ export class RegistryClient {
     }
     const data = await this.post(`${this.baseUrl}/api/properties/resolve/bulk`, { domains });
     return data.results;
+  }
+
+  /**
+   * Bulk resolve any number of domains to property information.
+   * Automatically paginates in batches of 100.
+   */
+  async lookupPropertiesAll(domains: string[]): Promise<Record<string, ResolvedProperty | null>> {
+    const unique = [...new Set(domains)];
+    const results: Record<string, ResolvedProperty | null> = {};
+    for (let i = 0; i < unique.length; i += MAX_BULK_DOMAINS) {
+      const batch = unique.slice(i, i + MAX_BULK_DOMAINS);
+      Object.assign(results, await this.lookupProperties(batch));
+    }
+    return results;
   }
 
   /** List properties in the registry with optional search and pagination. */
@@ -293,6 +323,9 @@ export class RegistryClient {
    * - `ok`: domains found in registry with no changes needed
    *
    * Results are stored for 7 days and retrievable via the `report_id`.
+   *
+   * For domains in the `modify` bucket, use the `canonical` value (not the original `input`)
+   * for subsequent lookupProperties/lookupDomain calls.
    */
   async checkPropertyList(domains: string[]): Promise<{
     summary: { total: number; remove: number; modify: number; assess: number; ok: number };
@@ -380,6 +413,63 @@ export class RegistryClient {
   async validatePublisher(domain: string): Promise<Record<string, unknown>> {
     if (!domain?.trim()) throw new Error('domain is required');
     return this.get(`${this.baseUrl}/api/public/validate-publisher?domain=${encodeURIComponent(domain)}`);
+  }
+
+  // ====== Registry Sync ======
+
+  /**
+   * Poll the catalog event feed. Returns events since the provided cursor.
+   * Consumers save `cursor` from the response and pass it on the next poll.
+   * When `has_more` is false, the consumer is caught up.
+   *
+   * Requires authentication.
+   */
+  async getFeed(options?: FeedQuery): Promise<FeedResponse> {
+    if (!this.apiKey) throw new Error('apiKey is required for feed access');
+    const params = new URLSearchParams();
+    if (options?.cursor) params.set('cursor', options.cursor);
+    if (options?.types) params.set('types', options.types);
+    if (options?.limit != null) params.set('limit', String(options.limit));
+    const qs = params.toString();
+    return this.get(`${this.baseUrl}/api/registry/feed${qs ? '?' + qs : ''}`);
+  }
+
+  /**
+   * Search agents by inventory profile. Returns ranked results with match scores.
+   * All filters use AND logic across dimensions; multiple CSV values within a
+   * filter use OR.
+   *
+   * Requires authentication.
+   */
+  async searchAgents(query?: AgentSearchQuery): Promise<AgentSearchResponse> {
+    if (!this.apiKey) throw new Error('apiKey is required for agent search');
+    const params = new URLSearchParams();
+    if (query?.type) params.set('type', query.type);
+    if (query?.channels) params.set('channels', query.channels);
+    if (query?.markets) params.set('markets', query.markets);
+    if (query?.categories) params.set('categories', query.categories);
+    if (query?.property_types) params.set('property_types', query.property_types);
+    if (query?.tags) params.set('tags', query.tags);
+    if (query?.delivery_types) params.set('delivery_types', query.delivery_types);
+    if (query?.has_tmp != null) params.set('has_tmp', String(query.has_tmp));
+    if (query?.min_properties != null) params.set('min_properties', String(query.min_properties));
+    if (query?.sort) params.set('sort', query.sort);
+    if (query?.limit != null) params.set('limit', String(query.limit));
+    if (query?.cursor) params.set('cursor', query.cursor);
+    const qs = params.toString();
+    return this.get(`${this.baseUrl}/api/registry/agents/search${qs ? '?' + qs : ''}`);
+  }
+
+  /**
+   * Request immediate re-crawl of a domain's adagents.json.
+   * Rate limited to one crawl per domain per 10 minutes.
+   *
+   * Requires authentication.
+   */
+  async requestCrawl(domain: string): Promise<CrawlRequestResponse> {
+    if (!domain?.trim()) throw new Error('domain is required');
+    if (!this.apiKey) throw new Error('apiKey is required for crawl requests');
+    return this.post(`${this.baseUrl}/api/registry/crawl-request`, { domain });
   }
 
   // ====== Private helpers ======

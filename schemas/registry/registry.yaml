@@ -987,6 +987,305 @@ components:
         - policy_id
         - total
         - revisions
+    CatalogEvent:
+      type: object
+      properties:
+        event_id:
+          type: string
+          format: uuid
+          description: UUID v7, monotonically ordered
+        event_type:
+          type: string
+          enum:
+            - property.created
+            - property.updated
+            - property.merged
+            - property.stale
+            - property.reactivated
+            - agent.discovered
+            - agent.removed
+            - agent.profile_updated
+            - publisher.adagents_changed
+            - authorization.granted
+            - authorization.revoked
+        entity_type:
+          type: string
+          enum:
+            - property
+            - agent
+            - publisher
+            - authorization
+        entity_id:
+          type: string
+          description: property_rid, agent_url, or publisher_domain
+        payload:
+          type: object
+          additionalProperties: {}
+        actor:
+          type: string
+          description: "crawler, member_id, or system"
+        created_at:
+          type: string
+          format: date-time
+      required:
+        - event_id
+        - event_type
+        - entity_type
+        - entity_id
+        - payload
+        - actor
+        - created_at
+    FeedResponse:
+      type: object
+      properties:
+        events:
+          type: array
+          items:
+            $ref: "#/components/schemas/CatalogEvent"
+        cursor:
+          type:
+            - string
+            - "null"
+          format: uuid
+          description: Pass as cursor on next poll. Null when no events returned.
+        has_more:
+          type: boolean
+        cursor_expired:
+          type: boolean
+          description: True when the provided cursor has been cleaned up. Client should re-bootstrap.
+      required:
+        - events
+        - cursor
+        - has_more
+    AgentInventoryProfile:
+      type: object
+      properties:
+        channels:
+          type: array
+          items:
+            type: string
+          description: "Media channels: display, olv, ctv, dooh, etc."
+        property_types:
+          type: array
+          items:
+            type: string
+          description: "Inventory surface types: website, mobile_app, ctv_app, etc."
+        markets:
+          type: array
+          items:
+            type: string
+          description: ISO 3166-1 alpha-2 country codes
+        categories:
+          type: array
+          items:
+            type: string
+          description: IAB Content Taxonomy 3.0 categories
+        category_taxonomy:
+          type: string
+          default: iab_content_3.0
+        tags:
+          type: array
+          items:
+            type: string
+        delivery_types:
+          type: array
+          items:
+            type: string
+          description: "guaranteed, non_guaranteed, etc."
+        property_count:
+          type: integer
+        publisher_count:
+          type: integer
+        has_tmp:
+          type: boolean
+          description: Whether the agent supports Trusted Match Protocol
+      required:
+        - channels
+        - property_types
+        - markets
+        - categories
+        - tags
+        - delivery_types
+        - property_count
+        - publisher_count
+        - has_tmp
+    AgentSearchResult:
+      type: object
+      properties:
+        url:
+          type: string
+        name:
+          type: string
+        type:
+          type: string
+          enum:
+            - creative
+            - signals
+            - sales
+            - governance
+            - si
+            - unknown
+        protocol:
+          type: string
+          enum:
+            - mcp
+            - a2a
+        source:
+          type: string
+          enum:
+            - registered
+            - discovered
+        member:
+          type: object
+          properties:
+            slug:
+              type: string
+            display_name:
+              type: string
+        inventory_profile:
+          $ref: "#/components/schemas/AgentInventoryProfile"
+        match:
+          type: object
+          properties:
+            score:
+              type: number
+            matched_filters:
+              type: array
+              items:
+                type: string
+          required:
+            - score
+            - matched_filters
+      required:
+        - url
+        - name
+        - type
+        - inventory_profile
+        - match
+    AgentSearchResponse:
+      type: object
+      properties:
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/AgentSearchResult"
+        cursor:
+          type:
+            - string
+            - "null"
+        has_more:
+          type: boolean
+        filters_applied:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              type: string
+      required:
+        - results
+        - has_more
+    CrawlRequestResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum:
+            - accepted
+            - rate_limited
+        domain:
+          type: string
+        last_crawled:
+          type:
+            - string
+            - "null"
+          format: date-time
+          description: Present when rate_limited
+        retry_after:
+          type:
+            - integer
+            - "null"
+          description: Seconds until next crawl allowed. Present when rate_limited.
+      required:
+        - status
+        - domain
+    AuthorizationEntry:
+      type: object
+      description: Full authorization record from adagents.json, carried in authorization.granted/revoked event payloads.
+      properties:
+        agent_url:
+          type: string
+        publisher_domain:
+          type: string
+        authorization_type:
+          type: string
+          enum:
+            - full
+            - property_ids
+            - property_types
+            - collections
+        property_ids:
+          type: array
+          items:
+            type: string
+        placement_ids:
+          type: array
+          items:
+            type: string
+        collections:
+          type: array
+          items:
+            type: object
+            properties:
+              publisher_domain:
+                type: string
+              collection_id:
+                type: string
+            required:
+              - publisher_domain
+              - collection_id
+        countries:
+          type: array
+          items:
+            type: string
+          description: ISO 3166-1 alpha-2 country codes
+        delegation_type:
+          type: string
+          enum:
+            - direct
+            - delegated
+        exclusive:
+          type: boolean
+        signing_keys:
+          type: array
+          items:
+            type: object
+            properties:
+              algorithm:
+                type: string
+              public_key:
+                type: string
+            required:
+              - algorithm
+              - public_key
+        effective_from:
+          type:
+            - string
+            - "null"
+          format: date-time
+        effective_until:
+          type:
+            - string
+            - "null"
+          format: date-time
+      required:
+        - agent_url
+        - publisher_domain
+        - authorization_type
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      description: API key passed as Bearer token. Required for member-only endpoints.
 paths:
   /api:
     get:
@@ -2236,6 +2535,208 @@ paths:
                   - authorized
                   - checked_at
                 additionalProperties: {}
+  /api/registry/feed:
+    get:
+      operationId: getRegistryFeed
+      summary: Registry change feed
+      description: |-
+        Poll the catalog event feed. Returns events since the provided cursor,
+        ordered by UUID v7 event_id. Consumers save cursor and pass it on
+        the next poll. When has_more is false, the consumer is caught up.
+
+        Events are retained for 90 days. If the cursor refers to a deleted event,
+        cursor_expired is true and the client should re-bootstrap.
+      tags:
+        - Registry Sync
+      security:
+        - BearerAuth: []
+      parameters:
+        - schema:
+            type: string
+            format: uuid
+          required: false
+          name: cursor
+          in: query
+          description: Last event_id processed. Omit for start of retention window.
+        - schema:
+            type: string
+          required: false
+          name: types
+          in: query
+          description: "Comma-separated event types. Supports glob: property.*, authorization.*"
+        - schema:
+            type: integer
+            minimum: 1
+            maximum: 10000
+            default: 1000
+          required: false
+          name: limit
+          in: query
+      responses:
+        "200":
+          description: Feed events
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FeedResponse"
+        "401":
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/registry/agents/search:
+    get:
+      operationId: searchAgents
+      summary: Search agents by inventory profile
+      description: |-
+        Query the registry for agents matching a campaign profile. Returns a
+        ranked list with inventory profiles and match scores. All filters use
+        AND logic across dimensions; multiple values within a filter use OR.
+      tags:
+        - Registry Sync
+      parameters:
+        - schema:
+            type: string
+            enum:
+              - creative
+              - signals
+              - sales
+              - governance
+              - si
+          required: false
+          name: type
+          in: query
+        - schema:
+            type: string
+          required: false
+          name: channels
+          in: query
+          description: "Comma-separated media channels: ctv, olv, display, dooh"
+        - schema:
+            type: string
+          required: false
+          name: markets
+          in: query
+          description: "Comma-separated ISO 3166-1 alpha-2 codes: US, GB, CA"
+        - schema:
+            type: string
+          required: false
+          name: categories
+          in: query
+          description: "Comma-separated IAB categories: IAB-7, IAB-7-1"
+        - schema:
+            type: string
+          required: false
+          name: property_types
+          in: query
+          description: "Comma-separated: website, mobile_app, ctv_app"
+        - schema:
+            type: string
+          required: false
+          name: tags
+          in: query
+          description: Comma-separated property tags
+        - schema:
+            type: string
+          required: false
+          name: delivery_types
+          in: query
+          description: "Comma-separated: guaranteed, non_guaranteed"
+        - schema:
+            type: boolean
+          required: false
+          name: has_tmp
+          in: query
+          description: Filter to agents supporting Trusted Match Protocol
+        - schema:
+            type: integer
+            minimum: 1
+          required: false
+          name: min_properties
+          in: query
+        - schema:
+            type: string
+            enum:
+              - relevance
+              - property_count
+              - publisher_count
+            default: relevance
+          required: false
+          name: sort
+          in: query
+        - schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+          required: false
+          name: limit
+          in: query
+        - schema:
+            type: string
+          required: false
+          name: cursor
+          in: query
+          description: Pagination cursor from previous response
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Search results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentSearchResponse"
+        "401":
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/registry/crawl-request:
+    post:
+      operationId: requestCrawl
+      summary: Request domain re-crawl
+      description: |-
+        Request immediate re-crawl of a domain's adagents.json. The requester
+        must be a member who owns the domain or an agent authorized for it.
+        Rate limited to one crawl per domain per 10 minutes.
+      tags:
+        - Registry Sync
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                domain:
+                  type: string
+                  description: Publisher domain to re-crawl
+              required:
+                - domain
+      responses:
+        "200":
+          description: Crawl accepted or rate limited
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CrawlRequestResponse"
+        "401":
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          description: Rate limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CrawlRequestResponse"
   /api/adagents/validate:
     post:
       operationId: validateAdagents
@@ -3068,5 +3569,7 @@ tags:
     description: Cross-entity search across brands, publishers, agents, and properties.
   - name: Agent Probing
     description: Connect to live agents and inspect their capabilities, formats, and inventory.
+  - name: Registry Sync
+    description: Change feed, structured agent search, and crawl triggers for maintaining a synchronized view of the registry.
   - name: Policy Registry
     description: Browse, resolve, and contribute governance policies for campaign compliance.
