@@ -477,21 +477,19 @@ export async function testReportingFlow(
     return { steps, profile };
   }
 
-  // Check supported_protocols includes 'reporting' if agent declares them
-  if (profile.supported_protocols && profile.supported_protocols.length > 0) {
-    const hasReporting = profile.supported_protocols.includes('reporting');
-    steps.push({
-      step: 'Check reporting protocol declaration',
-      passed: true,
-      duration_ms: 0,
-      details: hasReporting
-        ? 'Agent declares reporting in supported_protocols'
-        : 'Agent does not declare reporting in supported_protocols (tool is present but protocol not declared)',
-      warnings: hasReporting
-        ? undefined
-        : ['Agent has get_media_buy_delivery but does not declare reporting in supported_protocols'],
-    });
-  }
+  // Check supported_protocols includes 'reporting'
+  const hasReporting = profile.supported_protocols?.includes('reporting') ?? false;
+  steps.push({
+    step: 'Check reporting protocol declaration',
+    passed: true,
+    duration_ms: 0,
+    details: hasReporting
+      ? 'Agent declares reporting in supported_protocols'
+      : 'Agent does not declare reporting in supported_protocols (tool is present but protocol not declared)',
+    warnings: hasReporting
+      ? undefined
+      : ['Agent has get_media_buy_delivery but does not declare reporting in supported_protocols'],
+  });
 
   // Discover products to check reporting_capabilities
   const { result: productsResult, step: productsStep } = await runStep<TaskResult>(
@@ -590,52 +588,77 @@ export async function testReportingFlow(
     const mediaBuys = delivery.media_buys as unknown[] | undefined;
     const mediaBuyDeliveries = delivery.media_buy_deliveries as Record<string, unknown>[] | undefined;
 
-    const allEntries = mediaBuyDeliveries ?? mediaBuys ?? deliveries ?? [];
+    const allEntries = (mediaBuyDeliveries ?? mediaBuys ?? deliveries ?? []) as Record<string, unknown>[];
     const hasData = allEntries.length > 0;
 
-    // Check for reporting_delayed — a valid async response indicating data not yet available
-    const delayedEntries = (allEntries as Record<string, unknown>[]).filter(e => e.status === 'reporting_delayed');
-    const isDelayed = delayedEntries.length > 0;
+    // Split entries: some may be delayed while others have actual data
+    const delayedEntries = allEntries.filter(e => e.status === 'reporting_delayed');
+    const readyEntries = allEntries.filter(e => e.status !== 'reporting_delayed');
 
-    // Check for currency field anywhere in the response
-    const responseStr = JSON.stringify(delivery);
-    const hasCurrency = responseStr.includes('"currency"');
+    // Check for currency on entry objects (not via string search)
+    const hasCurrency = readyEntries.some(
+      e => 'currency' in e || (e.totals as Record<string, unknown> | undefined)?.currency !== undefined
+    );
 
     // Extract metrics info for diagnostics
-    const totals = (mediaBuyDeliveries?.[0]?.totals ?? undefined) as Record<string, unknown> | undefined;
+    const firstReady = readyEntries[0];
+    const totals = (firstReady?.totals ?? undefined) as Record<string, unknown> | undefined;
     const summary = delivery.summary as Record<string, unknown> | undefined;
     const impressions = (totals?.impressions ?? delivery.impressions ?? summary?.impressions) as number | undefined;
     const clicks = (totals?.clicks ?? delivery.clicks ?? summary?.clicks) as number | undefined;
 
-    if (isDelayed) {
-      // reporting_delayed is a valid response — check that expected_availability is present
+    const details: string[] = [];
+    const warnings: string[] = [];
+
+    // Validate delayed entries
+    if (delayedEntries.length > 0) {
       const withAvailability = delayedEntries.filter(e => e.expected_availability);
-      deliveryStep.details = `${delayedEntries.length} media buy(s) report data not yet available (reporting_delayed)`;
+      details.push(`${delayedEntries.length} media buy(s) reporting_delayed`);
       if (withAvailability.length < delayedEntries.length) {
-        deliveryStep.warnings = [
-          ...(deliveryStep.warnings || []),
-          'reporting_delayed entries should include expected_availability so buyers know when to expect data',
-        ];
+        warnings.push(
+          'reporting_delayed entries should include expected_availability so buyers know when to expect data'
+        );
       }
-    } else if (hasData) {
-      deliveryStep.details = `Retrieved delivery data${hasCurrency ? ' with currency' : ' (no currency field found)'}`;
-      if (!hasCurrency) {
-        deliveryStep.warnings = [...(deliveryStep.warnings || []), 'No currency field found in delivery response'];
-      }
-    } else {
-      deliveryStep.passed = false;
-      deliveryStep.error = 'Expected delivery data or reporting_delayed status in response but found neither';
     }
 
+    // Validate ready entries
+    if (readyEntries.length > 0) {
+      details.push(`${readyEntries.length} media buy(s) with delivery data`);
+      if (!hasCurrency) {
+        warnings.push('No currency field found in delivery entries');
+      }
+    }
+
+    if (!hasData) {
+      deliveryStep.passed = false;
+      deliveryStep.error = 'Expected delivery data or reporting_delayed status in response but found neither';
+    } else {
+      deliveryStep.details = details.join(', ');
+    }
+
+    if (warnings.length > 0) {
+      deliveryStep.warnings = [...(deliveryStep.warnings || []), ...warnings];
+    }
+
+    const KNOWN_DELIVERY_KEYS = [
+      'media_buy_deliveries',
+      'media_buys',
+      'deliveries',
+      'currency',
+      'summary',
+      'reporting_period',
+      'notification_type',
+      'partial_data',
+    ];
     deliveryStep.response_preview = JSON.stringify(
       {
         has_data: hasData,
-        is_delayed: isDelayed,
         delayed_count: delayedEntries.length,
+        ready_count: readyEntries.length,
         has_currency: hasCurrency,
         impressions,
         clicks,
-        raw_keys: Object.keys(delivery),
+        known_keys: Object.keys(delivery).filter(k => KNOWN_DELIVERY_KEYS.includes(k)),
       },
       null,
       2
@@ -643,6 +666,9 @@ export async function testReportingFlow(
   } else if (deliveryResult && !deliveryResult.success) {
     deliveryStep.passed = false;
     deliveryStep.error = deliveryResult.error || 'get_media_buy_delivery returned unsuccessful result';
+  } else if (!deliveryResult) {
+    deliveryStep.passed = false;
+    deliveryStep.error = 'get_media_buy_delivery returned no result';
   }
   steps.push(deliveryStep);
 
