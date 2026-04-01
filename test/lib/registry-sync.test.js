@@ -562,6 +562,28 @@ describe('RegistrySync', () => {
       assert.strictEqual(stats.authorizations, 1);
     });
 
+    test('reset clears state and stops polling', async () => {
+      restore = mockFetch(async (url) => {
+        if (url.includes('/agents/search')) {
+          return new Response(JSON.stringify(makeSearchResponse([AGENT_1])), { status: 200 });
+        }
+        if (url.includes('/registry/feed')) {
+          return new Response(JSON.stringify(EMPTY_FEED), { status: 200 });
+        }
+        return new Response('Not found', { status: 404 });
+      });
+
+      const client = new RegistryClient({ apiKey: 'sk_test' });
+      const sync = new RegistrySync({ client });
+      await sync.start();
+      assert.strictEqual(sync.getStats().agents, 1);
+
+      await sync.reset();
+      assert.strictEqual(sync.state, 'idle');
+      assert.strictEqual(sync.getStats().agents, 0);
+      assert.strictEqual(sync.getCursor(), null);
+    });
+
     test('disabled agent index skips agent loading', async () => {
       restore = mockFetch(async (url) => {
         if (url.includes('/agents/search')) {
@@ -579,6 +601,171 @@ describe('RegistrySync', () => {
       sync.stop();
 
       assert.strictEqual(sync.getStats().agents, 0);
+    });
+  });
+
+  // ============ Feed Pagination & Cursor Expiration ============
+
+  describe('feed pagination and cursor expiration', () => {
+    test('drains has_more pages during bootstrap', async () => {
+      let feedCallCount = 0;
+      const event1 = makeEvent('agent.discovered', 'https://agent1.example.com', { name: 'Agent1' });
+      const event2 = makeEvent('agent.discovered', 'https://agent2.example.com', { name: 'Agent2' });
+
+      restore = mockFetch(async (url) => {
+        if (url.includes('/agents/search')) {
+          return new Response(JSON.stringify(makeSearchResponse([])), { status: 200 });
+        }
+        if (url.includes('/registry/feed')) {
+          feedCallCount++;
+          if (feedCallCount === 1) {
+            return new Response(
+              JSON.stringify(makeFeedResponse([event1], { has_more: true, cursor: 'cursor-page2' })),
+              { status: 200 }
+            );
+          }
+          return new Response(
+            JSON.stringify(makeFeedResponse([event2], { cursor: 'cursor-final' })),
+            { status: 200 }
+          );
+        }
+        return new Response('Not found', { status: 404 });
+      });
+
+      const client = new RegistryClient({ apiKey: 'sk_test' });
+      const sync = new RegistrySync({ client });
+      await sync.start();
+      sync.stop();
+
+      assert.strictEqual(feedCallCount, 2);
+      assert.strictEqual(sync.getStats().agents, 2);
+      assert.strictEqual(sync.getCursor(), 'cursor-final');
+    });
+
+    test('cursor_expired triggers re-bootstrap with fresh data', async () => {
+      let phase = 'initial';
+      const AGENT_NEW = { ...AGENT_2, url: 'https://new.agent.example.com', name: 'NewAgent' };
+
+      restore = mockFetch(async (url) => {
+        if (url.includes('/agents/search')) {
+          if (phase === 'initial') {
+            return new Response(JSON.stringify(makeSearchResponse([AGENT_1])), { status: 200 });
+          }
+          // After re-bootstrap, return different agent
+          return new Response(JSON.stringify(makeSearchResponse([AGENT_NEW])), { status: 200 });
+        }
+        if (url.includes('/registry/feed')) {
+          if (phase === 'expired') {
+            // First poll after bootstrap returns cursor_expired
+            phase = 'rebootstrap';
+            return new Response(
+              JSON.stringify(makeFeedResponse([], { cursor_expired: true })),
+              { status: 200 }
+            );
+          }
+          return new Response(JSON.stringify(EMPTY_FEED), { status: 200 });
+        }
+        return new Response('Not found', { status: 404 });
+      });
+
+      const client = new RegistryClient({ apiKey: 'sk_test' });
+      const sync = new RegistrySync({ client, pollIntervalMs: 20 });
+
+      const bootstrapEvents = [];
+      sync.on('bootstrap', (data) => bootstrapEvents.push(data));
+      sync.on('error', () => {}); // prevent unhandled error
+
+      await sync.start();
+      assert.strictEqual(sync.getStats().agents, 1);
+      assert.ok(sync.getAgent('https://ads.streamhaus.example.com'));
+
+      // Trigger cursor_expired on next poll
+      phase = 'expired';
+
+      // Wait for poll + re-bootstrap
+      await new Promise(r => setTimeout(r, 200));
+      sync.stop();
+
+      // Should have re-bootstrapped with new data
+      assert.strictEqual(bootstrapEvents.length, 2);
+      assert.ok(sync.getAgent('https://new.agent.example.com'));
+      // Old agent should be gone (indexes were cleared)
+      assert.strictEqual(sync.getAgent('https://ads.streamhaus.example.com'), undefined);
+    });
+
+    test('multiple auth types for same agent+domain are preserved', async () => {
+      const fullAuth = makeEvent('authorization.granted', 'auth-1', {
+        agent_url: 'https://ads.example.com',
+        publisher_domain: 'pub.com',
+        authorization_type: 'full',
+      });
+      const propertyAuth = makeEvent('authorization.granted', 'auth-2', {
+        agent_url: 'https://ads.example.com',
+        publisher_domain: 'pub.com',
+        authorization_type: 'property_ids',
+        property_ids: ['prop_1'],
+      });
+
+      restore = mockFetch(async (url) => {
+        if (url.includes('/agents/search')) {
+          return new Response(JSON.stringify(makeSearchResponse([])), { status: 200 });
+        }
+        if (url.includes('/registry/feed')) {
+          return new Response(
+            JSON.stringify(makeFeedResponse([fullAuth, propertyAuth], { cursor: 'cursor-002' })),
+            { status: 200 }
+          );
+        }
+        return new Response('Not found', { status: 404 });
+      });
+
+      const client = new RegistryClient({ apiKey: 'sk_test' });
+      const sync = new RegistrySync({ client });
+      await sync.start();
+      sync.stop();
+
+      assert.strictEqual(sync.getAuthorizationsForDomain('pub.com').length, 2);
+      assert.strictEqual(sync.getAuthorizationsForAgent('https://ads.example.com').length, 2);
+    });
+
+    test('revoking specific auth type preserves other types', async () => {
+      const fullAuth = makeEvent('authorization.granted', 'auth-1', {
+        agent_url: 'https://ads.example.com',
+        publisher_domain: 'pub.com',
+        authorization_type: 'full',
+      });
+      const propertyAuth = makeEvent('authorization.granted', 'auth-2', {
+        agent_url: 'https://ads.example.com',
+        publisher_domain: 'pub.com',
+        authorization_type: 'property_ids',
+      });
+      const revokeProperty = makeEvent('authorization.revoked', 'auth-3', {
+        agent_url: 'https://ads.example.com',
+        publisher_domain: 'pub.com',
+        authorization_type: 'property_ids',
+      });
+
+      restore = mockFetch(async (url) => {
+        if (url.includes('/agents/search')) {
+          return new Response(JSON.stringify(makeSearchResponse([])), { status: 200 });
+        }
+        if (url.includes('/registry/feed')) {
+          return new Response(
+            JSON.stringify(makeFeedResponse([fullAuth, propertyAuth, revokeProperty], { cursor: 'c-002' })),
+            { status: 200 }
+          );
+        }
+        return new Response('Not found', { status: 404 });
+      });
+
+      const client = new RegistryClient({ apiKey: 'sk_test' });
+      const sync = new RegistrySync({ client });
+      await sync.start();
+      sync.stop();
+
+      const remaining = sync.getAuthorizationsForDomain('pub.com');
+      assert.strictEqual(remaining.length, 1);
+      assert.strictEqual(remaining[0].authorization_type, 'full');
     });
   });
 

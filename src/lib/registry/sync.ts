@@ -33,6 +33,7 @@ export type RegistrySyncState = 'idle' | 'bootstrapping' | 'syncing' | 'error';
 export interface RegistrySyncEvents {
   bootstrap: [{ agentCount: number; authorizationCount: number }];
   sync: [{ cursor: string; eventsApplied: number }];
+  /** Emitted for each event applied during polling. Not emitted during bootstrap. */
   event: [{ event: CatalogEvent }];
   error: [{ error: Error }];
   stateChange: [{ from: RegistrySyncState; to: RegistrySyncState }];
@@ -104,7 +105,7 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
 
   /** Bootstrap from the registry and begin polling the event feed. */
   async start(): Promise<void> {
-    if (this._state === 'syncing') return;
+    if (this._state === 'syncing' || this._state === 'bootstrapping') return;
     await this.bootstrap();
     this.schedulePoll();
   }
@@ -115,17 +116,17 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
       clearTimeout(this.pollTimer);
       this.pollTimer = null;
     }
+    if (this._state === 'syncing') {
+      this.setState('idle');
+    }
   }
 
-  /** Stop, clear all state, and re-bootstrap. */
+  /** Stop, clear all state. Call start() again to re-bootstrap. */
   async reset(): Promise<void> {
     this.stop();
-    this.agents.clear();
-    this.authByDomain.clear();
-    this.authByAgent.clear();
+    this.clearIndexes();
     this.cursor = null;
     this.setState('idle');
-    await this.start();
   }
 
   // ====== Agent Lookups ======
@@ -171,7 +172,11 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
     return this.authByAgent.get(agentUrl) ?? [];
   }
 
-  /** Check if an agent is authorized for a publisher domain. */
+  /**
+   * Check if an agent has any authorization for a publisher domain.
+   * Does not evaluate property_id scoping, time bounds, or effective dates.
+   * For scoped checks, use getAuthorizationsForDomain() and inspect entries directly.
+   */
   isAuthorized(agentUrl: string, domain: string): boolean {
     const entries = this.authByDomain.get(domain);
     return entries != null && entries.some(e => e.agent_url === agentUrl);
@@ -212,22 +217,8 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
         } while (cursor);
       }
 
-      // Get initial feed cursor
-      const feed: FeedResponse = await this.client.getFeed({ limit: 1000 });
-      for (const event of feed.events) {
-        this.applyEvent(event);
-      }
-      this.cursor = feed.cursor;
-
-      // Drain remaining events
-      while (feed.has_more && this.cursor) {
-        const more = await this.client.getFeed({ cursor: this.cursor, limit: 1000 });
-        for (const event of more.events) {
-          this.applyEvent(event);
-        }
-        this.cursor = more.cursor;
-        if (!more.has_more) break;
-      }
+      // Get initial feed cursor and apply any events
+      await this.drainFeed();
 
       this.setState('syncing');
       this.emit('bootstrap', {
@@ -257,42 +248,63 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
       this.emit('error', { error });
       this.errorHandler?.(error);
     }
-    // Schedule next poll even after errors (will retry)
-    if (this._state !== 'idle') {
+    // Schedule next poll even after errors (will retry), unless stopped
+    if (this._state === 'syncing') {
       this.schedulePoll();
     }
   }
 
   private async poll(): Promise<void> {
-    const feed = await this.client.getFeed({
-      cursor: this.cursor ?? undefined,
-      limit: 1000,
-    });
+    let totalEventsApplied = 0;
+    let hasMore = true;
 
-    if (feed.cursor_expired) {
-      await this.reset();
-      return;
+    while (hasMore) {
+      const feed: FeedResponse = await this.client.getFeed({
+        cursor: this.cursor ?? undefined,
+        limit: 1000,
+      });
+
+      if (feed.cursor_expired) {
+        // Clear state and re-bootstrap inline; the existing poll loop continues
+        this.clearIndexes();
+        this.cursor = null;
+        await this.bootstrap();
+        return;
+      }
+
+      for (const event of feed.events) {
+        this.applyEvent(event);
+        this.emit('event', { event });
+        totalEventsApplied++;
+      }
+
+      if (feed.cursor) {
+        this.cursor = feed.cursor;
+      }
+
+      hasMore = feed.has_more && this.cursor != null;
     }
 
-    let eventsApplied = 0;
-    for (const event of feed.events) {
-      this.applyEvent(event);
-      this.emit('event', { event });
-      eventsApplied++;
+    if (totalEventsApplied > 0) {
+      this.emit('sync', { cursor: this.cursor!, eventsApplied: totalEventsApplied });
     }
+  }
 
-    if (feed.cursor) {
+  /**
+   * Drain all available feed pages. Used during bootstrap (does not emit 'event' per event).
+   */
+  private async drainFeed(): Promise<void> {
+    let hasMore = true;
+    while (hasMore) {
+      const feed: FeedResponse = await this.client.getFeed({
+        cursor: this.cursor ?? undefined,
+        limit: 1000,
+      });
+      for (const event of feed.events) {
+        this.applyEvent(event);
+      }
       this.cursor = feed.cursor;
-    }
-
-    // Drain has_more pages immediately
-    if (feed.has_more && this.cursor) {
-      await this.poll();
-      return;
-    }
-
-    if (eventsApplied > 0) {
-      this.emit('sync', { cursor: this.cursor!, eventsApplied });
+      hasMore = feed.has_more && this.cursor != null;
     }
   }
 
@@ -307,13 +319,12 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
         if (!this.indexAgents) break;
         const existing = this.agents.get(event.entity_id);
         if (existing && payload.inventory_profile) {
-          // Update profile data
           this.agents.set(event.entity_id, {
             ...existing,
             inventory_profile: payload.inventory_profile as AgentSearchResult['inventory_profile'],
           });
         } else if (!existing) {
-          // Stub entry for newly discovered agent
+          // New agent: use payload data or create stub
           this.agents.set(event.entity_id, {
             url: event.entity_id,
             name: (payload.name as string) ?? event.entity_id,
@@ -348,14 +359,21 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
         if (!entry.agent_url || !entry.publisher_domain || !entry.authorization_type) break;
 
         const domainEntries = this.authByDomain.get(entry.publisher_domain) ?? [];
-        // Avoid duplicates
-        if (!domainEntries.some(e => e.agent_url === entry.agent_url)) {
+        if (
+          !domainEntries.some(
+            e => e.agent_url === entry.agent_url && e.authorization_type === entry.authorization_type
+          )
+        ) {
           domainEntries.push(entry);
           this.authByDomain.set(entry.publisher_domain, domainEntries);
         }
 
         const agentEntries = this.authByAgent.get(entry.agent_url) ?? [];
-        if (!agentEntries.some(e => e.publisher_domain === entry.publisher_domain)) {
+        if (
+          !agentEntries.some(
+            e => e.publisher_domain === entry.publisher_domain && e.authorization_type === entry.authorization_type
+          )
+        ) {
           agentEntries.push(entry);
           this.authByAgent.set(entry.agent_url, agentEntries);
         }
@@ -366,18 +384,23 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
         if (!this.indexAuthorizations) break;
         const agentUrl = payload.agent_url as string;
         const domain = payload.publisher_domain as string;
+        const authType = payload.authorization_type as string | undefined;
         if (!agentUrl || !domain) break;
 
         const domainEntries = this.authByDomain.get(domain);
         if (domainEntries) {
-          const filtered = domainEntries.filter(e => e.agent_url !== agentUrl);
+          const filtered = domainEntries.filter(
+            e => !(e.agent_url === agentUrl && (!authType || e.authorization_type === authType))
+          );
           if (filtered.length > 0) this.authByDomain.set(domain, filtered);
           else this.authByDomain.delete(domain);
         }
 
         const agentEntries = this.authByAgent.get(agentUrl);
         if (agentEntries) {
-          const filtered = agentEntries.filter(e => e.publisher_domain !== domain);
+          const filtered = agentEntries.filter(
+            e => !(e.publisher_domain === domain && (!authType || e.authorization_type === authType))
+          );
           if (filtered.length > 0) this.authByAgent.set(agentUrl, filtered);
           else this.authByAgent.delete(agentUrl);
         }
@@ -390,7 +413,13 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
     }
   }
 
-  // ====== Private: State ======
+  // ====== Private: Helpers ======
+
+  private clearIndexes(): void {
+    this.agents.clear();
+    this.authByDomain.clear();
+    this.authByAgent.clear();
+  }
 
   private setState(next: RegistrySyncState): void {
     const from = this._state;
