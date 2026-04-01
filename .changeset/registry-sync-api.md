@@ -2,4 +2,4 @@
 "@adcp/client": minor
 ---
 
-Align registry sync types with live server: FeedResponse uses `cursor` (not `next_cursor`), AgentSearchResponse uses `results` (not `agents`). Add auth requirement to `searchAgents()`. Add `lookupPropertiesAll()` for auto-paginated bulk domain resolution.
+Add RegistrySync for in-memory registry replica with agent/authorization indexes, event feed polling, and zero-latency lookups. Add `lookupDomains()` for concurrent domain→agent resolution. Parallelize `lookupPropertiesAll()` with configurable concurrency. Align registry sync types with live server.

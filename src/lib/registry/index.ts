@@ -80,6 +80,10 @@ export type {
   AuthorizationEntry,
 } from './types';
 
+// Re-export RegistrySync
+export { RegistrySync } from './sync';
+export type { RegistrySyncConfig, RegistrySyncState, RegistrySyncEvents, AgentFilter } from './sync';
+
 const DEFAULT_BASE_URL = 'https://adcontextprotocol.org';
 const MAX_BULK_DOMAINS = 100;
 const MAX_CHECK_DOMAINS = 10000; // per OpenAPI spec maxItems
@@ -182,14 +186,24 @@ export class RegistryClient {
 
   /**
    * Bulk resolve any number of domains to property information.
-   * Automatically paginates in batches of 100.
+   * Automatically paginates in batches of 100, running up to `concurrency`
+   * batches in parallel (default 5).
    */
-  async lookupPropertiesAll(domains: string[]): Promise<Record<string, ResolvedProperty | null>> {
+  async lookupPropertiesAll(
+    domains: string[],
+    options?: { concurrency?: number }
+  ): Promise<Record<string, ResolvedProperty | null>> {
     const unique = [...new Set(domains)];
-    const results: Record<string, ResolvedProperty | null> = {};
+    const concurrency = options?.concurrency ?? 5;
+    const batches: string[][] = [];
     for (let i = 0; i < unique.length; i += MAX_BULK_DOMAINS) {
-      const batch = unique.slice(i, i + MAX_BULK_DOMAINS);
-      Object.assign(results, await this.lookupProperties(batch));
+      batches.push(unique.slice(i, i + MAX_BULK_DOMAINS));
+    }
+    const results: Record<string, ResolvedProperty | null> = {};
+    for (let i = 0; i < batches.length; i += concurrency) {
+      const chunk = batches.slice(i, i + concurrency);
+      const settled = await Promise.all(chunk.map(b => this.lookupProperties(b)));
+      for (const r of settled) Object.assign(results, r);
     }
     return results;
   }
@@ -251,6 +265,29 @@ export class RegistryClient {
   async lookupDomain(domain: string): Promise<DomainLookupResult> {
     if (!domain?.trim()) throw new Error('domain is required');
     return this.get(`${this.baseUrl}/api/registry/lookup/domain/${encodeURIComponent(domain)}`);
+  }
+
+  /**
+   * Look up agents authorized for multiple domains.
+   * Client-side fan-out over lookupDomain (no server bulk endpoint yet).
+   * Domains that fail individually are omitted from the result.
+   */
+  async lookupDomains(
+    domains: string[],
+    options?: { concurrency?: number }
+  ): Promise<Record<string, DomainLookupResult>> {
+    const unique = [...new Set(domains)];
+    const concurrency = options?.concurrency ?? 10;
+    const results: Record<string, DomainLookupResult> = {};
+    for (let i = 0; i < unique.length; i += concurrency) {
+      const batch = unique.slice(i, i + concurrency);
+      const settled = await Promise.allSettled(batch.map(d => this.lookupDomain(d)));
+      for (let j = 0; j < batch.length; j++) {
+        const s = settled[j]!;
+        if (s.status === 'fulfilled') results[batch[j]!] = s.value;
+      }
+    }
+    return results;
   }
 
   /** Look up agents by property identifier (type + value). */
