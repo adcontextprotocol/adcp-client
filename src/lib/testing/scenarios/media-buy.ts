@@ -445,9 +445,15 @@ export async function testFullSalesFlow(
 
 /**
  * Test: Reporting Flow
- * Validates reporting capabilities by creating a media buy then calling
- * get_media_buy_delivery and checking the response for expected structure
- * (delivery data with dimensions/metrics and currency).
+ * Validates reporting capabilities:
+ * - Agent has get_media_buy_delivery tool
+ * - Products declare reporting_capabilities (frequencies, webhook support)
+ * - get_media_buy_delivery returns valid structure or reporting_delayed with expected_availability
+ * - Currency field is present in delivery data
+ *
+ * The protocol favors async webhook-based report delivery over buyer polling.
+ * This scenario checks that the agent advertises webhook support and properly
+ * handles the reporting_delayed status for data not yet available.
  */
 export async function testReportingFlow(
   agentUrl: string,
@@ -487,6 +493,72 @@ export async function testReportingFlow(
     });
   }
 
+  // Discover products to check reporting_capabilities
+  const { result: productsResult, step: productsStep } = await runStep<TaskResult>(
+    'Check product reporting capabilities',
+    'get_products',
+    async () =>
+      client.getProducts({
+        buying_mode: 'brief',
+        brief: options.brief || 'Looking for advertising products with reporting',
+        brand: resolveBrand(options),
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- intentional: test request bypasses strict typing
+      } as any) as Promise<TaskResult>
+  );
+
+  const productsData = productsResult?.data as Record<string, unknown> | undefined;
+  const products = (productsData?.products ?? []) as Array<Record<string, unknown>>;
+
+  // Evaluate reporting_capabilities on discovered products
+  const withReporting = products.filter(p => p.reporting_capabilities);
+  const withWebhooks = withReporting.filter(p => {
+    const rc = p.reporting_capabilities as Record<string, unknown> | undefined;
+    return rc?.supports_webhooks === true;
+  });
+
+  if (products.length > 0) {
+    const webhookWarnings: string[] = [];
+    if (withReporting.length === 0) {
+      webhookWarnings.push(
+        'No products declare reporting_capabilities — buyers cannot discover reporting frequency or webhook support'
+      );
+    } else if (withWebhooks.length === 0) {
+      webhookWarnings.push(
+        'No products declare supports_webhooks: true — buyers must poll get_media_buy_delivery instead of receiving async reports'
+      );
+    }
+
+    // Check for available_reporting_frequencies
+    const withFrequencies = withReporting.filter(p => {
+      const rc = p.reporting_capabilities as Record<string, unknown> | undefined;
+      const freqs = rc?.available_reporting_frequencies as unknown[] | undefined;
+      return freqs && freqs.length > 0;
+    });
+
+    productsStep.details = [
+      `${products.length} product(s) discovered`,
+      `${withReporting.length} with reporting_capabilities`,
+      `${withWebhooks.length} with webhook support`,
+      `${withFrequencies.length} with reporting frequencies`,
+    ].join(', ');
+    productsStep.response_preview = JSON.stringify(
+      {
+        product_count: products.length,
+        with_reporting_capabilities: withReporting.length,
+        with_webhook_support: withWebhooks.length,
+        with_frequencies: withFrequencies.length,
+        sample_capabilities: withReporting.slice(0, 2).map(p => ({
+          product_id: p.product_id,
+          reporting_capabilities: p.reporting_capabilities,
+        })),
+      },
+      null,
+      2
+    );
+    productsStep.warnings = webhookWarnings.length > 0 ? webhookWarnings : undefined;
+  }
+  steps.push(productsStep);
+
   // Create a media buy to report on
   const { steps: createSteps, mediaBuyId } = await testCreateMediaBuy(agentUrl, options);
   steps.push(...createSteps);
@@ -518,24 +590,48 @@ export async function testReportingFlow(
     const mediaBuys = delivery.media_buys as unknown[] | undefined;
     const mediaBuyDeliveries = delivery.media_buy_deliveries as Record<string, unknown>[] | undefined;
 
-    const hasData = !!(deliveries?.length || mediaBuys?.length || mediaBuyDeliveries?.length);
+    const allEntries = mediaBuyDeliveries ?? mediaBuys ?? deliveries ?? [];
+    const hasData = allEntries.length > 0;
+
+    // Check for reporting_delayed — a valid async response indicating data not yet available
+    const delayedEntries = (allEntries as Record<string, unknown>[]).filter(e => e.status === 'reporting_delayed');
+    const isDelayed = delayedEntries.length > 0;
 
     // Check for currency field anywhere in the response
     const responseStr = JSON.stringify(delivery);
     const hasCurrency = responseStr.includes('"currency"');
 
     // Extract metrics info for diagnostics
-    const totals = mediaBuyDeliveries?.[0]?.totals as Record<string, unknown> | undefined;
+    const totals = (mediaBuyDeliveries?.[0]?.totals ?? undefined) as Record<string, unknown> | undefined;
     const summary = delivery.summary as Record<string, unknown> | undefined;
     const impressions = (totals?.impressions ?? delivery.impressions ?? summary?.impressions) as number | undefined;
     const clicks = (totals?.clicks ?? delivery.clicks ?? summary?.clicks) as number | undefined;
 
-    deliveryStep.details = hasData
-      ? `Retrieved delivery data${hasCurrency ? ' with currency' : ' (no currency field found)'}`
-      : 'get_media_buy_delivery returned no delivery data';
+    if (isDelayed) {
+      // reporting_delayed is a valid response — check that expected_availability is present
+      const withAvailability = delayedEntries.filter(e => e.expected_availability);
+      deliveryStep.details = `${delayedEntries.length} media buy(s) report data not yet available (reporting_delayed)`;
+      if (withAvailability.length < delayedEntries.length) {
+        deliveryStep.warnings = [
+          ...(deliveryStep.warnings || []),
+          'reporting_delayed entries should include expected_availability so buyers know when to expect data',
+        ];
+      }
+    } else if (hasData) {
+      deliveryStep.details = `Retrieved delivery data${hasCurrency ? ' with currency' : ' (no currency field found)'}`;
+      if (!hasCurrency) {
+        deliveryStep.warnings = [...(deliveryStep.warnings || []), 'No currency field found in delivery response'];
+      }
+    } else {
+      deliveryStep.passed = false;
+      deliveryStep.error = 'Expected delivery data or reporting_delayed status in response but found neither';
+    }
+
     deliveryStep.response_preview = JSON.stringify(
       {
         has_data: hasData,
+        is_delayed: isDelayed,
+        delayed_count: delayedEntries.length,
         has_currency: hasCurrency,
         impressions,
         clicks,
@@ -544,14 +640,6 @@ export async function testReportingFlow(
       null,
       2
     );
-
-    if (!hasData) {
-      deliveryStep.passed = false;
-      deliveryStep.error = 'Expected delivery data in response but found none';
-    }
-    if (!hasCurrency) {
-      deliveryStep.warnings = [...(deliveryStep.warnings || []), 'No currency field found in delivery response'];
-    }
   } else if (deliveryResult && !deliveryResult.success) {
     deliveryStep.passed = false;
     deliveryStep.error = deliveryResult.error || 'get_media_buy_delivery returned unsuccessful result';
