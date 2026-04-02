@@ -1,5 +1,11 @@
 # Changelog
 
+## 4.20.0
+
+### Minor Changes
+
+- 3bff582: Add RegistrySync for in-memory registry replica with agent/authorization indexes, event feed polling, and zero-latency lookups. Add `lookupDomains()` for concurrent domain→agent resolution. Parallelize `lookupPropertiesAll()` with configurable concurrency. Align registry sync types with live server.
+
 ## 4.19.0
 
 ### Minor Changes
