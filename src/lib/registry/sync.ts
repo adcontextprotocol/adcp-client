@@ -149,11 +149,9 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
       if (filter.channels?.length && !filter.channels.some(c => p.channels.includes(c))) return false;
       if (filter.markets?.length && !filter.markets.some(m => p.markets.includes(m))) return false;
       if (filter.categories?.length && !filter.categories.some(c => p.categories.includes(c))) return false;
-      if (filter.property_types?.length && !filter.property_types.some(t => p.property_types.includes(t)))
-        return false;
+      if (filter.property_types?.length && !filter.property_types.some(t => p.property_types.includes(t))) return false;
       if (filter.tags?.length && !filter.tags.some(t => p.tags.includes(t))) return false;
-      if (filter.delivery_types?.length && !filter.delivery_types.some(d => p.delivery_types.includes(d)))
-        return false;
+      if (filter.delivery_types?.length && !filter.delivery_types.some(d => p.delivery_types.includes(d))) return false;
       if (filter.has_tmp != null && p.has_tmp !== filter.has_tmp) return false;
       if (filter.min_properties != null && p.property_count < filter.min_properties) return false;
       return true;
@@ -360,9 +358,7 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
 
         const domainEntries = this.authByDomain.get(entry.publisher_domain) ?? [];
         if (
-          !domainEntries.some(
-            e => e.agent_url === entry.agent_url && e.authorization_type === entry.authorization_type
-          )
+          !domainEntries.some(e => e.agent_url === entry.agent_url && e.authorization_type === entry.authorization_type)
         ) {
           domainEntries.push(entry);
           this.authByDomain.set(entry.publisher_domain, domainEntries);

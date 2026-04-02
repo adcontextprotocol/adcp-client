@@ -85,7 +85,7 @@ describe('RegistrySync', () => {
   describe('bootstrap', () => {
     test('loads agents from search and initializes feed cursor', async () => {
       const calls = [];
-      restore = mockFetch(async (url) => {
+      restore = mockFetch(async url => {
         calls.push(url);
         if (url.includes('/agents/search')) {
           return new Response(JSON.stringify(makeSearchResponse([AGENT_1, AGENT_2])), { status: 200 });
@@ -112,14 +112,13 @@ describe('RegistrySync', () => {
 
     test('paginates search until has_more is false', async () => {
       let searchCallCount = 0;
-      restore = mockFetch(async (url) => {
+      restore = mockFetch(async url => {
         if (url.includes('/agents/search')) {
           searchCallCount++;
           if (searchCallCount === 1) {
-            return new Response(
-              JSON.stringify(makeSearchResponse([AGENT_1], { has_more: true, cursor: 'page2' })),
-              { status: 200 }
-            );
+            return new Response(JSON.stringify(makeSearchResponse([AGENT_1], { has_more: true, cursor: 'page2' })), {
+              status: 200,
+            });
           }
           assert.ok(url.includes('cursor=page2'));
           return new Response(JSON.stringify(makeSearchResponse([AGENT_2])), { status: 200 });
@@ -140,7 +139,7 @@ describe('RegistrySync', () => {
     });
 
     test('emits bootstrap event with counts', async () => {
-      restore = mockFetch(async (url) => {
+      restore = mockFetch(async url => {
         if (url.includes('/agents/search')) {
           return new Response(JSON.stringify(makeSearchResponse([AGENT_1])), { status: 200 });
         }
@@ -154,7 +153,7 @@ describe('RegistrySync', () => {
       const sync = new RegistrySync({ client });
 
       const bootstrapEvents = [];
-      sync.on('bootstrap', (data) => bootstrapEvents.push(data));
+      sync.on('bootstrap', data => bootstrapEvents.push(data));
 
       await sync.start();
 
@@ -164,7 +163,7 @@ describe('RegistrySync', () => {
     });
 
     test('transitions state: idle -> bootstrapping -> syncing', async () => {
-      restore = mockFetch(async (url) => {
+      restore = mockFetch(async url => {
         if (url.includes('/agents/search')) {
           return new Response(JSON.stringify(makeSearchResponse([])), { status: 200 });
         }
@@ -178,7 +177,7 @@ describe('RegistrySync', () => {
       const sync = new RegistrySync({ client });
 
       const transitions = [];
-      sync.on('stateChange', (data) => transitions.push(data));
+      sync.on('stateChange', data => transitions.push(data));
 
       assert.strictEqual(sync.state, 'idle');
       await sync.start();
@@ -198,8 +197,8 @@ describe('RegistrySync', () => {
       const client = new RegistryClient({ apiKey: 'sk_test' });
       const errors = [];
       const emittedErrors = [];
-      const sync = new RegistrySync({ client, onError: (err) => errors.push(err) });
-      sync.on('error', (data) => emittedErrors.push(data));
+      const sync = new RegistrySync({ client, onError: err => errors.push(err) });
+      sync.on('error', data => emittedErrors.push(data));
 
       await assert.rejects(() => sync.start(), { message: /500/ });
       assert.strictEqual(sync.state, 'error');
@@ -214,7 +213,7 @@ describe('RegistrySync', () => {
     let sync;
 
     beforeEach(async () => {
-      restore = mockFetch(async (url) => {
+      restore = mockFetch(async url => {
         if (url.includes('/agents/search')) {
           return new Response(JSON.stringify(makeSearchResponse([AGENT_1, AGENT_2])), { status: 200 });
         }
@@ -291,7 +290,7 @@ describe('RegistrySync', () => {
     let sync;
 
     beforeEach(async () => {
-      restore = mockFetch(async (url) => {
+      restore = mockFetch(async url => {
         if (url.includes('/agents/search')) {
           return new Response(JSON.stringify(makeSearchResponse([AGENT_1])), { status: 200 });
         }
@@ -319,10 +318,7 @@ describe('RegistrySync', () => {
       restore = mockFetch(async () => {
         pollCount++;
         if (pollCount === 1) {
-          return new Response(
-            JSON.stringify(makeFeedResponse([authEvent], { cursor: 'cursor-002' })),
-            { status: 200 }
-          );
+          return new Response(JSON.stringify(makeFeedResponse([authEvent], { cursor: 'cursor-002' })), { status: 200 });
         }
         return new Response(JSON.stringify(EMPTY_FEED), { status: 200 });
       });
@@ -333,15 +329,12 @@ describe('RegistrySync', () => {
 
       // We'll apply events directly via internal mechanism by starting fresh
       // Instead, test the lookup methods after applying auth events during bootstrap
-      restore = mockFetch(async (url) => {
+      restore = mockFetch(async url => {
         if (url.includes('/agents/search')) {
           return new Response(JSON.stringify(makeSearchResponse([AGENT_1])), { status: 200 });
         }
         if (url.includes('/registry/feed')) {
-          return new Response(
-            JSON.stringify(makeFeedResponse([authEvent], { cursor: 'cursor-002' })),
-            { status: 200 }
-          );
+          return new Response(JSON.stringify(makeFeedResponse([authEvent], { cursor: 'cursor-002' })), { status: 200 });
         }
         return new Response('Not found', { status: 404 });
       });
@@ -366,15 +359,14 @@ describe('RegistrySync', () => {
         publisher_domain: 'nytimes.com',
       });
 
-      restore = mockFetch(async (url) => {
+      restore = mockFetch(async url => {
         if (url.includes('/agents/search')) {
           return new Response(JSON.stringify(makeSearchResponse([AGENT_1])), { status: 200 });
         }
         if (url.includes('/registry/feed')) {
-          return new Response(
-            JSON.stringify(makeFeedResponse([grantEvent, revokeEvent], { cursor: 'cursor-003' })),
-            { status: 200 }
-          );
+          return new Response(JSON.stringify(makeFeedResponse([grantEvent, revokeEvent], { cursor: 'cursor-003' })), {
+            status: 200,
+          });
         }
         return new Response('Not found', { status: 404 });
       });
@@ -394,15 +386,14 @@ describe('RegistrySync', () => {
         type: 'creative',
       });
 
-      restore = mockFetch(async (url) => {
+      restore = mockFetch(async url => {
         if (url.includes('/agents/search')) {
           return new Response(JSON.stringify(makeSearchResponse([AGENT_1])), { status: 200 });
         }
         if (url.includes('/registry/feed')) {
-          return new Response(
-            JSON.stringify(makeFeedResponse([discoverEvent], { cursor: 'cursor-002' })),
-            { status: 200 }
-          );
+          return new Response(JSON.stringify(makeFeedResponse([discoverEvent], { cursor: 'cursor-002' })), {
+            status: 200,
+          });
         }
         return new Response('Not found', { status: 404 });
       });
@@ -421,15 +412,14 @@ describe('RegistrySync', () => {
     test('agent.removed deletes from agent index', async () => {
       const removeEvent = makeEvent('agent.removed', 'https://ads.streamhaus.example.com', {});
 
-      restore = mockFetch(async (url) => {
+      restore = mockFetch(async url => {
         if (url.includes('/agents/search')) {
           return new Response(JSON.stringify(makeSearchResponse([AGENT_1])), { status: 200 });
         }
         if (url.includes('/registry/feed')) {
-          return new Response(
-            JSON.stringify(makeFeedResponse([removeEvent], { cursor: 'cursor-002' })),
-            { status: 200 }
-          );
+          return new Response(JSON.stringify(makeFeedResponse([removeEvent], { cursor: 'cursor-002' })), {
+            status: 200,
+          });
         }
         return new Response('Not found', { status: 404 });
       });
@@ -452,15 +442,14 @@ describe('RegistrySync', () => {
         },
       });
 
-      restore = mockFetch(async (url) => {
+      restore = mockFetch(async url => {
         if (url.includes('/agents/search')) {
           return new Response(JSON.stringify(makeSearchResponse([AGENT_1])), { status: 200 });
         }
         if (url.includes('/registry/feed')) {
-          return new Response(
-            JSON.stringify(makeFeedResponse([updateEvent], { cursor: 'cursor-002' })),
-            { status: 200 }
-          );
+          return new Response(JSON.stringify(makeFeedResponse([updateEvent], { cursor: 'cursor-002' })), {
+            status: 200,
+          });
         }
         return new Response('Not found', { status: 404 });
       });
@@ -482,15 +471,12 @@ describe('RegistrySync', () => {
         // missing authorization_type
       });
 
-      restore = mockFetch(async (url) => {
+      restore = mockFetch(async url => {
         if (url.includes('/agents/search')) {
           return new Response(JSON.stringify(makeSearchResponse([])), { status: 200 });
         }
         if (url.includes('/registry/feed')) {
-          return new Response(
-            JSON.stringify(makeFeedResponse([badAuth], { cursor: 'cursor-002' })),
-            { status: 200 }
-          );
+          return new Response(JSON.stringify(makeFeedResponse([badAuth], { cursor: 'cursor-002' })), { status: 200 });
         }
         return new Response('Not found', { status: 404 });
       });
@@ -509,7 +495,7 @@ describe('RegistrySync', () => {
   describe('lifecycle', () => {
     test('stop prevents further polling', async () => {
       let fetchCount = 0;
-      restore = mockFetch(async (url) => {
+      restore = mockFetch(async url => {
         fetchCount++;
         if (url.includes('/agents/search')) {
           return new Response(JSON.stringify(makeSearchResponse([])), { status: 200 });
@@ -539,15 +525,12 @@ describe('RegistrySync', () => {
         authorization_type: 'full',
       });
 
-      restore = mockFetch(async (url) => {
+      restore = mockFetch(async url => {
         if (url.includes('/agents/search')) {
           return new Response(JSON.stringify(makeSearchResponse([AGENT_1, AGENT_2])), { status: 200 });
         }
         if (url.includes('/registry/feed')) {
-          return new Response(
-            JSON.stringify(makeFeedResponse([authEvent], { cursor: 'cursor-002' })),
-            { status: 200 }
-          );
+          return new Response(JSON.stringify(makeFeedResponse([authEvent], { cursor: 'cursor-002' })), { status: 200 });
         }
         return new Response('Not found', { status: 404 });
       });
@@ -563,7 +546,7 @@ describe('RegistrySync', () => {
     });
 
     test('reset clears state and stops polling', async () => {
-      restore = mockFetch(async (url) => {
+      restore = mockFetch(async url => {
         if (url.includes('/agents/search')) {
           return new Response(JSON.stringify(makeSearchResponse([AGENT_1])), { status: 200 });
         }
@@ -585,7 +568,7 @@ describe('RegistrySync', () => {
     });
 
     test('disabled agent index skips agent loading', async () => {
-      restore = mockFetch(async (url) => {
+      restore = mockFetch(async url => {
         if (url.includes('/agents/search')) {
           assert.fail('should not call search when agents index disabled');
         }
@@ -612,7 +595,7 @@ describe('RegistrySync', () => {
       const event1 = makeEvent('agent.discovered', 'https://agent1.example.com', { name: 'Agent1' });
       const event2 = makeEvent('agent.discovered', 'https://agent2.example.com', { name: 'Agent2' });
 
-      restore = mockFetch(async (url) => {
+      restore = mockFetch(async url => {
         if (url.includes('/agents/search')) {
           return new Response(JSON.stringify(makeSearchResponse([])), { status: 200 });
         }
@@ -624,10 +607,7 @@ describe('RegistrySync', () => {
               { status: 200 }
             );
           }
-          return new Response(
-            JSON.stringify(makeFeedResponse([event2], { cursor: 'cursor-final' })),
-            { status: 200 }
-          );
+          return new Response(JSON.stringify(makeFeedResponse([event2], { cursor: 'cursor-final' })), { status: 200 });
         }
         return new Response('Not found', { status: 404 });
       });
@@ -646,7 +626,7 @@ describe('RegistrySync', () => {
       let phase = 'initial';
       const AGENT_NEW = { ...AGENT_2, url: 'https://new.agent.example.com', name: 'NewAgent' };
 
-      restore = mockFetch(async (url) => {
+      restore = mockFetch(async url => {
         if (url.includes('/agents/search')) {
           if (phase === 'initial') {
             return new Response(JSON.stringify(makeSearchResponse([AGENT_1])), { status: 200 });
@@ -658,10 +638,7 @@ describe('RegistrySync', () => {
           if (phase === 'expired') {
             // First poll after bootstrap returns cursor_expired
             phase = 'rebootstrap';
-            return new Response(
-              JSON.stringify(makeFeedResponse([], { cursor_expired: true })),
-              { status: 200 }
-            );
+            return new Response(JSON.stringify(makeFeedResponse([], { cursor_expired: true })), { status: 200 });
           }
           return new Response(JSON.stringify(EMPTY_FEED), { status: 200 });
         }
@@ -672,7 +649,7 @@ describe('RegistrySync', () => {
       const sync = new RegistrySync({ client, pollIntervalMs: 20 });
 
       const bootstrapEvents = [];
-      sync.on('bootstrap', (data) => bootstrapEvents.push(data));
+      sync.on('bootstrap', data => bootstrapEvents.push(data));
       sync.on('error', () => {}); // prevent unhandled error
 
       await sync.start();
@@ -706,15 +683,14 @@ describe('RegistrySync', () => {
         property_ids: ['prop_1'],
       });
 
-      restore = mockFetch(async (url) => {
+      restore = mockFetch(async url => {
         if (url.includes('/agents/search')) {
           return new Response(JSON.stringify(makeSearchResponse([])), { status: 200 });
         }
         if (url.includes('/registry/feed')) {
-          return new Response(
-            JSON.stringify(makeFeedResponse([fullAuth, propertyAuth], { cursor: 'cursor-002' })),
-            { status: 200 }
-          );
+          return new Response(JSON.stringify(makeFeedResponse([fullAuth, propertyAuth], { cursor: 'cursor-002' })), {
+            status: 200,
+          });
         }
         return new Response('Not found', { status: 404 });
       });
@@ -745,7 +721,7 @@ describe('RegistrySync', () => {
         authorization_type: 'property_ids',
       });
 
-      restore = mockFetch(async (url) => {
+      restore = mockFetch(async url => {
         if (url.includes('/agents/search')) {
           return new Response(JSON.stringify(makeSearchResponse([])), { status: 200 });
         }
@@ -774,7 +750,7 @@ describe('RegistrySync', () => {
   describe('lookupDomains', () => {
     test('fans out individual lookupDomain calls', async () => {
       const lookupCalls = [];
-      restore = mockFetch(async (url) => {
+      restore = mockFetch(async url => {
         const match = url.match(/\/lookup\/domain\/([^?]+)/);
         if (match) {
           const domain = decodeURIComponent(match[1]);
@@ -801,15 +777,14 @@ describe('RegistrySync', () => {
 
     test('deduplicates domains', async () => {
       const lookupCalls = [];
-      restore = mockFetch(async (url) => {
+      restore = mockFetch(async url => {
         const match = url.match(/\/lookup\/domain\/([^?]+)/);
         if (match) {
           const domain = decodeURIComponent(match[1]);
           lookupCalls.push(domain);
-          return new Response(
-            JSON.stringify({ domain, authorized_agents: [], sales_agents_claiming: [] }),
-            { status: 200 }
-          );
+          return new Response(JSON.stringify({ domain, authorized_agents: [], sales_agents_claiming: [] }), {
+            status: 200,
+          });
         }
         return new Response('Not found', { status: 404 });
       });
@@ -821,14 +796,13 @@ describe('RegistrySync', () => {
     });
 
     test('omits failed domains from results', async () => {
-      restore = mockFetch(async (url) => {
+      restore = mockFetch(async url => {
         if (url.includes('fail.com')) {
           return new Response('Not found', { status: 404 });
         }
-        return new Response(
-          JSON.stringify({ domain: 'ok.com', authorized_agents: [], sales_agents_claiming: [] }),
-          { status: 200 }
-        );
+        return new Response(JSON.stringify({ domain: 'ok.com', authorized_agents: [], sales_agents_claiming: [] }), {
+          status: 200,
+        });
       });
 
       const client = new RegistryClient();
@@ -843,15 +817,14 @@ describe('RegistrySync', () => {
       let concurrent = 0;
       let maxConcurrent = 0;
 
-      restore = mockFetch(async (url) => {
+      restore = mockFetch(async url => {
         concurrent++;
         maxConcurrent = Math.max(maxConcurrent, concurrent);
         await new Promise(r => setTimeout(r, 20));
         concurrent--;
-        return new Response(
-          JSON.stringify({ domain: 'x', authorized_agents: [], sales_agents_claiming: [] }),
-          { status: 200 }
-        );
+        return new Response(JSON.stringify({ domain: 'x', authorized_agents: [], sales_agents_claiming: [] }), {
+          status: 200,
+        });
       });
 
       const client = new RegistryClient();

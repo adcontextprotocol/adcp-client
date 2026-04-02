@@ -1883,10 +1883,7 @@ describe('RegistryClient', () => {
         const body = JSON.parse(opts.body);
         assert.strictEqual(body.domain, 'publisher.example.com');
         assert.strictEqual(opts.headers.Authorization, 'Bearer test-key');
-        return new Response(
-          JSON.stringify({ status: 'accepted', domain: 'publisher.example.com' }),
-          { status: 200 }
-        );
+        return new Response(JSON.stringify({ status: 'accepted', domain: 'publisher.example.com' }), { status: 200 });
       });
 
       const client = new RegistryClient({ apiKey: 'test-key' });
