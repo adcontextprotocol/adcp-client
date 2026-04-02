@@ -768,11 +768,11 @@ describe('RegistrySync', () => {
       });
 
       const client = new RegistryClient();
-      const results = await client.lookupDomains(['a.com', 'b.com', 'c.com']);
+      const results = await client.lookupDomains(['alpha.example.com', 'beta.example.com', 'gamma.example.com']);
 
       assert.strictEqual(Object.keys(results).length, 3);
-      assert.strictEqual(results['a.com'].authorized_agents.length, 1);
-      assert.ok(lookupCalls.includes('a.com'));
+      assert.strictEqual(results['alpha.example.com'].authorized_agents.length, 1);
+      assert.strictEqual(lookupCalls.length, 3);
     });
 
     test('deduplicates domains', async () => {
@@ -790,27 +790,28 @@ describe('RegistrySync', () => {
       });
 
       const client = new RegistryClient();
-      await client.lookupDomains(['a.com', 'a.com', 'b.com']);
+      await client.lookupDomains(['alpha.example.com', 'alpha.example.com', 'beta.example.com']);
 
       assert.strictEqual(lookupCalls.length, 2);
     });
 
     test('omits failed domains from results', async () => {
       restore = mockFetch(async url => {
-        if (url.includes('fail.com')) {
+        if (url.endsWith('/lookup/domain/fail.example.com')) {
           return new Response('Not found', { status: 404 });
         }
-        return new Response(JSON.stringify({ domain: 'ok.com', authorized_agents: [], sales_agents_claiming: [] }), {
-          status: 200,
-        });
+        return new Response(
+          JSON.stringify({ domain: 'ok.example.com', authorized_agents: [], sales_agents_claiming: [] }),
+          { status: 200 }
+        );
       });
 
       const client = new RegistryClient();
-      const results = await client.lookupDomains(['ok.com', 'fail.com']);
+      const results = await client.lookupDomains(['ok.example.com', 'fail.example.com']);
 
       assert.strictEqual(Object.keys(results).length, 1);
-      assert.ok(results['ok.com']);
-      assert.strictEqual(results['fail.com'], undefined);
+      assert.ok(results['ok.example.com']);
+      assert.strictEqual(results['fail.example.com'], undefined);
     });
 
     test('respects concurrency limit', async () => {
