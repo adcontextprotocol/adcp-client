@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-04-02T00:52:29.477Z
+// Generated at: 2026-04-02T02:00:29.560Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -2309,7 +2309,7 @@ export const AssetAccessSchema = z.union([z.object({
     }).passthrough()]);
 
 export const ArtifactSchema = z.object({
-    property_id: IdentifierSchema,
+    property_rid: z.string(),
     artifact_id: z.string(),
     variant_id: z.string().nullish(),
     format_id: FormatIDSchema.nullish(),
@@ -2320,6 +2320,7 @@ export const ArtifactSchema = z.object({
             type: z.literal("text"),
             role: z.union([z.literal("title"), z.literal("paragraph"), z.literal("heading"), z.literal("caption"), z.literal("quote"), z.literal("list_item"), z.literal("description")]).nullish(),
             content: z.string(),
+            content_format: z.union([z.literal("text/plain"), z.literal("text/markdown"), z.literal("text/html"), z.literal("application/json")]).nullish(),
             language: z.string().nullish(),
             heading_level: z.number().nullish(),
             provenance: ProvenanceSchema.nullish()
@@ -2338,6 +2339,7 @@ export const ArtifactSchema = z.object({
             access: AssetAccessSchema.nullish(),
             duration_ms: z.number().nullish(),
             transcript: z.string().nullish(),
+            transcript_format: z.union([z.literal("text/plain"), z.literal("text/markdown"), z.literal("application/json")]).nullish(),
             transcript_source: z.union([z.literal("original_script"), z.literal("subtitles"), z.literal("closed_captions"), z.literal("dub"), z.literal("generated")]).nullish(),
             thumbnail_url: z.string().nullish(),
             provenance: ProvenanceSchema.nullish()
@@ -2347,6 +2349,7 @@ export const ArtifactSchema = z.object({
             access: AssetAccessSchema.nullish(),
             duration_ms: z.number().nullish(),
             transcript: z.string().nullish(),
+            transcript_format: z.union([z.literal("text/plain"), z.literal("text/markdown"), z.literal("application/json")]).nullish(),
             transcript_source: z.union([z.literal("original_script"), z.literal("closed_captions"), z.literal("generated")]).nullish(),
             provenance: ProvenanceSchema.nullish()
         }).passthrough()])),

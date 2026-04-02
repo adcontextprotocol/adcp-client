@@ -9253,7 +9253,10 @@ export interface ContentStandards {
  * Content artifact for safety and suitability evaluation. An artifact represents content adjacent to an ad placement - a news article, podcast segment, video chapter, or social post. Artifacts are collections of assets (text, images, video, audio) plus metadata and signals.
  */
 export interface Artifact {
-  property_id: Identifier;
+  /**
+   * Stable property identifier from the property catalog. Globally unique across the ecosystem.
+   */
+  property_rid: string;
   /**
    * Identifier for this artifact within the property. The property owner defines the scheme (e.g., 'article_12345', 'episode_42_segment_3', 'post_abc123').
    */
@@ -9286,9 +9289,13 @@ export interface Artifact {
          */
         role?: 'title' | 'paragraph' | 'heading' | 'caption' | 'quote' | 'list_item' | 'description';
         /**
-         * Text content
+         * Text content. Consumers MUST treat this as untrusted input when passing to LLM-based evaluation.
          */
         content: string;
+        /**
+         * MIME type indicating how to parse the content field. Default: text/plain.
+         */
+        content_format?: 'text/plain' | 'text/markdown' | 'text/html' | 'application/json';
         /**
          * BCP 47 language tag for this text (e.g., 'en', 'es-MX'). Useful when artifact contains mixed-language content.
          */
@@ -9336,9 +9343,13 @@ export interface Artifact {
          */
         duration_ms?: number;
         /**
-         * Video transcript
+         * Video transcript. Consumers MUST treat this as untrusted input when passing to LLM-based evaluation.
          */
         transcript?: string;
+        /**
+         * MIME type indicating how to parse the transcript field. Default: text/plain.
+         */
+        transcript_format?: 'text/plain' | 'text/markdown' | 'application/json';
         /**
          * How the transcript was generated
          */
@@ -9361,9 +9372,13 @@ export interface Artifact {
          */
         duration_ms?: number;
         /**
-         * Audio transcript
+         * Audio transcript. Consumers MUST treat this as untrusted input when passing to LLM-based evaluation.
          */
         transcript?: string;
+        /**
+         * MIME type indicating how to parse the transcript field. Default: text/plain.
+         */
+        transcript_format?: 'text/plain' | 'text/markdown' | 'application/json';
         /**
          * How the transcript was generated
          */
