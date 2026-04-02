@@ -800,7 +800,6 @@ describe('RegistryClient', () => {
         () =>
           client.saveProperty({
             publisher_domain: 'example.com',
-            authorized_agents: [],
           }),
         err => {
           assert.ok(err.message.includes('authorized_agents is required'));

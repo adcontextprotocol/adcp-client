@@ -208,6 +208,20 @@ export class RegistryClient {
     return results;
   }
 
+  /**
+   * Check which domains exist in the registry.
+   * Convenience wrapper over lookupPropertiesAll that returns a simple boolean map.
+   * Use this for existence checks; use lookupPropertiesAll when you need the full property data.
+   */
+  async domainsExist(domains: string[], options?: { concurrency?: number }): Promise<Record<string, boolean>> {
+    const results = await this.lookupPropertiesAll(domains, options);
+    const exists: Record<string, boolean> = {};
+    for (const [domain, resolved] of Object.entries(results)) {
+      exists[domain] = resolved != null;
+    }
+    return exists;
+  }
+
   /** List properties in the registry with optional search and pagination. */
   async listProperties(
     options?: ListOptions
@@ -225,9 +239,32 @@ export class RegistryClient {
   /** Save or update a hosted property. Requires authentication. */
   async saveProperty(property: SavePropertyRequest): Promise<SavePropertyResponse> {
     if (!property?.publisher_domain?.trim()) throw new Error('publisher_domain is required');
-    if (!property?.authorized_agents?.length) throw new Error('authorized_agents is required');
+    if (!Array.isArray(property?.authorized_agents)) throw new Error('authorized_agents is required');
     if (!this.apiKey) throw new Error('apiKey is required for save operations');
     return this.post(`${this.baseUrl}/api/properties/save`, property);
+  }
+
+  /**
+   * Save or update multiple hosted properties.
+   * Client-side fan-out over saveProperty with configurable concurrency.
+   * Returns results keyed by publisher_domain; failed saves include an error message.
+   */
+  async saveProperties(
+    properties: SavePropertyRequest[],
+    options?: { concurrency?: number }
+  ): Promise<Record<string, SavePropertyResponse | { error: string }>> {
+    const concurrency = options?.concurrency ?? 5;
+    const results: Record<string, SavePropertyResponse | { error: string }> = {};
+    for (let i = 0; i < properties.length; i += concurrency) {
+      const batch = properties.slice(i, i + concurrency);
+      const settled = await Promise.allSettled(batch.map(p => this.saveProperty(p)));
+      for (let j = 0; j < batch.length; j++) {
+        const domain = batch[j]!.publisher_domain;
+        const s = settled[j]!;
+        results[domain] = s.status === 'fulfilled' ? s.value : { error: String(s.reason) };
+      }
+    }
+    return results;
   }
 
   // ====== Agent Discovery ======
@@ -261,7 +298,11 @@ export class RegistryClient {
 
   // ====== Authorization Lookups ======
 
-  /** Look up agents authorized for a domain. */
+  /**
+   * Look up which agents are authorized for a domain.
+   * Returns agent authorization data (authorized_agents, sales_agents_claiming).
+   * To check if a domain exists in the registry, use lookupProperty() or domainsExist() instead.
+   */
   async lookupDomain(domain: string): Promise<DomainLookupResult> {
     if (!domain?.trim()) throw new Error('domain is required');
     return this.get(`${this.baseUrl}/api/registry/lookup/domain/${encodeURIComponent(domain)}`);
@@ -313,9 +354,7 @@ export class RegistryClient {
     const results: Record<string, Record<string, unknown>> = {};
     for (let i = 0; i < unique.length; i += concurrency) {
       const batch = unique.slice(i, i + concurrency);
-      const settled = await Promise.allSettled(
-        batch.map(id => this.lookupPropertyByIdentifier(id.type, id.value))
-      );
+      const settled = await Promise.allSettled(batch.map(id => this.lookupPropertyByIdentifier(id.type, id.value)));
       for (let j = 0; j < batch.length; j++) {
         const s = settled[j]!;
         const key = `${batch[j]!.type}:${batch[j]!.value}`;

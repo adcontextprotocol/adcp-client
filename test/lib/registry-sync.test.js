@@ -911,6 +911,82 @@ describe('RegistrySync', () => {
     });
   });
 
+  // ============ domainsExist ============
+
+  describe('domainsExist', () => {
+    test('returns boolean map from lookupPropertiesAll', async () => {
+      restore = mockFetch(async (url, opts) => {
+        const body = JSON.parse(opts.body);
+        const results = {};
+        for (const d of body.domains) {
+          results[d] = d === 'exists.com' ? { publisher_domain: d, authorized_agents: [] } : null;
+        }
+        return new Response(JSON.stringify({ results }), { status: 200 });
+      });
+
+      const client = new RegistryClient();
+      const result = await client.domainsExist(['exists.com', 'missing.com']);
+
+      assert.strictEqual(result['exists.com'], true);
+      assert.strictEqual(result['missing.com'], false);
+    });
+  });
+
+  // ============ saveProperties ============
+
+  describe('saveProperties', () => {
+    test('saves multiple properties with partial failure handling', async () => {
+      restore = mockFetch(async (url, opts) => {
+        if (url.includes('/properties/save')) {
+          const body = JSON.parse(opts.body);
+          if (body.publisher_domain === 'fail.com') {
+            return new Response('Conflict', { status: 409 });
+          }
+          return new Response(JSON.stringify({ publisher_domain: body.publisher_domain, status: 'saved' }), {
+            status: 200,
+          });
+        }
+        return new Response('Not found', { status: 404 });
+      });
+
+      const client = new RegistryClient({ apiKey: 'sk_test' });
+      const results = await client.saveProperties([
+        { publisher_domain: 'ok.com', authorized_agents: [] },
+        { publisher_domain: 'fail.com', authorized_agents: [] },
+        { publisher_domain: 'also-ok.com', authorized_agents: [{ url: 'https://agent.example.com' }] },
+      ]);
+
+      assert.strictEqual(results['ok.com'].status, 'saved');
+      assert.strictEqual(results['also-ok.com'].status, 'saved');
+      assert.ok(results['fail.com'].error);
+    });
+
+    test('accepts empty authorized_agents array', async () => {
+      restore = mockFetch(async (url, opts) => {
+        if (url.includes('/properties/save')) {
+          const body = JSON.parse(opts.body);
+          return new Response(JSON.stringify({ publisher_domain: body.publisher_domain }), { status: 200 });
+        }
+        return new Response('Not found', { status: 404 });
+      });
+
+      const client = new RegistryClient({ apiKey: 'sk_test' });
+      // This should NOT throw — empty authorized_agents is valid for hosted properties
+      const result = await client.saveProperty({
+        publisher_domain: 'new-domain.com',
+        authorized_agents: [],
+      });
+      assert.strictEqual(result.publisher_domain, 'new-domain.com');
+    });
+
+    test('still rejects missing authorized_agents', () => {
+      const client = new RegistryClient({ apiKey: 'sk_test' });
+      assert.rejects(() => client.saveProperty({ publisher_domain: 'test.com' }), {
+        message: /authorized_agents is required/,
+      });
+    });
+  });
+
   // ============ lookupPropertiesAll parallelism ============
 
   describe('lookupPropertiesAll parallelism', () => {
