@@ -290,6 +290,41 @@ export class RegistryClient {
     return results;
   }
 
+  /**
+   * Look up agents authorized for multiple property identifiers.
+   * Client-side fan-out over lookupPropertyByIdentifier.
+   * Identifiers that fail individually are omitted from the result.
+   */
+  async lookupPropertyIdentifiers(
+    identifiers: { type: string; value: string }[],
+    options?: { concurrency?: number }
+  ): Promise<Record<string, Record<string, unknown>>> {
+    const concurrency = options?.concurrency ?? 10;
+    // Deduplicate by "type:value" key
+    const seen = new Set<string>();
+    const unique: { type: string; value: string }[] = [];
+    for (const id of identifiers) {
+      const key = `${id.type}:${id.value}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        unique.push(id);
+      }
+    }
+    const results: Record<string, Record<string, unknown>> = {};
+    for (let i = 0; i < unique.length; i += concurrency) {
+      const batch = unique.slice(i, i + concurrency);
+      const settled = await Promise.allSettled(
+        batch.map(id => this.lookupPropertyByIdentifier(id.type, id.value))
+      );
+      for (let j = 0; j < batch.length; j++) {
+        const s = settled[j]!;
+        const key = `${batch[j]!.type}:${batch[j]!.value}`;
+        if (s.status === 'fulfilled') results[key] = s.value;
+      }
+    }
+    return results;
+  }
+
   /** Look up agents by property identifier (type + value). */
   async lookupPropertyByIdentifier(type: string, value: string): Promise<Record<string, unknown>> {
     if (!type?.trim()) throw new Error('type is required');

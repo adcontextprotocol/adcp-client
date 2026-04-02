@@ -835,6 +835,82 @@ describe('RegistrySync', () => {
     });
   });
 
+  // ============ lookupPropertyIdentifiers ============
+
+  describe('lookupPropertyIdentifiers', () => {
+    test('fans out individual lookupPropertyByIdentifier calls', async () => {
+      const lookupCalls = [];
+      restore = mockFetch(async url => {
+        if (url.includes('/lookup/property')) {
+          const parsed = new URL(url);
+          const type = parsed.searchParams.get('type');
+          const value = parsed.searchParams.get('value');
+          lookupCalls.push({ type, value });
+          return new Response(
+            JSON.stringify({
+              identifier_type: type,
+              identifier_value: value,
+              properties: [{ id: 'prop_1' }],
+            }),
+            { status: 200 }
+          );
+        }
+        return new Response('Not found', { status: 404 });
+      });
+
+      const client = new RegistryClient();
+      const results = await client.lookupPropertyIdentifiers([
+        { type: 'app_store_id', value: '12345' },
+        { type: 'bundle_id', value: 'com.example.app' },
+        { type: 'domain', value: 'example.com' },
+      ]);
+
+      assert.strictEqual(Object.keys(results).length, 3);
+      assert.ok(results['app_store_id:12345']);
+      assert.ok(results['bundle_id:com.example.app']);
+      assert.strictEqual(lookupCalls.length, 3);
+    });
+
+    test('deduplicates by type:value', async () => {
+      const lookupCalls = [];
+      restore = mockFetch(async url => {
+        if (url.includes('/lookup/property')) {
+          lookupCalls.push(url);
+          return new Response(JSON.stringify({ properties: [] }), { status: 200 });
+        }
+        return new Response('Not found', { status: 404 });
+      });
+
+      const client = new RegistryClient();
+      await client.lookupPropertyIdentifiers([
+        { type: 'app_store_id', value: '12345' },
+        { type: 'app_store_id', value: '12345' },
+        { type: 'bundle_id', value: 'com.example.app' },
+      ]);
+
+      assert.strictEqual(lookupCalls.length, 2);
+    });
+
+    test('omits failed lookups from results', async () => {
+      restore = mockFetch(async url => {
+        if (url.includes('fail_value')) {
+          return new Response('Not found', { status: 404 });
+        }
+        return new Response(JSON.stringify({ properties: [] }), { status: 200 });
+      });
+
+      const client = new RegistryClient();
+      const results = await client.lookupPropertyIdentifiers([
+        { type: 'app_store_id', value: 'ok_value' },
+        { type: 'app_store_id', value: 'fail_value' },
+      ]);
+
+      assert.strictEqual(Object.keys(results).length, 1);
+      assert.ok(results['app_store_id:ok_value']);
+      assert.strictEqual(results['app_store_id:fail_value'], undefined);
+    });
+  });
+
   // ============ lookupPropertiesAll parallelism ============
 
   describe('lookupPropertiesAll parallelism', () => {
