@@ -23,6 +23,13 @@ export type {
   PropertySummary,
   FederatedPublisher,
   DomainLookupResult,
+  CatalogEvent,
+  FeedResponse,
+  AgentInventoryProfile,
+  AgentSearchResult,
+  AgentSearchResponse,
+  CrawlRequestResponse,
+  AuthorizationEntry,
 } from './types.generated';
 
 // Re-export the full generated module for advanced usage (paths, operations, etc.)
@@ -64,6 +71,15 @@ export type ValidateProductAuthorizationRequest = NonNullable<
 export type ExpandProductIdentifiersRequest = NonNullable<
   operations['expandProductIdentifiers']['requestBody']
 >['content']['application/json'];
+
+/** Query parameters for GET /api/registry/feed */
+export type FeedQuery = NonNullable<operations['getRegistryFeed']['parameters']['query']>;
+
+/** Query parameters for GET /api/registry/agents/search */
+export type AgentSearchQuery = NonNullable<operations['searchAgents']['parameters']['query']>;
+
+/** Request body for POST /api/registry/crawl-request */
+export type CrawlRequest = NonNullable<operations['requestCrawl']['requestBody']>['content']['application/json'];
 
 // ====== Backward compatibility ======
 

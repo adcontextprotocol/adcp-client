@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-04-01T04:07:58.017Z
+// Generated at: 2026-04-02T02:00:29.560Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -1326,6 +1326,8 @@ export const CreativeBriefSchema = z.object({
     }).passthrough().nullish()
 }).passthrough();
 
+export const AdvertiserIndustrySchema = z.union([z.literal("automotive"), z.literal("automotive.electric_vehicles"), z.literal("automotive.parts_accessories"), z.literal("automotive.luxury"), z.literal("beauty_cosmetics"), z.literal("beauty_cosmetics.skincare"), z.literal("beauty_cosmetics.fragrance"), z.literal("beauty_cosmetics.haircare"), z.literal("cannabis"), z.literal("cpg"), z.literal("cpg.personal_care"), z.literal("cpg.household"), z.literal("dating"), z.literal("education"), z.literal("education.higher_education"), z.literal("education.online_learning"), z.literal("education.k12"), z.literal("energy_utilities"), z.literal("energy_utilities.renewable"), z.literal("fashion_apparel"), z.literal("fashion_apparel.luxury"), z.literal("fashion_apparel.sportswear"), z.literal("finance"), z.literal("finance.banking"), z.literal("finance.insurance"), z.literal("finance.investment"), z.literal("finance.cryptocurrency"), z.literal("food_beverage"), z.literal("food_beverage.alcohol"), z.literal("food_beverage.restaurants"), z.literal("food_beverage.packaged_goods"), z.literal("gambling_betting"), z.literal("gambling_betting.sports_betting"), z.literal("gambling_betting.casino"), z.literal("gaming"), z.literal("gaming.mobile"), z.literal("gaming.console_pc"), z.literal("gaming.esports"), z.literal("government_nonprofit"), z.literal("government_nonprofit.political"), z.literal("government_nonprofit.charity"), z.literal("healthcare"), z.literal("healthcare.pharmaceutical"), z.literal("healthcare.medical_devices"), z.literal("healthcare.wellness"), z.literal("home_garden"), z.literal("home_garden.furniture"), z.literal("home_garden.home_improvement"), z.literal("media_entertainment"), z.literal("media_entertainment.podcasts"), z.literal("media_entertainment.music"), z.literal("media_entertainment.film_tv"), z.literal("media_entertainment.publishing"), z.literal("media_entertainment.live_events"), z.literal("pets"), z.literal("professional_services"), z.literal("professional_services.legal"), z.literal("professional_services.consulting"), z.literal("real_estate"), z.literal("real_estate.residential"), z.literal("real_estate.commercial"), z.literal("recruitment_hr"), z.literal("retail"), z.literal("retail.ecommerce"), z.literal("retail.department_stores"), z.literal("sports_fitness"), z.literal("sports_fitness.equipment"), z.literal("sports_fitness.teams_leagues"), z.literal("technology"), z.literal("technology.software"), z.literal("technology.hardware"), z.literal("technology.ai_ml"), z.literal("telecom"), z.literal("telecom.mobile_carriers"), z.literal("telecom.internet_providers"), z.literal("transportation_logistics"), z.literal("travel_hospitality"), z.literal("travel_hospitality.airlines"), z.literal("travel_hospitality.hotels"), z.literal("travel_hospitality.cruise"), z.literal("travel_hospitality.tourism")]);
+
 export const StartTimingSchema = z.union([z.literal("asap"), z.string()]);
 
 export const AuthenticationSchemeSchema = z.union([z.literal("Bearer"), z.literal("HMAC-SHA256")]);
@@ -2307,7 +2309,7 @@ export const AssetAccessSchema = z.union([z.object({
     }).passthrough()]);
 
 export const ArtifactSchema = z.object({
-    property_id: IdentifierSchema,
+    property_rid: z.string(),
     artifact_id: z.string(),
     variant_id: z.string().nullish(),
     format_id: FormatIDSchema.nullish(),
@@ -2318,6 +2320,7 @@ export const ArtifactSchema = z.object({
             type: z.literal("text"),
             role: z.union([z.literal("title"), z.literal("paragraph"), z.literal("heading"), z.literal("caption"), z.literal("quote"), z.literal("list_item"), z.literal("description")]).nullish(),
             content: z.string(),
+            content_format: z.union([z.literal("text/plain"), z.literal("text/markdown"), z.literal("text/html"), z.literal("application/json")]).nullish(),
             language: z.string().nullish(),
             heading_level: z.number().nullish(),
             provenance: ProvenanceSchema.nullish()
@@ -2336,6 +2339,7 @@ export const ArtifactSchema = z.object({
             access: AssetAccessSchema.nullish(),
             duration_ms: z.number().nullish(),
             transcript: z.string().nullish(),
+            transcript_format: z.union([z.literal("text/plain"), z.literal("text/markdown"), z.literal("application/json")]).nullish(),
             transcript_source: z.union([z.literal("original_script"), z.literal("subtitles"), z.literal("closed_captions"), z.literal("dub"), z.literal("generated")]).nullish(),
             thumbnail_url: z.string().nullish(),
             provenance: ProvenanceSchema.nullish()
@@ -2345,6 +2349,7 @@ export const ArtifactSchema = z.object({
             access: AssetAccessSchema.nullish(),
             duration_ms: z.number().nullish(),
             transcript: z.string().nullish(),
+            transcript_format: z.union([z.literal("text/plain"), z.literal("text/markdown"), z.literal("application/json")]).nullish(),
             transcript_source: z.union([z.literal("original_script"), z.literal("closed_captions"), z.literal("generated")]).nullish(),
             provenance: ProvenanceSchema.nullish()
         }).passthrough()])),
@@ -2538,10 +2543,7 @@ export const GetMediaBuyArtifactsRequestSchema = z.object({
     account: AccountReferenceSchema.nullish(),
     media_buy_id: z.string(),
     package_ids: z.array(z.string()).nullish(),
-    sampling: z.object({
-        rate: z.number().nullish(),
-        method: z.union([z.literal("random"), z.literal("stratified"), z.literal("recent"), z.literal("failures_only")]).nullish()
-    }).passthrough().nullish(),
+    failures_only: z.boolean().nullish(),
     time_range: z.object({
         start: z.string().nullish(),
         end: z.string().nullish()
@@ -2569,11 +2571,11 @@ export const GetMediaBuyArtifactsResponseSchema = z.union([z.object({
             }).passthrough().nullish(),
             local_verdict: z.union([z.literal("pass"), z.literal("fail"), z.literal("unevaluated")]).nullish()
         }).passthrough()),
-        sampling_info: z.object({
+        collection_info: z.object({
             total_deliveries: z.number().nullish(),
-            sampled_count: z.number().nullish(),
-            effective_rate: z.number().nullish(),
-            method: z.union([z.literal("random"), z.literal("stratified"), z.literal("recent"), z.literal("failures_only")]).nullish()
+            total_collected: z.number().nullish(),
+            returned_count: z.number().nullish(),
+            effective_rate: z.number().nullish()
         }).passthrough().nullish(),
         pagination: PaginationResponseSchema.nullish(),
         context: ContextObjectSchema.nullish(),
@@ -3024,6 +3026,10 @@ export const GetAdCPCapabilitiesResponseSchema = z.object({
         }).passthrough().nullish(),
         features: MediaBuyFeaturesSchema.nullish(),
         execution: z.object({
+            trusted_match: z.object({
+                supported: z.boolean().nullish(),
+                surfaces: z.array(z.union([z.literal("website"), z.literal("mobile_app"), z.literal("ctv_app"), z.literal("desktop_app"), z.literal("dooh"), z.literal("podcast"), z.literal("radio"), z.literal("streaming_audio"), z.literal("ai_assistant")])).nullish()
+            }).passthrough().nullish(),
             axe_integrations: z.array(z.string()).nullish(),
             creative_specs: z.object({
                 vast_versions: z.array(z.string()).nullish(),
@@ -3097,6 +3103,11 @@ export const GetAdCPCapabilitiesResponseSchema = z.object({
                 post_click: z.array(DurationSchema),
                 post_view: z.array(DurationSchema).nullish()
             }).passthrough()).nullish()
+        }).passthrough().nullish(),
+        content_standards_detail: z.object({
+            supports_local_evaluation: z.boolean().nullish(),
+            supported_channels: z.array(MediaChannelSchema).nullish(),
+            supports_webhook_delivery: z.boolean().nullish()
         }).passthrough().nullish(),
         portfolio: z.object({
             publisher_domains: z.array(z.string()),
@@ -4315,6 +4326,7 @@ export const CreateMediaBuyRequestSchema = z.object({
     }).passthrough().nullish(),
     packages: z.array(PackageRequestSchema).nullish(),
     brand: BrandReferenceSchema,
+    advertiser_industry: AdvertiserIndustrySchema.nullish(),
     invoice_recipient: BusinessEntitySchema.nullish(),
     io_acceptance: z.object({
         io_id: z.string(),

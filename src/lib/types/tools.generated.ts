@@ -3217,6 +3217,91 @@ export type CatalogAsset = Catalog;
  */
 export type CreativeStatus = 'processing' | 'pending_review' | 'approved' | 'rejected' | 'archived';
 /**
+ * Industry classification for this specific campaign. A brand may operate across multiple industries (brand.json industries field), but each media buy targets one. For example, a consumer health company running a wellness campaign sends 'healthcare.wellness', not 'cpg'. Sellers map this to platform-native codes (e.g., Spotify ADV categories, LinkedIn industry IDs). When omitted, sellers may infer from the brand manifest's industries field.
+ */
+export type AdvertiserIndustry =
+  | 'automotive'
+  | 'automotive.electric_vehicles'
+  | 'automotive.parts_accessories'
+  | 'automotive.luxury'
+  | 'beauty_cosmetics'
+  | 'beauty_cosmetics.skincare'
+  | 'beauty_cosmetics.fragrance'
+  | 'beauty_cosmetics.haircare'
+  | 'cannabis'
+  | 'cpg'
+  | 'cpg.personal_care'
+  | 'cpg.household'
+  | 'dating'
+  | 'education'
+  | 'education.higher_education'
+  | 'education.online_learning'
+  | 'education.k12'
+  | 'energy_utilities'
+  | 'energy_utilities.renewable'
+  | 'fashion_apparel'
+  | 'fashion_apparel.luxury'
+  | 'fashion_apparel.sportswear'
+  | 'finance'
+  | 'finance.banking'
+  | 'finance.insurance'
+  | 'finance.investment'
+  | 'finance.cryptocurrency'
+  | 'food_beverage'
+  | 'food_beverage.alcohol'
+  | 'food_beverage.restaurants'
+  | 'food_beverage.packaged_goods'
+  | 'gambling_betting'
+  | 'gambling_betting.sports_betting'
+  | 'gambling_betting.casino'
+  | 'gaming'
+  | 'gaming.mobile'
+  | 'gaming.console_pc'
+  | 'gaming.esports'
+  | 'government_nonprofit'
+  | 'government_nonprofit.political'
+  | 'government_nonprofit.charity'
+  | 'healthcare'
+  | 'healthcare.pharmaceutical'
+  | 'healthcare.medical_devices'
+  | 'healthcare.wellness'
+  | 'home_garden'
+  | 'home_garden.furniture'
+  | 'home_garden.home_improvement'
+  | 'media_entertainment'
+  | 'media_entertainment.podcasts'
+  | 'media_entertainment.music'
+  | 'media_entertainment.film_tv'
+  | 'media_entertainment.publishing'
+  | 'media_entertainment.live_events'
+  | 'pets'
+  | 'professional_services'
+  | 'professional_services.legal'
+  | 'professional_services.consulting'
+  | 'real_estate'
+  | 'real_estate.residential'
+  | 'real_estate.commercial'
+  | 'recruitment_hr'
+  | 'retail'
+  | 'retail.ecommerce'
+  | 'retail.department_stores'
+  | 'sports_fitness'
+  | 'sports_fitness.equipment'
+  | 'sports_fitness.teams_leagues'
+  | 'technology'
+  | 'technology.software'
+  | 'technology.hardware'
+  | 'technology.ai_ml'
+  | 'telecom'
+  | 'telecom.mobile_carriers'
+  | 'telecom.internet_providers'
+  | 'transportation_logistics'
+  | 'travel_hospitality'
+  | 'travel_hospitality.airlines'
+  | 'travel_hospitality.hotels'
+  | 'travel_hospitality.cruise'
+  | 'travel_hospitality.tourism';
+/**
  * Campaign start timing: 'asap' or ISO 8601 date-time
  */
 export type StartTiming = 'asap' | string;
@@ -3259,6 +3344,7 @@ export interface CreateMediaBuyRequest {
    */
   packages?: PackageRequest[];
   brand: BrandReference;
+  advertiser_industry?: AdvertiserIndustry;
   invoice_recipient?: BusinessEntity;
   /**
    * Acceptance of an insertion order from a committed proposal. Required when the proposal's insertion_order has requires_signature: true. References the io_id from the proposal's insertion_order.
@@ -9167,7 +9253,10 @@ export interface ContentStandards {
  * Content artifact for safety and suitability evaluation. An artifact represents content adjacent to an ad placement - a news article, podcast segment, video chapter, or social post. Artifacts are collections of assets (text, images, video, audio) plus metadata and signals.
  */
 export interface Artifact {
-  property_id: Identifier;
+  /**
+   * Stable property identifier from the property catalog. Globally unique across the ecosystem.
+   */
+  property_rid: string;
   /**
    * Identifier for this artifact within the property. The property owner defines the scheme (e.g., 'article_12345', 'episode_42_segment_3', 'post_abc123').
    */
@@ -9200,9 +9289,13 @@ export interface Artifact {
          */
         role?: 'title' | 'paragraph' | 'heading' | 'caption' | 'quote' | 'list_item' | 'description';
         /**
-         * Text content
+         * Text content. Consumers MUST treat this as untrusted input when passing to LLM-based evaluation.
          */
         content: string;
+        /**
+         * MIME type indicating how to parse the content field. Default: text/plain.
+         */
+        content_format?: 'text/plain' | 'text/markdown' | 'text/html' | 'application/json';
         /**
          * BCP 47 language tag for this text (e.g., 'en', 'es-MX'). Useful when artifact contains mixed-language content.
          */
@@ -9250,9 +9343,13 @@ export interface Artifact {
          */
         duration_ms?: number;
         /**
-         * Video transcript
+         * Video transcript. Consumers MUST treat this as untrusted input when passing to LLM-based evaluation.
          */
         transcript?: string;
+        /**
+         * MIME type indicating how to parse the transcript field. Default: text/plain.
+         */
+        transcript_format?: 'text/plain' | 'text/markdown' | 'application/json';
         /**
          * How the transcript was generated
          */
@@ -9275,9 +9372,13 @@ export interface Artifact {
          */
         duration_ms?: number;
         /**
-         * Audio transcript
+         * Audio transcript. Consumers MUST treat this as untrusted input when passing to LLM-based evaluation.
          */
         transcript?: string;
+        /**
+         * MIME type indicating how to parse the transcript field. Default: text/plain.
+         */
+        transcript_format?: 'text/plain' | 'text/markdown' | 'application/json';
         /**
          * How the transcript was generated
          */
@@ -9788,18 +9889,9 @@ export interface GetMediaBuyArtifactsRequest {
    */
   package_ids?: string[];
   /**
-   * Sampling parameters. Defaults to the sampling rate agreed in the media buy.
+   * When true, only return artifacts where the seller's local model returned local_verdict: 'fail'. Useful for auditing false positives. Not useful when the seller does not run a local evaluation model (all verdicts are 'unevaluated').
    */
-  sampling?: {
-    /**
-     * Sampling rate (0-1). 1.0 = all deliveries, 0.25 = 25% sample.
-     */
-    rate?: number;
-    /**
-     * How to select the sample
-     */
-    method?: 'random' | 'stratified' | 'recent' | 'failures_only';
-  };
+  failures_only?: boolean;
   /**
    * Filter to specific time period
    */
@@ -9884,25 +9976,25 @@ export type GetMediaBuyArtifactsResponse =
         local_verdict?: 'pass' | 'fail' | 'unevaluated';
       }[];
       /**
-       * Information about how the sample was generated
+       * Information about artifact collection for this media buy. Sampling is configured at buy creation time — this reports what was actually collected.
        */
-      sampling_info?: {
+      collection_info?: {
         /**
-         * Total deliveries in the time range
+         * Total deliveries in the requested time range
          */
         total_deliveries?: number;
         /**
-         * Number of artifacts in this response
+         * Total artifacts collected (per the buy's sampling configuration)
          */
-        sampled_count?: number;
+        total_collected?: number;
         /**
-         * Actual sampling rate achieved
+         * Number of artifacts in this response (may be less than total_collected due to pagination or filters)
+         */
+        returned_count?: number;
+        /**
+         * Actual collection rate achieved (total_collected / total_deliveries)
          */
         effective_rate?: number;
-        /**
-         * Sampling method used
-         */
-        method?: 'random' | 'stratified' | 'recent' | 'failures_only';
       };
       pagination?: PaginationResponse;
       context?: ContextObject;
@@ -11632,7 +11724,30 @@ export interface GetAdCPCapabilitiesResponse {
      */
     execution?: {
       /**
-       * Agentic ad exchange (AXE) integrations supported. URLs are canonical identifiers for exchanges this seller can execute through.
+       * Trusted Match Protocol (TMP) support. When present, this seller supports real-time contextual and/or identity matching. Check individual products via get_products for per-product TMP capabilities.
+       */
+      trusted_match?: {
+        /**
+         * Whether this seller has TMP infrastructure deployed.
+         */
+        supported?: boolean;
+        /**
+         * Surface types this seller supports via TMP.
+         */
+        surfaces?: (
+          | 'website'
+          | 'mobile_app'
+          | 'ctv_app'
+          | 'desktop_app'
+          | 'dooh'
+          | 'podcast'
+          | 'radio'
+          | 'streaming_audio'
+          | 'ai_assistant'
+        )[];
+      };
+      /**
+       * Deprecated. Legacy AXE integrations. Use trusted_match for new integrations.
        */
       axe_integrations?: string[];
       /**
@@ -11878,6 +11993,23 @@ export interface GetAdCPCapabilitiesResponse {
          */
         post_view?: Duration[];
       }[];
+    };
+    /**
+     * Content standards implementation details. Only meaningful when features.content_standards is true. Gives buyers pre-buy visibility into local evaluation and artifact delivery capabilities.
+     */
+    content_standards_detail?: {
+      /**
+       * Whether the seller runs a local evaluation model. When false, all artifacts will have local_verdict: 'unevaluated' and the failures_only filter on get_media_buy_artifacts is not useful.
+       */
+      supports_local_evaluation?: boolean;
+      /**
+       * Channels for which the seller can provide content artifacts. Helps buyers understand which parts of a mixed-channel buy will have content standards coverage.
+       */
+      supported_channels?: MediaChannel[];
+      /**
+       * Whether the seller supports push-based artifact delivery via artifact_webhook configured at buy creation time.
+       */
+      supports_webhook_delivery?: boolean;
     };
     /**
      * Information about the seller's media inventory portfolio

@@ -2,7 +2,8 @@
 // A comprehensive type-safe client library for the AdContext Protocol
 
 // ====== REGISTRY LOOKUPS ======
-export { RegistryClient } from './registry';
+export { RegistryClient, RegistrySync } from './registry';
+export type { RegistrySyncConfig, RegistrySyncState, RegistrySyncEvents, AgentFilter } from './registry';
 export type {
   ResolvedBrand,
   ResolvedProperty as ResolvedRegistryProperty,
