@@ -1738,11 +1738,12 @@ export async function testMediaBuyLifecycle(
 
   if (cancelResult?.success && cancelResult?.data) {
     const data = cancelResult.data as unknown as Record<string, unknown>;
+    const nested = data.media_buy as Record<string, unknown> | undefined;
     const status = extractStatus(data);
-    const cancelRevision = data.revision as number | undefined;
+    const cancelRevision = (data.revision ?? nested?.revision) as number | undefined;
     cancelStep.details = `Canceled media buy, status: ${status}`;
-    const canceledBy = data.canceled_by as string | undefined;
-    const canceledAt = data.canceled_at as string | undefined;
+    const canceledBy = (data.canceled_by ?? nested?.canceled_by) as string | undefined;
+    const canceledAt = (data.canceled_at ?? nested?.canceled_at) as string | undefined;
     if (cancelRevision !== undefined) revisions.push({ step: 'cancel', revision: cancelRevision });
     cancelStep.response_preview = JSON.stringify(
       { media_buy_id: mediaBuyId, status, revision: cancelRevision, canceled_by: canceledBy, canceled_at: canceledAt },

@@ -259,7 +259,9 @@ function collectObservations(
 
   // Media buy track observations
   if (track === 'media_buy') {
-    // Check for valid_actions support (first match only)
+    // Check for valid_actions support (first match only).
+    // Skip snapshot-only previews (which lack a `status` field) — they intentionally
+    // omit fields like valid_actions and sandbox, causing false positive advisories.
     let checkedValidActions = false;
     for (const result of results) {
       if (checkedValidActions) break;
@@ -276,6 +278,10 @@ function collectObservations(
               sandbox?: unknown;
               status?: string;
             };
+
+            // Snapshot-only previews carry package_count but no status — skip them
+            if (!preview.status) continue;
+
             if (preview.valid_actions === undefined || preview.valid_actions === null) {
               observations.push({
                 category: 'best_practice',

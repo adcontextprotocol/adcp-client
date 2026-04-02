@@ -67,9 +67,30 @@ async function callController(
   options?: TestOptions
 ): Promise<TaskResult> {
   const withAccount = { account: buildAccount(options), ...params };
-  const raw = await (
-    client as unknown as { executeTask(name: string, params: Record<string, unknown>): Promise<TaskResult> }
-  ).executeTask(TOOL_NAME, withAccount);
+
+  // Suppress schema validation stderr for comply_test_controller responses.
+  // The controller returns non-standard responses (e.g., UNKNOWN_SCENARIO, INVALID_PARAMS)
+  // that intentionally don't match any task schema, causing noisy but harmless warnings.
+  const origError = console.error;
+  const origWarn = console.warn;
+  console.error = (...args: unknown[]) => {
+    if (typeof args[0] === 'string' && args[0].includes('Schema validation failed for comply_test_controller')) return;
+    origError.apply(console, args);
+  };
+  console.warn = (...args: unknown[]) => {
+    if (typeof args[0] === 'string' && args[0].includes('Schema validation failed for comply_test_controller')) return;
+    origWarn.apply(console, args);
+  };
+
+  let raw: TaskResult;
+  try {
+    raw = await (
+      client as unknown as { executeTask(name: string, params: Record<string, unknown>): Promise<TaskResult> }
+    ).executeTask(TOOL_NAME, withAccount);
+  } finally {
+    console.error = origError;
+    console.warn = origWarn;
+  }
 
   // Parse the MCP content envelope to extract the JSON response.
   // Success responses come as { content: [{ type: 'text', text: '...' }] }.
