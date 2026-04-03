@@ -76,7 +76,12 @@ export type ExpandProductIdentifiersRequest = NonNullable<
 export type FeedQuery = NonNullable<operations['getRegistryFeed']['parameters']['query']>;
 
 /** Query parameters for GET /api/registry/agents/search */
-export type AgentSearchQuery = NonNullable<operations['searchAgents']['parameters']['query']>;
+export type AgentSearchQuery = NonNullable<operations['searchAgentProfiles']['parameters']['query']> & {
+  /** Agent type filter (creative, signals, sales, governance, si). */
+  type?: string;
+  /** Sort order. */
+  sort?: string;
+};
 
 /** Request body for POST /api/registry/crawl-request */
 export type CrawlRequest = NonNullable<operations['requestCrawl']['requestBody']>['content']['application/json'];

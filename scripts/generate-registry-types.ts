@@ -87,13 +87,73 @@ export type AgentCapabilities = components['schemas']['AgentCapabilities'];
 export type PropertySummary = components['schemas']['PropertySummary'];
 export type FederatedPublisher = components['schemas']['FederatedPublisher'];
 export type DomainLookupResult = components['schemas']['DomainLookupResult'];
-export type CatalogEvent = components['schemas']['CatalogEvent'];
-export type FeedResponse = components['schemas']['FeedResponse'];
-export type AgentInventoryProfile = components['schemas']['AgentInventoryProfile'];
-export type AgentSearchResult = components['schemas']['AgentSearchResult'];
-export type AgentSearchResponse = components['schemas']['AgentSearchResponse'];
-export type CrawlRequestResponse = components['schemas']['CrawlRequestResponse'];
-export type AuthorizationEntry = components['schemas']['AuthorizationEntry'];
+
+// ====== Inline operation types ======
+// The following types are defined inline in operation responses (not in components.schemas)
+// in ADCP 3.0.0-rc.3. We extract them here for ergonomic standalone usage.
+
+/** A single event from the registry feed (inline in getRegistryFeed 200 response). */
+export type CatalogEvent = operations['getRegistryFeed']['responses']['200']['content']['application/json']['events'][number];
+
+/** Full response from GET /api/registry/feed. Includes optional cursor_expired for 410 handling. */
+export type FeedResponse = operations['getRegistryFeed']['responses']['200']['content']['application/json'] & {
+  /** Set to true by the client when the server returns 410 (cursor expired). */
+  cursor_expired?: boolean;
+};
+
+/** Raw search result from the searchAgentProfiles operation. */
+export type AgentProfileSearchResult = operations['searchAgentProfiles']['responses']['200']['content']['application/json']['results'][number];
+
+/** Full response from GET /api/registry/agents/search (raw operation type). */
+export type AgentProfileSearchResponse = operations['searchAgentProfiles']['responses']['200']['content']['application/json'];
+
+/** Response from POST /api/registry/crawl-request (202). */
+export type CrawlRequestResponse = operations['requestCrawl']['responses']['202']['content']['application/json'];
+
+// ====== Client-facing composite types ======
+// These provide a stable API for the sync module and client consumers,
+// mapping the flat searchAgentProfiles response to the richer shape expected by callers.
+
+/** Inventory profile for an agent (channels, markets, categories, etc.). */
+export type AgentInventoryProfile = {
+  channels: string[];
+  property_types: string[];
+  markets: string[];
+  categories: string[];
+  category_taxonomy: string | null;
+  tags: string[];
+  delivery_types: string[];
+  format_ids?: unknown[];
+  property_count: number;
+  publisher_count: number;
+  has_tmp: boolean;
+};
+
+/** An agent search result in the client-facing shape used by RegistrySync. */
+export type AgentSearchResult = {
+  url: string;
+  name: string;
+  type: string;
+  inventory_profile: AgentInventoryProfile;
+  match: { score: number; matched_filters: string[] };
+};
+
+/** Response shape for the searchAgents client method. */
+export type AgentSearchResponse = {
+  results: AgentSearchResult[];
+  cursor: string | null;
+  has_more: boolean;
+};
+
+/** An authorization entry used by the sync module. Derived from authorization.granted event payloads. */
+export type AuthorizationEntry = {
+  agent_url: string;
+  publisher_domain: string;
+  authorization_type: string;
+  property_ids?: string[];
+  effective_from?: string;
+  effective_to?: string;
+};
 `;
 
   const changed = writeFileIfChanged(OUTPUT_FILE, content);
