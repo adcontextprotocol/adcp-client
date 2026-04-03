@@ -23,6 +23,11 @@ export type {
   PropertySummary,
   FederatedPublisher,
   DomainLookupResult,
+  BrandActivity,
+  PropertyActivity,
+  PolicySummary,
+  Policy,
+  PolicyHistory,
   CatalogEvent,
   FeedResponse,
   AgentInventoryProfile,
@@ -85,6 +90,53 @@ export type AgentSearchQuery = NonNullable<operations['searchAgentProfiles']['pa
 
 /** Request body for POST /api/registry/crawl-request */
 export type CrawlRequest = NonNullable<operations['requestCrawl']['requestBody']>['content']['application/json'];
+
+/** Query parameters for GET /api/policies/registry */
+export type ListPoliciesQuery = NonNullable<operations['listPolicies']['parameters']['query']>;
+
+/** Response from GET /api/policies/registry (200) */
+export type ListPoliciesResponse = operations['listPolicies']['responses']['200']['content']['application/json'];
+
+/** Query parameters for GET /api/policies/resolve */
+export type ResolvePolicyQuery = operations['resolvePolicy']['parameters']['query'];
+
+/** Response from GET /api/policies/resolve (200) */
+export type ResolvePolicyResponse = operations['resolvePolicy']['responses']['200']['content']['application/json'];
+
+/** Request body for POST /api/policies/resolve/bulk */
+export type ResolvePoliciesBulkRequest = NonNullable<
+  operations['resolvePoliciesBulk']['requestBody']
+>['content']['application/json'];
+
+/** Response from POST /api/policies/resolve/bulk (200) */
+export type ResolvePoliciesBulkResponse =
+  operations['resolvePoliciesBulk']['responses']['200']['content']['application/json'];
+
+/** Query parameters for GET /api/policies/history */
+export type GetPolicyHistoryQuery = operations['getPolicyHistory']['parameters']['query'];
+
+/** Response from GET /api/policies/history (200) */
+export type GetPolicyHistoryResponse =
+  operations['getPolicyHistory']['responses']['200']['content']['application/json'];
+
+/** Request body for POST /api/policies/save */
+export type SavePolicyRequest = NonNullable<operations['savePolicy']['requestBody']>['content']['application/json'];
+
+/** Response from POST /api/policies/save (200) */
+export type SavePolicyResponse = operations['savePolicy']['responses']['200']['content']['application/json'];
+
+/** Query parameters for GET /api/brands/history */
+export type GetBrandHistoryQuery = operations['getBrandHistory']['parameters']['query'];
+
+/** Response from GET /api/brands/history (200) */
+export type GetBrandHistoryResponse = operations['getBrandHistory']['responses']['200']['content']['application/json'];
+
+/** Query parameters for GET /api/properties/history */
+export type GetPropertyHistoryQuery = operations['getPropertyHistory']['parameters']['query'];
+
+/** Response from GET /api/properties/history (200) */
+export type GetPropertyHistoryResponse =
+  operations['getPropertyHistory']['responses']['200']['content']['application/json'];
 
 // ====== Backward compatibility ======
 

@@ -2,8 +2,15 @@
 // A comprehensive type-safe client library for the AdContext Protocol
 
 // ====== REGISTRY LOOKUPS ======
-export { RegistryClient, RegistrySync } from './registry';
-export type { RegistrySyncConfig, RegistrySyncState, RegistrySyncEvents, AgentFilter } from './registry';
+export { RegistryClient, RegistrySync, PropertyRegistry, InMemoryCursorStore, FileCursorStore } from './registry';
+export type {
+  RegistrySyncConfig,
+  RegistrySyncState,
+  RegistrySyncEvents,
+  AgentFilter,
+  CursorStore,
+  PropertyRegistryConfig,
+} from './registry';
 export type {
   ResolvedBrand,
   ResolvedProperty as ResolvedRegistryProperty,
@@ -24,6 +31,20 @@ export type {
   PublisherPropertySelector,
   CompanySearchResult,
   FindCompanyResult,
+  ListPoliciesQuery,
+  ListPoliciesResponse,
+  ResolvePolicyQuery,
+  ResolvePolicyResponse,
+  ResolvePoliciesBulkRequest,
+  ResolvePoliciesBulkResponse,
+  GetPolicyHistoryQuery,
+  GetPolicyHistoryResponse,
+  SavePolicyRequest,
+  SavePolicyResponse,
+  GetBrandHistoryQuery,
+  GetBrandHistoryResponse,
+  GetPropertyHistoryQuery,
+  GetPropertyHistoryResponse,
 } from './registry';
 
 // ====== PROPERTY DISCOVERY (AdCP v2.2.0) ======
@@ -495,6 +516,7 @@ export {
   EVENT_TRACKING_TOOLS,
   ACCOUNT_TOOLS,
   PROTOCOL_TOOLS,
+  BRAND_RIGHTS_TOOLS,
   TASK_FEATURE_MAP,
 } from './utils/capabilities';
 export type {
@@ -700,4 +722,6 @@ export {
   TEST_AGENT_NO_AUTH_MCP_CONFIG,
   TEST_AGENT_NO_AUTH_A2A_CONFIG,
   creativeAgent,
+  testBrandRightsFlow,
+  hasBrandRightsTools,
 } from './testing/index';

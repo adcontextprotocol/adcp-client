@@ -21,7 +21,8 @@ export type AdcpProtocol =
   | 'creative'
   | 'sponsored_intelligence'
   | 'trusted_match'
-  | 'compliance';
+  | 'compliance'
+  | 'brand';
 
 /**
  * Media buy features available on the agent
@@ -222,6 +223,8 @@ export const TRUSTED_MATCH_TOOLS = ['context_match', 'identity_match'] as const;
 
 export const COMPLIANCE_TOOLS = ['comply_test_controller'] as const;
 
+export const BRAND_RIGHTS_TOOLS = ['get_brand_identity', 'get_rights', 'acquire_rights'] as const;
+
 export const EVENT_TRACKING_TOOLS = ['sync_event_sources', 'log_event'] as const;
 
 export const ACCOUNT_TOOLS = ['list_accounts', 'sync_accounts'] as const;
@@ -271,6 +274,11 @@ export function buildSyntheticCapabilities(tools: ToolInfo[]): AdcpCapabilities 
   const hasComplianceTools = COMPLIANCE_TOOLS.some(t => toolNames.has(t));
   if (hasComplianceTools) {
     protocols.push('compliance');
+  }
+
+  const hasBrandRightsTools = BRAND_RIGHTS_TOOLS.some(t => toolNames.has(t));
+  if (hasBrandRightsTools) {
+    protocols.push('brand');
   }
 
   // Detect features from tool presence
@@ -482,6 +490,11 @@ export const TASK_FEATURE_MAP: Record<string, FeatureName[]> = {
 
   // Compliance protocol
   comply_test_controller: ['compliance'],
+
+  // Brand rights protocol
+  get_brand_identity: ['brand'],
+  get_rights: ['brand'],
+  acquire_rights: ['brand'],
 };
 
 /**

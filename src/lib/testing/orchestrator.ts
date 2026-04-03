@@ -80,6 +80,9 @@ export const SCENARIO_REQUIREMENTS: Partial<Record<TestScenario, string[]>> = {
   error_structure: ['create_media_buy'],
   error_transport: ['create_media_buy'],
 
+  // Requires brand rights tools
+  brand_rights_flow: ['get_brand_identity'],
+
   // Deterministic state machine scenarios (require comply_test_controller)
   deterministic_creative: ['comply_test_controller', 'sync_creatives'],
   deterministic_media_buy: ['comply_test_controller', 'get_products', 'create_media_buy'],
@@ -136,6 +139,7 @@ export const DEFAULT_SCENARIOS: readonly TestScenario[] = [
   'error_codes',
   'error_structure',
   'error_transport',
+  'brand_rights_flow',
 ] as const;
 
 /**

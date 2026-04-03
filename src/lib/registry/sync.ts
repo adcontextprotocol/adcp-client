@@ -7,6 +7,8 @@ import type {
   AgentSearchResponse,
   FeedResponse,
 } from './types.generated';
+import type { CursorStore } from './cursor-store';
+import { InMemoryCursorStore } from './cursor-store';
 
 // ====== Configuration ======
 
@@ -22,6 +24,8 @@ export interface RegistrySyncConfig {
     /** Authorization entries (agent→domain mappings). Default: true. */
     authorizations?: boolean;
   };
+  /** Optional cursor store for persisting the feed cursor between restarts. */
+  cursorStore?: CursorStore;
   /** Called on errors during polling/bootstrap. */
   onError?: (error: Error) => void;
 }
@@ -82,6 +86,7 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
   private readonly indexAgents: boolean;
   private readonly indexAuthorizations: boolean;
   private readonly errorHandler: ((error: Error) => void) | undefined;
+  private readonly cursorStore: CursorStore;
 
   private _state: RegistrySyncState = 'idle';
   private cursor: string | null = null;
@@ -98,6 +103,7 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
     this.pollIntervalMs = config.pollIntervalMs ?? 30_000;
     this.indexAgents = config.indexes?.agents !== false;
     this.indexAuthorizations = config.indexes?.authorizations !== false;
+    this.cursorStore = config.cursorStore ?? new InMemoryCursorStore();
     this.errorHandler = config.onError;
   }
 
@@ -201,6 +207,12 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
   private async bootstrap(): Promise<void> {
     this.setState('bootstrapping');
     try {
+      // Restore cursor from store if available
+      const storedCursor = await this.cursorStore.getCursor();
+      if (storedCursor) {
+        this.cursor = storedCursor;
+      }
+
       // Paginate searchAgents to load all agents
       if (this.indexAgents) {
         let cursor: string | undefined;
@@ -283,6 +295,10 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
       hasMore = feed.has_more && this.cursor != null;
     }
 
+    if (this.cursor) {
+      await this.cursorStore.setCursor(this.cursor);
+    }
+
     if (totalEventsApplied > 0) {
       this.emit('sync', { cursor: this.cursor!, eventsApplied: totalEventsApplied });
     }
@@ -303,6 +319,9 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
       }
       this.cursor = feed.cursor;
       hasMore = feed.has_more && this.cursor != null;
+    }
+    if (this.cursor) {
+      await this.cursorStore.setCursor(this.cursor);
     }
   }
 
