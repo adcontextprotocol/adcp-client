@@ -14,7 +14,14 @@ export type AdcpMajorVersion = 2 | 3;
 /**
  * Supported AdCP protocols/domains
  */
-export type AdcpProtocol = 'media_buy' | 'signals' | 'governance' | 'creative' | 'sponsored_intelligence';
+export type AdcpProtocol =
+  | 'media_buy'
+  | 'signals'
+  | 'governance'
+  | 'creative'
+  | 'sponsored_intelligence'
+  | 'trusted_match'
+  | 'compliance';
 
 /**
  * Media buy features available on the agent
@@ -211,6 +218,10 @@ export const SPONSORED_INTELLIGENCE_TOOLS = [
   'si_terminate_session',
 ] as const;
 
+export const TRUSTED_MATCH_TOOLS = ['context_match', 'identity_match'] as const;
+
+export const COMPLIANCE_TOOLS = ['comply_test_controller'] as const;
+
 export const EVENT_TRACKING_TOOLS = ['sync_event_sources', 'log_event'] as const;
 
 export const ACCOUNT_TOOLS = ['list_accounts', 'sync_accounts'] as const;
@@ -250,6 +261,16 @@ export function buildSyntheticCapabilities(tools: ToolInfo[]): AdcpCapabilities 
   const hasSponsoredIntelligenceTools = SPONSORED_INTELLIGENCE_TOOLS.some(t => toolNames.has(t));
   if (hasSponsoredIntelligenceTools) {
     protocols.push('sponsored_intelligence');
+  }
+
+  const hasTrustedMatchTools = TRUSTED_MATCH_TOOLS.some(t => toolNames.has(t));
+  if (hasTrustedMatchTools) {
+    protocols.push('trusted_match');
+  }
+
+  const hasComplianceTools = COMPLIANCE_TOOLS.some(t => toolNames.has(t));
+  if (hasComplianceTools) {
+    protocols.push('compliance');
   }
 
   // Detect features from tool presence
@@ -454,6 +475,13 @@ export const TASK_FEATURE_MAP: Record<string, FeatureName[]> = {
   si_initiate_session: ['sponsored_intelligence'],
   si_send_message: ['sponsored_intelligence'],
   si_terminate_session: ['sponsored_intelligence'],
+
+  // Trusted match protocol
+  context_match: ['trusted_match'],
+  identity_match: ['trusted_match'],
+
+  // Compliance protocol
+  comply_test_controller: ['compliance'],
 };
 
 /**
