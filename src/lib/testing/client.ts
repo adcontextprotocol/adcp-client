@@ -123,6 +123,7 @@ export function createTestClient(agentUrl: string, protocol: 'mcp' | 'a2a' = 'mc
 
   const multiClient = new ADCPMultiAgentClient([agentConfig], {
     headers,
+    validation: { logSchemaViolations: false },
   });
 
   return multiClient.agent('test');
@@ -303,6 +304,7 @@ export async function discoverAgentCapabilities(
       null,
       2
     );
+    step.observation_data = { products_count: products.length, channels: capabilities.channels };
   } else if (result && !result.success) {
     step.passed = false;
     step.error = result.error || 'get_products failed';

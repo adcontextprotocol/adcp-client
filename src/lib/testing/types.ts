@@ -157,6 +157,8 @@ export interface TestStepResult {
   details?: string;
   error?: string;
   response_preview?: string;
+  // Structured data for collectObservations() — decoupled from response_preview display
+  observation_data?: Record<string, unknown>;
   // For tracking what was created (for cleanup or follow-up)
   created_id?: string;
   // Deprecation or other warnings

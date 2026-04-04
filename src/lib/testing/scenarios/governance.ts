@@ -944,6 +944,7 @@ export async function testCampaignGovernance(
         null,
         2
       );
+      step.observation_data = { governance_context: data.governance_context || null };
 
       // Any status is valid — we're testing the protocol, not the policy
       if (!['approved', 'denied', 'conditions', 'escalated'].includes(status)) {
@@ -1152,6 +1153,7 @@ export async function testCampaignGovernanceDenied(
       null,
       2
     );
+    overBudgetStep.observation_data = { governance_context: data.governance_context || null };
 
     if (data.status === 'approved' && data.mode !== 'advisory' && data.mode !== 'audit') {
       overBudgetStep.passed = false;
@@ -1358,6 +1360,7 @@ export async function testCampaignGovernanceConditions(
       null,
       2
     );
+    checkStep.observation_data = { governance_context: initialGovernanceContext || null };
 
     // If we got conditions, apply them and re-check with governance_context round-trip
     if (data.status === 'conditions' && data.conditions?.length > 0) {
@@ -1413,6 +1416,7 @@ export async function testCampaignGovernanceConditions(
           null,
           2
         );
+        recheckStep.observation_data = { governance_context: recheckData.governance_context || null };
       } else if (recheckResult && !recheckResult.success) {
         recheckStep.passed = false;
         recheckStep.error = recheckResult.error || 'Re-check after conditions failed';
@@ -1557,6 +1561,7 @@ export async function testCampaignGovernanceDelivery(
       null,
       2
     );
+    deliveryStep.observation_data = { governance_context: data.governance_context || null };
   } else if (deliveryResult && !deliveryResult.success) {
     deliveryStep.passed = false;
     deliveryStep.error = deliveryResult.error || 'Delivery-phase check_governance failed';

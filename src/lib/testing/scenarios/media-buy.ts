@@ -291,6 +291,7 @@ export async function testCreateMediaBuy(
       null,
       2
     );
+    createStep.observation_data = { confirmed_at: confirmedAt, revision };
   } else if (createResult && !createResult.success) {
     createStep.passed = false;
     createStep.error = createResult.error || 'create_media_buy returned unsuccessful result';
@@ -401,6 +402,14 @@ export async function testFullSalesFlow(
           null,
           2
         );
+        // Provide observation data so collectObservations can check valid_actions/sandbox
+        // even when media_buy_lifecycle doesn't run (e.g., agent lacks update_media_buy).
+        snapshotStep.observation_data = {
+          valid_actions: mediaBuy.valid_actions,
+          sandbox: mediaBuy.sandbox,
+          status: mediaBuy.status,
+          has_creative_deadline: packages.some((p: any) => p.creative_deadline) || !!mediaBuy.creative_deadline,
+        };
       }
     } else if (snapshotResult && !snapshotResult.success) {
       snapshotStep.passed = false;
@@ -1654,6 +1663,14 @@ export async function testMediaBuyLifecycle(
           null,
           2
         );
+        statusStep.observation_data = {
+          valid_actions: validActions,
+          sandbox: mediaBuy.sandbox,
+          status: mediaBuy.status,
+          has_creative_deadline: hasCreativeDeadline,
+          history_entries: history?.length ?? 0,
+          history_valid: historyValid,
+        };
       }
     } else if (statusResult && !statusResult.success) {
       statusStep.passed = false;
@@ -1738,17 +1755,19 @@ export async function testMediaBuyLifecycle(
 
   if (cancelResult?.success && cancelResult?.data) {
     const data = cancelResult.data as unknown as Record<string, unknown>;
+    const nested = data.media_buy as Record<string, unknown> | undefined;
     const status = extractStatus(data);
-    const cancelRevision = data.revision as number | undefined;
+    const cancelRevision = (data.revision ?? nested?.revision) as number | undefined;
     cancelStep.details = `Canceled media buy, status: ${status}`;
-    const canceledBy = data.canceled_by as string | undefined;
-    const canceledAt = data.canceled_at as string | undefined;
+    const canceledBy = (data.canceled_by ?? nested?.canceled_by) as string | undefined;
+    const canceledAt = (data.canceled_at ?? nested?.canceled_at) as string | undefined;
     if (cancelRevision !== undefined) revisions.push({ step: 'cancel', revision: cancelRevision });
     cancelStep.response_preview = JSON.stringify(
       { media_buy_id: mediaBuyId, status, revision: cancelRevision, canceled_by: canceledBy, canceled_at: canceledAt },
       null,
       2
     );
+    cancelStep.observation_data = { status, canceled_by: canceledBy, canceled_at: canceledAt };
     if (status && status !== 'canceled') {
       cancelStep.warnings = [`Expected status 'canceled', got '${status}'`];
     }

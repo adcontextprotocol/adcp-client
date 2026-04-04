@@ -215,42 +215,35 @@ function collectObservations(
   if (track === 'products') {
     for (const result of results) {
       for (const step of result.steps ?? []) {
-        if (step.response_preview && step.task === 'get_products') {
-          try {
-            const preview = JSON.parse(step.response_preview) as {
-              products_count?: number;
-              channels?: string[];
-            };
-            if (preview.products_count !== undefined) {
-              if (preview.products_count === 0) {
-                observations.push({
-                  category: 'completeness',
-                  severity: 'warning',
-                  track,
-                  message: 'Agent returned 0 products. Buyers cannot transact without product inventory.',
-                  evidence: { products_count: 0 },
-                });
-              } else if (preview.products_count > 50) {
-                observations.push({
-                  category: 'best_practice',
-                  severity: 'suggestion',
-                  track,
-                  message: `Agent returned ${preview.products_count} products for a single brief. Consider curating to 5-15 most relevant products.`,
-                  evidence: { products_count: preview.products_count },
-                });
-              }
-            }
-            if (preview.channels && preview.channels.length === 1) {
+        if (step.task === 'get_products' && step.observation_data) {
+          const obs = step.observation_data as { products_count?: number; channels?: string[] };
+          if (obs.products_count !== undefined) {
+            if (obs.products_count === 0) {
               observations.push({
                 category: 'completeness',
-                severity: 'info',
+                severity: 'warning',
                 track,
-                message: `Agent only serves ${preview.channels[0]} channel. Multi-channel inventory broadens demand.`,
-                evidence: { channels: preview.channels },
+                message: 'Agent returned 0 products. Buyers cannot transact without product inventory.',
+                evidence: { products_count: 0 },
+              });
+            } else if (obs.products_count > 50) {
+              observations.push({
+                category: 'best_practice',
+                severity: 'suggestion',
+                track,
+                message: `Agent returned ${obs.products_count} products for a single brief. Consider curating to 5-15 most relevant products.`,
+                evidence: { products_count: obs.products_count },
               });
             }
-          } catch {
-            // response_preview isn't always JSON
+          }
+          if (obs.channels && obs.channels.length === 1) {
+            observations.push({
+              category: 'completeness',
+              severity: 'info',
+              track,
+              message: `Agent only serves ${obs.channels[0]} channel. Multi-channel inventory broadens demand.`,
+              evidence: { channels: obs.channels },
+            });
           }
         }
       }
@@ -260,73 +253,67 @@ function collectObservations(
   // Media buy track observations
   if (track === 'media_buy') {
     // Check for valid_actions support (first match only)
+    // Only steps with observation_data are considered — snapshot-only steps don't set it.
     let checkedValidActions = false;
     for (const result of results) {
       if (checkedValidActions) break;
       for (const step of result.steps ?? []) {
-        if (step.task === 'get_media_buys' && step.response_preview) {
-          try {
-            const preview = JSON.parse(step.response_preview) as {
-              valid_actions?: unknown;
-              confirmed_at?: unknown;
-              revision?: unknown;
-              history_entries?: number;
-              history_valid?: boolean;
-              has_creative_deadline?: boolean;
-              sandbox?: unknown;
-              status?: string;
-            };
-            if (preview.valid_actions === undefined || preview.valid_actions === null) {
-              observations.push({
-                category: 'best_practice',
-                severity: 'warning',
-                track,
-                message:
-                  'Agent does not return valid_actions in get_media_buys response. ' +
-                  'Without valid_actions, buyer agents must hardcode the state machine to know what operations are permitted.',
-              });
-            }
-
-            // Check creative_deadline support
-            if (preview.has_creative_deadline === false) {
-              observations.push({
-                category: 'best_practice',
-                severity: 'suggestion',
-                track,
-                message:
-                  'Agent does not return creative_deadline on media buys or packages. ' +
-                  'Buyers need to know when creative uploads must be finalized to avoid rejected submissions.',
-              });
-            }
-
-            // Check history entry shape when present
-            if (preview.history_entries && preview.history_entries > 0 && preview.history_valid === false) {
-              observations.push({
-                category: 'best_practice',
-                severity: 'warning',
-                track,
-                message:
-                  'Agent returns history entries but some lack required fields (timestamp, action). ' +
-                  'History entries must include at least timestamp and action to be useful for audit.',
-              });
-            }
-
-            // Check dry_run/sandbox confirmation
-            if (preview.sandbox === undefined || preview.sandbox === null) {
-              observations.push({
-                category: 'best_practice',
-                severity: 'suggestion',
-                track,
-                message:
-                  'Agent does not confirm sandbox mode in get_media_buys response. ' +
-                  'Include sandbox: true so buyers can verify the agent honored dry_run mode.',
-              });
-            }
-
-            checkedValidActions = true;
-          } catch {
-            // not always JSON
+        if (step.task === 'get_media_buys' && step.observation_data) {
+          const obs = step.observation_data as {
+            valid_actions?: unknown;
+            history_entries?: number;
+            history_valid?: boolean;
+            has_creative_deadline?: boolean;
+            sandbox?: unknown;
+          };
+          if (obs.valid_actions === undefined || obs.valid_actions === null) {
+            observations.push({
+              category: 'best_practice',
+              severity: 'warning',
+              track,
+              message:
+                'Agent does not return valid_actions in get_media_buys response. ' +
+                'Without valid_actions, buyer agents must hardcode the state machine to know what operations are permitted.',
+            });
           }
+
+          // Check creative_deadline support
+          if (obs.has_creative_deadline === false) {
+            observations.push({
+              category: 'best_practice',
+              severity: 'suggestion',
+              track,
+              message:
+                'Agent does not return creative_deadline on media buys or packages. ' +
+                'Buyers need to know when creative uploads must be finalized to avoid rejected submissions.',
+            });
+          }
+
+          // Check history entry shape when present
+          if (obs.history_entries && obs.history_entries > 0 && obs.history_valid === false) {
+            observations.push({
+              category: 'best_practice',
+              severity: 'warning',
+              track,
+              message:
+                'Agent returns history entries but some lack required fields (timestamp, action). ' +
+                'History entries must include at least timestamp and action to be useful for audit.',
+            });
+          }
+
+          // Check dry_run/sandbox confirmation
+          if (obs.sandbox === undefined || obs.sandbox === null) {
+            observations.push({
+              category: 'best_practice',
+              severity: 'suggestion',
+              track,
+              message:
+                'Agent does not confirm sandbox mode in get_media_buys response. ' +
+                'Include sandbox: true so buyers can verify the agent honored dry_run mode.',
+            });
+          }
+
+          checkedValidActions = true;
           break;
         }
       }
@@ -337,33 +324,29 @@ function collectObservations(
     for (const result of results) {
       if (checkedCreateLifecycle) break;
       for (const step of result.steps ?? []) {
-        if (step.task === 'create_media_buy' && step.response_preview) {
-          try {
-            const preview = JSON.parse(step.response_preview) as { confirmed_at?: unknown; revision?: unknown };
-            if (preview.confirmed_at === undefined || preview.confirmed_at === null) {
-              observations.push({
-                category: 'best_practice',
-                severity: 'warning',
-                track,
-                message:
-                  'Agent does not return confirmed_at in create_media_buy response. ' +
-                  'A successful response constitutes order confirmation — confirmed_at provides an auditable timestamp for dispute resolution.',
-              });
-            }
-            if (preview.revision === undefined || preview.revision === null) {
-              observations.push({
-                category: 'best_practice',
-                severity: 'suggestion',
-                track,
-                message:
-                  'Agent does not return revision in create_media_buy response. ' +
-                  'Revision numbers enable optimistic concurrency for safe concurrent updates.',
-              });
-            }
-            checkedCreateLifecycle = true;
-          } catch {
-            // not always JSON
+        if (step.task === 'create_media_buy' && step.observation_data) {
+          const obs = step.observation_data as { confirmed_at?: unknown; revision?: unknown };
+          if (obs.confirmed_at === undefined || obs.confirmed_at === null) {
+            observations.push({
+              category: 'best_practice',
+              severity: 'warning',
+              track,
+              message:
+                'Agent does not return confirmed_at in create_media_buy response. ' +
+                'A successful response constitutes order confirmation — confirmed_at provides an auditable timestamp for dispute resolution.',
+            });
           }
+          if (obs.revision === undefined || obs.revision === null) {
+            observations.push({
+              category: 'best_practice',
+              severity: 'suggestion',
+              track,
+              message:
+                'Agent does not return revision in create_media_buy response. ' +
+                'Revision numbers enable optimistic concurrency for safe concurrent updates.',
+            });
+          }
+          checkedCreateLifecycle = true;
           break;
         }
       }
@@ -374,23 +357,19 @@ function collectObservations(
     for (const result of results) {
       if (checkedHistory) break;
       for (const step of result.steps ?? []) {
-        if (step.task === 'get_media_buys' && step.response_preview) {
-          try {
-            const preview = JSON.parse(step.response_preview) as { history_entries?: number };
-            if (preview.history_entries !== undefined && preview.history_entries === 0) {
-              observations.push({
-                category: 'best_practice',
-                severity: 'suggestion',
-                track,
-                message:
-                  'Agent does not return revision history when include_history is requested. ' +
-                  'History enables audit trails and helps buyers understand what changed.',
-              });
-            }
-            checkedHistory = true;
-          } catch {
-            // not always JSON
+        if (step.task === 'get_media_buys' && step.observation_data) {
+          const obs = step.observation_data as { history_entries?: number };
+          if (obs.history_entries !== undefined && obs.history_entries === 0) {
+            observations.push({
+              category: 'best_practice',
+              severity: 'suggestion',
+              track,
+              message:
+                'Agent does not return revision history when include_history is requested. ' +
+                'History enables audit trails and helps buyers understand what changed.',
+            });
           }
+          checkedHistory = true;
           break;
         }
       }
@@ -401,28 +380,24 @@ function collectObservations(
     for (const result of results) {
       if (checkedCancellation) break;
       for (const step of result.steps ?? []) {
-        if (step.task === 'update_media_buy' && step.response_preview) {
-          try {
-            const preview = JSON.parse(step.response_preview) as {
-              status?: string;
-              canceled_by?: string;
-              canceled_at?: string;
-            };
-            if (preview.status === 'canceled') {
-              if (!preview.canceled_by) {
-                observations.push({
-                  category: 'completeness',
-                  severity: 'warning',
-                  track,
-                  message:
-                    'Agent transitions to canceled status but does not include canceled_by field. ' +
-                    'Buyers need to distinguish buyer-initiated from seller-initiated cancellations.',
-                });
-              }
-              checkedCancellation = true;
+        if (step.task === 'update_media_buy' && step.observation_data) {
+          const obs = step.observation_data as {
+            status?: string;
+            canceled_by?: string;
+            canceled_at?: string;
+          };
+          if (obs.status === 'canceled') {
+            if (!obs.canceled_by) {
+              observations.push({
+                category: 'completeness',
+                severity: 'warning',
+                track,
+                message:
+                  'Agent transitions to canceled status but does not include canceled_by field. ' +
+                  'Buyers need to distinguish buyer-initiated from seller-initiated cancellations.',
+              });
             }
-          } catch {
-            // not always JSON
+            checkedCancellation = true;
           }
         }
       }
@@ -490,14 +465,9 @@ function collectObservations(
     let anyCheckMissingContext = false;
     for (const result of results) {
       for (const step of result.steps ?? []) {
-        if (step.task === 'check_governance' && step.passed && step.response_preview) {
-          try {
-            const preview = JSON.parse(step.response_preview) as { governance_context?: string };
-            if (!preview.governance_context || preview.governance_context === '(absent)') {
-              anyCheckMissingContext = true;
-            }
-          } catch {
-            // not always JSON
+        if (step.task === 'check_governance' && step.passed && step.observation_data) {
+          if (!step.observation_data.governance_context) {
+            anyCheckMissingContext = true;
           }
         }
       }
