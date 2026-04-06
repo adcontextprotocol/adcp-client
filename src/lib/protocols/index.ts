@@ -110,10 +110,25 @@ export class ProtocolClient {
  */
 export const createMCPClient = (agentUrl: string, authToken?: string, headers?: Record<string, string>) => ({
   callTool: (toolName: string, args: Record<string, unknown>, debugLogs?: DebugLogEntry[]) =>
-    callMCPToolWithTasks(agentUrl, toolName, { adcp_major_version: ADCP_MAJOR_VERSION, ...args }, authToken, debugLogs, headers),
+    callMCPToolWithTasks(
+      agentUrl,
+      toolName,
+      { adcp_major_version: ADCP_MAJOR_VERSION, ...args },
+      authToken,
+      debugLogs,
+      headers
+    ),
 });
 
 export const createA2AClient = (agentUrl: string, authToken?: string, headers?: Record<string, string>) => ({
   callTool: (toolName: string, parameters: Record<string, unknown>, debugLogs?: DebugLogEntry[]) =>
-    callA2ATool(agentUrl, toolName, { adcp_major_version: ADCP_MAJOR_VERSION, ...parameters }, authToken, debugLogs, undefined, headers),
+    callA2ATool(
+      agentUrl,
+      toolName,
+      { adcp_major_version: ADCP_MAJOR_VERSION, ...parameters },
+      authToken,
+      debugLogs,
+      undefined,
+      headers
+    ),
 });

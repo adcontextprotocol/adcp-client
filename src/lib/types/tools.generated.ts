@@ -3457,6 +3457,10 @@ export interface CreateMediaBuyRequest {
  */
 export interface PackageRequest {
   /**
+   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Product ID for this package
    */
   product_id: string;

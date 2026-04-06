@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-04-06T22:56:54.117Z
+// Generated at: 2026-04-06T23:00:33.080Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -3710,6 +3710,7 @@ export const BaseIndividualAssetSchema = z.object({
 }).passthrough();
 
 export const PackageRequestSchema = z.object({
+    adcp_major_version: z.number().nullish(),
     product_id: z.string(),
     format_ids: z.array(FormatIDSchema).nullish(),
     budget: z.number(),
