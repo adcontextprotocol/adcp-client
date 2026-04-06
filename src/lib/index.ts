@@ -615,6 +615,7 @@ export {
   isCompatibleWith,
   getCompatibleVersions,
   ADCP_VERSION,
+  ADCP_MAJOR_VERSION,
   LIBRARY_VERSION,
   COMPATIBLE_ADCP_VERSIONS,
   VERSION_INFO,

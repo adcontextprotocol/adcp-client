@@ -19,6 +19,7 @@ import type { PushNotificationConfig } from '../types/tools.generated';
 import { getAuthToken } from '../auth';
 import { validateAgentUrl } from '../validation';
 import { withSpan } from '../observability/tracing';
+import { ADCP_MAJOR_VERSION } from '../version';
 
 /**
  * Universal protocol client - automatically routes to the correct protocol implementation
@@ -60,6 +61,9 @@ export class ProtocolClient {
 
         const authToken = getAuthToken(agent);
 
+        // Declare AdCP major version on every request so sellers can validate compatibility
+        const argsWithVersion = { adcp_major_version: ADCP_MAJOR_VERSION, ...args };
+
         // Build push_notification_config for ASYNC TASK STATUS notifications
         // (NOT for reporting_webhook - that stays in args)
         // Schema: https://adcontextprotocol.org/schemas/v1/core/push-notification-config.json
@@ -77,8 +81,8 @@ export class ProtocolClient {
         if (agent.protocol === 'mcp') {
           // For MCP, include push_notification_config in tool arguments (MCP spec)
           const argsWithWebhook = pushNotificationConfig
-            ? { ...args, push_notification_config: pushNotificationConfig }
-            : args;
+            ? { ...argsWithVersion, push_notification_config: pushNotificationConfig }
+            : argsWithVersion;
           // Use callMCPToolWithTasks which auto-detects server tasks capability
           // and falls back to standard callTool when tasks are not supported
           return callMCPToolWithTasks(agent.agent_uri, toolName, argsWithWebhook, authToken, debugLogs, agent.headers);
@@ -87,7 +91,7 @@ export class ProtocolClient {
           return callA2ATool(
             agent.agent_uri,
             toolName,
-            args, // This maps to 'parameters' in callA2ATool
+            argsWithVersion,
             authToken,
             debugLogs,
             pushNotificationConfig,
@@ -106,10 +110,10 @@ export class ProtocolClient {
  */
 export const createMCPClient = (agentUrl: string, authToken?: string, headers?: Record<string, string>) => ({
   callTool: (toolName: string, args: Record<string, unknown>, debugLogs?: DebugLogEntry[]) =>
-    callMCPToolWithTasks(agentUrl, toolName, args, authToken, debugLogs, headers),
+    callMCPToolWithTasks(agentUrl, toolName, { adcp_major_version: ADCP_MAJOR_VERSION, ...args }, authToken, debugLogs, headers),
 });
 
 export const createA2AClient = (agentUrl: string, authToken?: string, headers?: Record<string, string>) => ({
   callTool: (toolName: string, parameters: Record<string, unknown>, debugLogs?: DebugLogEntry[]) =>
-    callA2ATool(agentUrl, toolName, parameters, authToken, debugLogs, undefined, headers),
+    callA2ATool(agentUrl, toolName, { adcp_major_version: ADCP_MAJOR_VERSION, ...parameters }, authToken, debugLogs, undefined, headers),
 });

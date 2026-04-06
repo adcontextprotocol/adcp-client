@@ -238,6 +238,10 @@ export type PostalCodeSystem =
  */
 export interface GetProductsRequest {
   /**
+   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Declares buyer intent for this request. 'brief': publisher curates product recommendations from the provided brief. 'wholesale': buyer requests raw inventory to apply their own audiences — brief must not be provided, and proposals are omitted. 'refine': iterate on products and proposals from a previous get_products response using the refine array of change requests. v3 clients MUST include buying_mode. Sellers receiving requests from pre-v3 clients without buying_mode SHOULD default to 'brief'.
    */
   buying_mode: 'brief' | 'wholesale' | 'refine';
@@ -2441,6 +2445,10 @@ export type DisclosurePersistence = 'continuous' | 'initial' | 'flexible';
  */
 export interface ListCreativeFormatsRequest {
   /**
+   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Return only these specific format IDs (e.g., from get_products response)
    */
   format_ids?: FormatID[];
@@ -3334,6 +3342,10 @@ export type AuthenticationScheme = 'Bearer' | 'HMAC-SHA256';
  * Request parameters for creating a media buy. Supports two modes: (1) Manual mode - provide packages array with explicit line item configurations, or (2) Proposal mode - provide proposal_id and total_budget to execute a proposal from get_products. One of packages or proposal_id must be provided.
  */
 export interface CreateMediaBuyRequest {
+  /**
+   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
   /**
    * Client-generated unique key for this request. If a request with the same idempotency_key and account has already been processed, the seller returns the existing media buy rather than creating a duplicate. MUST be unique per (seller, request) pair to prevent cross-seller correlation. Use a fresh UUID v4 for each request.
    */
@@ -4882,6 +4894,10 @@ export interface CreateMediaBuyError {
  */
 export interface UpdateMediaBuyRequest {
   /**
+   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Seller's ID of the media buy to update
    */
   media_buy_id: string;
@@ -5104,6 +5120,10 @@ export interface UpdateMediaBuyError {
  * Request parameters for retrieving media buy status, creative approval state, and optional delivery snapshots
  */
 export interface GetMediaBuysRequest {
+  /**
+   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
   account?: AccountReference;
   /**
    * Array of media buy IDs to retrieve. When omitted, returns a paginated set of accessible media buys matching status_filter.
@@ -5419,6 +5439,10 @@ export type SortMetric =
  * Request parameters for retrieving comprehensive delivery metrics
  */
 export interface GetMediaBuyDeliveryRequest {
+  /**
+   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
   account?: AccountReference;
   /**
    * Array of media buy IDs to get delivery data for
@@ -6163,6 +6187,10 @@ export type FeedbackSource =
  */
 export interface ProvidePerformanceFeedbackRequest {
   /**
+   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Seller's media buy identifier
    */
   media_buy_id: string;
@@ -6240,6 +6268,10 @@ export interface ProvidePerformanceFeedbackError {
  * Request parameters for configuring event sources on an account with upsert semantics. Existing event sources matched by event_source_id are updated, new ones are created. When delete_missing is true, buyer-managed event sources on the account not in this request are removed. When event_sources is omitted, the call is discovery-only: it returns all event sources on the account without modification. The response always includes both synced and seller-managed event sources for full visibility.
  */
 export interface SyncEventSourcesRequest {
+  /**
+   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
   account: AccountReference;
   /**
    * Event sources to sync (create or update). When omitted, the call is discovery-only and returns all existing event sources on the account without modification.
@@ -6454,6 +6486,10 @@ export type UIDType =
  */
 export interface LogEventRequest {
   /**
+   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Event source configured on the account via sync_event_sources
    */
   event_source_id: string;
@@ -6664,6 +6700,10 @@ export type ConsentBasis = 'consent' | 'legitimate_interest' | 'contract' | 'leg
  * Request parameters for managing CRM-based audiences on an account with upsert semantics. Existing audiences matched by audience_id are updated, new ones are created. Members are specified as delta operations: add appends new members, remove drops existing ones. Recommend no more than 100,000 members per call; for larger lists, chunk and call incrementally using add/remove deltas. When delete_missing is true, buyer-managed audiences on the account not in this request are removed — do not combine with omitted audiences or all buyer-managed audiences will be deleted. When audiences is omitted, the call is discovery-only: it returns all audiences on the account without modification.
  */
 export interface SyncAudiencesRequest {
+  /**
+   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
   account: AccountReference;
   /**
    * Audiences to sync (create or update). When omitted, the call is discovery-only and returns all existing audiences on the account without modification.
@@ -6834,6 +6874,10 @@ export type ValidationMode = 'strict' | 'lenient';
  * Request parameters for syncing catalog feeds with upsert semantics. Supports bulk operations across multiple catalog types (products, inventory, stores, promotions, offerings). Existing catalogs matched by catalog_id are updated, new ones are created. When catalogs is omitted, the call is discovery-only: returns all catalogs on the account without modification.
  */
 export interface SyncCatalogsRequest {
+  /**
+   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
   account: AccountReference;
   /**
    * Array of catalog feeds to sync (create or update). When omitted, the call is discovery-only and returns all existing catalogs on the account without modification.
@@ -6995,6 +7039,10 @@ export type PreviewOutputFormat = 'url' | 'html';
  * Request to transform, generate, or retrieve a creative manifest. Supports three modes: (1) generation from a brief or seed assets, (2) transformation of an existing manifest, (3) retrieval from a creative library by creative_id. Produces target manifest(s) in the specified format(s). Provide either target_format_id for a single format or target_format_ids for multiple formats.
  */
 export interface BuildCreativeRequest {
+  /**
+   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
   /**
    * Natural language instructions for the transformation or generation. For pure generation, this is the creative brief. For transformation, this provides guidance on how to adapt the creative. For refinement, this describes the desired changes.
    */
@@ -7459,6 +7507,10 @@ export interface BuildCreativeError {
 export type PreviewCreativeRequest =
   | {
       /**
+       * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+       */
+      adcp_major_version?: number;
+      /**
        * Discriminator indicating this is a single preview request
        */
       request_type: 'single';
@@ -7497,6 +7549,10 @@ export type PreviewCreativeRequest =
       ext?: ExtensionObject;
     }
   | {
+      /**
+       * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+       */
+      adcp_major_version?: number;
       /**
        * Discriminator indicating this is a batch preview request
        */
@@ -7543,6 +7599,10 @@ export type PreviewCreativeRequest =
       ext?: ExtensionObject;
     }
   | {
+      /**
+       * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+       */
+      adcp_major_version?: number;
       /**
        * Discriminator indicating this is a variant preview request
        */
@@ -7691,6 +7751,10 @@ export interface PreviewCreativeVariantResponse {
 export type GetCreativeDeliveryRequest = {
   [k: string]: unknown | undefined;
 } & {
+  /**
+   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
   account?: AccountReference;
   /**
    * Filter to specific media buys by publisher ID. If omitted, returns creative delivery across all matching media buys.
@@ -7881,6 +7945,10 @@ export type SortDirection = 'asc' | 'desc';
  * Request parameters for querying creative assets from a creative library with filtering, sorting, and pagination. Implemented by any agent that hosts a creative library — creative agents (ad servers, creative platforms) and sales agents that manage creatives.
  */
 export interface ListCreativesRequest {
+  /**
+   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
   filters?: CreativeFilters;
   /**
    * Sorting parameters
@@ -8268,6 +8336,10 @@ export interface CreativeVariable {
  * Request parameters for syncing creative assets with upsert semantics - supports bulk operations, scoped updates, and assignment management
  */
 export interface SyncCreativesRequest {
+  /**
+   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
   account: AccountReference;
   /**
    * Array of creative assets to sync (create or update)
@@ -8411,6 +8483,10 @@ export interface SyncCreativesError {
 export type GetSignalsRequest = {
   [k: string]: unknown | undefined;
 } & {
+  /**
+   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
   account?: AccountReference;
   /**
    * Natural language description of the desired signals. When used alone, enables semantic discovery. When combined with signal_ids, provides context for the agent but signal_ids matches are returned first.
@@ -8734,6 +8810,10 @@ export interface FlatFeePricing {
  */
 export interface ActivateSignalRequest {
   /**
+   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Whether to activate or deactivate the signal. Deactivating removes the segment from downstream platforms, required when campaigns end to comply with data governance policies (GDPR, CCPA). Defaults to 'activate' when omitted.
    */
   action?: 'activate' | 'deactivate';
@@ -8812,6 +8892,10 @@ export type PropertyType =
  * Request parameters for creating a new property list
  */
 export interface CreatePropertyListRequest {
+  /**
+   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
   /**
    * Human-readable name for the list
    */
@@ -8997,6 +9081,10 @@ export interface PropertyList {
  */
 export interface UpdatePropertyListRequest {
   /**
+   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * ID of the property list to update
    */
   list_id: string;
@@ -9040,6 +9128,10 @@ export interface UpdatePropertyListResponse {
  * Request parameters for retrieving a property list with resolved identifiers
  */
 export interface GetPropertyListRequest {
+  /**
+   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
   /**
    * ID of the property list to retrieve
    */
@@ -9099,6 +9191,10 @@ export interface GetPropertyListResponse {
  */
 export interface ListPropertyListsRequest {
   /**
+   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Filter to lists owned by this principal
    */
   principal?: string;
@@ -9129,6 +9225,10 @@ export interface ListPropertyListsResponse {
  * Request parameters for deleting a property list
  */
 export interface DeletePropertyListRequest {
+  /**
+   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
   /**
    * ID of the property list to delete
    */
@@ -9162,6 +9262,10 @@ export interface DeletePropertyListResponse {
  * Request parameters for listing content standards configurations
  */
 export interface ListContentStandardsRequest {
+  /**
+   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
   /**
    * Filter by channel
    */
@@ -9470,6 +9574,10 @@ export interface Artifact {
  */
 export interface GetContentStandardsRequest {
   /**
+   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Identifier for the standards configuration to retrieve
    */
   standards_id: string;
@@ -9494,6 +9602,10 @@ export type GetContentStandardsResponse =
  * Request parameters for creating a new content standards configuration
  */
 export interface CreateContentStandardsRequest {
+  /**
+   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
   /**
    * Where this standards configuration applies
    */
@@ -9603,6 +9715,10 @@ export type CreateContentStandardsResponse =
  * Request parameters for updating an existing content standards configuration. Creates a new version.
  */
 export interface UpdateContentStandardsRequest {
+  /**
+   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
   /**
    * ID of the standards configuration to update
    */
@@ -9730,6 +9846,10 @@ export interface UpdateContentStandardsError {
  */
 export interface CalibrateContentRequest {
   /**
+   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Standards configuration to calibrate against
    */
   standards_id: string;
@@ -9790,6 +9910,10 @@ export type CalibrateContentResponse =
  * Request parameters for batch validating delivery records against content safety policies
  */
 export interface ValidateContentDeliveryRequest {
+  /**
+   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
   /**
    * Standards configuration to validate against
    */
@@ -9900,6 +10024,10 @@ export type ValidateContentDeliveryResponse =
  * Request parameters for retrieving content artifacts from a media buy for validation
  */
 export interface GetMediaBuyArtifactsRequest {
+  /**
+   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
   account?: AccountReference;
   /**
    * Media buy to get artifacts from
@@ -10032,6 +10160,10 @@ export type GetMediaBuyArtifactsResponse =
  * Request payload for the get_creative_features task. Submits a creative manifest for evaluation by a governance agent, which analyzes the creative and returns scored feature values (brand safety, content categorization, quality metrics, etc.).
  */
 export interface GetCreativeFeaturesRequest {
+  /**
+   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
   creative_manifest: CreativeManifest;
   /**
    * Optional filter to specific features. If omitted, returns all available features.
@@ -10130,6 +10262,10 @@ export type DelegationAuthority = 'full' | 'execute_only' | 'propose_only';
  * Push campaign plans to the governance agent. A plan defines the authorized parameters for a campaign -- budget limits, channels, flight dates, and authorized markets.
  */
 export interface SyncPlansRequest {
+  /**
+   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
   /**
    * One or more campaign plans to sync.
    */
@@ -10376,6 +10512,10 @@ export type OutcomeType = 'completed' | 'failed' | 'delivery';
  */
 export interface ReportPlanOutcomeRequest {
   /**
+   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * The plan this outcome is for.
    */
   plan_id: string;
@@ -10530,6 +10670,10 @@ export interface ReportPlanOutcomeResponse {
 export type GetPlanAuditLogsRequest = {
   [k: string]: unknown | undefined;
 } & {
+  /**
+   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
   /**
    * Plan IDs to retrieve. For a single plan, pass a one-element array.
    */
@@ -10807,6 +10951,10 @@ export type GovernancePhase = 'purchase' | 'modification' | 'delivery';
  */
 export interface CheckGovernanceRequest {
   /**
+   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Campaign governance plan identifier.
    */
   plan_id: string;
@@ -11007,6 +11155,10 @@ export interface CheckGovernanceResponse {
  */
 export interface SIGetOfferingRequest {
   /**
+   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Offering identifier from the catalog to get details for
    */
   offering_id: string;
@@ -11140,6 +11292,10 @@ export interface SIGetOfferingResponse {
  * Host initiates a session with a brand agent
  */
 export interface SIInitiateSessionRequest {
+  /**
+   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
   /**
    * Conversation handoff from the host describing what the user needs
    */
@@ -11403,6 +11559,10 @@ export type SISendMessageRequest = {
   [k: string]: unknown | undefined;
 } & {
   /**
+   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Active session identifier
    */
   session_id: string;
@@ -11555,6 +11715,10 @@ export interface A2UIComponent {
  */
 export interface SITerminateSessionRequest {
   /**
+   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Session identifier to terminate
    */
   session_id: string;
@@ -11643,6 +11807,10 @@ export interface SITerminateSessionResponse {
  */
 export interface GetAdCPCapabilitiesRequest {
   /**
+   * The AdCP major version the buyer's payloads conform to. When provided, the seller validates this against its supported major_versions and returns VERSION_UNSUPPORTED if the version is not in range. When omitted, the seller assumes the highest major version it supports.
+   */
+  adcp_major_version?: number;
+  /**
    * Specific protocols to query capabilities for. If omitted, returns capabilities for all supported protocols.
    */
   protocols?: ('media_buy' | 'signals' | 'governance' | 'sponsored_intelligence' | 'creative')[];
@@ -11664,7 +11832,7 @@ export interface GetAdCPCapabilitiesResponse {
    */
   adcp: {
     /**
-     * AdCP major versions supported by this seller. Major versions indicate breaking changes. When multiple versions are listed, the buyer declares its version during the capabilities handshake or via the adcp_version field on requests.
+     * AdCP major versions supported by this seller. Major versions indicate breaking changes. When multiple versions are listed, the buyer declares its version via the adcp_major_version field on requests.
      */
     major_versions: number[];
   };
@@ -12262,6 +12430,10 @@ export interface GetAdCPCapabilitiesResponse {
  */
 export interface ListAccountsRequest {
   /**
+   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Filter accounts by status. Omit to return accounts in all statuses.
    */
   status?: 'active' | 'pending_approval' | 'rejected' | 'payment_required' | 'suspended' | 'closed';
@@ -12297,6 +12469,10 @@ export interface ListAccountsResponse {
  * Sync advertiser accounts with a seller using upsert semantics. The agent declares which brands it represents, who operates on each brand's behalf, and the billing model. The seller provisions or links accounts accordingly, returning per-account status.
  */
 export interface SyncAccountsRequest {
+  /**
+   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
   /**
    * Advertiser accounts to sync
    */
@@ -12444,6 +12620,10 @@ export interface SyncAccountsError {
  */
 export interface ReportUsageRequest {
   /**
+   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Client-generated unique key for this request. If a request with the same key has already been accepted, the server returns the original response without re-processing. MUST be unique per (seller, request) pair to prevent cross-seller correlation. Use a fresh UUID v4 for each request. Prevents duplicate billing on retries.
    */
   idempotency_key?: string;
@@ -12520,6 +12700,10 @@ export interface ReportUsageResponse {
  * Request financial status for an operator-billed account. Returns spend summary, credit/balance status, and invoice history. Only applicable when the seller declares account_financials capability.
  */
 export interface GetAccountFinancialsRequest {
+  /**
+   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
   account: AccountReference;
   period?: DateRange;
   context?: ContextObject;
