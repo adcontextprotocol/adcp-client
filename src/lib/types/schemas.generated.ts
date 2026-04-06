@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-04-06T02:49:58.325Z
+// Generated at: 2026-04-06T23:00:33.080Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -732,9 +732,9 @@ export const MaterialDeadlineSchema = z.object({
     label: z.string().nullish()
 }).passthrough();
 
-export const PropertyTypeSchema = z.union([z.literal("website"), z.literal("mobile_app"), z.literal("ctv_app"), z.literal("desktop_app"), z.literal("dooh"), z.literal("podcast"), z.literal("radio"), z.literal("streaming_audio"), z.literal("ai_assistant")]);
+export const PropertyTypeSchema = z.union([z.literal("website"), z.literal("mobile_app"), z.literal("ctv_app"), z.literal("desktop_app"), z.literal("dooh"), z.literal("podcast"), z.literal("radio"), z.literal("linear_tv"), z.literal("streaming_audio"), z.literal("ai_assistant")]);
 
-export const PropertyIdentifierTypesSchema = z.union([z.literal("domain"), z.literal("subdomain"), z.literal("network_id"), z.literal("ios_bundle"), z.literal("android_package"), z.literal("apple_app_store_id"), z.literal("google_play_id"), z.literal("roku_store_id"), z.literal("fire_tv_asin"), z.literal("samsung_app_id"), z.literal("apple_tv_bundle"), z.literal("bundle_id"), z.literal("venue_id"), z.literal("screen_id"), z.literal("openooh_venue_type"), z.literal("rss_url"), z.literal("apple_podcast_id"), z.literal("spotify_collection_id"), z.literal("podcast_guid")]);
+export const PropertyIdentifierTypesSchema = z.union([z.literal("domain"), z.literal("subdomain"), z.literal("network_id"), z.literal("ios_bundle"), z.literal("android_package"), z.literal("apple_app_store_id"), z.literal("google_play_id"), z.literal("roku_store_id"), z.literal("fire_tv_asin"), z.literal("samsung_app_id"), z.literal("apple_tv_bundle"), z.literal("bundle_id"), z.literal("venue_id"), z.literal("screen_id"), z.literal("openooh_venue_type"), z.literal("rss_url"), z.literal("apple_podcast_id"), z.literal("spotify_collection_id"), z.literal("podcast_guid"), z.literal("station_id"), z.literal("facility_id")]);
 
 export const PropertySchema = z.object({
     property_id: PropertyIDSchema.nullish(),
@@ -1277,6 +1277,7 @@ export const AssetContentTypeSchema = z.union([z.literal("image"), z.literal("vi
 export const WCAGLevelSchema = z.union([z.literal("A"), z.literal("AA"), z.literal("AAA")]);
 
 export const ListCreativeFormatsRequestSchema = z.object({
+    adcp_major_version: z.number().nullish(),
     format_ids: z.array(FormatIDSchema).nullish(),
     asset_types: z.array(AssetContentTypeSchema).nullish(),
     max_width: z.number().nullish(),
@@ -1510,6 +1511,7 @@ export const UpdateMediaBuySuccessSchema = z.object({
 }).passthrough();
 
 export const GetMediaBuysRequestSchema = z.object({
+    adcp_major_version: z.number().nullish(),
     account: AccountReferenceSchema.nullish(),
     media_buy_ids: z.array(z.string()).nullish(),
     status_filter: z.union([MediaBuyStatusSchema, z.array(MediaBuyStatusSchema)]).nullish(),
@@ -1565,6 +1567,7 @@ export const AttributionModelSchema = z.union([z.literal("last_touch"), z.litera
 export const SortMetricSchema = z.union([z.literal("impressions"), z.literal("spend"), z.literal("clicks"), z.literal("ctr"), z.literal("views"), z.literal("completed_views"), z.literal("completion_rate"), z.literal("conversions"), z.literal("conversion_value"), z.literal("roas"), z.literal("cost_per_acquisition"), z.literal("new_to_brand_rate"), z.literal("leads"), z.literal("grps"), z.literal("reach"), z.literal("frequency"), z.literal("engagements"), z.literal("follows"), z.literal("saves"), z.literal("profile_visits"), z.literal("engagement_rate"), z.literal("cost_per_click")]);
 
 export const GetMediaBuyDeliveryRequestSchema = z.object({
+    adcp_major_version: z.number().nullish(),
     account: AccountReferenceSchema.nullish(),
     media_buy_ids: z.array(z.string()).nullish(),
     status_filter: z.union([MediaBuyStatusSchema, z.array(MediaBuyStatusSchema)]).nullish(),
@@ -1702,6 +1705,7 @@ export const ProvidePerformanceFeedbackErrorSchema = z.object({
 }).passthrough();
 
 export const SyncEventSourcesRequestSchema = z.object({
+    adcp_major_version: z.number().nullish(),
     account: AccountReferenceSchema,
     event_sources: z.array(z.object({
         event_source_id: z.string(),
@@ -1804,6 +1808,7 @@ export const AudienceMemberSchema = z.object({
 export const ConsentBasisSchema = z.union([z.literal("consent"), z.literal("legitimate_interest"), z.literal("contract"), z.literal("legal_obligation")]);
 
 export const SyncAudiencesRequestSchema = z.object({
+    adcp_major_version: z.number().nullish(),
     account: AccountReferenceSchema,
     audiences: z.array(z.object({
         audience_id: z.string(),
@@ -1858,6 +1863,7 @@ export const SyncAudiencesSuccessSchema = z.object({
 export const ValidationModeSchema = z.union([z.literal("strict"), z.literal("lenient")]);
 
 export const SyncCatalogsRequestSchema = z.object({
+    adcp_major_version: z.number().nullish(),
     account: AccountReferenceSchema,
     catalogs: z.array(CatalogSchema).nullish(),
     catalog_ids: z.array(z.string()).nullish(),
@@ -1929,6 +1935,7 @@ export const BuildCreativeMultiSuccessSchema = z.object({
 }).passthrough();
 
 export const PreviewCreativeRequestSchema = z.union([z.object({
+        adcp_major_version: z.number().nullish(),
         request_type: z.literal("single"),
         format_id: FormatIDSchema.nullish(),
         creative_manifest: CreativeManifestSchema,
@@ -1944,6 +1951,7 @@ export const PreviewCreativeRequestSchema = z.union([z.object({
         context: ContextObjectSchema.nullish(),
         ext: ExtensionObjectSchema.nullish()
     }).passthrough(), z.object({
+        adcp_major_version: z.number().nullish(),
         request_type: z.literal("batch"),
         requests: z.array(z.object({
             format_id: FormatIDSchema.nullish(),
@@ -1963,6 +1971,7 @@ export const PreviewCreativeRequestSchema = z.union([z.object({
         context: ContextObjectSchema.nullish(),
         ext: ExtensionObjectSchema.nullish()
     }).passthrough(), z.object({
+        adcp_major_version: z.number().nullish(),
         request_type: z.literal("variant"),
         variant_id: z.string(),
         creative_id: z.string().nullish(),
@@ -2011,6 +2020,7 @@ export const PreviewBatchResultErrorSchema = z.object({
 }).passthrough();
 
 export const GetCreativeDeliveryRequestSchema = z.object({
+    adcp_major_version: z.number().nullish(),
     account: AccountReferenceSchema.nullish(),
     media_buy_ids: z.array(z.string()).nullish(),
     creative_ids: z.array(z.string()).nullish(),
@@ -2085,6 +2095,7 @@ export const CreativeVariableSchema = z.object({
 }).passthrough();
 
 export const SyncCreativesRequestSchema = z.object({
+    adcp_major_version: z.number().nullish(),
     account: AccountReferenceSchema,
     creatives: z.array(CreativeAssetSchema),
     creative_ids: z.array(z.string()).nullish(),
@@ -2178,6 +2189,7 @@ export const DeploymentSchema = z.union([z.object({
     }).passthrough()]);
 
 export const ActivateSignalRequestSchema = z.object({
+    adcp_major_version: z.number().nullish(),
     action: z.union([z.literal("activate"), z.literal("deactivate")]).nullish(),
     signal_agent_segment_id: z.string(),
     destinations: z.array(DestinationSchema),
@@ -2237,6 +2249,7 @@ export const PropertyListFiltersSchema = z.object({
 }).passthrough();
 
 export const UpdatePropertyListRequestSchema = z.object({
+    adcp_major_version: z.number().nullish(),
     list_id: z.string(),
     name: z.string().nullish(),
     description: z.string().nullish(),
@@ -2265,6 +2278,7 @@ export const PropertyListSchema = z.object({
 }).passthrough();
 
 export const GetPropertyListRequestSchema = z.object({
+    adcp_major_version: z.number().nullish(),
     list_id: z.string(),
     resolve: z.boolean().nullish(),
     pagination: z.object({
@@ -2286,6 +2300,7 @@ export const GetPropertyListResponseSchema = z.object({
 }).passthrough();
 
 export const ListPropertyListsRequestSchema = z.object({
+    adcp_major_version: z.number().nullish(),
     principal: z.string().nullish(),
     name_contains: z.string().nullish(),
     pagination: PaginationRequestSchema.nullish(),
@@ -2300,6 +2315,7 @@ export const ListPropertyListsResponseSchema = z.object({
 }).passthrough();
 
 export const DeletePropertyListRequestSchema = z.object({
+    adcp_major_version: z.number().nullish(),
     list_id: z.string(),
     context: ContextObjectSchema.nullish(),
     ext: ExtensionObjectSchema.nullish(),
@@ -2313,6 +2329,7 @@ export const DeletePropertyListResponseSchema = z.object({
 }).passthrough();
 
 export const ListContentStandardsRequestSchema = z.object({
+    adcp_major_version: z.number().nullish(),
     channels: z.array(MediaChannelSchema).nullish(),
     languages: z.array(z.string()).nullish(),
     countries: z.array(z.string()).nullish(),
@@ -2396,6 +2413,7 @@ export const ArtifactSchema = z.object({
 }).passthrough();
 
 export const GetContentStandardsRequestSchema = z.object({
+    adcp_major_version: z.number().nullish(),
     standards_id: z.string(),
     context: ContextObjectSchema.nullish(),
     ext: ExtensionObjectSchema.nullish()
@@ -2417,6 +2435,7 @@ export const ContentStandardsSchema = z.object({
 }).passthrough();
 
 export const CreateContentStandardsRequestSchema = z.object({
+    adcp_major_version: z.number().nullish(),
     scope: z.object({
         countries_all: z.array(z.string()).nullish(),
         channels_any: z.array(MediaChannelSchema).nullish(),
@@ -2454,6 +2473,7 @@ export const CreateContentStandardsResponseSchema = z.union([z.object({
     }).passthrough()]);
 
 export const UpdateContentStandardsRequestSchema = z.object({
+    adcp_major_version: z.number().nullish(),
     standards_id: z.string(),
     scope: z.object({
         countries_all: z.array(z.string()).nullish(),
@@ -2496,6 +2516,7 @@ export const UpdateContentStandardsErrorSchema = z.object({
 }).passthrough();
 
 export const CalibrateContentRequestSchema = z.object({
+    adcp_major_version: z.number().nullish(),
     standards_id: z.string(),
     artifact: ArtifactSchema,
     idempotency_key: z.string().nullish()
@@ -2519,6 +2540,7 @@ export const CalibrateContentResponseSchema = z.union([z.object({
     }).passthrough()]);
 
 export const ValidateContentDeliveryRequestSchema = z.object({
+    adcp_major_version: z.number().nullish(),
     standards_id: z.string(),
     records: z.array(z.object({
         record_id: z.string(),
@@ -2564,6 +2586,7 @@ export const ValidateContentDeliveryResponseSchema = z.union([z.object({
     }).passthrough()]);
 
 export const GetMediaBuyArtifactsRequestSchema = z.object({
+    adcp_major_version: z.number().nullish(),
     account: AccountReferenceSchema.nullish(),
     media_buy_id: z.string(),
     package_ids: z.array(z.string()).nullish(),
@@ -2611,6 +2634,7 @@ export const GetMediaBuyArtifactsResponseSchema = z.union([z.object({
     }).passthrough()]);
 
 export const GetCreativeFeaturesRequestSchema = z.object({
+    adcp_major_version: z.number().nullish(),
     creative_manifest: CreativeManifestSchema,
     feature_ids: z.array(z.string()).nullish(),
     account: AccountReferenceSchema.nullish(),
@@ -2664,6 +2688,7 @@ export const SyncPlansResponseSchema = z.object({
 export const OutcomeTypeSchema = z.union([z.literal("completed"), z.literal("failed"), z.literal("delivery")]);
 
 export const ReportPlanOutcomeRequestSchema = z.object({
+    adcp_major_version: z.number().nullish(),
     plan_id: z.string(),
     check_id: z.string().nullish(),
     idempotency_key: z.string().nullish(),
@@ -2715,6 +2740,7 @@ export const ReportPlanOutcomeResponseSchema = z.object({
 }).passthrough();
 
 export const GetPlanAuditLogsRequestSchema = z.object({
+    adcp_major_version: z.number().nullish(),
     plan_ids: z.array(z.string()).nullish(),
     portfolio_plan_ids: z.array(z.string()).nullish(),
     include_entries: z.boolean().nullish()
@@ -2801,6 +2827,7 @@ export const GetPlanAuditLogsResponseSchema = z.object({
 export const GovernancePhaseSchema = z.union([z.literal("purchase"), z.literal("modification"), z.literal("delivery")]);
 
 export const CheckGovernanceRequestSchema = z.object({
+    adcp_major_version: z.number().nullish(),
     plan_id: z.string(),
     caller: z.string(),
     tool: z.string().nullish(),
@@ -2859,6 +2886,7 @@ export const CheckGovernanceResponseSchema = z.object({
 }).passthrough();
 
 export const SIGetOfferingRequestSchema = z.object({
+    adcp_major_version: z.number().nullish(),
     offering_id: z.string(),
     context: z.string().nullish(),
     include_products: z.boolean().nullish(),
@@ -2972,6 +3000,7 @@ export const SIInitiateSessionResponseSchema = z.object({
 }).passthrough();
 
 export const SISendMessageRequestSchema = z.object({
+    adcp_major_version: z.number().nullish(),
     session_id: z.string(),
     message: z.string().nullish(),
     action_response: z.object({
@@ -2988,6 +3017,7 @@ export const A2UIComponentSchema = z.object({
 }).passthrough();
 
 export const SITerminateSessionRequestSchema = z.object({
+    adcp_major_version: z.number().nullish(),
     session_id: z.string(),
     reason: z.union([z.literal("handoff_transaction"), z.literal("handoff_complete"), z.literal("user_exit"), z.literal("session_timeout"), z.literal("host_terminated")]),
     termination_context: z.object({
@@ -3020,6 +3050,7 @@ export const SITerminateSessionResponseSchema = z.object({
 }).passthrough();
 
 export const GetAdCPCapabilitiesRequestSchema = z.object({
+    adcp_major_version: z.number().nullish(),
     protocols: z.array(z.union([z.literal("media_buy"), z.literal("signals"), z.literal("governance"), z.literal("sponsored_intelligence"), z.literal("creative")])).nullish(),
     context: ContextObjectSchema.nullish(),
     ext: ExtensionObjectSchema.nullish()
@@ -3204,6 +3235,7 @@ export const GetAdCPCapabilitiesResponseSchema = z.object({
 }).passthrough();
 
 export const ListAccountsRequestSchema = z.object({
+    adcp_major_version: z.number().nullish(),
     status: z.union([z.literal("active"), z.literal("pending_approval"), z.literal("rejected"), z.literal("payment_required"), z.literal("suspended"), z.literal("closed")]).nullish(),
     pagination: PaginationRequestSchema.nullish(),
     sandbox: z.boolean().nullish(),
@@ -3220,6 +3252,7 @@ export const ListAccountsResponseSchema = z.object({
 }).passthrough();
 
 export const SyncAccountsRequestSchema = z.object({
+    adcp_major_version: z.number().nullish(),
     accounts: z.array(z.object({
         brand: BrandReferenceSchema,
         operator: z.string(),
@@ -3273,6 +3306,7 @@ export const SyncAccountsErrorSchema = z.object({
 }).passthrough();
 
 export const ReportUsageRequestSchema = z.object({
+    adcp_major_version: z.number().nullish(),
     idempotency_key: z.string().nullish(),
     reporting_period: DatetimeRangeSchema,
     usage: z.array(z.object({
@@ -3676,6 +3710,7 @@ export const BaseIndividualAssetSchema = z.object({
 }).passthrough();
 
 export const PackageRequestSchema = z.object({
+    adcp_major_version: z.number().nullish(),
     product_id: z.string(),
     format_ids: z.array(FormatIDSchema).nullish(),
     budget: z.number(),
@@ -3885,6 +3920,7 @@ export const GetMediaBuyDeliveryResponseSchema = z.object({
 }).passthrough();
 
 export const ProvidePerformanceFeedbackRequestSchema = z.object({
+    adcp_major_version: z.number().nullish(),
     media_buy_id: z.string(),
     idempotency_key: z.string().nullish(),
     measurement_period: DatetimeRangeSchema,
@@ -3938,6 +3974,7 @@ export const LogEventResponseSchema = z.union([LogEventSuccessSchema, LogEventEr
 export const SyncAudiencesResponseSchema = z.union([SyncAudiencesSuccessSchema, SyncAudiencesErrorSchema]);
 
 export const BuildCreativeRequestSchema = z.object({
+    adcp_major_version: z.number().nullish(),
     message: z.string().nullish(),
     creative_manifest: CreativeManifestSchema.nullish(),
     creative_id: z.string().nullish(),
@@ -3999,6 +4036,7 @@ export const GetCreativeDeliveryResponseSchema = z.object({
 }).passthrough();
 
 export const ListCreativesRequestSchema = z.object({
+    adcp_major_version: z.number().nullish(),
     filters: CreativeFiltersSchema.nullish(),
     sort: z.object({
         field: CreativeSortFieldSchema.nullish(),
@@ -4069,6 +4107,7 @@ export const ListCreativesResponseSchema = z.object({
 }).passthrough();
 
 export const GetSignalsRequestSchema = z.object({
+    adcp_major_version: z.number().nullish(),
     account: AccountReferenceSchema.nullish(),
     signal_spec: z.string().nullish(),
     signal_ids: z.array(SignalIDSchema).nullish(),
@@ -4090,6 +4129,7 @@ export const SignalPricingOptionSchema = z.object({
 export const ActivateSignalResponseSchema = z.union([ActivateSignalSuccessSchema, ActivateSignalErrorSchema]);
 
 export const CreatePropertyListRequestSchema = z.object({
+    adcp_major_version: z.number().nullish(),
     name: z.string(),
     description: z.string().nullish(),
     base_properties: z.array(BasePropertySourceSchema).nullish(),
@@ -4142,6 +4182,7 @@ export const GetCreativeFeaturesResponseSchema = z.union([z.object({
     }).passthrough()]);
 
 export const SyncPlansRequestSchema = z.object({
+    adcp_major_version: z.number().nullish(),
     plans: z.array(z.object({
         plan_id: z.string(),
         brand: BrandReferenceSchema,
@@ -4199,6 +4240,7 @@ export const SyncPlansRequestSchema = z.object({
 }).passthrough();
 
 export const SIInitiateSessionRequestSchema = z.object({
+    adcp_major_version: z.number().nullish(),
     context: z.string(),
     identity: SIIdentitySchema,
     media_buy_id: z.string().nullish(),
@@ -4221,6 +4263,7 @@ export const A2UISurfaceSchema = z.object({
 export const SyncAccountsResponseSchema = z.union([SyncAccountsSuccessSchema, SyncAccountsErrorSchema]);
 
 export const GetAccountFinancialsRequestSchema = z.object({
+    adcp_major_version: z.number().nullish(),
     account: AccountReferenceSchema,
     period: DateRangeSchema.nullish(),
     context: ContextObjectSchema.nullish(),
@@ -4248,6 +4291,7 @@ export const MCPWebhookPayloadSchema: z.ZodType = z.object({
 }).passthrough();
 
 export const GetProductsRequestSchema = z.object({
+    adcp_major_version: z.number().nullish(),
     buying_mode: z.union([z.literal("brief"), z.literal("wholesale"), z.literal("refine")]),
     brief: z.string().nullish(),
     refine: z.array(z.union([z.object({
@@ -4321,6 +4365,7 @@ export const FormatSchema = z.object({
 }).passthrough();
 
 export const CreateMediaBuyRequestSchema = z.object({
+    adcp_major_version: z.number().nullish(),
     idempotency_key: z.string().nullish(),
     plan_id: z.string().nullish(),
     account: AccountReferenceSchema,
@@ -4360,6 +4405,7 @@ export const CreateMediaBuyRequestSchema = z.object({
 }).passthrough();
 
 export const UpdateMediaBuyRequestSchema = z.object({
+    adcp_major_version: z.number().nullish(),
     media_buy_id: z.string(),
     revision: z.number().nullish(),
     paused: z.boolean().nullish(),
@@ -4380,6 +4426,7 @@ export const UpdateMediaBuyRequestSchema = z.object({
 export const SyncEventSourcesResponseSchema = z.union([SyncEventSourcesSuccessSchema, SyncEventSourcesErrorSchema]);
 
 export const LogEventRequestSchema = z.object({
+    adcp_major_version: z.number().nullish(),
     event_source_id: z.string(),
     test_event_code: z.string().nullish(),
     events: z.array(EventSchema),

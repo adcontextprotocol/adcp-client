@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas vlatest
-// Generated at: 2026-04-06T02:49:53.798Z
+// Generated at: 2026-04-06T22:56:52.473Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -3408,6 +3408,7 @@ export type PropertyType =
   | 'dooh'
   | 'podcast'
   | 'radio'
+  | 'linear_tv'
   | 'streaming_audio'
   | 'ai_assistant';
 /**
@@ -3432,7 +3433,9 @@ export type PropertyIdentifierTypes =
   | 'rss_url'
   | 'apple_podcast_id'
   | 'spotify_collection_id'
-  | 'podcast_guid';
+  | 'podcast_guid'
+  | 'station_id'
+  | 'facility_id';
 /**
  * An advertising property that can be validated via adagents.json
  */

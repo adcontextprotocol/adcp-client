@@ -77,6 +77,13 @@ export const LIBRARY_VERSION = '${libraryVersion}';
 export const ADCP_VERSION = '${adcpVersion}';
 
 /**
+ * AdCP major version sent with every request (adcp_major_version field).
+ * Sellers validate this against their supported versions and return
+ * VERSION_UNSUPPORTED if the version is not in range.
+ */
+export const ADCP_MAJOR_VERSION = 3;
+
+/**
  * AdCP versions this library maintains backward compatibility with
  */
 export const COMPATIBLE_ADCP_VERSIONS = ['v2.5', 'v2.6', 'v3', '3.0.0-beta.1', '3.0.0-beta.3'] as const;
