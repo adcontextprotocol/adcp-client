@@ -87,6 +87,11 @@ export type AgentCapabilities = components['schemas']['AgentCapabilities'];
 export type PropertySummary = components['schemas']['PropertySummary'];
 export type FederatedPublisher = components['schemas']['FederatedPublisher'];
 export type DomainLookupResult = components['schemas']['DomainLookupResult'];
+export type BrandActivity = components['schemas']['BrandActivity'];
+export type PropertyActivity = components['schemas']['PropertyActivity'];
+export type PolicySummary = components['schemas']['PolicySummary'];
+export type Policy = components['schemas']['Policy'];
+export type PolicyHistory = components['schemas']['PolicyHistory'];
 
 // ====== Inline operation types ======
 // The following types are defined inline in operation responses (not in components.schemas)

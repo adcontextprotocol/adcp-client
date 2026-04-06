@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas vlatest
-// Generated at: 2026-04-03T19:24:51.974Z
+// Generated at: 2026-04-06T02:49:53.798Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -247,7 +247,7 @@ export type OptimizationGoal =
          */
         custom_event_name?: string;
         /**
-         * Which field in the event's custom_data carries the monetary value. The seller must use this field for value extraction and aggregation when computing ROAS and conversion value metrics. Required on at least one entry when target.kind is 'per_ad_spend' or 'maximize_value'. Common values: 'value', 'order_total', 'profit_margin'. This is not passed as a parameter to underlying platform APIs — the seller maps it to their platform's value ingestion mechanism.
+         * Which field in the event's custom_data carries the monetary value. The seller must use this field for value extraction and aggregation when computing ROAS and conversion value metrics. Required on at least one entry when target.kind is 'per_ad_spend' or 'maximize_value' — sellers must reject these target kinds when no event source entry includes value_field. When present without a value-oriented target, the seller may use it for delivery reporting (conversion_value, roas) but must not change the optimization objective. Common values: 'value', 'order_total', 'profit_margin'. This is not passed as a parameter to underlying platform APIs — the seller maps it to their platform's value ingestion mechanism.
          */
         value_field?: string;
         /**
@@ -256,7 +256,7 @@ export type OptimizationGoal =
         value_factor?: number;
       }[];
       /**
-       * Target cost or return for this event goal. When omitted, the seller optimizes for maximum conversions within budget.
+       * Target cost or return for this event goal. When omitted, the seller optimizes for maximum conversion count within budget — regardless of whether value_field is present on event sources. The presence of value_field alone does not change the optimization objective; it only makes value available for reporting. An explicit target of maximize_value or per_ad_spend is required to steer toward value.
        */
       target?:
         | {
@@ -2095,9 +2095,36 @@ export type PriceAdjustmentKind = 'fee' | 'discount' | 'commission' | 'settlemen
  */
 export type DemographicSystem = 'nielsen' | 'barb' | 'agf' | 'oztam' | 'mediametrie' | 'custom';
 /**
- * How to interpret the points array. 'spend' (default when omitted): points at ascending budget levels. 'availability': total available inventory, budget omitted. 'reach_freq': points at ascending reach/frequency targets. 'weekly'/'daily': metrics are per-period values. 'clicks'/'conversions': points at ascending outcome targets.
+ * A forecast value with optional confidence bounds. Either mid (point estimate) or both low and high (range) must be provided. mid represents the most likely outcome. low and high represent conservative and optimistic estimates. All three can be provided together.
  */
-export type ForecastRangeUnit = 'spend' | 'availability' | 'reach_freq' | 'weekly' | 'daily' | 'clicks' | 'conversions';
+export type ForecastRange = {
+  [k: string]: unknown | undefined;
+} & {
+  /**
+   * Conservative (low-end) forecast value
+   */
+  low?: number;
+  /**
+   * Expected (most likely) forecast value
+   */
+  mid?: number;
+  /**
+   * Optimistic (high-end) forecast value
+   */
+  high?: number;
+};
+/**
+ * How to interpret the points array. 'spend' (default when omitted): points at ascending budget levels. 'availability': total available inventory, budget omitted. 'reach_freq': points at ascending reach/frequency targets. 'weekly'/'daily': metrics are per-period values. 'clicks'/'conversions': points at ascending outcome targets. 'package': each point is a distinct inventory package.
+ */
+export type ForecastRangeUnit =
+  | 'spend'
+  | 'availability'
+  | 'reach_freq'
+  | 'weekly'
+  | 'daily'
+  | 'clicks'
+  | 'conversions'
+  | 'package';
 /**
  * Method used to produce this forecast
  */
@@ -2987,6 +3014,10 @@ export interface DeliveryForecast {
    * Target demographic code within the specified demographic_system. For Nielsen: P18-49, M25-54, W35+. For BARB: ABC1 Adults, 16-34. For AGF: E 14-49.
    */
   demographic?: string;
+  /**
+   * Third-party measurement provider whose data was used to produce this forecast. Distinct from demographic_system, which specifies demographic notation — measurement_source identifies whose data produced the forecast numbers. Should be present when measured_impressions is used. Lowercase slug format.
+   */
+  measurement_source?: string;
   reach_unit?: ReachUnit;
   /**
    * When this forecast was computed
@@ -3002,6 +3033,10 @@ export interface DeliveryForecast {
  * A forecast data point. When budget is present, the point pairs a spend level with expected delivery — multiple points at ascending budgets form a curve. When budget is omitted, the point represents total available inventory for the requested targeting and dates, independent of spend.
  */
 export interface ForecastPoint {
+  /**
+   * Human-readable name for this forecast point. Required when forecast_range_unit is 'package' so buyer agents can identify and reference individual packages. Optional for other forecast types.
+   */
+  label?: string;
   /**
    * Budget amount for this forecast point. Required for spend curves; omit for availability forecasts where the metrics represent total available inventory. For allocation-level forecasts, this is the absolute budget for that allocation (not the percentage). For proposal-level forecasts, this is the total proposal budget. When omitted, use metrics.spend to express the estimated cost of the available inventory.
    */
@@ -3023,25 +3058,11 @@ export interface ForecastPoint {
     follows?: ForecastRange;
     saves?: ForecastRange;
     profile_visits?: ForecastRange;
+    measured_impressions?: ForecastRange;
+    downloads?: ForecastRange;
+    plays?: ForecastRange;
     [k: string]: ForecastRange | undefined;
   };
-}
-/**
- * A forecast value with optional low/high bounds. The mid value represents the most likely outcome. When low and high are provided, they represent conservative and optimistic estimates respectively.
- */
-export interface ForecastRange {
-  /**
-   * Conservative (low-end) forecast value
-   */
-  low?: number;
-  /**
-   * Expected (most likely) forecast value
-   */
-  mid: number;
-  /**
-   * Optimistic (high-end) forecast value
-   */
-  high?: number;
 }
 /**
  * Business outcome measurement capabilities included with a product (e.g., incremental sales lift, brand lift, foot traffic). Distinct from delivery_measurement, which declares who counts ad impressions.
