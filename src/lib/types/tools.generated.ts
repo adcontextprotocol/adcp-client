@@ -7834,7 +7834,9 @@ export type PropertyIdentifierTypes =
   | 'rss_url'
   | 'apple_podcast_id'
   | 'spotify_collection_id'
-  | 'podcast_guid';
+  | 'podcast_guid'
+  | 'station_id'
+  | 'facility_id';
 
 /**
  * Response payload for get_creative_delivery task. Returns creative delivery data with variant-level breakdowns including manifests and metrics.
@@ -8886,6 +8888,7 @@ export type PropertyType =
   | 'dooh'
   | 'podcast'
   | 'radio'
+  | 'linear_tv'
   | 'streaming_audio'
   | 'ai_assistant';
 /**
