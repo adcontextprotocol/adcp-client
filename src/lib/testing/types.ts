@@ -63,7 +63,9 @@ export type TestScenario =
   | 'deterministic_session' // Force SI session timeout/termination
   | 'deterministic_delivery' // Simulate delivery data and verify reporting
   | 'deterministic_budget' // Simulate budget spend and verify financials
-  | 'controller_validation'; // Validate the test controller itself (error codes, edge cases)
+  | 'controller_validation' // Validate the test controller itself (error codes, edge cases)
+  // Brand rights protocol scenarios
+  | 'brand_rights_flow'; // Brand rights: get_brand_identity -> get_rights -> acquire_rights
 
 export interface TestOptions {
   // Protocol to use for testing (default: 'mcp')

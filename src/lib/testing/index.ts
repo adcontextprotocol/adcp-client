@@ -68,6 +68,9 @@ export {
   testDeliverySimulation,
   testBudgetSimulation,
   testControllerValidation,
+  // Brand rights
+  testBrandRightsFlow,
+  hasBrandRightsTools,
   // v3 helpers
   hasGovernanceTools,
   hasSITools,

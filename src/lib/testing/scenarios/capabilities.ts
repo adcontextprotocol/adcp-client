@@ -17,6 +17,8 @@ import {
   GOVERNANCE_TOOLS,
   CREATIVE_TOOLS,
   SPONSORED_INTELLIGENCE_TOOLS,
+  TRUSTED_MATCH_TOOLS,
+  COMPLIANCE_TOOLS,
   type AdcpCapabilities,
   type AdcpProtocol,
 } from '../../utils/capabilities';
@@ -141,9 +143,12 @@ export async function testCapabilityDiscovery(
     });
 
     // Check for v3 upgrade potential
-    const v3ToolsPresent = [...GOVERNANCE_TOOLS, ...SPONSORED_INTELLIGENCE_TOOLS].filter(t =>
-      profile.tools.includes(t)
-    );
+    const v3ToolsPresent = [
+      ...GOVERNANCE_TOOLS,
+      ...SPONSORED_INTELLIGENCE_TOOLS,
+      ...TRUSTED_MATCH_TOOLS,
+      ...COMPLIANCE_TOOLS,
+    ].filter(t => profile.tools.includes(t));
 
     if (v3ToolsPresent.length > 0) {
       steps.push({
@@ -311,6 +316,8 @@ function crossValidateProtocolsAndTools(capabilities: AdcpCapabilities, tools: s
     governance: GOVERNANCE_TOOLS,
     creative: CREATIVE_TOOLS,
     sponsored_intelligence: SPONSORED_INTELLIGENCE_TOOLS,
+    trusted_match: TRUSTED_MATCH_TOOLS,
+    compliance: COMPLIANCE_TOOLS,
   };
 
   // Check each reported protocol has at least one corresponding tool
@@ -406,6 +413,8 @@ export function likelySupportsV3(tools: string[]): boolean {
   return (
     tools.includes('get_adcp_capabilities') ||
     GOVERNANCE_TOOLS.some(t => tools.includes(t)) ||
-    SPONSORED_INTELLIGENCE_TOOLS.some(t => tools.includes(t))
+    SPONSORED_INTELLIGENCE_TOOLS.some(t => tools.includes(t)) ||
+    TRUSTED_MATCH_TOOLS.some(t => tools.includes(t)) ||
+    COMPLIANCE_TOOLS.some(t => tools.includes(t))
   );
 }

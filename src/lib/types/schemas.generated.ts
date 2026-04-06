@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-04-04T12:40:45.360Z
+// Generated at: 2026-04-06T02:49:58.325Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -456,7 +456,13 @@ export const PriceAdjustmentKindSchema = z.union([z.literal("fee"), z.literal("d
 
 export const DemographicSystemSchema = z.union([z.literal("nielsen"), z.literal("barb"), z.literal("agf"), z.literal("oztam"), z.literal("mediametrie"), z.literal("custom")]);
 
-export const ForecastRangeUnitSchema = z.union([z.literal("spend"), z.literal("availability"), z.literal("reach_freq"), z.literal("weekly"), z.literal("daily"), z.literal("clicks"), z.literal("conversions")]);
+export const ForecastRangeSchema = z.object({
+    low: z.number().nullish(),
+    mid: z.number().nullish(),
+    high: z.number().nullish()
+}).passthrough();
+
+export const ForecastRangeUnitSchema = z.union([z.literal("spend"), z.literal("availability"), z.literal("reach_freq"), z.literal("weekly"), z.literal("daily"), z.literal("clicks"), z.literal("conversions"), z.literal("package")]);
 
 export const ForecastMethodSchema = z.union([z.literal("estimate"), z.literal("modeled"), z.literal("guaranteed")]);
 
@@ -659,10 +665,27 @@ export const TimeBasedPricingOptionSchema = z.object({
     eligible_adjustments: z.array(PriceAdjustmentKindSchema).nullish()
 }).passthrough();
 
-export const ForecastRangeSchema = z.object({
-    low: z.number().nullish(),
-    mid: z.number(),
-    high: z.number().nullish()
+export const ForecastPointSchema = z.object({
+    label: z.string().nullish(),
+    budget: z.number().nullish(),
+    metrics: z.record(z.string(), ForecastRangeSchema).and(z.object({
+        audience_size: ForecastRangeSchema.nullish(),
+        reach: ForecastRangeSchema.nullish(),
+        frequency: ForecastRangeSchema.nullish(),
+        impressions: ForecastRangeSchema.nullish(),
+        clicks: ForecastRangeSchema.nullish(),
+        spend: ForecastRangeSchema.nullish(),
+        views: ForecastRangeSchema.nullish(),
+        completed_views: ForecastRangeSchema.nullish(),
+        grps: ForecastRangeSchema.nullish(),
+        engagements: ForecastRangeSchema.nullish(),
+        follows: ForecastRangeSchema.nullish(),
+        saves: ForecastRangeSchema.nullish(),
+        profile_visits: ForecastRangeSchema.nullish(),
+        measured_impressions: ForecastRangeSchema.nullish(),
+        downloads: ForecastRangeSchema.nullish(),
+        plays: ForecastRangeSchema.nullish()
+    }).passthrough())
 }).passthrough();
 
 export const GeographicBreakdownSupportSchema = z.object({
@@ -945,6 +968,34 @@ export const InsertionOrderSchema = z.object({
     requires_signature: z.boolean()
 }).passthrough();
 
+export const DeliveryForecastSchema = z.object({
+    points: z.array(ForecastPointSchema),
+    forecast_range_unit: ForecastRangeUnitSchema.nullish(),
+    method: ForecastMethodSchema,
+    currency: z.string(),
+    demographic_system: DemographicSystemSchema.nullish(),
+    demographic: z.string().nullish(),
+    measurement_source: z.string().nullish(),
+    reach_unit: ReachUnitSchema.nullish(),
+    generated_at: z.string().nullish(),
+    valid_until: z.string().nullish(),
+    ext: ExtensionObjectSchema.nullish()
+}).passthrough();
+
+export const ProductAllocationSchema = z.object({
+    product_id: z.string(),
+    allocation_percentage: z.number(),
+    pricing_option_id: z.string().nullish(),
+    rationale: z.string().nullish(),
+    sequence: z.number().nullish(),
+    tags: z.array(z.string()).nullish(),
+    start_time: z.string().nullish(),
+    end_time: z.string().nullish(),
+    daypart_targets: z.array(DaypartTargetSchema).nullish(),
+    forecast: DeliveryForecastSchema.nullish(),
+    ext: ExtensionObjectSchema.nullish()
+}).passthrough();
+
 export const AccountSchema = z.object({
     account_id: z.string(),
     name: z.string(),
@@ -1170,6 +1221,25 @@ export const FlatRatePricingOptionSchema = z.object({
     eligible_adjustments: z.array(PriceAdjustmentKindSchema).nullish()
 }).passthrough();
 
+export const ProposalSchema = z.object({
+    proposal_id: z.string(),
+    name: z.string(),
+    description: z.string().nullish(),
+    allocations: z.array(ProductAllocationSchema),
+    proposal_status: ProposalStatusSchema.nullish(),
+    expires_at: z.string().nullish(),
+    insertion_order: InsertionOrderSchema.nullish(),
+    total_budget_guidance: z.object({
+        min: z.number().nullish(),
+        recommended: z.number().nullish(),
+        max: z.number().nullish(),
+        currency: z.string().nullish()
+    }).passthrough().nullish(),
+    brief_alignment: z.string().nullish(),
+    forecast: DeliveryForecastSchema.nullish(),
+    ext: ExtensionObjectSchema.nullish()
+}).passthrough();
+
 export const PricingOptionSchema = z.union([CPMPricingOptionSchema, VCPMPricingOptionSchema, CPCPricingOptionSchema, CPCVPricingOptionSchema, CPVPricingOptionSchema, CPPPricingOptionSchema, CPAPricingOptionSchema, FlatRatePricingOptionSchema, TimeBasedPricingOptionSchema]);
 
 export const ReportingCapabilitiesSchema = z.object({
@@ -1196,56 +1266,10 @@ export const MeasurementReadinessSchema = z.object({
     notes: z.string().nullish()
 }).passthrough();
 
-export const ForecastPointSchema = z.object({
-    budget: z.number().nullish(),
-    metrics: z.record(z.string(), ForecastRangeSchema).and(z.object({
-        audience_size: ForecastRangeSchema.nullish(),
-        reach: ForecastRangeSchema.nullish(),
-        frequency: ForecastRangeSchema.nullish(),
-        impressions: ForecastRangeSchema.nullish(),
-        clicks: ForecastRangeSchema.nullish(),
-        spend: ForecastRangeSchema.nullish(),
-        views: ForecastRangeSchema.nullish(),
-        completed_views: ForecastRangeSchema.nullish(),
-        grps: ForecastRangeSchema.nullish(),
-        engagements: ForecastRangeSchema.nullish(),
-        follows: ForecastRangeSchema.nullish(),
-        saves: ForecastRangeSchema.nullish(),
-        profile_visits: ForecastRangeSchema.nullish()
-    }).passthrough())
-}).passthrough();
-
 export const InstallmentDeadlinesSchema = z.object({
     booking_deadline: z.string().nullish(),
     cancellation_deadline: z.string().nullish(),
     material_deadlines: z.array(MaterialDeadlineSchema).nullish()
-}).passthrough();
-
-export const DeliveryForecastSchema = z.object({
-    points: z.array(ForecastPointSchema),
-    forecast_range_unit: ForecastRangeUnitSchema.nullish(),
-    method: ForecastMethodSchema,
-    currency: z.string(),
-    demographic_system: DemographicSystemSchema.nullish(),
-    demographic: z.string().nullish(),
-    reach_unit: ReachUnitSchema.nullish(),
-    generated_at: z.string().nullish(),
-    valid_until: z.string().nullish(),
-    ext: ExtensionObjectSchema.nullish()
-}).passthrough();
-
-export const ProductAllocationSchema = z.object({
-    product_id: z.string(),
-    allocation_percentage: z.number(),
-    pricing_option_id: z.string().nullish(),
-    rationale: z.string().nullish(),
-    sequence: z.number().nullish(),
-    tags: z.array(z.string()).nullish(),
-    start_time: z.string().nullish(),
-    end_time: z.string().nullish(),
-    daypart_targets: z.array(DaypartTargetSchema).nullish(),
-    forecast: DeliveryForecastSchema.nullish(),
-    ext: ExtensionObjectSchema.nullish()
 }).passthrough();
 
 export const AssetContentTypeSchema = z.union([z.literal("image"), z.literal("video"), z.literal("audio"), z.literal("text"), z.literal("markdown"), z.literal("html"), z.literal("css"), z.literal("javascript"), z.literal("vast"), z.literal("daast"), z.literal("url"), z.literal("webhook"), z.literal("brief"), z.literal("catalog")]);
@@ -3566,25 +3590,6 @@ export const ProductSchema = z.object({
         instructions: z.string().nullish(),
         ext: ExtensionObjectSchema.nullish()
     }).passthrough().nullish(),
-    ext: ExtensionObjectSchema.nullish()
-}).passthrough();
-
-export const ProposalSchema = z.object({
-    proposal_id: z.string(),
-    name: z.string(),
-    description: z.string().nullish(),
-    allocations: z.array(ProductAllocationSchema),
-    proposal_status: ProposalStatusSchema.nullish(),
-    expires_at: z.string().nullish(),
-    insertion_order: InsertionOrderSchema.nullish(),
-    total_budget_guidance: z.object({
-        min: z.number().nullish(),
-        recommended: z.number().nullish(),
-        max: z.number().nullish(),
-        currency: z.string().nullish()
-    }).passthrough().nullish(),
-    brief_alignment: z.string().nullish(),
-    forecast: DeliveryForecastSchema.nullish(),
     ext: ExtensionObjectSchema.nullish()
 }).passthrough();
 

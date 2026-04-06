@@ -89,6 +89,8 @@ import {
   testDeliverySimulation,
   testBudgetSimulation,
   testControllerValidation,
+  // Brand rights
+  testBrandRightsFlow,
 } from './scenarios';
 
 // Import types
@@ -396,6 +398,13 @@ export async function testAgent(
         profile = result.profile;
         break;
 
+      // Brand rights protocol
+      case 'brand_rights_flow':
+        result = await testBrandRightsFlow(agentUrl, effectiveOptions);
+        steps = result.steps;
+        profile = result.profile;
+        break;
+
       default:
         steps = [
           {
@@ -508,6 +517,9 @@ export {
   testDeliverySimulation,
   testBudgetSimulation,
   testControllerValidation,
+  // Brand rights
+  testBrandRightsFlow,
+  hasBrandRightsTools,
   // v3 helpers
   hasGovernanceTools,
   hasCampaignGovernanceTools,

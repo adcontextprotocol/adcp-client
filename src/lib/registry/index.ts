@@ -28,6 +28,25 @@ import type {
   AgentSearchResponse,
   CrawlRequest,
   CrawlRequestResponse,
+  BrandActivity,
+  PropertyActivity,
+  PolicySummary,
+  Policy,
+  PolicyHistory,
+  ListPoliciesQuery,
+  ListPoliciesResponse,
+  ResolvePolicyQuery,
+  ResolvePolicyResponse,
+  ResolvePoliciesBulkRequest,
+  ResolvePoliciesBulkResponse,
+  GetPolicyHistoryQuery,
+  GetPolicyHistoryResponse,
+  SavePolicyRequest,
+  SavePolicyResponse,
+  GetBrandHistoryQuery,
+  GetBrandHistoryResponse,
+  GetPropertyHistoryQuery,
+  GetPropertyHistoryResponse,
 } from './types';
 
 export type {
@@ -57,6 +76,20 @@ export type {
   FeedQuery,
   AgentSearchQuery,
   CrawlRequest,
+  ListPoliciesQuery,
+  ListPoliciesResponse,
+  ResolvePolicyQuery,
+  ResolvePolicyResponse,
+  ResolvePoliciesBulkRequest,
+  ResolvePoliciesBulkResponse,
+  GetPolicyHistoryQuery,
+  GetPolicyHistoryResponse,
+  SavePolicyRequest,
+  SavePolicyResponse,
+  GetBrandHistoryQuery,
+  GetBrandHistoryResponse,
+  GetPropertyHistoryQuery,
+  GetPropertyHistoryResponse,
 } from './types';
 
 // Re-export all generated types for advanced usage
@@ -78,11 +111,24 @@ export type {
   AgentSearchResponse,
   CrawlRequestResponse,
   AuthorizationEntry,
+  BrandActivity,
+  PropertyActivity,
+  PolicySummary,
+  Policy,
+  PolicyHistory,
 } from './types';
 
 // Re-export RegistrySync
 export { RegistrySync } from './sync';
 export type { RegistrySyncConfig, RegistrySyncState, RegistrySyncEvents, AgentFilter } from './sync';
+
+// Re-export CursorStore
+export { InMemoryCursorStore, FileCursorStore } from './cursor-store';
+export type { CursorStore } from './cursor-store';
+
+// Re-export PropertyRegistry
+export { PropertyRegistry } from './property-registry';
+export type { PropertyRegistryConfig } from './property-registry';
 
 const DEFAULT_BASE_URL = 'https://adcontextprotocol.org';
 const MAX_BULK_DOMAINS = 100;
@@ -581,6 +627,76 @@ export class RegistryClient {
     if (!domain?.trim()) throw new Error('domain is required');
     if (!this.apiKey) throw new Error('apiKey is required for crawl requests');
     return this.post(`${this.baseUrl}/api/registry/crawl-request`, { domain });
+  }
+
+  // ====== Policy Management ======
+
+  /** List policies in the governance policy registry with optional filtering. */
+  async listPolicies(params?: ListPoliciesQuery): Promise<ListPoliciesResponse> {
+    const qs = new URLSearchParams();
+    if (params?.search) qs.set('search', params.search);
+    if (params?.category) qs.set('category', params.category);
+    if (params?.enforcement) qs.set('enforcement', params.enforcement);
+    if (params?.jurisdiction) qs.set('jurisdiction', params.jurisdiction);
+    if (params?.policy_category) qs.set('policy_category', params.policy_category);
+    if (params?.domain) qs.set('domain', params.domain);
+    if (params?.limit != null) qs.set('limit', String(params.limit));
+    if (params?.offset != null) qs.set('offset', String(params.offset));
+    const q = qs.toString();
+    return this.get(`${this.baseUrl}/api/policies/registry${q ? '?' + q : ''}`);
+  }
+
+  /** Resolve a single policy by ID. Optionally pin to a specific version. */
+  async resolvePolicy(params: ResolvePolicyQuery): Promise<ResolvePolicyResponse | null> {
+    if (!params?.policy_id?.trim()) throw new Error('policy_id is required');
+    const qs = new URLSearchParams({ policy_id: params.policy_id });
+    if (params.version) qs.set('version', params.version);
+    return this.get(`${this.baseUrl}/api/policies/resolve?${qs}`, { nullOn404: true });
+  }
+
+  /** Bulk resolve up to 100 policies by ID in a single request. */
+  async resolvePoliciesBulk(body: ResolvePoliciesBulkRequest): Promise<ResolvePoliciesBulkResponse> {
+    if (!body?.policy_ids?.length) throw new Error('policy_ids is required');
+    return this.post(`${this.baseUrl}/api/policies/resolve/bulk`, body);
+  }
+
+  /** Retrieve the edit history for a policy. */
+  async getPolicyHistory(params: GetPolicyHistoryQuery): Promise<GetPolicyHistoryResponse | null> {
+    if (!params?.policy_id?.trim()) throw new Error('policy_id is required');
+    const qs = new URLSearchParams({ policy_id: params.policy_id });
+    if (params.limit != null) qs.set('limit', String(params.limit));
+    if (params.offset != null) qs.set('offset', String(params.offset));
+    return this.get(`${this.baseUrl}/api/policies/history?${qs}`, { nullOn404: true });
+  }
+
+  /** Create or update a community-contributed policy. Requires authentication. */
+  async savePolicy(body: SavePolicyRequest): Promise<SavePolicyResponse> {
+    if (!body?.policy_id?.trim()) throw new Error('policy_id is required');
+    if (!body?.version?.trim()) throw new Error('version is required');
+    if (!body?.name?.trim()) throw new Error('name is required');
+    if (!body?.policy?.trim()) throw new Error('policy is required');
+    if (!this.apiKey) throw new Error('apiKey is required for save operations');
+    return this.post(`${this.baseUrl}/api/policies/save`, body);
+  }
+
+  // ====== History ======
+
+  /** Retrieve brand activity history for a domain. */
+  async getBrandHistory(params: GetBrandHistoryQuery): Promise<GetBrandHistoryResponse | null> {
+    if (!params?.domain?.trim()) throw new Error('domain is required');
+    const qs = new URLSearchParams({ domain: params.domain });
+    if (params.limit != null) qs.set('limit', String(params.limit));
+    if (params.offset != null) qs.set('offset', String(params.offset));
+    return this.get(`${this.baseUrl}/api/brands/history?${qs}`, { nullOn404: true });
+  }
+
+  /** Retrieve property activity history for a domain. */
+  async getPropertyHistory(params: GetPropertyHistoryQuery): Promise<GetPropertyHistoryResponse | null> {
+    if (!params?.domain?.trim()) throw new Error('domain is required');
+    const qs = new URLSearchParams({ domain: params.domain });
+    if (params.limit != null) qs.set('limit', String(params.limit));
+    if (params.offset != null) qs.set('offset', String(params.offset));
+    return this.get(`${this.baseUrl}/api/properties/history?${qs}`, { nullOn404: true });
   }
 
   // ====== Private helpers ======

@@ -61,6 +61,12 @@ export {
 // v3 SI (Sponsored Intelligence) protocol testing
 export { testSISessionLifecycle, testSIAvailability, testSIHandoff, hasSITools } from './sponsored-intelligence';
 
+// v3 Trusted Match Protocol testing
+export { testTrustedMatchFlow, hasTrustedMatchTools } from './trusted-match';
+
+// v3 Brand Rights Protocol testing
+export { testBrandRightsFlow, hasBrandRightsTools } from './brand-rights';
+
 // v3 Capability discovery testing
 export { testCapabilityDiscovery, likelySupportsV3 } from './capabilities';
 
