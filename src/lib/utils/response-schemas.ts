@@ -32,6 +32,7 @@ export const TOOL_RESPONSE_SCHEMAS: Partial<Record<string, z.ZodType>> = {
   // Account & audience
   sync_accounts: schemas.SyncAccountsResponseSchema,
   list_accounts: schemas.ListAccountsResponseSchema,
+  sync_governance: schemas.SyncGovernanceResponseSchema,
   sync_audiences: schemas.SyncAudiencesResponseSchema,
 
   // Governance — property lists & content standards

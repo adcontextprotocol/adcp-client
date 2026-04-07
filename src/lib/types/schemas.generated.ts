@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-04-06T23:00:33.080Z
+// Generated at: 2026-04-07T17:57:55.076Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -3305,6 +3305,43 @@ export const SyncAccountsErrorSchema = z.object({
     ext: ExtensionObjectSchema.nullish()
 }).passthrough();
 
+export const SyncGovernanceRequestSchema = z.object({
+    adcp_major_version: z.number().nullish(),
+    accounts: z.array(z.object({
+        account: AccountReferenceSchema,
+        governance_agents: z.array(z.object({
+            url: z.string(),
+            authentication: z.object({
+                schemes: z.array(AuthenticationSchemeSchema),
+                credentials: z.string()
+            }).passthrough(),
+            categories: z.array(z.string()).nullish()
+        }).passthrough())
+    }).passthrough()),
+    context: ContextObjectSchema.nullish(),
+    ext: ExtensionObjectSchema.nullish()
+}).passthrough();
+
+export const SyncGovernanceSuccessSchema = z.object({
+    accounts: z.array(z.object({
+        account: AccountReferenceSchema,
+        status: z.union([z.literal("synced"), z.literal("failed")]),
+        governance_agents: z.array(z.object({
+            url: z.string(),
+            categories: z.array(z.string()).nullish()
+        }).passthrough()).nullish(),
+        errors: z.array(ErrorSchema).nullish()
+    }).passthrough()),
+    context: ContextObjectSchema.nullish(),
+    ext: ExtensionObjectSchema.nullish()
+}).passthrough();
+
+export const SyncGovernanceErrorSchema = z.object({
+    errors: z.array(ErrorSchema),
+    context: ContextObjectSchema.nullish(),
+    ext: ExtensionObjectSchema.nullish()
+}).passthrough();
+
 export const ReportUsageRequestSchema = z.object({
     adcp_major_version: z.number().nullish(),
     idempotency_key: z.string().nullish(),
@@ -4261,6 +4298,8 @@ export const A2UISurfaceSchema = z.object({
 }).passthrough();
 
 export const SyncAccountsResponseSchema = z.union([SyncAccountsSuccessSchema, SyncAccountsErrorSchema]);
+
+export const SyncGovernanceResponseSchema = z.union([SyncGovernanceSuccessSchema, SyncGovernanceErrorSchema]);
 
 export const GetAccountFinancialsRequestSchema = z.object({
     adcp_major_version: z.number().nullish(),
