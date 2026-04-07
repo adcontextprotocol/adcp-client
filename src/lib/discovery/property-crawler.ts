@@ -31,15 +31,22 @@ export interface CrawlResult {
 
 export interface PropertyCrawlerConfig {
   logLevel?: LogLevel;
+  /** Custom User-Agent string for outbound requests */
+  userAgent?: string;
 }
 
 export class PropertyCrawler {
   private logger: ReturnType<typeof createLogger>;
+  private userAgent?: string;
 
   constructor(config?: PropertyCrawlerConfig) {
     this.logger = createLogger({
       level: config?.logLevel || 'warn',
     }).child('PropertyCrawler');
+    if (config?.userAgent && /[\r\n]/.test(config.userAgent)) {
+      throw new Error('userAgent must not contain newline characters');
+    }
+    this.userAgent = config?.userAgent;
   }
   /**
    * Crawl multiple agents to discover their publisher domains and properties
@@ -117,13 +124,16 @@ export class PropertyCrawler {
    * Crawl a single agent to get its authorized publisher domains via capabilities
    */
   async crawlAgent(agentInfo: AgentInfo): Promise<string[]> {
-    const client = new SingleAgentClient({
-      id: 'crawler',
-      name: 'Property Crawler',
-      agent_uri: agentInfo.agent_url,
-      protocol: agentInfo.protocol || 'mcp',
-      ...(agentInfo.auth_token && { auth_token: agentInfo.auth_token }),
-    });
+    const client = new SingleAgentClient(
+      {
+        id: 'crawler',
+        name: 'Property Crawler',
+        agent_uri: agentInfo.agent_url,
+        protocol: agentInfo.protocol || 'mcp',
+        ...(agentInfo.auth_token && { auth_token: agentInfo.auth_token }),
+      },
+      { userAgent: this.userAgent }
+    );
 
     try {
       // Use capabilities API which replaced list_authorized_properties
@@ -254,7 +264,9 @@ export class PropertyCrawler {
           Accept: 'application/json, text/plain, */*',
           'Accept-Language': 'en-US,en;q=0.9',
           'Accept-Encoding': 'gzip, deflate, br',
-          From: `adcp-property-crawler@adcontextprotocol.org (v${LIBRARY_VERSION})`,
+          From: this.userAgent
+            ? `${this.userAgent} adcp-property-crawler@adcontextprotocol.org (v${LIBRARY_VERSION})`
+            : `adcp-property-crawler@adcontextprotocol.org (v${LIBRARY_VERSION})`,
         },
       });
       if (!response.ok) {

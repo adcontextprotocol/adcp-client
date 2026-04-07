@@ -164,7 +164,8 @@ type NormalizedWebhookPayload = {
 export interface SingleAgentClientConfig extends ConversationConfig {
   /** Enable debug logging */
   debug?: boolean;
-  /** Custom user agent string */
+  /** Custom User-Agent header sent with all outbound protocol requests.
+   *  Per-agent headers take precedence if they also set User-Agent. */
   userAgent?: string;
   /** Additional headers to include in requests */
   headers?: Record<string, string>;
@@ -253,8 +254,19 @@ export class SingleAgentClient {
     private agent: AgentConfig,
     private config: SingleAgentClientConfig = {}
   ) {
+    // Inject userAgent into agent headers so it flows through both MCP and A2A transports
+    if (config.userAgent) {
+      if (/[\r\n]/.test(config.userAgent)) {
+        throw new Error('userAgent must not contain newline characters');
+      }
+      this.agent = {
+        ...this.agent,
+        headers: { 'User-Agent': config.userAgent, ...this.agent.headers },
+      };
+    }
+
     // Normalize agent URL for MCP protocol
-    this.normalizedAgent = this.normalizeAgentConfig(agent);
+    this.normalizedAgent = this.normalizeAgentConfig(this.agent);
 
     this.executor = new TaskExecutor({
       workingTimeout: config.workingTimeout || 120000, // Max 120s for working status

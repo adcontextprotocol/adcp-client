@@ -55,7 +55,12 @@ export {
   type PropertyMatch,
   type AgentAuthorization,
 } from './discovery/property-index';
-export { PropertyCrawler, type AgentInfo, type CrawlResult } from './discovery/property-crawler';
+export {
+  PropertyCrawler,
+  type AgentInfo,
+  type CrawlResult,
+  type PropertyCrawlerConfig,
+} from './discovery/property-crawler';
 export type {
   Property,
   PropertyIdentifier,
