@@ -72,9 +72,7 @@ export async function executeStoryboardTask(
   taskName: string,
   params: Record<string, unknown>
 ): Promise<TaskResult> {
-  const methodName = Object.hasOwn(TASK_TO_METHOD, taskName)
-    ? TASK_TO_METHOD[taskName]
-    : undefined;
+  const methodName = Object.hasOwn(TASK_TO_METHOD, taskName) ? TASK_TO_METHOD[taskName] : undefined;
 
   if (methodName && typeof client[methodName] === 'function') {
     const result = await client[methodName](params);

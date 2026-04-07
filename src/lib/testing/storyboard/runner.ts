@@ -134,7 +134,7 @@ export async function runStoryboardStep(
   if (!found) {
     throw new Error(
       `Step "${stepId}" not found in storyboard "${storyboard.id}". ` +
-      `Available steps: ${allSteps.map(s => s.step.id).join(', ')}`
+        `Available steps: ${allSteps.map(s => s.step.id).join(', ')}`
     );
   }
 
@@ -162,10 +162,8 @@ async function executeStep(
       : {};
 
   // Execute the task
-  const { result: taskResult, step: stepResult } = await runStep(
-    step.title,
-    step.task,
-    () => executeStoryboardTask(client, step.task, request)
+  const { result: taskResult, step: stepResult } = await runStep(step.title, step.task, () =>
+    executeStoryboardTask(client, step.task, request)
   );
 
   const passed = stepResult.passed && (taskResult?.success ?? false);
@@ -198,7 +196,7 @@ async function executeStep(
     response: taskResult?.data,
     validations,
     context: updatedContext,
-    error: stepResult.error || (taskResult?.error) || undefined,
+    error: stepResult.error || taskResult?.error || undefined,
     next,
   };
 }
@@ -237,9 +235,7 @@ function getNextStepPreview(
   const nextStep = nextFlat.step;
 
   // Inject context into the next step's sample_request for preview
-  const previewRequest = nextStep.sample_request
-    ? injectContext({ ...nextStep.sample_request }, context)
-    : undefined;
+  const previewRequest = nextStep.sample_request ? injectContext({ ...nextStep.sample_request }, context) : undefined;
 
   return {
     step_id: nextStep.id,
@@ -263,9 +259,7 @@ export function getFirstStepPreview(
   if (!firstPhase?.steps[0]) return undefined;
 
   const step = firstPhase.steps[0];
-  const previewRequest = step.sample_request
-    ? injectContext({ ...step.sample_request }, context)
-    : undefined;
+  const previewRequest = step.sample_request ? injectContext({ ...step.sample_request }, context) : undefined;
 
   return {
     step_id: step.id,

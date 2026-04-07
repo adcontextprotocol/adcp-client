@@ -545,9 +545,7 @@ function parseAgentOptions(args) {
 
   // Filter out flags and their values to find positional args
   const flagValues = [authToken, protocolFlag, brief, contextValue, requestValue].filter(Boolean);
-  const positionalArgs = args.filter(
-    arg => !arg.startsWith('--') && !flagValues.includes(arg)
-  );
+  const positionalArgs = args.filter(arg => !arg.startsWith('--') && !flagValues.includes(arg));
 
   return { authToken, protocolFlag, brief, jsonOutput, debug, dryRun, positionalArgs };
 }
@@ -982,7 +980,11 @@ async function handleStoryboardRun(args) {
     process.exit(2);
   }
 
-  const { agentUrl, protocol, authToken: resolvedAuth } = await resolveAgent(agentArg, authToken, protocolFlag, jsonOutput);
+  const {
+    agentUrl,
+    protocol,
+    authToken: resolvedAuth,
+  } = await resolveAgent(agentArg, authToken, protocolFlag, jsonOutput);
 
   if (!jsonOutput) {
     console.error(`Running storyboard: ${storyboard.title}`);
@@ -1022,7 +1024,9 @@ async function handleStoryboardRun(args) {
 
     console.log(`\n${'─'.repeat(50)}`);
     const overallIcon = result.overall_passed ? '✅' : '❌';
-    console.log(`${overallIcon} ${result.passed_count} passed, ${result.failed_count} failed, ${result.skipped_count} skipped (${result.total_duration_ms}ms)`);
+    console.log(
+      `${overallIcon} ${result.passed_count} passed, ${result.failed_count} failed, ${result.skipped_count} skipped (${result.total_duration_ms}ms)`
+    );
   }
 
   process.exit(result.overall_passed ? 0 : 3);
@@ -1047,7 +1051,11 @@ async function handleStoryboardStepCmd(args) {
     process.exit(2);
   }
 
-  const { agentUrl, protocol, authToken: resolvedAuth } = await resolveAgent(agentArg, authToken, protocolFlag, jsonOutput);
+  const {
+    agentUrl,
+    protocol,
+    authToken: resolvedAuth,
+  } = await resolveAgent(agentArg, authToken, protocolFlag, jsonOutput);
 
   // Parse --context and --request flags
   let context = {};

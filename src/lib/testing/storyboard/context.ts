@@ -169,10 +169,7 @@ const CONTEXT_EXTRACTORS: Record<string, ContextExtractor> = {
 /**
  * Extract context values from a task response.
  */
-export function extractContext(
-  taskName: string,
-  data: unknown
-): Record<string, unknown> {
+export function extractContext(taskName: string, data: unknown): Record<string, unknown> {
   const extractor = CONTEXT_EXTRACTORS[taskName];
   if (!extractor) return {};
   try {
@@ -192,10 +189,7 @@ export function extractContext(
  *
  * Returns a new object (does not mutate the input).
  */
-export function injectContext(
-  obj: Record<string, unknown>,
-  context: StoryboardContext
-): Record<string, unknown> {
+export function injectContext(obj: Record<string, unknown>, context: StoryboardContext): Record<string, unknown> {
   return deepReplace(obj, context) as Record<string, unknown>;
 }
 

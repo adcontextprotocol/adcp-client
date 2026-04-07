@@ -51,9 +51,7 @@ export function loadBundledStoryboards(): Storyboard[] {
   const dir = getStoryboardsDir();
   let files: string[];
   try {
-    files = readdirSync(dir).filter(
-      f => (f.endsWith('.yaml') || f.endsWith('.yml')) && f !== 'schema.yaml'
-    );
+    files = readdirSync(dir).filter(f => (f.endsWith('.yaml') || f.endsWith('.yml')) && f !== 'schema.yaml');
   } catch {
     return [];
   }
@@ -73,9 +71,7 @@ export function getStoryboardById(id: string): Storyboard | undefined {
  * Get bundled storyboards that match a platform type tag.
  */
 export function getStoryboardsForPlatformType(platformType: string): Storyboard[] {
-  return loadBundledStoryboards().filter(
-    s => s.platform_types?.includes(platformType)
-  );
+  return loadBundledStoryboards().filter(s => s.platform_types?.includes(platformType));
 }
 
 /**

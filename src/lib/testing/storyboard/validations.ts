@@ -23,11 +23,7 @@ export function runValidations(
   return validations.map(v => runValidation(v, taskName, taskResult));
 }
 
-function runValidation(
-  validation: StoryboardValidation,
-  taskName: string,
-  taskResult: TaskResult
-): ValidationResult {
+function runValidation(validation: StoryboardValidation, taskName: string, taskResult: TaskResult): ValidationResult {
   switch (validation.check) {
     case 'response_schema':
       return validateResponseSchema(validation, taskName, taskResult);
@@ -93,10 +89,7 @@ function validateResponseSchema(
 // field_present: check a path exists
 // ────────────────────────────────────────────────────────────
 
-function validateFieldPresent(
-  validation: StoryboardValidation,
-  taskResult: TaskResult
-): ValidationResult {
+function validateFieldPresent(validation: StoryboardValidation, taskResult: TaskResult): ValidationResult {
   if (!validation.path) {
     return {
       check: 'field_present',
@@ -123,10 +116,7 @@ function validateFieldPresent(
 // field_value: check a path equals expected value
 // ────────────────────────────────────────────────────────────
 
-function validateFieldValue(
-  validation: StoryboardValidation,
-  taskResult: TaskResult
-): ValidationResult {
+function validateFieldValue(validation: StoryboardValidation, taskResult: TaskResult): ValidationResult {
   if (!validation.path) {
     return {
       check: 'field_value',
@@ -149,9 +139,7 @@ function validateFieldValue(
     passed,
     description: validation.description,
     path: validation.path,
-    error: passed
-      ? undefined
-      : `Expected ${JSON.stringify(validation.value)}, got ${JSON.stringify(actual)}`,
+    error: passed ? undefined : `Expected ${JSON.stringify(validation.value)}, got ${JSON.stringify(actual)}`,
   };
 }
 
@@ -159,10 +147,7 @@ function validateFieldValue(
 // status_code: check TaskResult status
 // ────────────────────────────────────────────────────────────
 
-function validateStatusCode(
-  validation: StoryboardValidation,
-  taskResult: TaskResult
-): ValidationResult {
+function validateStatusCode(validation: StoryboardValidation, taskResult: TaskResult): ValidationResult {
   // Check success status
   const passed = taskResult.success;
 
