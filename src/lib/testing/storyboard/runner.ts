@@ -6,7 +6,8 @@
  * - runStoryboardStep(): run a single step (stateless, LLM-friendly)
  */
 
-import { getOrCreateClient, runStep } from '../client';
+import { getOrCreateClient, getOrDiscoverProfile, runStep } from '../client';
+import { closeMCPConnections } from '../../protocols/mcp';
 import { executeStoryboardTask } from './task-map';
 import { extractContext, injectContext, applyContextOutputs, applyContextInputs } from './context';
 import { runValidations } from './validations';
@@ -37,6 +38,17 @@ export async function runStoryboard(
 ): Promise<StoryboardResult> {
   const start = Date.now();
   const client = getOrCreateClient(agentUrl, options);
+
+  // Initialize MCP session — discovers agent profile, keeps the transport alive.
+  // Without this, Streamable HTTP degrades to SSE after a few calls.
+  if (!options._client) {
+    const { profile } = await getOrDiscoverProfile(client, options);
+    // Populate agentTools from discovered profile if not already set
+    if (!options.agentTools && profile?.tools) {
+      options = { ...options, agentTools: profile.tools };
+    }
+  }
+
   let context: StoryboardContext = { ...options.context };
   const phaseResults: StoryboardPhaseResult[] = [];
   let passedCount = 0;
@@ -93,7 +105,7 @@ export async function runStoryboard(
     });
   }
 
-  return {
+  const result: StoryboardResult = {
     storyboard_id: storyboard.id,
     storyboard_title: storyboard.title,
     agent_url: agentUrl,
@@ -107,6 +119,13 @@ export async function runStoryboard(
     tested_at: new Date().toISOString(),
     dry_run: options.dry_run !== false,
   };
+
+  // Close MCP connections when the runner created its own client
+  if (!options._client) {
+    await closeMCPConnections();
+  }
+
+  return result;
 }
 
 // ────────────────────────────────────────────────────────────
@@ -126,6 +145,12 @@ export async function runStoryboardStep(
   options: StoryboardRunOptions = {}
 ): Promise<StoryboardStepResult> {
   const client = getOrCreateClient(agentUrl, options);
+
+  // Initialize MCP session for standalone step execution
+  if (!options._client) {
+    await getOrDiscoverProfile(client, options);
+  }
+
   const context: StoryboardContext = { ...options.context };
 
   // Find the step
@@ -138,7 +163,13 @@ export async function runStoryboardStep(
     );
   }
 
-  return executeStep(client, found.step, found.phaseId, context, allSteps, options);
+  const result = await executeStep(client, found.step, found.phaseId, context, allSteps, options);
+
+  if (!options._client) {
+    await closeMCPConnections();
+  }
+
+  return result;
 }
 
 // ────────────────────────────────────────────────────────────

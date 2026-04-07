@@ -1,8 +1,8 @@
 id: media_buy_seller
-version: "1.0.0"
-title: "Media buy seller agent"
+version: '1.0.0'
+title: 'Media buy seller agent'
 category: media_buy_seller
-summary: "Seller agent that receives briefs, returns products, accepts media buys, and reports delivery."
+summary: 'Seller agent that receives briefs, returns products, accepts media buys, and reports delivery.'
 platform_types:
   - display_ad_server
   - video_ad_server
@@ -38,25 +38,25 @@ agent:
     - supports_guaranteed
     - supports_non_guaranteed
   examples:
-    - "Yahoo"
-    - "Retail media networks"
-    - "Publisher platforms"
-    - "SSPs"
+    - 'Yahoo'
+    - 'Retail media networks'
+    - 'Publisher platforms'
+    - 'SSPs'
 
 caller:
   role: buyer_agent
-  example: "Scope3 (DSP)"
+  example: 'Scope3 (DSP)'
 
 prerequisites:
   description: |
     The caller needs a brand identity and operator credentials for account setup.
     The test kit provides a sample brand (Acme Outdoor) with campaign parameters
     suitable for testing the full media buy flow.
-  test_kit: "test-kits/acme-outdoor.yaml"
+  test_kit: 'test-kits/acme-outdoor.yaml'
 
 phases:
   - id: account_setup
-    title: "Account setup"
+    title: 'Account setup'
     narrative: |
       Before buying anything, the buyer establishes an account relationship with
       your platform. This is the handshake: the buyer tells you which brand and
@@ -69,7 +69,7 @@ phases:
 
     steps:
       - id: sync_accounts
-        title: "Establish account relationship"
+        title: 'Establish account relationship'
         narrative: |
           The buyer registers their brand and operator with your platform. This is
           the first call in any new relationship. Your platform validates the request,
@@ -79,9 +79,9 @@ phases:
           return pending_approval with a setup URL. The buyer will complete setup there
           and poll list_accounts until the status changes to active.
         task: sync_accounts
-        schema_ref: "account/sync-accounts-request.json"
-        response_schema_ref: "account/sync-accounts-response.json"
-        doc_ref: "/accounts/tasks/sync_accounts"
+        schema_ref: 'account/sync-accounts-request.json'
+        response_schema_ref: 'account/sync-accounts-response.json'
+        doc_ref: '/accounts/tasks/sync_accounts'
         comply_scenario: account_setup
         stateful: true
         expected: |
@@ -97,23 +97,23 @@ phases:
         sample_request:
           accounts:
             - brand:
-                domain: "acmeoutdoor.com"
-              operator: "pinnacle-agency.com"
-              billing: "operator"
-              payment_terms: "net_30"
+                domain: 'acmeoutdoor.com'
+              operator: 'pinnacle-agency.com'
+              billing: 'operator'
+              payment_terms: 'net_30'
 
         validations:
           - check: response_schema
-            description: "Response matches sync-accounts-response.json schema"
+            description: 'Response matches sync-accounts-response.json schema'
           - check: field_present
-            path: "accounts[0].account_id"
-            description: "Account has a platform-assigned ID"
+            path: 'accounts[0].account_id'
+            description: 'Account has a platform-assigned ID'
           - check: field_present
-            path: "accounts[0].status"
-            description: "Account has a status (active or pending_approval)"
+            path: 'accounts[0].status'
+            description: 'Account has a status (active or pending_approval)'
 
   - id: governance_setup
-    title: "Governance agent registration"
+    title: 'Governance agent registration'
     narrative: |
       The buyer registers their governance agent with your platform. This tells your
       platform where to call check_governance before confirming media buys. The
@@ -126,7 +126,7 @@ phases:
 
     steps:
       - id: sync_governance
-        title: "Register governance agents"
+        title: 'Register governance agents'
         narrative: |
           The buyer tells your platform: "Before you confirm any media buy for this
           account, call this governance agent to validate it." Your platform stores
@@ -135,9 +135,9 @@ phases:
           This uses replace semantics — each sync_governance call replaces any
           previously registered agents for the account.
         task: sync_governance
-        schema_ref: "account/sync-governance-request.json"
-        response_schema_ref: "account/sync-governance-response.json"
-        doc_ref: "/accounts/tasks/sync_governance"
+        schema_ref: 'account/sync-governance-request.json'
+        response_schema_ref: 'account/sync-governance-response.json'
+        doc_ref: '/accounts/tasks/sync_governance'
         comply_scenario: governance_setup
         stateful: true
         expected: |
@@ -150,21 +150,21 @@ phases:
           accounts:
             - account:
                 brand:
-                  domain: "acmeoutdoor.com"
-                operator: "pinnacle-agency.com"
+                  domain: 'acmeoutdoor.com'
+                operator: 'pinnacle-agency.com'
               governance_agents:
-                - url: "https://governance.pinnacle-agency.example"
+                - url: 'https://governance.pinnacle-agency.example'
                   authentication:
-                    schemes: ["Bearer"]
-                    credentials: "gov-token-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-                  categories: ["budget_authority", "brand_policy"]
+                    schemes: ['Bearer']
+                    credentials: 'gov-token-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'
+                  categories: ['budget_authority', 'brand_policy']
 
         validations:
           - check: response_schema
-            description: "Response matches sync-governance-response.json schema"
+            description: 'Response matches sync-governance-response.json schema'
 
   - id: product_discovery
-    title: "Product discovery"
+    title: 'Product discovery'
     narrative: |
       The buyer sends a natural-language brief describing what they want to buy.
       Your platform interprets the brief against your inventory and returns products —
@@ -177,7 +177,7 @@ phases:
 
     steps:
       - id: get_products_brief
-        title: "Send a brief"
+        title: 'Send a brief'
         narrative: |
           The buyer describes what they want in natural language. Your platform returns
           products that match the brief, including pricing options, delivery forecasts,
@@ -187,9 +187,9 @@ phases:
           against your inventory catalog. If the brief is ambiguous, you can return
           input-required to ask clarifying questions before producing results.
         task: get_products
-        schema_ref: "media-buy/get-products-request.json"
-        response_schema_ref: "media-buy/get-products-response.json"
-        doc_ref: "/media-buy/task-reference/get_products"
+        schema_ref: 'media-buy/get-products-request.json'
+        response_schema_ref: 'media-buy/get-products-response.json'
+        doc_ref: '/media-buy/task-reference/get_products'
         comply_scenario: media_buy_flow
         stateful: false
         expected: |
@@ -208,30 +208,30 @@ phases:
           If the brief is unclear, return input-required with clarifying questions.
 
         sample_request:
-          buying_mode: "brief"
-          brief: "Premium video inventory on sports and outdoor lifestyle publishers. Q2 flight, $50K budget. Adults 25-54, US and Canada."
+          buying_mode: 'brief'
+          brief: 'Premium video inventory on sports and outdoor lifestyle publishers. Q2 flight, $50K budget. Adults 25-54, US and Canada.'
           brand:
-            domain: "acmeoutdoor.com"
+            domain: 'acmeoutdoor.com'
           account:
             brand:
-              domain: "acmeoutdoor.com"
-            operator: "pinnacle-agency.com"
+              domain: 'acmeoutdoor.com'
+            operator: 'pinnacle-agency.com'
 
         validations:
           - check: response_schema
-            description: "Response matches get-products-response.json schema"
+            description: 'Response matches get-products-response.json schema'
           - check: field_present
-            path: "products"
-            description: "Response contains a products array"
+            path: 'products'
+            description: 'Response contains a products array'
           - check: field_present
-            path: "products[0].product_id"
-            description: "Each product has a product_id"
+            path: 'products[0].product_id'
+            description: 'Each product has a product_id'
           - check: field_present
-            path: "products[0].delivery_type"
-            description: "Each product declares guaranteed or non_guaranteed delivery"
+            path: 'products[0].delivery_type'
+            description: 'Each product declares guaranteed or non_guaranteed delivery'
 
   - id: proposal_refinement
-    title: "Proposal refinement"
+    title: 'Proposal refinement'
     narrative: |
       The buyer reviews the products from the brief and wants to narrow down. They
       switch to refine mode, layering constraints without starting over. Each refinement
@@ -243,15 +243,15 @@ phases:
 
     steps:
       - id: get_products_refine
-        title: "Refine the proposal"
+        title: 'Refine the proposal'
         narrative: |
           The buyer has reviewed the initial products and wants adjustments. They call
           get_products with buying_mode: refine and a refine array describing what to
           change. Your platform applies the refinements and returns updated products.
         task: get_products
-        schema_ref: "media-buy/get-products-request.json"
-        response_schema_ref: "media-buy/get-products-response.json"
-        doc_ref: "/media-buy/task-reference/get_products"
+        schema_ref: 'media-buy/get-products-request.json'
+        response_schema_ref: 'media-buy/get-products-response.json'
+        doc_ref: '/media-buy/task-reference/get_products'
         comply_scenario: media_buy_flow
         stateful: true
         expected: |
@@ -262,29 +262,29 @@ phases:
           - Update pricing and forecasts to reflect the changes
 
         sample_request:
-          buying_mode: "refine"
+          buying_mode: 'refine'
           refine:
-            - scope: "request"
-              ask: "Only guaranteed packages. Must include completion rate SLA above 80%."
-            - scope: "product"
-              product_id: "sports_preroll_q2"
-              ask: "Increase budget allocation to $30K"
+            - scope: 'request'
+              ask: 'Only guaranteed packages. Must include completion rate SLA above 80%.'
+            - scope: 'product'
+              product_id: 'sports_preroll_q2'
+              ask: 'Increase budget allocation to $30K'
           brand:
-            domain: "acmeoutdoor.com"
+            domain: 'acmeoutdoor.com'
           account:
             brand:
-              domain: "acmeoutdoor.com"
-            operator: "pinnacle-agency.com"
+              domain: 'acmeoutdoor.com'
+            operator: 'pinnacle-agency.com'
 
         validations:
           - check: response_schema
-            description: "Response matches get-products-response.json schema"
+            description: 'Response matches get-products-response.json schema'
           - check: field_present
-            path: "products"
-            description: "Response contains updated products"
+            path: 'products'
+            description: 'Response contains updated products'
 
   - id: create_buy
-    title: "Create the media buy"
+    title: 'Create the media buy'
     narrative: |
       The buyer is satisfied with the products and creates a media buy. This is the
       equivalent of signing an IO — the buyer commits to specific products, budgets,
@@ -301,7 +301,7 @@ phases:
 
     steps:
       - id: create_media_buy
-        title: "Create a media buy"
+        title: 'Create a media buy'
         narrative: |
           The buyer commits to specific products with budgets and flight dates. Your
           platform validates the request, optionally calls governance, and either confirms
@@ -317,9 +317,9 @@ phases:
           - submitted: long-running async — approval workflow, IO signing, etc.
           - input-required: need more information (budget clarification, approval)
         task: create_media_buy
-        schema_ref: "media-buy/create-media-buy-request.json"
-        response_schema_ref: "media-buy/create-media-buy-response.json"
-        doc_ref: "/media-buy/task-reference/create_media_buy"
+        schema_ref: 'media-buy/create-media-buy-request.json'
+        response_schema_ref: 'media-buy/create-media-buy-response.json'
+        doc_ref: '/media-buy/task-reference/create_media_buy'
         comply_scenario: media_buy_flow
         stateful: true
         expected: |
@@ -348,32 +348,32 @@ phases:
         sample_request:
           account:
             brand:
-              domain: "acmeoutdoor.com"
-            operator: "pinnacle-agency.com"
+              domain: 'acmeoutdoor.com'
+            operator: 'pinnacle-agency.com'
           brand:
-            domain: "acmeoutdoor.com"
-          start_time: "2026-04-01T00:00:00Z"
-          end_time: "2026-06-30T23:59:59Z"
+            domain: 'acmeoutdoor.com'
+          start_time: '2026-04-01T00:00:00Z'
+          end_time: '2026-06-30T23:59:59Z'
           packages:
-            - product_id: "sports_preroll_q2"
+            - product_id: 'sports_preroll_q2'
               budget: 25000
-              pricing_option_id: "cpm_guaranteed"
+              pricing_option_id: 'cpm_guaranteed'
               creative_assignments:
-                - creative_id: "video_30s_trail_pro"
-            - product_id: "lifestyle_display_q2"
+                - creative_id: 'video_30s_trail_pro'
+            - product_id: 'lifestyle_display_q2'
               budget: 15000
-              pricing_option_id: "cpm_standard"
+              pricing_option_id: 'cpm_standard'
           push_notification_config:
-            url: "https://buyer.example/webhooks/adcp"
+            url: 'https://buyer.example/webhooks/adcp'
             authentication:
-              scheme: "HMAC-SHA256"
+              scheme: 'HMAC-SHA256'
 
         validations:
           - check: response_schema
-            description: "Response matches create-media-buy-response.json schema"
+            description: 'Response matches create-media-buy-response.json schema'
 
       - id: check_buy_status
-        title: "Check media buy status"
+        title: 'Check media buy status'
         narrative: |
           If create_media_buy returned working or submitted, the buyer polls for status
           updates. Your platform returns the current state of the media buy — whether
@@ -384,9 +384,9 @@ phases:
           until the human completes the action. Your platform sends back a URL where the
           human goes to approve.
         task: get_media_buys
-        schema_ref: "media-buy/get-media-buys-request.json"
-        response_schema_ref: "media-buy/get-media-buys-response.json"
-        doc_ref: "/media-buy/task-reference/get_media_buys"
+        schema_ref: 'media-buy/get-media-buys-request.json'
+        response_schema_ref: 'media-buy/get-media-buys-response.json'
+        doc_ref: '/media-buy/task-reference/get_media_buys'
         comply_scenario: media_buy_flow
         stateful: true
         expected: |
@@ -403,20 +403,20 @@ phases:
         sample_request:
           account:
             brand:
-              domain: "acmeoutdoor.com"
-            operator: "pinnacle-agency.com"
+              domain: 'acmeoutdoor.com'
+            operator: 'pinnacle-agency.com'
           media_buy_ids:
-            - "mb_acme_q2_2026"
+            - 'mb_acme_q2_2026'
 
         validations:
           - check: response_schema
-            description: "Response matches get-media-buys-response.json schema"
+            description: 'Response matches get-media-buys-response.json schema'
           - check: field_present
-            path: "media_buys[0].status"
-            description: "Each media buy has a status"
+            path: 'media_buys[0].status'
+            description: 'Each media buy has a status'
 
   - id: creative_sync
-    title: "Creative sync"
+    title: 'Creative sync'
     narrative: |
       With the media buy confirmed, the buyer syncs creative assets to your platform.
       Each package in the buy has creative format requirements — the buyer discovered
@@ -428,15 +428,15 @@ phases:
 
     steps:
       - id: list_formats
-        title: "Check creative format requirements"
+        title: 'Check creative format requirements'
         narrative: |
           The buyer confirms what creative formats the confirmed packages require.
           Your platform returns format specs with asset requirements, dimensions,
           and constraints.
         task: list_creative_formats
-        schema_ref: "creative/list-creative-formats-request.json"
-        response_schema_ref: "creative/list-creative-formats-response.json"
-        doc_ref: "/creative/task-reference/list_creative_formats"
+        schema_ref: 'creative/list-creative-formats-request.json'
+        response_schema_ref: 'creative/list-creative-formats-response.json'
+        doc_ref: '/creative/task-reference/list_creative_formats'
         comply_scenario: creative_sync
         stateful: false
         expected: |
@@ -449,21 +449,21 @@ phases:
 
         validations:
           - check: response_schema
-            description: "Response matches list-creative-formats-response.json schema"
+            description: 'Response matches list-creative-formats-response.json schema'
           - check: field_present
-            path: "formats"
-            description: "Response contains formats array"
+            path: 'formats'
+            description: 'Response contains formats array'
 
       - id: sync_creatives
-        title: "Push creative assets"
+        title: 'Push creative assets'
         narrative: |
           The buyer uploads creative assets for the confirmed packages. Your platform
           validates each creative against the format specs, transcodes if necessary,
           and returns per-creative status.
         task: sync_creatives
-        schema_ref: "creative/sync-creatives-request.json"
-        response_schema_ref: "creative/sync-creatives-response.json"
-        doc_ref: "/creative/task-reference/sync_creatives"
+        schema_ref: 'creative/sync-creatives-request.json'
+        response_schema_ref: 'creative/sync-creatives-response.json'
+        doc_ref: '/creative/task-reference/sync_creatives'
         comply_scenario: creative_sync
         stateful: true
         expected: |
@@ -476,39 +476,39 @@ phases:
         sample_request:
           account:
             brand:
-              domain: "acmeoutdoor.com"
-            operator: "pinnacle-agency.com"
+              domain: 'acmeoutdoor.com'
+            operator: 'pinnacle-agency.com'
           creatives:
-            - creative_id: "video_30s_trail_pro"
-              name: "Trail Pro 3000 - 30s CTV Spot"
+            - creative_id: 'video_30s_trail_pro'
+              name: 'Trail Pro 3000 - 30s CTV Spot'
               format_id:
-                agent_url: "https://your-platform.example.com"
-                id: "ssai_30s"
+                agent_url: 'https://your-platform.example.com'
+                id: 'ssai_30s'
               assets:
-                - asset_id: "video"
-                  asset_type: "video"
-                  url: "https://cdn.pinnacle-agency.example/trail-pro-30s.mp4"
-                  mime_type: "video/mp4"
-            - creative_id: "display_trail_pro_300x250"
-              name: "Trail Pro 3000 - Display 300x250"
+                - asset_id: 'video'
+                  asset_type: 'video'
+                  url: 'https://cdn.pinnacle-agency.example/trail-pro-30s.mp4'
+                  mime_type: 'video/mp4'
+            - creative_id: 'display_trail_pro_300x250'
+              name: 'Trail Pro 3000 - Display 300x250'
               format_id:
-                agent_url: "https://your-platform.example.com"
-                id: "display_300x250"
+                agent_url: 'https://your-platform.example.com'
+                id: 'display_300x250'
               assets:
-                - asset_id: "image"
-                  asset_type: "image"
-                  url: "https://cdn.pinnacle-agency.example/trail-pro-300x250.png"
-                  mime_type: "image/png"
+                - asset_id: 'image'
+                  asset_type: 'image'
+                  url: 'https://cdn.pinnacle-agency.example/trail-pro-300x250.png'
+                  mime_type: 'image/png'
 
         validations:
           - check: response_schema
-            description: "Response matches sync-creatives-response.json schema"
+            description: 'Response matches sync-creatives-response.json schema'
           - check: field_present
-            path: "results[0].action"
-            description: "Each creative has an action (created/updated)"
+            path: 'results[0].action'
+            description: 'Each creative has an action (created/updated)'
 
   - id: delivery_monitoring
-    title: "Delivery and reporting"
+    title: 'Delivery and reporting'
     narrative: |
       The campaign is live. The buyer monitors delivery through two tasks:
       get_media_buys for status and get_media_buy_delivery for performance metrics.
@@ -519,7 +519,7 @@ phases:
 
     steps:
       - id: get_delivery
-        title: "Check delivery metrics"
+        title: 'Check delivery metrics'
         narrative: |
           The buyer requests delivery data for the active media buy. Your platform
           returns performance metrics — impressions, clicks, spend, completion rates —
@@ -528,9 +528,9 @@ phases:
           This call may take up to 60 seconds as your platform aggregates reporting
           data across delivery systems.
         task: get_media_buy_delivery
-        schema_ref: "media-buy/get-media-buy-delivery-request.json"
-        response_schema_ref: "media-buy/get-media-buy-delivery-response.json"
-        doc_ref: "/media-buy/task-reference/get_media_buy_delivery"
+        schema_ref: 'media-buy/get-media-buy-delivery-request.json'
+        response_schema_ref: 'media-buy/get-media-buy-delivery-response.json'
+        doc_ref: '/media-buy/task-reference/get_media_buy_delivery'
         comply_scenario: media_buy_flow
         stateful: true
         expected: |
@@ -543,15 +543,15 @@ phases:
         sample_request:
           account:
             brand:
-              domain: "acmeoutdoor.com"
-            operator: "pinnacle-agency.com"
+              domain: 'acmeoutdoor.com'
+            operator: 'pinnacle-agency.com'
           media_buy_ids:
-            - "mb_acme_q2_2026"
+            - 'mb_acme_q2_2026'
           include_package_daily_breakdown: true
 
         validations:
           - check: response_schema
-            description: "Response matches get-media-buy-delivery-response.json schema"
+            description: 'Response matches get-media-buy-delivery-response.json schema'
           - check: field_present
-            path: "media_buys"
-            description: "Response contains media buy delivery data"
+            path: 'media_buy_deliveries'
+            description: 'Response contains media buy delivery data'
