@@ -56,6 +56,7 @@
     "bin/**/*.js",
     "skills/**/*",
     ".claude-plugin/**/*",
+    "storyboards/**/*",
     "README.md",
     "LICENSE"
   ],
@@ -129,6 +130,9 @@
     "url": "https://github.com/adcontextprotocol/adcp-client/issues",
     "email": "bugs@adcontextprotocol.org"
   },
+  "dependencies": {
+    "yaml": "^2.7.1"
+  },
   "peerDependencies": {
     "@a2a-js/sdk": "^0.3.4",
     "@modelcontextprotocol/sdk": "^1.17.5",
@@ -144,7 +148,7 @@
     "@changesets/cli": "^2.29.7",
     "@commitlint/cli": "^19.6.0",
     "@commitlint/config-conventional": "^19.6.0",
-    "@modelcontextprotocol/sdk": "^1.24.1",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@opentelemetry/api": "^1.9.0",
     "@types/node": "^20.19.13",
     "eslint": "^10.0.3",

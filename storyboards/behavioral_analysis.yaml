@@ -1,0 +1,244 @@
+id: behavioral_analysis
+version: "1.0.0"
+title: "Behavioral analysis"
+category: products
+summary: "Validates product discovery behavior, response consistency, and pricing edge cases."
+track: products
+required_tools:
+  - get_products
+platform_types:
+  - display_ad_server
+  - video_ad_server
+  - social_platform
+  - retail_media
+  - search_platform
+  - audio_platform
+  - linear_tv_platform
+  - dsp
+  - pmax_platform
+  - ai_ad_network
+  - ai_platform
+  - generative_dsp
+
+narrative: |
+  You expose a get_products task that accepts natural-language briefs and returns structured
+  product listings with pricing, delivery forecasts, and targeting. This storyboard verifies
+  three properties of that task:
+
+  1. Behavior analysis — do results change when the brief changes? Does the agent filter
+     products by brief content or return a static catalog?
+  2. Response consistency — given the same brief twice, does the agent return the same
+     product IDs? Deterministic responses are expected for identical inputs.
+  3. Pricing edge cases — do products declare valid pricing_options structures with
+     recognized delivery_type values (guaranteed or non_guaranteed)?
+
+agent:
+  interaction_model: media_buy_seller
+  capabilities:
+    - sells_media
+    - accepts_briefs
+  examples:
+    - "Yahoo"
+    - "Retail media networks"
+    - "Publisher platforms"
+
+caller:
+  role: buyer_agent
+  example: "Scope3 (DSP)"
+
+prerequisites:
+  description: |
+    The caller needs a brand identity for product discovery requests.
+    The test kit provides a sample brand (Acme Outdoor) with campaign parameters.
+  test_kit: "test-kits/acme-outdoor.yaml"
+
+phases:
+  - id: behavior_analysis
+    title: "Behavior analysis"
+    narrative: |
+      Tests whether the agent filters products based on the brief content. Two different
+      briefs are sent — one narrow (podcast audio only) and one broad (all products across
+      all channels). If the agent interprets briefs, the narrow brief should return fewer
+      products than the broad brief.
+
+    steps:
+      - id: get_products_narrow
+        title: "Get products with narrow brief"
+        narrative: |
+          Send a narrow brief requesting only podcast audio advertising. Capture the
+          returned product IDs so they can be compared with a broader request.
+        task: get_products
+        schema_ref: "media-buy/get-products-request.json"
+        response_schema_ref: "media-buy/get-products-response.json"
+        doc_ref: "/media-buy/task-reference/get_products"
+        comply_scenario: behavior_analysis
+        stateful: false
+        context_outputs:
+          - name: narrow_product_ids
+            path: "products[*].product_id"
+          - name: narrow_product_count
+            path: "products.length"
+        expected: |
+          Return products matching the narrow brief. The result set should be scoped
+          to audio/podcast inventory if the agent performs brief filtering.
+
+        sample_request:
+          buying_mode: "brief"
+          brief: "Looking specifically for podcast audio advertising only"
+          brand:
+            domain: "acmeoutdoor.com"
+
+        validations:
+          - check: response_schema
+            description: "Response matches get-products-response.json schema"
+          - check: field_present
+            path: "products"
+            description: "Response contains a products array"
+
+      - id: get_products_broad
+        title: "Get products with broad brief"
+        narrative: |
+          Send a broad brief requesting all products across all channels. Compare the
+          result count against the narrow brief to determine whether the agent filters
+          by brief content.
+        task: get_products
+        schema_ref: "media-buy/get-products-request.json"
+        response_schema_ref: "media-buy/get-products-response.json"
+        doc_ref: "/media-buy/task-reference/get_products"
+        comply_scenario: behavior_analysis
+        stateful: false
+        expected: |
+          Return all available products. If the agent performs brief filtering, this
+          response should contain more products than the narrow brief response.
+
+        sample_request:
+          buying_mode: "brief"
+          brief: "Show all products across all channels and formats"
+          brand:
+            domain: "acmeoutdoor.com"
+
+        validations:
+          - check: response_schema
+            description: "Response matches get-products-response.json schema"
+          - check: field_present
+            path: "products"
+            description: "Response contains a products array"
+          - check: compare_context
+            description: "Broad brief returns >= narrow brief product count"
+            context_ref: narrow_product_count
+            comparison: ">="
+
+  - id: response_consistency
+    title: "Response consistency"
+    narrative: |
+      Calls get_products twice with the identical brief and brand. The agent should
+      return the same product IDs both times. Non-deterministic responses indicate
+      randomness in product selection or caching issues.
+
+    steps:
+      - id: get_products_first
+        title: "First call with fixed brief"
+        narrative: |
+          Send a specific brief and capture the returned product IDs for comparison.
+        task: get_products
+        schema_ref: "media-buy/get-products-request.json"
+        response_schema_ref: "media-buy/get-products-response.json"
+        doc_ref: "/media-buy/task-reference/get_products"
+        comply_scenario: response_consistency
+        stateful: false
+        context_outputs:
+          - name: first_call_product_ids
+            path: "products[*].product_id"
+        expected: |
+          Return products matching the brief. Product IDs are captured for comparison
+          with a second identical call.
+
+        sample_request:
+          buying_mode: "brief"
+          brief: "Premium video inventory on sports and outdoor lifestyle publishers. Q2 flight, $50K budget. Adults 25-54, US and Canada."
+          brand:
+            domain: "acmeoutdoor.com"
+
+        validations:
+          - check: response_schema
+            description: "Response matches get-products-response.json schema"
+          - check: field_present
+            path: "products[0].product_id"
+            description: "At least one product returned with a product_id"
+
+      - id: get_products_second
+        title: "Second call with identical brief"
+        narrative: |
+          Repeat the exact same request. The returned product IDs should match
+          those from the first call.
+        task: get_products
+        schema_ref: "media-buy/get-products-request.json"
+        response_schema_ref: "media-buy/get-products-response.json"
+        doc_ref: "/media-buy/task-reference/get_products"
+        comply_scenario: response_consistency
+        stateful: false
+        expected: |
+          Return the same product IDs as the first call. Consistent responses
+          for identical inputs are expected.
+
+        sample_request:
+          buying_mode: "brief"
+          brief: "Premium video inventory on sports and outdoor lifestyle publishers. Q2 flight, $50K budget. Adults 25-54, US and Canada."
+          brand:
+            domain: "acmeoutdoor.com"
+
+        validations:
+          - check: response_schema
+            description: "Response matches get-products-response.json schema"
+          - check: match_context
+            description: "Product IDs match the first call"
+            context_ref: first_call_product_ids
+            path: "products[*].product_id"
+
+  - id: pricing_edge_cases
+    title: "Pricing edge cases"
+    narrative: |
+      Validates the structure of pricing_options on returned products. Each product
+      should declare a delivery_type (guaranteed or non_guaranteed) and well-formed
+      pricing options with recognized fields.
+
+    steps:
+      - id: get_products_pricing
+        title: "Fetch products for pricing analysis"
+        narrative: |
+          Request all products with pricing details. Validate that each product has
+          a valid delivery_type and that pricing_options contain recognized fields
+          (fixed_price, floor_price, price_guidance, min_spend_per_package).
+        task: get_products
+        schema_ref: "media-buy/get-products-request.json"
+        response_schema_ref: "media-buy/get-products-response.json"
+        doc_ref: "/media-buy/task-reference/get_products"
+        comply_scenario: pricing_edge_cases
+        stateful: false
+        expected: |
+          Return products with well-formed pricing structures:
+          - Each product has a delivery_type: guaranteed or non_guaranteed
+          - Each pricing_option has a pricing_option_id
+          - Pricing fields are valid (no negative values, recognized pricing models)
+
+        sample_request:
+          buying_mode: "brief"
+          brief: "Show all products with pricing details"
+          brand:
+            domain: "acmeoutdoor.com"
+
+        validations:
+          - check: response_schema
+            description: "Response matches get-products-response.json schema"
+          - check: field_present
+            path: "products"
+            description: "Response contains products array"
+          - check: field_present
+            path: "products[0].delivery_type"
+            description: "Each product declares guaranteed or non_guaranteed delivery"
+          - check: field_value
+            path: "products[*].delivery_type"
+            allowed_values:
+              - "guaranteed"
+              - "non_guaranteed"
+            description: "delivery_type is a recognized value"

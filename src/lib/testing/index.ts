@@ -131,3 +131,39 @@ export {
 // Test stubs for compliance testing
 export { GovernanceAgentStub } from './stubs';
 export type { StubCallRecord } from './stubs';
+
+// Storyboard-driven testing
+export {
+  // Runner
+  runStoryboard,
+  runStoryboardStep,
+  getFirstStepPreview,
+  // Loader
+  parseStoryboard,
+  loadStoryboardFile,
+  loadBundledStoryboards,
+  getStoryboardById,
+  getStoryboardsForPlatformType,
+  listStoryboards,
+  // Task mapping
+  TASK_TO_METHOD,
+  executeStoryboardTask,
+  // Context
+  extractContext,
+  injectContext,
+  // Validations
+  runValidations,
+  resolvePath,
+  // Types
+  type Storyboard,
+  type StoryboardPhase,
+  type StoryboardStep,
+  type StoryboardValidation,
+  type StoryboardContext,
+  type StoryboardRunOptions,
+  type ValidationResult,
+  type StoryboardStepPreview,
+  type StoryboardStepResult,
+  type StoryboardPhaseResult,
+  type StoryboardResult,
+} from './storyboard';

@@ -1,0 +1,231 @@
+id: error_compliance
+version: "1.0.0"
+title: "Error handling and compliance"
+category: media_buy_seller
+track: error_handling
+summary: "Validates that agents return properly structured AdCP errors with correct codes, recovery hints, and transport bindings."
+
+required_tools:
+  - get_products
+
+narrative: |
+  Every AdCP agent must handle invalid input gracefully. When a buyer sends a negative budget,
+  a nonexistent product ID, or a malformed request, the agent should return a structured error
+  response — not a stack trace or a generic 500.
+
+  AdCP defines three compliance levels for error responses:
+  - L1: isError flag set on the MCP response
+  - L2: JSON text fallback with adcp_error object in content
+  - L3: structuredContent.adcp_error binding (full compliance)
+
+  This storyboard sends intentionally bad input and validates that the agent rejects it with
+  the correct error code, recovery classification, and transport binding. Agents that use the
+  adcpError() helper from @adcp/client get L3 compliance automatically.
+
+agent:
+  interaction_model: media_buy_seller
+  capabilities:
+    - sells_media
+  examples:
+    - "Any AdCP seller agent"
+
+caller:
+  role: buyer_agent
+  example: "Compliance test harness"
+
+phases:
+  - id: error_responses
+    title: "Error responses for invalid input"
+    narrative: |
+      The buyer sends requests with intentionally invalid data — negative budgets, missing
+      required fields, nonexistent product IDs. Each request should be rejected with a
+      structured error containing an appropriate AdCP error code.
+
+    steps:
+      - id: negative_budget
+        title: "Reject negative budget"
+        narrative: |
+          A negative budget is never valid. The agent must reject this with INVALID_REQUEST
+          or BUDGET_TOO_LOW and a correctable recovery hint so the buyer knows to fix the value.
+        task: create_media_buy
+        requires_tool: create_media_buy
+        expect_error: true
+        stateful: false
+        expected: |
+          Reject the request with an error containing:
+          - code: INVALID_REQUEST or BUDGET_TOO_LOW
+          - recovery: correctable
+          - field: packages[0].budget (optional but recommended)
+        sample_request:
+          idempotency_key: "error-test-negative-budget"
+          start_time: "2026-05-01T00:00:00Z"
+          end_time: "2026-05-31T23:59:59Z"
+          packages:
+            - product_id: "test-product"
+              budget: -500
+              pricing_option_id: "test-pricing"
+        validations:
+          - check: error_code
+            value: "INVALID_REQUEST"
+            description: "Error code is INVALID_REQUEST or BUDGET_TOO_LOW"
+
+      - id: nonexistent_product
+        title: "Reject nonexistent product ID"
+        narrative: |
+          The buyer references a product ID that does not exist on this platform.
+          The agent should return PRODUCT_NOT_FOUND or INVALID_REQUEST.
+        task: create_media_buy
+        requires_tool: create_media_buy
+        expect_error: true
+        stateful: false
+        expected: |
+          Reject the request with an error containing:
+          - code: PRODUCT_NOT_FOUND or INVALID_REQUEST
+          - recovery: correctable
+        sample_request:
+          idempotency_key: "error-test-nonexistent-product"
+          start_time: "2026-05-01T00:00:00Z"
+          end_time: "2026-05-31T23:59:59Z"
+          packages:
+            - product_id: "NONEXISTENT_PRODUCT_ID_12345"
+              budget: 1000
+              pricing_option_id: "nonexistent-pricing"
+        validations:
+          - check: error_code
+            value: "PRODUCT_NOT_FOUND"
+            description: "Error code is PRODUCT_NOT_FOUND or INVALID_REQUEST"
+
+      - id: missing_fields
+        title: "Handle empty get_products request"
+        narrative: |
+          The buyer sends an empty get_products request with no brief or brand.
+          The agent may accept it (permissive) or reject it (strict validation).
+          Both behaviors are acceptable — what matters is that the response is structured.
+        task: get_products
+        requires_tool: get_products
+        stateful: false
+        expected: |
+          Either:
+          - Return products (permissive mode)
+          - Return a structured error with INVALID_REQUEST (strict mode)
+          Both are acceptable. An unstructured error or crash is not.
+        sample_request: {}
+        validations:
+          - check: response_schema
+            description: "Response is a valid get-products-response or structured error"
+
+      - id: reversed_dates
+        title: "Reject end time before start time"
+        narrative: |
+          The buyer sends a create_media_buy with end_time before start_time.
+          The agent must reject this temporal inconsistency.
+        task: create_media_buy
+        requires_tool: create_media_buy
+        expect_error: true
+        stateful: false
+        expected: |
+          Reject the request with an error containing:
+          - code: INVALID_REQUEST
+          - recovery: correctable
+          - field: end_time (optional but recommended)
+        sample_request:
+          idempotency_key: "error-test-reversed-dates"
+          start_time: "2026-05-31T23:59:59Z"
+          end_time: "2026-05-01T00:00:00Z"
+          packages:
+            - product_id: "test-product"
+              budget: 1000
+              pricing_option_id: "test-pricing"
+        validations:
+          - check: error_code
+            value: "INVALID_REQUEST"
+            description: "Error code is INVALID_REQUEST for reversed date range"
+
+  - id: error_structure
+    title: "Error JSON structure validation"
+    narrative: |
+      Beyond returning the right error code, the error object itself must conform to the
+      AdCP error schema. Required fields: code (non-empty string), message (string).
+      Optional fields: recovery (transient|correctable|terminal), retry_after (non-negative
+      number), field (string), suggestion (string). Non-standard codes must use the X_ prefix.
+
+    steps:
+      - id: validate_error_shape
+        title: "Validate error JSON structure"
+        narrative: |
+          Provoke an error and inspect the JSON structure. The error object must have a
+          code and message at minimum. If recovery, retry_after, field, or suggestion are
+          present, they must have the correct types. Non-standard codes must use X_ prefix.
+        task: create_media_buy
+        requires_tool: create_media_buy
+        expect_error: true
+        stateful: false
+        expected: |
+          Error object with valid structure:
+          - code: non-empty string (standard AdCP code or X_-prefixed vendor code)
+          - message: string
+          - recovery: transient, correctable, or terminal (if present)
+          - retry_after: non-negative number (if present)
+          - field: string path to the offending field (if present)
+          - suggestion: string with remediation hint (if present)
+        sample_request:
+          idempotency_key: "error-test-structure"
+          start_time: "2026-05-01T00:00:00Z"
+          end_time: "2026-05-31T23:59:59Z"
+          packages:
+            - product_id: "NONEXISTENT_PRODUCT_ID_12345"
+              budget: 1000
+              pricing_option_id: "nonexistent-pricing"
+        validations:
+          - check: field_present
+            path: "adcp_error.code"
+            description: "Error has a code field"
+          - check: field_present
+            path: "adcp_error.message"
+            description: "Error has a message field"
+
+  - id: error_transport
+    title: "Error transport binding validation"
+    narrative: |
+      AdCP errors must be delivered through the correct MCP transport layers. The isError
+      flag signals the error to the MCP client, the JSON text content provides a fallback
+      for clients that do not support structuredContent, and structuredContent.adcp_error
+      provides the full typed error object.
+
+      Agents using the adcpError() helper from @adcp/client get all three layers automatically.
+
+    steps:
+      - id: validate_transport_binding
+        title: "Validate structuredContent.adcp_error binding"
+        narrative: |
+          Provoke an error and check that it appears in the correct transport layers:
+          - isError: true on the MCP response
+          - JSON text content with adcp_error (L2 fallback)
+          - structuredContent.adcp_error (L3 full compliance)
+
+          L2 is the minimum passing level. L3 is expected for agents using adcpError().
+        task: create_media_buy
+        requires_tool: create_media_buy
+        expect_error: true
+        stateful: false
+        expected: |
+          MCP response with:
+          - isError: true
+          - content[].text contains JSON with adcp_error (L2)
+          - structuredContent.adcp_error present (L3)
+          - Error code in structuredContent matches error code in text content (consistency)
+        sample_request:
+          idempotency_key: "error-test-transport"
+          start_time: "2026-05-01T00:00:00Z"
+          end_time: "2026-05-31T23:59:59Z"
+          packages:
+            - product_id: "NONEXISTENT_PRODUCT_ID_12345"
+              budget: 1000
+              pricing_option_id: "nonexistent-pricing"
+        validations:
+          - check: field_present
+            path: "adcp_error"
+            description: "structuredContent contains adcp_error object"
+          - check: error_code
+            value: "PRODUCT_NOT_FOUND"
+            description: "Error code is a valid AdCP standard code or X_-prefixed vendor code"

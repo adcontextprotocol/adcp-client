@@ -526,14 +526,26 @@ function parseAgentOptions(args) {
     brief = args[briefIndex + 1];
   }
 
+  // Storyboard-specific flags (--context, --request) with JSON values
+  const contextIndex = args.indexOf('--context');
+  let contextValue = null;
+  if (contextIndex !== -1 && contextIndex + 1 < args.length && !args[contextIndex + 1].startsWith('--')) {
+    contextValue = args[contextIndex + 1];
+  }
+
+  const requestIndex = args.indexOf('--request');
+  let requestValue = null;
+  if (requestIndex !== -1 && requestIndex + 1 < args.length && !args[requestIndex + 1].startsWith('--')) {
+    requestValue = args[requestIndex + 1];
+  }
+
   const jsonOutput = args.includes('--json');
   const debug = args.includes('--debug') || process.env.ADCP_DEBUG === 'true';
   const dryRun = !args.includes('--no-dry-run');
 
-  // Filter out flags to find positional args
-  const positionalArgs = args.filter(
-    arg => !arg.startsWith('--') && arg !== authToken && arg !== protocolFlag && arg !== brief
-  );
+  // Filter out flags and their values to find positional args
+  const flagValues = [authToken, protocolFlag, brief, contextValue, requestValue].filter(Boolean);
+  const positionalArgs = args.filter(arg => !arg.startsWith('--') && !flagValues.includes(arg));
 
   return { authToken, protocolFlag, brief, jsonOutput, debug, dryRun, positionalArgs };
 }
@@ -758,6 +770,7 @@ USAGE:
 COMMANDS:
   test <agent> [scenario]     Run test scenarios against an agent
   comply <agent> [options]    Run compliance assessment
+  storyboard <subcommand>     Storyboard-driven testing (list, show, run, step)
   registry <command>          Brand/property registry lookups
 
   Run 'adcp <command> --help' for details on each command.
@@ -795,6 +808,326 @@ Full documentation: https://github.com/adcontextprotocol/adcp-client/blob/main/d
 `);
 }
 
+// ────────────────────────────────────────────────────────────
+// Storyboard command
+// ────────────────────────────────────────────────────────────
+
+async function handleStoryboardCommand(args) {
+  if (args.includes('--help') || args.includes('-h') || args.length === 0) {
+    console.log(`
+Storyboard-driven testing
+
+USAGE:
+  adcp storyboard list [--platform-type TYPE] [--json]
+  adcp storyboard show <storyboard_id> [--json]
+  adcp storyboard run <agent> <storyboard_id> [options]
+  adcp storyboard step <agent> <storyboard_id> <step_id> [options]
+
+SUBCOMMANDS:
+  list                List available storyboards
+  show <id>           Show storyboard structure (phases, steps)
+  run <agent> <id>    Run entire storyboard against an agent
+  step <agent> <id> <step_id>  Run a single step (stateless, LLM-friendly)
+
+OPTIONS:
+  --platform-type TYPE  Filter storyboards by platform type (list only)
+  --context JSON        Pass context from previous step (step only)
+  --request JSON        Override sample_request for the step (step only)
+  --json                JSON output (recommended for LLM consumption)
+  --auth TOKEN          Authentication token
+  --protocol PROTO      Force protocol: mcp or a2a
+  --no-dry-run          Execute real operations (default: dry-run)
+  --debug               Debug output
+
+EXAMPLES:
+  adcp storyboard list
+  adcp storyboard list --platform-type retail_media --json
+  adcp storyboard show media_buy_seller
+  adcp storyboard run test-mcp media_buy_seller --json
+  adcp storyboard step test-mcp media_buy_seller sync_accounts --json
+  adcp storyboard step test-mcp media_buy_seller get_products_brief \\
+    --context '{"account_id":"abc123"}' --json
+`);
+    process.exit(0);
+  }
+
+  const subcommand = args[0];
+  const subArgs = args.slice(1);
+
+  switch (subcommand) {
+    case 'list':
+      await handleStoryboardList(subArgs);
+      break;
+    case 'show':
+      await handleStoryboardShow(subArgs);
+      break;
+    case 'run':
+      await handleStoryboardRun(subArgs);
+      break;
+    case 'step':
+      await handleStoryboardStepCmd(subArgs);
+      break;
+    default:
+      console.error(`Unknown storyboard subcommand: ${subcommand}`);
+      console.error('Available: list, show, run, step');
+      process.exit(2);
+  }
+}
+
+async function handleStoryboardList(args) {
+  const { listStoryboards, getStoryboardsForPlatformType } = await import('../dist/lib/testing/storyboard/index.js');
+  const jsonOutput = args.includes('--json');
+
+  const ptIndex = args.indexOf('--platform-type');
+  const platformType = ptIndex !== -1 ? args[ptIndex + 1] : null;
+
+  let storyboards;
+  if (platformType) {
+    const filtered = getStoryboardsForPlatformType(platformType);
+    storyboards = filtered.map(s => ({
+      id: s.id,
+      title: s.title,
+      category: s.category,
+      summary: s.summary,
+      platform_types: s.platform_types,
+      step_count: s.phases.reduce((sum, p) => sum + p.steps.length, 0),
+    }));
+  } else {
+    storyboards = listStoryboards();
+  }
+
+  if (jsonOutput) {
+    console.log(JSON.stringify(storyboards, null, 2));
+  } else {
+    if (platformType) {
+      console.log(`\nStoryboards for platform type: ${platformType}\n`);
+    } else {
+      console.log('\nAvailable storyboards:\n');
+    }
+    for (const s of storyboards) {
+      console.log(`  ${s.id}`);
+      console.log(`    ${s.title} (${s.step_count} steps)`);
+      console.log(`    ${s.summary}`);
+      if (s.platform_types?.length) {
+        console.log(`    Platform types: ${s.platform_types.join(', ')}`);
+      }
+      console.log();
+    }
+    console.log(`${storyboards.length} storyboard(s) found.`);
+  }
+}
+
+async function handleStoryboardShow(args) {
+  const { getStoryboardById } = await import('../dist/lib/testing/storyboard/index.js');
+  const jsonOutput = args.includes('--json');
+  const positionalArgs = args.filter(a => !a.startsWith('--'));
+  const storyboardId = positionalArgs[0];
+
+  if (!storyboardId) {
+    console.error('Usage: adcp storyboard show <storyboard_id>');
+    process.exit(2);
+  }
+
+  const storyboard = getStoryboardById(storyboardId);
+  if (!storyboard) {
+    console.error(`Storyboard not found: ${storyboardId}`);
+    const { listStoryboards } = await import('../dist/lib/testing/storyboard/index.js');
+    const all = listStoryboards();
+    console.error(`Available: ${all.map(s => s.id).join(', ')}`);
+    process.exit(2);
+  }
+
+  if (jsonOutput) {
+    console.log(JSON.stringify(storyboard, null, 2));
+  } else {
+    console.log(`\n${storyboard.title}`);
+    console.log(`${'─'.repeat(storyboard.title.length)}`);
+    console.log(`ID: ${storyboard.id}  |  Category: ${storyboard.category}  |  Version: ${storyboard.version}`);
+    if (storyboard.platform_types?.length) {
+      console.log(`Platform types: ${storyboard.platform_types.join(', ')}`);
+    }
+    console.log(`\n${storyboard.summary}\n`);
+
+    for (const phase of storyboard.phases) {
+      const stepCount = phase.steps.length;
+      console.log(`Phase: ${phase.title} (${stepCount} step${stepCount !== 1 ? 's' : ''})`);
+      for (const step of phase.steps) {
+        const validationCount = step.validations?.length || 0;
+        const statefulTag = step.stateful ? ' [stateful]' : '';
+        console.log(`  → ${step.id}: ${step.title}${statefulTag}`);
+        console.log(`    Task: ${step.task}  |  Validations: ${validationCount}`);
+      }
+      console.log();
+    }
+  }
+}
+
+async function handleStoryboardRun(args) {
+  const { getStoryboardById, runStoryboard } = await import('../dist/lib/testing/storyboard/index.js');
+  const { authToken, protocolFlag, jsonOutput, debug, dryRun, positionalArgs } = parseAgentOptions(args);
+
+  const agentArg = positionalArgs[0];
+  const storyboardId = positionalArgs[1];
+
+  if (!agentArg || !storyboardId) {
+    console.error('Usage: adcp storyboard run <agent> <storyboard_id> [options]');
+    process.exit(2);
+  }
+
+  const storyboard = getStoryboardById(storyboardId);
+  if (!storyboard) {
+    console.error(`Storyboard not found: ${storyboardId}`);
+    process.exit(2);
+  }
+
+  const {
+    agentUrl,
+    protocol,
+    authToken: resolvedAuth,
+  } = await resolveAgent(agentArg, authToken, protocolFlag, jsonOutput);
+
+  if (!jsonOutput) {
+    console.error(`Running storyboard: ${storyboard.title}`);
+    console.error(`Agent: ${agentUrl} (${protocol})`);
+    console.error(`Steps: ${storyboard.phases.reduce((sum, p) => sum + p.steps.length, 0)}`);
+    console.error(`Dry run: ${dryRun}\n`);
+  }
+
+  const options = {
+    protocol,
+    dry_run: dryRun,
+    ...(resolvedAuth ? { auth: { type: 'bearer', token: resolvedAuth } } : {}),
+  };
+
+  const result = await runStoryboard(agentUrl, storyboard, options);
+
+  if (jsonOutput) {
+    console.log(JSON.stringify(result, null, 2));
+  } else {
+    // Human-readable output
+    for (const phase of result.phases) {
+      console.log(`\n── Phase: ${phase.phase_title} ──────────────────────────────`);
+      for (const step of phase.steps) {
+        const icon = step.passed ? '✅' : '❌';
+        console.log(`\n${icon} ${step.title} (${step.duration_ms}ms)`);
+        console.log(`   Task: ${step.task}`);
+        if (step.error) {
+          console.log(`   Error: ${step.error}`);
+        }
+        for (const v of step.validations) {
+          const vIcon = v.passed ? '✅' : '❌';
+          console.log(`   ${vIcon} ${v.description}`);
+          if (v.error) console.log(`      ${v.error}`);
+        }
+      }
+    }
+
+    console.log(`\n${'─'.repeat(50)}`);
+    const overallIcon = result.overall_passed ? '✅' : '❌';
+    console.log(
+      `${overallIcon} ${result.passed_count} passed, ${result.failed_count} failed, ${result.skipped_count} skipped (${result.total_duration_ms}ms)`
+    );
+  }
+
+  process.exit(result.overall_passed ? 0 : 3);
+}
+
+async function handleStoryboardStepCmd(args) {
+  const { getStoryboardById, runStoryboardStep } = await import('../dist/lib/testing/storyboard/index.js');
+  const { authToken, protocolFlag, jsonOutput, debug, dryRun, positionalArgs } = parseAgentOptions(args);
+
+  const agentArg = positionalArgs[0];
+  const storyboardId = positionalArgs[1];
+  const stepId = positionalArgs[2];
+
+  if (!agentArg || !storyboardId || !stepId) {
+    console.error('Usage: adcp storyboard step <agent> <storyboard_id> <step_id> [options]');
+    process.exit(2);
+  }
+
+  const storyboard = getStoryboardById(storyboardId);
+  if (!storyboard) {
+    console.error(`Storyboard not found: ${storyboardId}`);
+    process.exit(2);
+  }
+
+  const {
+    agentUrl,
+    protocol,
+    authToken: resolvedAuth,
+  } = await resolveAgent(agentArg, authToken, protocolFlag, jsonOutput);
+
+  // Parse --context and --request flags
+  let context = {};
+  let request;
+  const contextIndex = args.indexOf('--context');
+  if (contextIndex !== -1 && args[contextIndex + 1]) {
+    try {
+      context = JSON.parse(args[contextIndex + 1]);
+    } catch (e) {
+      console.error(`Invalid JSON for --context: ${e.message}`);
+      process.exit(2);
+    }
+  }
+  const requestIndex = args.indexOf('--request');
+  if (requestIndex !== -1 && args[requestIndex + 1]) {
+    try {
+      request = JSON.parse(args[requestIndex + 1]);
+    } catch (e) {
+      console.error(`Invalid JSON for --request: ${e.message}`);
+      process.exit(2);
+    }
+  }
+
+  const options = {
+    protocol,
+    dry_run: dryRun,
+    context,
+    request,
+    ...(resolvedAuth ? { auth: { type: 'bearer', token: resolvedAuth } } : {}),
+  };
+
+  const result = await runStoryboardStep(agentUrl, storyboard, stepId, options);
+
+  if (jsonOutput) {
+    console.log(JSON.stringify(result, null, 2));
+  } else {
+    const icon = result.passed ? '✅' : '❌';
+    console.log(`\n── Step: ${result.title} ──────────────────────────────`);
+    console.log(`Task: ${result.task}`);
+    console.log(`\n${icon} ${result.passed ? 'Passed' : 'Failed'} (${result.duration_ms}ms)`);
+
+    if (result.error) {
+      console.log(`Error: ${result.error}`);
+    }
+
+    for (const v of result.validations) {
+      const vIcon = v.passed ? '✅' : '❌';
+      console.log(`  ${vIcon} ${v.description}`);
+      if (v.error) console.log(`     ${v.error}`);
+    }
+
+    // Show context
+    const contextKeys = Object.keys(result.context);
+    if (contextKeys.length > 0) {
+      console.log(`\nContext: ${contextKeys.map(k => `${k}=${JSON.stringify(result.context[k])}`).join(', ')}`);
+    }
+
+    // Show next step preview
+    if (result.next) {
+      console.log(`\n── Next: ${result.next.title} ──────────────────────────────`);
+      console.log(`Task: ${result.next.task}`);
+      if (result.next.narrative) {
+        // Show first line of narrative
+        const firstLine = result.next.narrative.trim().split('\n')[0];
+        console.log(firstLine);
+      }
+    }
+  }
+
+  process.exit(result.passed ? 0 : 3);
+}
+
 async function main() {
   const args = process.argv.slice(2);
 
@@ -811,6 +1144,11 @@ async function main() {
 
   if (args[0] === 'comply') {
     await handleComplyCommand(args.slice(1));
+    return;
+  }
+
+  if (args[0] === 'storyboard') {
+    await handleStoryboardCommand(args.slice(1));
     return;
   }
 

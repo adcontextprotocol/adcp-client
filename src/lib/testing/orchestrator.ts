@@ -14,6 +14,9 @@ import type { TestScenario, TestOptions, TestResult, SuiteResult } from './types
  * ALL listed tools must be present in the agent's tool list.
  * Scenarios with an empty array are always applicable.
  *
+ * @deprecated Use storyboard-driven testing via `runStoryboard()` instead.
+ * Storyboards define required tools per step via `requires_tool` and per
+ * storyboard via `required_tools`. See `src/lib/testing/storyboard/`.
  */
 export const SCENARIO_REQUIREMENTS: Partial<Record<TestScenario, string[]>> = {
   // Always applicable
@@ -101,6 +104,8 @@ export const SCENARIO_REQUIREMENTS: Partial<Record<TestScenario, string[]>> = {
  * Deterministic scenarios (deterministic_*, controller_validation) are excluded here —
  * they are managed by the comply engine via TRACK_DEFINITIONS and only run when the
  * seller exposes comply_test_controller.
+ *
+ * @deprecated Use storyboard-driven testing via `runStoryboard()` instead.
  */
 export const DEFAULT_SCENARIOS: readonly TestScenario[] = [
   'health_check',
@@ -180,6 +185,9 @@ export function getApplicableScenarios(tools: string[], filter?: readonly TestSc
  * testAgent call creates its own client internally. This is intentional — testAgent
  * is designed as a standalone function and sharing state between scenarios could
  * cause cross-scenario interference.
+ *
+ * @deprecated Use `runStoryboard()` for storyboard-driven testing instead.
+ * The comply() engine now uses storyboards as its primary testing surface.
  */
 export async function testAllScenarios(agentUrl: string, options: OrchestratorOptions = {}): Promise<SuiteResult> {
   const start = Date.now();

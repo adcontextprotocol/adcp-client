@@ -12621,6 +12621,100 @@ export interface SyncAccountsError {
 }
 
 
+// sync_governance parameters
+/**
+ * Sync governance agent endpoints against specific accounts. The seller persists these governance agents and calls them for approval during media buy lifecycle events via check_governance. Uses replace semantics: each call replaces any previously synced agents on the specified accounts. The seller MUST verify that the authenticated agent has authority over each referenced account before persisting governance agents.
+ */
+export interface SyncGovernanceRequest {
+  /**
+   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
+   * Per-account governance agent configuration. Each entry pairs an account reference with the governance agents for that account.
+   */
+  accounts: {
+    account: AccountReference;
+    /**
+     * Governance agent endpoints for this account. The seller calls these agents via check_governance during media buy lifecycle events.
+     */
+    governance_agents: {
+      /**
+       * Governance agent endpoint URL. Must use HTTPS.
+       */
+      url: string;
+      /**
+       * Authentication the seller presents when calling this governance agent.
+       */
+      authentication: {
+        schemes: AuthenticationScheme[];
+        /**
+         * Authentication credential (e.g., Bearer token).
+         */
+        credentials: string;
+      };
+      /**
+       * Governance categories this agent handles (e.g., ['budget_authority', 'strategic_alignment']). When omitted, the agent handles all categories.
+       */
+      categories?: string[];
+    }[];
+  }[];
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+
+// sync_governance response
+/**
+ * Response from governance agent sync. Returns per-account results confirming sync, or operation-level errors on complete failure.
+ */
+export type SyncGovernanceResponse = SyncGovernanceSuccess | SyncGovernanceError;
+/**
+ * Sync processed — individual accounts may have errors
+ */
+export interface SyncGovernanceSuccess {
+  /**
+   * Per-account sync results
+   */
+  accounts: {
+    account: AccountReference;
+    /**
+     * Sync result. synced: governance agents persisted. failed: could not complete (see errors).
+     */
+    status: 'synced' | 'failed';
+    /**
+     * Governance agents now synced on this account. Reflects the persisted state after sync.
+     */
+    governance_agents?: {
+      /**
+       * Governance agent endpoint URL.
+       */
+      url: string;
+      /**
+       * Governance categories this agent handles.
+       */
+      categories?: string[];
+    }[];
+    /**
+     * Per-account errors (only present when status is 'failed')
+     */
+    errors?: Error[];
+  }[];
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Operation failed completely, no accounts were processed
+ */
+export interface SyncGovernanceError {
+  /**
+   * Operation-level errors (e.g., authentication failure, service unavailable)
+   */
+  errors: Error[];
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+
+
 // report_usage parameters
 /**
  * Reports how a vendor's service was consumed after campaign delivery. Used by orchestrators (DSPs, storefronts) to inform vendor agents (signals, governance, creative) what was used so the vendor can track earned revenue and verify billing. Records can span multiple accounts and campaigns in a single request.
