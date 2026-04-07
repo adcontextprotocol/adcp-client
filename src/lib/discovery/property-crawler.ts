@@ -12,6 +12,7 @@ import { SingleAgentClient } from '../core/SingleAgentClient';
 import { getPropertyIndex } from './property-index';
 import { createLogger, type LogLevel } from '../utils/logger';
 import { LIBRARY_VERSION } from '../version';
+import { validateUserAgent } from '../utils/validate-user-agent';
 import type { Property, AdAgentsJson } from './types';
 
 export interface AgentInfo {
@@ -31,7 +32,8 @@ export interface CrawlResult {
 
 export interface PropertyCrawlerConfig {
   logLevel?: LogLevel;
-  /** Custom User-Agent string for outbound requests */
+  /** Custom identifier for outbound requests. Used as User-Agent for protocol
+   *  calls to agents and included in the From header for direct property fetches. */
   userAgent?: string;
 }
 
@@ -43,8 +45,8 @@ export class PropertyCrawler {
     this.logger = createLogger({
       level: config?.logLevel || 'warn',
     }).child('PropertyCrawler');
-    if (config?.userAgent && /[\r\n]/.test(config.userAgent)) {
-      throw new Error('userAgent must not contain newline characters');
+    if (config?.userAgent) {
+      validateUserAgent(config.userAgent);
     }
     this.userAgent = config?.userAgent;
   }
@@ -265,7 +267,7 @@ export class PropertyCrawler {
           'Accept-Language': 'en-US,en;q=0.9',
           'Accept-Encoding': 'gzip, deflate, br',
           From: this.userAgent
-            ? `${this.userAgent} adcp-property-crawler@adcontextprotocol.org (v${LIBRARY_VERSION})`
+            ? `adcp-property-crawler@adcontextprotocol.org (${this.userAgent}; v${LIBRARY_VERSION})`
             : `adcp-property-crawler@adcontextprotocol.org (v${LIBRARY_VERSION})`,
         },
       });

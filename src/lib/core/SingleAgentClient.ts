@@ -112,6 +112,7 @@ import { normalizeFormatsResponse } from '../utils/format-renders';
 import { normalizePreviewCreativeResponse } from '../utils/preview-normalizer';
 import { normalizeGetProductsResponse, adaptGetProductsRequestForV2 } from '../utils/pricing-adapter';
 import { normalizeRequestParams } from '../utils/request-normalizer';
+import { validateUserAgent } from '../utils/validate-user-agent';
 
 /**
  * Error class for v3 feature compatibility issues
@@ -165,7 +166,7 @@ export interface SingleAgentClientConfig extends ConversationConfig {
   /** Enable debug logging */
   debug?: boolean;
   /** Custom User-Agent header sent with all outbound protocol requests.
-   *  Per-agent headers take precedence if they also set User-Agent. */
+   *  Overridden by per-agent `headers['User-Agent']` if set. */
   userAgent?: string;
   /** Additional headers to include in requests */
   headers?: Record<string, string>;
@@ -256,9 +257,7 @@ export class SingleAgentClient {
   ) {
     // Inject userAgent into agent headers so it flows through both MCP and A2A transports
     if (config.userAgent) {
-      if (/[\r\n]/.test(config.userAgent)) {
-        throw new Error('userAgent must not contain newline characters');
-      }
+      validateUserAgent(config.userAgent);
       this.agent = {
         ...this.agent,
         headers: { 'User-Agent': config.userAgent, ...this.agent.headers },

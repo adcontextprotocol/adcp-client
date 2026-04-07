@@ -55,12 +55,18 @@ describe('userAgent config', () => {
 
       assert.ok(capturedHeaders, 'Headers should be captured');
       assert.ok(
-        capturedHeaders['From'].startsWith('AAO-PropertyCrawler/1.0 '),
-        `From header should start with custom userAgent, got: ${capturedHeaders['From']}`
+        capturedHeaders['From'].startsWith('adcp-property-crawler@'),
+        `From header should start with standard email, got: ${capturedHeaders['From']}`
       );
       assert.ok(
-        capturedHeaders['From'].includes('adcp-property-crawler'),
-        'From header should still include standard crawler identifier'
+        capturedHeaders['From'].includes('AAO-PropertyCrawler/1.0'),
+        'From header should include custom userAgent in comment'
+      );
+      // Custom identifier goes in the RFC 5322 comment (parenthetical)
+      assert.match(
+        capturedHeaders['From'],
+        /\(AAO-PropertyCrawler\/1\.0;/,
+        'Custom userAgent should appear in parenthetical comment'
       );
     });
 
@@ -173,7 +179,7 @@ describe('userAgent config', () => {
     });
   });
 
-  describe('CRLF validation', () => {
+  describe('header injection validation', () => {
     test('SingleAgentClient rejects userAgent containing CRLF', () => {
       const { SingleAgentClient } = require('../../dist/lib/core/SingleAgentClient.js');
 
@@ -183,7 +189,7 @@ describe('userAgent config', () => {
             { id: 'test', name: 'Test', agent_uri: 'https://agent.example.com/mcp', protocol: 'mcp' },
             { userAgent: 'Evil/1.0\r\nX-Injected: true' }
           ),
-        /newline/
+        /newline|null/
       );
     });
 
@@ -196,7 +202,33 @@ describe('userAgent config', () => {
             { id: 'test', name: 'Test', agent_uri: 'https://agent.example.com/mcp', protocol: 'mcp' },
             { userAgent: 'Evil/1.0\nX-Injected: true' }
           ),
-        /newline/
+        /newline|null/
+      );
+    });
+
+    test('SingleAgentClient rejects userAgent containing bare carriage return', () => {
+      const { SingleAgentClient } = require('../../dist/lib/core/SingleAgentClient.js');
+
+      assert.throws(
+        () =>
+          new SingleAgentClient(
+            { id: 'test', name: 'Test', agent_uri: 'https://agent.example.com/mcp', protocol: 'mcp' },
+            { userAgent: 'Evil/1.0\rX-Injected: true' }
+          ),
+        /newline|null/
+      );
+    });
+
+    test('SingleAgentClient rejects userAgent containing null byte', () => {
+      const { SingleAgentClient } = require('../../dist/lib/core/SingleAgentClient.js');
+
+      assert.throws(
+        () =>
+          new SingleAgentClient(
+            { id: 'test', name: 'Test', agent_uri: 'https://agent.example.com/mcp', protocol: 'mcp' },
+            { userAgent: 'Evil/1.0\x00X-Injected: true' }
+          ),
+        /newline|null/
       );
     });
 
@@ -205,7 +237,7 @@ describe('userAgent config', () => {
 
       assert.throws(
         () => new PropertyCrawler({ logLevel: 'silent', userAgent: 'Evil/1.0\r\nX-Injected: true' }),
-        /newline/
+        /newline|null/
       );
     });
   });
