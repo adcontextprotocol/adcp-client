@@ -284,8 +284,13 @@ export function setPath(obj: Record<string, unknown>, path: string, value: unkno
     } else {
       if (FORBIDDEN_KEYS.has(segment)) return;
       const record = current as Record<string, unknown>;
-      if (record[segment] === undefined || record[segment] === null) {
-        record[segment] = typeof nextSegment === 'number' ? [] : {};
+      if (!Object.prototype.hasOwnProperty.call(record, segment) || record[segment] == null) {
+        Object.defineProperty(record, segment, {
+          value: typeof nextSegment === 'number' ? [] : {},
+          writable: true,
+          enumerable: true,
+          configurable: true,
+        });
       }
       current = record[segment];
     }
@@ -300,7 +305,12 @@ export function setPath(obj: Record<string, unknown>, path: string, value: unkno
     }
   } else {
     if (FORBIDDEN_KEYS.has(lastSegment)) return;
-    (current as Record<string, unknown>)[lastSegment] = value;
+    Object.defineProperty(current as Record<string, unknown>, lastSegment, {
+      value,
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    });
   }
 }
 
