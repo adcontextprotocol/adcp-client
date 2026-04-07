@@ -1,0 +1,279 @@
+/**
+ * Storyboard execution engine.
+ *
+ * Two entry points:
+ * - runStoryboard(): run all phases/steps sequentially
+ * - runStoryboardStep(): run a single step (stateless, LLM-friendly)
+ */
+
+import { getOrCreateClient, runStep } from '../client';
+import { executeStoryboardTask } from './task-map';
+import { extractContext, injectContext } from './context';
+import { runValidations } from './validations';
+import type {
+  Storyboard,
+  StoryboardPhase,
+  StoryboardStep,
+  StoryboardContext,
+  StoryboardRunOptions,
+  StoryboardResult,
+  StoryboardPhaseResult,
+  StoryboardStepResult,
+  StoryboardStepPreview,
+  ValidationResult,
+} from './types';
+
+// ────────────────────────────────────────────────────────────
+// runStoryboard: execute all phases/steps
+// ────────────────────────────────────────────────────────────
+
+/**
+ * Run an entire storyboard against an agent.
+ */
+export async function runStoryboard(
+  agentUrl: string,
+  storyboard: Storyboard,
+  options: StoryboardRunOptions = {}
+): Promise<StoryboardResult> {
+  const start = Date.now();
+  const client = getOrCreateClient(agentUrl, options);
+  let context: StoryboardContext = { ...options.context };
+  const phaseResults: StoryboardPhaseResult[] = [];
+  let passedCount = 0;
+  let failedCount = 0;
+  let skippedCount = 0;
+
+  // Flatten all steps for next-step preview lookups
+  const allSteps = flattenSteps(storyboard);
+
+  for (const phase of storyboard.phases) {
+    const phaseStart = Date.now();
+    const stepResults: StoryboardStepResult[] = [];
+    let phasePassed = true;
+    let statefulFailed = false;
+
+    for (const step of phase.steps) {
+      // Skip remaining steps if a stateful dependency failed
+      if (statefulFailed && step.stateful) {
+        stepResults.push({
+          step_id: step.id,
+          phase_id: phase.id,
+          title: step.title,
+          task: step.task,
+          passed: false,
+          duration_ms: 0,
+          validations: [],
+          context,
+          error: 'Skipped: prior stateful step failed',
+        });
+        skippedCount++;
+        phasePassed = false;
+        continue;
+      }
+
+      const result = await executeStep(client, step, phase.id, context, allSteps, options);
+      stepResults.push(result);
+
+      if (result.passed) {
+        context = result.context;
+        passedCount++;
+      } else {
+        phasePassed = false;
+        failedCount++;
+        if (step.stateful) statefulFailed = true;
+      }
+    }
+
+    phaseResults.push({
+      phase_id: phase.id,
+      phase_title: phase.title,
+      passed: phasePassed,
+      steps: stepResults,
+      duration_ms: Date.now() - phaseStart,
+    });
+  }
+
+  return {
+    storyboard_id: storyboard.id,
+    storyboard_title: storyboard.title,
+    agent_url: agentUrl,
+    overall_passed: failedCount === 0 && passedCount > 0,
+    phases: phaseResults,
+    context,
+    total_duration_ms: Date.now() - start,
+    passed_count: passedCount,
+    failed_count: failedCount,
+    skipped_count: skippedCount,
+    tested_at: new Date().toISOString(),
+    dry_run: options.dry_run !== false,
+  };
+}
+
+// ────────────────────────────────────────────────────────────
+// runStoryboardStep: execute a single step (stateless)
+// ────────────────────────────────────────────────────────────
+
+/**
+ * Run a single storyboard step.
+ *
+ * This is the core primitive for stateless, LLM-friendly execution.
+ * Context is passed in and returned, enabling step-by-step orchestration.
+ */
+export async function runStoryboardStep(
+  agentUrl: string,
+  storyboard: Storyboard,
+  stepId: string,
+  options: StoryboardRunOptions = {}
+): Promise<StoryboardStepResult> {
+  const client = getOrCreateClient(agentUrl, options);
+  const context: StoryboardContext = { ...options.context };
+
+  // Find the step
+  const allSteps = flattenSteps(storyboard);
+  const found = allSteps.find(s => s.step.id === stepId);
+  if (!found) {
+    throw new Error(
+      `Step "${stepId}" not found in storyboard "${storyboard.id}". ` +
+      `Available steps: ${allSteps.map(s => s.step.id).join(', ')}`
+    );
+  }
+
+  return executeStep(client, found.step, found.phaseId, context, allSteps, options);
+}
+
+// ────────────────────────────────────────────────────────────
+// Internal: execute a single step
+// ────────────────────────────────────────────────────────────
+
+async function executeStep(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- client type varies (TestClient)
+  client: any,
+  step: StoryboardStep,
+  phaseId: string,
+  context: StoryboardContext,
+  allSteps: FlatStep[],
+  options: StoryboardRunOptions
+): Promise<StoryboardStepResult> {
+  // Build request: use override, or inject context into sample_request
+  const request = options.request
+    ? { ...options.request }
+    : step.sample_request
+      ? injectContext({ ...step.sample_request }, context)
+      : {};
+
+  // Execute the task
+  const { result: taskResult, step: stepResult } = await runStep(
+    step.title,
+    step.task,
+    () => executeStoryboardTask(client, step.task, request)
+  );
+
+  const passed = stepResult.passed && (taskResult?.success ?? false);
+
+  // Run validations if the task succeeded
+  let validations: ValidationResult[] = [];
+  if (taskResult && step.validations?.length) {
+    validations = runValidations(step.validations, step.task, taskResult);
+  }
+
+  const allValidationsPassed = validations.every(v => v.passed);
+
+  // Extract context from successful responses
+  const updatedContext = { ...context };
+  if (passed && taskResult?.data) {
+    const extracted = extractContext(step.task, taskResult.data);
+    Object.assign(updatedContext, extracted);
+  }
+
+  // Build next step preview
+  const next = getNextStepPreview(step.id, allSteps, updatedContext);
+
+  return {
+    step_id: step.id,
+    phase_id: phaseId,
+    title: step.title,
+    task: step.task,
+    passed: passed && allValidationsPassed,
+    duration_ms: stepResult.duration_ms,
+    response: taskResult?.data,
+    validations,
+    context: updatedContext,
+    error: stepResult.error || (taskResult?.error) || undefined,
+    next,
+  };
+}
+
+// ────────────────────────────────────────────────────────────
+// Helpers
+// ────────────────────────────────────────────────────────────
+
+interface FlatStep {
+  step: StoryboardStep;
+  phaseId: string;
+  globalIndex: number;
+}
+
+function flattenSteps(storyboard: Storyboard): FlatStep[] {
+  const result: FlatStep[] = [];
+  let index = 0;
+  for (const phase of storyboard.phases) {
+    for (const step of phase.steps) {
+      result.push({ step, phaseId: phase.id, globalIndex: index++ });
+    }
+  }
+  return result;
+}
+
+function getNextStepPreview(
+  currentStepId: string,
+  allSteps: FlatStep[],
+  context: StoryboardContext
+): StoryboardStepPreview | undefined {
+  const currentIdx = allSteps.findIndex(s => s.step.id === currentStepId);
+  if (currentIdx === -1 || currentIdx >= allSteps.length - 1) return undefined;
+
+  const nextFlat = allSteps[currentIdx + 1];
+  if (!nextFlat) return undefined;
+  const nextStep = nextFlat.step;
+
+  // Inject context into the next step's sample_request for preview
+  const previewRequest = nextStep.sample_request
+    ? injectContext({ ...nextStep.sample_request }, context)
+    : undefined;
+
+  return {
+    step_id: nextStep.id,
+    phase_id: nextFlat.phaseId,
+    title: nextStep.title,
+    task: nextStep.task,
+    narrative: nextStep.narrative,
+    expected: nextStep.expected,
+    sample_request: previewRequest,
+  };
+}
+
+/**
+ * Get a preview of the first step in a storyboard (for showing what will happen).
+ */
+export function getFirstStepPreview(
+  storyboard: Storyboard,
+  context: StoryboardContext = {}
+): StoryboardStepPreview | undefined {
+  const firstPhase = storyboard.phases[0];
+  if (!firstPhase?.steps[0]) return undefined;
+
+  const step = firstPhase.steps[0];
+  const previewRequest = step.sample_request
+    ? injectContext({ ...step.sample_request }, context)
+    : undefined;
+
+  return {
+    step_id: step.id,
+    phase_id: firstPhase.id,
+    title: step.title,
+    task: step.task,
+    narrative: step.narrative,
+    expected: step.expected,
+    sample_request: previewRequest,
+  };
+}
