@@ -265,6 +265,8 @@ export function applyContextInputs(
  *
  * "media_buy_ids[0]" → obj.media_buy_ids[0] = value
  */
+const FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
 export function setPath(obj: Record<string, unknown>, path: string, value: unknown): void {
   const segments = parsePath(path);
   let current: unknown = obj;
@@ -280,6 +282,7 @@ export function setPath(obj: Record<string, unknown>, path: string, value: unkno
       }
       current = current[segment];
     } else {
+      if (FORBIDDEN_KEYS.has(segment)) return;
       const record = current as Record<string, unknown>;
       if (record[segment] === undefined || record[segment] === null) {
         record[segment] = typeof nextSegment === 'number' ? [] : {};
@@ -296,6 +299,7 @@ export function setPath(obj: Record<string, unknown>, path: string, value: unkno
       current[lastSegment] = value;
     }
   } else {
+    if (FORBIDDEN_KEYS.has(lastSegment)) return;
     (current as Record<string, unknown>)[lastSegment] = value;
   }
 }
