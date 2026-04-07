@@ -33,6 +33,8 @@ function runValidation(validation: StoryboardValidation, taskName: string, taskR
       return validateFieldValue(validation, taskResult);
     case 'status_code':
       return validateStatusCode(validation, taskResult);
+    case 'error_code':
+      return validateErrorCode(validation, taskResult);
     default:
       return {
         check: validation.check,
@@ -156,6 +158,36 @@ function validateStatusCode(validation: StoryboardValidation, taskResult: TaskRe
     passed,
     description: validation.description,
     error: passed ? undefined : `Task failed: ${taskResult.error || 'unknown error'}`,
+  };
+}
+
+// ────────────────────────────────────────────────────────────
+// error_code: check error code in error response
+// ────────────────────────────────────────────────────────────
+
+function validateErrorCode(validation: StoryboardValidation, taskResult: TaskResult): ValidationResult {
+  // Extract error code from various locations agents might put it
+  const data = taskResult.data as Record<string, unknown> | undefined;
+  const errorCode =
+    data?.error_code ?? data?.code ?? (data?.error as Record<string, unknown> | undefined)?.code ?? taskResult.error;
+
+  if (!validation.value) {
+    // Just check that an error code exists
+    const hasCode = errorCode !== undefined && errorCode !== null;
+    return {
+      check: 'error_code',
+      passed: hasCode,
+      description: validation.description,
+      error: hasCode ? undefined : 'No error code found in response',
+    };
+  }
+
+  const passed = String(errorCode) === String(validation.value);
+  return {
+    check: 'error_code',
+    passed,
+    description: validation.description,
+    error: passed ? undefined : `Expected error code "${validation.value}", got "${errorCode}"`,
   };
 }
 

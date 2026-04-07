@@ -1,0 +1,372 @@
+id: governance_property_lists
+version: "1.0.0"
+title: "Governance property list management"
+category: governance_property_lists
+summary: "CRUD lifecycle for property lists with filter round-trip validation."
+track: governance
+required_tools:
+  - create_property_list
+
+narrative: |
+  You operate a governance agent that manages property lists — curated sets of
+  domains and apps where a brand is willing (or unwilling) to run ads. Buyer
+  agents create, read, update, and delete property lists through your agent,
+  attaching filters like GARM brand-safety categories, MFA thresholds, and
+  custom tags.
+
+  This storyboard covers two concerns: basic CRUD operations on property lists,
+  and filter fidelity — ensuring that every filter type set at creation time
+  survives the round-trip and comes back unchanged on retrieval.
+
+agent:
+  interaction_model: governance
+  capabilities:
+    - manages_property_lists
+    - brand_safety
+  examples:
+    - "Brand safety platforms"
+    - "Agency governance dashboards"
+    - "Advertiser compliance tools"
+
+caller:
+  role: buyer_agent
+  example: "Scope3 (DSP)"
+
+prerequisites:
+  description: |
+    The caller needs a brand identity for the property list. The test kit
+    provides a sample brand (Acme Outdoor) with governance parameters.
+  test_kit: "test-kits/acme-outdoor.yaml"
+
+phases:
+  - id: property_list_crud
+    title: "Property list CRUD operations"
+    narrative: |
+      The buyer creates a property list, retrieves it, updates it, lists all
+      property lists, deletes the created list, and verifies the deletion.
+      This exercises the full lifecycle of property list management.
+
+    steps:
+      - id: create_property_list
+        title: "Create a property list"
+        narrative: |
+          The buyer creates a new property list with base properties (included
+          domains) and filters (GARM exclusions, MFA thresholds). The governance
+          agent provisions the list and returns a list_id and auth_token for
+          subsequent mutations.
+        task: create_property_list
+        stateful: true
+        expected: |
+          Return the created property list with:
+          - list.list_id: platform-assigned identifier
+          - list.name: echoes the requested name
+          - auth_token: credential for update/delete operations
+        sample_request:
+          name: "E2E Test List"
+          description: "E2E test property list for governance testing"
+          base_properties:
+            include:
+              - identifier_type: "domain"
+                identifier_value: "example.com"
+              - identifier_type: "domain"
+                identifier_value: "test.example.com"
+          filters:
+            garm_categories:
+              exclude:
+                - "adult"
+                - "arms"
+            mfa_thresholds:
+              min_score: 0.7
+          brand_manifest:
+            name: "E2E Test Brand"
+            url: "https://test.example.com"
+        validations:
+          - check: response_schema
+            description: "Response matches create-property-list response schema"
+          - check: field_present
+            path: "list.list_id"
+            description: "Created list has a platform-assigned ID"
+          - check: field_present
+            path: "list.name"
+            description: "Created list echoes the requested name"
+        context_outputs:
+          - path: "list.list_id"
+            key: "list_id"
+          - path: "auth_token"
+            key: "auth_token"
+
+      - id: get_property_list
+        title: "Retrieve the property list"
+        requires_tool: get_property_list
+        narrative: |
+          The buyer retrieves the property list just created, requesting
+          resolved identifiers. The response should include the list metadata,
+          base properties, and filters exactly as they were set.
+        task: get_property_list
+        stateful: true
+        expected: |
+          Return the property list with:
+          - list.list_id: matches the created ID
+          - list.name: matches the created name
+          - identifiers: resolved list of included domains
+          - list.filters: matches the filters set at creation
+        sample_request:
+          list_id: "$context.list_id"
+          resolve: true
+          max_results: 10
+        context_inputs:
+          - key: "list_id"
+            inject_at: "list_id"
+        validations:
+          - check: response_schema
+            description: "Response matches get-property-list response schema"
+          - check: field_present
+            path: "list.list_id"
+            description: "Response contains the list ID"
+
+      - id: update_property_list
+        title: "Update the property list"
+        requires_tool: update_property_list
+        narrative: |
+          The buyer updates the property list, adding a new domain to the
+          include set and expanding the GARM exclusion list. The auth_token
+          from the create step authorizes the mutation.
+        task: update_property_list
+        stateful: true
+        expected: |
+          Return the updated property list with:
+          - list.list_id: unchanged
+          - list.updated_at: a timestamp reflecting the update
+          - Updated description and filters
+        sample_request:
+          list_id: "$context.list_id"
+          auth_token: "$context.auth_token"
+          description: "Updated E2E test property list"
+          base_properties:
+            include:
+              - identifier_type: "domain"
+                identifier_value: "example.com"
+              - identifier_type: "domain"
+                identifier_value: "test.example.com"
+              - identifier_type: "domain"
+                identifier_value: "new.example.com"
+          filters:
+            garm_categories:
+              exclude:
+                - "adult"
+                - "arms"
+                - "gambling"
+            mfa_thresholds:
+              min_score: 0.8
+        context_inputs:
+          - key: "list_id"
+            inject_at: "list_id"
+          - key: "auth_token"
+            inject_at: "auth_token"
+        validations:
+          - check: response_schema
+            description: "Response matches update-property-list response schema"
+          - check: field_present
+            path: "list.list_id"
+            description: "Updated list retains its ID"
+
+      - id: list_property_lists
+        title: "List all property lists"
+        requires_tool: list_property_lists
+        narrative: |
+          The buyer lists all property lists visible to them. The response
+          should include at least the list created earlier in this storyboard.
+        task: list_property_lists
+        stateful: false
+        expected: |
+          Return a paginated list of property lists with:
+          - lists: array of property list summaries
+          - Each list has list_id and name
+        sample_request:
+          max_results: 10
+        validations:
+          - check: response_schema
+            description: "Response matches list-property-lists response schema"
+          - check: field_present
+            path: "lists"
+            description: "Response contains a lists array"
+
+      - id: delete_property_list
+        title: "Delete the property list"
+        requires_tool: delete_property_list
+        narrative: |
+          The buyer deletes the test property list. The auth_token from the
+          create step authorizes the deletion.
+        task: delete_property_list
+        stateful: true
+        expected: |
+          Return confirmation of deletion:
+          - deleted: true
+          - list_id: matches the deleted list
+        sample_request:
+          list_id: "$context.list_id"
+          auth_token: "$context.auth_token"
+        context_inputs:
+          - key: "list_id"
+            inject_at: "list_id"
+          - key: "auth_token"
+            inject_at: "auth_token"
+        validations:
+          - check: response_schema
+            description: "Response matches delete-property-list response schema"
+          - check: field_present
+            path: "deleted"
+            description: "Response confirms deletion"
+          - check: field_present
+            path: "list_id"
+            description: "Response echoes the deleted list ID"
+
+      - id: get_deleted_list
+        title: "Retrieve deleted list (error expected)"
+        requires_tool: get_property_list
+        narrative: |
+          The buyer attempts to retrieve the list that was just deleted. The
+          agent should reject this request with an error, confirming that the
+          list no longer exists.
+        task: get_property_list
+        stateful: true
+        expect_error: true
+        expected: |
+          Return an error indicating the list does not exist.
+        sample_request:
+          list_id: "$context.list_id"
+        context_inputs:
+          - key: "list_id"
+            inject_at: "list_id"
+        validations:
+          - check: error_code
+            value: "not_found"
+            description: "Agent rejects access to a deleted list"
+
+  - id: property_list_filters
+    title: "Property list filter round-trips"
+    narrative: |
+      Filter fidelity matters: when a buyer sets GARM exclusions, MFA
+      thresholds, custom tags, and feature requirements on a property list,
+      those filters must survive storage and come back unchanged on retrieval.
+
+      This phase creates a property list with every supported filter type,
+      retrieves it with resolve:true, and validates each filter round-tripped.
+
+    steps:
+      - id: create_list_with_all_filters
+        title: "Create property list with all filter types"
+        narrative: |
+          The buyer creates a property list with GARM category exclusions,
+          MFA thresholds, custom tag include/exclude rules, and optionally
+          feature requirements. This exercises the full filter surface area.
+        task: create_property_list
+        stateful: true
+        expected: |
+          Return the created property list with:
+          - list.list_id: platform-assigned identifier
+          - auth_token: credential for subsequent operations
+          - All filter types accepted without error
+        sample_request:
+          name: "E2E Filter Test"
+          description: "E2E filter round-trip test"
+          base_properties:
+            include:
+              - identifier_type: "domain"
+                identifier_value: "example.com"
+          filters:
+            garm_categories:
+              exclude:
+                - "adult"
+                - "arms"
+                - "gambling"
+                - "hate_speech"
+            mfa_thresholds:
+              min_score: 0.75
+            custom_tags:
+              include:
+                - key: "content_type"
+                  value: "premium"
+              exclude:
+                - key: "content_type"
+                  value: "user_generated"
+          brand_manifest:
+            name: "E2E Test Brand"
+            url: "https://test.example.com"
+        validations:
+          - check: response_schema
+            description: "Response matches create-property-list response schema"
+          - check: field_present
+            path: "list.list_id"
+            description: "Created list has a platform-assigned ID"
+        context_outputs:
+          - path: "list.list_id"
+            key: "filter_list_id"
+          - path: "auth_token"
+            key: "filter_auth_token"
+
+      - id: get_list_validate_filters
+        title: "Retrieve and validate filter round-trip"
+        requires_tool: get_property_list
+        narrative: |
+          The buyer retrieves the property list with resolve:true and checks
+          that every filter type set at creation time is returned unchanged.
+          GARM categories, MFA thresholds, and custom tags must all survive
+          the round-trip through the governance agent's storage.
+        task: get_property_list
+        stateful: true
+        expected: |
+          Return the property list with all filters intact:
+          - list.filters.garm_categories.exclude: contains adult, arms, gambling, hate_speech
+          - list.filters.mfa_thresholds.min_score: 0.75
+          - list.filters.custom_tags.include: content_type=premium
+          - list.filters.custom_tags.exclude: content_type=user_generated
+        sample_request:
+          list_id: "$context.filter_list_id"
+          resolve: true
+          max_results: 5
+        context_inputs:
+          - key: "filter_list_id"
+            inject_at: "list_id"
+        validations:
+          - check: response_schema
+            description: "Response matches get-property-list response schema"
+          - check: field_present
+            path: "list.list_id"
+            description: "Response contains the list ID"
+          - check: field_present
+            path: "list.filters"
+            description: "Filters object is present in the response"
+          - check: field_present
+            path: "list.filters.garm_categories"
+            description: "GARM category filters survived the round-trip"
+          - check: field_present
+            path: "list.filters.mfa_thresholds"
+            description: "MFA threshold filters survived the round-trip"
+          - check: field_present
+            path: "list.filters.custom_tags"
+            description: "Custom tag filters survived the round-trip"
+
+      - id: cleanup_filter_list
+        title: "Delete filter test list (cleanup)"
+        requires_tool: delete_property_list
+        narrative: |
+          Clean up the filter test list created in this phase.
+        task: delete_property_list
+        stateful: true
+        expected: |
+          Return confirmation that the list was deleted.
+        sample_request:
+          list_id: "$context.filter_list_id"
+          auth_token: "$context.filter_auth_token"
+        context_inputs:
+          - key: "filter_list_id"
+            inject_at: "list_id"
+          - key: "filter_auth_token"
+            inject_at: "auth_token"
+        validations:
+          - check: response_schema
+            description: "Response matches delete-property-list response schema"
+          - check: field_present
+            path: "deleted"
+            description: "Response confirms deletion"

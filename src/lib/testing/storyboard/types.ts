@@ -21,6 +21,10 @@ export interface Storyboard {
   narrative: string;
   /** Platform types this storyboard applies to (for backwards compat with PlatformType) */
   platform_types?: string[];
+  /** Maps to a ComplianceTrack for comply() integration */
+  track?: string;
+  /** Tools that make this storyboard applicable (at least one must be present) */
+  required_tools?: string[];
   agent: {
     interaction_model: string;
     capabilities: string[];
@@ -44,6 +48,20 @@ export interface StoryboardPhase {
   steps: StoryboardStep[];
 }
 
+export interface ContextOutput {
+  /** JSON path to extract from the response */
+  path: string;
+  /** Key to store the extracted value under in context */
+  key: string;
+}
+
+export interface ContextInput {
+  /** Key to look up in context */
+  key: string;
+  /** JSON path in the request to inject the value at */
+  inject_at: string;
+}
+
 export interface StoryboardStep {
   id: string;
   title: string;
@@ -57,6 +75,14 @@ export interface StoryboardStep {
   comply_scenario?: string;
   /** Whether this step depends on state from a previous step */
   stateful?: boolean;
+  /** When true, the step passes if the task returns an error */
+  expect_error?: boolean;
+  /** Tool name required for this step to run. Skipped if agent lacks it. */
+  requires_tool?: string;
+  /** Explicit context extraction rules (supplements convention-based extractors) */
+  context_outputs?: ContextOutput[];
+  /** Explicit context injection rules (supplements $context.key placeholders) */
+  context_inputs?: ContextInput[];
   expected?: string;
   sample_request?: Record<string, unknown>;
   sample_response?: Record<string, unknown>;
@@ -64,10 +90,10 @@ export interface StoryboardStep {
 }
 
 export interface StoryboardValidation {
-  check: 'response_schema' | 'field_present' | 'field_value' | 'status_code';
+  check: 'response_schema' | 'field_present' | 'field_value' | 'status_code' | 'error_code';
   /** JSON path for field checks, e.g. "accounts[0].account_id" */
   path?: string;
-  /** Expected value for field_value checks */
+  /** Expected value for field_value and error_code checks */
   value?: unknown;
   description: string;
 }
@@ -87,6 +113,8 @@ export interface StoryboardRunOptions extends TestOptions {
   context?: StoryboardContext;
   /** Override the step's sample_request with a custom request */
   request?: Record<string, unknown>;
+  /** Agent's available tools (for requires_tool filtering) */
+  agentTools?: string[];
 }
 
 // ────────────────────────────────────────────────────────────
@@ -118,6 +146,10 @@ export interface StoryboardStepResult {
   title: string;
   task: string;
   passed: boolean;
+  /** True when the step was skipped due to requires_tool not being present */
+  skipped?: boolean;
+  /** True when the step expected an error (inverted pass/fail) */
+  expect_error?: boolean;
   duration_ms: number;
   response?: unknown;
   validations: ValidationResult[];

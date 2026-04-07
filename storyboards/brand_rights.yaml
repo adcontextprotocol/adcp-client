@@ -1,0 +1,131 @@
+id: brand_rights
+version: "1.0.0"
+title: "Brand rights flow"
+category: brand_rights
+summary: "Agent that provides brand identity, queries rights, and supports rights acquisition."
+track: core
+required_tools:
+  - get_brand_identity
+
+narrative: |
+  You run a brand rights platform — a system that manages brand identity information,
+  tracks rights associated with brands, and facilitates rights acquisition. A caller
+  connects to retrieve brand identity details, query existing rights, and initiate
+  new rights acquisitions.
+
+  The caller starts by fetching the brand identity for a given domain. Then they
+  query what rights are currently associated with that brand. Finally, they request
+  acquisition of additional rights, optionally in dry_run mode to preview without
+  committing.
+
+  This storyboard walks through the complete brand rights flow from discovery
+  through acquisition.
+
+agent:
+  interaction_model: brand_rights
+  capabilities:
+    - brand_identity
+    - rights_management
+  examples:
+    - "Brand registry platforms"
+    - "Rights management systems"
+    - "Brand safety and compliance platforms"
+
+caller:
+  role: buyer_agent
+  example: "Agency brand compliance tool"
+
+prerequisites:
+  description: |
+    The caller needs a brand domain to query. The test uses example.com as a
+    default domain suitable for validating the brand rights protocol flow.
+
+phases:
+  - id: brand_rights_flow
+    title: "Brand rights flow"
+    narrative: |
+      The caller retrieves brand identity, queries existing rights, and initiates
+      rights acquisition. Each step builds on the previous: the brand identity
+      confirms the brand exists, the rights query shows what is already held,
+      and the acquisition request adds new rights.
+
+    steps:
+      - id: get_brand_identity
+        title: "Retrieve brand identity"
+        narrative: |
+          The caller requests brand identity information for a specific domain.
+          The agent returns the brand name, domain, and any associated guidelines
+          or metadata. This confirms the brand is known to the platform.
+        task: get_brand_identity
+        stateful: false
+        expected: |
+          Return the brand identity:
+          - request_id: echoes the caller's request_id
+          - brand_name: human-readable brand name
+          - brand_domain: the queried domain
+          - guidelines: brand usage guidelines (optional)
+
+        sample_request:
+          type: "get_brand_identity_request"
+          request_id: "e2e-brand-id-001"
+          brand_domain: "example.com"
+
+        validations:
+          - check: field_present
+            path: "brand_name"
+            description: "Response includes the brand name"
+          - check: field_present
+            path: "brand_domain"
+            description: "Response includes the brand domain"
+
+      - id: get_rights
+        title: "Query current brand rights"
+        requires_tool: get_rights
+        narrative: |
+          The caller queries what rights are currently associated with the brand.
+          The agent returns a list of rights with their types, scopes, and
+          expiration dates.
+        task: get_rights
+        stateful: false
+        expected: |
+          Return the current rights:
+          - request_id: echoes the caller's request_id
+          - rights: array of right objects, each with type, scope, and optional expires_at
+
+        sample_request:
+          type: "get_rights_request"
+          request_id: "e2e-rights-001"
+          brand_domain: "example.com"
+
+        validations:
+          - check: field_present
+            path: "rights"
+            description: "Response includes a rights array"
+
+      - id: acquire_rights
+        title: "Acquire brand rights"
+        requires_tool: acquire_rights
+        narrative: |
+          The caller initiates acquisition of brand rights. The dry_run flag
+          allows previewing the acquisition without committing. The agent
+          returns the acquisition status and a rights_id for tracking.
+        task: acquire_rights
+        stateful: true
+        expected: |
+          Return the acquisition result:
+          - request_id: echoes the caller's request_id
+          - status: granted, pending, denied, or dry_run
+          - rights_id: identifier for the acquired or pending rights
+          - dry_run: true when the request was a preview
+
+        sample_request:
+          type: "acquire_rights_request"
+          request_id: "e2e-acquire-001"
+          brand_domain: "example.com"
+          rights_type: "usage"
+          dry_run: true
+
+        validations:
+          - check: field_present
+            path: "status"
+            description: "Response includes acquisition status"

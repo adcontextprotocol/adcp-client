@@ -11,6 +11,8 @@ export type {
   StoryboardPhase,
   StoryboardStep,
   StoryboardValidation,
+  ContextOutput,
+  ContextInput,
   StoryboardContext,
   StoryboardRunOptions,
   ValidationResult,
@@ -30,6 +32,9 @@ export {
   loadBundledStoryboards,
   getStoryboardById,
   getStoryboardsForPlatformType,
+  getComplianceStoryboards,
+  getComplianceStoryboardsForTrack,
+  getApplicableComplianceStoryboards,
   listStoryboards,
 } from './loader';
 
@@ -37,7 +42,7 @@ export {
 export { TASK_TO_METHOD, executeStoryboardTask } from './task-map';
 
 // Context
-export { extractContext, injectContext } from './context';
+export { extractContext, injectContext, applyContextOutputs, applyContextInputs, setPath } from './context';
 
 // Validations
 export { runValidations, resolvePath } from './validations';

@@ -75,6 +75,31 @@ export function getStoryboardsForPlatformType(platformType: string): Storyboard[
 }
 
 /**
+ * Get compliance storyboards (those with a `track` field set).
+ */
+export function getComplianceStoryboards(): Storyboard[] {
+  return loadBundledStoryboards().filter(s => s.track);
+}
+
+/**
+ * Get compliance storyboards for a specific track.
+ */
+export function getComplianceStoryboardsForTrack(track: string): Storyboard[] {
+  return getComplianceStoryboards().filter(s => s.track === track);
+}
+
+/**
+ * Get compliance storyboards applicable to an agent based on its tools.
+ * A storyboard is applicable if the agent has at least one of its required_tools.
+ */
+export function getApplicableComplianceStoryboards(track: string, agentTools: string[]): Storyboard[] {
+  return getComplianceStoryboardsForTrack(track).filter(s => {
+    if (!s.required_tools?.length) return true;
+    return s.required_tools.some(tool => agentTools.includes(tool));
+  });
+}
+
+/**
  * Get all bundled storyboard IDs with titles and categories.
  */
 export function listStoryboards(): Array<{

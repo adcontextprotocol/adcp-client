@@ -1,0 +1,384 @@
+id: si_session
+version: "1.0.0"
+title: "Sponsored intelligence session"
+category: si_session
+summary: "SI agent that serves offerings, manages conversational sessions, and handles purchase handoffs."
+track: si
+required_tools:
+  - si_initiate_session
+
+narrative: |
+  You run a sponsored intelligence platform — an AI-powered conversational commerce agent
+  that monetizes through product recommendations and purchase handoffs. A caller connects
+  to check offering availability, initiate a conversation session, exchange messages, and
+  optionally hand off to a transaction flow.
+
+  The caller starts by querying whether an offering is available. If it is, they initiate
+  a session, send messages to explore products, and eventually terminate the session. When
+  the user expresses purchase intent, the termination includes a handoff_transaction reason
+  and the response may contain an acp_handoff structure with checkout details.
+
+  This storyboard walks through the full SI lifecycle: availability, session management,
+  and transaction handoff.
+
+agent:
+  interaction_model: si_platform
+  capabilities:
+    - sponsored_intelligence
+    - conversational
+  examples:
+    - "AI shopping assistants"
+    - "Conversational commerce platforms"
+    - "Product recommendation engines"
+
+caller:
+  role: buyer_agent
+  example: "AI assistant caller"
+
+prerequisites:
+  description: |
+    The caller needs an offering ID and identity credentials. The test uses
+    default values (e2e-test-offering, e2e-test-principal) suitable for
+    validating the SI protocol flow.
+
+phases:
+  - id: availability
+    title: "Offering availability"
+    narrative: |
+      The caller checks whether a specific SI offering is available before initiating
+      a session. The agent returns availability status, an optional offering token for
+      session initiation, and metadata about the offering's capabilities.
+
+      This phase also validates that the agent handles invalid offering IDs gracefully,
+      returning unavailable rather than erroring.
+
+    steps:
+      - id: get_offering
+        title: "Check SI offering availability"
+        requires_tool: si_get_offering
+        narrative: |
+          The caller queries a specific offering by ID. The agent checks inventory and
+          returns whether the offering is available, along with an offering_token the
+          caller uses in subsequent session initiation.
+        task: si_get_offering
+        stateful: false
+        expected: |
+          Return the offering status:
+          - available: true or false
+          - offering_token: opaque token for session initiation (when available)
+          - title and description of the offering
+          - capabilities: what modalities this offering supports
+          - unavailable_reason: explanation when not available
+
+        sample_request:
+          offering_id: "e2e-test-offering"
+          context: "Checking SI offering availability"
+          identity:
+            principal: "e2e-test-principal"
+            device_id: "e2e-test-device"
+
+        validations:
+          - check: field_present
+            path: "available"
+            description: "Response includes availability status"
+
+        context_outputs:
+          - path: "offering_token"
+            key: "offering_token"
+
+      - id: get_offering_invalid
+        title: "Check invalid offering availability"
+        requires_tool: si_get_offering
+        narrative: |
+          The caller queries a nonexistent offering ID. The agent should return
+          available: false with an unavailable_reason, or reject the request with
+          an error. Either response is acceptable.
+        task: si_get_offering
+        stateful: false
+        expected: |
+          Return available: false for the invalid offering, or return an error.
+          The agent must not return available: true for an unknown offering ID.
+
+        sample_request:
+          offering_id: "INVALID_OFFERING_ID_DOES_NOT_EXIST_12345"
+          context: "Checking unavailable offering"
+          identity:
+            principal: "e2e-test-principal"
+
+        validations:
+          - check: field_value
+            path: "available"
+            value: false
+            description: "Invalid offering is reported as unavailable"
+
+  - id: session_lifecycle
+    title: "Session lifecycle"
+    narrative: |
+      The caller initiates a conversational session, exchanges messages, and
+      terminates the session. This tests the core SI protocol flow: create a
+      session, send messages within it, and cleanly shut it down.
+
+      After termination, the caller verifies the session is no longer active
+      by attempting to send a message to the terminated session.
+
+    steps:
+      - id: initiate_session
+        title: "Initiate SI session"
+        narrative: |
+          The caller starts a new conversational session with an offering. The agent
+          provisions the session and returns a session_id, an initial response message,
+          and negotiated capabilities describing what the session supports.
+        task: si_initiate_session
+        stateful: true
+        expected: |
+          Return the session with:
+          - session_id: unique identifier for this session
+          - response: initial message and optional ui_elements
+          - negotiated_capabilities: what modalities were agreed upon
+
+        sample_request:
+          offering_id: "e2e-test-offering"
+          offering_token: "$context.offering_token"
+          identity:
+            principal: "e2e-test-principal"
+            device_id: "e2e-test-device"
+          context: "Initiating conversation about products"
+          placement: "e2e-test-placement"
+          supported_capabilities:
+            modalities:
+              conversational: true
+              rich_media: true
+
+        context_inputs:
+          - key: "offering_token"
+            inject_at: "offering_token"
+
+        validations:
+          - check: field_present
+            path: "session_id"
+            description: "Response includes a session_id"
+
+        context_outputs:
+          - path: "session_id"
+            key: "session_id"
+
+      - id: send_message_1
+        title: "Send message: product inquiry"
+        requires_tool: si_send_message
+        narrative: |
+          The caller sends a product inquiry message within the active session.
+          The agent responds with product information and optional UI elements
+          such as product cards or carousels.
+        task: si_send_message
+        stateful: true
+        expected: |
+          Return the message response:
+          - session_id: matches the active session
+          - session_status: active
+          - response: message text and optional ui_elements
+
+        sample_request:
+          session_id: "$context.session_id"
+          message: "What products do you have available?"
+          metadata:
+            test_iteration: 1
+
+        context_inputs:
+          - key: "session_id"
+            inject_at: "session_id"
+
+        validations:
+          - check: field_present
+            path: "session_id"
+            description: "Response includes the session_id"
+
+      - id: send_message_2
+        title: "Send message: product details"
+        requires_tool: si_send_message
+        narrative: |
+          The caller asks a follow-up question about a specific product.
+          The agent should maintain conversational context from the previous
+          message and respond with more detailed information.
+        task: si_send_message
+        stateful: true
+        expected: |
+          Return a contextual response continuing the conversation:
+          - session_status: active
+          - response: detailed product information
+
+        sample_request:
+          session_id: "$context.session_id"
+          message: "Can you tell me more about your best seller?"
+          metadata:
+            test_iteration: 2
+
+        context_inputs:
+          - key: "session_id"
+            inject_at: "session_id"
+
+        validations:
+          - check: field_present
+            path: "session_id"
+            description: "Response includes the session_id"
+
+      - id: terminate_session
+        title: "Terminate SI session"
+        requires_tool: si_terminate_session
+        narrative: |
+          The caller ends the session with a user_exit reason. The agent
+          confirms termination and cleans up session state.
+        task: si_terminate_session
+        stateful: true
+        expected: |
+          Confirm session termination:
+          - session_id: matches the terminated session
+          - terminated: true
+
+        sample_request:
+          session_id: "$context.session_id"
+          reason: "user_exit"
+          termination_context:
+            summary: "Session completed successfully"
+
+        context_inputs:
+          - key: "session_id"
+            inject_at: "session_id"
+
+        validations:
+          - check: field_present
+            path: "terminated"
+            description: "Response confirms termination"
+
+      - id: send_to_terminated
+        title: "Send message to terminated session (error expected)"
+        requires_tool: si_send_message
+        expect_error: true
+        narrative: |
+          The caller attempts to send a message to the terminated session.
+          The agent should reject the message or return a terminated session
+          status. This validates that session cleanup is enforced.
+        task: si_send_message
+        stateful: true
+        expected: |
+          Reject the message or return session_status of "terminated" or "complete".
+          The agent must not accept new messages on a terminated session.
+
+        sample_request:
+          session_id: "$context.session_id"
+          message: "This should fail"
+
+        context_inputs:
+          - key: "session_id"
+            inject_at: "session_id"
+
+        validations: []
+
+  - id: handoff
+    title: "Transaction handoff"
+    narrative: |
+      The caller initiates a session, sends a purchase-intent message, and then
+      terminates with reason handoff_transaction. The agent may include an
+      acp_handoff structure in the termination response containing checkout URLs,
+      tokens, and transaction metadata.
+
+      This tests the commerce integration path where conversational AI transitions
+      to a purchase flow.
+
+    steps:
+      - id: initiate_handoff_session
+        title: "Initiate SI session (handoff flow)"
+        narrative: |
+          The caller starts a new session specifically for testing the handoff flow.
+          This is a separate session from the lifecycle phase.
+        task: si_initiate_session
+        stateful: true
+        expected: |
+          Return a new session with a session_id for the handoff test.
+
+        sample_request:
+          offering_id: "e2e-test-offering"
+          offering_token: "$context.offering_token"
+          identity:
+            principal: "e2e-test-principal"
+            device_id: "e2e-test-device"
+          context: "Initiating session for handoff test"
+          placement: "e2e-test-placement"
+          supported_capabilities:
+            modalities:
+              conversational: true
+
+        context_inputs:
+          - key: "offering_token"
+            inject_at: "offering_token"
+
+        validations:
+          - check: field_present
+            path: "session_id"
+            description: "Response includes a session_id"
+
+        context_outputs:
+          - path: "session_id"
+            key: "handoff_session_id"
+
+      - id: send_purchase_intent
+        title: "Send purchase intent message"
+        requires_tool: si_send_message
+        narrative: |
+          The caller sends a message expressing purchase intent. This primes the
+          agent for a transaction handoff in the next step.
+        task: si_send_message
+        stateful: true
+        expected: |
+          Accept the purchase intent message. The agent may begin preparing
+          transaction details in anticipation of a handoff.
+
+        sample_request:
+          session_id: "$context.handoff_session_id"
+          message: "I'd like to purchase this product. Can you set up a transaction?"
+
+        context_inputs:
+          - key: "handoff_session_id"
+            inject_at: "session_id"
+
+        validations:
+          - check: field_present
+            path: "session_id"
+            description: "Response includes the session_id"
+
+      - id: terminate_with_handoff
+        title: "Terminate with handoff_transaction"
+        requires_tool: si_terminate_session
+        narrative: |
+          The caller terminates the session with reason handoff_transaction and
+          includes transaction intent metadata. The agent confirms termination and
+          may return an acp_handoff structure with checkout details.
+        task: si_terminate_session
+        stateful: true
+        expected: |
+          Confirm termination and optionally return an acp_handoff object:
+          - terminated: true
+          - acp_handoff (optional):
+            - checkout_url: URL for the purchase flow
+            - checkout_token: opaque token for the transaction
+            - payload: additional transaction data
+            - expires_at: when the handoff expires
+
+          If the agent does not support transaction handoff, terminated: true
+          without acp_handoff is acceptable.
+
+        sample_request:
+          session_id: "$context.handoff_session_id"
+          reason: "handoff_transaction"
+          termination_context:
+            summary: "Terminating for handoff validation"
+            transaction_intent:
+              intent: "purchase"
+
+        context_inputs:
+          - key: "handoff_session_id"
+            inject_at: "session_id"
+
+        validations:
+          - check: field_present
+            path: "terminated"
+            description: "Response confirms termination"

@@ -9,6 +9,7 @@ import { testAgent as runAgentTest } from '../agent-tester';
 import { createTestClient, discoverAgentProfile } from '../client';
 import { getApplicableScenarios } from '../orchestrator';
 import type { TestScenario, TestOptions, TestResult, AgentProfile } from '../types';
+import { runTrackStoryboards, mapStoryboardResultsToTrackResult } from './storyboard-tracks';
 import type {
   ComplianceTrack,
   TrackResult,
@@ -696,81 +697,38 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
       }
 
       const trackStart = Date.now();
-      const applicable = getApplicableScenarios(profile.tools, def.scenarios);
-      const skipped = def.scenarios.filter(s => !applicable.includes(s));
 
-      // Track is relevant (agent has some related tools) but no scenarios match
-      // the specific tool combinations. Report as pass with an observation.
-      if (applicable.length === 0) {
-        const relevantTools = TRACK_RELEVANCE[track].filter(t => profile.tools.includes(t));
-        const observations: AdvisoryObservation[] = [
-          {
-            category: 'completeness',
-            severity: 'info',
-            track,
-            message:
-              `Agent has ${relevantTools.join(', ')} but no test scenarios cover this tool combination. ` +
-              `Compliance tests exist for: ${def.scenarios.join(', ')}.`,
-            evidence: { tools_present: relevantTools, scenarios_available: def.scenarios },
-          },
-        ];
-        allObservations.push(...observations);
-        trackResults.push({
+      // Run compliance storyboards for this track
+      const storyboardResults = await runTrackStoryboards(agentUrl, track, profile.tools, {
+        ...effectiveOptions,
+        agentTools: profile.tools,
+      });
+
+      let trackResult: TrackResult;
+
+      if (storyboardResults.length > 0) {
+        // Map storyboard results to TrackResult for backwards compat
+        trackResult = mapStoryboardResultsToTrackResult(track, storyboardResults, profile);
+      } else {
+        // No storyboards for this track — skip
+        trackResult = {
           track,
-          status: 'pass',
+          status: 'skip',
           label: def.label,
           scenarios: [],
-          skipped_scenarios: skipped,
-          observations,
-          duration_ms: Date.now() - trackStart,
-        });
-        continue;
+          skipped_scenarios: [],
+          observations: [],
+          duration_ms: 0,
+        };
       }
 
-      // Run each applicable scenario for this track
-      const results: TestResult[] = [];
-      for (const scenario of applicable) {
-        // Check for abort between scenarios
-        signal?.throwIfAborted();
-        const result = await runAgentTest(agentUrl, scenario, effectiveOptions);
-        results.push(result);
-      }
-
-      const observations = collectObservations(track, results, profile);
-
-      // Detect auth-only failures when running without auth
-      const hasAuth = !!effectiveOptions.auth;
-      const authSkippedScenarios = !hasAuth ? results.filter(r => isAuthOnlyFailure(r)).map(r => r.scenario) : [];
-
-      if (authSkippedScenarios.length > 0) {
-        observations.push({
-          category: 'auth',
-          severity: 'info',
-          track,
-          message:
-            `${authSkippedScenarios.length} scenario(s) require authentication: ${authSkippedScenarios.join(', ')}. ` +
-            `Re-run with --auth to test.`,
-          evidence: { scenarios: authSkippedScenarios },
-        });
-      }
+      // Collect observations from track results and agent profile
+      const observations = collectObservations(track, trackResult.scenarios, profile);
+      trackResult.observations = observations;
+      trackResult.duration_ms = Date.now() - trackStart;
 
       allObservations.push(...observations);
-
-      const status = computeTrackStatus(results, skipped.length, hasAuth);
-      const hasDeterministicScenario = applicable.some(
-        s => s.startsWith('deterministic_') || s === 'controller_validation'
-      );
-      const mode = hasDeterministicScenario ? ('deterministic' as const) : ('observational' as const);
-      trackResults.push({
-        track,
-        status,
-        label: def.label,
-        scenarios: results,
-        skipped_scenarios: skipped,
-        observations,
-        duration_ms: Date.now() - trackStart,
-        mode,
-      });
+      trackResults.push(trackResult);
     }
 
     // Build platform coherence result if platform type was declared

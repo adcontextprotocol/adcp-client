@@ -10,7 +10,8 @@
  * (context_outputs/context_inputs) while still enabling stateful flows.
  */
 
-import type { StoryboardContext } from './types';
+import type { StoryboardContext, ContextOutput, ContextInput } from './types';
+import { resolvePath } from './validations';
 
 // ────────────────────────────────────────────────────────────
 // Context extraction: pull known IDs from task responses
@@ -216,4 +217,104 @@ function deepReplace(value: unknown, context: StoryboardContext): unknown {
   }
 
   return value;
+}
+
+// ────────────────────────────────────────────────────────────
+// Explicit context_outputs: extract values by path
+// ────────────────────────────────────────────────────────────
+
+/**
+ * Apply explicit context_outputs rules to extract values from response data.
+ */
+export function applyContextOutputs(data: unknown, outputs: ContextOutput[]): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  for (const output of outputs) {
+    const value = resolvePath(data, output.path);
+    if (value !== undefined && value !== null) {
+      result[output.key] = value;
+    }
+  }
+  return result;
+}
+
+// ────────────────────────────────────────────────────────────
+// Explicit context_inputs: inject values into request by path
+// ────────────────────────────────────────────────────────────
+
+/**
+ * Apply explicit context_inputs rules to inject context values into a request.
+ * Returns a new object (does not mutate the input).
+ */
+export function applyContextInputs(
+  request: Record<string, unknown>,
+  inputs: ContextInput[],
+  context: StoryboardContext
+): Record<string, unknown> {
+  const result = structuredClone(request);
+  for (const input of inputs) {
+    if (input.key in context) {
+      setPath(result, input.inject_at, context[input.key]);
+    }
+  }
+  return result;
+}
+
+/**
+ * Set a value at a dot-path with array indexing.
+ * Creates intermediate objects/arrays as needed.
+ *
+ * "media_buy_ids[0]" → obj.media_buy_ids[0] = value
+ */
+export function setPath(obj: Record<string, unknown>, path: string, value: unknown): void {
+  const segments = parsePath(path);
+  let current: unknown = obj;
+
+  for (let i = 0; i < segments.length - 1; i++) {
+    const segment = segments[i]!;
+    const nextSegment = segments[i + 1];
+
+    if (typeof segment === 'number') {
+      if (!Array.isArray(current)) return;
+      if (current[segment] === undefined || current[segment] === null) {
+        current[segment] = typeof nextSegment === 'number' ? [] : {};
+      }
+      current = current[segment];
+    } else {
+      const record = current as Record<string, unknown>;
+      if (record[segment] === undefined || record[segment] === null) {
+        record[segment] = typeof nextSegment === 'number' ? [] : {};
+      }
+      current = record[segment];
+    }
+  }
+
+  const lastSegment = segments[segments.length - 1];
+  if (lastSegment === undefined) return;
+
+  if (typeof lastSegment === 'number') {
+    if (Array.isArray(current)) {
+      current[lastSegment] = value;
+    }
+  } else {
+    (current as Record<string, unknown>)[lastSegment] = value;
+  }
+}
+
+/**
+ * Parse a path string into segments (shared logic with validations.ts resolvePath).
+ */
+function parsePath(path: string): Array<string | number> {
+  const segments: Array<string | number> = [];
+  const re = /([^.\[\]]+)|\[(\d+)\]/g;
+  let match: RegExpExecArray | null;
+
+  while ((match = re.exec(path)) !== null) {
+    if (match[2] !== undefined) {
+      segments.push(parseInt(match[2], 10));
+    } else if (match[1] !== undefined) {
+      segments.push(match[1]);
+    }
+  }
+
+  return segments;
 }

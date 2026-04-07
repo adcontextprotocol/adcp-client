@@ -8,11 +8,10 @@
 
 import { getOrCreateClient, runStep } from '../client';
 import { executeStoryboardTask } from './task-map';
-import { extractContext, injectContext } from './context';
+import { extractContext, injectContext, applyContextOutputs, applyContextInputs } from './context';
 import { runValidations } from './validations';
 import type {
   Storyboard,
-  StoryboardPhase,
   StoryboardStep,
   StoryboardContext,
   StoryboardRunOptions,
@@ -154,21 +153,50 @@ async function executeStep(
   allSteps: FlatStep[],
   options: StoryboardRunOptions
 ): Promise<StoryboardStepResult> {
+  // Check requires_tool — skip if agent doesn't have it
+  if (step.requires_tool && options.agentTools && !options.agentTools.includes(step.requires_tool)) {
+    const next = getNextStepPreview(step.id, allSteps, context);
+    return {
+      step_id: step.id,
+      phase_id: phaseId,
+      title: step.title,
+      task: step.task,
+      passed: true,
+      skipped: true,
+      duration_ms: 0,
+      validations: [],
+      context,
+      next,
+    };
+  }
+
   // Build request: use override, or inject context into sample_request
-  const request = options.request
+  let request = options.request
     ? { ...options.request }
     : step.sample_request
       ? injectContext({ ...step.sample_request }, context)
       : {};
+
+  // Apply explicit context_inputs
+  if (step.context_inputs?.length) {
+    request = applyContextInputs(request, step.context_inputs, context);
+  }
 
   // Execute the task
   const { result: taskResult, step: stepResult } = await runStep(step.title, step.task, () =>
     executeStoryboardTask(client, step.task, request)
   );
 
-  const passed = stepResult.passed && (taskResult?.success ?? false);
+  // Determine pass/fail — inverted when expect_error is set
+  let passed: boolean;
+  if (step.expect_error) {
+    // Step passes when the task fails (returns an error)
+    passed = !taskResult?.success || !!stepResult.error;
+  } else {
+    passed = stepResult.passed && (taskResult?.success ?? false);
+  }
 
-  // Run validations if the task succeeded
+  // Run validations
   let validations: ValidationResult[] = [];
   if (taskResult && step.validations?.length) {
     validations = runValidations(step.validations, step.task, taskResult);
@@ -176,11 +204,20 @@ async function executeStep(
 
   const allValidationsPassed = validations.every(v => v.passed);
 
-  // Extract context from successful responses
+  // Extract context from responses
   const updatedContext = { ...context };
-  if (passed && taskResult?.data) {
+  const hasData = taskResult?.data !== undefined && taskResult?.data !== null;
+
+  // Convention-based extraction (for non-error steps, or when expect_error succeeded)
+  if (passed && hasData) {
     const extracted = extractContext(step.task, taskResult.data);
     Object.assign(updatedContext, extracted);
+  }
+
+  // Explicit context_outputs (always applied when data exists)
+  if (hasData && step.context_outputs?.length) {
+    const explicit = applyContextOutputs(taskResult.data, step.context_outputs);
+    Object.assign(updatedContext, explicit);
   }
 
   // Build next step preview
@@ -192,11 +229,12 @@ async function executeStep(
     title: step.title,
     task: step.task,
     passed: passed && allValidationsPassed,
+    expect_error: step.expect_error,
     duration_ms: stepResult.duration_ms,
     response: taskResult?.data,
     validations,
     context: updatedContext,
-    error: stepResult.error || taskResult?.error || undefined,
+    error: step.expect_error ? undefined : stepResult.error || taskResult?.error || undefined,
     next,
   };
 }
