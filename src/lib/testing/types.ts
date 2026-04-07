@@ -70,6 +70,8 @@ export type TestScenario =
 export interface TestOptions {
   // Protocol to use for testing (default: 'mcp')
   protocol?: 'mcp' | 'a2a';
+  /** Custom User-Agent string sent with all outbound requests */
+  userAgent?: string;
   // Brand reference for product discovery (preferred over brand_manifest)
   brand?: { domain: string; brand_id?: string };
   // Custom brief for product discovery
