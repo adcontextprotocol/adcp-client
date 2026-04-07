@@ -22,10 +22,7 @@ import { createServer } from 'http';
 
 // Server-side helpers for building AdCP agents
 // In your own project, import from '@adcp/client' instead of '../dist/...'
-import {
-  createTaskCapableServer,
-  taskToolResponse,
-} from '../dist/lib/server/index.js';
+import { createTaskCapableServer, taskToolResponse } from '../dist/lib/server/index.js';
 
 // Generated schemas for tool input validation
 import { GetSignalsRequestSchema } from '../dist/lib/types/schemas.generated.js';
@@ -47,8 +44,7 @@ const SEGMENTS: Signal[] = [
       id: 'high_intent_shoppers',
     },
     name: 'High Intent Shoppers',
-    description:
-      'Users who visited product pages 3+ times in the last 7 days without purchasing.',
+    description: 'Users who visited product pages 3+ times in the last 7 days without purchasing.',
     value_type: 'binary',
     signal_type: 'owned',
     data_provider: 'Example Signals Agent',
@@ -71,8 +67,7 @@ const SEGMENTS: Signal[] = [
       id: 'lapsed_subscribers',
     },
     name: 'Lapsed Subscribers',
-    description:
-      'Email subscribers who have not opened in 90+ days but previously had high engagement.',
+    description: 'Email subscribers who have not opened in 90+ days but previously had high engagement.',
     value_type: 'binary',
     signal_type: 'custom',
     data_provider: 'Example Signals Agent',
@@ -95,8 +90,7 @@ const SEGMENTS: Signal[] = [
       id: 'geo_urban_commuters',
     },
     name: 'Urban Commuters',
-    description:
-      'Users whose location data indicates daily commute patterns through major metro areas.',
+    description: 'Users whose location data indicates daily commute patterns through major metro areas.',
     value_type: 'binary',
     signal_type: 'marketplace',
     data_provider: 'Example Signals Agent',
@@ -125,21 +119,17 @@ function querySegments(args: {
   let results = [...SEGMENTS];
 
   if (args.signal_ids?.length) {
-    const ids = new Set(args.signal_ids.map((s) => s.id));
-    results = results.filter((s) => ids.has(s.signal_agent_segment_id));
+    const ids = new Set(args.signal_ids.map(s => s.id));
+    results = results.filter(s => ids.has(s.signal_agent_segment_id));
   }
 
   if (args.catalog_types?.length) {
-    results = results.filter((s) => args.catalog_types!.includes(s.signal_type));
+    results = results.filter(s => args.catalog_types!.includes(s.signal_type));
   }
 
   if (args.signal_spec) {
     const spec = args.signal_spec.toLowerCase();
-    results = results.filter(
-      (s) =>
-        s.name.toLowerCase().includes(spec) ||
-        s.description.toLowerCase().includes(spec),
-    );
+    results = results.filter(s => s.name.toLowerCase().includes(spec) || s.description.toLowerCase().includes(spec));
   }
 
   if (args.max_results) {
@@ -154,15 +144,14 @@ function querySegments(args: {
 // ---------------------------------------------------------------------------
 function createSignalsAgent() {
   const server = createTaskCapableServer('Example Signals Agent', '1.0.0', {
-    instructions:
-      'Signals agent providing audience segment discovery via get_signals.',
+    instructions: 'Signals agent providing audience segment discovery via get_signals.',
   });
 
   server.tool(
     'get_signals',
     'Discover audience segments. Supports natural language discovery via signal_spec or exact lookup via signal_ids.',
     GetSignalsRequestSchema.shape,
-    async (args) => {
+    async args => {
       const signals = querySegments({
         signal_spec: args.signal_spec,
         signal_ids: args.signal_ids,
@@ -170,11 +159,8 @@ function createSignalsAgent() {
         max_results: args.max_results,
       });
 
-      return taskToolResponse(
-        { signals, sandbox: true },
-        `Found ${signals.length} audience segment(s)`,
-      );
-    },
+      return taskToolResponse({ signals, sandbox: true }, `Found ${signals.length} audience segment(s)`);
+    }
   );
 
   return server;
@@ -214,7 +200,5 @@ httpServer.listen(PORT, () => {
   console.log(`Signals agent running at http://localhost:${PORT}/mcp`);
   console.log(`\nTest with:`);
   console.log(`  npx @adcp/client http://localhost:${PORT}/mcp`);
-  console.log(
-    `  npx @adcp/client http://localhost:${PORT}/mcp get_signals '{"signal_spec":"audience segments"}'`,
-  );
+  console.log(`  npx @adcp/client http://localhost:${PORT}/mcp get_signals '{"signal_spec":"audience segments"}'`);
 });
