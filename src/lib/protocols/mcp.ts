@@ -293,21 +293,33 @@ async function connectMCPWithFallbackImpl(
       error,
     });
 
-    // Stale session — retry StreamableHTTP with a fresh connection
-    if (error instanceof StreamableHTTPError && error.code === 404) {
+    // Stale/expired session — retry StreamableHTTP with a fresh connection.
+    // 404 = session not found (per MCP spec), 400 = "Session not found" (SDK #1852),
+    // other StreamableHTTPError codes may also indicate session issues.
+    // Always retry StreamableHTTP before falling back to SSE.
+    if (error instanceof StreamableHTTPError) {
       debugLogs.push({
         type: 'info',
-        message: `MCP: Session error detected, retrying StreamableHTTP for ${label}`,
+        message: `MCP: Session error (${error.code}) detected, retrying StreamableHTTP for ${label}`,
         timestamp: new Date().toISOString(),
       });
-      const client = new MCPClient({ name: 'AdCP-Client', version: '1.0.0' });
-      await client.connect(new StreamableHTTPClientTransport(url, transportOptions));
-      debugLogs.push({
-        type: 'success',
-        message: `MCP: Connected via StreamableHTTP (retry) for ${label}`,
-        timestamp: new Date().toISOString(),
-      });
-      return client;
+      try {
+        const client = new MCPClient({ name: 'AdCP-Client', version: '1.0.0' });
+        await client.connect(new StreamableHTTPClientTransport(url, transportOptions));
+        debugLogs.push({
+          type: 'success',
+          message: `MCP: Connected via StreamableHTTP (retry) for ${label}`,
+          timestamp: new Date().toISOString(),
+        });
+        return client;
+      } catch (retryError) {
+        debugLogs.push({
+          type: 'error',
+          message: `MCP: StreamableHTTP retry also failed for ${label}: ${retryError instanceof Error ? retryError.message : String(retryError)}`,
+          timestamp: new Date().toISOString(),
+        });
+        // Fall through to SSE fallback below
+      }
     }
 
     // Auth failure — transport type won't change the outcome
