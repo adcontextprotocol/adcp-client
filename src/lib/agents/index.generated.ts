@@ -90,6 +90,8 @@ import type {
   ListAccountsResponse,
   SyncAccountsRequest,
   SyncAccountsResponse,
+  SyncGovernanceRequest,
+  SyncGovernanceResponse,
   ReportUsageRequest,
   ReportUsageResponse,
   GetAccountFinancialsRequest,
@@ -432,6 +434,13 @@ export class Agent {
   }
 
   /**
+   * Official AdCP sync_governance tool schema
+   */
+  async syncGovernance(params: SyncGovernanceRequest): Promise<SyncGovernanceResponse> {
+    return this.callTool<SyncGovernanceResponse>('sync_governance', params);
+  }
+
+  /**
    * Official AdCP report_usage tool schema
    */
   async reportUsage(params: ReportUsageRequest): Promise<ReportUsageResponse> {
@@ -698,6 +707,13 @@ export class AgentCollection {
    */
   async syncAccounts(params: SyncAccountsRequest): Promise<SyncAccountsResponse[]> {
     return this.callToolOnAll<SyncAccountsResponse>('sync_accounts', params);
+  }
+
+  /**
+   * Official AdCP sync_governance tool schema (across multiple agents)
+   */
+  async syncGovernance(params: SyncGovernanceRequest): Promise<SyncGovernanceResponse[]> {
+    return this.callToolOnAll<SyncGovernanceResponse>('sync_governance', params);
   }
 
   /**
