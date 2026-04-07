@@ -85,7 +85,8 @@ describe('userAgent config', () => {
 
       await crawler.fetchAdAgentsJson('example.com');
 
-      assert.ok(capturedHeaders['From'].startsWith('adcp-property-crawler@'),
+      assert.ok(
+        capturedHeaders['From'].startsWith('adcp-property-crawler@'),
         `From header should start with standard identifier, got: ${capturedHeaders['From']}`
       );
     });
