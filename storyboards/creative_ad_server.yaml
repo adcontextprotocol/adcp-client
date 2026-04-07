@@ -6,6 +6,10 @@ summary: "Stateful ad server with pre-loaded creatives. Generates serving tags p
 platform_types:
   - creative_ad_server
 
+track: creative
+required_tools:
+  - build_creative
+  - sync_creatives
 narrative: |
   You run a creative ad server — think Innovid, Flashtalking, or CM360. Your clients
   have already uploaded their creatives through your UI. Buyers connect to browse your

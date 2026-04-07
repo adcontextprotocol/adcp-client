@@ -17,6 +17,9 @@ platform_types:
   - ai_platform
   - generative_dsp
 
+track: reporting
+required_tools:
+  - get_media_buy_delivery
 narrative: |
   You run a sell-side platform — a publisher, SSP, retail media network, or any system that
   sells advertising inventory. A buyer agent connects to discover your products, negotiate

@@ -8,6 +8,9 @@ platform_types:
   - ai_ad_network
   - ai_platform
 
+track: signals
+required_tools:
+  - get_signals
 narrative: |
   You operate a signal marketplace — an intermediary that aggregates audience data from
   multiple third-party providers and makes it available to buyers through a single interface.

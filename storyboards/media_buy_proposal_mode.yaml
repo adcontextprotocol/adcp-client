@@ -9,6 +9,10 @@ platform_types:
   - pmax_platform
   - generative_dsp
 
+track: media_buy
+required_tools:
+  - create_media_buy
+  - get_products
 narrative: |
   Your seller generates curated media plan proposals. The buyer sends a brief, your platform
   returns products alongside proposals — curated bundles with budget allocations and rationale

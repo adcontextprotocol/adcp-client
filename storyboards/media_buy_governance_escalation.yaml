@@ -8,6 +8,9 @@ platform_types:
   - ai_ad_network
   - generative_dsp
 
+track: campaign_governance
+required_tools:
+  - sync_plans
 narrative: |
   The buyer's governance agent denies a media buy because it exceeds the agent's spending
   authority. The governance check escalates to a human reviewer who approves with conditions.

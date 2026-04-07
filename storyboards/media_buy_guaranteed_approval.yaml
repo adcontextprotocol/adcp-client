@@ -9,6 +9,9 @@ platform_types:
   - audio_platform
   - linear_tv_platform
 
+track: media_buy
+required_tools:
+  - create_media_buy
 narrative: |
   You run a sell-side platform that requires human approval before guaranteed media buys go
   live. When a buyer creates a guaranteed buy, your platform returns a submitted status with

@@ -9,6 +9,9 @@ platform_types:
   - pmax_platform
   - generative_dsp
 
+track: media_buy
+required_tools:
+  - create_media_buy
 narrative: |
   You run a sell-side platform with auction-based inventory. Non-guaranteed buys don't
   require IOs or human approval — the buyer sets a bid price and budget, and your platform

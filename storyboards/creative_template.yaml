@@ -7,6 +7,10 @@ platform_types:
   - creative_transformer
   - creative_library
 
+track: creative
+required_tools:
+  - build_creative
+  - list_creative_formats
 narrative: |
   You build a creative management or rich media platform — think Celtra, a format
   conversion service, or any tool that defines ad templates and transforms input assets

@@ -6,6 +6,10 @@ summary: "Seller that renders dynamic ads from product catalogs, tracks conversi
 platform_types:
   - retail_media
 
+track: media_buy
+required_tools:
+  - create_media_buy
+  - sync_creatives
 narrative: |
   You run a platform that supports catalog-driven advertising — think Snap Dynamic Ads,
   Meta Product Catalogs, or retail media product listing ads. The buyer pushes a product

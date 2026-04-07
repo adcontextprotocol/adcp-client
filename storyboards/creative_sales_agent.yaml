@@ -7,6 +7,10 @@ platform_types:
   - retail_media
   - social_platform
 
+track: creative
+required_tools:
+  - sync_creatives
+  - list_creative_formats
 narrative: |
   You run a publisher platform, retail media network, or other sell-side system that
   accepts creative assets from buyers. The buyer pushes assets or catalog items to your
