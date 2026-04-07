@@ -644,6 +644,23 @@ const result = await agent.syncCreatives(
 // Handler fires when webhook received
 ```
 
+## Building an Agent (Server)
+
+The examples above show client-side usage — calling existing agents. To build your own agent that serves AdCP tools:
+
+```typescript
+import { createTaskCapableServer, taskToolResponse, GetSignalsRequestSchema } from '@adcp/client';
+
+const server = createTaskCapableServer('My Signals Agent', '1.0.0');
+
+server.tool('get_signals', 'Discover audience segments.', GetSignalsRequestSchema.shape, async (args) => {
+  const signals = queryYourDatabase(args.signal_spec);
+  return taskToolResponse({ signals, sandbox: true }, `Found ${signals.length} segment(s)`);
+});
+```
+
+See the [Build an Agent guide](docs/guides/BUILD-AN-AGENT.md) for the full walkthrough, and [`examples/signals-agent.ts`](examples/signals-agent.ts) for a complete runnable example.
+
 ## Contributing
 
 Contributions welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
