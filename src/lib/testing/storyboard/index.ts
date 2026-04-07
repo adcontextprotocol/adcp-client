@@ -44,5 +44,8 @@ export { TASK_TO_METHOD, executeStoryboardTask } from './task-map';
 // Context
 export { extractContext, injectContext, applyContextOutputs, applyContextInputs, setPath } from './context';
 
+// Request builder
+export { buildRequest, hasRequestBuilder } from './request-builder';
+
 // Validations
 export { runValidations, resolvePath } from './validations';

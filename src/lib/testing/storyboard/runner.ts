@@ -10,6 +10,7 @@ import { getOrCreateClient, runStep } from '../client';
 import { executeStoryboardTask } from './task-map';
 import { extractContext, injectContext, applyContextOutputs, applyContextInputs } from './context';
 import { runValidations } from './validations';
+import { buildRequest, hasRequestBuilder } from './request-builder';
 import type {
   Storyboard,
   StoryboardStep,
@@ -170,14 +171,22 @@ async function executeStep(
     };
   }
 
-  // Build request: use override, or inject context into sample_request
-  let request = options.request
-    ? { ...options.request }
-    : step.sample_request
-      ? injectContext({ ...step.sample_request }, context)
-      : {};
+  // Build request — priority:
+  // 1. User-provided --request override
+  // 2. Request builder (builds from context + options, like hand-written scenarios)
+  // 3. sample_request from YAML with context injection (fallback)
+  let request: Record<string, unknown>;
+  if (options.request) {
+    request = { ...options.request };
+  } else if (hasRequestBuilder(step.task)) {
+    request = buildRequest(step, context, options);
+  } else if (step.sample_request) {
+    request = injectContext({ ...step.sample_request }, context);
+  } else {
+    request = {};
+  }
 
-  // Apply explicit context_inputs
+  // Apply explicit context_inputs on top of whatever request source was used
   if (step.context_inputs?.length) {
     request = applyContextInputs(request, step.context_inputs, context);
   }
