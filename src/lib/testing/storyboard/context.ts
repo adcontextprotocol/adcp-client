@@ -11,7 +11,7 @@
  */
 
 import type { StoryboardContext, ContextOutput, ContextInput } from './types';
-import { resolvePath } from './validations';
+import { resolvePath, setPath } from './path';
 
 // ────────────────────────────────────────────────────────────
 // Context extraction: pull known IDs from task responses
@@ -259,76 +259,5 @@ export function applyContextInputs(
   return result;
 }
 
-/**
- * Set a value at a dot-path with array indexing.
- * Creates intermediate objects/arrays as needed.
- *
- * "media_buy_ids[0]" → obj.media_buy_ids[0] = value
- */
-const FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
-
-export function setPath(obj: Record<string, unknown>, path: string, value: unknown): void {
-  const segments = parsePath(path);
-  let current: unknown = obj;
-
-  for (let i = 0; i < segments.length - 1; i++) {
-    const segment = segments[i]!;
-    const nextSegment = segments[i + 1];
-
-    if (typeof segment === 'number') {
-      if (!Array.isArray(current)) return;
-      if (current[segment] === undefined || current[segment] === null) {
-        current[segment] = typeof nextSegment === 'number' ? [] : {};
-      }
-      current = current[segment];
-    } else {
-      if (FORBIDDEN_KEYS.has(segment)) return;
-      const record = current as Record<string, unknown>;
-      if (!Object.prototype.hasOwnProperty.call(record, segment) || record[segment] == null) {
-        Object.defineProperty(record, segment, {
-          value: typeof nextSegment === 'number' ? [] : {},
-          writable: true,
-          enumerable: true,
-          configurable: true,
-        });
-      }
-      current = record[segment];
-    }
-  }
-
-  const lastSegment = segments[segments.length - 1];
-  if (lastSegment === undefined) return;
-
-  if (typeof lastSegment === 'number') {
-    if (Array.isArray(current)) {
-      current[lastSegment] = value;
-    }
-  } else {
-    if (FORBIDDEN_KEYS.has(lastSegment)) return;
-    Object.defineProperty(current as Record<string, unknown>, lastSegment, {
-      value,
-      writable: true,
-      enumerable: true,
-      configurable: true,
-    });
-  }
-}
-
-/**
- * Parse a path string into segments (shared logic with validations.ts resolvePath).
- */
-function parsePath(path: string): Array<string | number> {
-  const segments: Array<string | number> = [];
-  const re = /([^.\[\]]+)|\[(\d+)\]/g;
-  let match: RegExpExecArray | null;
-
-  while ((match = re.exec(path)) !== null) {
-    if (match[2] !== undefined) {
-      segments.push(parseInt(match[2], 10));
-    } else if (match[1] !== undefined) {
-      segments.push(match[1]);
-    }
-  }
-
-  return segments;
-}
+// setPath is re-exported from ./path for backwards compat
+export { setPath } from './path';

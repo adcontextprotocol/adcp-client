@@ -41,11 +41,14 @@ export {
 // Task mapping
 export { TASK_TO_METHOD, executeStoryboardTask } from './task-map';
 
+// Path utilities
+export { parsePath, resolvePath, setPath } from './path';
+
 // Context
-export { extractContext, injectContext, applyContextOutputs, applyContextInputs, setPath } from './context';
+export { extractContext, injectContext, applyContextOutputs, applyContextInputs } from './context';
 
 // Request builder
 export { buildRequest, hasRequestBuilder } from './request-builder';
 
 // Validations
-export { runValidations, resolvePath } from './validations';
+export { runValidations } from './validations';

@@ -11,6 +11,7 @@
 import { TOOL_RESPONSE_SCHEMAS } from '../../utils/response-schemas';
 import type { TaskResult } from '../types';
 import type { StoryboardValidation, ValidationResult } from './types';
+import { resolvePath } from './path';
 
 /**
  * Run all validations for a storyboard step.
@@ -191,55 +192,5 @@ function validateErrorCode(validation: StoryboardValidation, taskResult: TaskRes
   };
 }
 
-// ────────────────────────────────────────────────────────────
-// Path resolution: "accounts[0].account_id" → value
-// ────────────────────────────────────────────────────────────
-
-/**
- * Resolve a dot-path with array indexing against an object.
- *
- * Examples:
- *   "accounts[0].account_id" → obj.accounts[0].account_id
- *   "formats[0].format_id.id" → obj.formats[0].format_id.id
- *   "status" → obj.status
- */
-export function resolvePath(obj: unknown, path: string): unknown {
-  if (obj === null || obj === undefined) return undefined;
-
-  const segments = parsePath(path);
-  let current: unknown = obj;
-
-  for (const segment of segments) {
-    if (current === null || current === undefined) return undefined;
-
-    if (typeof segment === 'number') {
-      if (!Array.isArray(current)) return undefined;
-      current = current[segment];
-    } else {
-      if (typeof current !== 'object') return undefined;
-      current = (current as Record<string, unknown>)[segment];
-    }
-  }
-
-  return current;
-}
-
-/**
- * Parse a path string into segments.
- * "accounts[0].account_id" → ["accounts", 0, "account_id"]
- */
-function parsePath(path: string): Array<string | number> {
-  const segments: Array<string | number> = [];
-  const re = /([^.\[\]]+)|\[(\d+)\]/g;
-  let match: RegExpExecArray | null;
-
-  while ((match = re.exec(path)) !== null) {
-    if (match[2] !== undefined) {
-      segments.push(parseInt(match[2], 10));
-    } else if (match[1] !== undefined) {
-      segments.push(match[1]);
-    }
-  }
-
-  return segments;
-}
+// resolvePath re-exported from ./path for backwards compat
+export { resolvePath } from './path';
