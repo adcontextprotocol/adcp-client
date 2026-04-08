@@ -4,9 +4,11 @@ const http = require('http');
 
 function makeRequest(port, path = '/mcp', method = 'POST') {
   return new Promise((resolve, reject) => {
-    const req = http.request({ hostname: '127.0.0.1', port, path, method }, (res) => {
+    const req = http.request({ hostname: '127.0.0.1', port, path, method }, res => {
       let data = '';
-      res.on('data', (chunk) => { data += chunk; });
+      res.on('data', chunk => {
+        data += chunk;
+      });
       res.on('end', () => resolve({ status: res.statusCode, body: data, headers: res.headers }));
     });
     req.on('error', reject);
@@ -15,7 +17,7 @@ function makeRequest(port, path = '/mcp', method = 'POST') {
 }
 
 function waitForListening(server) {
-  return new Promise((resolve) => {
+  return new Promise(resolve => {
     if (server.listening) return resolve();
     server.on('listening', resolve);
   });
@@ -103,11 +105,13 @@ describe('serve()', () => {
   });
 
   test('onListening callback receives URL', async () => {
-    const received = new Promise((resolve) => {
+    const received = new Promise(resolve => {
       const factory = () => new McpServer({ name: 'Test', version: '1.0.0' });
       const server = serve(factory, {
         port: 0,
-        onListening: (url) => { resolve({ url, server }); },
+        onListening: url => {
+          resolve({ url, server });
+        },
       });
     });
     const { url, server } = await received;
@@ -121,10 +125,7 @@ describe('serve()', () => {
     const original = process.env.PORT;
     try {
       process.env.PORT = 'not-a-number';
-      assert.throws(
-        () => serve(() => new McpServer({ name: 'Test', version: '1.0.0' })),
-        /Invalid PORT/,
-      );
+      assert.throws(() => serve(() => new McpServer({ name: 'Test', version: '1.0.0' })), /Invalid PORT/);
     } finally {
       if (original !== undefined) {
         process.env.PORT = original;
@@ -138,7 +139,9 @@ describe('serve()', () => {
     const factory = () => {
       const s = new McpServer({ name: 'Test', version: '1.0.0' });
       // Override connect to throw
-      s.connect = async () => { throw new Error('boom'); };
+      s.connect = async () => {
+        throw new Error('boom');
+      };
       return s;
     };
 
