@@ -1,7 +1,7 @@
 # AdCP Type Summary
 
-> Generated at: 2026-04-07
-> @adcp/client v4.20.0
+> Generated at: 2026-04-08
+> @adcp/client v4.22.1
 
 Curated reference of the types that matter for using the AdCP client. For full generated types see `src/lib/types/tools.generated.ts` and `src/lib/types/core.generated.ts`.
 
@@ -326,6 +326,7 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
   package_id: string
   target_format_id: Format Id
   target_format_ids: object[]
+  account: Account Ref
   brand: Brand Ref
   quality: Creative Quality
   item_limit: integer
@@ -360,6 +361,8 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
   disclosure_persistence: object[]
   output_format_ids: object[]
   input_format_ids: object[]
+  include_pricing: boolean
+  account: Account Ref
   pagination: Pagination Request
   context: Context
 }
@@ -391,6 +394,8 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
   include_snapshot: boolean
   include_items: boolean
   include_variables: boolean
+  include_pricing: boolean
+  account: Account Ref
   fields: string[]
   context: Context
 }
