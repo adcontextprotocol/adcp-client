@@ -1,8 +1,30 @@
-# AdCP Client - Development & Release Guide
+# AdCP Client
 
-> **For AI coding assistant instructions, see [AGENTS.md](./AGENTS.md)**
+## For AI Agents Building on AdCP
 
-## Project Overview
+**Start here**: Read `docs/llms.txt` for a complete protocol overview
+(all tools, types, error codes, examples — single fetch).
+
+**Do NOT read these files** — they are machine-generated and will waste
+your context: `src/lib/types/*.generated.ts`, `src/lib/agents/index.generated.ts`, `schemas/`
+
+**Use instead**: `docs/TYPE-SUMMARY.md` for curated type signatures.
+
+**Key entry points**: `src/lib/index.ts`, `examples/signals-agent.ts`
+
+**Building a server-side agent?** Read `docs/guides/BUILD-AN-AGENT.md` and the `storyboards/` directory.
+
+**Critical rules**:
+- ALWAYS use official `@a2a-js/sdk` and `@modelcontextprotocol/sdk` clients — never custom HTTP or SSE parsing
+- NEVER inject mock/fallback data — return exactly what agents provide
+- NEVER hardcode API keys, tokens, or credentials — use environment variables
+- NEVER manually edit `package.json` version — use `npm run changeset`
+
+**Full agent instructions**: [AGENTS.md](./AGENTS.md) has protocol details, architecture patterns, and testing strategies.
+
+---
+
+## Development & Release Guide
 
 **@adcp/client** is the official TypeScript client library for the Ad Context Protocol (AdCP), with CLI tooling for testing agents.
 
