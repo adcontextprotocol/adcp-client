@@ -114,27 +114,15 @@ export const PLATFORM_STORYBOARDS: Record<PlatformType, string[]> = {
 
   // ── Creative agents ──────────────────────────────────────
 
-  creative_transformer: [
-    'schema_validation',
-    'creative_template',
-  ],
+  creative_transformer: ['schema_validation', 'creative_template'],
 
-  creative_library: [
-    'schema_validation',
-    'creative_template',
-  ],
+  creative_library: ['schema_validation', 'creative_template'],
 
-  creative_ad_server: [
-    'schema_validation',
-    'creative_ad_server',
-  ],
+  creative_ad_server: ['schema_validation', 'creative_ad_server'],
 
   // ── Sponsored intelligence ───────────────────────────────
 
-  si_platform: [
-    'schema_validation',
-    'si_session',
-  ],
+  si_platform: ['schema_validation', 'si_session'],
 
   // ── AI-native platforms ──────────────────────────────────
 

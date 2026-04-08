@@ -15,14 +15,8 @@ describe('PLATFORM_STORYBOARDS', () => {
   it('has an entry for every platform type', () => {
     const allTypes = getAllPlatformTypes();
     for (const type of allTypes) {
-      assert.ok(
-        Array.isArray(PLATFORM_STORYBOARDS[type]),
-        `Missing PLATFORM_STORYBOARDS entry for ${type}`
-      );
-      assert.ok(
-        PLATFORM_STORYBOARDS[type].length > 0,
-        `PLATFORM_STORYBOARDS[${type}] is empty`
-      );
+      assert.ok(Array.isArray(PLATFORM_STORYBOARDS[type]), `Missing PLATFORM_STORYBOARDS entry for ${type}`);
+      assert.ok(PLATFORM_STORYBOARDS[type].length > 0, `PLATFORM_STORYBOARDS[${type}] is empty`);
     }
   });
 
@@ -47,15 +41,18 @@ describe('PLATFORM_STORYBOARDS', () => {
 
   it('sales platforms include schema_validation', () => {
     const salesTypes = [
-      'display_ad_server', 'video_ad_server', 'social_platform',
-      'search_platform', 'audio_platform', 'linear_tv_platform',
-      'dsp', 'retail_media', 'pmax_platform',
+      'display_ad_server',
+      'video_ad_server',
+      'social_platform',
+      'search_platform',
+      'audio_platform',
+      'linear_tv_platform',
+      'dsp',
+      'retail_media',
+      'pmax_platform',
     ];
     for (const type of salesTypes) {
-      assert.ok(
-        PLATFORM_STORYBOARDS[type].includes('schema_validation'),
-        `${type} should include schema_validation`
-      );
+      assert.ok(PLATFORM_STORYBOARDS[type].includes('schema_validation'), `${type} should include schema_validation`);
     }
   });
 
@@ -81,10 +78,7 @@ describe('getStoryboardIdsForPlatform', () => {
   it('returns same result as direct mapping access', () => {
     const allTypes = getAllPlatformTypes();
     for (const type of allTypes) {
-      assert.deepEqual(
-        getStoryboardIdsForPlatform(type),
-        PLATFORM_STORYBOARDS[type]
-      );
+      assert.deepEqual(getStoryboardIdsForPlatform(type), PLATFORM_STORYBOARDS[type]);
     }
   });
 });
@@ -111,15 +105,17 @@ describe('extractScenariosFromStoryboard', () => {
       narrative: 'Test',
       agent: { interaction_model: 'test', capabilities: [] },
       caller: { role: 'test' },
-      phases: [{
-        id: 'p1',
-        title: 'Phase 1',
-        steps: [
-          { id: 's1', title: 'Step 1', task: 'get_products', comply_scenario: 'discovery' },
-          { id: 's2', title: 'Step 2', task: 'get_products', comply_scenario: 'discovery' },
-          { id: 's3', title: 'Step 3', task: 'create_media_buy', comply_scenario: 'create_media_buy' },
-        ],
-      }],
+      phases: [
+        {
+          id: 'p1',
+          title: 'Phase 1',
+          steps: [
+            { id: 's1', title: 'Step 1', task: 'get_products', comply_scenario: 'discovery' },
+            { id: 's2', title: 'Step 2', task: 'get_products', comply_scenario: 'discovery' },
+            { id: 's3', title: 'Step 3', task: 'create_media_buy', comply_scenario: 'create_media_buy' },
+          ],
+        },
+      ],
     };
     const scenarios = extractScenariosFromStoryboard(sb);
     assert.deepEqual(scenarios, ['discovery', 'create_media_buy']);
@@ -135,13 +131,13 @@ describe('extractScenariosFromStoryboard', () => {
       narrative: 'Test',
       agent: { interaction_model: 'test', capabilities: [] },
       caller: { role: 'test' },
-      phases: [{
-        id: 'p1',
-        title: 'Phase 1',
-        steps: [
-          { id: 's1', title: 'Step 1', task: 'get_products' },
-        ],
-      }],
+      phases: [
+        {
+          id: 'p1',
+          title: 'Phase 1',
+          steps: [{ id: 's1', title: 'Step 1', task: 'get_products' }],
+        },
+      ],
     };
     const scenarios = extractScenariosFromStoryboard(sb);
     assert.deepEqual(scenarios, []);
@@ -150,21 +146,12 @@ describe('extractScenariosFromStoryboard', () => {
 
 describe('filterToKnownScenarios', () => {
   it('keeps known scenario names', () => {
-    const result = filterToKnownScenarios([
-      'discovery',
-      'creative_sync',
-      'health_check',
-    ]);
+    const result = filterToKnownScenarios(['discovery', 'creative_sync', 'health_check']);
     assert.deepEqual(result, ['discovery', 'creative_sync', 'health_check']);
   });
 
   it('filters out unknown scenario names', () => {
-    const result = filterToKnownScenarios([
-      'discovery',
-      'typo_scenario',
-      'phantom_name',
-      'creative_sync',
-    ]);
+    const result = filterToKnownScenarios(['discovery', 'typo_scenario', 'phantom_name', 'creative_sync']);
     assert.deepEqual(result, ['discovery', 'creative_sync']);
   });
 

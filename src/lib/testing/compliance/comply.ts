@@ -430,9 +430,7 @@ function resolveStoryboards(options: ComplyOptions): Storyboard[] {
     for (const id of options.storyboards) {
       const sb = getStoryboardById(id);
       if (!sb) {
-        throw new Error(
-          `Unknown storyboard ID: "${id}". Use listStoryboards() to see available IDs.`
-        );
+        throw new Error(`Unknown storyboard ID: "${id}". Use listStoryboards() to see available IDs.`);
       }
       resolved.push(sb);
     }
@@ -493,7 +491,10 @@ function filterApplicable(storyboards: Storyboard[], agentTools: string[]): Stor
 /**
  * Group storyboard results by track.
  */
-function groupByTrack(results: StoryboardResult[], storyboards: Storyboard[]): Map<ComplianceTrack, StoryboardResult[]> {
+function groupByTrack(
+  results: StoryboardResult[],
+  storyboards: Storyboard[]
+): Map<ComplianceTrack, StoryboardResult[]> {
   // Build a storyboard ID → track lookup
   const trackLookup = new Map<string, ComplianceTrack>();
   for (const sb of storyboards) {
@@ -518,7 +519,14 @@ function groupByTrack(results: StoryboardResult[], storyboards: Storyboard[]): M
 
 async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<ComplianceResult> {
   const start = Date.now();
-  const { storyboards: _storyboardIds, tracks: _trackFilter, platform_type, timeout_ms, signal: externalSignal, ...testOptions } = options;
+  const {
+    storyboards: _storyboardIds,
+    tracks: _trackFilter,
+    platform_type,
+    timeout_ms,
+    signal: externalSignal,
+    ...testOptions
+  } = options;
 
   // Validate platform_type if provided
   let platformProfile: PlatformProfile | undefined;
@@ -659,10 +667,10 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
     let platformCoherence: PlatformCoherenceResult | undefined;
     if (platformProfile) {
       const findings = platformProfile.checkCoherence(profile);
-      const applicableTrackSet = new Set(trackResults.filter(t => t.status !== 'skip' && t.status !== 'expected').map(t => t.track));
-      const missingTracks = platformProfile.expected_tracks.filter(
-        t => !applicableTrackSet.has(t) && t !== 'core'
+      const applicableTrackSet = new Set(
+        trackResults.filter(t => t.status !== 'skip' && t.status !== 'expected').map(t => t.track)
       );
+      const missingTracks = platformProfile.expected_tracks.filter(t => !applicableTrackSet.has(t) && t !== 'core');
 
       for (const finding of findings) {
         allObservations.push({
