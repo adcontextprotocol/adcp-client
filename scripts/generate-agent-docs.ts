@@ -420,8 +420,37 @@ function generateLlmsTxt(
   );
   ln();
 
+  // --- Client vs. server routing ---
+  ln(`## Are you building a client or a server?`);
+  ln();
+  ln(
+    `- **Client** (calling existing agents): Continue reading — the Quick Start below is for you.`
+  );
+  ln(
+    `- **Server** (implementing an agent that others call): Read \`docs/guides/BUILD-AN-AGENT.md\` instead. Minimal example:`
+  );
+  ln();
+  ln('```typescript');
+  ln(
+    `import { createTaskCapableServer, taskToolResponse, serve, GetSignalsRequestSchema } from '@adcp/client';`
+  );
+  ln();
+  ln(`function createAgent() {`);
+  ln(`  const server = createTaskCapableServer('My Agent', '1.0.0');`);
+  ln(
+    `  server.tool('get_signals', 'Discover segments.', GetSignalsRequestSchema.shape, async (args) => {`
+  );
+  ln(`    return taskToolResponse({ signals: [...], sandbox: true }, 'Found segments');`);
+  ln(`  });`);
+  ln(`  return server;`);
+  ln(`}`);
+  ln();
+  ln(`serve(createAgent); // http://localhost:3001/mcp`);
+  ln('```');
+  ln();
+
   // --- Quick start ---
-  ln(`## Quick Start`);
+  ln(`## Quick Start (Client)`);
   ln();
   ln('```typescript');
   ln(`import { ADCPMultiAgentClient } from '@adcp/client';`);
