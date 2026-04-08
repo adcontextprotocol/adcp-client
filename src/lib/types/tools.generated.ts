@@ -232,6 +232,14 @@ export type PostalCodeSystem =
   | 'au_postcode'
   | 'ch_plz'
   | 'at_plz';
+/**
+ * The performance metric this standard applies to.
+ */
+export type PerformanceStandardMetric = 'viewability' | 'ivt' | 'completion_rate' | 'brand_safety' | 'attention_score';
+/**
+ * Measurement standard. Required when metric is 'viewability' (MRC and GroupM define materially different thresholds). Omit for other metrics.
+ */
+export type ViewabilityStandard = 'mrc' | 'groupm';
 
 /**
  * Request parameters for discovering or refining advertising products. buying_mode declares the buyer's intent: 'brief' for curated discovery, 'wholesale' for raw catalog access, or 'refine' to iterate on known products and proposals.
@@ -594,6 +602,10 @@ export interface ProductFilters {
     [k: string]: unknown | undefined;
   }[];
   /**
+   * Filter to products that can meet the buyer's performance standard requirements. Each entry specifies a metric, minimum threshold, and optionally a required vendor and standard. Products that cannot meet these thresholds or do not support the specified vendors are excluded. Use this to tell the seller upfront: 'I need DoubleVerify for viewability at 70% MRC.'
+   */
+  required_performance_standards?: PerformanceStandard[];
+  /**
    * Filter by keyword relevance for search and retail media platforms. Returns products that support keyword targeting for these terms. Allows the sell-side agent to assess keyword availability and recommend appropriate products. Use match_type to indicate the desired precision.
    */
   keywords?: {
@@ -661,6 +673,18 @@ export interface MediaBuyFeatures {
    */
   catalog_management?: boolean;
   [k: string]: boolean | undefined;
+}
+/**
+ * A rate threshold for a performance metric, measured by a specified vendor. The threshold is a floor or ceiling depending on the metric: viewability, completion_rate, brand_safety, and attention_score are floors (must exceed); ivt is a ceiling (must not exceed).
+ */
+export interface PerformanceStandard {
+  metric: PerformanceStandardMetric;
+  /**
+   * Rate threshold as a decimal (e.g., 0.70 for 70%). Whether this is a floor or ceiling depends on the metric: for viewability, completion_rate, brand_safety, attention_score the actual rate must be >= threshold; for ivt the actual rate must be <= threshold.
+   */
+  threshold: number;
+  standard?: ViewabilityStandard;
+  vendor: BrandReference;
 }
 /**
  * [AdCP 3.0] Reference to an externally managed property list. When provided, the sales agent should filter products to only those available on properties in the list.
@@ -822,6 +846,10 @@ export type ForecastMethod = 'estimate' | 'modeled' | 'guaranteed';
  * Unit of measurement for reach and audience_size metrics in this forecast. Required for cross-channel forecast comparison.
  */
 export type ReachUnit = 'individuals' | 'households' | 'devices' | 'accounts' | 'cookies' | 'custom';
+/**
+ * Remedy types available when a performance standard or billing measurement threshold is breached.
+ */
+export type MakegoodRemedy = 'additional_delivery' | 'credit' | 'invoice_adjustment';
 /**
  * Available frequencies for delivery reports and metrics updates
  */
@@ -1092,6 +1120,12 @@ export interface Product {
      */
     notes?: string;
   };
+  measurement_terms?: MeasurementTerms;
+  /**
+   * Seller's default performance standards for this product: viewability, IVT, completion rate, brand safety, attention score. Buyers may propose different standards at media buy creation. When absent, no structured performance standards apply.
+   */
+  performance_standards?: PerformanceStandard[];
+  cancellation_policy?: CancellationPolicy;
   reporting_capabilities?: ReportingCapabilities;
   creative_policy?: CreativePolicy;
   /**
@@ -1868,6 +1902,53 @@ export interface OutcomeMeasurement {
   reporting: string;
 }
 /**
+ * Seller's default billing measurement and makegood terms. Declares who counts the billing metric and what remedies apply when thresholds are breached. Buyers may propose different terms at media buy creation — sellers accept, reject (TERMS_REJECTED), or adjust per their policy.
+ */
+export interface MeasurementTerms {
+  /**
+   * Which vendor's count of the billing metric governs invoicing. The billing metric is determined by the pricing_model on the selected pricing_option (e.g., impressions for CPM, completed views for CPCV).
+   */
+  billing_measurement?: {
+    vendor: BrandReference;
+    /**
+     * Maximum acceptable variance between the billing vendor's count and the other party's count before resolution is triggered (e.g., 10 means a 10% divergence triggers review).
+     */
+    max_variance_percent?: number;
+  };
+  /**
+   * Remedies available when a performance standard or billing measurement variance is breached. Seller declares which remedy types they support. When a breach occurs, the seller proposes a remedy from this menu; the buyer accepts or disputes.
+   */
+  makegood_policy?: {
+    /**
+     * Remedy types the seller supports. Ordered by seller preference (first = preferred). Seller proposes from this list when a breach occurs; buyer accepts or disputes.
+     */
+    available_remedies: MakegoodRemedy[];
+  };
+}
+/**
+ * Cancellation terms for this product. Declares the minimum notice period required before cancellation takes effect and any penalties for insufficient notice. Relevant for guaranteed delivery products. Buyers accept these terms by creating a media buy against the product.
+ */
+export interface CancellationPolicy {
+  notice_period: Duration;
+  /**
+   * Fee applied when the notice period is not met.
+   */
+  cancellation_fee: {
+    /**
+     * Fee calculation method. 'percent_remaining': percentage of remaining uncommitted spend. 'full_commitment': buyer owes the full committed budget regardless of delivery. 'fixed_fee': flat monetary amount. 'none': no financial fee (cancellation with notice is free).
+     */
+    type: 'percent_remaining' | 'full_commitment' | 'fixed_fee' | 'none';
+    /**
+     * Fee rate as a decimal proportion of remaining committed spend. Required when type is 'percent_remaining' (e.g., 0.5 means 50% of remaining spend).
+     */
+    rate?: number;
+    /**
+     * Fixed fee amount in the buy's currency. Required when type is 'fixed_fee'.
+     */
+    amount?: number;
+  };
+}
+/**
  * Reporting capabilities available for a product
  */
 export interface ReportingCapabilities {
@@ -2302,7 +2383,7 @@ export interface InsertionOrder {
    */
   io_id: string;
   /**
-   * Structured terms for agent validation. Agents can programmatically verify these match the proposal and campaign requirements.
+   * Summary fields echoed from the committed proposal for agent verification. Buyer agents use these to confirm the IO matches what was negotiated before a human signs. These are read-only summaries, not negotiation surfaces — deal terms live on products and packages.
    */
   terms?: {
     /**
@@ -2580,6 +2661,19 @@ export type UniversalMacro =
   | 'CREATIVE_VARIANT_ID'
   | 'APP_ITEM_ID';
 /**
+ * A pricing option offered by a vendor agent (signals, creative, governance). Combines pricing_option_id with the pricing model fields. Pass pricing_option_id in report_usage for billing verification. All vendor discovery responses return pricing_options as an array — vendors may offer multiple options (volume tiers, context-specific rates, different models per product line).
+ */
+export type VendorPricingOption = {
+  /**
+   * Opaque identifier for this pricing option, unique within the vendor agent. Pass this in report_usage to identify which pricing option was applied.
+   */
+  pricing_option_id: string;
+} & VendorPricing;
+/**
+ * Pricing model for a vendor service. Discriminated by model: 'cpm' (fixed CPM), 'percent_of_media' (percentage of spend with optional CPM cap), 'flat_fee' (fixed charge per reporting period), or 'per_unit' (fixed price per unit of work).
+ */
+export type VendorPricing = CpmPricing | PercentOfMediaPricing | FlatFeePricing | PerUnitPricing;
+/**
  * Capabilities supported by creative agents for format handling
  */
 export type CreativeAgentCapability = 'validation' | 'assembly' | 'generation' | 'preview' | 'delivery';
@@ -2753,6 +2847,10 @@ export interface Format {
    * Metrics this format can produce in delivery reporting. Buyers receive the intersection of format reported_metrics and product available_metrics. If omitted, the format defers entirely to product-level metric declarations.
    */
   reported_metrics?: AvailableMetric[];
+  /**
+   * Pricing options for this format. Used by transformation and generation agents that charge per format adapted, per image generated, or per unit of work. Present when the request included include_pricing=true and account. Ad servers and library-based agents expose pricing on list_creatives instead.
+   */
+  pricing_options?: VendorPricingOption[];
 }
 export interface BaseIndividualAsset {
   /**
@@ -2849,6 +2947,80 @@ export interface BaseGroupAsset {
    */
   overlays?: Overlay[];
 }
+/**
+ * Fixed cost per thousand impressions
+ */
+export interface CpmPricing {
+  model: 'cpm';
+  /**
+   * Cost per thousand impressions
+   */
+  cpm: number;
+  /**
+   * ISO 4217 currency code
+   */
+  currency: string;
+  ext?: ExtensionObject;
+}
+/**
+ * Percentage of media spend charged for this signal. When max_cpm is set, the effective rate is capped at that CPM — useful for platforms like The Trade Desk that use percent-of-media pricing with a CPM ceiling.
+ */
+export interface PercentOfMediaPricing {
+  model: 'percent_of_media';
+  /**
+   * Percentage of media spend, e.g. 15 = 15%
+   */
+  percent: number;
+  /**
+   * Optional CPM cap. When set, the effective charge is min(percent × media_spend_per_mille, max_cpm).
+   */
+  max_cpm?: number;
+  /**
+   * ISO 4217 currency code for the resulting charge
+   */
+  currency: string;
+  ext?: ExtensionObject;
+}
+/**
+ * Fixed charge per billing period, regardless of impressions or spend. Used for licensed data bundles and audience subscriptions.
+ */
+export interface FlatFeePricing {
+  model: 'flat_fee';
+  /**
+   * Fixed charge for the billing period
+   */
+  amount: number;
+  /**
+   * Billing period for the flat fee.
+   */
+  period: 'monthly' | 'quarterly' | 'annual' | 'campaign';
+  /**
+   * ISO 4217 currency code
+   */
+  currency: string;
+  ext?: ExtensionObject;
+}
+/**
+ * Fixed price per unit of work. Used for creative transformation (per format), AI generation (per image, per token), and rendering (per variant). The unit field describes what is counted; unit_price is the cost per one unit.
+ */
+export interface PerUnitPricing {
+  model: 'per_unit';
+  /**
+   * What is counted — e.g. 'format', 'image', 'token', 'variant', 'render', 'evaluation'.
+   */
+  unit: string;
+  /**
+   * Cost per one unit
+   */
+  unit_price: number;
+  /**
+   * ISO 4217 currency code
+   */
+  currency: string;
+  ext?: ExtensionObject;
+}
+
+// create_media_buy parameters
 /**
  * Budget pacing strategy
  */
@@ -4775,6 +4947,11 @@ export interface Package {
    */
   format_ids?: FormatID[];
   targeting_overlay?: TargetingOverlay;
+  measurement_terms?: MeasurementTerms;
+  /**
+   * Agreed performance standards for this package. When any entry specifies a vendor, creatives assigned to this package MUST include corresponding tracker_script or tracker_pixel assets from that vendor.
+   */
+  performance_standards?: PerformanceStandard[];
   /**
    * Creative assets assigned to this package
    */
@@ -6115,10 +6292,7 @@ export interface DeliveryMetrics {
      * Viewable impression rate (viewable_impressions / measurable_impressions). Range 0.0 to 1.0.
      */
     viewable_rate?: number;
-    /**
-     * Viewability measurement standard. 'mrc': 50% of pixels in view for 1 second (display) or 2 seconds (video), per MRC/IAB guidelines. 'groupm': 100% of pixels in view for the same durations. These are materially different thresholds and should not be compared across standards.
-     */
-    standard?: 'mrc' | 'groupm';
+    standard?: ViewabilityStandard;
   };
   /**
    * Total engagements — direct interactions with the ad beyond viewing. Includes social reactions/comments/shares, story/unit opens, interactive overlay taps on CTV, companion banner interactions on audio. Platform-specific; corresponds to the 'engagements' optimization metric.
@@ -7073,6 +7247,7 @@ export interface BuildCreativeRequest {
    * Array of format IDs to generate in a single call. Mutually exclusive with target_format_id. The creative agent produces one manifest per format. Each format definition specifies its own required input assets and output structure.
    */
   target_format_ids?: FormatID[];
+  account?: AccountReference;
   brand?: BrandReference;
   quality?: CreativeQuality;
   /**
@@ -7423,8 +7598,42 @@ export interface BuildCreativeSuccess {
     expires_at: string;
   };
   preview_error?: Error;
+  /**
+   * Which rate card pricing option was applied for this build. Present when the creative agent charges for its services. Pass this in report_usage to identify which pricing option was applied.
+   */
+  pricing_option_id?: string;
+  /**
+   * Cost incurred for this build, denominated in currency. May be 0 for CPM-priced creatives where cost accrues at serve time rather than build time.
+   */
+  vendor_cost?: number;
+  /**
+   * ISO 4217 currency code for vendor_cost.
+   */
+  currency?: string;
+  consumption?: CreativeConsumption;
   context?: ContextObject;
   ext?: ExtensionObject;
+}
+/**
+ * Structured consumption details for this build. Informational — lets the buyer verify that vendor_cost is consistent with the rate card. vendor_cost is the billing source of truth.
+ */
+export interface CreativeConsumption {
+  /**
+   * LLM or generation tokens consumed during creative generation.
+   */
+  tokens?: number;
+  /**
+   * Number of images produced during generation.
+   */
+  images_generated?: number;
+  /**
+   * Number of render passes performed (video, animation).
+   */
+  renders?: number;
+  /**
+   * Processing time billed, in seconds. For compute-time pricing models.
+   */
+  duration_seconds?: number;
 }
 /**
  * Multi-format success response. Returned when the request used target_format_ids. Contains one manifest per requested format. Multi-format requests are atomic — all formats must succeed or the entire request fails with an error response. Array order corresponds to the target_format_ids request order.
@@ -7489,6 +7698,19 @@ export interface BuildCreativeMultiSuccess {
     expires_at: string;
   };
   preview_error?: Error;
+  /**
+   * Which rate card pricing option was applied for this build. Represents the total cost of the entire multi-format build call. Present when the creative agent charges for its services.
+   */
+  pricing_option_id?: string;
+  /**
+   * Total cost incurred for this multi-format build, denominated in currency. May be 0 for CPM-priced creatives where cost accrues at serve time.
+   */
+  vendor_cost?: number;
+  /**
+   * ISO 4217 currency code for vendor_cost.
+   */
+  currency?: string;
+  consumption?: CreativeConsumption;
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -7946,7 +8168,6 @@ export type CreativeSortField = 'created_date' | 'updated_date' | 'name' | 'stat
  * Sort direction
  */
 export type SortDirection = 'asc' | 'desc';
-
 /**
  * Request parameters for querying creative assets from a creative library with filtering, sorting, and pagination. Implemented by any agent that hosts a creative library — creative agents (ad servers, creative platforms) and sales agents that manage creatives.
  */
@@ -7981,6 +8202,11 @@ export interface ListCreativesRequest {
    */
   include_variables?: boolean;
   /**
+   * Include pricing_options on each creative. Requires account to be provided. When false or omitted, pricing is not computed.
+   */
+  include_pricing?: boolean;
+  account?: AccountReference;
+  /**
    * Specific fields to include in response (omit for all fields). The 'concept' value returns both concept_id and concept_name.
    */
   fields?: (
@@ -7996,6 +8222,7 @@ export interface ListCreativesRequest {
     | 'items'
     | 'variables'
     | 'concept'
+    | 'pricing_options'
   )[];
   context?: ContextObject;
   ext?: ExtensionObject;
@@ -8115,7 +8342,6 @@ export type CreativeItem =
        */
       content: string | string[];
     };
-
 /**
  * Response from creative library query with filtered results, metadata, and optional enriched data
  */
@@ -8262,6 +8488,10 @@ export interface ListCreativesResponse {
      * Items for multi-asset formats like carousels and native ads (included when include_items=true)
      */
     items?: CreativeItem[];
+    /**
+     * Pricing options for using this creative (serving, delivery). Used by ad servers and library agents. Transformation agents expose format-level pricing on list_creative_formats instead. Present when include_pricing=true and account provided. The buyer passes the applied pricing_option_id in report_usage.
+     */
+    pricing_options?: VendorPricingOption[];
   }[];
   /**
    * Breakdown of creatives by format. Keys are agent-defined format identifiers, optionally including dimensions (e.g., 'display_static_300x250', 'video_30s_vast'). Key construction is platform-specific — there is no required format.
@@ -8674,20 +8904,6 @@ export type ActivationKey =
       value: string;
     };
 /**
- * A pricing option offered by a signals agent. Combines pricing_option_id with the signal pricing model fields at the same level — pass pricing_option_id in report_usage for billing verification.
- */
-export type SignalPricingOption = {
-  /**
-   * Opaque identifier for this pricing option, unique within the signals agent. Pass this in report_usage to identify which pricing option was applied.
-   */
-  pricing_option_id: string;
-} & SignalPricing;
-/**
- * Pricing model for a signal. Discriminated by model: 'cpm' (fixed CPM), 'percent_of_media' (percentage of spend with optional CPM cap), or 'flat_fee' (fixed charge per reporting period, e.g. monthly licensed segments).
- */
-export type SignalPricing = CpmPricing | PercentOfMediaPricing | FlatFeePricing;
-
-/**
  * Response payload for get_signals task
  */
 export interface GetSignalsResponse {
@@ -8742,7 +8958,7 @@ export interface GetSignalsResponse {
     /**
      * Pricing options available for this signal. The buyer selects one and passes its pricing_option_id in report_usage for billing verification.
      */
-    pricing_options: SignalPricingOption[];
+    pricing_options: VendorPricingOption[];
   }[];
   /**
    * Task-specific errors and warnings (e.g., signal discovery or pricing issues)
@@ -8754,59 +8970,6 @@ export interface GetSignalsResponse {
    */
   sandbox?: boolean;
   context?: ContextObject;
-  ext?: ExtensionObject;
-}
-/**
- * Fixed cost per thousand impressions
- */
-export interface CpmPricing {
-  model: 'cpm';
-  /**
-   * Cost per thousand impressions
-   */
-  cpm: number;
-  /**
-   * ISO 4217 currency code
-   */
-  currency: string;
-  ext?: ExtensionObject;
-}
-/**
- * Percentage of media spend charged for this signal. When max_cpm is set, the effective rate is capped at that CPM — useful for platforms like The Trade Desk that use percent-of-media pricing with a CPM ceiling.
- */
-export interface PercentOfMediaPricing {
-  model: 'percent_of_media';
-  /**
-   * Percentage of media spend, e.g. 15 = 15%
-   */
-  percent: number;
-  /**
-   * Optional CPM cap. When set, the effective charge is min(percent × media_spend_per_mille, max_cpm).
-   */
-  max_cpm?: number;
-  /**
-   * ISO 4217 currency code for the resulting charge
-   */
-  currency: string;
-  ext?: ExtensionObject;
-}
-/**
- * Fixed charge per billing period, regardless of impressions or spend. Used for licensed data bundles and audience subscriptions.
- */
-export interface FlatFeePricing {
-  model: 'flat_fee';
-  /**
-   * Fixed charge for the billing period
-   */
-  amount: number;
-  /**
-   * Billing period for the flat fee.
-   */
-  period: 'monthly' | 'quarterly' | 'annual' | 'campaign';
-  /**
-   * ISO 4217 currency code
-   */
-  currency: string;
   ext?: ExtensionObject;
 }
 
@@ -10195,6 +10358,19 @@ export type GetCreativeFeaturesResponse =
        * URL to the vendor's full assessment report. The vendor controls what information is disclosed and access control.
        */
       detail_url?: string;
+      /**
+       * Which rate card pricing option was applied for this evaluation. Present when the governance agent charges for evaluations and account was provided in the request.
+       */
+      pricing_option_id?: string;
+      /**
+       * Cost incurred for this evaluation, denominated in currency.
+       */
+      vendor_cost?: number;
+      /**
+       * ISO 4217 currency code for vendor_cost.
+       */
+      currency?: string;
+      consumption?: CreativeConsumption;
       context?: ContextObject;
       ext?: ExtensionObject;
     }
@@ -12770,6 +12946,14 @@ export interface ReportUsageRequest {
      * Rights grant identifier from acquire_rights. Required for brand/rights agents. Links usage records to specific rights grants for cap tracking, billing verification, and overage calculation.
      */
     rights_id?: string;
+    /**
+     * Creative identifier from build_creative or list_creatives. Required for creative agents. Links usage records to specific creatives for billing verification.
+     */
+    creative_id?: string;
+    /**
+     * Property list identifier from list_property_lists. Required for property list agents. Links usage records to specific property lists for billing verification.
+     */
+    property_list_id?: string;
   }[];
   context?: ContextObject;
   ext?: ExtensionObject;

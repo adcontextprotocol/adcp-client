@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas vlatest
-// Generated at: 2026-04-06T22:56:52.473Z
+// Generated at: 2026-04-08T19:24:10.034Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -173,6 +173,18 @@ export type DevicePlatform =
  * Device form factor categories for targeting and reporting. Complements device-platform (operating system) with hardware classification. OpenRTB mapping: 1 (Mobile/Tablet General) → mobile, 2 (PC) → desktop, 4 (Phone) → mobile, 5 (Tablet) → tablet, 6 (Connected Device) → ctv, 7 (Set Top Box) → ctv. DOOH inventory uses dooh.
  */
 export type DeviceType = 'desktop' | 'mobile' | 'tablet' | 'ctv' | 'dooh' | 'unknown';
+/**
+ * Remedy types available when a performance standard or billing measurement threshold is breached.
+ */
+export type MakegoodRemedy = 'additional_delivery' | 'credit' | 'invoice_adjustment';
+/**
+ * The performance metric this standard applies to.
+ */
+export type PerformanceStandardMetric = 'viewability' | 'ivt' | 'completion_rate' | 'brand_safety' | 'attention_score';
+/**
+ * Measurement standard. Required when metric is 'viewability' (MRC and GroupM define materially different thresholds). Omit for other metrics.
+ */
+export type ViewabilityStandard = 'mrc' | 'groupm';
 /**
  * A single optimization target for a package. Packages accept an array of optimization_goals. When multiple goals are present, priority determines which the seller focuses on — 1 is highest priority (primary goal); higher numbers are secondary. Duplicate priority values result in undefined seller behavior.
  */
@@ -573,6 +585,11 @@ export interface Package {
    */
   format_ids?: FormatID[];
   targeting_overlay?: TargetingOverlay;
+  measurement_terms?: MeasurementTerms;
+  /**
+   * Agreed performance standards for this package. When any entry specifies a vendor, creatives assigned to this package MUST include corresponding tracker_script or tracker_pixel assets from that vendor.
+   */
+  performance_standards?: PerformanceStandard[];
   /**
    * Creative assets assigned to this package
    */
@@ -990,6 +1007,42 @@ export interface PropertyListReference {
    * JWT or other authorization token for accessing the list. Optional if the list is public or caller has implicit access.
    */
   auth_token?: string;
+}
+/**
+ * Agreed billing measurement and makegood terms for this package. Reflects what was negotiated — may differ from the buyer's proposal or the product's defaults. When present, these terms are binding for the package's duration.
+ */
+export interface MeasurementTerms {
+  /**
+   * Which vendor's count of the billing metric governs invoicing. The billing metric is determined by the pricing_model on the selected pricing_option (e.g., impressions for CPM, completed views for CPCV).
+   */
+  billing_measurement?: {
+    vendor: BrandReference;
+    /**
+     * Maximum acceptable variance between the billing vendor's count and the other party's count before resolution is triggered (e.g., 10 means a 10% divergence triggers review).
+     */
+    max_variance_percent?: number;
+  };
+  /**
+   * Remedies available when a performance standard or billing measurement variance is breached. Seller declares which remedy types they support. When a breach occurs, the seller proposes a remedy from this menu; the buyer accepts or disputes.
+   */
+  makegood_policy?: {
+    /**
+     * Remedy types the seller supports. Ordered by seller preference (first = preferred). Seller proposes from this list when a breach occurs; buyer accepts or disputes.
+     */
+    available_remedies: MakegoodRemedy[];
+  };
+}
+/**
+ * A rate threshold for a performance metric, measured by a specified vendor. The threshold is a floor or ceiling depending on the metric: viewability, completion_rate, brand_safety, and attention_score are floors (must exceed); ivt is a ceiling (must not exceed).
+ */
+export interface PerformanceStandard {
+  metric: PerformanceStandardMetric;
+  /**
+   * Rate threshold as a decimal (e.g., 0.70 for 70%). Whether this is a floor or ceiling depends on the metric: for viewability, completion_rate, brand_safety, attention_score the actual rate must be >= threshold; for ivt the actual rate must be <= threshold.
+   */
+  threshold: number;
+  standard?: ViewabilityStandard;
+  vendor: BrandReference;
 }
 /**
  * Assignment of a creative asset to a package with optional placement targeting. Used in create_media_buy and update_media_buy requests. Note: sync_creatives does not support placement_ids - use create/update_media_buy for placement-level targeting.
@@ -2325,6 +2378,12 @@ export interface Product {
      */
     notes?: string;
   };
+  measurement_terms?: MeasurementTerms;
+  /**
+   * Seller's default performance standards for this product: viewability, IVT, completion rate, brand safety, attention score. Buyers may propose different standards at media buy creation. When absent, no structured performance standards apply.
+   */
+  performance_standards?: PerformanceStandard[];
+  cancellation_policy?: CancellationPolicy;
   reporting_capabilities?: ReportingCapabilities;
   creative_policy?: CreativePolicy;
   /**
@@ -3084,6 +3143,29 @@ export interface OutcomeMeasurement {
    * Reporting frequency and format
    */
   reporting: string;
+}
+/**
+ * Cancellation terms for this product. Declares the minimum notice period required before cancellation takes effect and any penalties for insufficient notice. Relevant for guaranteed delivery products. Buyers accept these terms by creating a media buy against the product.
+ */
+export interface CancellationPolicy {
+  notice_period: Duration;
+  /**
+   * Fee applied when the notice period is not met.
+   */
+  cancellation_fee: {
+    /**
+     * Fee calculation method. 'percent_remaining': percentage of remaining uncommitted spend. 'full_commitment': buyer owes the full committed budget regardless of delivery. 'fixed_fee': flat monetary amount. 'none': no financial fee (cancellation with notice is free).
+     */
+    type: 'percent_remaining' | 'full_commitment' | 'fixed_fee' | 'none';
+    /**
+     * Fee rate as a decimal proportion of remaining committed spend. Required when type is 'percent_remaining' (e.g., 0.5 means 50% of remaining spend).
+     */
+    rate?: number;
+    /**
+     * Fixed fee amount in the buy's currency. Required when type is 'fixed_fee'.
+     */
+    amount?: number;
+  };
 }
 /**
  * Reporting capabilities available for a product
@@ -4046,7 +4128,7 @@ export interface InsertionOrder {
    */
   io_id: string;
   /**
-   * Structured terms for agent validation. Agents can programmatically verify these match the proposal and campaign requirements.
+   * Summary fields echoed from the committed proposal for agent verification. Buyer agents use these to confirm the IO matches what was negotiated before a human signs. These are read-only summaries, not negotiation surfaces — deal terms live on products and packages.
    */
   terms?: {
     /**
@@ -4243,6 +4325,30 @@ export interface CreateMediaBuySuccess {
   sandbox?: boolean;
   context?: ContextObject;
   ext?: ExtensionObject;
+}
+/**
+ * Agreed billing measurement and makegood terms for this package. Reflects what was negotiated — may differ from the buyer's proposal or the product's defaults. When present, these terms are binding for the package's duration.
+ */
+export interface MeasurementTerms1 {
+  /**
+   * Which vendor's count of the billing metric governs invoicing. The billing metric is determined by the pricing_model on the selected pricing_option (e.g., impressions for CPM, completed views for CPCV).
+   */
+  billing_measurement?: {
+    vendor: BrandReference;
+    /**
+     * Maximum acceptable variance between the billing vendor's count and the other party's count before resolution is triggered (e.g., 10 means a 10% divergence triggers review).
+     */
+    max_variance_percent?: number;
+  };
+  /**
+   * Remedies available when a performance standard or billing measurement variance is breached. Seller declares which remedy types they support. When a breach occurs, the seller proposes a remedy from this menu; the buyer accepts or disputes.
+   */
+  makegood_policy?: {
+    /**
+     * Remedy types the seller supports. Ordered by seller preference (first = preferred). Seller proposes from this list when a breach occurs; buyer accepts or disputes.
+     */
+    available_remedies: MakegoodRemedy[];
+  };
 }
 /**
  * The seller's interpreted delivery parameters. Describes what the seller will actually run -- geo, channels, flight dates, frequency caps, and budget. Present when the account has governance_agents or when the seller chooses to provide delivery transparency.
@@ -4505,6 +4611,19 @@ export interface BuildCreativeSuccess {
     expires_at: string;
   };
   preview_error?: Error;
+  /**
+   * Which rate card pricing option was applied for this build. Present when the creative agent charges for its services. Pass this in report_usage to identify which pricing option was applied.
+   */
+  pricing_option_id?: string;
+  /**
+   * Cost incurred for this build, denominated in currency. May be 0 for CPM-priced creatives where cost accrues at serve time rather than build time.
+   */
+  vendor_cost?: number;
+  /**
+   * ISO 4217 currency code for vendor_cost.
+   */
+  currency?: string;
+  consumption?: CreativeConsumption;
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -4603,6 +4722,27 @@ export interface RightsConstraint {
   ext?: ExtensionObject;
 }
 /**
+ * Structured consumption details for this build. Informational — lets the buyer verify that vendor_cost is consistent with the rate card. vendor_cost is the billing source of truth.
+ */
+export interface CreativeConsumption {
+  /**
+   * LLM or generation tokens consumed during creative generation.
+   */
+  tokens?: number;
+  /**
+   * Number of images produced during generation.
+   */
+  images_generated?: number;
+  /**
+   * Number of render passes performed (video, animation).
+   */
+  renders?: number;
+  /**
+   * Processing time billed, in seconds. For compute-time pricing models.
+   */
+  duration_seconds?: number;
+}
+/**
  * Multi-format success response. Returned when the request used target_format_ids. Contains one manifest per requested format. Multi-format requests are atomic — all formats must succeed or the entire request fails with an error response. Array order corresponds to the target_format_ids request order.
  */
 export interface BuildCreativeMultiSuccess {
@@ -4665,6 +4805,19 @@ export interface BuildCreativeMultiSuccess {
     expires_at: string;
   };
   preview_error?: Error;
+  /**
+   * Which rate card pricing option was applied for this build. Represents the total cost of the entire multi-format build call. Present when the creative agent charges for its services.
+   */
+  pricing_option_id?: string;
+  /**
+   * Total cost incurred for this multi-format build, denominated in currency. May be 0 for CPM-priced creatives where cost accrues at serve time.
+   */
+  vendor_cost?: number;
+  /**
+   * ISO 4217 currency code for vendor_cost.
+   */
+  currency?: string;
+  consumption?: CreativeConsumption;
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -4740,7 +4893,7 @@ export interface SyncCreativesSuccess {
      * Creative ID from the request
      */
     creative_id: string;
-    account?: Account;
+    account?: Account1;
     action: CreativeAction;
     /**
      * Platform-specific ID assigned to the creative
@@ -4788,6 +4941,92 @@ export interface SyncCreativesSuccess {
    */
   sandbox?: boolean;
   context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Account that owns this creative
+ */
+export interface Account1 {
+  /**
+   * Unique identifier for this account
+   */
+  account_id: string;
+  /**
+   * Human-readable account name (e.g., 'Acme', 'Acme c/o Pinnacle')
+   */
+  name: string;
+  /**
+   * The advertiser whose rates apply to this account
+   */
+  advertiser?: string;
+  /**
+   * Optional intermediary who receives invoices on behalf of the advertiser (e.g., agency)
+   */
+  billing_proxy?: string;
+  status: AccountStatus;
+  brand?: BrandReference;
+  /**
+   * Domain of the entity operating this account. When the brand operates directly, this is the brand's domain.
+   */
+  operator?: string;
+  /**
+   * Who is invoiced on this account. operator: seller invoices the operator (agency or brand buying direct). agent: agent consolidates billing. advertiser: seller invoices the advertiser directly, even when a different operator places orders on their behalf. See billing_entity for the invoiced party's business details.
+   */
+  billing?: 'operator' | 'agent' | 'advertiser';
+  billing_entity?: BusinessEntity;
+  /**
+   * Identifier for the rate card applied to this account
+   */
+  rate_card?: string;
+  /**
+   * Payment terms agreed for this account. Binding for all invoices when the account is active.
+   */
+  payment_terms?: 'net_15' | 'net_30' | 'net_45' | 'net_60' | 'net_90' | 'prepay';
+  /**
+   * Maximum outstanding balance allowed
+   */
+  credit_limit?: {
+    amount: number;
+    currency: string;
+  };
+  /**
+   * Present when status is 'pending_approval'. Contains next steps for completing account activation.
+   */
+  setup?: {
+    /**
+     * URL where the human can complete the required action (credit application, legal agreement, add funds).
+     */
+    url?: string;
+    /**
+     * Human-readable description of what's needed.
+     */
+    message: string;
+    /**
+     * When this setup link expires.
+     */
+    expires_at?: string;
+  };
+  /**
+   * How the seller scoped this account. operator: shared across all brands for this operator. brand: shared across all operators for this brand. operator_brand: dedicated to a specific operator+brand combination. agent: the agent's default account with no brand or operator association.
+   */
+  account_scope?: 'operator' | 'brand' | 'operator_brand' | 'agent';
+  /**
+   * Governance agent endpoints registered on this account. Authentication credentials are write-only and not included in responses — use sync_governance to set or update credentials.
+   */
+  governance_agents?: {
+    /**
+     * Governance agent endpoint URL. Must use HTTPS.
+     */
+    url: string;
+    /**
+     * Governance categories this agent handles (e.g., ['budget_authority', 'strategic_alignment']). When omitted, the agent handles all categories.
+     */
+    categories?: string[];
+  }[];
+  /**
+   * When true, this is a sandbox account — no real platform calls, no real spend. For explicit accounts (require_operator_auth: true), sandbox accounts are pre-existing test accounts on the platform discovered via list_accounts. For implicit accounts, sandbox is part of the natural key: the same brand/operator pair can have both a production and sandbox account.
+   */
+  sandbox?: boolean;
   ext?: ExtensionObject;
 }
 /**
