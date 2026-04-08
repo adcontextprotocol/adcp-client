@@ -45,6 +45,7 @@ const TRACK_ORDER: ComplianceTrack[] = [
   'si',
   'audiences',
   'error_handling',
+  'brand',
 ];
 
 /**
