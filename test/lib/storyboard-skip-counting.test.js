@@ -8,9 +8,7 @@
 const { describe, test, beforeEach } = require('node:test');
 const assert = require('node:assert');
 
-const {
-  mapStoryboardResultsToTrackResult,
-} = require('../../dist/lib/testing/compliance/storyboard-tracks.js');
+const { mapStoryboardResultsToTrackResult } = require('../../dist/lib/testing/compliance/storyboard-tracks.js');
 
 // Helper to build a minimal StoryboardStepResult
 function stepResult(overrides = {}) {
@@ -136,10 +134,7 @@ describe('storyboard skip counting', () => {
             phase_id: 'flow',
             phase_title: 'Flow',
             passed: false,
-            steps: [
-              stepResult({ duration_ms: 50 }),
-              stepResult({ step_id: 'step-2', passed: false, error: 'Failed' }),
-            ],
+            steps: [stepResult({ duration_ms: 50 }), stepResult({ step_id: 'step-2', passed: false, error: 'Failed' })],
             duration_ms: 100,
           },
         ],
