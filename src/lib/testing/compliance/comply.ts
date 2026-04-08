@@ -16,6 +16,7 @@ import type { Storyboard, StoryboardResult, StoryboardRunOptions } from '../stor
 import { PLATFORM_STORYBOARDS } from './platform-storyboards';
 import type {
   ComplianceTrack,
+  ComplianceFailure,
   TrackResult,
   ComplianceResult,
   ComplianceSummary,
@@ -393,6 +394,8 @@ export interface ComplyOptions extends TestOptions {
   timeout_ms?: number;
   /** AbortSignal for external cancellation (e.g., graceful shutdown) */
   signal?: AbortSignal;
+  /** Original agent alias or identifier (used in fix_command instead of resolved URL) */
+  agent_alias?: string;
 }
 
 /**
@@ -512,6 +515,65 @@ function groupByTrack(
     grouped.get(track)!.push(result);
   }
   return grouped;
+}
+
+// ────────────────────────────────────────────────────────────
+// Failure extraction
+// ────────────────────────────────────────────────────────────
+
+/**
+ * Extract a flat list of failures from raw storyboard results.
+ * Preserves step_id and expected text from the storyboard YAML,
+ * and includes a fix_command for targeted re-running.
+ */
+function extractFailures(
+  results: StoryboardResult[],
+  storyboards: Storyboard[],
+  agentRef: string
+): ComplianceFailure[] {
+  const failures: ComplianceFailure[] = [];
+
+  // Build storyboard lookup for track and expected text
+  const sbLookup = new Map<string, Storyboard>();
+  for (const sb of storyboards) {
+    sbLookup.set(sb.id, sb);
+  }
+
+  for (const result of results) {
+    const sb = sbLookup.get(result.storyboard_id);
+    const track = (sb?.track as ComplianceTrack) ?? 'core';
+
+    for (const phase of result.phases) {
+      for (const step of phase.steps) {
+        if (step.passed || step.skipped) continue;
+
+        // Find the step definition in the storyboard for expected text
+        let expected: string | undefined;
+        if (sb) {
+          for (const p of sb.phases) {
+            const stepDef = p.steps.find(s => s.id === step.step_id);
+            if (stepDef?.expected) {
+              expected = stepDef.expected.trim();
+              break;
+            }
+          }
+        }
+
+        failures.push({
+          track,
+          storyboard_id: result.storyboard_id,
+          step_id: step.step_id,
+          step_title: step.title,
+          task: step.task,
+          error: step.error,
+          expected,
+          fix_command: `adcp storyboard step ${agentRef} ${result.storyboard_id} ${step.step_id} --json`,
+        });
+      }
+    }
+  }
+
+  return failures;
 }
 
 // ────────────────────────────────────────────────────────────
@@ -713,6 +775,10 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
 
     const overallStatus = computeOverallStatus(summary);
 
+    // Build flat failures array from raw storyboard results (preserves step_id and expected)
+    const agentRef = options.agent_alias || agentUrl;
+    const failures = extractFailures(storyboardResults, applicableStoryboards, agentRef);
+
     return {
       agent_url: agentUrl,
       agent_profile: profile,
@@ -723,7 +789,9 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
       expected_tracks: expectedTracks,
       summary,
       observations: allObservations,
+      failures: failures.length > 0 ? failures : undefined,
       platform_coherence: platformCoherence,
+      storyboards_executed: applicableStoryboards.map(sb => sb.id),
       controller_detected: controllerDetection.detected,
       controller_scenarios: controllerDetection.detected ? controllerDetection.scenarios : undefined,
       tested_at: new Date().toISOString(),
@@ -814,6 +882,7 @@ async function buildUnreachableResult(
       headline,
     },
     observations,
+    storyboards_executed: [],
     tested_at: new Date().toISOString(),
     total_duration_ms: Date.now() - start,
     dry_run: effectiveOptions.dry_run !== false,
@@ -887,7 +956,11 @@ export function formatComplianceResults(result: ComplianceResult): string {
   if (result.platform_coherence) {
     output += `Platform: ${result.platform_coherence.label}\n`;
   }
-  output += `Duration: ${(result.total_duration_ms / 1000).toFixed(1)}s\n\n`;
+  output += `Duration: ${(result.total_duration_ms / 1000).toFixed(1)}s\n`;
+  if (result.storyboards_executed?.length) {
+    output += `Storyboards: ${result.storyboards_executed.join(', ')}\n`;
+  }
+  output += '\n';
 
   // Summary line
   output += `${result.summary.headline}\n\n`;
@@ -934,6 +1007,22 @@ export function formatComplianceResults(result: ComplianceResult): string {
           }
         }
       }
+    }
+  }
+
+  // Failures with fix guidance (show up to 5 with expected text)
+  const failuresWithExpected = (result.failures ?? []).filter(f => f.expected);
+  if (failuresWithExpected.length > 0) {
+    output += `\nHow to Fix\n`;
+    output += `${'─'.repeat(50)}\n`;
+    for (const f of failuresWithExpected.slice(0, 5)) {
+      output += `❌ ${f.storyboard_id}/${f.step_id} (${f.task})\n`;
+      if (f.error) output += `   Error: ${f.error}\n`;
+      output += `   Expected: ${f.expected!.split('\n')[0]}\n`;
+      output += `   Debug: ${f.fix_command}\n`;
+    }
+    if (failuresWithExpected.length > 5) {
+      output += `   ... and ${failuresWithExpected.length - 5} more (use --json for all)\n`;
     }
   }
 

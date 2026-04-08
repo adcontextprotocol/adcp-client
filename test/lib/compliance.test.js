@@ -439,6 +439,7 @@ describe('formatComplianceResults', () => {
       headline: '1 passing, 1 failing',
     },
     observations: [{ category: 'completeness', severity: 'warning', message: 'Missing fields' }],
+    storyboards_executed: ['capability_discovery', 'schema_validation'],
     tested_at: new Date().toISOString(),
     total_duration_ms: 150,
     dry_run: true,
@@ -514,6 +515,73 @@ describe('formatComplianceResults', () => {
     const output = formatComplianceResults(mockResult);
     assert.ok(!output.includes('Platform Coherence'), 'Should not show coherence without platform_type');
     assert.ok(!output.includes('Platform:'), 'Should not show platform in header');
+  });
+
+  test('shows storyboards executed', () => {
+    const output = formatComplianceResults(mockResult);
+    assert.ok(
+      output.includes('Storyboards: capability_discovery, schema_validation'),
+      'Should show storyboards_executed in output'
+    );
+  });
+
+  test('no storyboards line when storyboards_executed is empty', () => {
+    const resultNoStoryboards = { ...mockResult, storyboards_executed: [] };
+    const output = formatComplianceResults(resultNoStoryboards);
+    assert.ok(!output.includes('Storyboards:'), 'Should not show Storyboards line when empty');
+  });
+
+  test('no storyboards line when storyboards_executed is undefined', () => {
+    const { storyboards_executed, ...resultWithout } = mockResult;
+    const output = formatComplianceResults(resultWithout);
+    assert.ok(!output.includes('Storyboards:'), 'Should not show Storyboards line when undefined');
+  });
+
+  test('shows How to Fix section when failures have expected text', () => {
+    const resultWithFailures = {
+      ...mockResult,
+      failures: [
+        {
+          track: 'media_buy',
+          storyboard_id: 'media_buy_seller',
+          step_id: 'sync_accounts',
+          step_title: 'Establish account',
+          task: 'sync_accounts',
+          error: 'Unknown tool: sync_accounts',
+          expected: 'Return the account with account_id and status',
+          fix_command: 'adcp storyboard step moloco media_buy_seller sync_accounts --json',
+        },
+      ],
+    };
+    const output = formatComplianceResults(resultWithFailures);
+    assert.ok(output.includes('How to Fix'), 'Should show How to Fix section');
+    assert.ok(output.includes('media_buy_seller/sync_accounts'), 'Should show storyboard/step');
+    assert.ok(output.includes('Expected: Return the account'), 'Should show expected text');
+    assert.ok(output.includes('adcp storyboard step moloco'), 'Should show fix command');
+  });
+
+  test('no How to Fix section when failures is undefined', () => {
+    const output = formatComplianceResults(mockResult);
+    assert.ok(!output.includes('How to Fix'), 'Should not show How to Fix when no failures');
+  });
+
+  test('no How to Fix section when failures have no expected text', () => {
+    const resultWithFailures = {
+      ...mockResult,
+      failures: [
+        {
+          track: 'core',
+          storyboard_id: 'capability_discovery',
+          step_id: 'get_caps',
+          step_title: 'Discover capabilities',
+          task: 'get_adcp_capabilities',
+          error: 'Connection refused',
+          fix_command: 'adcp storyboard step test capability_discovery get_caps --json',
+        },
+      ],
+    };
+    const output = formatComplianceResults(resultWithFailures);
+    assert.ok(!output.includes('How to Fix'), 'Should not show How to Fix when no expected text');
   });
 });
 

@@ -62,7 +62,7 @@ export function mapStoryboardResultsToTrackResult(
 
       const testResult: TestResult = {
         agent_url: sbResult.agent_url,
-        scenario: phase.phase_id as any, // Phase ID acts as pseudo-scenario name
+        scenario: `${sbResult.storyboard_id}/${phase.phase_id}` as any,
         overall_passed: phase.passed,
         steps,
         summary: phase.passed

@@ -477,8 +477,37 @@ async function handleTestCommand(args) {
 }
 
 /**
- * Parse common agent/auth options shared by test and comply commands.
+ * Parse a JSON flag value — supports inline JSON or @file.json (read from file).
  */
+function parseJsonFlag(flagName, value) {
+  if (value.startsWith('@')) {
+    const filePath = value.substring(1);
+    if (!filePath) {
+      console.error(`${flagName} requires a filename after @, e.g. ${flagName} @context.json`);
+      process.exit(2);
+    }
+    let fileContent;
+    try {
+      fileContent = readFileSync(filePath, 'utf-8');
+    } catch (e) {
+      console.error(`Cannot read file for ${flagName}: ${e.message}`);
+      process.exit(2);
+    }
+    try {
+      return JSON.parse(fileContent);
+    } catch (e) {
+      console.error(`Invalid JSON in ${filePath} for ${flagName}: ${e.message}`);
+      process.exit(2);
+    }
+  }
+  try {
+    return JSON.parse(value);
+  } catch (e) {
+    console.error(`Invalid JSON for ${flagName}: ${e.message}`);
+    process.exit(2);
+  }
+}
+
 function closestFlag(input, known) {
   let best = null;
   let bestDist = Infinity;
@@ -634,6 +663,7 @@ OPTIONS:
   --auth TOKEN             Authentication token (overrides saved tokens)
   --protocol PROTO         Force protocol: mcp or a2a
   --tracks TRACKS          Comma-separated tracks to run (default: all applicable)
+  --storyboards IDS        Comma-separated storyboard IDs to run (highest priority)
   --platform-type TYPE     Declare platform type for coherence checking
   --list-platform-types    List all available platform types
   --brief TEXT             Custom brief for product discovery
@@ -645,6 +675,7 @@ EXAMPLES:
   adcp comply test-mcp
   adcp comply myagent                                    # uses saved OAuth tokens automatically
   adcp comply test-mcp --tracks core,products,media_buy
+  adcp comply test-mcp --storyboards media_buy_seller,error_compliance
   adcp comply test-mcp --platform-type social_platform
   adcp comply https://my-agent.com/mcp --auth my-token
   adcp comply test-mcp --json | jq '.summary'
@@ -658,6 +689,7 @@ EXAMPLES:
     '--auth',
     '--protocol',
     '--tracks',
+    '--storyboards',
     '--platform-type',
     '--list-platform-types',
     '--brief',
@@ -699,6 +731,23 @@ EXAMPLES:
     tracks = args[tracksIndex + 1].split(',');
   }
 
+  // Parse --storyboards
+  const storyboardsIndex = args.indexOf('--storyboards');
+  let storyboards;
+  if (storyboardsIndex !== -1 && storyboardsIndex + 1 < args.length) {
+    storyboards = args[storyboardsIndex + 1].split(',');
+    // Validate against bundled storyboard IDs
+    const { listStoryboards } = await import('../dist/lib/testing/storyboard/index.js');
+    const knownIds = new Set(listStoryboards().map(s => s.id));
+    const unknown = storyboards.filter(id => !knownIds.has(id));
+    if (unknown.length > 0) {
+      console.error(`ERROR: Unknown storyboard ID(s): ${unknown.join(', ')}`);
+      console.error(`Available: ${[...knownIds].sort().join(', ')}`);
+      console.error(`Run 'adcp storyboard list' to see all options.\n`);
+      process.exit(2);
+    }
+  }
+
   // Parse --platform-type
   const platformTypeIndex = args.indexOf('--platform-type');
   let platform_type;
@@ -715,12 +764,15 @@ EXAMPLES:
     }
   }
 
+  const agentAlias = opts.positionalArgs[0];
   const testOptions = {
     protocol,
     dry_run: opts.dryRun,
     brief: opts.brief,
     tracks,
+    storyboards,
     platform_type,
+    agent_alias: agentAlias !== agentUrl ? agentAlias : undefined,
     ...(finalAuthToken && { auth: { type: 'bearer', token: finalAuthToken } }),
   };
 
@@ -728,6 +780,7 @@ EXAMPLES:
     console.log(`\n🔍 Running compliance assessment against ${agentUrl}`);
     console.log(`   Protocol: ${protocol.toUpperCase()}`);
     console.log(`   Mode: ${opts.dryRun ? 'Dry Run' : 'Live'}`);
+    if (storyboards) console.log(`   Storyboards: ${storyboards.join(', ')}`);
     if (platform_type) console.log(`   Platform: ${platform_type}`);
     console.log(`   Auth: ${finalAuthToken ? 'configured' : 'none'}\n`);
   }
@@ -768,9 +821,9 @@ USAGE:
   adcp <command> [args]
 
 COMMANDS:
-  test <agent> [scenario]     Run test scenarios against an agent
-  comply <agent> [options]    Run compliance assessment
-  storyboard <subcommand>     Storyboard-driven testing (list, show, run, step)
+  comply <agent> [options]    Full compliance assessment ("does my agent work?")
+  storyboard <subcommand>     Debug specific flows step by step
+  test <agent> [scenario]     Run individual test scenarios (legacy)
   registry <command>          Brand/property registry lookups
 
   Run 'adcp <command> --help' for details on each command.
@@ -889,6 +942,7 @@ async function handleStoryboardList(args) {
       title: s.title,
       category: s.category,
       summary: s.summary,
+      track: s.track,
       platform_types: s.platform_types,
       step_count: s.phases.reduce((sum, p) => sum + p.steps.length, 0),
     }));
@@ -908,6 +962,7 @@ async function handleStoryboardList(args) {
       console.log(`  ${s.id}`);
       console.log(`    ${s.title} (${s.step_count} steps)`);
       console.log(`    ${s.summary}`);
+      if (s.track) console.log(`    Track: ${s.track}`);
       if (s.platform_types?.length) {
         console.log(`    Platform types: ${s.platform_types.join(', ')}`);
       }
@@ -943,19 +998,37 @@ async function handleStoryboardShow(args) {
     console.log(`\n${storyboard.title}`);
     console.log(`${'─'.repeat(storyboard.title.length)}`);
     console.log(`ID: ${storyboard.id}  |  Category: ${storyboard.category}  |  Version: ${storyboard.version}`);
+    if (storyboard.track) console.log(`Track: ${storyboard.track}`);
     if (storyboard.platform_types?.length) {
       console.log(`Platform types: ${storyboard.platform_types.join(', ')}`);
     }
-    console.log(`\n${storyboard.summary}\n`);
+    console.log(`\n${storyboard.summary}`);
+    if (storyboard.narrative) {
+      console.log(`\n${storyboard.narrative.trim()}`);
+    }
+    console.log();
 
     for (const phase of storyboard.phases) {
       const stepCount = phase.steps.length;
       console.log(`Phase: ${phase.title} (${stepCount} step${stepCount !== 1 ? 's' : ''})`);
+      if (phase.narrative) {
+        // Indent phase narrative
+        const lines = phase.narrative.trim().split('\n');
+        for (const line of lines) {
+          console.log(`  ${line}`);
+        }
+        console.log();
+      }
       for (const step of phase.steps) {
         const validationCount = step.validations?.length || 0;
         const statefulTag = step.stateful ? ' [stateful]' : '';
         console.log(`  → ${step.id}: ${step.title}${statefulTag}`);
         console.log(`    Task: ${step.task}  |  Validations: ${validationCount}`);
+        if (step.expected) {
+          // Show expected on one line, trimmed
+          const expected = step.expected.trim().split('\n')[0];
+          console.log(`    Expected: ${expected}`);
+        }
       }
       console.log();
     }
@@ -1005,6 +1078,8 @@ async function handleStoryboardRun(args) {
     console.log(JSON.stringify(result, null, 2));
   } else {
     // Human-readable output
+    console.log(`\n${storyboard.title} (${storyboard.id})`);
+    console.log('═'.repeat(50));
     for (const phase of result.phases) {
       console.log(`\n── Phase: ${phase.phase_title} ──────────────────────────────`);
       for (const step of phase.steps) {
@@ -1057,26 +1132,16 @@ async function handleStoryboardStepCmd(args) {
     authToken: resolvedAuth,
   } = await resolveAgent(agentArg, authToken, protocolFlag, jsonOutput);
 
-  // Parse --context and --request flags
+  // Parse --context and --request flags (supports inline JSON or @file.json)
   let context = {};
   let request;
   const contextIndex = args.indexOf('--context');
   if (contextIndex !== -1 && args[contextIndex + 1]) {
-    try {
-      context = JSON.parse(args[contextIndex + 1]);
-    } catch (e) {
-      console.error(`Invalid JSON for --context: ${e.message}`);
-      process.exit(2);
-    }
+    context = parseJsonFlag('--context', args[contextIndex + 1]);
   }
   const requestIndex = args.indexOf('--request');
   if (requestIndex !== -1 && args[requestIndex + 1]) {
-    try {
-      request = JSON.parse(args[requestIndex + 1]);
-    } catch (e) {
-      console.error(`Invalid JSON for --request: ${e.message}`);
-      process.exit(2);
-    }
+    request = parseJsonFlag('--request', args[requestIndex + 1]);
   }
 
   const options = {

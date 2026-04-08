@@ -1,7 +1,7 @@
 ---
 name: adcp
 description: Interact with AdCP (Ad Context Protocol) advertising agents over MCP or A2A protocols. Use when the user wants to call AdCP tools (get_products, create_media_buy, sync_creatives, etc.), discover an agent's capabilities, run protocol compliance tests, look up brands or properties in the AdCP registry, manage saved agent aliases, or debug agent responses. NOT for general HTTP/REST API calls. Requires @adcp/client (npm).
-argument-hint: "<agent> [tool] [payload] | test <agent> [scenario] | registry <command>"
+argument-hint: "<agent> [tool] [payload] | comply <agent> | storyboard <cmd> | test <agent> [scenario] | registry <command>"
 allowed-tools: Bash, Read
 ---
 
@@ -71,50 +71,133 @@ adcp https://agent.example.com get_products '{}' --protocol mcp
 adcp https://agent.example.com get_products '{}' --protocol a2a
 ```
 
-## Test runner
+## Testing: comply vs storyboard vs test
 
-Run protocol compliance tests against any AdCP agent. 24 built-in scenarios.
+Three testing commands, each for a different purpose:
+
+- **`comply`** — Full compliance assessment. "Does my agent work?" Runs all applicable storyboards, reports by track.
+- **`storyboard`** — Debug a specific flow step by step. Stateless, context-in/context-out.
+- **`test`** — Individual legacy scenarios. Use `comply` for new work.
+
+## Compliance assessment (comply)
+
+The primary way to test an AdCP agent. Runs storyboard-driven assessments grouped by capability track.
+
+```bash
+adcp comply <agent> [options]
+```
+
+### Recommended workflow
+
+1. Run full compliance to see the big picture:
+```bash
+adcp comply my-agent --json
+```
+
+2. Parse the `failures` array for actionable items — each failure includes `storyboard_id`, `step_id`, and a `fix_command` you can run directly.
+
+3. Debug specific failures with storyboard step:
+```bash
+adcp storyboard step my-agent media_buy_seller sync_accounts --json
+```
+
+4. Fix and re-run. Use `--storyboards` to re-test only the relevant storyboard:
+```bash
+adcp comply my-agent --storyboards media_buy_seller --json
+```
+
+### Filtering options (resolution priority)
+
+| Flag | When to use | Example |
+|------|-------------|---------|
+| `--storyboards IDS` | You know exactly which storyboards to run | `--storyboards media_buy_seller,error_compliance` |
+| `--platform-type TYPE` | You know your platform type and want curated tests + coherence checking | `--platform-type retail_media` |
+| `--tracks TRACKS` | You want to test specific capability areas | `--tracks media_buy,products` |
+| _(none)_ | Run everything applicable to your agent's tools | `adcp comply my-agent` |
+
+When `--platform-type` and `--tracks` are both set, `--tracks` controls which storyboards run, and `--platform-type` adds coherence checking.
+
+### Options
+- `--json` — Structured JSON output (recommended for agents)
+- `--platform-type TYPE` — Declare platform type for curated storyboards + coherence
+- `--storyboards IDS` — Comma-separated storyboard IDs (highest priority)
+- `--tracks TRACKS` — Comma-separated tracks to test
+- `--list-platform-types` — Show available platform types
+- `--debug` — Verbose logging
+- `--no-dry-run` — Execute real operations (default is dry-run)
+
+### JSON output structure
+
+The `--json` output includes a `failures` array for quick iteration:
+```json
+{
+  "overall_status": "partial",
+  "storyboards_executed": ["capability_discovery", "media_buy_seller"],
+  "failures": [
+    {
+      "track": "media_buy",
+      "storyboard_id": "media_buy_seller",
+      "step_id": "sync_accounts",
+      "step_title": "Establish account relationship",
+      "error": "Unknown tool: sync_accounts",
+      "expected": "Return the account with account_id, status, ...",
+      "fix_command": "adcp storyboard step <agent> media_buy_seller sync_accounts --json"
+    }
+  ],
+  "summary": { "headline": "1 passing, 3 partial" },
+  "tracks": [ ... ]
+}
+```
+
+## Storyboard testing
+
+Explore and debug individual storyboard flows.
+
+```bash
+adcp storyboard list [--platform-type TYPE] [--json]    # List storyboards
+adcp storyboard show <id> [--json]                       # Show structure and narratives
+adcp storyboard run <agent> <id> [options]               # Run full storyboard
+adcp storyboard step <agent> <id> <step_id> [options]    # Run single step
+```
+
+### Step-by-step debugging (agent-friendly)
+
+Each step returns context and a preview of the next step:
+```bash
+# Run step 1
+adcp storyboard step my-agent media_buy_seller sync_accounts --json > step1.json
+
+# Feed context to step 2
+adcp storyboard step my-agent media_buy_seller get_products_brief \
+  --context @step1_context.json --json
+```
+
+The `--context` flag accepts inline JSON or `@file.json` (read from file).
+
+### Step options
+- `--context JSON` or `--context @file.json` — Pass state from previous steps
+- `--request JSON` or `--request @file.json` — Override sample_request
+- `--json` — Structured output
+
+## Legacy test runner
+
+Individual scenario testing. 24 built-in scenarios.
 
 ```bash
 adcp test <agent> [scenario] [options]
-adcp test --list-scenarios
+adcp test --list-scenarios                               # List all scenarios
 ```
 
-### Scenarios (run `adcp test --list-scenarios` for all 24 with descriptions)
+### Common scenarios
 | Scenario | What it tests |
 |----------|---------------|
 | `health_check` | Basic connectivity |
-| `discovery` | get_products, list_creative_formats, list_authorized_properties |
-| `create_media_buy` | Discovery + create a media buy (dry-run by default) |
+| `discovery` | get_products, list_creative_formats |
 | `full_sales_flow` | Full lifecycle: discovery, create, update, delivery |
-| `creative_sync` | Test sync_creatives flow |
-| `creative_inline` | Test inline creatives in create_media_buy |
-| `creative_flow` | Creative agent: list_formats, build, preview |
 | `signals_flow` | Signals: get_signals, activate |
-| `validation` | Schema validation (invalid inputs should be rejected) |
-| `error_handling` | Verify proper error responses |
-| `pricing_edge_cases` | Auction vs fixed pricing, min spend, bid_price |
-| `temporal_validation` | Date/time ordering and format validation |
-| `behavior_analysis` | Auth, brief relevance, filtering behavior |
-| `response_consistency` | Schema errors, pagination bugs, data mismatches |
 | `capability_discovery` | v3: get_adcp_capabilities |
-| `governance_property_lists` | v3: property list CRUD |
-| `governance_content_standards` | v3: content standards listing and calibration |
-| `si_session_lifecycle` | v3: structured interaction sessions |
-| `si_availability` | v3: SI offering availability check |
-| `campaign_governance` | v3: full governance lifecycle: sync_plans → check → execute → report |
-| `campaign_governance_denied` | v3: denied flow: over-budget, unauthorized market |
-| `campaign_governance_conditions` | v3: apply conditions → re-check |
-| `campaign_governance_delivery` | v3: delivery monitoring with drift detection |
-| `seller_governance_context` | v3: verify seller persists governance_context |
 
-### Examples
-```bash
-adcp test test-mcp discovery                           # Quick check
-adcp test test-mcp full_sales_flow --json              # CI-friendly JSON output
-adcp test https://my-agent.com validation --protocol mcp
-adcp test my-alias create_media_buy --no-dry-run       # Real operations (careful!)
-```
+Run `adcp test --list-scenarios` for all 24 with descriptions.
 
 ### Test options
 - `--json` — Machine-readable output for CI
@@ -210,7 +293,9 @@ If not installed, prefix all commands with `npx @adcp/client`. Requires Node.js 
 
 - **"try AdCP" / "show me how it works" / no specific agent** — Use built-in `test-mcp`
 - **"what tools" / "discover" / "list tools"** — `adcp <agent>` with no tool name
-- **"test" / "run tests" / "compliance" / "validate agent"** — `adcp test <agent> [scenario]`
+- **"test" / "compliance" / "validate agent" / "does my agent work"** — `adcp comply <agent> --json`
+- **"debug a specific failure" / "why does this step fail"** — `adcp storyboard step <agent> <storyboard_id> <step_id> --json`
+- **"run a specific scenario"** — `adcp test <agent> [scenario]` (legacy)
 - **"brand" / "property" / "registry" / "look up" / "validate domain"** — `adcp registry <command>`
 - **Specific tool name mentioned** — `adcp <agent> <tool> '<payload>'`
 - **"compare protocols"** — Run same call with `--protocol mcp` then `--protocol a2a`, diff results
