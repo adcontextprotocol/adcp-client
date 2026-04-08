@@ -1,5 +1,20 @@
 # Changelog
 
+## 4.22.0
+
+### Minor Changes
+
+- ee1753d: Send adcp_major_version on every request per adcontextprotocol/adcp#1959. Sellers can validate the declared version against their supported range and return VERSION_UNSUPPORTED on mismatch.
+- 68da21e: Add `serve()` helper for zero-boilerplate agent HTTP servers, fix examples to use npm-consumer import paths, and ship docs/llms.txt + BUILD-AN-AGENT.md in the npm package for agent discoverability.
+- ea93508: Migrate comply() to storyboard-driven testing. The compliance engine now runs storyboard YAMLs instead of hand-written scenario functions. Adds YAML format extensions (expect_error, requires_tool, context_outputs/context_inputs, error_code validation) and 10 new compliance storyboards covering governance, SI, brand rights, state machines, error compliance, schema validation, behavioral analysis, audiences, and deterministic testing. Deprecates SCENARIO_REQUIREMENTS, DEFAULT_SCENARIOS, and testAllScenarios() in favor of storyboard execution.
+- ea93508: Add storyboard-driven testing module with CLI support. Storyboards are YAML-defined test workflows that map directly to SingleAgentClient methods, enabling step-by-step agent testing. Includes 12 bundled storyboards from the AdCP spec, a stateless per-step CLI (`adcp storyboard step`) designed for LLM consumption, and platform type tags for backwards compatibility with the existing compliance system.
+- e5002a4: Add `userAgent` config to `PropertyCrawlerConfig` and `TestOptions`, threaded through to all outbound HTTP requests via both MCP and A2A transports. Wire the existing but unused `SingleAgentClientConfig.userAgent` field into protocol headers. Export `PropertyCrawlerConfig` type from public API.
+
+### Patch Changes
+
+- 913fadd: Add generated agent documentation (llms.txt, TYPE-SUMMARY.md) and update SKILL.md with all 24 test scenarios
+- cc07055: Fix skipped-step counting in storyboard runner and add tool_discovery diagnostic observations to comply(). Steps skipped due to requires_tool are now correctly counted as skipped instead of passed, and comply() emits observations showing discovered tools and expected-vs-actual tools when tracks are skipped.
+
 ## 4.21.0
 
 ### Minor Changes
