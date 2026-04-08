@@ -107,6 +107,11 @@ export {
   getPlatformProfile,
   getAllPlatformTypes,
   getPlatformTypesWithLabels,
+  // Platform storyboard mapping
+  PLATFORM_STORYBOARDS,
+  getStoryboardIdsForPlatform,
+  extractScenariosFromStoryboard,
+  filterToKnownScenarios,
   // Types
   type ComplyOptions,
   type ComplianceTrack,

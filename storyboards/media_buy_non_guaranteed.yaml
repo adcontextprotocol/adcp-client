@@ -8,6 +8,8 @@ platform_types:
   - dsp
   - pmax_platform
   - generative_dsp
+  - search_platform
+  - ai_platform
 
 track: media_buy
 required_tools:

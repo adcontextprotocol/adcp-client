@@ -1,19 +1,22 @@
 /**
  * Compliance Engine
  *
- * Runs all applicable capability tracks against an agent
- * and reports results for every track — never stops at the first failure.
+ * Storyboard-driven compliance assessment. Storyboards are the routing
+ * mechanism; tracks are a reporting layer derived from storyboard results.
+ *
+ * Resolution priority: storyboards > platform_type > all applicable.
  */
 
-import { testAgent as runAgentTest } from '../agent-tester';
 import { createTestClient, discoverAgentProfile } from '../client';
-import { getApplicableScenarios } from '../orchestrator';
-import type { TestScenario, TestOptions, TestResult, AgentProfile } from '../types';
-import { runTrackStoryboards, mapStoryboardResultsToTrackResult } from './storyboard-tracks';
+import type { TestOptions, TestResult, AgentProfile } from '../types';
+import { mapStoryboardResultsToTrackResult, TRACK_LABELS } from './storyboard-tracks';
+import { runStoryboard } from '../storyboard/runner';
+import { loadBundledStoryboards, getStoryboardById } from '../storyboard/loader';
+import type { Storyboard, StoryboardResult, StoryboardRunOptions } from '../storyboard/types';
+import { PLATFORM_STORYBOARDS } from './platform-storyboards';
 import type {
   ComplianceTrack,
   TrackResult,
-  TrackStatus,
   ComplianceResult,
   ComplianceSummary,
   AdvisoryObservation,
@@ -28,96 +31,8 @@ import { detectController, hasTestController } from '../test-controller';
 import type { ControllerDetection } from '../test-controller';
 
 /**
- * Maps each track to its constituent scenarios and a human-readable label.
+ * All compliance tracks in display order.
  */
-const TRACK_DEFINITIONS: Record<ComplianceTrack, { label: string; scenarios: TestScenario[] }> = {
-  core: {
-    label: 'Core Protocol',
-    scenarios: [
-      'health_check',
-      'discovery',
-      'capability_discovery',
-      'schema_compliance',
-      'controller_validation',
-      'deterministic_account',
-    ],
-  },
-  products: {
-    label: 'Product Discovery',
-    scenarios: ['pricing_edge_cases', 'behavior_analysis', 'response_consistency'],
-  },
-  media_buy: {
-    label: 'Media Buy Lifecycle',
-    scenarios: [
-      'create_media_buy',
-      'full_sales_flow',
-      'creative_inline',
-      'temporal_validation',
-      'media_buy_lifecycle',
-      'terminal_state_enforcement',
-      'package_lifecycle',
-      'seller_governance_context',
-      'deterministic_media_buy',
-      'deterministic_budget',
-    ],
-  },
-  creative: {
-    label: 'Creative Management',
-    scenarios: ['creative_sync', 'creative_flow', 'deterministic_creative'],
-  },
-  reporting: {
-    label: 'Reporting',
-    scenarios: ['reporting_flow', 'deterministic_delivery'],
-  },
-  governance: {
-    label: 'Governance',
-    scenarios: ['governance_property_lists', 'governance_content_standards', 'property_list_filters'],
-  },
-  campaign_governance: {
-    label: 'Campaign Governance',
-    scenarios: [
-      'campaign_governance',
-      'campaign_governance_denied',
-      'campaign_governance_conditions',
-      'campaign_governance_delivery',
-    ],
-  },
-  signals: {
-    label: 'Signals',
-    scenarios: ['signals_flow'],
-  },
-  si: {
-    label: 'Sponsored Intelligence',
-    scenarios: ['si_session_lifecycle', 'si_availability', 'si_handoff', 'deterministic_session'],
-  },
-  audiences: {
-    label: 'Audience Management',
-    scenarios: ['sync_audiences'],
-  },
-  error_handling: {
-    label: 'Error Compliance',
-    scenarios: ['error_codes', 'error_structure', 'error_transport'],
-  },
-};
-
-/**
- * Which tools make a track "applicable" — if the agent has at least one
- * of these tools, the track should be attempted.
- */
-const TRACK_RELEVANCE: Record<ComplianceTrack, string[]> = {
-  core: [], // always applicable
-  products: ['get_products'],
-  media_buy: ['create_media_buy', 'update_media_buy', 'get_media_buys'],
-  creative: ['sync_creatives', 'build_creative', 'list_creative_formats'],
-  reporting: ['get_media_buy_delivery'],
-  governance: ['create_property_list', 'list_content_standards'],
-  campaign_governance: ['sync_plans', 'check_governance'],
-  signals: ['get_signals'],
-  si: ['si_initiate_session'],
-  audiences: ['sync_audiences'],
-  error_handling: ['create_media_buy'],
-};
-
 const TRACK_ORDER: ComplianceTrack[] = [
   'core',
   'products',
@@ -131,53 +46,6 @@ const TRACK_ORDER: ComplianceTrack[] = [
   'audiences',
   'error_handling',
 ];
-
-function isTrackApplicable(track: ComplianceTrack, tools: string[]): boolean {
-  const relevantTools = TRACK_RELEVANCE[track];
-  if (relevantTools.length === 0) return true;
-  return relevantTools.some(t => tools.includes(t));
-}
-
-function isAuthError(step: { error?: string; passed?: boolean }): boolean {
-  if (!step.error || step.passed) return false;
-  const e = step.error.toLowerCase();
-  return (
-    e.includes('authentication') ||
-    e.includes('x-adcp-auth') ||
-    e.includes('unauthorized') ||
-    e.includes('missing auth') ||
-    e.includes('401')
-  );
-}
-
-/**
- * Check if a scenario failed entirely due to auth errors.
- * Returns true if every failed step is an auth error.
- */
-function isAuthOnlyFailure(result: TestResult): boolean {
-  if (result.overall_passed) return false;
-  const failedSteps = (result.steps ?? []).filter(s => !s.passed);
-  return failedSteps.length > 0 && failedSteps.every(isAuthError);
-}
-
-function computeTrackStatus(results: TestResult[], skippedCount: number, hasAuth: boolean): TrackStatus {
-  if (results.length === 0) return 'skip';
-
-  // When running without auth, scenarios that failed only due to auth
-  // don't count as failures
-  const effectiveResults = results.map(r => {
-    if (!hasAuth && isAuthOnlyFailure(r)) {
-      return { ...r, _authSkipped: true, overall_passed: true };
-    }
-    return r;
-  });
-
-  const passed = effectiveResults.filter(r => r.overall_passed).length;
-  const total = effectiveResults.length;
-  if (passed === total) return 'pass';
-  if (passed === 0) return 'fail';
-  return 'partial';
-}
 
 /**
  * Collect advisory observations from test results.
@@ -254,7 +122,6 @@ function collectObservations(
   // Media buy track observations
   if (track === 'media_buy') {
     // Check for valid_actions support (first match only)
-    // Only steps with observation_data are considered — snapshot-only steps don't set it.
     let checkedValidActions = false;
     for (const result of results) {
       if (checkedValidActions) break;
@@ -278,7 +145,6 @@ function collectObservations(
             });
           }
 
-          // Check creative_deadline support
           if (obs.has_creative_deadline === false) {
             observations.push({
               category: 'best_practice',
@@ -290,7 +156,6 @@ function collectObservations(
             });
           }
 
-          // Check history entry shape when present
           if (obs.history_entries && obs.history_entries > 0 && obs.history_valid === false) {
             observations.push({
               category: 'best_practice',
@@ -302,7 +167,6 @@ function collectObservations(
             });
           }
 
-          // Check dry_run/sandbox confirmation
           if (obs.sandbox === undefined || obs.sandbox === null) {
             observations.push({
               category: 'best_practice',
@@ -396,6 +260,16 @@ function collectObservations(
                 message:
                   'Agent transitions to canceled status but does not include canceled_by field. ' +
                   'Buyers need to distinguish buyer-initiated from seller-initiated cancellations.',
+              });
+            }
+            if (!obs.canceled_at) {
+              observations.push({
+                category: 'completeness',
+                severity: 'warning',
+                track,
+                message:
+                  'Agent transitions to canceled status but does not include canceled_at timestamp. ' +
+                  'A cancellation timestamp is required for audit and reconciliation.',
               });
             }
             checkedCancellation = true;
@@ -504,11 +378,17 @@ function collectObservations(
 }
 
 export interface ComplyOptions extends TestOptions {
-  /** Only run specific tracks (default: all applicable) */
+  /**
+   * Run specific storyboards by ID.
+   * Takes priority over tracks and platform_type.
+   * Example: comply(url, { storyboards: ['media_buy_seller', 'social_platform'] })
+   */
+  storyboards?: string[];
+  /** Only run specific tracks (default: all applicable). Ignored when storyboards is set. Also bypassed when platform_type is set without tracks. */
   tracks?: ComplianceTrack[];
   /** Declare the platform type for coherence checking. Accepts any string — validated internally. */
   platform_type?: PlatformType | string;
-  /** Timeout in milliseconds — stops new scenarios from starting when exceeded */
+  /** Timeout in milliseconds — stops new storyboards from starting when exceeded */
   timeout_ms?: number;
   /** AbortSignal for external cancellation (e.g., graceful shutdown) */
   signal?: AbortSignal;
@@ -516,7 +396,16 @@ export interface ComplyOptions extends TestOptions {
 
 /**
  * Run compliance assessment against an agent.
- * Assesses all applicable tracks independently — never stops at first failure.
+ * Assesses all applicable storyboards and reports results grouped by track.
+ *
+ * Resolution priority:
+ * 1. options.storyboards — run exactly these storyboard IDs
+ * 2. options.platform_type (when tracks is not set) — resolve via PLATFORM_STORYBOARDS
+ * 3. options.tracks — run all storyboards for these tracks
+ * 4. Default — run all applicable storyboards
+ *
+ * When platform_type is set, it always drives coherence checking regardless
+ * of how the storyboard pool was resolved.
  */
 export async function comply(agentUrl: string, options: ComplyOptions = {}): Promise<ComplianceResult> {
   try {
@@ -526,11 +415,112 @@ export async function comply(agentUrl: string, options: ComplyOptions = {}): Pro
   }
 }
 
+// ────────────────────────────────────────────────────────────
+// Storyboard resolution
+// ────────────────────────────────────────────────────────────
+
+/**
+ * Resolve the storyboard pool based on options.
+ * Priority: storyboards > platform_type (when tracks is not set) > tracks > all bundled.
+ */
+function resolveStoryboards(options: ComplyOptions): Storyboard[] {
+  // Explicit storyboard IDs — highest priority
+  if (options.storyboards?.length) {
+    const resolved: Storyboard[] = [];
+    for (const id of options.storyboards) {
+      const sb = getStoryboardById(id);
+      if (!sb) {
+        throw new Error(
+          `Unknown storyboard ID: "${id}". Use listStoryboards() to see available IDs.`
+        );
+      }
+      resolved.push(sb);
+    }
+    return resolved;
+  }
+
+  // Platform type — resolve via PLATFORM_STORYBOARDS
+  if (options.platform_type && !options.tracks) {
+    const pt = options.platform_type as PlatformType;
+    const ids = PLATFORM_STORYBOARDS[pt];
+    if (ids) {
+      const resolved: Storyboard[] = [];
+      for (const id of ids) {
+        const sb = getStoryboardById(id);
+        if (sb) {
+          resolved.push(sb);
+        } else {
+          // Data integrity issue — storyboard declared in PLATFORM_STORYBOARDS
+          // but not found in bundled set. This is a packaging bug.
+          console.warn(`PLATFORM_STORYBOARDS[${pt}] references unknown storyboard "${id}"`);
+        }
+      }
+      // Also include universal storyboards (no platform_types) not already in the set
+      const resolvedIds = new Set(resolved.map(s => s.id));
+      for (const sb of loadBundledStoryboards()) {
+        if (!sb.track) continue;
+        if (resolvedIds.has(sb.id)) continue;
+        if (!sb.platform_types?.length) {
+          resolved.push(sb);
+        }
+      }
+      return resolved;
+    }
+  }
+
+  // Track filter — run storyboards whose track field matches
+  if (options.tracks?.length) {
+    const trackSet = new Set(options.tracks);
+    return loadBundledStoryboards().filter(sb => sb.track && trackSet.has(sb.track as ComplianceTrack));
+  }
+
+  // Default — all compliance storyboards (those with a track field)
+  return loadBundledStoryboards().filter(sb => sb.track);
+}
+
+/**
+ * Filter storyboards to those applicable for the agent's tools.
+ * A storyboard is applicable if the agent has at least one of its required_tools,
+ * or if it has no required_tools at all.
+ */
+function filterApplicable(storyboards: Storyboard[], agentTools: string[]): Storyboard[] {
+  return storyboards.filter(sb => {
+    if (!sb.required_tools?.length) return true;
+    return sb.required_tools.some(tool => agentTools.includes(tool));
+  });
+}
+
+/**
+ * Group storyboard results by track.
+ */
+function groupByTrack(results: StoryboardResult[], storyboards: Storyboard[]): Map<ComplianceTrack, StoryboardResult[]> {
+  // Build a storyboard ID → track lookup
+  const trackLookup = new Map<string, ComplianceTrack>();
+  for (const sb of storyboards) {
+    if (sb.track) {
+      trackLookup.set(sb.id, sb.track as ComplianceTrack);
+    }
+  }
+
+  const grouped = new Map<ComplianceTrack, StoryboardResult[]>();
+  for (const result of results) {
+    const track = trackLookup.get(result.storyboard_id);
+    if (!track) continue;
+    if (!grouped.has(track)) grouped.set(track, []);
+    grouped.get(track)!.push(result);
+  }
+  return grouped;
+}
+
+// ────────────────────────────────────────────────────────────
+// Core implementation
+// ────────────────────────────────────────────────────────────
+
 async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<ComplianceResult> {
   const start = Date.now();
-  const { tracks: trackFilter, platform_type, timeout_ms, signal: externalSignal, ...testOptions } = options;
+  const { storyboards: _storyboardIds, tracks: _trackFilter, platform_type, timeout_ms, signal: externalSignal, ...testOptions } = options;
 
-  // Validate platform_type if provided (issue #402: accept string, validate internally)
+  // Validate platform_type if provided
   let platformProfile: PlatformProfile | undefined;
   if (platform_type) {
     const validTypes: string[] = getAllPlatformTypes();
@@ -580,16 +570,16 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
     // Check for abort before starting
     signal?.throwIfAborted();
 
-    // Collect observations across all tracks (declared early for tool discovery diagnostics)
+    // Collect observations across all tracks
     const allObservations: AdvisoryObservation[] = [];
 
-    // Discover agent capabilities once and share across all scenarios
+    // Discover agent capabilities once and share across all storyboards
     const client = createTestClient(agentUrl, effectiveOptions.protocol ?? 'mcp', effectiveOptions);
     const { profile, step: profileStep } = await discoverAgentProfile(client);
     effectiveOptions._client = client;
     effectiveOptions._profile = profile;
 
-    // Log discovered tools for diagnostic purposes
+    // Log discovered tools
     if (profileStep.passed) {
       allObservations.push({
         category: 'tool_discovery',
@@ -609,162 +599,71 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
     }
 
     if (!profileStep.passed) {
-      const errorMsg = profileStep.error || 'Unknown error';
-      const observations: AdvisoryObservation[] = [];
-
-      // Check for auth errors — either explicit 401/Unauthorized or MCP SDK's generic
-      // "Failed to discover" which often wraps a 401
-      const isExplicitAuthError =
-        errorMsg.includes('401') ||
-        errorMsg.includes('Unauthorized') ||
-        errorMsg.includes('unauthorized') ||
-        errorMsg.includes('authentication') ||
-        errorMsg.includes('JWS') ||
-        errorMsg.includes('JWT') ||
-        errorMsg.includes('signature verification');
-
-      // When MCP SDK wraps the error, probe the endpoint directly
-      let isAuthError = isExplicitAuthError;
-      if (!isAuthError && errorMsg.includes('Failed to discover')) {
-        try {
-          const probe = await fetch(agentUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            signal,
-          });
-          if (probe.status === 401 || probe.status === 403) {
-            isAuthError = true;
-          }
-        } catch {
-          // Network error — not an auth issue
-        }
-      }
-
-      const headline = isAuthError ? `Authentication required` : `Agent unreachable — ${errorMsg}`;
-
-      if (isAuthError) {
-        // Check if agent supports OAuth
-        const { discoverOAuthMetadata } = await import('../../auth/oauth/discovery');
-        const oauthMeta = await discoverOAuthMetadata(agentUrl);
-        if (oauthMeta) {
-          observations.push({
-            category: 'auth',
-            severity: 'error',
-            message: `Agent requires OAuth (issuer: ${oauthMeta.issuer || 'unknown'}). Save credentials: adcp --save-auth <alias> ${agentUrl} --oauth`,
-          });
-        } else {
-          observations.push({
-            category: 'auth',
-            severity: 'error',
-            message: 'Agent returned 401. Check your --auth token.',
-          });
-        }
-      }
-
-      return {
-        agent_url: agentUrl,
-        agent_profile: profile,
-        overall_status: (isAuthError ? 'auth_required' : 'unreachable') as OverallStatus,
-        tracks: [],
-        tested_tracks: [],
-        skipped_tracks: [],
-        expected_tracks: [],
-        summary: {
-          tracks_passed: 0,
-          tracks_failed: 0,
-          tracks_skipped: 0,
-          tracks_partial: 0,
-          tracks_expected: 0,
-          headline,
-        },
-        observations,
-        tested_at: new Date().toISOString(),
-        total_duration_ms: Date.now() - start,
-        dry_run: effectiveOptions.dry_run !== false,
-      };
+      return buildUnreachableResult(agentUrl, profile, profileStep.error, start, effectiveOptions, signal);
     }
 
-    const tracksToRun = trackFilter ?? TRACK_ORDER;
+    // Resolve and filter storyboard pool
+    const allStoryboards = resolveStoryboards(options);
+    const applicableStoryboards = filterApplicable(allStoryboards, profile.tools);
+
+    // Run storyboards
+    const storyboardResults: StoryboardResult[] = [];
+    const runOptions: StoryboardRunOptions = {
+      ...effectiveOptions,
+      agentTools: profile.tools,
+    };
+
+    for (const sb of applicableStoryboards) {
+      signal?.throwIfAborted();
+      const result = await runStoryboard(agentUrl, sb, runOptions);
+      storyboardResults.push(result);
+    }
+
+    // Group results by track and build TrackResults
+    const grouped = groupByTrack(storyboardResults, applicableStoryboards);
     const trackResults: TrackResult[] = [];
 
-    for (const track of tracksToRun) {
-      // Check for abort between tracks
-      signal?.throwIfAborted();
+    // Determine which tracks had storyboards in the pool (even if filtered out by tools)
+    const poolTrackSet = new Set<ComplianceTrack>();
+    for (const sb of allStoryboards) {
+      if (sb.track) poolTrackSet.add(sb.track as ComplianceTrack);
+    }
 
-      const def = TRACK_DEFINITIONS[track];
-      if (!def) continue;
+    for (const track of TRACK_ORDER) {
+      if (!poolTrackSet.has(track)) continue;
 
-      if (!isTrackApplicable(track, profile.tools)) {
+      const results = grouped.get(track) ?? [];
+
+      if (results.length > 0) {
+        const trackResult = mapStoryboardResultsToTrackResult(track, results, profile);
+        const observations = collectObservations(track, trackResult.scenarios, profile);
+        trackResult.observations = observations;
+        allObservations.push(...observations);
+        trackResults.push(trackResult);
+      } else {
+        // Track was in the pool but no storyboards ran (agent lacks tools)
         const isExpected = track !== 'core' && (platformProfile?.expected_tracks.includes(track) ?? false);
-        const requiredTools = TRACK_RELEVANCE[track];
-        const trackObservations: AdvisoryObservation[] = [];
-        if (requiredTools.length > 0) {
-          trackObservations.push({
-            category: 'tool_discovery',
-            severity: isExpected ? 'warning' : 'info',
-            message:
-              `Track "${track}" skipped: agent does not advertise any of [${requiredTools.join(', ')}]. ` +
-              `Agent tools: [${profile.tools.join(', ')}]`,
-            evidence: { expected_tools: requiredTools, agent_tool_count: profile.tools.length },
-          });
-        }
-        allObservations.push(...trackObservations);
         trackResults.push({
           track,
           status: isExpected ? 'expected' : 'skip',
-          label: def.label,
-          scenarios: [],
-          skipped_scenarios: def.scenarios,
-          observations: trackObservations,
-          duration_ms: 0,
-        });
-        continue;
-      }
-
-      const trackStart = Date.now();
-
-      // Run compliance storyboards for this track
-      const storyboardResults = await runTrackStoryboards(agentUrl, track, profile.tools, {
-        ...effectiveOptions,
-        agentTools: profile.tools,
-      });
-
-      let trackResult: TrackResult;
-
-      if (storyboardResults.length > 0) {
-        // Map storyboard results to TrackResult for backwards compat
-        trackResult = mapStoryboardResultsToTrackResult(track, storyboardResults, profile);
-      } else {
-        // No storyboards for this track — skip
-        trackResult = {
-          track,
-          status: 'skip',
-          label: def.label,
+          label: TRACK_LABELS[track] || track,
           scenarios: [],
           skipped_scenarios: [],
           observations: [],
           duration_ms: 0,
-        };
+        });
       }
-
-      // Collect observations from track results and agent profile
-      const observations = collectObservations(track, trackResult.scenarios, profile);
-      trackResult.observations = observations;
-      trackResult.duration_ms = Date.now() - trackStart;
-
-      allObservations.push(...observations);
-      trackResults.push(trackResult);
     }
 
     // Build platform coherence result if platform type was declared
     let platformCoherence: PlatformCoherenceResult | undefined;
     if (platformProfile) {
       const findings = platformProfile.checkCoherence(profile);
+      const applicableTrackSet = new Set(trackResults.filter(t => t.status !== 'skip' && t.status !== 'expected').map(t => t.track));
       const missingTracks = platformProfile.expected_tracks.filter(
-        t => !isTrackApplicable(t, profile.tools) && t !== 'core'
+        t => !applicableTrackSet.has(t) && t !== 'core'
       );
 
-      // Add coherence findings as observations
       for (const finding of findings) {
         allObservations.push({
           category: 'coherence',
@@ -787,20 +686,14 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
     }
 
     const summary = buildSummary(trackResults);
-
-    // Partition tracks by disposition (issue #403)
     const testedTracks = trackResults.filter(t => t.status === 'pass' || t.status === 'fail' || t.status === 'partial');
     const skippedTracks = trackResults
       .filter(t => t.status === 'skip')
-      .map(t => {
-        const required = TRACK_RELEVANCE[t.track];
-        return {
-          track: t.track,
-          label: t.label,
-          reason:
-            required.length > 0 ? `Agent lacks required tools: ${required.join(', ')}` : 'Agent lacks required tools',
-        };
-      });
+      .map(t => ({
+        track: t.track,
+        label: t.label,
+        reason: 'Agent lacks required tools for applicable storyboards',
+      }));
     const expectedTracks = trackResults
       .filter(t => t.status === 'expected')
       .map(t => ({
@@ -809,7 +702,6 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
         reason: `Expected for ${platformCoherence?.label ?? 'declared platform type'}`,
       }));
 
-    // Compute overall status (issue #401)
     const overallStatus = computeOverallStatus(summary);
 
     return {
@@ -835,6 +727,88 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
       externalSignal.removeEventListener('abort', onExternalAbort);
     }
   }
+}
+
+/**
+ * Build result for an unreachable or auth-required agent.
+ */
+async function buildUnreachableResult(
+  agentUrl: string,
+  profile: AgentProfile,
+  errorMsg: string | undefined,
+  start: number,
+  effectiveOptions: TestOptions,
+  signal?: AbortSignal
+): Promise<ComplianceResult> {
+  const err = errorMsg || 'Unknown error';
+  const observations: AdvisoryObservation[] = [];
+
+  const isExplicitAuthError =
+    err.includes('401') ||
+    err.includes('Unauthorized') ||
+    err.includes('unauthorized') ||
+    err.includes('authentication') ||
+    err.includes('JWS') ||
+    err.includes('JWT') ||
+    err.includes('signature verification');
+
+  let isAuthError = isExplicitAuthError;
+  if (!isAuthError && err.includes('Failed to discover')) {
+    try {
+      const probe = await fetch(agentUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal,
+      });
+      if (probe.status === 401 || probe.status === 403) {
+        isAuthError = true;
+      }
+    } catch {
+      // Network error — not an auth issue
+    }
+  }
+
+  const headline = isAuthError ? `Authentication required` : `Agent unreachable — ${err}`;
+
+  if (isAuthError) {
+    const { discoverOAuthMetadata } = await import('../../auth/oauth/discovery');
+    const oauthMeta = await discoverOAuthMetadata(agentUrl);
+    if (oauthMeta) {
+      observations.push({
+        category: 'auth',
+        severity: 'error',
+        message: `Agent requires OAuth (issuer: ${oauthMeta.issuer || 'unknown'}). Save credentials: adcp --save-auth <alias> ${agentUrl} --oauth`,
+      });
+    } else {
+      observations.push({
+        category: 'auth',
+        severity: 'error',
+        message: 'Agent returned 401. Check your --auth token.',
+      });
+    }
+  }
+
+  return {
+    agent_url: agentUrl,
+    agent_profile: profile,
+    overall_status: (isAuthError ? 'auth_required' : 'unreachable') as OverallStatus,
+    tracks: [],
+    tested_tracks: [],
+    skipped_tracks: [],
+    expected_tracks: [],
+    summary: {
+      tracks_passed: 0,
+      tracks_failed: 0,
+      tracks_skipped: 0,
+      tracks_partial: 0,
+      tracks_expected: 0,
+      headline,
+    },
+    observations,
+    tested_at: new Date().toISOString(),
+    total_duration_ms: Date.now() - start,
+    dry_run: effectiveOptions.dry_run !== false,
+  };
 }
 
 /**

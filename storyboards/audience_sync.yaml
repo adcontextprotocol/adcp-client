@@ -12,6 +12,7 @@ platform_types:
   - retail_media
   - dsp
   - pmax_platform
+  - audio_platform
 
 narrative: |
   You support audience syncing via the sync_audiences task. Buyers push first-party

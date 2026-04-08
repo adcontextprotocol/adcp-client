@@ -9,12 +9,9 @@
 import type { TestResult, TestStepResult, AgentProfile } from '../types';
 import type { ComplianceTrack, TrackResult, TrackStatus, AdvisoryObservation } from './types';
 import type { StoryboardResult, StoryboardStepResult } from '../storyboard/types';
-import { getApplicableComplianceStoryboards } from '../storyboard/loader';
-import { runStoryboard } from '../storyboard/runner';
-import type { StoryboardRunOptions } from '../storyboard/types';
 
-/** Labels for each track (carried over from TRACK_DEFINITIONS) */
-const TRACK_LABELS: Record<ComplianceTrack, string> = {
+/** Labels for each compliance track. */
+export const TRACK_LABELS: Record<ComplianceTrack, string> = {
   core: 'Core Protocol',
   products: 'Product Discovery',
   media_buy: 'Media Buy Lifecycle',
@@ -27,29 +24,6 @@ const TRACK_LABELS: Record<ComplianceTrack, string> = {
   audiences: 'Audience Management',
   error_handling: 'Error Handling',
 };
-
-/**
- * Run all applicable compliance storyboards for a track.
- */
-export async function runTrackStoryboards(
-  agentUrl: string,
-  track: ComplianceTrack,
-  agentTools: string[],
-  options: StoryboardRunOptions
-): Promise<StoryboardResult[]> {
-  const storyboards = getApplicableComplianceStoryboards(track, agentTools);
-  const results: StoryboardResult[] = [];
-
-  for (const sb of storyboards) {
-    const result = await runStoryboard(agentUrl, sb, {
-      ...options,
-      agentTools,
-    });
-    results.push(result);
-  }
-
-  return results;
-}
 
 /**
  * Convert storyboard results to a TrackResult for backwards-compatible ComplianceResult.
@@ -133,7 +107,7 @@ function mapStepToTestStep(stepResult: StoryboardStepResult): TestStepResult {
   return {
     step: stepResult.title,
     task: stepResult.task,
-    passed: stepResult.skipped ? false : stepResult.passed,
+    passed: stepResult.skipped ? true : stepResult.passed,
     duration_ms: stepResult.duration_ms,
     error: stepResult.error,
     details: validationDetails || undefined,
@@ -156,28 +130,4 @@ function computeTrackStatus(results: StoryboardResult[]): TrackStatus {
   if (totalFailed === 0) return 'pass';
   if (totalPassed === 0) return 'fail';
   return 'partial';
-}
-
-/**
- * Get all compliance tracks that have applicable storyboards for the given agent tools.
- */
-export function getApplicableTracks(agentTools: string[]): ComplianceTrack[] {
-  const allTracks: ComplianceTrack[] = [
-    'core',
-    'products',
-    'media_buy',
-    'creative',
-    'reporting',
-    'governance',
-    'campaign_governance',
-    'signals',
-    'si',
-    'audiences',
-    'error_handling',
-  ];
-
-  return allTracks.filter(track => {
-    const storyboards = getApplicableComplianceStoryboards(track, agentTools);
-    return storyboards.length > 0;
-  });
 }
