@@ -90,7 +90,9 @@ import {
   testBudgetSimulation,
   testControllerValidation,
   // Brand rights
+  testBrandIdentity,
   testBrandRightsFlow,
+  testCreativeApproval,
 } from './scenarios';
 
 // Import types
@@ -399,8 +401,20 @@ export async function testAgent(
         break;
 
       // Brand rights protocol
+      case 'brand_identity':
+        result = await testBrandIdentity(agentUrl, effectiveOptions);
+        steps = result.steps;
+        profile = result.profile;
+        break;
+
       case 'brand_rights_flow':
         result = await testBrandRightsFlow(agentUrl, effectiveOptions);
+        steps = result.steps;
+        profile = result.profile;
+        break;
+
+      case 'creative_approval':
+        result = await testCreativeApproval(agentUrl, effectiveOptions);
         steps = result.steps;
         profile = result.profile;
         break;
@@ -518,7 +532,9 @@ export {
   testBudgetSimulation,
   testControllerValidation,
   // Brand rights
+  testBrandIdentity,
   testBrandRightsFlow,
+  testCreativeApproval,
   hasBrandRightsTools,
   // v3 helpers
   hasGovernanceTools,

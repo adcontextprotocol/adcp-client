@@ -24,7 +24,8 @@ export type ComplianceTrack =
   | 'signals' // Signal discovery, activation
   | 'si' // Sponsored intelligence sessions
   | 'audiences' // CRM audience sync
-  | 'error_handling'; // Error response structure and transport compliance
+  | 'error_handling' // Error response structure and transport compliance
+  | 'brand'; // Brand identity, rights licensing, creative approval
 
 export type TrackStatus = 'pass' | 'fail' | 'skip' | 'partial' | 'expected';
 

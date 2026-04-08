@@ -23,6 +23,7 @@ export const TRACK_LABELS: Record<ComplianceTrack, string> = {
   si: 'Sponsored Intelligence',
   audiences: 'Audience Management',
   error_handling: 'Error Handling',
+  brand: 'Brand Rights',
 };
 
 /**

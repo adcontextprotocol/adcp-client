@@ -218,6 +218,8 @@ const KNOWN_SCENARIOS: ReadonlySet<string> = new Set([
   'deterministic_budget',
   'controller_validation',
   'brand_rights_flow',
+  'brand_identity',
+  'creative_approval',
 ]);
 
 /**

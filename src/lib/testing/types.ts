@@ -65,7 +65,9 @@ export type TestScenario =
   | 'deterministic_budget' // Simulate budget spend and verify financials
   | 'controller_validation' // Validate the test controller itself (error codes, edge cases)
   // Brand rights protocol scenarios
-  | 'brand_rights_flow'; // Brand rights: get_brand_identity -> get_rights -> acquire_rights
+  | 'brand_identity' // Brand identity discovery (public and authorized access tiers)
+  | 'brand_rights_flow' // Brand rights: get_rights -> acquire_rights lifecycle
+  | 'creative_approval'; // Creative approval workflow for brand compliance
 
 export interface TestOptions {
   // Protocol to use for testing (default: 'mcp')
