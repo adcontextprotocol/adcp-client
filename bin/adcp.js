@@ -479,6 +479,23 @@ async function handleTestCommand(args) {
 /**
  * Parse common agent/auth options shared by test and comply commands.
  */
+/**
+ * Parse a JSON flag value — supports inline JSON or @file.json (read from file).
+ */
+function parseJsonFlag(flagName, value) {
+  try {
+    if (value.startsWith('@')) {
+      const filePath = value.substring(1);
+      const fileContent = readFileSync(filePath, 'utf-8');
+      return JSON.parse(fileContent);
+    }
+    return JSON.parse(value);
+  } catch (e) {
+    console.error(`Invalid JSON for ${flagName}: ${e.message}`);
+    process.exit(2);
+  }
+}
+
 function closestFlag(input, known) {
   let best = null;
   let bestDist = Infinity;
@@ -790,9 +807,9 @@ USAGE:
   adcp <command> [args]
 
 COMMANDS:
-  test <agent> [scenario]     Run test scenarios against an agent
-  comply <agent> [options]    Run compliance assessment
-  storyboard <subcommand>     Storyboard-driven testing (list, show, run, step)
+  comply <agent> [options]    Full compliance assessment ("does my agent work?")
+  storyboard <subcommand>     Debug specific flows step by step
+  test <agent> [scenario]     Run individual test scenarios (legacy)
   registry <command>          Brand/property registry lookups
 
   Run 'adcp <command> --help' for details on each command.
@@ -911,6 +928,7 @@ async function handleStoryboardList(args) {
       title: s.title,
       category: s.category,
       summary: s.summary,
+      track: s.track,
       platform_types: s.platform_types,
       step_count: s.phases.reduce((sum, p) => sum + p.steps.length, 0),
     }));
@@ -930,6 +948,7 @@ async function handleStoryboardList(args) {
       console.log(`  ${s.id}`);
       console.log(`    ${s.title} (${s.step_count} steps)`);
       console.log(`    ${s.summary}`);
+      if (s.track) console.log(`    Track: ${s.track}`);
       if (s.platform_types?.length) {
         console.log(`    Platform types: ${s.platform_types.join(', ')}`);
       }
@@ -965,19 +984,37 @@ async function handleStoryboardShow(args) {
     console.log(`\n${storyboard.title}`);
     console.log(`${'─'.repeat(storyboard.title.length)}`);
     console.log(`ID: ${storyboard.id}  |  Category: ${storyboard.category}  |  Version: ${storyboard.version}`);
+    if (storyboard.track) console.log(`Track: ${storyboard.track}`);
     if (storyboard.platform_types?.length) {
       console.log(`Platform types: ${storyboard.platform_types.join(', ')}`);
     }
-    console.log(`\n${storyboard.summary}\n`);
+    console.log(`\n${storyboard.summary}`);
+    if (storyboard.narrative) {
+      console.log(`\n${storyboard.narrative.trim()}`);
+    }
+    console.log();
 
     for (const phase of storyboard.phases) {
       const stepCount = phase.steps.length;
       console.log(`Phase: ${phase.title} (${stepCount} step${stepCount !== 1 ? 's' : ''})`);
+      if (phase.narrative) {
+        // Indent phase narrative
+        const lines = phase.narrative.trim().split('\n');
+        for (const line of lines) {
+          console.log(`  ${line}`);
+        }
+        console.log();
+      }
       for (const step of phase.steps) {
         const validationCount = step.validations?.length || 0;
         const statefulTag = step.stateful ? ' [stateful]' : '';
         console.log(`  → ${step.id}: ${step.title}${statefulTag}`);
         console.log(`    Task: ${step.task}  |  Validations: ${validationCount}`);
+        if (step.expected) {
+          // Show expected on one line, trimmed
+          const expected = step.expected.trim().split('\n')[0];
+          console.log(`    Expected: ${expected}`);
+        }
       }
       console.log();
     }
@@ -1081,26 +1118,16 @@ async function handleStoryboardStepCmd(args) {
     authToken: resolvedAuth,
   } = await resolveAgent(agentArg, authToken, protocolFlag, jsonOutput);
 
-  // Parse --context and --request flags
+  // Parse --context and --request flags (supports inline JSON or @file.json)
   let context = {};
   let request;
   const contextIndex = args.indexOf('--context');
   if (contextIndex !== -1 && args[contextIndex + 1]) {
-    try {
-      context = JSON.parse(args[contextIndex + 1]);
-    } catch (e) {
-      console.error(`Invalid JSON for --context: ${e.message}`);
-      process.exit(2);
-    }
+    context = parseJsonFlag('--context', args[contextIndex + 1]);
   }
   const requestIndex = args.indexOf('--request');
   if (requestIndex !== -1 && args[requestIndex + 1]) {
-    try {
-      request = JSON.parse(args[requestIndex + 1]);
-    } catch (e) {
-      console.error(`Invalid JSON for --request: ${e.message}`);
-      process.exit(2);
-    }
+    request = parseJsonFlag('--request', args[requestIndex + 1]);
   }
 
   const options = {

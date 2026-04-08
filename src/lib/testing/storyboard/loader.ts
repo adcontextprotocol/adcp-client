@@ -107,6 +107,7 @@ export function listStoryboards(): Array<{
   title: string;
   category: string;
   summary: string;
+  track?: string;
   platform_types?: string[];
   step_count: number;
 }> {
@@ -115,6 +116,7 @@ export function listStoryboards(): Array<{
     title: s.title,
     category: s.category,
     summary: s.summary,
+    track: s.track,
     platform_types: s.platform_types,
     step_count: s.phases.reduce((sum, p) => sum + p.steps.length, 0),
   }));

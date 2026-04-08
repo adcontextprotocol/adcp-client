@@ -47,6 +47,24 @@ export interface TrackResult {
   mode?: 'observational' | 'deterministic';
 }
 
+/**
+ * A single failed step from a compliance assessment.
+ * Designed for agent consumption — includes everything needed to
+ * diagnose the failure and re-run the step.
+ */
+export interface ComplianceFailure {
+  track: ComplianceTrack;
+  storyboard_id: string;
+  step_id: string;
+  step_title: string;
+  task: string;
+  error?: string;
+  /** What a correct response looks like (from storyboard YAML) */
+  expected?: string;
+  /** CLI command to re-run just this step for debugging */
+  fix_command: string;
+}
+
 export interface ComplianceResult {
   agent_url: string;
   agent_profile: AgentProfile;
@@ -64,6 +82,8 @@ export interface ComplianceResult {
   summary: ComplianceSummary;
   /** Advisory observations across all tracks */
   observations: AdvisoryObservation[];
+  /** Flat list of all failed steps for quick agent iteration */
+  failures?: ComplianceFailure[];
   /** Platform coherence assessment (only when platform_type provided) */
   platform_coherence?: PlatformCoherenceResult;
   /** Storyboard IDs that were resolved and executed */
