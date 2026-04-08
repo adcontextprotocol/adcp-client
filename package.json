@@ -57,6 +57,8 @@
     "skills/**/*",
     ".claude-plugin/**/*",
     "storyboards/**/*",
+    "docs/llms.txt",
+    "docs/guides/BUILD-AN-AGENT.md",
     "README.md",
     "LICENSE"
   ],

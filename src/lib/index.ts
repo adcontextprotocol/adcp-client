@@ -417,6 +417,7 @@ export {
   createTaskCapableServer,
   InMemoryTaskStore,
   isTerminal,
+  serve,
 } from './server';
 export type {
   AdcpTaskToolConfig,
@@ -429,6 +430,7 @@ export type {
   CreateTaskResult,
   GetTaskResult,
   Task,
+  ServeOptions,
 } from './server';
 
 // ====== ERROR EXTRACTION ======
