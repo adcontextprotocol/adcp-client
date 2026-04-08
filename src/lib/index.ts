@@ -430,6 +430,7 @@ export type {
   CreateTaskResult,
   GetTaskResult,
   Task,
+  ServeContext,
   ServeOptions,
 } from './server';
 

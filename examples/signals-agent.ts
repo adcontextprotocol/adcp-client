@@ -18,7 +18,7 @@
  */
 
 import { createTaskCapableServer, taskToolResponse, serve, GetSignalsRequestSchema } from '@adcp/client';
-import type { GetSignalsResponse } from '@adcp/client';
+import type { GetSignalsResponse, ServeContext } from '@adcp/client';
 
 // ---------------------------------------------------------------------------
 // Audience segment catalog — typed to match the AdCP signals response schema
@@ -132,8 +132,9 @@ function querySegments(args: {
 // ---------------------------------------------------------------------------
 // Server factory
 // ---------------------------------------------------------------------------
-function createSignalsAgent() {
+function createSignalsAgent({ taskStore }: ServeContext) {
   const server = createTaskCapableServer('Example Signals Agent', '1.0.0', {
+    taskStore,
     instructions: 'Signals agent providing audience segment discovery via get_signals.',
   });
 

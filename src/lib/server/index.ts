@@ -25,4 +25,4 @@ export type {
 } from './tasks';
 
 export { serve } from './serve';
-export type { ServeOptions } from './serve';
+export type { ServeContext, ServeOptions } from './serve';

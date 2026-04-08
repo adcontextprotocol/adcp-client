@@ -17,8 +17,8 @@ AdCP is an open protocol for AI agents to buy, manage, and optimize advertising 
 ```typescript
 import { createTaskCapableServer, taskToolResponse, serve, GetSignalsRequestSchema } from '@adcp/client';
 
-function createAgent() {
-  const server = createTaskCapableServer('My Agent', '1.0.0');
+function createAgent({ taskStore }) {
+  const server = createTaskCapableServer('My Agent', '1.0.0', { taskStore });
   server.tool('get_signals', 'Discover segments.', GetSignalsRequestSchema.shape, async (args) => {
     return taskToolResponse({ signals: [...], sandbox: true }, 'Found segments');
   });
