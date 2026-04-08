@@ -519,8 +519,10 @@ describe('formatComplianceResults', () => {
 
   test('shows storyboards executed', () => {
     const output = formatComplianceResults(mockResult);
-    assert.ok(output.includes('Storyboards: capability_discovery, schema_validation'),
-      'Should show storyboards_executed in output');
+    assert.ok(
+      output.includes('Storyboards: capability_discovery, schema_validation'),
+      'Should show storyboards_executed in output'
+    );
   });
 
   test('no storyboards line when storyboards_executed is empty', () => {
