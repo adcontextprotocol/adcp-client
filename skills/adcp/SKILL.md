@@ -73,30 +73,40 @@ adcp https://agent.example.com get_products '{}' --protocol a2a
 
 ## Test runner
 
-Run protocol compliance tests against any AdCP agent. 20 built-in scenarios.
+Run protocol compliance tests against any AdCP agent. 24 built-in scenarios.
 
 ```bash
 adcp test <agent> [scenario] [options]
 adcp test --list-scenarios
 ```
 
-### Scenarios (run `adcp test --list-scenarios` for all 20 with descriptions)
+### Scenarios (run `adcp test --list-scenarios` for all 24 with descriptions)
 | Scenario | What it tests |
 |----------|---------------|
 | `health_check` | Basic connectivity |
 | `discovery` | get_products, list_creative_formats, list_authorized_properties |
 | `create_media_buy` | Discovery + create a media buy (dry-run by default) |
 | `full_sales_flow` | Full lifecycle: discovery, create, update, delivery |
+| `creative_sync` | Test sync_creatives flow |
+| `creative_inline` | Test inline creatives in create_media_buy |
 | `creative_flow` | Creative agent: list_formats, build, preview |
 | `signals_flow` | Signals: get_signals, activate |
 | `validation` | Schema validation (invalid inputs should be rejected) |
 | `error_handling` | Verify proper error responses |
 | `pricing_edge_cases` | Auction vs fixed pricing, min spend, bid_price |
+| `temporal_validation` | Date/time ordering and format validation |
 | `behavior_analysis` | Auth, brief relevance, filtering behavior |
+| `response_consistency` | Schema errors, pagination bugs, data mismatches |
 | `capability_discovery` | v3: get_adcp_capabilities |
 | `governance_property_lists` | v3: property list CRUD |
 | `governance_content_standards` | v3: content standards listing and calibration |
 | `si_session_lifecycle` | v3: structured interaction sessions |
+| `si_availability` | v3: SI offering availability check |
+| `campaign_governance` | v3: full governance lifecycle: sync_plans → check → execute → report |
+| `campaign_governance_denied` | v3: denied flow: over-budget, unauthorized market |
+| `campaign_governance_conditions` | v3: apply conditions → re-check |
+| `campaign_governance_delivery` | v3: delivery monitoring with drift detection |
+| `seller_governance_context` | v3: verify seller persists governance_context |
 
 ### Examples
 ```bash
@@ -204,6 +214,7 @@ If not installed, prefix all commands with `npx @adcp/client`. Requires Node.js 
 - **"brand" / "property" / "registry" / "look up" / "validate domain"** — `adcp registry <command>`
 - **Specific tool name mentioned** — `adcp <agent> <tool> '<payload>'`
 - **"compare protocols"** — Run same call with `--protocol mcp` then `--protocol a2a`, diff results
+- **"build an agent" / "implement AdCP" / "server side"** — Read `docs/guides/BUILD-AN-AGENT.md` for server setup, and `storyboards/` for expected tool call sequences. Use `docs/llms.txt` for the protocol overview.
 
 ### Step 3: Handle authentication
 

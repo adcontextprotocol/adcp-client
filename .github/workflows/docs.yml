@@ -32,6 +32,12 @@ jobs:
       - name: Build library
         run: npm run build:lib
       
+      - name: Sync schemas
+        run: npm run sync-schemas
+
+      - name: Generate agent docs (llms.txt, TYPE-SUMMARY.md)
+        run: npm run generate-agent-docs
+
       - name: Generate API docs
         run: npm run docs
       
