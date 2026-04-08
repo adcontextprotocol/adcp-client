@@ -11,11 +11,14 @@ Official TypeScript/JavaScript client for the **Ad Context Protocol (AdCP)**. Bu
 
 ## For AI Agents
 
-Start with [`docs/llms.txt`](./docs/llms.txt) — the full protocol spec in one file (tools, types, error codes, examples). For type signatures, use [`docs/TYPE-SUMMARY.md`](./docs/TYPE-SUMMARY.md). Skip `src/lib/types/*.generated.ts` — they're machine-generated and will burn context.
+Start with [`docs/llms.txt`](./docs/llms.txt) — the full protocol spec in one file (tools, types, error codes, examples). Building a server? See [`docs/guides/BUILD-AN-AGENT.md`](./docs/guides/BUILD-AN-AGENT.md). For type signatures, use [`docs/TYPE-SUMMARY.md`](./docs/TYPE-SUMMARY.md). Skip `src/lib/types/*.generated.ts` — they're machine-generated and will burn context.
+
+These docs are also available in `node_modules/@adcp/client/docs/` after install.
 
 ## The Core Concept
 
 AdCP operations are **distributed and asynchronous by default**. An agent might:
+
 - Complete your request **immediately** (synchronous)
 - Need time to process and **send results via webhook** (asynchronous)
 - Ask for **clarifications** before proceeding
@@ -35,44 +38,47 @@ npm install @adcp/client
 import { ADCPMultiAgentClient } from '@adcp/client';
 
 // Configure agents and handlers
-const client = new ADCPMultiAgentClient([
+const client = new ADCPMultiAgentClient(
+  [
+    {
+      id: 'agent_x',
+      agent_uri: 'https://agent-x.com',
+      protocol: 'a2a',
+    },
+    {
+      id: 'agent_y',
+      agent_uri: 'https://agent-y.com/mcp/',
+      protocol: 'mcp',
+    },
+  ],
   {
-    id: 'agent_x',
-    agent_uri: 'https://agent-x.com',
-    protocol: 'a2a'
-  },
-  {
-    id: 'agent_y',
-    agent_uri: 'https://agent-y.com/mcp/',
-    protocol: 'mcp'
+    // Webhook URL template (macros: {agent_id}, {task_type}, {operation_id})
+    webhookUrlTemplate: 'https://myapp.com/webhook/{task_type}/{agent_id}/{operation_id}',
+
+    // Activity callback - fires for ALL events (requests, responses, status changes, webhooks)
+    onActivity: activity => {
+      console.log(`[${activity.type}] ${activity.task_type} - ${activity.operation_id}`);
+      // Log to monitoring, update UI, etc.
+    },
+
+    // Status change handlers - called for ALL status changes (completed, failed, input-required, working, etc)
+    handlers: {
+      onGetProductsStatusChange: (response, metadata) => {
+        // Called for sync completion, async webhook, AND status changes
+        console.log(`[${metadata.status}] Got products for ${metadata.operation_id}`);
+
+        if (metadata.status === 'completed') {
+          db.saveProducts(metadata.operation_id, response.products);
+        } else if (metadata.status === 'failed') {
+          db.markFailed(metadata.operation_id, metadata.message);
+        } else if (metadata.status === 'input-required') {
+          // Handle clarification needed
+          console.log('Needs input:', metadata.message);
+        }
+      },
+    },
   }
-], {
-  // Webhook URL template (macros: {agent_id}, {task_type}, {operation_id})
-  webhookUrlTemplate: 'https://myapp.com/webhook/{task_type}/{agent_id}/{operation_id}',
-
-  // Activity callback - fires for ALL events (requests, responses, status changes, webhooks)
-  onActivity: (activity) => {
-    console.log(`[${activity.type}] ${activity.task_type} - ${activity.operation_id}`);
-    // Log to monitoring, update UI, etc.
-  },
-
-  // Status change handlers - called for ALL status changes (completed, failed, input-required, working, etc)
-  handlers: {
-    onGetProductsStatusChange: (response, metadata) => {
-      // Called for sync completion, async webhook, AND status changes
-      console.log(`[${metadata.status}] Got products for ${metadata.operation_id}`);
-
-      if (metadata.status === 'completed') {
-        db.saveProducts(metadata.operation_id, response.products);
-      } else if (metadata.status === 'failed') {
-        db.markFailed(metadata.operation_id, metadata.message);
-      } else if (metadata.status === 'input-required') {
-        // Handle clarification needed
-        console.log('Needs input:', metadata.message);
-      }
-    }
-  }
-});
+);
 
 // Execute operation - library handles operation IDs, webhook URLs, context management
 const agent = client.agent('agent_x');
@@ -136,7 +142,7 @@ const client = new ADCPMultiAgentClient(agents, {
   webhookUrlTemplate: 'https://myapp.com/api/v1/adcp/{agent_id}?operation={operation_id}',
 
   // OR namespace to avoid conflicts
-  webhookUrlTemplate: 'https://myapp.com/adcp-webhooks/{agent_id}/{task_type}/{operation_id}'
+  webhookUrlTemplate: 'https://myapp.com/adcp-webhooks/{agent_id}/{task_type}/{operation_id}',
 });
 ```
 
@@ -176,21 +182,22 @@ Get observability into everything happening:
 
 ```typescript
 const client = new ADCPMultiAgentClient(agents, {
-  onActivity: (activity) => {
+  onActivity: activity => {
     console.log({
-      type: activity.type,              // 'protocol_request', 'webhook_received', etc.
+      type: activity.type, // 'protocol_request', 'webhook_received', etc.
       operation_id: activity.operation_id,
       agent_id: activity.agent_id,
-      status: activity.status
+      status: activity.status,
     });
 
     // Stream to UI, save to database, send to monitoring
     eventStream.send(activity);
-  }
+  },
 });
 ```
 
 Activity types:
+
 - `protocol_request` - Request sent to agent
 - `protocol_response` - Response received from agent
 - `status_change` - Task status changed
@@ -204,7 +211,7 @@ Activity types:
 // When creating a media buy, agent registers for delivery notifications
 const result = await agent.createMediaBuy({
   campaign_id: 'camp_123',
-  budget: { amount: 10000, currency: 'USD' }
+  budget: { amount: 10000, currency: 'USD' },
   // Agent internally sets up recurring delivery_report notifications
 });
 
@@ -224,12 +231,13 @@ const client = new ADCPMultiAgentClient(agents, {
       if (metadata.notification_type === 'final') {
         db.markOperationComplete(metadata.operation_id);
       }
-    }
-  }
+    },
+  },
 });
 ```
 
 Notifications use the **same webhook URL pattern** as regular operations:
+
 ```
 POST https://myapp.com/webhook/media_buy_delivery/agent_x/delivery_report_agent_x_2025-10
 ```
@@ -261,7 +269,7 @@ handlers: {
     if (metadata.status === 'completed') {
       const buyId = (response as CreateMediaBuyResponse).media_buy_id; // Typed!
     }
-  }
+  };
 }
 ```
 
@@ -270,11 +278,7 @@ handlers: {
 Building a server that receives AdCP tool calls? Import request types for handler signatures and Zod schemas for validation:
 
 ```typescript
-import {
-  CreateMediaBuyRequest,
-  CreateMediaBuyResponse,
-  CreateMediaBuyRequestSchema,
-} from '@adcp/client';
+import { CreateMediaBuyRequest, CreateMediaBuyResponse, CreateMediaBuyRequestSchema } from '@adcp/client';
 
 function handleCreateMediaBuy(rawParams: unknown): CreateMediaBuyResponse {
   const request: CreateMediaBuyRequest = CreateMediaBuyRequestSchema.parse(rawParams);
@@ -313,7 +317,7 @@ results.forEach((result, i) => {
 
 ```typescript
 const client = new ADCPMultiAgentClient(agents, {
-  webhookSecret: process.env.WEBHOOK_SECRET
+  webhookSecret: process.env.WEBHOOK_SECRET,
 });
 
 // Signatures verified automatically on handleWebhook()
@@ -323,13 +327,15 @@ const client = new ADCPMultiAgentClient(agents, {
 ### Authentication
 
 ```typescript
-const agents = [{
-  id: 'agent_x',
-  name: 'Agent X',
-  agent_uri: 'https://agent-x.com',
-  protocol: 'a2a',
-  auth_token: process.env.AGENT_X_TOKEN // ✅ Secure - load from env
-}];
+const agents = [
+  {
+    id: 'agent_x',
+    name: 'Agent X',
+    agent_uri: 'https://agent-x.com',
+    protocol: 'a2a',
+    auth_token: process.env.AGENT_X_TOKEN, // ✅ Secure - load from env
+  },
+];
 ```
 
 ## Environment Configuration
@@ -360,6 +366,7 @@ const client = ADCPMultiAgentClient.fromEnv();
 All AdCP tools with full type safety:
 
 **Media Buy Lifecycle:**
+
 - `getProducts()` - Discover advertising products
 - `listCreativeFormats()` - Get supported creative formats
 - `createMediaBuy()` - Create new media buy
@@ -369,11 +376,13 @@ All AdCP tools with full type safety:
 - `getMediaBuyDelivery()` - Get delivery performance
 
 **Audience & Targeting:**
+
 - `getSignals()` - Get audience signals
 - `activateSignal()` - Activate audience signals
 - `providePerformanceFeedback()` - Send performance feedback
 
 **Protocol:**
+
 - `getAdcpCapabilities()` - Get agent capabilities (v3)
 
 ## Property Discovery (AdCP v2.2.0)
@@ -395,7 +404,7 @@ import { PropertyCrawler, getPropertyIndex } from '@adcp/client';
 const crawler = new PropertyCrawler();
 await crawler.crawlAgents([
   { agent_url: 'https://agent-x.com', protocol: 'a2a' },
-  { agent_url: 'https://agent-y.com/mcp/', protocol: 'mcp' }
+  { agent_url: 'https://agent-y.com/mcp/', protocol: 'mcp' },
 ]);
 
 const index = getPropertyIndex();
@@ -422,7 +431,7 @@ const crawler = new PropertyCrawler();
 // Crawl agents - gets publisher_domains from each, then fetches adagents.json
 const result = await crawler.crawlAgents([
   { agent_url: 'https://sales.cnn.com' },
-  { agent_url: 'https://sales.espn.com' }
+  { agent_url: 'https://sales.espn.com' },
 ]);
 
 console.log(`✅ ${result.successfulAgents} agents`);
@@ -445,6 +454,7 @@ Supports 18 identifier types: `domain`, `subdomain`, `ios_bundle`, `android_pack
 ### Use Case
 
 Build a registry service that:
+
 - Periodically crawls agents with `PropertyCrawler`
 - Persists discovered properties to a database
 - Exposes fast query APIs using the in-memory index patterns
@@ -604,6 +614,7 @@ npm start
 ```
 
 Features:
+
 - Configure multiple agents (test agents + your own)
 - Execute ONE operation across all agents
 - See live activity stream (protocol requests, webhooks, handlers)
@@ -613,11 +624,13 @@ Features:
 ## Examples
 
 ### Basic Operation
+
 ```typescript
 const result = await agent.getProducts({ brief: 'Coffee brands' });
 ```
 
 ### With Clarification Handler
+
 ```typescript
 const result = await agent.createMediaBuy(
   { buyer_ref: 'campaign-123', account_id: 'acct-456', packages: [...] },
@@ -632,6 +645,7 @@ const result = await agent.createMediaBuy(
 ```
 
 ### With Webhook for Long-Running Operations
+
 ```typescript
 const operationId = createOperationId();
 
@@ -640,7 +654,7 @@ const result = await agent.syncCreatives(
   null, // No clarification handler = webhook mode
   {
     contextId: operationId,
-    webhookUrl: agent.getWebhookUrl('sync_creatives', operationId)
+    webhookUrl: agent.getWebhookUrl('sync_creatives', operationId),
   }
 );
 
@@ -657,7 +671,7 @@ import { createTaskCapableServer, taskToolResponse, GetSignalsRequestSchema } fr
 
 const server = createTaskCapableServer('My Signals Agent', '1.0.0');
 
-server.tool('get_signals', 'Discover audience segments.', GetSignalsRequestSchema.shape, async (args) => {
+server.tool('get_signals', 'Discover audience segments.', GetSignalsRequestSchema.shape, async args => {
   const signals = queryYourDatabase(args.signal_spec);
   return taskToolResponse({ signals, sandbox: true }, `Found ${signals.length} segment(s)`);
 });
