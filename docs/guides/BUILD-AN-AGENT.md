@@ -24,8 +24,8 @@ import {
   GetSignalsRequestSchema,
 } from '@adcp/client';
 
-function createAgent() {
-  const server = createTaskCapableServer('My Signals Agent', '1.0.0');
+function createAgent({ taskStore }) {
+  const server = createTaskCapableServer('My Signals Agent', '1.0.0', { taskStore });
 
   server.tool(
     'get_signals',
@@ -193,7 +193,7 @@ Key storyboards for server-side builders:
 
 ### HTTP Transport
 
-The `serve()` helper handles HTTP transport setup. Pass it a factory function that returns a configured `McpServer`:
+The `serve()` helper handles HTTP transport setup. Pass it a factory function that receives a `ServeContext` and returns a configured `McpServer`:
 
 ```typescript
 import { serve } from '@adcp/client';
@@ -202,6 +202,8 @@ serve(createMyAgent);                          // defaults: port 3001, path /mcp
 serve(createMyAgent, { port: 8080 });          // custom port
 serve(createMyAgent, { path: '/v1/mcp' });     // custom path
 ```
+
+`serve()` creates a shared task store and passes it to your factory on every request via `{ taskStore }`. Pass it through to `createTaskCapableServer()` so MCP Tasks work correctly across stateless HTTP requests.
 
 `serve()` returns the underlying `http.Server` for lifecycle control (e.g., graceful shutdown).
 

@@ -431,8 +431,8 @@ function generateLlmsTxt(
   ln('```typescript');
   ln(`import { createTaskCapableServer, taskToolResponse, serve, GetSignalsRequestSchema } from '@adcp/client';`);
   ln();
-  ln(`function createAgent() {`);
-  ln(`  const server = createTaskCapableServer('My Agent', '1.0.0');`);
+  ln(`function createAgent({ taskStore }) {`);
+  ln(`  const server = createTaskCapableServer('My Agent', '1.0.0', { taskStore });`);
   ln(`  server.tool('get_signals', 'Discover segments.', GetSignalsRequestSchema.shape, async (args) => {`);
   ln(`    return taskToolResponse({ signals: [...], sandbox: true }, 'Found segments');`);
   ln(`  });`);
