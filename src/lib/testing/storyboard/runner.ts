@@ -86,7 +86,10 @@ export async function runStoryboard(
       const result = await executeStep(client, step, phase.id, context, allSteps, options);
       stepResults.push(result);
 
-      if (result.passed) {
+      if (result.skipped) {
+        skippedCount++;
+        context = result.context;
+      } else if (result.passed) {
         context = result.context;
         passedCount++;
       } else {

@@ -580,11 +580,24 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
     // Check for abort before starting
     signal?.throwIfAborted();
 
+    // Collect observations across all tracks (declared early for tool discovery diagnostics)
+    const allObservations: AdvisoryObservation[] = [];
+
     // Discover agent capabilities once and share across all scenarios
     const client = createTestClient(agentUrl, effectiveOptions.protocol ?? 'mcp', effectiveOptions);
     const { profile, step: profileStep } = await discoverAgentProfile(client);
     effectiveOptions._client = client;
     effectiveOptions._profile = profile;
+
+    // Log discovered tools for diagnostic purposes
+    if (profileStep.passed) {
+      allObservations.push({
+        category: 'tool_discovery',
+        severity: 'info',
+        message: `Discovered ${profile.tools.length} tools: [${profile.tools.join(', ')}]`,
+        evidence: { tools: profile.tools },
+      });
+    }
 
     // Detect test controller for deterministic mode
     let controllerDetection: ControllerDetection = { detected: false };
@@ -673,7 +686,6 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
 
     const tracksToRun = trackFilter ?? TRACK_ORDER;
     const trackResults: TrackResult[] = [];
-    const allObservations: AdvisoryObservation[] = [];
 
     for (const track of tracksToRun) {
       // Check for abort between tracks
@@ -684,13 +696,26 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
 
       if (!isTrackApplicable(track, profile.tools)) {
         const isExpected = track !== 'core' && (platformProfile?.expected_tracks.includes(track) ?? false);
+        const requiredTools = TRACK_RELEVANCE[track];
+        const trackObservations: AdvisoryObservation[] = [];
+        if (requiredTools.length > 0) {
+          trackObservations.push({
+            category: 'tool_discovery',
+            severity: isExpected ? 'warning' : 'info',
+            message:
+              `Track "${track}" skipped: agent does not advertise any of [${requiredTools.join(', ')}]. ` +
+              `Agent tools: [${profile.tools.join(', ')}]`,
+            evidence: { expected_tools: requiredTools, agent_tool_count: profile.tools.length },
+          });
+        }
+        allObservations.push(...trackObservations);
         trackResults.push({
           track,
           status: isExpected ? 'expected' : 'skip',
           label: def.label,
           scenarios: [],
           skipped_scenarios: def.scenarios,
-          observations: [],
+          observations: trackObservations,
           duration_ms: 0,
         });
         continue;
