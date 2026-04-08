@@ -126,6 +126,76 @@ For media buy and product tools, dedicated response builders are also available:
 import { productsResponse, mediaBuyResponse, deliveryResponse, adcpError } from '@adcp/client';
 ```
 
+### Task Statuses (Server-Side Contract)
+
+When your agent receives a tool call, it returns one of these statuses. The buyer client handles each differently:
+
+| Status | When to use | What the buyer client does |
+|--------|------------|---------------------------|
+| `completed` | Request fulfilled synchronously | Reads `result.data` and proceeds |
+| `working` | Processing started, not done yet | Polls `tasks/get` until status changes |
+| `submitted` | Will notify via webhook when done | Waits for webhook delivery at `push_notification_config.url` |
+| `input_required` | Need clarification from buyer | Fires buyer's `InputHandler` callback with the question |
+| `deferred` | Requires human decision | Returns a token; human resumes later via `result.deferred.resume()` |
+
+For synchronous tools, use `taskToolResponse()` — it sets `completed` automatically:
+
+```typescript
+return taskToolResponse({ signals: [...], sandbox: true }, 'Found 3 segments');
+```
+
+For async tools that need background processing, use `registerAdcpTaskTool()`:
+
+```typescript
+import { registerAdcpTaskTool, InMemoryTaskStore } from '@adcp/client';
+
+const taskStore = new InMemoryTaskStore();
+
+registerAdcpTaskTool(server, taskStore, {
+  name: 'create_media_buy',
+  description: 'Create a media buy.',
+  schema: CreateMediaBuyRequestSchema.shape,
+  createTask: async (args) => {
+    // Start processing, return a task ID
+    const taskId = crypto.randomUUID();
+    processInBackground(taskId, args); // your async logic
+    return { taskId, status: 'submitted' };
+  },
+  getTask: async (taskId) => taskStore.get(taskId),
+  getTaskResult: async (taskId) => taskStore.getResult(taskId),
+});
+```
+
+**Error responses**: Use `adcpError()` with standard error codes. The buyer agent uses the `recovery` classification to decide retry behavior:
+
+```typescript
+import { adcpError } from '@adcp/client';
+
+// correctable — buyer should fix params and retry
+return adcpError('BUDGET_TOO_LOW', 'Minimum budget is $1,000');
+
+// transient — buyer should retry after delay
+return adcpError('SERVICE_UNAVAILABLE', 'Try again in 30 seconds');
+
+// terminal — buyer should stop
+return adcpError('ACCOUNT_SUSPENDED', 'Contact support');
+```
+
+See `docs/llms.txt` for the full error code table with recovery classifications.
+
+### Storyboards
+
+The `storyboards/` directory contains YAML files that define exactly what tool call sequences a buyer agent will make against your server. Each storyboard includes phases, steps, sample requests/responses, and validation rules.
+
+Key storyboards for server-side builders:
+- `media_buy_non_guaranteed.yaml` — auction-based buying flow
+- `media_buy_guaranteed_approval.yaml` — guaranteed buying with IO approval
+- `media_buy_proposal_mode.yaml` — proposal-based buying
+- `creative_sales_agent.yaml` — push creative assets to your platform
+- `signal_marketplace.yaml` / `signal_owned.yaml` — signals agent flows
+- `si_session.yaml` — sponsored intelligence sessions
+- `media_buy_governance_escalation.yaml` — governance with human escalation
+
 ### HTTP Transport
 
 AdCP agents serve over HTTP using the MCP Streamable HTTP transport. The standard pattern creates a new server instance per request:

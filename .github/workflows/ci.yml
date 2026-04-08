@@ -54,6 +54,9 @@ jobs:
 
         echo "✅ Generated files are in sync with schemas"
 
+    - name: Validate agent docs are in sync
+      run: npm run ci:docs-check
+
     - name: Run TypeScript type checking
       run: npm run typecheck
 

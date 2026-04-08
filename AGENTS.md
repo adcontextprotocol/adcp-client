@@ -2,6 +2,20 @@
 
 This document contains essential guidelines for AI coding assistants (Claude, Copilot, etc.) working on the AdCP Client project.
 
+## Start Here
+
+**Protocol overview** — Read `docs/llms.txt` for a single-file summary of AdCP: all 46 tools, key types, error codes, common flows, and test scenarios. Also available at https://adcontextprotocol.github.io/adcp-client/llms.txt
+
+**Type reference** — Read `docs/TYPE-SUMMARY.md` for curated type signatures (AgentConfig, TaskResult, ConversationContext, and all tool request/response shapes).
+
+**Do NOT read these files** — they are large generated files that waste context:
+- `src/lib/types/tools.generated.ts` (~13,000 lines) — use TYPE-SUMMARY.md instead
+- `src/lib/types/core.generated.ts` (~2,000 lines) — use TYPE-SUMMARY.md instead
+- `src/lib/types/schemas.generated.ts` (~8,000 lines) — Zod runtime schemas, rarely needed directly
+- `src/lib/agents/index.generated.ts` — generated Agent classes, use the client API instead
+
+**Building a server-side agent?** — Read `docs/guides/BUILD-AN-AGENT.md` and the `storyboards/` directory for expected tool call sequences.
+
 ## Project Overview
 
 **@adcp/client** is the official TypeScript client library for the Ad Context Protocol (AdCP), documented at [docs.adcontextprotocol.org](https://docs.adcontextprotocol.org/docs/).
@@ -217,9 +231,12 @@ npm run test:all          # Full test suite
 
 ## File Organization
 
+- `docs/llms.txt` - **Start here**: protocol overview, all tools, types, flows (generated)
+- `docs/TYPE-SUMMARY.md` - Curated type reference (generated)
 - `src/lib/core/` - Main client classes (AdCPClient, TaskExecutor)
 - `src/lib/protocols/` - A2A/MCP protocol implementations
-- `src/lib/types/` - Generated TypeScript types from schemas
+- `src/lib/types/` - Generated TypeScript types from schemas (prefer TYPE-SUMMARY.md)
+- `storyboards/` - YAML definitions of tool call sequences for each agent type
 - `test/lib/` - Library unit tests
 - `test/e2e/` - Integration tests
 - `examples/` - Usage examples and demos
@@ -253,7 +270,9 @@ The pattern:
 
 ## References
 
-- [AdCP Documentation](https://docs.adcontextprotocol.org/docs/)
+- [Protocol overview (llms.txt)](https://adcontextprotocol.github.io/adcp-client/llms.txt)
+- [API Documentation](https://adcontextprotocol.github.io/adcp-client/api/index.html)
+- [AdCP Specification](https://adcontextprotocol.org)
 - [A2A SDK](https://github.com/a2a/a2a-js-sdk)
 - [MCP SDK](https://github.com/modelcontextprotocol/typescript-sdk)
 - [Changesets Documentation](https://github.com/changesets/changesets)
