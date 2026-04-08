@@ -14,54 +14,49 @@ We'll build a **signals agent** that serves audience segments via the `get_signa
 
 ## Quick Start
 
-A minimal signals agent in ~40 lines:
+A minimal signals agent in ~20 lines:
 
 ```typescript
-import { createTaskCapableServer, taskToolResponse } from '@adcp/client';
-import { GetSignalsRequestSchema } from '@adcp/client';
-import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import { createServer } from 'http';
+import {
+  createTaskCapableServer,
+  taskToolResponse,
+  serve,
+  GetSignalsRequestSchema,
+} from '@adcp/client';
 
-const server = createTaskCapableServer('My Signals Agent', '1.0.0');
+function createAgent() {
+  const server = createTaskCapableServer('My Signals Agent', '1.0.0');
 
-server.tool(
-  'get_signals',
-  'Discover audience segments.',
-  GetSignalsRequestSchema.shape,
-  async (args) => {
-    const signals = [
-      {
-        signal_agent_segment_id: 'demo_segment',
-        signal_id: { source: 'catalog', data_provider_domain: 'example.com', id: 'demo_segment' },
-        name: 'Demo Segment',
-        description: 'A demo audience segment.',
-        value_type: 'binary',
-        signal_type: 'owned',
-        data_provider: 'My Agent',
-        coverage_percentage: 10,
-        deployments: [],
-        pricing_options: [
-          { pricing_option_id: 'po_demo', model: 'cpm', currency: 'USD', cpm: 5 },
-        ],
-      },
-    ];
+  server.tool(
+    'get_signals',
+    'Discover audience segments.',
+    GetSignalsRequestSchema.shape,
+    async (args) => {
+      const signals = [
+        {
+          signal_agent_segment_id: 'demo_segment',
+          signal_id: { source: 'catalog', data_provider_domain: 'example.com', id: 'demo_segment' },
+          name: 'Demo Segment',
+          description: 'A demo audience segment.',
+          value_type: 'binary',
+          signal_type: 'owned',
+          data_provider: 'My Agent',
+          coverage_percentage: 10,
+          deployments: [],
+          pricing_options: [
+            { pricing_option_id: 'po_demo', model: 'cpm', currency: 'USD', cpm: 5 },
+          ],
+        },
+      ];
 
-    return taskToolResponse({ signals, sandbox: true }, `Found ${signals.length} segment(s)`);
-  },
-);
+      return taskToolResponse({ signals, sandbox: true }, `Found ${signals.length} segment(s)`);
+    },
+  );
 
-const httpServer = createServer(async (req, res) => {
-  if (req.url === '/mcp' || req.url === '/mcp/') {
-    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
-    await server.connect(transport);
-    await transport.handleRequest(req, res);
-  } else {
-    res.writeHead(404);
-    res.end('Not found');
-  }
-});
+  return server;
+}
 
-httpServer.listen(3001, () => console.log('Agent running at http://localhost:3001/mcp'));
+serve(createAgent); // listening on http://localhost:3001/mcp
 ```
 
 Start it and test immediately:
@@ -100,7 +95,7 @@ import {
   CreateMediaBuyRequestSchema,
 } from '@adcp/client';
 
-// Pass .shape to server.tool() for MCP tool registration
+// The MCP SDK expects a plain object of Zod fields, not a Zod schema — .shape unwraps it.
 server.tool('get_signals', 'Discover audience segments.', GetSignalsRequestSchema.shape, async (args) => {
   // args is fully typed from the schema
 });
@@ -198,7 +193,19 @@ Key storyboards for server-side builders:
 
 ### HTTP Transport
 
-AdCP agents serve over HTTP using the MCP Streamable HTTP transport. The standard pattern creates a new server instance per request:
+The `serve()` helper handles HTTP transport setup. Pass it a factory function that returns a configured `McpServer`:
+
+```typescript
+import { serve } from '@adcp/client';
+
+serve(createMyAgent);                          // defaults: port 3001, path /mcp
+serve(createMyAgent, { port: 8080 });          // custom port
+serve(createMyAgent, { path: '/v1/mcp' });     // custom path
+```
+
+`serve()` returns the underlying `http.Server` for lifecycle control (e.g., graceful shutdown).
+
+For custom routing or middleware, you can wire the transport manually:
 
 ```typescript
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';

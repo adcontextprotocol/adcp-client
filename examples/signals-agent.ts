@@ -17,18 +17,8 @@
  *   npx @adcp/client http://localhost:3001/mcp get_signals '{"filters":{"catalog_types":["marketplace"]}}'
  */
 
-import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import { createServer } from 'http';
-
-// Server-side helpers for building AdCP agents
-// In your own project, import from '@adcp/client' instead of '../dist/...'
-import { createTaskCapableServer, taskToolResponse } from '../dist/lib/server/index.js';
-
-// Generated schemas for tool input validation
-import { GetSignalsRequestSchema } from '../dist/lib/types/schemas.generated.js';
-
-// Generated types for type-safe data
-import type { GetSignalsResponse } from '../dist/lib/types/tools.generated.js';
+import { createTaskCapableServer, taskToolResponse, serve, GetSignalsRequestSchema } from '@adcp/client';
+import type { GetSignalsResponse } from '@adcp/client';
 
 // ---------------------------------------------------------------------------
 // Audience segment catalog — typed to match the AdCP signals response schema
@@ -167,38 +157,6 @@ function createSignalsAgent() {
 }
 
 // ---------------------------------------------------------------------------
-// HTTP Server
+// Start the server
 // ---------------------------------------------------------------------------
-const PORT = parseInt(process.env.PORT || '3001');
-
-const httpServer = createServer(async (req, res) => {
-  const url = req.url || '';
-  if (url === '/mcp' || url === '/mcp/') {
-    const agentServer = createSignalsAgent();
-    const transport = new StreamableHTTPServerTransport({
-      sessionIdGenerator: undefined,
-    });
-    try {
-      await agentServer.connect(transport);
-      await transport.handleRequest(req, res);
-    } catch (err) {
-      console.error('Server error:', err);
-      if (!res.headersSent) {
-        res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Internal server error' }));
-      }
-    } finally {
-      await agentServer.close();
-    }
-  } else {
-    res.writeHead(404);
-    res.end('Not found');
-  }
-});
-
-httpServer.listen(PORT, () => {
-  console.log(`Signals agent running at http://localhost:${PORT}/mcp`);
-  console.log(`\nTest with:`);
-  console.log(`  npx @adcp/client http://localhost:${PORT}/mcp`);
-  console.log(`  npx @adcp/client http://localhost:${PORT}/mcp get_signals '{"signal_spec":"audience segments"}'`);
-});
+serve(createSignalsAgent);

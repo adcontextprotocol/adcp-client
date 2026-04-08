@@ -11,26 +11,19 @@
  *   npx @adcp/client comply http://localhost:3456/mcp
  */
 
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import { createServer } from 'http';
-
-// Server-side helpers: typed response builders + error helper
-// In your own project, import from '@adcp/client' instead of '../dist/...'
 import {
+  createTaskCapableServer,
   adcpError,
   capabilitiesResponse,
   productsResponse,
   mediaBuyResponse,
   deliveryResponse,
-} from '../dist/lib/server/index.js';
-
-// Generated schemas for tool input validation
-import {
+  serve,
   GetProductsRequestSchema,
   CreateMediaBuyRequestSchema,
   GetMediaBuyDeliveryRequestSchema,
-} from '../dist/lib/types/schemas.generated.js';
+} from '@adcp/client';
+import type { Product, GetAdCPCapabilitiesResponse } from '@adcp/client';
 
 // CreateMediaBuyRequestSchema requires account/brand per spec, but a lenient
 // version lets intentionally-incomplete requests reach the handler so it can
@@ -39,10 +32,6 @@ const LenientCreateMediaBuyInput = CreateMediaBuyRequestSchema.extend({
   account: CreateMediaBuyRequestSchema.shape.account.optional(),
   brand: CreateMediaBuyRequestSchema.shape.brand.optional(),
 });
-
-// Generated types for type-safe data
-import type { Product } from '../dist/lib/types/core.generated.js';
-import type { GetAdCPCapabilitiesResponse } from '../dist/lib/types/tools.generated.js';
 
 // ---------------------------------------------------------------------------
 // Product catalog — typed as Product[] so the compiler enforces the schema
@@ -114,16 +103,10 @@ function checkRateLimit() {
 }
 
 // ---------------------------------------------------------------------------
-// Tool input schemas — all from generated Zod schemas, no hand-rolled definitions.
-// The schemas use .shape for MCP tool registration, providing type-safe
-// JSON Schema generation for tools/list and input validation.
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
 // Server factory (McpServer.connect() can only be called once per instance)
 // ---------------------------------------------------------------------------
-function createAgentServer(): McpServer {
-  const server = new McpServer({ name: 'Example AdCP Agent', version: '1.0.0' });
+function createAgentServer() {
+  const server = createTaskCapableServer('Example AdCP Agent', '1.0.0');
 
   // --- get_adcp_capabilities ---
   server.tool('get_adcp_capabilities', {}, async () => {
@@ -223,7 +206,6 @@ function createAgentServer(): McpServer {
   );
 
   // --- get_media_buy_delivery ---
-  // Uses generated schema for input validation
   server.tool('get_media_buy_delivery', GetMediaBuyDeliveryRequestSchema.shape, async ({ media_buy_ids }) => {
     const limited = checkRateLimit();
     if (limited) return limited;
@@ -250,34 +232,6 @@ function createAgentServer(): McpServer {
 }
 
 // ---------------------------------------------------------------------------
-// HTTP Server
+// Start the server
 // ---------------------------------------------------------------------------
-const PORT = parseInt(process.env.PORT || '3456');
-
-const httpServer = createServer(async (req, res) => {
-  const url = req.url || '';
-  if (url === '/mcp' || url === '/mcp/') {
-    const agentServer = createAgentServer();
-    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
-    try {
-      await agentServer.connect(transport);
-      await transport.handleRequest(req, res);
-    } catch (err) {
-      console.error('Server error:', err);
-      if (!res.headersSent) {
-        res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Internal server error' }));
-      }
-    } finally {
-      await agentServer.close();
-    }
-  } else {
-    res.writeHead(404);
-    res.end('Not found');
-  }
-});
-
-httpServer.listen(PORT, () => {
-  console.log(`Example AdCP server running at http://localhost:${PORT}/mcp`);
-  console.log(`Test with: node bin/adcp.js comply http://localhost:${PORT}/mcp`);
-});
+serve(createAgentServer, { port: 3456 });
