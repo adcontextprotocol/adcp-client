@@ -107,7 +107,7 @@ function mapStepToTestStep(stepResult: StoryboardStepResult): TestStepResult {
   return {
     step: stepResult.title,
     task: stepResult.task,
-    passed: stepResult.skipped ? true : stepResult.passed,
+    passed: stepResult.skipped ? false : stepResult.passed,
     duration_ms: stepResult.duration_ms,
     error: stepResult.error,
     details: validationDetails || undefined,

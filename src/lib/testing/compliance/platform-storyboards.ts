@@ -167,14 +167,13 @@ export function getStoryboardIdsForPlatform(platformType: PlatformType): string[
 // ────────────────────────────────────────────────────────────
 
 /**
- * All known scenario names — both standalone TestScenario values and
- * storyboard-specific comply_scenario values used in YAML step annotations.
+ * Valid TestScenario names that have standalone test runner functions.
  *
  * Used by filterToKnownScenarios() to validate comply_scenario values
- * and filter out typos or phantom names.
+ * extracted from storyboard YAML. Names not in this set are filtered out
+ * as typos or phantom references.
  */
 const KNOWN_SCENARIOS: ReadonlySet<string> = new Set([
-  // Standalone TestScenario values (have test runner functions)
   'health_check',
   'discovery',
   'create_media_buy',
@@ -221,12 +220,6 @@ const KNOWN_SCENARIOS: ReadonlySet<string> = new Set([
   'deterministic_budget',
   'controller_validation',
   'brand_rights_flow',
-  // Storyboard-specific comply_scenario values (used in YAML annotations, no standalone runner)
-  'account_setup',
-  'audience_sync',
-  'behavior_analysis',
-  'governance_setup',
-  'media_buy_flow',
 ]);
 
 /**

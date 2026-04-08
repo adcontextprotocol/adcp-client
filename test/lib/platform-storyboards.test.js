@@ -178,15 +178,14 @@ describe('filterToKnownScenarios', () => {
     assert.equal(result.length, 7);
   });
 
-  it('includes storyboard-specific comply_scenario values', () => {
-    const result = filterToKnownScenarios([
-      'account_setup',
-      'audience_sync',
-      'behavior_analysis',
-      'governance_setup',
-      'media_buy_flow',
-    ]);
-    assert.equal(result.length, 5);
+  it('filters out phantom storyboard comply_scenario names', () => {
+    const result = filterToKnownScenarios(['account_setup', 'audience_sync', 'governance_setup', 'media_buy_flow']);
+    assert.equal(result.length, 0, 'phantom names should be filtered out');
+  });
+
+  it('keeps behavior_analysis (real TestScenario, not phantom)', () => {
+    const result = filterToKnownScenarios(['behavior_analysis']);
+    assert.equal(result.length, 1);
   });
 });
 
