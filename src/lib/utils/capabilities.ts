@@ -223,7 +223,13 @@ export const TRUSTED_MATCH_TOOLS = ['context_match', 'identity_match'] as const;
 
 export const COMPLIANCE_TOOLS = ['comply_test_controller'] as const;
 
-export const BRAND_RIGHTS_TOOLS = ['get_brand_identity', 'get_rights', 'acquire_rights', 'update_rights', 'creative_approval'] as const;
+export const BRAND_RIGHTS_TOOLS = [
+  'get_brand_identity',
+  'get_rights',
+  'acquire_rights',
+  'update_rights',
+  'creative_approval',
+] as const;
 
 export const EVENT_TRACKING_TOOLS = ['sync_event_sources', 'log_event'] as const;
 

@@ -427,16 +427,10 @@ Flow: `sync_accounts → list_accounts → sync_audiences → sync_creatives →
 **Behavioral analysis** — Validates product discovery behavior: brief filtering, response consistency, and pricing edge cases.
 Flow: `get_products`
 
-### Core
+### Brand
 
 **Brand identity and rights licensing** — Brand agent that serves identity assets and licenses rights for AI-generated content.
 Flow: `get_brand_identity → get_rights → acquire_rights → update_rights → creative_approval`
-
-**Capability discovery** — Buyer calls get_adcp_capabilities to discover what an agent supports before making any buying or creative decisions.
-Flow: `get_adcp_capabilities`
-
-**Deterministic testing** — Uses comply_test_controller to force state transitions and simulate delivery/budget, verifying state machines and reporting.
-Flow: `comply_test_controller → list_accounts → comply_test_controller → create_media_buy → comply_test_controller → get_media_buys → comply_test_controller → sync_creatives → comply_test_controller → si_initiate_session → comply_test_controller → si_send_message → create_media_buy → comply_test_controller → get_media_buy_delivery → create_media_buy → comply_test_controller`
 
 ### Campaign Governance
 
@@ -451,6 +445,14 @@ Flow: `sync_plans → check_governance`
 
 **Governance denial and human escalation** — Buyer's governance agent denies a media buy that exceeds spending authority, escalates to a human who approves with conditions.
 Flow: `sync_accounts → sync_governance → sync_plans → get_products → check_governance → create_media_buy → report_plan_outcome → get_plan_audit_logs`
+
+### Core
+
+**Capability discovery** — Buyer calls get_adcp_capabilities to discover what an agent supports before making any buying or creative decisions.
+Flow: `get_adcp_capabilities`
+
+**Deterministic testing** — Uses comply_test_controller to force state transitions and simulate delivery/budget, verifying state machines and reporting.
+Flow: `comply_test_controller → list_accounts → comply_test_controller → create_media_buy → comply_test_controller → get_media_buys → comply_test_controller → sync_creatives → comply_test_controller → si_initiate_session → comply_test_controller → si_send_message → create_media_buy → comply_test_controller → get_media_buy_delivery → create_media_buy → comply_test_controller`
 
 ### Governance
 

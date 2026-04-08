@@ -5,11 +5,7 @@
 const { describe, test } = require('node:test');
 const assert = require('node:assert');
 
-const {
-  SCENARIO_REQUIREMENTS,
-  DEFAULT_SCENARIOS,
-  getApplicableScenarios,
-} = require('../../dist/lib/testing/index.js');
+const { SCENARIO_REQUIREMENTS, DEFAULT_SCENARIOS, getApplicableScenarios } = require('../../dist/lib/testing/index.js');
 
 const { hasBrandRightsTools } = require('../../dist/lib/testing/scenarios/brand-rights.js');
 
