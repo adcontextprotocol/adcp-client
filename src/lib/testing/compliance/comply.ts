@@ -393,6 +393,8 @@ export interface ComplyOptions extends TestOptions {
   timeout_ms?: number;
   /** AbortSignal for external cancellation (e.g., graceful shutdown) */
   signal?: AbortSignal;
+  /** Original agent alias or identifier (used in fix_command instead of resolved URL) */
+  agent_alias?: string;
 }
 
 /**
@@ -526,7 +528,7 @@ function groupByTrack(
 function extractFailures(
   results: StoryboardResult[],
   storyboards: Storyboard[],
-  agentUrl: string
+  agentRef: string
 ): ComplianceFailure[] {
   const failures: ComplianceFailure[] = [];
 
@@ -564,7 +566,7 @@ function extractFailures(
           task: step.task,
           error: step.error,
           expected,
-          fix_command: `adcp storyboard step ${agentUrl} ${result.storyboard_id} ${step.step_id} --json`,
+          fix_command: `adcp storyboard step ${agentRef} ${result.storyboard_id} ${step.step_id} --json`,
         });
       }
     }
@@ -773,7 +775,8 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
     const overallStatus = computeOverallStatus(summary);
 
     // Build flat failures array from raw storyboard results (preserves step_id and expected)
-    const failures = extractFailures(storyboardResults, applicableStoryboards, agentUrl);
+    const agentRef = options.agent_alias || agentUrl;
+    const failures = extractFailures(storyboardResults, applicableStoryboards, agentRef);
 
     return {
       agent_url: agentUrl,

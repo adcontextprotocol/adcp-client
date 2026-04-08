@@ -536,6 +536,53 @@ describe('formatComplianceResults', () => {
     const output = formatComplianceResults(resultWithout);
     assert.ok(!output.includes('Storyboards:'), 'Should not show Storyboards line when undefined');
   });
+
+  test('shows How to Fix section when failures have expected text', () => {
+    const resultWithFailures = {
+      ...mockResult,
+      failures: [
+        {
+          track: 'media_buy',
+          storyboard_id: 'media_buy_seller',
+          step_id: 'sync_accounts',
+          step_title: 'Establish account',
+          task: 'sync_accounts',
+          error: 'Unknown tool: sync_accounts',
+          expected: 'Return the account with account_id and status',
+          fix_command: 'adcp storyboard step moloco media_buy_seller sync_accounts --json',
+        },
+      ],
+    };
+    const output = formatComplianceResults(resultWithFailures);
+    assert.ok(output.includes('How to Fix'), 'Should show How to Fix section');
+    assert.ok(output.includes('media_buy_seller/sync_accounts'), 'Should show storyboard/step');
+    assert.ok(output.includes('Expected: Return the account'), 'Should show expected text');
+    assert.ok(output.includes('adcp storyboard step moloco'), 'Should show fix command');
+  });
+
+  test('no How to Fix section when failures is undefined', () => {
+    const output = formatComplianceResults(mockResult);
+    assert.ok(!output.includes('How to Fix'), 'Should not show How to Fix when no failures');
+  });
+
+  test('no How to Fix section when failures have no expected text', () => {
+    const resultWithFailures = {
+      ...mockResult,
+      failures: [
+        {
+          track: 'core',
+          storyboard_id: 'capability_discovery',
+          step_id: 'get_caps',
+          step_title: 'Discover capabilities',
+          task: 'get_adcp_capabilities',
+          error: 'Connection refused',
+          fix_command: 'adcp storyboard step test capability_discovery get_caps --json',
+        },
+      ],
+    };
+    const output = formatComplianceResults(resultWithFailures);
+    assert.ok(!output.includes('How to Fix'), 'Should not show How to Fix when no expected text');
+  });
 });
 
 // ============================================================

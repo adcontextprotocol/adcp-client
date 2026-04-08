@@ -477,18 +477,30 @@ async function handleTestCommand(args) {
 }
 
 /**
- * Parse common agent/auth options shared by test and comply commands.
- */
-/**
  * Parse a JSON flag value — supports inline JSON or @file.json (read from file).
  */
 function parseJsonFlag(flagName, value) {
-  try {
-    if (value.startsWith('@')) {
-      const filePath = value.substring(1);
-      const fileContent = readFileSync(filePath, 'utf-8');
-      return JSON.parse(fileContent);
+  if (value.startsWith('@')) {
+    const filePath = value.substring(1);
+    if (!filePath) {
+      console.error(`${flagName} requires a filename after @, e.g. ${flagName} @context.json`);
+      process.exit(2);
     }
+    let fileContent;
+    try {
+      fileContent = readFileSync(filePath, 'utf-8');
+    } catch (e) {
+      console.error(`Cannot read file for ${flagName}: ${e.message}`);
+      process.exit(2);
+    }
+    try {
+      return JSON.parse(fileContent);
+    } catch (e) {
+      console.error(`Invalid JSON in ${filePath} for ${flagName}: ${e.message}`);
+      process.exit(2);
+    }
+  }
+  try {
     return JSON.parse(value);
   } catch (e) {
     console.error(`Invalid JSON for ${flagName}: ${e.message}`);
@@ -752,6 +764,7 @@ EXAMPLES:
     }
   }
 
+  const agentAlias = opts.positionalArgs[0];
   const testOptions = {
     protocol,
     dry_run: opts.dryRun,
@@ -759,6 +772,7 @@ EXAMPLES:
     tracks,
     storyboards,
     platform_type,
+    agent_alias: agentAlias !== agentUrl ? agentAlias : undefined,
     ...(finalAuthToken && { auth: { type: 'bearer', token: finalAuthToken } }),
   };
 
