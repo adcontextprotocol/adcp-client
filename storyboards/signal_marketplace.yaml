@@ -3,14 +3,10 @@ version: "1.0.0"
 title: "Marketplace signal agent"
 category: signal_marketplace
 summary: "Signal agent that resells third-party data provider signals with verifiable catalog provenance."
-platform_types:
-  - pmax_platform
-  - ai_ad_network
-  - ai_platform
-
 track: signals
 required_tools:
   - get_signals
+
 narrative: |
   You operate a signal marketplace — an intermediary that aggregates audience data from
   multiple third-party providers and makes it available to buyers through a single interface.
@@ -72,6 +68,7 @@ phases:
         schema_ref: "signals/get-signals-request.json"
         response_schema_ref: "signals/get-signals-response.json"
         doc_ref: "/signals/tasks/get_signals"
+        comply_scenario: signals_flow
         stateful: false
         expected: |
           Return matching signals from multiple data providers. Each signal must include:
@@ -111,6 +108,7 @@ phases:
         schema_ref: "signals/get-signals-request.json"
         response_schema_ref: "signals/get-signals-response.json"
         doc_ref: "/signals/tasks/get_signals"
+        comply_scenario: signals_flow
         stateful: false
         expected: |
           Return the exact signals requested, with full metadata and pricing.
@@ -157,6 +155,7 @@ phases:
         schema_ref: "signals/get-signals-request.json"
         response_schema_ref: "signals/get-signals-response.json"
         doc_ref: "/signals/data-providers"
+        comply_scenario: signals_flow
         stateful: false
         expected: |
           Return the requested signal with verifiable provenance metadata:
@@ -201,6 +200,7 @@ phases:
         schema_ref: "signals/activate-signal-request.json"
         response_schema_ref: "signals/activate-signal-response.json"
         doc_ref: "/signals/tasks/activate_signal"
+        comply_scenario: signals_flow
         stateful: true
         expected: |
           Return a deployment with:
@@ -252,6 +252,7 @@ phases:
         schema_ref: "signals/activate-signal-request.json"
         response_schema_ref: "signals/activate-signal-response.json"
         doc_ref: "/signals/tasks/activate_signal"
+        comply_scenario: signals_flow
         stateful: true
         expected: |
           Return a deployment with:

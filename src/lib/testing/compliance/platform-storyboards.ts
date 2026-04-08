@@ -7,7 +7,7 @@
  * derived from storyboard results, not a routing mechanism.
  *
  * Each entry lists storyboard IDs in recommended execution order.
- * Derived from the platform_types field in each storyboard YAML.
+ * Synced from the canonical adcp repo (adcontextprotocol/adcp).
  */
 
 import type { PlatformType } from './types';
@@ -16,142 +16,140 @@ import type { Storyboard } from '../storyboard/types';
 /**
  * Curated storyboard sets per platform type.
  *
- * When comply() receives a platform_type, this mapping determines which
- * storyboards to run. Storyboards without platform_types (e.g., schema_validation,
- * error_compliance) are universal and included automatically when the agent
- * has the required tools.
+ * Matches the canonical PLATFORM_STORYBOARDS mapping in the adcp repo
+ * (server/src/addie/services/compliance-testing.ts). Keep these in sync.
+ *
+ * Storyboards without platform_types (universal storyboards) are
+ * auto-included by resolveStoryboards() when the agent has the required tools.
+ *
+ * linear_tv_platform is client-only (not yet in the adcp repo PlatformType).
  */
 export const PLATFORM_STORYBOARDS: Record<PlatformType, string[]> = {
   // ── Sales platforms ──────────────────────────────────────
 
   display_ad_server: [
+    'capability_discovery',
     'schema_validation',
     'behavioral_analysis',
-    'media_buy_guaranteed_approval',
     'media_buy_seller',
-    'audience_sync',
-    'deterministic_testing',
+    'media_buy_state_machine',
+    'error_compliance',
   ],
 
   video_ad_server: [
+    'capability_discovery',
     'schema_validation',
     'behavioral_analysis',
-    'media_buy_guaranteed_approval',
     'media_buy_seller',
-    'deterministic_testing',
+    'media_buy_state_machine',
+    'error_compliance',
   ],
 
   social_platform: [
+    'capability_discovery',
     'schema_validation',
     'behavioral_analysis',
-    'creative_sales_agent',
-    'media_buy_non_guaranteed',
-    'media_buy_seller',
-    'audience_sync',
-    'signal_owned',
-    'deterministic_testing',
+    'social_platform',
+    'media_buy_state_machine',
+    'error_compliance',
   ],
 
   pmax_platform: [
+    'capability_discovery',
     'schema_validation',
     'behavioral_analysis',
-    'media_buy_non_guaranteed',
-    'media_buy_proposal_mode',
     'media_buy_seller',
-    'audience_sync',
-    'signal_marketplace',
-    'signal_owned',
-    'deterministic_testing',
+    'media_buy_state_machine',
+    'creative_lifecycle',
+    'error_compliance',
   ],
 
   dsp: [
+    'capability_discovery',
     'schema_validation',
     'behavioral_analysis',
-    'media_buy_governance_escalation',
-    'media_buy_non_guaranteed',
-    'media_buy_proposal_mode',
     'media_buy_seller',
-    'audience_sync',
-    'deterministic_testing',
+    'media_buy_state_machine',
+    'error_compliance',
   ],
 
   retail_media: [
+    'capability_discovery',
     'schema_validation',
     'behavioral_analysis',
-    'creative_sales_agent',
-    'media_buy_catalog_creative',
-    'media_buy_proposal_mode',
     'media_buy_seller',
-    'audience_sync',
-    'signal_owned',
-    'deterministic_testing',
+    'media_buy_catalog_creative',
+    'media_buy_state_machine',
+    'error_compliance',
   ],
 
   search_platform: [
+    'capability_discovery',
     'schema_validation',
     'behavioral_analysis',
-    'media_buy_non_guaranteed',
     'media_buy_seller',
-    'deterministic_testing',
+    'media_buy_state_machine',
+    'error_compliance',
   ],
 
   audio_platform: [
+    'capability_discovery',
     'schema_validation',
     'behavioral_analysis',
-    'media_buy_guaranteed_approval',
     'media_buy_seller',
-    'audience_sync',
-    'deterministic_testing',
+    'media_buy_state_machine',
+    'error_compliance',
   ],
 
   linear_tv_platform: [
+    'capability_discovery',
     'schema_validation',
     'behavioral_analysis',
-    'media_buy_guaranteed_approval',
     'media_buy_seller',
-    'deterministic_testing',
+    'media_buy_state_machine',
+    'error_compliance',
   ],
 
   // ── Creative agents ──────────────────────────────────────
 
-  creative_transformer: ['schema_validation', 'creative_template'],
+  creative_transformer: ['capability_discovery', 'creative_template'],
 
-  creative_library: ['schema_validation', 'creative_template'],
+  creative_library: ['capability_discovery', 'creative_lifecycle'],
 
-  creative_ad_server: ['schema_validation', 'creative_ad_server'],
+  creative_ad_server: ['capability_discovery', 'creative_ad_server'],
 
   // ── Sponsored intelligence ───────────────────────────────
 
-  si_platform: ['schema_validation', 'si_session'],
+  si_platform: ['capability_discovery', 'si_session'],
 
   // ── AI-native platforms ──────────────────────────────────
 
   ai_ad_network: [
+    'capability_discovery',
     'schema_validation',
     'behavioral_analysis',
-    'media_buy_governance_escalation',
     'media_buy_seller',
-    'signal_marketplace',
-    'deterministic_testing',
+    'media_buy_state_machine',
+    'creative_lifecycle',
+    'error_compliance',
   ],
 
   ai_platform: [
+    'capability_discovery',
     'schema_validation',
     'behavioral_analysis',
-    'media_buy_non_guaranteed',
-    'media_buy_seller',
-    'signal_marketplace',
-    'deterministic_testing',
+    'creative_template',
+    'error_compliance',
   ],
 
   generative_dsp: [
+    'capability_discovery',
     'schema_validation',
     'behavioral_analysis',
-    'media_buy_governance_escalation',
-    'media_buy_non_guaranteed',
-    'media_buy_proposal_mode',
     'media_buy_seller',
-    'deterministic_testing',
+    'media_buy_state_machine',
+    'creative_lifecycle',
+    'error_compliance',
   ],
 };
 

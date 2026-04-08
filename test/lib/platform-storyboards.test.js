@@ -62,8 +62,19 @@ describe('PLATFORM_STORYBOARDS', () => {
 
   it('creative platforms include their specific storyboard', () => {
     assert.ok(PLATFORM_STORYBOARDS.creative_transformer.includes('creative_template'));
-    assert.ok(PLATFORM_STORYBOARDS.creative_library.includes('creative_template'));
+    assert.ok(PLATFORM_STORYBOARDS.creative_library.includes('creative_lifecycle'));
     assert.ok(PLATFORM_STORYBOARDS.creative_ad_server.includes('creative_ad_server'));
+  });
+
+  it('all platform types start with capability_discovery', () => {
+    const allTypes = getAllPlatformTypes();
+    for (const type of allTypes) {
+      assert.equal(
+        PLATFORM_STORYBOARDS[type][0],
+        'capability_discovery',
+        `${type} should start with capability_discovery`
+      );
+    }
   });
 });
 
