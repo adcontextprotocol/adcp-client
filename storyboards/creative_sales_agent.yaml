@@ -3,14 +3,10 @@ version: "1.0.0"
 title: "Sales agent with creative capabilities"
 category: creative_sales_agent
 summary: "Stateful sales agent that accepts pushed creative assets and renders them in its environment."
-platform_types:
-  - retail_media
-  - social_platform
-
 track: creative
 required_tools:
   - sync_creatives
-  - list_creative_formats
+
 narrative: |
   You run a publisher platform, retail media network, or other sell-side system that
   accepts creative assets from buyers. The buyer pushes assets or catalog items to your
@@ -122,7 +118,7 @@ phases:
           - check: response_schema
             description: "Response matches sync-creatives-response.json schema"
           - check: field_present
-            path: "creatives[0].action"
+            path: "results[0].action"
             description: "Each creative has an action (created/updated)"
 
   - id: preview

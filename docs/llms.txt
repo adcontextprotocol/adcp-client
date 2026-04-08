@@ -1,7 +1,7 @@
 # Ad Context Protocol (AdCP)
 
 > Generated at: 2026-04-08
-> Library: @adcp/client v4.20.0
+> Library: @adcp/client v4.22.1
 > AdCP major version: 3
 > Canonical URL: https://adcontextprotocol.github.io/adcp-client/llms.txt
 
@@ -191,7 +191,7 @@ Optional: `catalogs: object[]`, `catalog_ids: string[]`, `delete_missing: boolea
 
 Request parameters for AI-powered creative generation.
 
-Optional: `message: string`, `creative_manifest: Creative Manifest`, `creative_id: string`, `concept_id: string`, `media_buy_id: string`, `package_id: string`, `target_format_id: Format Id`, `target_format_ids: object[]`, +10 more
+Optional: `message: string`, `creative_manifest: Creative Manifest`, `creative_id: string`, `concept_id: string`, `media_buy_id: string`, `package_id: string`, `target_format_id: Format Id`, `target_format_ids: object[]`, +11 more
 
 #### `preview_creative`
 
@@ -202,7 +202,7 @@ Request parameters for generating creative previews.
 
 Request parameters for discovering creative formats from this creative agent.
 
-Optional: `format_ids: object[]`, `type: 'audio' | 'video' | 'display' | 'dooh'`, `asset_types: string[]`, `max_width: integer`, `max_height: integer`, `min_width: integer`, `min_height: integer`, `is_responsive: boolean`, +8 more
+Optional: `format_ids: object[]`, `type: 'audio' | 'video' | 'display' | 'dooh'`, `asset_types: string[]`, `max_width: integer`, `max_height: integer`, `min_width: integer`, `min_height: integer`, `is_responsive: boolean`, +10 more
 
 #### `get_creative_delivery`
 
@@ -214,7 +214,7 @@ Optional: `account: Account Ref`, `media_buy_ids: string[]`, `creative_ids: stri
 
 Request parameters for querying creative library with filtering and pagination.
 
-Optional: `filters: Creative Filters`, `sort: object`, `pagination: Pagination Request`, `include_assignments: boolean`, `include_snapshot: boolean`, `include_items: boolean`, `include_variables: boolean`, `fields: string[]`, +1 more
+Optional: `filters: Creative Filters`, `sort: object`, `pagination: Pagination Request`, `include_assignments: boolean`, `include_snapshot: boolean`, `include_items: boolean`, `include_variables: boolean`, `include_pricing: boolean`, +3 more
 
 #### `sync_creatives`
 
@@ -416,26 +416,57 @@ These are the standard tool call sequences from the AdCP storyboards. Each flow 
 
 ### Audiences
 
-**Audience sync** — Tests sync_audiences: account discovery, audience creation with hashed identifiers, and audience deletion.
+**Audience sync** — Full audience lifecycle: account discovery, audience creation with hashed identifiers, and audience deletion.
 Flow: `list_accounts → sync_audiences`
+
+**Social platform** — Social media platform that accepts audience segments, native creatives, and conversion events from buyer agents.
+Flow: `sync_accounts → list_accounts → sync_audiences → sync_creatives → log_event → get_account_financials`
 
 ### Products
 
-**Behavioral analysis** — Validates product discovery behavior, response consistency, and pricing edge cases.
+**Behavioral analysis** — Validates product discovery behavior: brief filtering, response consistency, and pricing edge cases.
 Flow: `get_products`
 
 ### Core
 
-**Brand rights flow** — Agent that provides brand identity, queries rights, and supports rights acquisition.
-Flow: `get_brand_identity → get_rights → acquire_rights`
+**Brand identity and rights licensing** — Brand agent that serves identity assets and licenses rights for AI-generated content.
+Flow: `get_brand_identity → get_rights → acquire_rights → update_rights → creative_approval`
+
+**Capability discovery** — Buyer calls get_adcp_capabilities to discover what an agent supports before making any buying or creative decisions.
+Flow: `get_adcp_capabilities`
 
 **Deterministic testing** — Uses comply_test_controller to force state transitions and simulate delivery/budget, verifying state machines and reporting.
 Flow: `comply_test_controller → list_accounts → comply_test_controller → create_media_buy → comply_test_controller → get_media_buys → comply_test_controller → sync_creatives → comply_test_controller → si_initiate_session → comply_test_controller → si_send_message → create_media_buy → comply_test_controller → get_media_buy_delivery → create_media_buy → comply_test_controller`
 
+### Campaign Governance
+
+**Campaign governance — conditional approval** — Governance agent approves a media buy with conditions. Buyer re-checks after meeting the conditions.
+Flow: `sync_plans → check_governance → create_media_buy`
+
+**Campaign governance — delivery monitoring with drift detection** — Governance agent monitors delivery, detects budget drift past thresholds, and triggers re-evaluation.
+Flow: `sync_plans → check_governance → get_media_buy_delivery → check_governance`
+
+**Campaign governance — denied** — Governance agent denies a media buy that exceeds the agent's spending authority. No human escalation — the buy is blocked.
+Flow: `sync_plans → check_governance`
+
+**Governance denial and human escalation** — Buyer's governance agent denies a media buy that exceeds spending authority, escalates to a human who approves with conditions.
+Flow: `sync_accounts → sync_governance → sync_plans → get_products → check_governance → create_media_buy → report_plan_outcome → get_plan_audit_logs`
+
+### Governance
+
+**Content standards** — Define creative quality rules, calibrate content against them, and validate that delivered ads met the standards.
+Flow: `create_content_standards → list_content_standards → get_content_standards → update_content_standards → calibrate_content → validate_content_delivery`
+
+**Property governance** — Manage brand safety property lists — create inclusion/exclusion lists, query and update them, validate delivery compliance.
+Flow: `create_property_list → list_property_lists → get_property_list → update_property_list → delete_property_list → validate_property_delivery`
+
 ### Creative
 
-**Creative ad server** — Stateful ad server with pre-loaded creatives. Generates serving tags per media buy.
-Flow: `list_creatives → list_creative_formats → build_creative → get_creative_delivery`
+**Creative ad server** — Stateful ad server with pre-loaded creatives. Generates serving tags per media buy with pricing and billing.
+Flow: `list_creatives → list_creative_formats → build_creative → get_creative_delivery → report_usage`
+
+**Creative lifecycle** — Full creative lifecycle on a stateful platform: sync multiple creatives, list with filtering, build and preview across formats, observe status transitions.
+Flow: `list_creative_formats → sync_creatives → list_creatives → preview_creative → build_creative`
 
 **Sales agent with creative capabilities** — Stateful sales agent that accepts pushed creative assets and renders them in its environment.
 Flow: `list_creative_formats → sync_creatives → preview_creative`
@@ -447,14 +478,6 @@ Flow: `list_creative_formats → preview_creative → build_creative`
 
 **Error handling and compliance** — Validates that agents return properly structured AdCP errors with correct codes, recovery hints, and transport bindings.
 Flow: `create_media_buy → get_products → create_media_buy`
-
-### Governance
-
-**Governance content standards** — Content standards discovery, calibration, and delivery validation.
-Flow: `list_content_standards → get_content_standards → calibrate_content → validate_content_delivery`
-
-**Governance property list management** — CRUD lifecycle for property lists with filter round-trip validation.
-Flow: `create_property_list → get_property_list → update_property_list → list_property_lists → delete_property_list → get_property_list → create_property_list → get_property_list → delete_property_list`
 
 ### Media Buy
 
@@ -470,23 +493,16 @@ Flow: `get_products → create_media_buy → get_media_buys → update_media_buy
 **Media buy via proposal acceptance** — Seller agent that generates curated media plan proposals the buyer can review, refine, and accept.
 Flow: `sync_accounts → get_products → create_media_buy → list_creative_formats → sync_creatives → get_media_buy_delivery`
 
-**Media buy state machine lifecycle** — Validates media buy state transitions: create, pause, resume, cancel, and terminal state enforcement.
-Flow: `get_products → create_media_buy → update_media_buy`
-
-### Campaign Governance
-
-**Governance denial and human escalation** — Buyer's governance agent denies a media buy that exceeds spending authority, escalates to a human who approves with conditions.
-Flow: `sync_accounts → sync_governance → sync_plans → get_products → check_governance → create_media_buy → report_plan_outcome → get_plan_audit_logs`
-
-### Reporting
-
 **Media buy seller agent** — Seller agent that receives briefs, returns products, accepts media buys, and reports delivery.
 Flow: `sync_accounts → sync_governance → get_products → create_media_buy → get_media_buys → list_creative_formats → sync_creatives → get_media_buy_delivery`
 
+**Media buy state machine lifecycle** — Validates media buy state transitions: create, pause, resume, cancel, and terminal state enforcement.
+Flow: `get_products → create_media_buy → update_media_buy`
+
 ### Sponsored Intelligence (SI)
 
-**Sponsored intelligence session** — SI agent that serves offerings, manages conversational sessions, and handles purchase handoffs.
-Flow: `si_get_offering → si_initiate_session → si_send_message → si_terminate_session → si_send_message → si_initiate_session → si_send_message → si_terminate_session`
+**Sponsored intelligence session** — Conversational ad session on an AI platform — discover offerings, initiate a session, exchange messages, and terminate.
+Flow: `si_get_offering → si_initiate_session → si_send_message → si_terminate_session`
 
 ### Signals
 

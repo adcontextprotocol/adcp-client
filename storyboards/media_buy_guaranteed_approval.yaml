@@ -3,15 +3,11 @@ version: "1.0.0"
 title: "Guaranteed media buy with human IO approval"
 category: media_buy_guaranteed_approval
 summary: "Seller agent that requires human-in-the-loop IO signing before guaranteed media buys go live."
-platform_types:
-  - display_ad_server
-  - video_ad_server
-  - audio_platform
-  - linear_tv_platform
-
 track: media_buy
 required_tools:
+  - get_products
   - create_media_buy
+
 narrative: |
   You run a sell-side platform that requires human approval before guaranteed media buys go
   live. When a buyer creates a guaranteed buy, your platform returns a submitted status with
@@ -114,6 +110,7 @@ phases:
         schema_ref: "media-buy/get-products-request.json"
         response_schema_ref: "media-buy/get-products-response.json"
         doc_ref: "/media-buy/task-reference/get_products"
+        comply_scenario: full_sales_flow
         stateful: false
         expected: |
           Return guaranteed products matching the brief. Each product should include:
@@ -172,6 +169,7 @@ phases:
         schema_ref: "media-buy/create-media-buy-request.json"
         response_schema_ref: "media-buy/create-media-buy-response.json"
         doc_ref: "/media-buy/task-reference/create_media_buy"
+        comply_scenario: create_media_buy
         stateful: true
         expected: |
           Return the media buy in submitted status:
@@ -229,6 +227,7 @@ phases:
         schema_ref: "media-buy/get-media-buys-request.json"
         response_schema_ref: "media-buy/get-media-buys-response.json"
         doc_ref: "/media-buy/task-reference/get_media_buys"
+        comply_scenario: media_buy_lifecycle
         stateful: true
         expected: |
           Return the media buy in pending_approval status:
@@ -279,6 +278,7 @@ phases:
         schema_ref: "media-buy/get-media-buys-request.json"
         response_schema_ref: "media-buy/get-media-buys-response.json"
         doc_ref: "/media-buy/task-reference/get_media_buys"
+        comply_scenario: media_buy_lifecycle
         stateful: true
         expected: |
           Return the media buy in confirmed or active status:
@@ -323,6 +323,7 @@ phases:
         schema_ref: "creative/sync-creatives-request.json"
         response_schema_ref: "creative/sync-creatives-response.json"
         doc_ref: "/creative/task-reference/sync_creatives"
+        comply_scenario: creative_sync
         stateful: true
         expected: |
           Accept and validate creatives:
@@ -351,7 +352,7 @@ phases:
           - check: response_schema
             description: "Response matches sync-creatives-response.json schema"
           - check: field_present
-            path: "creatives[0].action"
+            path: "results[0].action"
             description: "Each creative has an action (created/updated)"
 
   - id: delivery_monitoring
@@ -371,6 +372,7 @@ phases:
         schema_ref: "media-buy/get-media-buy-delivery-request.json"
         response_schema_ref: "media-buy/get-media-buy-delivery-response.json"
         doc_ref: "/media-buy/task-reference/get_media_buy_delivery"
+        comply_scenario: reporting_flow
         stateful: true
         expected: |
           Return delivery metrics for the guaranteed media buy:

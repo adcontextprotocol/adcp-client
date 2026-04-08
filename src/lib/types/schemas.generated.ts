@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-04-07T18:32:23.490Z
+// Generated at: 2026-04-08T19:32:38.443Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -48,6 +48,12 @@ export const AgeVerificationMethodSchema = z.union([z.literal("facial_age_estima
 export const DevicePlatformSchema = z.union([z.literal("ios"), z.literal("android"), z.literal("windows"), z.literal("macos"), z.literal("linux"), z.literal("chromeos"), z.literal("tvos"), z.literal("tizen"), z.literal("webos"), z.literal("fire_os"), z.literal("roku_os"), z.literal("unknown")]);
 
 export const DeviceTypeSchema = z.union([z.literal("desktop"), z.literal("mobile"), z.literal("tablet"), z.literal("ctv"), z.literal("dooh"), z.literal("unknown")]);
+
+export const MakegoodRemedySchema = z.union([z.literal("additional_delivery"), z.literal("credit"), z.literal("invoice_adjustment")]);
+
+export const PerformanceStandardMetricSchema = z.union([z.literal("viewability"), z.literal("ivt"), z.literal("completion_rate"), z.literal("brand_safety"), z.literal("attention_score")]);
+
+export const ViewabilityStandardSchema = z.union([z.literal("mrc"), z.literal("groupm")]);
 
 export const OptimizationGoalSchema = z.union([z.object({
         kind: z.literal("metric"),
@@ -134,6 +140,23 @@ export const FormatIDSchema = z.object({
     width: z.number().nullish(),
     height: z.number().nullish(),
     duration_ms: z.number().nullish()
+}).passthrough();
+
+export const MeasurementTermsSchema = z.object({
+    billing_measurement: z.object({
+        vendor: BrandReferenceSchema,
+        max_variance_percent: z.number().nullish()
+    }).passthrough().nullish(),
+    makegood_policy: z.object({
+        available_remedies: z.array(MakegoodRemedySchema)
+    }).passthrough().nullish()
+}).passthrough();
+
+export const PerformanceStandardSchema = z.object({
+    metric: PerformanceStandardMetricSchema,
+    threshold: z.number(),
+    standard: ViewabilityStandardSchema.nullish(),
+    vendor: BrandReferenceSchema
 }).passthrough();
 
 export const CreativeAssignmentSchema = z.object({
@@ -529,6 +552,15 @@ export const OutcomeMeasurementSchema = z.object({
     attribution: z.string(),
     window: DurationSchema.nullish(),
     reporting: z.string()
+}).passthrough();
+
+export const CancellationPolicySchema = z.object({
+    notice_period: DurationSchema,
+    cancellation_fee: z.object({
+        type: z.union([z.literal("percent_remaining"), z.literal("full_commitment"), z.literal("fixed_fee"), z.literal("none")]),
+        rate: z.number().nullish(),
+        amount: z.number().nullish()
+    }).passthrough()
 }).passthrough();
 
 export const CreativePolicySchema = z.object({
@@ -1026,6 +1058,16 @@ export const AccountSchema = z.object({
     ext: ExtensionObjectSchema.nullish()
 }).passthrough();
 
+export const MeasurementTerms1Schema = z.object({
+    billing_measurement: z.object({
+        vendor: BrandReferenceSchema,
+        max_variance_percent: z.number().nullish()
+    }).passthrough().nullish(),
+    makegood_policy: z.object({
+        available_remedies: z.array(MakegoodRemedySchema)
+    }).passthrough().nullish()
+}).passthrough();
+
 export const AudienceSelectorSchema = z.union([z.object({
         type: z.literal("signal"),
         signal_id: SignalIDSchema,
@@ -1065,6 +1107,13 @@ export const UpdateMediaBuyErrorSchema = z.object({
     errors: z.array(ErrorSchema),
     context: ContextObjectSchema.nullish(),
     ext: ExtensionObjectSchema.nullish()
+}).passthrough();
+
+export const CreativeConsumptionSchema = z.object({
+    tokens: z.number().nullish(),
+    images_generated: z.number().nullish(),
+    renders: z.number().nullish(),
+    duration_seconds: z.number().nullish()
 }).passthrough();
 
 export const RightsConstraintSchema = z.object({
@@ -1115,6 +1164,36 @@ export const SyncCreativesSuccessSchema = z.object({
     }).passthrough()),
     sandbox: z.boolean().nullish(),
     context: ContextObjectSchema.nullish(),
+    ext: ExtensionObjectSchema.nullish()
+}).passthrough();
+
+export const Account1Schema = z.object({
+    account_id: z.string(),
+    name: z.string(),
+    advertiser: z.string().nullish(),
+    billing_proxy: z.string().nullish(),
+    status: AccountStatusSchema,
+    brand: BrandReferenceSchema.nullish(),
+    operator: z.string().nullish(),
+    billing: z.union([z.literal("operator"), z.literal("agent"), z.literal("advertiser")]).nullish(),
+    billing_entity: BusinessEntitySchema.nullish(),
+    rate_card: z.string().nullish(),
+    payment_terms: z.union([z.literal("net_15"), z.literal("net_30"), z.literal("net_45"), z.literal("net_60"), z.literal("net_90"), z.literal("prepay")]).nullish(),
+    credit_limit: z.object({
+        amount: z.number(),
+        currency: z.string()
+    }).passthrough().nullish(),
+    setup: z.object({
+        url: z.string().nullish(),
+        message: z.string(),
+        expires_at: z.string().nullish()
+    }).passthrough().nullish(),
+    account_scope: z.union([z.literal("operator"), z.literal("brand"), z.literal("operator_brand"), z.literal("agent")]).nullish(),
+    governance_agents: z.array(z.object({
+        url: z.string(),
+        categories: z.array(z.string()).nullish()
+    }).passthrough()).nullish(),
+    sandbox: z.boolean().nullish(),
     ext: ExtensionObjectSchema.nullish()
 }).passthrough();
 
@@ -1298,6 +1377,37 @@ export const ListCreativeFormatsRequestSchema = z.object({
 
 export const FormatIDParameterSchema = z.union([z.literal("dimensions"), z.literal("duration")]);
 
+export const CpmPricingSchema = z.object({
+    model: z.literal("cpm"),
+    cpm: z.number(),
+    currency: z.string(),
+    ext: ExtensionObjectSchema.nullish()
+}).passthrough();
+
+export const PercentOfMediaPricingSchema = z.object({
+    model: z.literal("percent_of_media"),
+    percent: z.number(),
+    max_cpm: z.number().nullish(),
+    currency: z.string(),
+    ext: ExtensionObjectSchema.nullish()
+}).passthrough();
+
+export const FlatFeePricingSchema = z.object({
+    model: z.literal("flat_fee"),
+    amount: z.number(),
+    period: z.union([z.literal("monthly"), z.literal("quarterly"), z.literal("annual"), z.literal("campaign")]),
+    currency: z.string(),
+    ext: ExtensionObjectSchema.nullish()
+}).passthrough();
+
+export const PerUnitPricingSchema = z.object({
+    model: z.literal("per_unit"),
+    unit: z.string(),
+    unit_price: z.number(),
+    currency: z.string(),
+    ext: ExtensionObjectSchema.nullish()
+}).passthrough();
+
 export const CreativeAgentCapabilitySchema = z.union([z.literal("validation"), z.literal("assembly"), z.literal("generation"), z.literal("preview"), z.literal("delivery")]);
 
 export const OverlaySchema = z.object({
@@ -1445,6 +1555,8 @@ export const PackageSchema = z.object({
     catalogs: z.array(CatalogSchema).nullish(),
     format_ids: z.array(FormatIDSchema).nullish(),
     targeting_overlay: TargetingOverlaySchema.nullish(),
+    measurement_terms: MeasurementTermsSchema.nullish(),
+    performance_standards: z.array(PerformanceStandardSchema).nullish(),
     creative_assignments: z.array(CreativeAssignmentSchema).nullish(),
     format_ids_to_provide: z.array(FormatIDSchema).nullish(),
     optimization_goals: z.array(OptimizationGoalSchema).nullish(),
@@ -1666,7 +1778,7 @@ export const DeliveryMetricsSchema = z.object({
         measurable_impressions: z.number().nullish(),
         viewable_impressions: z.number().nullish(),
         viewable_rate: z.number().nullish(),
-        standard: z.union([z.literal("mrc"), z.literal("groupm")]).nullish()
+        standard: ViewabilityStandardSchema.nullish()
     }).passthrough().nullish(),
     engagements: z.number().nullish(),
     follows: z.number().nullish(),
@@ -1907,6 +2019,10 @@ export const BuildCreativeSuccessSchema = z.object({
         expires_at: z.string()
     }).passthrough().nullish(),
     preview_error: ErrorSchema.nullish(),
+    pricing_option_id: z.string().nullish(),
+    vendor_cost: z.number().nullish(),
+    currency: z.string().nullish(),
+    consumption: CreativeConsumptionSchema.nullish(),
     context: ContextObjectSchema.nullish(),
     ext: ExtensionObjectSchema.nullish()
 }).passthrough();
@@ -1930,6 +2046,10 @@ export const BuildCreativeMultiSuccessSchema = z.object({
         expires_at: z.string()
     }).passthrough().nullish(),
     preview_error: ErrorSchema.nullish(),
+    pricing_option_id: z.string().nullish(),
+    vendor_cost: z.number().nullish(),
+    currency: z.string().nullish(),
+    consumption: CreativeConsumptionSchema.nullish(),
     context: ContextObjectSchema.nullish(),
     ext: ExtensionObjectSchema.nullish()
 }).passthrough();
@@ -2147,29 +2267,6 @@ export const ActivationKeySchema = z.union([z.object({
         value: z.string()
     }).passthrough()]);
 
-export const CpmPricingSchema = z.object({
-    model: z.literal("cpm"),
-    cpm: z.number(),
-    currency: z.string(),
-    ext: ExtensionObjectSchema.nullish()
-}).passthrough();
-
-export const PercentOfMediaPricingSchema = z.object({
-    model: z.literal("percent_of_media"),
-    percent: z.number(),
-    max_cpm: z.number().nullish(),
-    currency: z.string(),
-    ext: ExtensionObjectSchema.nullish()
-}).passthrough();
-
-export const FlatFeePricingSchema = z.object({
-    model: z.literal("flat_fee"),
-    amount: z.number(),
-    period: z.union([z.literal("monthly"), z.literal("quarterly"), z.literal("annual"), z.literal("campaign")]),
-    currency: z.string(),
-    ext: ExtensionObjectSchema.nullish()
-}).passthrough();
-
 export const DeploymentSchema = z.union([z.object({
         type: z.literal("platform"),
         platform: z.string(),
@@ -2262,21 +2359,6 @@ export const UpdatePropertyListRequestSchema = z.object({
     idempotency_key: z.string().nullish()
 }).passthrough();
 
-export const PropertyListSchema = z.object({
-    list_id: z.string(),
-    name: z.string(),
-    description: z.string().nullish(),
-    principal: z.string().nullish(),
-    base_properties: z.array(BasePropertySourceSchema).nullish(),
-    filters: PropertyListFiltersSchema.nullish(),
-    brand: BrandReferenceSchema.nullish(),
-    webhook_url: z.string().nullish(),
-    cache_duration_hours: z.number().nullish(),
-    created_at: z.string().nullish(),
-    updated_at: z.string().nullish(),
-    property_count: z.number().nullish()
-}).passthrough();
-
 export const GetPropertyListRequestSchema = z.object({
     adcp_major_version: z.number().nullish(),
     list_id: z.string(),
@@ -2289,28 +2371,12 @@ export const GetPropertyListRequestSchema = z.object({
     ext: ExtensionObjectSchema.nullish()
 }).passthrough();
 
-export const GetPropertyListResponseSchema = z.object({
-    list: PropertyListSchema,
-    identifiers: z.array(IdentifierSchema).nullish(),
-    pagination: PaginationResponseSchema.nullish(),
-    resolved_at: z.string().nullish(),
-    cache_valid_until: z.string().nullish(),
-    coverage_gaps: z.record(z.string(), z.array(IdentifierSchema)).nullish(),
-    ext: ExtensionObjectSchema.nullish()
-}).passthrough();
-
 export const ListPropertyListsRequestSchema = z.object({
     adcp_major_version: z.number().nullish(),
     principal: z.string().nullish(),
     name_contains: z.string().nullish(),
     pagination: PaginationRequestSchema.nullish(),
     context: ContextObjectSchema.nullish(),
-    ext: ExtensionObjectSchema.nullish()
-}).passthrough();
-
-export const ListPropertyListsResponseSchema = z.object({
-    lists: z.array(PropertyListSchema),
-    pagination: PaginationResponseSchema.nullish(),
     ext: ExtensionObjectSchema.nullish()
 }).passthrough();
 
@@ -2416,21 +2482,6 @@ export const GetContentStandardsRequestSchema = z.object({
     adcp_major_version: z.number().nullish(),
     standards_id: z.string(),
     context: ContextObjectSchema.nullish(),
-    ext: ExtensionObjectSchema.nullish()
-}).passthrough();
-
-export const ContentStandardsSchema = z.object({
-    standards_id: z.string(),
-    name: z.string().nullish(),
-    countries_all: z.array(z.string()).nullish(),
-    channels_any: z.array(MediaChannelSchema).nullish(),
-    languages_any: z.array(z.string()).nullish(),
-    policy: z.string().nullish(),
-    calibration_exemplars: z.object({
-        pass: z.array(ArtifactSchema).nullish(),
-        fail: z.array(ArtifactSchema).nullish()
-    }).passthrough().nullish(),
-    pricing_options: z.array(PricingOptionSchema).nullish(),
     ext: ExtensionObjectSchema.nullish()
 }).passthrough();
 
@@ -3356,7 +3407,9 @@ export const ReportUsageRequestSchema = z.object({
         media_spend: z.number().nullish(),
         signal_agent_segment_id: z.string().nullish(),
         standards_id: z.string().nullish(),
-        rights_id: z.string().nullish()
+        rights_id: z.string().nullish(),
+        creative_id: z.string().nullish(),
+        property_list_id: z.string().nullish()
     }).passthrough()),
     context: ContextObjectSchema.nullish(),
     ext: ExtensionObjectSchema.nullish()
@@ -3604,6 +3657,9 @@ export const ProductSchema = z.object({
         provider: z.string(),
         notes: z.string().nullish()
     }).passthrough().nullish(),
+    measurement_terms: MeasurementTermsSchema.nullish(),
+    performance_standards: z.array(PerformanceStandardSchema).nullish(),
+    cancellation_policy: CancellationPolicySchema.nullish(),
     reporting_capabilities: ReportingCapabilitiesSchema.nullish(),
     creative_policy: CreativePolicySchema.nullish(),
     is_custom: z.boolean().nullish(),
@@ -3709,6 +3765,7 @@ export const ProductFiltersSchema = z.object({
         values: z.array(z.string())
     }).passthrough()).nullish(),
     geo_proximity: z.array(z.record(z.string(), z.unknown())).nullish(),
+    required_performance_standards: z.array(PerformanceStandardSchema).nullish(),
     keywords: z.array(z.object({
         keyword: z.string(),
         match_type: z.union([z.literal("broad"), z.literal("phrase"), z.literal("exact")]).nullish()
@@ -3738,6 +3795,8 @@ export const GetProductsResponseSchema = z.object({
     ext: ExtensionObjectSchema.nullish()
 }).passthrough();
 
+export const VendorPricingSchema = z.union([CpmPricingSchema, PercentOfMediaPricingSchema, FlatFeePricingSchema, PerUnitPricingSchema]);
+
 export const BaseIndividualAssetSchema = z.object({
     item_type: z.literal("individual"),
     asset_id: z.string(),
@@ -3745,6 +3804,10 @@ export const BaseIndividualAssetSchema = z.object({
     required: z.boolean(),
     overlays: z.array(OverlaySchema).nullish()
 }).passthrough();
+
+export const VendorPricingOptionSchema = z.object({
+    pricing_option_id: z.string()
+}).passthrough().and(VendorPricingSchema);
 
 export const PackageRequestSchema = z.object({
     adcp_major_version: z.number().nullish(),
@@ -3761,6 +3824,8 @@ export const PackageRequestSchema = z.object({
     catalogs: z.array(CatalogSchema).nullish(),
     optimization_goals: z.array(OptimizationGoalSchema).nullish(),
     targeting_overlay: TargetingOverlaySchema.nullish(),
+    measurement_terms: MeasurementTermsSchema.nullish(),
+    performance_standards: z.array(PerformanceStandardSchema).nullish(),
     creative_assignments: z.array(CreativeAssignmentSchema).nullish(),
     creatives: z.array(CreativeAssetSchema).nullish(),
     context: ContextObjectSchema.nullish(),
@@ -4020,6 +4085,7 @@ export const BuildCreativeRequestSchema = z.object({
     package_id: z.string().nullish(),
     target_format_id: FormatIDSchema.nullish(),
     target_format_ids: z.array(FormatIDSchema).nullish(),
+    account: AccountReferenceSchema.nullish(),
     brand: BrandReferenceSchema.nullish(),
     quality: CreativeQualitySchema.nullish(),
     item_limit: z.number().nullish(),
@@ -4084,7 +4150,9 @@ export const ListCreativesRequestSchema = z.object({
     include_snapshot: z.boolean().nullish(),
     include_items: z.boolean().nullish(),
     include_variables: z.boolean().nullish(),
-    fields: z.array(z.union([z.literal("creative_id"), z.literal("name"), z.literal("format_id"), z.literal("status"), z.literal("created_date"), z.literal("updated_date"), z.literal("tags"), z.literal("assignments"), z.literal("snapshot"), z.literal("items"), z.literal("variables"), z.literal("concept")])).nullish(),
+    include_pricing: z.boolean().nullish(),
+    account: AccountReferenceSchema.nullish(),
+    fields: z.array(z.union([z.literal("creative_id"), z.literal("name"), z.literal("format_id"), z.literal("status"), z.literal("created_date"), z.literal("updated_date"), z.literal("tags"), z.literal("assignments"), z.literal("snapshot"), z.literal("items"), z.literal("variables"), z.literal("concept"), z.literal("pricing_options")])).nullish(),
     context: ContextObjectSchema.nullish(),
     ext: ExtensionObjectSchema.nullish()
 }).passthrough();
@@ -4127,7 +4195,8 @@ export const ListCreativesResponseSchema = z.object({
             last_served: z.string().nullish()
         }).passthrough().nullish(),
         snapshot_unavailable_reason: z.union([z.literal("SNAPSHOT_UNSUPPORTED"), z.literal("SNAPSHOT_TEMPORARILY_UNAVAILABLE"), z.literal("SNAPSHOT_PERMISSION_DENIED")]).nullish(),
-        items: z.array(CreativeItemSchema).nullish()
+        items: z.array(CreativeItemSchema).nullish(),
+        pricing_options: z.array(VendorPricingOptionSchema).nullish()
     }).passthrough()),
     format_summary: z.record(z.string(), z.number()).nullish(),
     status_summary: z.object({
@@ -4157,11 +4226,30 @@ export const GetSignalsRequestSchema = z.object({
     ext: ExtensionObjectSchema.nullish()
 }).passthrough();
 
-export const SignalPricingSchema = z.union([CpmPricingSchema, PercentOfMediaPricingSchema, FlatFeePricingSchema]);
-
-export const SignalPricingOptionSchema = z.object({
-    pricing_option_id: z.string()
-}).passthrough().and(SignalPricingSchema);
+export const GetSignalsResponseSchema = z.object({
+    signals: z.array(z.object({
+        signal_id: SignalIDSchema.nullish(),
+        signal_agent_segment_id: z.string(),
+        name: z.string(),
+        description: z.string(),
+        value_type: SignalValueTypeSchema.nullish(),
+        categories: z.array(z.string()).nullish(),
+        range: z.object({
+            min: z.number(),
+            max: z.number()
+        }).passthrough().nullish(),
+        signal_type: SignalCatalogTypeSchema,
+        data_provider: z.string(),
+        coverage_percentage: z.number(),
+        deployments: z.array(DeploymentSchema),
+        pricing_options: z.array(VendorPricingOptionSchema)
+    }).passthrough()),
+    errors: z.array(ErrorSchema).nullish(),
+    pagination: PaginationResponseSchema.nullish(),
+    sandbox: z.boolean().nullish(),
+    context: ContextObjectSchema.nullish(),
+    ext: ExtensionObjectSchema.nullish()
+}).passthrough();
 
 export const ActivateSignalResponseSchema = z.union([ActivateSignalSuccessSchema, ActivateSignalErrorSchema]);
 
@@ -4177,10 +4265,20 @@ export const CreatePropertyListRequestSchema = z.object({
     ext: ExtensionObjectSchema.nullish()
 }).passthrough();
 
-export const CreatePropertyListResponseSchema = z.object({
-    list: PropertyListSchema,
-    auth_token: z.string(),
-    ext: ExtensionObjectSchema.nullish()
+export const PropertyListSchema = z.object({
+    list_id: z.string(),
+    name: z.string(),
+    description: z.string().nullish(),
+    principal: z.string().nullish(),
+    base_properties: z.array(BasePropertySourceSchema).nullish(),
+    filters: PropertyListFiltersSchema.nullish(),
+    brand: BrandReferenceSchema.nullish(),
+    webhook_url: z.string().nullish(),
+    cache_duration_hours: z.number().nullish(),
+    created_at: z.string().nullish(),
+    updated_at: z.string().nullish(),
+    property_count: z.number().nullish(),
+    pricing_options: z.array(VendorPricingOptionSchema).nullish()
 }).passthrough();
 
 export const UpdatePropertyListResponseSchema = z.object({
@@ -4188,16 +4286,36 @@ export const UpdatePropertyListResponseSchema = z.object({
     ext: ExtensionObjectSchema.nullish()
 }).passthrough();
 
-export const ListContentStandardsResponseSchema = z.union([z.object({
-        standards: z.array(ContentStandardsSchema),
-        pagination: PaginationResponseSchema.nullish(),
-        context: ContextObjectSchema.nullish(),
-        ext: ExtensionObjectSchema.nullish()
-    }).passthrough(), z.object({
-        errors: z.array(ErrorSchema),
-        context: ContextObjectSchema.nullish(),
-        ext: ExtensionObjectSchema.nullish()
-    }).passthrough()]);
+export const GetPropertyListResponseSchema = z.object({
+    list: PropertyListSchema,
+    identifiers: z.array(IdentifierSchema).nullish(),
+    pagination: PaginationResponseSchema.nullish(),
+    resolved_at: z.string().nullish(),
+    cache_valid_until: z.string().nullish(),
+    coverage_gaps: z.record(z.string(), z.array(IdentifierSchema)).nullish(),
+    ext: ExtensionObjectSchema.nullish()
+}).passthrough();
+
+export const ListPropertyListsResponseSchema = z.object({
+    lists: z.array(PropertyListSchema),
+    pagination: PaginationResponseSchema.nullish(),
+    ext: ExtensionObjectSchema.nullish()
+}).passthrough();
+
+export const ContentStandardsSchema = z.object({
+    standards_id: z.string(),
+    name: z.string().nullish(),
+    countries_all: z.array(z.string()).nullish(),
+    channels_any: z.array(MediaChannelSchema).nullish(),
+    languages_any: z.array(z.string()).nullish(),
+    policy: z.string().nullish(),
+    calibration_exemplars: z.object({
+        pass: z.array(ArtifactSchema).nullish(),
+        fail: z.array(ArtifactSchema).nullish()
+    }).passthrough().nullish(),
+    pricing_options: z.array(VendorPricingOptionSchema).nullish(),
+    ext: ExtensionObjectSchema.nullish()
+}).passthrough();
 
 export const GetContentStandardsResponseSchema = z.union([ContentStandardsSchema, z.object({
         errors: z.array(ErrorSchema),
@@ -4210,6 +4328,10 @@ export const UpdateContentStandardsResponseSchema = z.union([UpdateContentStanda
 export const GetCreativeFeaturesResponseSchema = z.union([z.object({
         results: z.array(CreativeFeatureResultSchema),
         detail_url: z.string().nullish(),
+        pricing_option_id: z.string().nullish(),
+        vendor_cost: z.number().nullish(),
+        currency: z.string().nullish(),
+        consumption: CreativeConsumptionSchema.nullish(),
         context: ContextObjectSchema.nullish(),
         ext: ExtensionObjectSchema.nullish()
     }).passthrough(), z.object({
@@ -4400,7 +4522,8 @@ export const FormatSchema = z.object({
         format_id: FormatIDSchema,
         manifest: z.object({}).passthrough()
     }).passthrough().nullish(),
-    reported_metrics: z.array(AvailableMetricSchema).nullish()
+    reported_metrics: z.array(AvailableMetricSchema).nullish(),
+    pricing_options: z.array(VendorPricingOptionSchema).nullish()
 }).passthrough();
 
 export const CreateMediaBuyRequestSchema = z.object({
@@ -4476,30 +4599,22 @@ export const LogEventRequestSchema = z.object({
 
 export const PreviewCreativeResponseSchema = z.union([PreviewCreativeSingleResponseSchema, PreviewCreativeBatchResponseSchema, PreviewCreativeVariantResponseSchema]);
 
-export const GetSignalsResponseSchema = z.object({
-    signals: z.array(z.object({
-        signal_id: SignalIDSchema.nullish(),
-        signal_agent_segment_id: z.string(),
-        name: z.string(),
-        description: z.string(),
-        value_type: SignalValueTypeSchema.nullish(),
-        categories: z.array(z.string()).nullish(),
-        range: z.object({
-            min: z.number(),
-            max: z.number()
-        }).passthrough().nullish(),
-        signal_type: SignalCatalogTypeSchema,
-        data_provider: z.string(),
-        coverage_percentage: z.number(),
-        deployments: z.array(DeploymentSchema),
-        pricing_options: z.array(SignalPricingOptionSchema)
-    }).passthrough()),
-    errors: z.array(ErrorSchema).nullish(),
-    pagination: PaginationResponseSchema.nullish(),
-    sandbox: z.boolean().nullish(),
-    context: ContextObjectSchema.nullish(),
+export const CreatePropertyListResponseSchema = z.object({
+    list: PropertyListSchema,
+    auth_token: z.string(),
     ext: ExtensionObjectSchema.nullish()
 }).passthrough();
+
+export const ListContentStandardsResponseSchema = z.union([z.object({
+        standards: z.array(ContentStandardsSchema),
+        pagination: PaginationResponseSchema.nullish(),
+        context: ContextObjectSchema.nullish(),
+        ext: ExtensionObjectSchema.nullish()
+    }).passthrough(), z.object({
+        errors: z.array(ErrorSchema),
+        context: ContextObjectSchema.nullish(),
+        ext: ExtensionObjectSchema.nullish()
+    }).passthrough()]);
 
 export const SISendMessageResponseSchema = z.object({
     session_id: z.string(),

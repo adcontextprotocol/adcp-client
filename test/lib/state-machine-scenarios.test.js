@@ -120,27 +120,25 @@ describe('getApplicableScenarios with state machine scenarios', () => {
 // Comply track integration
 // ============================================================
 
-describe('State machine scenarios in comply TRACK_DEFINITIONS', () => {
-  test('media_buy track includes state machine scenarios', () => {
-    const fs = require('node:fs');
-    const path = require('node:path');
-    const src = fs.readFileSync(path.join(__dirname, '../../dist/lib/testing/compliance/comply.js'), 'utf8');
-    // Verify the scenarios appear in the media_buy track definition
-    assert.ok(src.includes('media_buy_lifecycle'), 'comply should include media_buy_lifecycle in media_buy track');
-    assert.ok(
-      src.includes('terminal_state_enforcement'),
-      'comply should include terminal_state_enforcement in media_buy track'
-    );
-    assert.ok(src.includes('package_lifecycle'), 'comply should include package_lifecycle in media_buy track');
+describe('State machine storyboards cover media_buy track', () => {
+  test('media_buy_state_machine storyboard exists and targets media_buy track', () => {
+    const { getStoryboardById } = require('../../dist/lib/testing/storyboard/loader.js');
+    const sb = getStoryboardById('media_buy_state_machine');
+    assert.ok(sb, 'media_buy_state_machine storyboard should exist');
+    assert.strictEqual(sb.track, 'media_buy', 'storyboard should target media_buy track');
+    assert.ok(sb.required_tools.includes('create_media_buy'), 'storyboard should require create_media_buy');
+    assert.ok(sb.required_tools.includes('update_media_buy'), 'storyboard should require update_media_buy');
   });
 
-  test('media_buy track relevance includes update_media_buy', () => {
-    const fs = require('node:fs');
-    const path = require('node:path');
-    const src = fs.readFileSync(path.join(__dirname, '../../dist/lib/testing/compliance/comply.js'), 'utf8');
-    // The TRACK_RELEVANCE for media_buy should include update_media_buy and get_media_buys
-    assert.ok(src.includes('update_media_buy'), 'TRACK_RELEVANCE should include update_media_buy');
-    assert.ok(src.includes('get_media_buys'), 'TRACK_RELEVANCE should include get_media_buys');
+  test('PLATFORM_STORYBOARDS includes media_buy storyboards for sales platforms', () => {
+    const { PLATFORM_STORYBOARDS } = require('../../dist/lib/testing/compliance/platform-storyboards.js');
+    // All sales platforms should have at least one media_buy storyboard
+    const salesTypes = ['display_ad_server', 'video_ad_server', 'social_platform', 'dsp'];
+    for (const type of salesTypes) {
+      const ids = PLATFORM_STORYBOARDS[type];
+      const hasMediaBuy = ids.some(id => id.startsWith('media_buy_'));
+      assert.ok(hasMediaBuy, `${type} should include a media_buy storyboard`);
+    }
   });
 });
 

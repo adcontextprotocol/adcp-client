@@ -12,6 +12,13 @@ export { SAMPLE_BRIEFS, getBriefById, getBriefsByVertical } from './briefs';
 export { getPlatformProfile, getAllPlatformTypes, getPlatformTypesWithLabels } from './profiles';
 export type { PlatformProfile } from './profiles';
 
+export {
+  PLATFORM_STORYBOARDS,
+  getStoryboardIdsForPlatform,
+  extractScenariosFromStoryboard,
+  filterToKnownScenarios,
+} from './platform-storyboards';
+
 export type {
   ComplianceTrack,
   TrackResult,

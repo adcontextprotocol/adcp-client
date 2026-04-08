@@ -232,8 +232,6 @@ export type {
   GetSignalsResponse,
   ActivateSignalRequest,
   ActivateSignalResponse,
-  SignalPricingOption,
-  SignalPricing,
   CpmPricing,
   PercentOfMediaPricing,
   FlatFeePricing,
