@@ -23,3 +23,6 @@ export type {
   GetTaskResult,
   Task,
 } from './tasks';
+
+export { serve } from './serve';
+export type { ServeOptions } from './serve';
