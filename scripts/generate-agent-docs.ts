@@ -60,8 +60,8 @@ interface SchemaIndex {
 }
 
 interface ToolInfo {
-  name: string;          // snake_case MCP tool name
-  kebab: string;         // kebab-case key in index.json
+  name: string; // snake_case MCP tool name
+  kebab: string; // kebab-case key in index.json
   domain: string;
   reqDescription: string;
   resDescription: string;
@@ -141,9 +141,12 @@ function fieldType(prop: any): string {
     return kebabToTitle(filename);
   }
   if (prop.oneOf || prop.anyOf) {
-    const variants = (prop.oneOf || prop.anyOf);
+    const variants = prop.oneOf || prop.anyOf;
     if (variants.length <= 3) {
-      return variants.map((v: any) => v.title || v.const || fieldType(v)).filter(Boolean).join(' | ');
+      return variants
+        .map((v: any) => v.title || v.const || fieldType(v))
+        .filter(Boolean)
+        .join(' | ');
     }
     return 'union';
   }
@@ -192,12 +195,12 @@ function groupByDomain(tools: ToolInfo[]): Map<string, ToolInfo[]> {
 
 function domainLabel(domain: string): string {
   const labels: Record<string, string> = {
-    'protocol': 'Protocol',
-    'account': 'Account Management',
+    protocol: 'Protocol',
+    account: 'Account Management',
     'media-buy': 'Media Buying',
-    'creative': 'Creative',
-    'signals': 'Signals',
-    'governance': 'Governance',
+    creative: 'Creative',
+    signals: 'Signals',
+    governance: 'Governance',
     'sponsored-intelligence': 'Sponsored Intelligence',
     'trusted-match': 'Trusted Match (TMP)',
   };
@@ -206,10 +209,10 @@ function domainLabel(domain: string): string {
 
 function trackLabel(track: string): string {
   const overrides: Record<string, string> = {
-    'si': 'Sponsored Intelligence (SI)',
-    'campaign_governance': 'Campaign Governance',
-    'error_handling': 'Error Handling',
-    'media_buy': 'Media Buy',
+    si: 'Sponsored Intelligence (SI)',
+    campaign_governance: 'Campaign Governance',
+    error_handling: 'Error Handling',
+    media_buy: 'Media Buy',
   };
   return overrides[track] || kebabToTitle(track.replace(/_/g, ' '));
 }
@@ -223,22 +226,14 @@ function domainDeepDives(domain: string): string[] {
       'docs/guides/PUSH-NOTIFICATION-CONFIG.md — webhook setup for delivery reports',
       'docs/guides/REAL-WORLD-EXAMPLES.md — end-to-end buying flows',
     ],
-    'creative': [
+    creative: [
       'docs/guides/BUILD-AN-AGENT.md — building a creative agent (server-side)',
       'schemas/cache/latest/creative/asset-types/index.json — asset type definitions',
     ],
-    'signals': [
-      'docs/guides/BUILD-AN-AGENT.md — signals agent example',
-    ],
-    'governance': [
-      'docs/guides/HANDLER-PATTERNS-GUIDE.md — input handler patterns for governance flows',
-    ],
-    'sponsored-intelligence': [
-      'docs/guides/ASYNC-DEVELOPER-GUIDE.md — session lifecycle patterns',
-    ],
-    'account': [
-      'docs/getting-started.md — authentication and account setup',
-    ],
+    signals: ['docs/guides/BUILD-AN-AGENT.md — signals agent example'],
+    governance: ['docs/guides/HANDLER-PATTERNS-GUIDE.md — input handler patterns for governance flows'],
+    'sponsored-intelligence': ['docs/guides/ASYNC-DEVELOPER-GUIDE.md — session lifecycle patterns'],
+    account: ['docs/getting-started.md — authentication and account setup'],
   };
   return links[domain] || [];
 }
@@ -287,17 +282,19 @@ function parseStoryboards(): StoryboardSummary[] {
     .filter(f => f.endsWith('.yaml') && !SKIP_STORYBOARDS.has(f))
     .sort();
 
-  return files.map(f => {
-    const content = readFileSync(path.join(STORYBOARDS_DIR, f), 'utf8');
-    return {
-      id: yamlField(content, 'id') || f.replace('.yaml', ''),
-      title: yamlField(content, 'title') || '',
-      summary: yamlField(content, 'summary') || '',
-      track: yamlField(content, 'track') || '',
-      requiredTools: yamlListField(content, 'required_tools'),
-      flow: extractToolFlow(content),
-    };
-  }).filter(s => s.title); // skip empty/broken files
+  return files
+    .map(f => {
+      const content = readFileSync(path.join(STORYBOARDS_DIR, f), 'utf8');
+      return {
+        id: yamlField(content, 'id') || f.replace('.yaml', ''),
+        title: yamlField(content, 'title') || '',
+        summary: yamlField(content, 'summary') || '',
+        track: yamlField(content, 'track') || '',
+        requiredTools: yamlListField(content, 'required_tools'),
+        flow: extractToolFlow(content),
+      };
+    })
+    .filter(s => s.title); // skip empty/broken files
 }
 
 /** Extract a top-level scalar YAML field (single line). */
@@ -313,7 +310,10 @@ function yamlListField(content: string, field: string): string[] {
   const re = new RegExp(`^${field}:\\s*\\n((?:  - .+\\n?)*)`, 'm');
   const m = content.match(re);
   if (!m) return [];
-  return m[1].split('\n').map(l => l.replace(/^\s*-\s*/, '').trim()).filter(Boolean);
+  return m[1]
+    .split('\n')
+    .map(l => l.replace(/^\s*-\s*/, '').trim())
+    .filter(Boolean);
 }
 
 /** Extract ordered tool names from storyboard step `task:` fields. */
@@ -396,7 +396,7 @@ function generateLlmsTxt(
   tools: ToolInfo[],
   errorCodes: ErrorCodeEntry[],
   storyboards: StoryboardSummary[],
-  scenarios: TestScenario[],
+  scenarios: TestScenario[]
 ): string {
   const groups = groupByDomain(tools);
   const version = getLibraryVersion();
@@ -415,7 +415,9 @@ function generateLlmsTxt(
   ln();
   ln(`## What is AdCP`);
   ln();
-  ln(`AdCP is an open protocol for AI agents to buy, manage, and optimize advertising programmatically. It defines MCP tools that agents call on publisher ad servers — discover inventory, create media buys, sync creatives, manage brand safety, and track delivery. Every tool follows request/response JSON schemas; the TypeScript client wraps them with async task handling, conversation context, and governance middleware.`);
+  ln(
+    `AdCP is an open protocol for AI agents to buy, manage, and optimize advertising programmatically. It defines MCP tools that agents call on publisher ad servers — discover inventory, create media buys, sync creatives, manage brand safety, and track delivery. Every tool follows request/response JSON schemas; the TypeScript client wraps them with async task handling, conversation context, and governance middleware.`
+  );
   ln();
 
   // --- Quick start ---
@@ -447,7 +449,9 @@ function generateLlmsTxt(
   // --- Tools by domain ---
   ln(`## Tools`);
   ln();
-  ln(`Every tool is an MCP tool called via \`agent.<methodName>(params)\`. Returns \`TaskResult<T>\` with \`status\`, \`data\`, \`error\`, \`deferred\`, or \`submitted\`.`);
+  ln(
+    `Every tool is an MCP tool called via \`agent.<methodName>(params)\`. Returns \`TaskResult<T>\` with \`status\`, \`data\`, \`error\`, \`deferred\`, or \`submitted\`.`
+  );
   ln();
 
   for (const domain of TOOL_DOMAINS) {
@@ -509,7 +513,9 @@ function generateLlmsTxt(
   if (storyboards.length) {
     ln(`## Common Flows`);
     ln();
-    ln(`These are the standard tool call sequences from the AdCP storyboards. Each flow shows the tools called in order.`);
+    ln(
+      `These are the standard tool call sequences from the AdCP storyboards. Each flow shows the tools called in order.`
+    );
     ln();
 
     // Group by track and show the most representative flows
@@ -536,7 +542,9 @@ function generateLlmsTxt(
   if (errorCodes.length) {
     ln(`## Error Codes`);
     ln();
-    ln(`Agents use the \`recovery\` classification to decide what to do: \`transient\` → retry after delay, \`correctable\` → fix parameters and retry, \`terminal\` → stop and report.`);
+    ln(
+      `Agents use the \`recovery\` classification to decide what to do: \`transient\` → retry after delay, \`correctable\` → fix parameters and retry, \`terminal\` → stop and report.`
+    );
     ln();
     ln(`| Code | Recovery | Description |`);
     ln(`|------|----------|-------------|`);
@@ -601,7 +609,9 @@ function generateLlmsTxt(
   // --- Protocols ---
   ln(`## Protocols`);
   ln();
-  ln(`AdCP tools are served over MCP (Model Context Protocol) or A2A (Agent-to-Agent). The client auto-detects based on \`AgentConfig.protocol\`. MCP endpoints end with \`/mcp/\`. Auth is via bearer token in \`x-adcp-auth\` header.`);
+  ln(
+    `AdCP tools are served over MCP (Model Context Protocol) or A2A (Agent-to-Agent). The client auto-detects based on \`AgentConfig.protocol\`. MCP endpoints end with \`/mcp/\`. Auth is via bearer token in \`x-adcp-auth\` header.`
+  );
   ln();
   ln(`**Deep dive:** docs/development/PROTOCOL_DIFFERENCES.md`);
   ln();
@@ -609,7 +619,9 @@ function generateLlmsTxt(
   // --- Discovery ---
   ln(`## Discovery`);
   ln();
-  ln(`Publishers declare agents in \`/.well-known/adagents.json\`. Brands declare identity in \`/.well-known/brand.json\`. Use \`PropertyCrawler\` or \`adcp registry\` CLI to discover agents.`);
+  ln(
+    `Publishers declare agents in \`/.well-known/adagents.json\`. Brands declare identity in \`/.well-known/brand.json\`. Use \`PropertyCrawler\` or \`adcp registry\` CLI to discover agents.`
+  );
   ln();
 
   // --- Where to go next ---
@@ -671,7 +683,9 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
   ln(`> Generated at: ${now}`);
   ln(`> @adcp/client v${version}`);
   ln();
-  ln(`Curated reference of the types that matter for using the AdCP client. For full generated types see \`src/lib/types/tools.generated.ts\` and \`src/lib/types/core.generated.ts\`.`);
+  ln(
+    `Curated reference of the types that matter for using the AdCP client. For full generated types see \`src/lib/types/tools.generated.ts\` and \`src/lib/types/core.generated.ts\`.`
+  );
   ln();
 
   // --- Client types ---
@@ -731,7 +745,9 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
   // --- Tool request/response shapes ---
   ln(`## Tool Request/Response Shapes`);
   ln();
-  ln(`Each tool is called as \`agent.<methodName>(params)\` and returns \`TaskResult<ResponseType>\`. Below are the key fields for each tool's request. Fields marked with \`*\` are required.`);
+  ln(
+    `Each tool is called as \`agent.<methodName>(params)\` and returns \`TaskResult<ResponseType>\`. Below are the key fields for each tool's request. Fields marked with \`*\` are required.`
+  );
   ln();
 
   const groups = groupByDomain(tools);
@@ -773,14 +789,20 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
   ln();
 
   const coreTypes: [string, string][] = [
-    ['Product', 'Advertising inventory item — has product_id, name, format_ids, pricing_options, delivery_type, publisher_properties'],
+    [
+      'Product',
+      'Advertising inventory item — has product_id, name, format_ids, pricing_options, delivery_type, publisher_properties',
+    ],
     ['MediaBuy', 'Purchased campaign — has media_buy_id, status, packages, total_budget, start_time, end_time'],
     ['Package', 'Line item within a media buy — has package_id, product_id, budget, pricing_option_id, targeting'],
     ['CreativeAsset', 'Creative with assets — has creative_id, name, type, format_id, status, manifest'],
     ['Targeting', 'Audience criteria — geographic, demographic, behavioral, contextual, device, daypart, signals'],
     ['PricingOption', 'Discriminated by pricing_model: cpm, vcpm, cpc, cpcv, cpv, cpp, cpa, flat_rate, time'],
     ['Format', 'Creative format specification — has format_id, name, channel, requirements (typed asset constraints)'],
-    ['Proposal', 'Suggested media plan — has proposal_id, status (draft|committed), allocations, delivery_forecast, insertion_order'],
+    [
+      'Proposal',
+      'Suggested media plan — has proposal_id, status (draft|committed), allocations, delivery_forecast, insertion_order',
+    ],
     ['SignalDefinition', 'Data signal — has signal_id, name, description, value_type, targeting constraints, pricing'],
     ['PropertyList', 'Managed allow/block list — has list_id, name, list_type (allow|block), sources, filters'],
     ['ContentStandards', 'Brand safety config — has standards_id, name, scope, policy entries, calibration exemplars'],
@@ -833,7 +855,9 @@ function main() {
   const storyboards = parseStoryboards();
   const scenarios = parseTestScenarios();
 
-  console.log(`Found ${tools.length} tools, ${errorCodes.length} error codes, ${storyboards.length} storyboards, ${scenarios.length} test scenarios`);
+  console.log(
+    `Found ${tools.length} tools, ${errorCodes.length} error codes, ${storyboards.length} storyboards, ${scenarios.length} test scenarios`
+  );
 
   const llmsTxt = generateLlmsTxt(index, tools, errorCodes, storyboards, scenarios);
   const typeSummary = generateTypeSummary(index, tools);
