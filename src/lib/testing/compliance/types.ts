@@ -66,6 +66,8 @@ export interface ComplianceResult {
   observations: AdvisoryObservation[];
   /** Platform coherence assessment (only when platform_type provided) */
   platform_coherence?: PlatformCoherenceResult;
+  /** Storyboard IDs that were resolved and executed */
+  storyboards_executed?: string[];
   /** Whether the seller exposes comply_test_controller */
   controller_detected?: boolean;
   /** Scenarios the seller's test controller supports */

@@ -634,6 +634,7 @@ OPTIONS:
   --auth TOKEN             Authentication token (overrides saved tokens)
   --protocol PROTO         Force protocol: mcp or a2a
   --tracks TRACKS          Comma-separated tracks to run (default: all applicable)
+  --storyboards IDS        Comma-separated storyboard IDs to run (highest priority)
   --platform-type TYPE     Declare platform type for coherence checking
   --list-platform-types    List all available platform types
   --brief TEXT             Custom brief for product discovery
@@ -645,6 +646,7 @@ EXAMPLES:
   adcp comply test-mcp
   adcp comply myagent                                    # uses saved OAuth tokens automatically
   adcp comply test-mcp --tracks core,products,media_buy
+  adcp comply test-mcp --storyboards media_buy_seller,error_compliance
   adcp comply test-mcp --platform-type social_platform
   adcp comply https://my-agent.com/mcp --auth my-token
   adcp comply test-mcp --json | jq '.summary'
@@ -658,6 +660,7 @@ EXAMPLES:
     '--auth',
     '--protocol',
     '--tracks',
+    '--storyboards',
     '--platform-type',
     '--list-platform-types',
     '--brief',
@@ -699,6 +702,23 @@ EXAMPLES:
     tracks = args[tracksIndex + 1].split(',');
   }
 
+  // Parse --storyboards
+  const storyboardsIndex = args.indexOf('--storyboards');
+  let storyboards;
+  if (storyboardsIndex !== -1 && storyboardsIndex + 1 < args.length) {
+    storyboards = args[storyboardsIndex + 1].split(',');
+    // Validate against bundled storyboard IDs
+    const { listStoryboards } = await import('../dist/lib/testing/storyboard/index.js');
+    const knownIds = new Set(listStoryboards().map(s => s.id));
+    const unknown = storyboards.filter(id => !knownIds.has(id));
+    if (unknown.length > 0) {
+      console.error(`ERROR: Unknown storyboard ID(s): ${unknown.join(', ')}`);
+      console.error(`Available: ${[...knownIds].sort().join(', ')}`);
+      console.error(`Run 'adcp storyboard list' to see all options.\n`);
+      process.exit(2);
+    }
+  }
+
   // Parse --platform-type
   const platformTypeIndex = args.indexOf('--platform-type');
   let platform_type;
@@ -720,6 +740,7 @@ EXAMPLES:
     dry_run: opts.dryRun,
     brief: opts.brief,
     tracks,
+    storyboards,
     platform_type,
     ...(finalAuthToken && { auth: { type: 'bearer', token: finalAuthToken } }),
   };
@@ -728,6 +749,7 @@ EXAMPLES:
     console.log(`\n🔍 Running compliance assessment against ${agentUrl}`);
     console.log(`   Protocol: ${protocol.toUpperCase()}`);
     console.log(`   Mode: ${opts.dryRun ? 'Dry Run' : 'Live'}`);
+    if (storyboards) console.log(`   Storyboards: ${storyboards.join(', ')}`);
     if (platform_type) console.log(`   Platform: ${platform_type}`);
     console.log(`   Auth: ${finalAuthToken ? 'configured' : 'none'}\n`);
   }
@@ -1005,6 +1027,8 @@ async function handleStoryboardRun(args) {
     console.log(JSON.stringify(result, null, 2));
   } else {
     // Human-readable output
+    console.log(`\n${storyboard.title} (${storyboard.id})`);
+    console.log('═'.repeat(50));
     for (const phase of result.phases) {
       console.log(`\n── Phase: ${phase.phase_title} ──────────────────────────────`);
       for (const step of phase.steps) {

@@ -723,6 +723,7 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
       summary,
       observations: allObservations,
       platform_coherence: platformCoherence,
+      storyboards_executed: applicableStoryboards.map(sb => sb.id),
       controller_detected: controllerDetection.detected,
       controller_scenarios: controllerDetection.detected ? controllerDetection.scenarios : undefined,
       tested_at: new Date().toISOString(),
@@ -813,6 +814,7 @@ async function buildUnreachableResult(
       headline,
     },
     observations,
+    storyboards_executed: [],
     tested_at: new Date().toISOString(),
     total_duration_ms: Date.now() - start,
     dry_run: effectiveOptions.dry_run !== false,
@@ -886,7 +888,11 @@ export function formatComplianceResults(result: ComplianceResult): string {
   if (result.platform_coherence) {
     output += `Platform: ${result.platform_coherence.label}\n`;
   }
-  output += `Duration: ${(result.total_duration_ms / 1000).toFixed(1)}s\n\n`;
+  output += `Duration: ${(result.total_duration_ms / 1000).toFixed(1)}s\n`;
+  if (result.storyboards_executed?.length) {
+    output += `Storyboards: ${result.storyboards_executed.join(', ')}\n`;
+  }
+  output += '\n';
 
   // Summary line
   output += `${result.summary.headline}\n\n`;

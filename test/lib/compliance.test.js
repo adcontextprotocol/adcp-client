@@ -439,6 +439,7 @@ describe('formatComplianceResults', () => {
       headline: '1 passing, 1 failing',
     },
     observations: [{ category: 'completeness', severity: 'warning', message: 'Missing fields' }],
+    storyboards_executed: ['capability_discovery', 'schema_validation'],
     tested_at: new Date().toISOString(),
     total_duration_ms: 150,
     dry_run: true,
@@ -514,6 +515,24 @@ describe('formatComplianceResults', () => {
     const output = formatComplianceResults(mockResult);
     assert.ok(!output.includes('Platform Coherence'), 'Should not show coherence without platform_type');
     assert.ok(!output.includes('Platform:'), 'Should not show platform in header');
+  });
+
+  test('shows storyboards executed', () => {
+    const output = formatComplianceResults(mockResult);
+    assert.ok(output.includes('Storyboards: capability_discovery, schema_validation'),
+      'Should show storyboards_executed in output');
+  });
+
+  test('no storyboards line when storyboards_executed is empty', () => {
+    const resultNoStoryboards = { ...mockResult, storyboards_executed: [] };
+    const output = formatComplianceResults(resultNoStoryboards);
+    assert.ok(!output.includes('Storyboards:'), 'Should not show Storyboards line when empty');
+  });
+
+  test('no storyboards line when storyboards_executed is undefined', () => {
+    const { storyboards_executed, ...resultWithout } = mockResult;
+    const output = formatComplianceResults(resultWithout);
+    assert.ok(!output.includes('Storyboards:'), 'Should not show Storyboards line when undefined');
   });
 });
 
