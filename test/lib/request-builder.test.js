@@ -126,9 +126,15 @@ describe('Request Builder', () => {
   describe('hasRequestBuilder', () => {
     test('returns true for tasks with builders', () => {
       const tasks = [
-        'create_media_buy', 'get_products', 'get_brand_identity', 'get_rights',
-        'sync_catalogs', 'report_usage', 'provide_performance_feedback',
-        'sync_event_sources', 'log_event',
+        'create_media_buy',
+        'get_products',
+        'get_brand_identity',
+        'get_rights',
+        'sync_catalogs',
+        'report_usage',
+        'provide_performance_feedback',
+        'sync_event_sources',
+        'log_event',
       ];
       for (const task of tasks) {
         assert.ok(hasRequestBuilder(task), `should have builder for ${task}`);
